@@ -1,18 +1,23 @@
 # Terminal application
 
-This folder is the terminal, the pi-tui application that `dimos agent` opens on one conversation.
-`dimos agent` starts the gateway when none runs, then [cli/commands/tui.ts](../../cli/commands/tui.ts) calls
-`runTerminal` from [main.ts](main.ts). The terminal reaches the gateway only through the [SDK](../../sdk/README.md). It turns served state
-into rows with [view models](../../shared/view-models/README.md) and previews media with
-[shared/render/](../../shared/render/README.md). [The terminal](../../../../docs/usage/agent.md#the-terminal) in
+`dimos/agents/frontends/tui/` contains the terminal, the pi-tui application that `dimos agent` opens on one conversation.
+`dimos agent` starts the gateway when none runs, then [cli/commands/tui.ts](/dimos/agents/cli/commands/tui.ts) calls
+`runTerminal` from [main.ts](/dimos/agents/frontends/tui/main.ts). The terminal reaches the gateway only through the [SDK](/docs/usage/agent/sdk.md). It turns served state
+into rows with [view models](/docs/development/agent/view-models.md) and previews media with
+[shared/render/](/docs/development/agent/render.md). [The terminal](/docs/usage/agent.md#the-terminal) in
 docs/usage/agent.md describes what a user sees and lists every key.
+
+Source: [dimos/agents/frontends/tui/](/dimos/agents/frontends/tui/). TypeScript examples use imports relative to this source directory.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs frontends/tui/demo_example.ts`.
+Remove the temporary file with `rm frontends/tui/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on pi-tui and pi-coding-agent
 
 [pi-tui](https://github.com/earendil-works/pi/tree/main/packages/tui) draws the screen. A `TUI` owns the terminal. It
 holds the components, sends each key to the component that has focus, and rewrites only the rows that changed. main.ts
 runs a `TuiAltScreen` over a `ProcessTerminal`. That renderer draws in the alternate screen buffer and does its own
-scrolling. [setup.ts](setup.ts) runs the first-run screens on a `TuiMainScreen`, which draws in the normal buffer.
+scrolling. [setup.ts](/dimos/agents/frontends/tui/setup.ts) runs the first-run screens on a `TuiMainScreen`, which draws in the normal buffer.
 
 A `Component` is an object with `render(width)`, which returns one string per row. No row may be wider than `width`, so
 components cut their lines with `truncateToWidth`. A component that takes keys has `handleInput(data)`. It gets the raw
@@ -21,7 +26,7 @@ component cached. `/theme` calls `tui.invalidate()` after it changes the theme.
 
 Nothing redraws on its own. A component asks for a frame with `tui.requestRender()`, and pi-tui merges the requests into
 one frame. The terminal builds on that rule. Every component reads the SDK state it draws inside `render`, and every
-subscription only asks for a frame. main.ts subscribes with `listen` from [sdk/state.ts](../../sdk/state.ts). A new
+subscription only asks for a frame. main.ts subscribes with `listen` from [sdk/state.ts](/dimos/agents/sdk/state.ts). A new
 entry, a queue change or a new stream reaches the screen on the next frame, and the terminal keeps no copy of served
 state.
 
@@ -34,7 +39,7 @@ main.ts handles the global keys there. `tui.showOverlay` draws a component over 
 
 pi-tui also gives the terminal its editor and its pictures. `Editor` is the multi-line prompt, and
 `CombinedAutocompleteProvider` completes slash commands and file paths in it. `Image` draws a picture with the kitty or
-iTerm2 graphics protocol. `TerminalImage` in [lib/terminal-image.ts](lib/terminal-image.ts) wraps it for Warp and for
+iTerm2 graphics protocol. `TerminalImage` in [lib/terminal-image.ts](/dimos/agents/frontends/tui/lib/terminal-image.ts) wraps it for Warp and for
 terminals with no graphics protocol.
 
 [pi-coding-agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) is Pi's own coding agent. The
@@ -44,11 +49,11 @@ harness does not run on it. The terminal imports it for these components:
 - `ToolExecutionComponent` draws tool calls with Pi's renderers from `createBashToolDefinition`,
   `createReadToolDefinition`, `createEditToolDefinition` and `createWriteToolDefinition`. The harness stores `bash`
   details with the `truncation` and `fullOutputPath` fields that Pi's card reads, as `DETAILS` in
-  [shared/protocol/tools/details.ts](../../shared/protocol/tools/details.ts) declares.
+  [shared/protocol/tools/details.ts](/dimos/agents/shared/protocol/tools/details.ts) declares.
 - `ExtensionSelectorComponent`, `ThemeSelectorComponent`, `OAuthSelectorComponent` and `DynamicBorder` draw the setup
   screens and the login prompts.
 - `initTheme`, `getMarkdownTheme` and `getSelectListTheme` set and read Pi's theme. The reused components follow
-  `/theme`. The colours in [style.ts](style.ts) are fixed truecolor values and do not.
+  `/theme`. The colours in [style.ts](/dimos/agents/frontends/tui/style.ts) are fixed truecolor values and do not.
 
 This folder adds the layout, the wiring from SDK state to rows, the tool cards and media panels, the stream sidebar, the
 main menu and pictures drawn in text cells.
@@ -99,14 +104,14 @@ and shares the same reference with `MenuView`.
 
 ### Ui and Feedback
 
-`Ui` in [session.ts](session.ts) is the SDK `Client` plus three members. `gateway` is a `Ref<typeof GatewayContract>`,
+`Ui` in [session.ts](/dimos/agents/frontends/tui/session.ts) is the SDK `Client` plus three members. `gateway` is a `Ref<typeof GatewayContract>`,
 `lifecycle` is a `Ref<typeof LifecycleContract>`, and `actions` is a `Feedback`. Every component that acts on the
 gateway takes a `Ui`. Before it calls a method, it narrows the reference to the `owner` variant. `owner()` from
-[sdk/failures.ts](../../sdk/failures.ts) does that and throws a `RefusalError` for a viewer. A component wraps a
+[sdk/failures.ts](/dimos/agents/sdk/failures.ts) does that and throws a `RefusalError` for a viewer. A component wraps a
 `by_request_id` action in `retryByRequestId`.
 
-`Feedback` in [feedback.ts](feedback.ts) is a `Status<readonly ActionRecord[]>` from
-[shared/protocol/status.ts](../../shared/protocol/status.ts). It holds the newest 50 actions this terminal started. It
+`Feedback` in [feedback.ts](/dimos/agents/frontends/tui/feedback.ts) is a `Status<readonly ActionRecord[]>` from
+[shared/protocol/status.ts](/dimos/agents/shared/protocol/status.ts). It holds the newest 50 actions this terminal started. It
 never calls or retries an RPC.
 
 - `observe(text, work, context?)` records `work` as pending, waits for it or for `client.ended`, and records it as done,
@@ -124,14 +129,14 @@ default model. It waits up to 5 s for the provider's models to reach `accounts`.
 through `ui.actions.observe`. It resolves with `{ kind: "done" }`, or with `{ kind: "cancelled" }` after Ctrl-C or Esc.
 A failed login or a provider with no models rejects.
 
-`LoginPanel` in [dialogs.ts](dialogs.ts) draws this terminal's `loginFlow` member each time it renders. A `select`
+`LoginPanel` in [dialogs.ts](/dimos/agents/frontends/tui/dialogs.ts) draws this terminal's `loginFlow` member each time it renders. A `select`
 prompt is a list, `secret` and `manual_code` are a masked line, and `text` is a plain line. The provider's progress
 lines stay above the prompt, so a device code stays visible. Enter answers with `gateway.answerLogin`. Esc answers
 `null`, which cancels the flow. Setup and the chat both show it.
 
 ### Slash commands
 
-[commands.ts](commands.ts) exports `SlashCommand`, `TerminalApp` and `slashCommands()`. A `SlashCommand` is
+[commands.ts](/dimos/agents/frontends/tui/commands.ts) exports `SlashCommand`, `TerminalApp` and `slashCommands()`. A `SlashCommand` is
 `{ name, usage, run(args, app) }`. `run` gets the text after the name and a `TerminalApp`, and returns a promise.
 `slashCommands()` returns every command in `/help` order, and the editor completes their names. To add a command, add it
 to that array. When `run` throws, main.ts shows a `RefusalError` on the action line and any other error as a chat note.
@@ -155,7 +160,7 @@ to that array. When `run` throws, main.ts shows a `RefusalError` on the action l
 ### Families
 
 Three folders each define a family in a `base.ts`, and one consumer file lists every member.
-[test/boundaries.test.ts](../../test/boundaries.test.ts) fails a member that does not import its `base.ts` and a member
+[test/boundaries.test.ts](/dimos/agents/test/boundaries.test.ts) fails a member that does not import its `base.ts` and a member
 the consumer does not import.
 
 | Folder   | Contract       | Consumer                | Members                                   |
@@ -245,8 +250,8 @@ tui.start();
 
 `StreamGetCard` draws a `stream_get` call as the stream it reads, a spinner while the read waits, and then the result's
 state and first line. `/expand` shows Pi's generic card through a `PiToolCard` it holds, as `BashCard` in
-[cards/bash.ts](cards/bash.ts) does for Pi's bash card. To use it, move it into cards/, import `./base.ts` from there,
-and return it from `cardFor` in [cards/choose.ts](cards/choose.ts).
+[cards/bash.ts](/dimos/agents/frontends/tui/cards/bash.ts) does for Pi's bash card. To use it, move it into cards/, import `./base.ts` from there,
+and return it from `cardFor` in [cards/choose.ts](/dimos/agents/frontends/tui/cards/choose.ts).
 
 ```ts
 import type { TUI } from "@earendil-works/pi-tui";
@@ -325,8 +330,8 @@ export class StreamGetCard implements ToolCard {
 
 `busyTab` lists every conversation with a run in progress, the oldest run first, and Enter shows the selected one in the
 chat. It reads `ui.gateway.conversations` each time the view renders, as `conversationsTab` in
-[menu/conversations.ts](menu/conversations.ts) does. To show it, move it into menu/ and add it to `TABS` in
-[menu/view.ts](menu/view.ts). Add a matching key to `TAB_KEYS`.
+[menu/conversations.ts](/dimos/agents/frontends/tui/menu/conversations.ts) does. To show it, move it into menu/ and add it to `TABS` in
+[menu/view.ts](/dimos/agents/frontends/tui/menu/view.ts). Add a matching key to `TAB_KEYS`.
 
 ```ts
 import type { MenuRow, MenuTab } from "./menu/base.ts";
@@ -359,54 +364,54 @@ export const busyTab: MenuTab = {
 
 ## Files
 
-The root holds the entry and what it composes. [main.ts](main.ts) is `runTerminal`, the layout, the input modes, the
-global keys and the full-screen views. [session.ts](session.ts) is `Ui`. [commands.ts](commands.ts) holds every slash
-command and the key list `/help` prints. [setup.ts](setup.ts) is `runSetup`. [dialogs.ts](dialogs.ts) is `LoginPanel`.
-[feedback.ts](feedback.ts) is `Feedback`, and feedback.test.ts checks pending sends, refusals, unknown outcomes and a
-closed client. [inspect.ts](inspect.ts) is `inspectPath(path, cwd, renderer, progress)`, which renders a file in this
+The root holds the entry and what it composes. [main.ts](/dimos/agents/frontends/tui/main.ts) is `runTerminal`, the layout, the input modes, the
+global keys and the full-screen views. [session.ts](/dimos/agents/frontends/tui/session.ts) is `Ui`. [commands.ts](/dimos/agents/frontends/tui/commands.ts) holds every slash
+command and the key list `/help` prints. [setup.ts](/dimos/agents/frontends/tui/setup.ts) is `runSetup`. [dialogs.ts](/dimos/agents/frontends/tui/dialogs.ts) is `LoginPanel`.
+[feedback.ts](/dimos/agents/frontends/tui/feedback.ts) is `Feedback`, and feedback.test.ts checks pending sends, refusals, unknown outcomes and a
+closed client. [inspect.ts](/dimos/agents/frontends/tui/inspect.ts) is `inspectPath(path, cwd, renderer, progress)`, which renders a file in this
 process as the gateway would for a tool result and reports clip progress to a `ProgressPanel`. It throws when the file
-is not an image, a point cloud or a frame index, and it only reads the original. [style.ts](style.ts) has `accent`,
+is not an image, a point cloud or a frame index, and it only reads the original. [style.ts](/dimos/agents/frontends/tui/style.ts) has `accent`,
 `muted`, `amber` and `red`, which colour text, and `levelColor(level, text)`, which cleans text and colours it plain,
 amber or red for `ok`, `warn` or `critical`. Its `StatusLine` draws one row with a left text and an optional right text,
 read at each render.
 
-[conversation/](conversation/) draws the chat and its controls. [transcript.ts](conversation/transcript.ts) is
+[conversation/](/dimos/agents/frontends/tui/conversation/) draws the chat and its controls. [transcript.ts](/dimos/agents/frontends/tui/conversation/transcript.ts) is
 `TranscriptView`, the chat. It keeps one component per `TimelineRow` from `timelineOf`, keyed by the row, so a streamed
 reply updates one `Markdown` component and a new entry adds one. An input shows by its source, as the user's text,
 `⚡ module: text`, `⏰ job: text`, or the end of a background call. A tool result shows its card, with a `Gallery` under
 it when the result carries a rendering. A line the terminal adds itself, such as a command's answer or an `/inspect`
-rendering, sits after the newest entry it saw. [input.ts](conversation/input.ts) is `PromptEditor`, pi-tui's `Editor`
+rendering, sits after the newest entry it saw. [input.ts](/dimos/agents/frontends/tui/conversation/input.ts) is `PromptEditor`, pi-tui's `Editor`
 with command and file completion, an Esc hook and a masked mode, and `ChatInput`, the one-line input of dialogs. A
-masked `ChatInput` drops its undo and kill-ring history when it leaves the mode. [switcher.ts](conversation/switcher.ts)
-is `SwitcherOverlay`, the Ctrl+O overlay over `switcherRows`. [selection.ts](conversation/selection.ts) is
+masked `ChatInput` drops its undo and kill-ring history when it leaves the mode. [switcher.ts](/dimos/agents/frontends/tui/conversation/switcher.ts)
+is `SwitcherOverlay`, the Ctrl+O overlay over `switcherRows`. [selection.ts](/dimos/agents/frontends/tui/conversation/selection.ts) is
 `MessageSelection` and its `SelectionChoice`, the Esc-then-arrows selection over `selectables`, which starts at the
-newest message. [progress.ts](conversation/progress.ts) is `ProgressPanel`, a spinner, a bar and the newest finished
-frame while `/inspect` renders a clip. [background.ts](conversation/background.ts) is `BackgroundPanel`, one line under the
+newest message. [progress.ts](/dimos/agents/frontends/tui/conversation/progress.ts) is `ProgressPanel`, a spinner, a bar and the newest finished
+frame while `/inspect` renders a clip. [background.ts](/dimos/agents/frontends/tui/conversation/background.ts) is `BackgroundPanel`, one line under the
 editor for the calls running in the background; Down on an empty editor focuses it and lists them all, Enter opens a call's output full
 screen, and `x` stops the call. input.test.ts checks that a paste submits whole, that a modified Enter adds a
 line, and that a secret never reaches the editor history. progress.test.ts checks that the preview keeps its picture
 while the next frame loads. The timeline and selection calculations live in shared/view-models/conversation/.
 
-[cards/](cards/) is the `ToolCard` family in [base.ts](cards/base.ts). The transcript makes one card per call through
+[cards/](/dimos/agents/frontends/tui/cards/) is the `ToolCard` family in [base.ts](/dimos/agents/frontends/tui/cards/base.ts). The transcript makes one card per call through
 `cardFor` and owns it. `BashCard` in bash.ts shows `$ command`, a spinner, the last 12 output lines while the command
 runs and the last 3 after. Its label names the newest uv stage line, such as `Installed 16 packages`, once that line has
-left the shown lines. A nonzero exit or an error result reads `Failed`. `PiToolCard` in [pi-tool.ts](cards/pi-tool.ts)
+left the shown lines. A nonzero exit or an error result reads `Failed`. `PiToolCard` in [pi-tool.ts](/dimos/agents/frontends/tui/cards/pi-tool.ts)
 is Pi's `ToolExecutionComponent` with Pi's own renderers for `bash`, `read`, `edit` and `write`. Every other tool gets a
 one-line card with its name, its state and the first line of output until `/expand`. Pi draws result images itself
 except on Warp, where `needsImageSlices()` turns them off. bash.test.ts runs a real child process through a `BashCard`.
 
-[views/](views/) is the `ViewPanel` family in [base.ts](views/base.ts), one panel per renderer in shared/render/.
-`Gallery` in [gallery.ts](views/gallery.ts) is one rendering under a card or an event line. It shows a mosaic of the
+[views/](/dimos/agents/frontends/tui/views/) is the `ViewPanel` family in [base.ts](/dimos/agents/frontends/tui/views/base.ts), one panel per renderer in shared/render/.
+`Gallery` in [gallery.ts](/dimos/agents/frontends/tui/views/gallery.ts) is one rendering under a card or an event line. It shows a mosaic of the
 rendering's views, at most `MAX_VIEWS`, which is 6. A tab row numbers the views, and a click on a tab or `/panel N`
 opens view N in its panel. `/panel 0` returns to the overview. `/panel N` opens a panel that takes keys, such as
 `SpatialPanel`, full screen so it gets them. The gallery lists files past the limit as `Also:` and failed files as
-`Not rendered:`. `ImagePanel` in [image.ts](views/image.ts) shows the cached preview. `SpatialPanel` in
-[points.ts](views/points.ts) shows a point cloud. Left, Right and `r` rotate it, `+` and `-` zoom between 0.25 and 4,
+`Not rendered:`. `ImagePanel` in [image.ts](/dimos/agents/frontends/tui/views/image.ts) shows the cached preview. `SpatialPanel` in
+[points.ts](/dimos/agents/frontends/tui/views/points.ts) shows a point cloud. Left, Right and `r` rotate it, `+` and `-` zoom between 0.25 and 4,
 `g` switches between graphics and Braille, `d` shows the source path and SHA-256, and `0` resets. It repaints with
-`paintCloud` from shared/render/points.ts. `ClipPanel` in [clip.ts](views/clip.ts) loops a clip's saved frame PNGs at
+`paintCloud` from shared/render/points.ts. `ClipPanel` in [clip.ts](/dimos/agents/frontends/tui/views/clip.ts) loops a clip's saved frame PNGs at
 the source timing and never plays the GIF. clip.test.ts checks that playback never blanks between frames.
 
-[sidebar/](sidebar/) draws the stream sidebar. [sidebar.ts](sidebar/sidebar.ts) is `Sidebar`, `SidebarSource`, and
+[sidebar/](/dimos/agents/frontends/tui/sidebar/) draws the stream sidebar. [sidebar.ts](/dimos/agents/frontends/tui/sidebar/sidebar.ts) is `Sidebar`, `SidebarSource`, and
 `SIDEBAR_COLUMNS`, which is 40 cells with the `│ ` gutter. main.ts places `sidebar.column`, the gutter beside a
 `ScrollView`, in the layout. It passes a function that returns the shown conversation's `SidebarSource` or `null`, and
 one that returns the screen's rows, so the gutter reaches the bottom of the screen. The column lists the
@@ -415,40 +420,40 @@ admitted notices in the input queue. Below them it lists the system's picture st
 not show. `sidebarGroups` and `systemGroups` from shared/view-models/streams/ build the groups. Each render collects the
 channels of unfolded cards and passes that set to the `FrameSource` with `want`, and a closed or hidden sidebar wants
 nothing. Each SDK rate sample replaces the displayed `RateTable` through `ratesOf`. A picture frame goes to the painter one at a time per channel,
-and a frame that arrives while one paints is dropped. `StreamCardView` in [card.ts](sidebar/card.ts) is one stream's
+and a frame that arrives while one paints is dropped. `StreamCardView` in [card.ts](/dimos/agents/frontends/tui/sidebar/card.ts) is one stream's
 title row with its rate, then a picture slot or the newest value. Each card keeps one kitty image id, so a new frame
-replaces the picture in place. `FramePainter` in [painter.ts](sidebar/painter.ts) turns an image, cloud or grid record
+replaces the picture in place. `FramePainter` in [painter.ts](/dimos/agents/frontends/tui/sidebar/painter.ts) turns an image, cloud or grid record
 into a PNG with shared/render/frames.ts. The frames come from `RemoteFrames` in
-[sdk/streams/remote.ts](../../sdk/streams/remote.ts). It opens a Web SDK session from the current inventory relay
+[sdk/streams/remote.ts](/dimos/agents/sdk/streams/remote.ts). It opens a Web SDK session from the current inventory relay
 endpoint and subscribes to the exact manifest channel IDs. The gateway updates the catalog from live manifests.
 Preview types come from encodings; channels without module annotations appear under Relay. Closing a preview stops its SDK read.
 Any other `FrameSource` can replace it.
 sidebar.test.ts drives a `Sidebar` through a real `TuiAltScreen` with an in-memory terminal and frame source.
 
-[menu/](menu/) is the main menu that `/menu` opens, the `MenuTab` family in [base.ts](menu/base.ts). `MenuView` in
+[menu/](/dimos/agents/frontends/tui/menu/) is the main menu that `/menu` opens, the `MenuTab` family in [base.ts](/dimos/agents/frontends/tui/menu/base.ts). `MenuView` in
 view.ts is the full-screen view main.ts opens. Keys 1 to 9 pick a tab, Up and Down pick a row, Enter opens the row's
 detail, a row's own keys run its actions, and Esc closes the detail and then the view. A tab longer than the screen
 shows the rows around the selected one. A failed key action lands in `Feedback` as a refusal.
 
 | Key | Tab           | File                                         | Rows                                                                                                  |
 | --- | ------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 1   | Overview      | [overview.ts](menu/overview.ts)           | This terminal's link, the DimOS link, load and run, the five newest refused actions. |
+| 1   | Overview      | [overview.ts](/dimos/agents/frontends/tui/menu/overview.ts)           | This terminal's link, the dimOS link, load and run, the five newest refused actions. |
 | 2   | Conversations | conversations.ts                             | Every conversation in switcher order. Enter shows it in the chat.                                     |
-| 3   | Agent modules | [modules.ts](menu/modules.ts)             | Every agent module and its owner. `r` restarts, `u` unloads, `d` deletes.   |
-| 4   | Jobs          | [jobs.ts](menu/jobs.ts)                   | Every job as a lane over the last and next 12 hours. `r` runs it now, `d` deletes, Enter lists runs.  |
-| 5   | Streams       | [streams.ts](menu/streams.ts)             | Every DimOS stream, grouped by module instance.                                                       |
-| 6   | Env           | [inventory.ts](menu/inventory.ts)         | The DimOS checkout, Python, transport and system size.                                                |
+| 3   | Agent modules | [modules.ts](/dimos/agents/frontends/tui/menu/modules.ts)             | Every agent module and its owner. `r` restarts, `u` unloads, `d` deletes.   |
+| 4   | Jobs          | [jobs.ts](/dimos/agents/frontends/tui/menu/jobs.ts)                   | Every job as a lane over the last and next 12 hours. `r` runs it now, `d` deletes, Enter lists runs.  |
+| 5   | Streams       | [streams.ts](/dimos/agents/frontends/tui/menu/streams.ts)             | Every dimOS stream, grouped by module instance.                                                       |
+| 6   | Env           | [inventory.ts](/dimos/agents/frontends/tui/menu/inventory.ts)         | The dimOS checkout, Python, transport and system size.                                                |
 | 7   | Modules       | inventory.ts                                 | Every module instance. Enter lists its streams and RPCs.                                              |
 | 8   | RPCs          | inventory.ts                                 | Every RPC with its signature and doc.                                                                 |
 | 9   | Stream types  | inventory.ts                                 | Every stream with its direction, type and channel.                                                    |
 
-Tabs 6 to 9 read the inventory held by the terminal. [menu/lib/](menu/lib/) is private to menu/.
-`plain(text, level)` in [rows.ts](menu/lib/rows.ts) is a row with no keys and no Enter.
-[lane.ts](menu/lib/lane.ts) has `laneText`, which draws a job's runs, due times and now on a ruler of a given number
+Tabs 6 to 9 read the inventory held by the terminal. [menu/lib/](/dimos/agents/frontends/tui/menu/lib/) is private to menu/.
+`plain(text, level)` in [rows.ts](/dimos/agents/frontends/tui/menu/lib/rows.ts) is a row with no keys and no Enter.
+[lane.ts](/dimos/agents/frontends/tui/menu/lib/lane.ts) has `laneText`, which draws a job's runs, due times and now on a ruler of a given number
 of cells, and `axisText`, the clock labels above it. The Jobs tab uses 48 cells, one per 30 minutes. lane.test.ts checks
 both strings.
 
-[lib/](lib/) is private to the terminal. `TerminalImage(image, size, changed, imageId?)` in terminal-image.ts is a
+[lib/](/dimos/agents/frontends/tui/lib/) is private to the terminal. `TerminalImage(image, size, changed, imageId?)` in terminal-image.ts is a
 component for one picture. It takes a PNG or any format sharp reads, such as the JPEG the model was sent. A terminal
 with no graphics protocol gets the picture in text cells. They are half blocks in truecolor, 256 colours or 8 colours,
 or an ASCII ramp under `NO_COLOR`, `TERM=dumb` or an unknown `TERM`. Warp with kitty graphics gets one image per cell
@@ -460,8 +465,8 @@ shared/render/.
 
 ## See also
 
-- The [client SDK](../../sdk/README.md) covers `connect`, `listen`, `owner`, `retryByRequestId` and the frame sources.
-- The [view models](../../shared/view-models/README.md) build the rows the terminal draws.
-- The [protocol](../../shared/protocol/README.md) defines the contracts and actions the terminal calls.
-- [Media rendering](../../shared/render/README.md) prepares every preview the panels show.
-- The [CLI](../../cli/README.md) explains how `dimos agent` reaches `runTerminal`.
+- The [client SDK](/docs/usage/agent/sdk.md) covers `connect`, `listen`, `owner`, `retryByRequestId` and the frame sources.
+- The [view models](/docs/development/agent/view-models.md) build the rows the terminal draws.
+- The [protocol](/docs/development/agent/protocol.md) defines the contracts and actions the terminal calls.
+- [Media rendering](/docs/development/agent/render.md) prepares every preview the panels show.
+- The [CLI](/docs/usage/agent/cli.md) explains how `dimos agent` reaches `runTerminal`.

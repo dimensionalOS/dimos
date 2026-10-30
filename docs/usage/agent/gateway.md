@@ -2,9 +2,14 @@
 
 The gateway is the background Node process that runs the agent. Every terminal talks to the same gateway. It holds
 every conversation and runs the model turns, tool calls, cron jobs and event-driven turns. It keeps going after every
-terminal closes and while DimOS restarts. A client connects to its Unix socket and holds Chord objects: the gateway's
-state, one conversation, the process itself, and the inventory. This README is what you need to write a client. The
-entry for running the gateway is `runGateway` in [main.ts](main.ts).
+terminal closes and while dimOS restarts. A client connects to its Unix socket and holds Chord objects: the gateway's
+state, one conversation, the process itself, and the inventory. This guide is what you need to write a client. The
+entry for running the gateway is `runGateway` in [main.ts](/dimos/agents/gateway/main.ts).
+
+Source: [dimos/agents/gateway/](/dimos/agents/gateway/). TypeScript examples use imports relative to this source directory.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs gateway/demo_example.ts`.
+Remove the temporary file with `rm gateway/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on Chord
 
@@ -19,12 +24,12 @@ gateway uses these concepts:
 - A method is a call on a reference. Every gateway method resolves to an `Outcome`, done with a value or refused with a
   `Refusal`.
 
-The contracts and the actions behind the methods are declared in [shared/protocol/](../shared/protocol/README.md).
+The contracts and the actions behind the methods are declared in [shared/protocol/](/docs/development/agent/protocol.md).
 
 ## Quickstart
 
 This connects to a running gateway with Chord and the `ws` package. It prints the gateway's pid, waits for the link to
-DimOS, and starts a conversation on `gpt-5.6-luna`, which needs `OPENAI_API_KEY` in the gateway's environment. Then it
+dimOS, and starts a conversation on `gpt-5.6-luna`, which needs `OPENAI_API_KEY` in the gateway's environment. Then it
 asks what is running, prints the answer, and disconnects.
 
 ```ts
@@ -112,7 +117,7 @@ with a protocol error at the first acknowledgement.
 | `ConversationContract` | `{ conversation, role }` | `owner` when you ask for it, `viewer` otherwise | `record`, `transcript`, `live`, `queue`, `usage`, `agent`, `outcomes`, `detachable`, `moved`, `modules`, `jobs`, `streams` | `send`, `withdraw`, `abort`, `configure`, `edit`, `summarizeUpTo`, `summarizeFrom`, `background`, `stopBackground`, and `image` on both variants                                                                                    |
 | `InventoryContract`    | `{}`                     | `viewer`                                        | `inventory`                                                                                                                                   | none                                                                                                                                                                                                              |
 
-Each contract file in [shared/protocol/](../shared/protocol/README.md) types every member and argument. A viewer variant
+Each contract file in [shared/protocol/](/docs/development/agent/protocol.md) types every member and argument. A viewer variant
 has the state and no owner methods. `loginFlow` is per principal, so only the client that started a login sees its
 prompts. `InventoryContract` carries the full inventory, including the nullable relay endpoint. The terminal holds
 it for its lifetime and uses that endpoint for its own Web SDK session. Preview frames travel directly from the relay
@@ -136,7 +141,7 @@ to the terminal.
 
 ### Running it
 
-This runs the gateway in the foreground from a checkout. Like the harness Quickstart, it finds DimOS in the checkout's
+This runs the gateway in the foreground from a checkout. Like the harness Quickstart, it finds dimOS in the checkout's
 `.venv` and on McpServer's default port, and it loads the checkout's `.env`.
 
 ```ts
@@ -167,12 +172,12 @@ await runGateway({
 });
 ```
 
-`dimos agent gateway` runs the same `runGateway(launch)` from [main.ts](main.ts), with the install that
-`parseDimosInstall` in [config/environment.ts](config/environment.ts) reads from the variables it sets, and the systemd
+`dimos agent gateway` runs the same `runGateway(launch)` from [main.ts](/dimos/agents/gateway/main.ts), with the install that
+`parseDimosInstall` in [config/environment.ts](/dimos/agents/gateway/config/environment.ts) reads from the variables it sets, and the systemd
 user service runs that command on a robot. It exits 1 when serving fails or the process crashes, after writing the error to
 `gateway.log`, so the service restarts it. `dimos agent`, `run` and `conversations` spawn it detached when nothing
-answers the socket. `agentPaths(env)` in [config/paths.ts](config/paths.ts) gives the socket path and every other file
-the gateway owns. `buildInfo()` in [config/build.ts](config/build.ts) is the build a client compares against. The rest
-of this folder is the daemon's own machinery: the socket server and the retry cache in [server/](server/), who a
-connection is and the model logins in [auth/](auth/), and the objects clients hold in
-[server/objects/](server/objects/README.md).
+answers the socket. `agentPaths(env)` in [config/paths.ts](/dimos/agents/gateway/config/paths.ts) gives the socket path and every other file
+the gateway owns. `buildInfo()` in [config/build.ts](/dimos/agents/gateway/config/build.ts) is the build a client compares against. The rest
+of this folder is the daemon's own machinery: the socket server and the retry cache in [server/](/dimos/agents/gateway/server/), who a
+connection is and the model logins in [auth/](/dimos/agents/gateway/auth/), and the objects clients hold in
+[server/objects/](/docs/development/agent/gateway-objects.md).

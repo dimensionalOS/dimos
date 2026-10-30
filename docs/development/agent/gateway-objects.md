@@ -1,12 +1,17 @@
 # Chord objects the gateway serves
 
-This folder holds every Chord object a client can hold: the gateway's shared state, one conversation, the gateway
-process and the inventory. `GatewayServer.serve` in [host.ts](../host.ts) calls each `serve…` function in its `OBJECTS`
+`dimos/agents/gateway/server/objects/` holds every Chord object a client can hold: the gateway's shared state, one conversation, the gateway
+process and the inventory. `GatewayServer.serve` in [host.ts](/dimos/agents/gateway/server/host.ts) calls each `serve…` function in its `OBJECTS`
 list once, on the gateway's one Chord host. Each function registers a factory with `host.serve`. The four served
-objects implement contracts from [shared/protocol](../../../shared/protocol/README.md), and store.ts and room.ts declare
+objects implement contracts from [shared/protocol](/docs/development/agent/protocol.md), and store.ts and room.ts declare
 local types of their own. The factories read the harness and the gateway's
-stores through `ObjectDeps` and turn catalog actions into methods with `bind`. [base.ts](base.ts) defines `ServeObject`,
+stores through `ObjectDeps` and turn catalog actions into methods with `bind`. [base.ts](/dimos/agents/gateway/server/objects/base.ts) defines `ServeObject`,
 the type every file here implements.
+
+Source: [dimos/agents/gateway/server/objects/](/dimos/agents/gateway/server/objects/). TypeScript examples use imports relative to this source directory.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs gateway/server/objects/demo_example.ts`.
+Remove the temporary file with `rm gateway/server/objects/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on Chord
 
@@ -18,7 +23,7 @@ section covers the parts this folder uses.
 ### Contracts, factories and variants
 
 A contract names a type, its input, the host it lives on and its variants. `remote()` declares one in shared/protocol,
-such as `ConversationContract` in [conversation/contract.ts](../../../shared/protocol/conversation/contract.ts). The
+such as `ConversationContract` in [conversation/contract.ts](/dimos/agents/shared/protocol/conversation/contract.ts). The
 input is the object's address, for example `{ conversation, role }`. Every contract here says `hostNamed("gateway")`, so
 a client never picks the host. A variant is the shape one principal gets, its state members and its methods. Our
 contracts have an `owner` and a `viewer` variant, or `viewer` alone.
@@ -27,7 +32,7 @@ contracts have an `owner` and a `viewer` variant, or `viewer` alone.
 `principal` and `self` the first time a principal asks for an address. The factory runs synchronously. It declares what
 the object needs through `self` and returns the implementation, which is the `variant` it picked, the state members and
 the methods. Chord makes one object per type, input and principal. `principalKey` in
-[principal.ts](../../auth/principal.ts) maps a terminal to its terminal id, so a terminal that reconnects reaches the
+[principal.ts](/dimos/agents/gateway/auth/principal.ts) maps a terminal to its terminal id, so a terminal that reconnects reaches the
 same objects.
 
 A factory picks its variant from `grantOf(principal)`. A terminal on the 0600 socket is a `terminal` principal, and its
@@ -55,8 +60,8 @@ The factory's `self` declares everything the object keeps:
 
 Chord activates an object in a fixed order. It runs the factory, opens the resources, waits for the references, runs
 each cell's `init` and then makes the object live. Listeners and tasks start only at that last step. A change that
-arrives between a cell's `init` and the start of its listener would be lost. [feed.ts](lib/feed.ts) and
-[commits.ts](lib/commits.ts) close that gap. Inside the factory body you cannot read what you declared. Read cells and
+arrives between a cell's `init` and the start of its listener would be lost. [feed.ts](/dimos/agents/gateway/server/objects/lib/feed.ts) and
+[commits.ts](/dimos/agents/gateway/server/objects/lib/commits.ts) close that gap. Inside the factory body you cannot read what you declared. Read cells and
 references in methods, listeners, tasks and `init`.
 
 ### Lifetime and local objects
@@ -76,7 +81,7 @@ a local object that every view holds.
 Inside an object's methods, listeners and tasks, `ctx.principal` is the gateway's own principal, `{ kind: "gateway" }`.
 It is never the client. Chord's guide states the rule under "Principals and variants". Code inside a host acts as its
 `self`. The caller is the factory's `principal` argument. A method that needs the caller closes over that argument.
-[gateway.ts](gateway.ts) does so when it passes `principal` to `deps.logins.start`.
+[gateway.ts](/dimos/agents/gateway/server/objects/gateway.ts) does so when it passes `principal` to `deps.logins.start`.
 
 Chord gives us objects, variants, lifetime and state sync. This folder adds the `ServeObject` family, so host.ts serves
 every type with one loop. It adds `bind`, which turns a catalog group into Chord methods with a rule check, retries and
@@ -86,13 +91,13 @@ refusals. It adds helpers that feed cells from harness state without losing a ch
 
 ### ServeObject and ObjectDeps
 
-[base.ts](base.ts) exports both types. `ServeObject` is `(host: Host<Principal>, deps: ObjectDeps) => void`. Each file
+[base.ts](/dimos/agents/gateway/server/objects/base.ts) exports both types. `ServeObject` is `(host: Host<Principal>, deps: ObjectDeps) => void`. Each file
 in this folder exports one, and it calls `host.serve` for its types. `ObjectDeps` is everything a factory and its
-methods may use. `runGateway` in [gateway/main.ts](../../main.ts) builds it once per process.
+methods may use. `runGateway` in [gateway/main.ts](/dimos/agents/gateway/main.ts) builds it once per process.
 
 | Field      | Type                                                     | What the objects use it for                                                                                                                               |
 | ---------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`    | `Agent` from [harness/main.ts](../../../harness/main.ts) | The harness, with pi-durable's `Harness`, the input gate, conversations, history, the runtime client, jobs, the detacher, the DimOS link, the loader, the run watcher and the state directory. |
+| `agent`    | `Agent` from [harness/main.ts](/dimos/agents/harness/main.ts) | The harness, with pi-durable's `Harness`, the input gate, conversations, history, the runtime client, jobs, the detacher, the dimOS link, the loader, the run watcher and the state directory. |
 | `models`   | pi-ai `Models`                                           | `updateSettings` refuses a model that `getModel` does not know.                                                                                           |
 | `catalog`  | `ModelCatalog`                                           | The `accounts` cell and `logout`.                                                                                                                         |
 | `logins`   | `LoginFlows`                                             | The `loginFlow` cell of each principal, `login` and `answerLogin`.                                                                                        |
@@ -104,7 +109,7 @@ methods may use. `runGateway` in [gateway/main.ts](../../main.ts) builds it once
 
 ### The OBJECTS list
 
-`OBJECTS` in [host.ts](../host.ts) is the family's one consumer. It lists `serveStore`, `serveRoom`, `serveLifecycle`,
+`OBJECTS` in [host.ts](/dimos/agents/gateway/server/host.ts) is the family's one consumer. It lists `serveStore`, `serveRoom`, `serveLifecycle`,
 `serveGateway`, `serveConversation` and `serveInventory`, the local types first. `GatewayServer.serve`
 creates the host, calls each function and awaits `host.ready()` before it accepts a connection. The store has
 `lifetime: "host"`, so it has scanned every conversation before the first client connects. `GatewayServer.close` closes
@@ -116,10 +121,10 @@ Each served object implements one contract from shared/protocol. Clients hold th
 
 | File                               | Function            | Contract               | Input                    | Variants      | State                                          | Methods                                        |
 | ---------------------------------- | ------------------- | ---------------------- | ------------------------ | ------------- | ---------------------------------------------- | ---------------------------------------------- |
-| [lifecycle.ts](lifecycle.ts)       | `serveLifecycle`    | `LifecycleContract`    | `{}`                     | owner, viewer | `process`                                      | `LIFECYCLE_ACTIONS` on owner                   |
-| [gateway.ts](gateway.ts)           | `serveGateway`      | `GatewayContract`      | `{}`                     | owner, viewer | `GatewayState` from the store, and `loginFlow` | `GATEWAY_ACTIONS` on owner                     |
-| [conversation.ts](conversation.ts) | `serveConversation` | `ConversationContract` | `{ conversation, role }` | owner, viewer | `ConversationState` from the room              | `CONVERSATION_ACTIONS`, only `image` on viewer |
-| [inventory.ts](inventory.ts)       | `serveInventory`    | `InventoryContract`    | `{}`                     | viewer        | `inventory` from the store                     | none                                           |
+| [lifecycle.ts](/dimos/agents/gateway/server/objects/lifecycle.ts)       | `serveLifecycle`    | `LifecycleContract`    | `{}`                     | owner, viewer | `process`                                      | `LIFECYCLE_ACTIONS` on owner                   |
+| [gateway.ts](/dimos/agents/gateway/server/objects/gateway.ts)           | `serveGateway`      | `GatewayContract`      | `{}`                     | owner, viewer | `GatewayState` from the store, and `loginFlow` | `GATEWAY_ACTIONS` on owner                     |
+| [conversation.ts](/dimos/agents/gateway/server/objects/conversation.ts) | `serveConversation` | `ConversationContract` | `{ conversation, role }` | owner, viewer | `ConversationState` from the room              | `CONVERSATION_ACTIONS`, only `image` on viewer |
+| [inventory.ts](/dimos/agents/gateway/server/objects/inventory.ts)       | `serveInventory`    | `InventoryContract`    | `{}`                     | viewer        | `inventory` from the store                     | none                                           |
 
 `serveLifecycle` serves the gateway process's identity and its one action, `stop`. `LifecycleContract` is frozen at
 version 1, so `dimos agent status` and `stopGateway` in cli/process.ts work against a gateway of any build.
@@ -143,7 +148,7 @@ the largest gateway value. The terminal reads it for its relay endpoint and shar
 
 Two local types hold the state the served objects show.
 
-`GatewayStore` in [store.ts](store.ts) has `lifetime: "host"`, so there is one per gateway, and it keeps collecting
+`GatewayStore` in [store.ts](/dimos/agents/gateway/server/objects/store.ts) has `lifetime: "host"`, so there is one per gateway, and it keeps collecting
 while no client is attached. Its members are `GatewayState` plus `inventory`:
 
 | Member                                                    | Source                                                                                         |
@@ -154,7 +159,7 @@ while no client is attached. Its members are `GatewayState` plus `inventory`:
 | `jobs`                                                    | `jobRows`                                                                                      |
 | `modules`, `streams`, `inventory` | derived from the one cell `runtimeView` keeps                                                  |
 
-`ConversationRoom` in [room.ts](room.ts) has one object per conversation, with input `{ conversation }` and the members
+`ConversationRoom` in [room.ts](/dimos/agents/gateway/server/objects/room.ts) has one object per conversation, with input `{ conversation }` and the members
 of `ConversationState`. It is referenced, with a 30 s linger, so a client that switches away and back, or reconnects,
 does not mount pi-durable's view again. It holds:
 
@@ -174,7 +179,7 @@ Preview frames use the terminal's Web SDK session. The gateway exposes the relay
 
 ### bind and Handlers
 
-[lib/bind.ts](lib/bind.ts) connects a catalog group from shared/protocol/actions to executors.
+[lib/bind.ts](/dimos/agents/gateway/server/objects/lib/bind.ts) connects a catalog group from shared/protocol/actions to executors.
 
 `Handlers<G>` is a record with one executor per entry of the group `G`. The compiler checks it is exhaustive, so a new
 catalog entry does not compile until its executor exists. An executor takes the action's arguments and a `HandlerCall`.
@@ -184,7 +189,7 @@ which only shutdown aborts. Pass it to every harness and pi-durable call.
 
 `bind(object, group, handlers, standing, replies, variant)` returns the Chord methods for one variant. `object` is the
 group's name in `CATALOG`, one of `"conversation"`, `"gateway"` and `"lifecycle"`. `standing` is a function that reads
-the server state the rules need, the `Standing` from [standing.ts](../../../shared/protocol/actions/standing.ts). The
+the server state the rules need, the `Standing` from [standing.ts](/dimos/agents/shared/protocol/actions/standing.ts). The
 `owner` variant gets every action. The `viewer` variant gets only the actions whose `access` is `"any"`. The result has
 the shape `methodsOf` puts in the contract, so the factory spreads it into its implementation.
 
@@ -200,7 +205,7 @@ Each bound method runs these steps in order:
 4. If the executor throws `DimosUnavailable`, it returns a `dimos_unavailable` refusal worded by `describeLink`. Any
    other throw propagates to Chord, and the client's call rejects.
 
-`Replies` in [replies.ts](../replies.ts) is one cache per gateway process. `runGateway` keeps each outcome for
+`Replies` in [replies.ts](/dimos/agents/gateway/server/replies.ts) is one cache per gateway process. `runGateway` keeps each outcome for
 `REPLIES_KEPT_MS`, five minutes, and gives it the context its calls run in, which shutdown aborts. The cache lives
 outside the objects because Chord can dispose a served object and make it again between a dropped call and its retry.
 A call that threw is forgotten, so its retry runs again.
@@ -209,11 +214,11 @@ A call that threw is forgotten, so its retry runs again.
 
 These files are private to this folder. The boundaries test refuses an import of a lib/ file from outside its parent.
 
-- [commits.ts](lib/commits.ts) exports `commitEvents(harness)`. It subscribes to pi-durable's commit publications when
+- [commits.ts](/dimos/agents/gateway/server/objects/lib/commits.ts) exports `commitEvents(harness)`. It subscribes to pi-durable's commit publications when
   called and keeps them in `pending` until a listener subscribes. Every caller opens it as a resource, so the buffer
   covers the gap between a cell's `init` and the start of its listener. On a reload, Chord subscribes the new listener
   before it unsubscribes the old one, so an unsubscribe clears only its own listener.
-- [conversations.ts](lib/conversations.ts) exports `conversationRows(self, harness, conversations)`, which declares the
+- [conversations.ts](/dimos/agents/gateway/server/objects/lib/conversations.ts) exports `conversationRows(self, harness, conversations)`, which declares the
   store's `conversations` cell. Its `init` reads the `dimos.seen` cursors, scans every conversation record and its
   entries in one transaction, and snapshots each conversation's documents. It then drops the buffered publications that
   arrived before that transaction began, because the scan already includes them. A listener folds each later publication
@@ -221,30 +226,30 @@ These files are private to this folder. The boundaries test refuses an import of
   cursors after the commit returns. `foldPublication(rows, publication, seen, now)` is the pure fold. It applies new
   conversation records first, then entries and the `pi.live`, `pi.inbox`, `pi.usage` and `pi.agent` documents. A row
   that did not change keeps its object, so the `pi.live` partials that arrive every 100 ms send an empty diff.
-- [feed.ts](lib/feed.ts) exports `feed(self, name, schema, source)`. It makes a cell that holds `source.value` and
+- [feed.ts](/dimos/agents/gateway/server/objects/lib/feed.ts) exports `feed(self, name, schema, source)`. It makes a cell that holds `source.value` and
   replaces it on every change. `source` is a `Live`, the read side of a `Status` from
-  [shared/protocol/status.ts](../../../shared/protocol/status.ts). `DimosConnection`, `RuntimeLoader`, `RunWatcher`,
+  [shared/protocol/status.ts](/dimos/agents/shared/protocol/status.ts). `DimosConnection`, `RuntimeLoader`, `RunWatcher`,
   `ConfigStore` and `ModelCatalog` expose one as `status`. `LoginFlows.of` returns one per principal and
   `Detacher.of` one per conversation. A `Live` calls a new subscriber at once with its current value, so a change
   between `init` and the start of the listener is not lost.
-- [forward.ts](lib/forward.ts) exports `forward(ref, keys)`. It returns the named state members of a held reference as
+- [forward.ts](/dimos/agents/gateway/server/objects/lib/forward.ts) exports `forward(ref, keys)`. It returns the named state members of a held reference as
   the object's own, the same readables with no copy. A reference cannot be spread, so the keys come from the contract's
   state record, as in `Object.keys(GatewayState)`.
-- [items.ts](lib/items.ts) turns stored entries into the transcript clients see. `projectTranscript(view, memo, budget)`
+- [items.ts](/dimos/agents/gateway/server/objects/lib/items.ts) turns stored entries into the transcript clients see. `projectTranscript(view, memo, budget)`
   walks the entries newest first and keeps items until one does not fit `TRANSCRIPT_BUDGET`, 2,000 items or
   `8 * 2 ** 20` characters of JSON. The kept items are contiguous and come back oldest first. `omitted` counts the older
   rest. `transcriptItem` maps one entry, strips the `data` of every image block and turns an input's images into
   `ImageRef` addresses. A `TranscriptMemo` keeps one item per entry record, so successive frames share item objects and
   Chord sends ops. `imageAt(entry, at)` returns the stored image block at an address, or a `not_found` refusal, for the
   conversation's `image` action. `toolResult` parses a stored tool result's details with `parseToolDetails`.
-- [jobs.ts](lib/jobs.ts) exports `jobRows(self, harness)`, which declares the store's `jobs` cell from the jobs document
+- [jobs.ts](/dimos/agents/gateway/server/objects/lib/jobs.ts) exports `jobRows(self, harness)`, which declares the store's `jobs` cell from the jobs document
   and the checkpoint of each job's task, which holds its next due time. A task change updates that job's due time. A
   change to the jobs document lists the jobs again after the commit returns. `jobRow(job, nextDue)` builds one row with
   the next three due times from the cron expression. The job actions return it too.
-- [outcomes.ts](lib/outcomes.ts) converts harness results into an `Outcome` with `fromModuleOutcome`, `fromJobChange`,
+- [outcomes.ts](/dimos/agents/gateway/server/objects/lib/outcomes.ts) converts harness results into an `Outcome` with `fromModuleOutcome`, `fromJobChange`,
   `fromSubmit` and `fromBranch`. Each maps every result kind to `done` or one refusal.
-- [runtime.ts](lib/runtime.ts) exports `runtimeView(self, link, options)`, which declares one cell with the store's
-  DimOS rows. Modules and the inventory are parsed from HarnessRuntime's inventory, and streams follow
+- [runtime.ts](/dimos/agents/gateway/server/objects/lib/runtime.ts) exports `runtimeView(self, link, options)`, which declares one cell with the store's
+  dimOS rows. Modules and the inventory are parsed from HarnessRuntime's inventory, and streams follow
   `RuntimeClient.streams`. Each read also connects the relay, or drops it when the inventory names none. It reads the
   inventory when the link changes, when
   HarnessRuntime reports a status change, and every `pollMs` while the link is up. The store passes 30 s. A read that is
@@ -256,7 +261,7 @@ These files are private to this folder. The boundaries test refuses an import of
 ### Serve the lifecycle object
 
 `serveLifecycle` is the smallest object with an action. A client that holds `LifecycleContract` reads the `process`
-cell, and an owner can call `stop`. This is [lifecycle.ts](lifecycle.ts) as it stands.
+cell, and an owner can call `stop`. This is [lifecycle.ts](/dimos/agents/gateway/server/objects/lifecycle.ts) as it stands.
 
 ```ts
 import type { GatewayProcess } from "../../../shared/protocol/lifecycle/contract.ts";
@@ -313,10 +318,10 @@ Line by line:
 
 ### Feed cells from the harness
 
-This object combines a resource, a `feed` and a derived cell. A client sees the DimOS link, the tool calls of one
+This object combines a resource, a `feed` and a derived cell. A client sees the dimOS link, the tool calls of one
 conversation that can move to the background, their count, and the sequence number of the newest commit that added an
 entry to the conversation. A real contract belongs in shared/protocol. This one sits in the module so that the block is
-complete. [room.ts](room.ts) combines the same three declarations.
+complete. [room.ts](/dimos/agents/gateway/server/objects/room.ts) combines the same three declarations.
 
 ```ts
 import type { Seq } from "@earendil-works/pi-durable";
@@ -382,7 +387,7 @@ its `ServeObject` to `OBJECTS`.
 
 ### Share a room between clients
 
-This is [conversation.ts](conversation.ts) without the listener that marks notices seen. It gets the conversation's room
+This is [conversation.ts](/dimos/agents/gateway/server/objects/conversation.ts) without the listener that marks notices seen. It gets the conversation's room
 and the store, forwards the room's members, and binds the conversation actions for the variant it picks. An owner gets
 every method. A viewer gets the same state and only `image`.
 
@@ -499,51 +504,51 @@ makes you write all ten executors, even though the viewer variant exposes only `
 
 1. Declare the contract in `shared/protocol/<name>/contract.ts` with `remote()` and `hostNamed("gateway")`. Build its
    state record with `carried()`. If it has actions, add a group in shared/protocol/actions, add the group to `CATALOG`
-   in [catalog.ts](../../../shared/protocol/actions/catalog.ts) and take the variant's methods from `methodsOf`. `bind`
+   in [catalog.ts](/dimos/agents/shared/protocol/actions/catalog.ts) and take the variant's methods from `methodsOf`. `bind`
    accepts only a group named in `CATALOG`.
 2. Write `gateway/server/objects/<name>.ts`. Export a `ServeObject` typed from base.ts that calls `host.serve` with the
    contract. Keep shared state in a local type that the served object gets with `self.get`, as store.ts and room.ts do.
    Put a helper that serves nothing in lib/.
-3. Import the function in [host.ts](../host.ts) and add it to `OBJECTS`, after the local types.
+3. Import the function in [host.ts](/dimos/agents/gateway/server/host.ts) and add it to `OBJECTS`, after the local types.
 4. Run `node --import ./test/web-sdk.mjs --test test/boundaries.test.ts` from dimos/agents. The `FAMILIES` entry for `gateway/server/objects` in
-   [boundaries.test.ts](../../../test/boundaries.test.ts) already names host.ts as the consumer. The test fails when a
+   [boundaries.test.ts](/dimos/agents/test/boundaries.test.ts) already names host.ts as the consumer. The test fails when a
    file in this folder does not import base.ts, or when host.ts does not import it as a value. Add the contract to the
    list in the test "no served contract names a state member and a method alike".
 5. Hold the object from a client with `host.get(Contract, input)` through the SDK.
 
 ## Files
 
-The folder is a family. [base.ts](base.ts) defines its type, and every other `.ts` file here serves one or more Chord
+The folder is a family. [base.ts](/dimos/agents/gateway/server/objects/base.ts) defines its type, and every other `.ts` file here serves one or more Chord
 types and is listed in `OBJECTS`.
 
-- [base.ts](base.ts): `ServeObject` and `ObjectDeps`.
-- [store.ts](store.ts): `GatewayStore`, the local type with the gateway's shared cells, and `serveStore`.
-- [room.ts](room.ts): `ConversationRoom`, the local type with one conversation's cells, and `serveRoom`.
-- [lifecycle.ts](lifecycle.ts): `serveLifecycle`, the gateway process and `stop`.
-- [gateway.ts](gateway.ts): `serveGateway`, the store's members, the login flow and the gateway actions.
-- [conversation.ts](conversation.ts): `serveConversation`, one conversation for one principal.
-- [inventory.ts](inventory.ts): `serveInventory`, the inventory for the `/runtime` tabs.
+- [base.ts](/dimos/agents/gateway/server/objects/base.ts): `ServeObject` and `ObjectDeps`.
+- [store.ts](/dimos/agents/gateway/server/objects/store.ts): `GatewayStore`, the local type with the gateway's shared cells, and `serveStore`.
+- [room.ts](/dimos/agents/gateway/server/objects/room.ts): `ConversationRoom`, the local type with one conversation's cells, and `serveRoom`.
+- [lifecycle.ts](/dimos/agents/gateway/server/objects/lifecycle.ts): `serveLifecycle`, the gateway process and `stop`.
+- [gateway.ts](/dimos/agents/gateway/server/objects/gateway.ts): `serveGateway`, the store's members, the login flow and the gateway actions.
+- [conversation.ts](/dimos/agents/gateway/server/objects/conversation.ts): `serveConversation`, one conversation for one principal.
+- [inventory.ts](/dimos/agents/gateway/server/objects/inventory.ts): `serveInventory`, the inventory for the `/runtime` tabs.
 
 lib/ holds helpers private to this folder:
 
-- [lib/bind.ts](lib/bind.ts): `bind`, `Handlers`, `HandlerCall`, `OwnerBound` and `ViewerBound`.
-- [lib/commits.ts](lib/commits.ts): `commitEvents`, commit publications buffered until a listener starts.
-- [lib/conversations.ts](lib/conversations.ts): `conversationRows` and `foldPublication`.
-- [lib/feed.ts](lib/feed.ts): `feed`, a cell bound to a `Live`.
-- [lib/forward.ts](lib/forward.ts): `forward`, a held reference's members as an object's own.
-- [lib/items.ts](lib/items.ts): `projectTranscript`, `TRANSCRIPT_BUDGET`, `transcriptItem`, `toolResult` and `imageAt`.
-- [lib/jobs.ts](lib/jobs.ts): `jobRows` and `jobRow`.
-- [lib/outcomes.ts](lib/outcomes.ts): `fromModuleOutcome`, `fromJobChange`, `fromSubmit` and `fromBranch`.
-- [lib/runtime.ts](lib/runtime.ts): `runtimeView`, the DimOS rows from HarnessRuntime's inventory or from disk.
+- [lib/bind.ts](/dimos/agents/gateway/server/objects/lib/bind.ts): `bind`, `Handlers`, `HandlerCall`, `OwnerBound` and `ViewerBound`.
+- [lib/commits.ts](/dimos/agents/gateway/server/objects/lib/commits.ts): `commitEvents`, commit publications buffered until a listener starts.
+- [lib/conversations.ts](/dimos/agents/gateway/server/objects/lib/conversations.ts): `conversationRows` and `foldPublication`.
+- [lib/feed.ts](/dimos/agents/gateway/server/objects/lib/feed.ts): `feed`, a cell bound to a `Live`.
+- [lib/forward.ts](/dimos/agents/gateway/server/objects/lib/forward.ts): `forward`, a held reference's members as an object's own.
+- [lib/items.ts](/dimos/agents/gateway/server/objects/lib/items.ts): `projectTranscript`, `TRANSCRIPT_BUDGET`, `transcriptItem`, `toolResult` and `imageAt`.
+- [lib/jobs.ts](/dimos/agents/gateway/server/objects/lib/jobs.ts): `jobRows` and `jobRow`.
+- [lib/outcomes.ts](/dimos/agents/gateway/server/objects/lib/outcomes.ts): `fromModuleOutcome`, `fromJobChange`, `fromSubmit` and `fromBranch`.
+- [lib/runtime.ts](/dimos/agents/gateway/server/objects/lib/runtime.ts): `runtimeView`, the dimOS rows from HarnessRuntime's inventory or from disk.
 
-[lib/bind.test.ts](lib/bind.test.ts) covers the rule check, the replies cache, the `DimosUnavailable` refusal and the
-viewer's methods. [lib/conversations.test.ts](lib/conversations.test.ts) covers `foldPublication`.
-[lib/items.test.ts](lib/items.test.ts) covers `projectTranscript` and `imageAt`.
+[lib/bind.test.ts](/dimos/agents/gateway/server/objects/lib/bind.test.ts) covers the rule check, the replies cache, the `DimosUnavailable` refusal and the
+viewer's methods. [lib/conversations.test.ts](/dimos/agents/gateway/server/objects/lib/conversations.test.ts) covers `foldPublication`.
+[lib/items.test.ts](/dimos/agents/gateway/server/objects/lib/items.test.ts) covers `projectTranscript` and `imageAt`.
 
 ## See also
 
-- [gateway/README.md](../../README.md) for the process that serves these objects, principals and `Replies`.
-- [shared/protocol/README.md](../../../shared/protocol/README.md) for contracts, actions, rules and refusals.
-- [sdk/README.md](../../../sdk/README.md) for the client side that holds these objects.
-- [harness/README.md](../../../harness/README.md) for the `Agent` the executors call.
-- [Attach to a conversation](../../../../../docs/usage/agent.md#attach-to-a-conversation) for `--view`.
+- [Agent gateway](/docs/usage/agent/gateway.md) for the process that serves these objects, principals and `Replies`.
+- [Agent protocol](/docs/development/agent/protocol.md) for contracts, actions, rules and refusals.
+- [Client SDK](/docs/usage/agent/sdk.md) for the client side that holds these objects.
+- [Agent harness](/docs/usage/agent/harness.md) for the `Agent` the executors call.
+- [Attach to a conversation](/docs/usage/agent.md#attach-to-a-conversation) for `--view`.

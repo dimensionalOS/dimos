@@ -1,12 +1,17 @@
 # Agent harness
 
-The harness is the agent. It runs each conversation's model turns and tool calls, starts runs from DimOS events and cron
+The harness is the agent. It runs each conversation's model turns and tool calls, starts runs from dimOS events and cron
 jobs, and keeps every step in one SQLite store, so it works with no terminal attached and finishes an interrupted turn
 after a restart. `openAgent` returns an `Agent` whose members start conversations, submit input, fork history, operate
-modules and jobs, and report the DimOS link. The gateway opens it once per process and serves those members as the
-objects in [gateway/README.md](../gateway/README.md). The entry is `openAgent` in [main.ts](main.ts).
-[runtime/](runtime/harness_runtime.py) is the Python half, HarnessRuntime, which `dimos agent load` puts into the running DimOS
+modules and jobs, and report the dimOS link. The gateway opens it once per process and serves those members as the
+objects in [Agent gateway](/docs/usage/agent/gateway.md). The entry is `openAgent` in [main.ts](/dimos/agents/harness/main.ts).
+[Python agent runtime](/docs/usage/agent/runtime.md) is the Python half, HarnessRuntime, which `dimos agent load` puts into the running dimOS
 system and which the harness reaches over MCP.
+
+Source: [dimos/agents/harness/](/dimos/agents/harness/). TypeScript examples use imports relative to this source directory.
+Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs harness/demo_example.ts`.
+Remove the temporary file with `rm harness/demo_example.ts` before running `npm run typecheck` or `npm test`.
+Those checks treat saved examples as package code and may reject their imports.
 
 ## Built on pi-durable
 
@@ -27,10 +32,10 @@ as a commit. One `Harness` owns the store, and the `Agent` exposes it as `harnes
 
 ## Quickstart
 
-Start a DimOS system first, such as `dimos --replay run unitree-go2 --daemon`, and set `OPENAI_API_KEY` in the
+Start a dimOS system first, such as `dimos --replay run unitree-go2 --daemon`, and set `OPENAI_API_KEY` in the
 environment or in the checkout's `.env`. The Quickstart opens the agent on this checkout with `gpt-5.6-luna`. The agent
 finds the running system, runs `dimos agent load`, and connects to McpServer. Then the Quickstart asks what is running
-and prints the answer. The gateway's [main.ts](../gateway/main.ts) opens the agent the same way, with the model and
+and prints the answer. The gateway's [main.ts](/dimos/agents/gateway/main.ts) opens the agent the same way, with the model and
 credentials from its config. The snippets under Usage continue from this `agent` and `conversation`.
 
 ```ts
@@ -120,8 +125,8 @@ if (branch.kind !== "fork" && branch.kind !== "new") throw new Error(branch.kind
 console.log(`forked into conversation ${branch.conversation}`);
 ```
 
-**Show the DimOS link.** `connection`, `loader`, and `runs` each carry a `status` with `value` and
-`subscribe`, the `Live` in [shared/protocol/status.ts](../shared/protocol/status.ts). The gateway feeds each one into a
+**Show the dimOS link.** `connection`, `loader`, and `runs` each carry a `status` with `value` and
+`subscribe`, the `Live` in [shared/protocol/status.ts](/dimos/agents/shared/protocol/status.ts). The gateway feeds each one into a
 cell of its gateway object.
 
 ```ts
@@ -163,22 +168,22 @@ await agent.close(context);
 
 | Member                                   | File                                                               | What it does                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `openAgent(options, context)`            | [main.ts](main.ts)                                                 | Opens the store, installs the extensions, resumes pending work, starts the background services and returns an `Agent`. `options` is the install, pi-ai's `Models`, the store, tool-result and render paths, the skill roots, the per-conversation `defaults`, the gateway's environment, a `report` sink for errors raised in background work, and an optional `now` clock. |
+| `openAgent(options, context)`            | [main.ts](/dimos/agents/harness/main.ts)                                                 | Opens the store, installs the extensions, resumes pending work, starts the background services and returns an `Agent`. `options` is the install, pi-ai's `Models`, the store, tool-result and render paths, the skill roots, the per-conversation `defaults`, the gateway's environment, a `report` sink for errors raised in background work, and an optional `now` clock. |
 | `agent.harness`                          | pi-durable                                                         | `conversation(id)` for a handle to configure, `submission(id)` to wait on an input, `commit((tx) => ...)` to read entries and documents, `abortTask(id)` to end a run.                                                                                                                                                                                                      |
-| `agent.inputs`                           | [inputs/gate.ts](inputs/gate.ts)                                   | The one door into a conversation. `submit(conversation, draft, context)` for user, event, job and runtime inputs, with `whenBusy` deciding what happens during a run. `withdrawUser` takes queued text back.                                                                                                                                                                |
-| `agent.conversations`                    | [conversations.ts](conversations.ts)                               | `start(cwd, request, context)` creates a conversation with the defaults and a runtime baseline, once per request. `markSeen` and `seen` keep the newest entry shown per conversation.                                                                                                                                                                                       |
-| `agent.history`                          | [history/forks.ts](history/forks.ts)                               | `edit`, `summarizeUpTo` and `summarizeFrom`, each a fork recorded under its request and returning a `Branch`.                                                                                                                                                                                                                                                               |
-| `agent.runtime`                          | [dimos/client.ts](dimos/client.ts)                                 | Typed MCP calls for `snapshot`, `inventory`, `createModule`, and `moduleOp`. `relay(inventory?)` opens or reuses the process's Web SDK session from the inventory endpoint.                                                                                                                                                                                                 |
-| `agent.jobs`                             | [jobs/ops.ts](jobs/ops.ts)                                         | `create`, `update`, `remove`, `run` and `nextDue`, shared with the model's `job` tool.                                                                                                                                                                                                                                                                                      |
-| `agent.detacher`                         | [background/detacher.ts](background/detacher.ts)                   | `of(conversation)` lists the calls that can move now, and `detach` moves one. `moved(conversation)` lists the moved calls that still run, with their output so far, and `stop` ends one; the model's `background` tool and the gateway's `stopBackground` share it. `wrap` adds `run_in_background`, so the model can start a call moved.                                   |
-| `agent.connection`                       | [dimos/connection.ts](dimos/connection.ts)                         | The MCP link to McpServer. `status` is the link, `onEvent` and `onHarnessStatus` are its notifications, `retryNow` ends a backoff early.                                                                                                                                                                                                                                    |
-| `agent.loader`, `agent.runs`             | [dimos/loader.ts](dimos/loader.ts), [dimos/runs.ts](dimos/runs.ts) | Status for the automatic runtime load and the DimOS runs directory. The loader starts missing runtime modules and reuses the relay bridge.                                                                                                                                                                                                                                  |
-| `agent.stateDir`, `agent.close(context)` |                                                                    | Where saved module records are read while DimOS is down, and the stop that closes the services, the `Harness` and both links.                                                                                                                                                                                                                                               |
+| `agent.inputs`                           | [inputs/gate.ts](/dimos/agents/harness/inputs/gate.ts)                                   | The one door into a conversation. `submit(conversation, draft, context)` for user, event, job and runtime inputs, with `whenBusy` deciding what happens during a run. `withdrawUser` takes queued text back.                                                                                                                                                                |
+| `agent.conversations`                    | [conversations.ts](/dimos/agents/harness/conversations.ts)                               | `start(cwd, request, context)` creates a conversation with the defaults and a runtime baseline, once per request. `markSeen` and `seen` keep the newest entry shown per conversation.                                                                                                                                                                                       |
+| `agent.history`                          | [history/forks.ts](/dimos/agents/harness/history/forks.ts)                               | `edit`, `summarizeUpTo` and `summarizeFrom`, each a fork recorded under its request and returning a `Branch`.                                                                                                                                                                                                                                                               |
+| `agent.runtime`                          | [dimos/client.ts](/dimos/agents/harness/dimos/client.ts)                                 | Typed MCP calls for `snapshot`, `inventory`, `createModule`, and `moduleOp`. `relay(inventory?)` opens or reuses the process's Web SDK session from the inventory endpoint.                                                                                                                                                                                                 |
+| `agent.jobs`                             | [jobs/ops.ts](/dimos/agents/harness/jobs/ops.ts)                                         | `create`, `update`, `remove`, `run` and `nextDue`, shared with the model's `job` tool.                                                                                                                                                                                                                                                                                      |
+| `agent.detacher`                         | [background/detacher.ts](/dimos/agents/harness/background/detacher.ts)                   | `of(conversation)` lists the calls that can move now, and `detach` moves one. `moved(conversation)` lists the moved calls that still run, with their output so far, and `stop` ends one; the model's `background` tool and the gateway's `stopBackground` share it. `wrap` adds `run_in_background`, so the model can start a call moved.                                   |
+| `agent.connection`                       | [dimos/connection.ts](/dimos/agents/harness/dimos/connection.ts)                         | The MCP link to McpServer. `status` is the link, `onEvent` and `onHarnessStatus` are its notifications, `retryNow` ends a backoff early.                                                                                                                                                                                                                                    |
+| `agent.loader`, `agent.runs`             | [dimos/loader.ts](/dimos/agents/harness/dimos/loader.ts), [dimos/runs.ts](/dimos/agents/harness/dimos/runs.ts) | Status for the automatic runtime load and the dimOS runs directory. The loader starts missing runtime modules and reuses the relay bridge.                                                                                                                                                                                                                                  |
+| `agent.stateDir`, `agent.close(context)` |                                                                    | Where saved module records are read while dimOS is down, and the stop that closes the services, the `Harness` and both links.                                                                                                                                                                                                                                               |
 
-The gateway's folds also import the entry kinds in [inputs/source.ts](inputs/source.ts) and
-[history/entries.ts](history/entries.ts), `SEEN_DOC_KIND` from [conversations.ts](conversations.ts), `listJobs` from
-[jobs/registry.ts](jobs/registry.ts) and `DimosInstall` from [dimos/install.ts](dimos/install.ts).
-The rest is the agent's own machinery: the model's tools in [tools/](tools/extension.ts), the runtime facts the model
-is told in [context/](context/extension.ts), events in [events/](events/intake.ts), the cut on large text in
-[limit/](limit/limit.ts), skills in [skills/](skills/catalog.ts) and the trajectory a recording keeps in
-[trajectory/](trajectory/sender.ts).
+The gateway's folds also import the entry kinds in [inputs/source.ts](/dimos/agents/harness/inputs/source.ts) and
+[history/entries.ts](/dimos/agents/harness/history/entries.ts), `SEEN_DOC_KIND` from [conversations.ts](/dimos/agents/harness/conversations.ts), `listJobs` from
+[jobs/registry.ts](/dimos/agents/harness/jobs/registry.ts) and `DimosInstall` from [dimos/install.ts](/dimos/agents/harness/dimos/install.ts).
+The rest is the agent's own machinery: the model's tools in [tools/](/dimos/agents/harness/tools/extension.ts), the runtime facts the model
+is told in [context/](/dimos/agents/harness/context/extension.ts), events in [events/](/dimos/agents/harness/events/intake.ts), the cut on large text in
+[limit/](/dimos/agents/harness/limit/limit.ts), skills in [skills/](/dimos/agents/harness/skills/catalog.ts) and the trajectory a recording keeps in
+[trajectory/](/dimos/agents/harness/trajectory/sender.ts).
