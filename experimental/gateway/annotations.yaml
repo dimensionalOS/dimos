@@ -468,6 +468,16 @@ robots:
             placeholder: 192.168.1.185
             required: false
             when: {simulation: ''}
+        xarm7-keyboard-teleop:
+          title: xArm7 keyboard driving (XArmConnection)
+          description: Move a real xArm7's end with this computer's keyboard, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
+        xarm6-keyboard-teleop:
+          title: xArm6 keyboard driving (XArmConnection)
+          description: Move a real xArm6's end with this computer's keyboard, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
         xarm-perception-sim-agent:
           title: xArm pick and place agent (sim)
           description: The simulated pick-and-place stack plus an AI agent with manipulation skills.
