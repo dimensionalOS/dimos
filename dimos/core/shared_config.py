@@ -62,12 +62,10 @@ def shared_config_methods(cls: type) -> Iterator[tuple[str, type[ModuleBase]]]:
 class SharedConfigModule(Module):
     """A module that gets every @shared_config(ThisClass) value before its build()."""
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        # An override must stay callable from the coordinator without repeating @rpc.
-        if "config_receive" in cls.__dict__:
-            cls.config_receive = rpc(cls.__dict__["config_receive"])  # type: ignore[method-assign]
+    def config_receive(self, config_senders: ConfigSenders) -> None:
+        """Override to take the values; a plain method, not an RPC."""
 
     @rpc
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        pass
+    def deliver_shared_config(self, config_senders: ConfigSenders) -> None:
+        # The coordinator's way in, so config_receive itself is never an RPC.
+        self.config_receive(config_senders)

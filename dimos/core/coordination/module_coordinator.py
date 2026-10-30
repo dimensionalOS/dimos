@@ -329,7 +329,7 @@ class ModuleCoordinator(Resource):
                 for method, target in shared_config_methods(cls)
                 if issubclass(receiver_class, target)
             )
-            cast("SharedConfigModule", self._deployed_modules[receiver_name]).config_receive(
+            cast("SharedConfigModule", self._deployed_modules[receiver_name]).deliver_shared_config(
                 senders
             )
 
