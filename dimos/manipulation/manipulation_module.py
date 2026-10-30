@@ -67,6 +67,7 @@ from dimos.manipulation.planning.planners.config import (
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
+from dimos.manipulation.planning.spec.joint_space import CoordinateTopology
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
     CartesianTarget,
@@ -1012,6 +1013,14 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return ()
         has_gripper = self.config.model.gripper_hardware_id is not None
+        groups = self._world_monitor.planning_groups.list()
+        if not groups:
+            return ()
+        circles = {
+            coordinate.name
+            for coordinate in self._world_monitor.get_prepared_model().joint_space.coordinates
+            if coordinate.topology is CoordinateTopology.CIRCLE
+        }
         return tuple(
             PlanningGroupInfo(
                 id=group.id,
@@ -1019,8 +1028,9 @@ class ManipulationModule(Module):
                 base_frame=group.base_link,
                 tip_frame=group.tip_link,
                 has_gripper=has_gripper,
+                continuous_joints=tuple(name for name in group.joint_names if name in circles),
             )
-            for group in self._world_monitor.planning_groups.list()
+            for group in groups
         )
 
     def _group_joint_presets(self, group: PlanningGroup) -> dict[str, JointState]:

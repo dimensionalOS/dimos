@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -41,6 +42,8 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 if TYPE_CHECKING:
     from dimos.porcelain.dimos import Dimos
 
+SETTLE_TIMEOUT_S = 1.0
+
 
 class MotionError(RuntimeError):
     """An SDK action failed; the original RPC result is available as ``result``.
@@ -52,10 +55,12 @@ class MotionError(RuntimeError):
         self,
         operation: str,
         result: PlanResult | ExecutionResult | MoveResult | CommandResult,
+        detail: str | None = None,
     ) -> None:
         self.operation = operation
         self.result = result
-        super().__init__(f"{operation}: {result}")
+        self.detail = detail
+        super().__init__(f"{operation}: {detail}; {result}" if detail else f"{operation}: {result}")
 
 
 def _vector(values: ArrayLike, size: int, name: str) -> NDArray[np.float64]:
@@ -76,9 +81,18 @@ class Arm:
     pending plan and execution, so use one motion-commanding client per module.
     """
 
-    def __init__(self, rpc: ManipulationSpec, info: PlanningGroupInfo) -> None:
+    def __init__(
+        self,
+        rpc: ManipulationSpec,
+        info: PlanningGroupInfo,
+        *,
+        reach_tolerance: float | None = 0.05,
+    ) -> None:
+        """``reach_tolerance`` (rad): a move whose joints stop farther than this from the
+        plan's end raises ``MotionError``. ``None`` turns the check off."""
         self.rpc = rpc
         self.info = info
+        self.reach_tolerance = reach_tolerance
 
     @classmethod
     def from_app(
@@ -87,6 +101,7 @@ class Arm:
         *,
         group: PlanningGroupID | None = None,
         instance_name: str | None = None,
+        reach_tolerance: float | None = 0.05,
     ) -> Arm:
         """Select the unique pose-capable group, or an explicit group and module.
 
@@ -106,7 +121,7 @@ class Arm:
                 f"Expected one pose-capable group for {group!r}; "
                 f"available arms: {available}; all group IDs: {[info.id for info in groups]}"
             )
-        return cls(rpc, matches[0])
+        return cls(rpc, matches[0], reach_tolerance=reach_tolerance)
 
     def state(self) -> PlanningGroupState:
         """Read the selected group's state, including available joint presets."""
@@ -182,7 +197,42 @@ class Arm:
         result = self.rpc.execute(blocking=True, timeout=timeout, plan_id=plan.plan.plan_id)
         if result.status is not ExecutionStatus.COMPLETED:
             raise MotionError(operation, result)
+        self._check_reached(operation, plan, result)
         return result
+
+    def _check_reached(
+        self, operation: str, plan: PlanResult, result: ExecutionResult | MoveResult
+    ) -> None:
+        """Raise ``MotionError`` if the measured joints never settle at the plan's last waypoint."""
+        tolerance = self.reach_tolerance
+        trajectory = plan.plan.trajectory if plan.plan is not None else None
+        if tolerance is None or trajectory is None or not trajectory.points:
+            return
+        names = trajectory.joint_names or list(self.info.joint_names)
+        end = dict(zip(names, trajectory.points[-1].positions, strict=False))
+        if any(name not in end for name in self.info.joint_names):
+            return
+        goal = np.asarray([end[name] for name in self.info.joint_names], dtype=np.float64)
+        wraps = np.isin(self.info.joint_names, self.info.continuous_joints)
+        deadline = time.monotonic() + SETTLE_TIMEOUT_S
+        while True:
+            error = np.abs(self.joints() - goal)
+            # A continuous joint at -pi + a has reached pi + a.
+            error[wraps] = np.abs((error[wraps] + np.pi) % (2 * np.pi) - np.pi)
+            if error.max() <= tolerance or time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        if error.max() <= tolerance:
+            return
+        worst = int(error.argmax())
+        tip = self.pose().position
+        raise MotionError(
+            operation,
+            result,
+            f"stopped short of the planned end: joint {self.info.joint_names[worst]} is "
+            f"{error[worst]:.3f} rad off (tolerance {tolerance}); the arm may be blocked "
+            f"by contact. End effector now at ({tip.x:.3f}, {tip.y:.3f}, {tip.z:.3f})",
+        )
 
     def move_linear(
         self,
@@ -215,6 +265,7 @@ class Arm:
             or result.execution.status is not ExecutionStatus.COMPLETED
         ):
             raise MotionError("move_linear", result)
+        self._check_reached("move_linear", result.plan, result)
         return result
 
     def reset(self) -> CommandResult:

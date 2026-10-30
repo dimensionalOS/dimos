@@ -41,6 +41,7 @@ from dimos.manipulation.sdk import Arm, MotionError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.porcelain.dimos import Dimos
 
 
@@ -211,6 +212,73 @@ def test_joint_inputs_plan_before_blocking_execution(arm, rpc):
     rpc.execute.assert_called_once_with(
         blocking=True, timeout=10.0, plan_id=rpc.plan_to_joints.return_value.plan.plan_id
     )
+
+
+def _plan_ending_at(*positions):
+    trajectory = JointTrajectory(
+        points=[TrajectoryPoint(time_from_start=1.0, positions=list(positions))],
+        joint_names=["j0", "j1"],
+    )
+    return PlanResult(PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), trajectory))
+
+
+def test_move_that_stops_short_raises_with_the_shortfall(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.SETTLE_TIMEOUT_S", 0.0)
+    rpc.plan_to_joints.return_value = _plan_ending_at(0.1, 0.5)
+
+    with pytest.raises(MotionError, match=r"stopped short.*joint j1 is 0\.300 rad off") as caught:
+        arm.move_joints([0.1, 0.5])
+
+    assert caught.value.result is rpc.execute.return_value
+    assert caught.value.operation == "move_joints"
+
+
+@pytest.mark.parametrize("continuous", [True, False])
+def test_only_continuous_joints_compare_across_the_wrap(rpc, mocker, continuous):
+    mocker.patch("dimos.manipulation.sdk.SETTLE_TIMEOUT_S", 0.0)
+    info = replace(
+        rpc.list_planning_groups.return_value[0], continuous_joints=("j0",) if continuous else ()
+    )
+    state = rpc.get_state.return_value
+    rpc.get_state.return_value = replace(
+        state,
+        groups={
+            "arm": replace(
+                state.groups["arm"], joints=JointState(name=["j0", "j1"], position=[-3.12, 0.2])
+            )
+        },
+    )
+    rpc.plan_to_joints.return_value = _plan_ending_at(3.12, 0.2)
+    arm = Arm(rpc, info)
+
+    if continuous:
+        arm.move_joints([3.12, 0.2])
+    else:
+        with pytest.raises(MotionError, match=r"joint j0 is 6\.240 rad off"):
+            arm.move_joints([3.12, 0.2])
+
+
+def test_lagging_arm_is_given_time_to_settle(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.time.sleep")
+    rpc.plan_to_joints.return_value = _plan_ending_at(0.3, 0.2)
+    lagging = replace(
+        rpc.get_state.return_value.groups["arm"],
+        joints=JointState(name=["j0", "j1"], position=[0.2, 0.2]),
+    )
+    settled = rpc.get_state.return_value
+    rpc.get_state.side_effect = [
+        replace(settled, groups={"arm": lagging}),
+        replace(
+            settled,
+            groups={
+                "arm": replace(lagging, joints=JointState(name=["j0", "j1"], position=[0.3, 0.2]))
+            },
+        ),
+    ]
+
+    arm.move_joints([0.3, 0.2])
+
+    assert rpc.get_state.call_count == 2
 
 
 @pytest.mark.parametrize("positions", [[0.0], [[0.0, 0.1]], [0.0, np.nan], [np.inf, 0], [1j, 0]])
