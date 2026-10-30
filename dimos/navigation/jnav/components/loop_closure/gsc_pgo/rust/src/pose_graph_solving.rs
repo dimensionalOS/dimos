@@ -296,6 +296,9 @@ impl GscPgo {
                 }
                 None => Vec::new(),
             },
+            evidence_at_stated: config
+                .odometry_noise_evidence_at_stated
+                .then_some(solve_noise),
             committed: if config.closure_commitments {
                 self.committed_closures
                     .iter()
@@ -338,6 +341,7 @@ impl GscPgo {
                 let solution = if solve_config.committed.iter().any(|&c| c) {
                     let cold = run(&SolveConfig {
                         committed: Vec::new(),
+                        evidence_at_stated: None,
                         ..solve_config.clone()
                     });
                     let count =

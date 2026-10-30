@@ -121,6 +121,7 @@ fn config() -> SolveConfig {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
+        evidence_at_stated: None,
     }
 }
 

@@ -72,6 +72,10 @@ pub struct SolveConfig {
     /// of re-deciding it cold; empty for none. A committed loop is dropped only by a verdict that contradicts it
     /// (`closure_commitments`, decided by the caller).
     pub committed: Vec<bool>,
+    /// When set, per noise source (xy, z, yaw, roll/pitch) the factor the odometry edges' variances carry over the
+    /// stated drift: the noise evidence is then taken with the odometry back at the stated drift
+    /// (`odometry_noise_evidence_at_stated`), a fixed reference, instead of at the noise this solve used.
+    pub evidence_at_stated: Option<[f64; 4]>,
 }
 
 /// A gravity-referenced odometry's tilt as an absolute factor: keyframe `keyframe`'s up direction in its own frame,
@@ -669,9 +673,21 @@ pub(crate) fn solve_core(
     } else {
         huber.clone()
     };
+    // at the stated drift (`evidence_at_stated`), the odometry the evidence reads: each source's variances back over
+    // the factor this solve gave them
+    let stated_odometry: Option<Vec<Edge>> = config.evidence_at_stated.map(|factor| {
+        odometry
+            .iter()
+            .map(|e| Edge {
+                variances: std::array::from_fn(|k| e.variances[k] / factor[RESIDUAL_SOURCE[k]]),
+                ..*e
+            })
+            .collect()
+    });
+    let odometry = stated_odometry.as_deref().unwrap_or(odometry);
     // without the gravity factors the evidence reads the odometry and closures' own solve
     let mut without_gravity = state.clone();
-    if !config.gravity.is_empty() {
+    if !config.gravity.is_empty() || config.evidence_at_stated.is_some() {
         levenberg_marquardt(
             &mut without_gravity,
             evidence_pattern,

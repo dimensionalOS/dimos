@@ -131,6 +131,8 @@ class PGOConfig(NativeModuleConfig):
     closure_yank_gate_principled: bool = False
     # True: yank_stdevs = the yank in standard deviations of the odometry's drift between the two ends at the stated drift (no ruler from earlier candidates, nothing learned)
     closure_yank_at_stated_drift: bool = False
+    # True (with odometry_noise_from_closures): the noise evidence is taken with the odometry at the stated drift, a fixed reference (no estimate feeding the next)
+    odometry_noise_evidence_at_stated: bool = False
     closure_overlap_score: bool = False
     closure_overlap_sigma_m: float = 0.03
     closure_overlap_reach_m: float = 0.5
