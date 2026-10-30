@@ -343,7 +343,8 @@ def _keyboard_teleop(arm: XArmType) -> Blueprint:
                     params={
                         "robot_model": ik_model,
                         "target_frame": f"link{dof}",
-                        "timeout": 0.0,
+                        # The end stops 0.3 s after the last twist.
+                        "timeout": 0.3,
                     },
                 ),
             ],
