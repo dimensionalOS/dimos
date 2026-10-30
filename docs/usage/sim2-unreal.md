@@ -1,6 +1,7 @@
 # Unreal cameras for sim2
 
 One running world owns physics. One native Unreal process renders its body poses.
+For the full local convenience store, see [Load the full Konbini store](#load-the-full-konbini-store).
 
 ```text
 G1Connection <-> SimRobotClient <-> SimulationModule <-> MuJoCo / Genesis
@@ -217,7 +218,7 @@ Outputs: `preview.gif`, `rgb.png`, metric `depth.npy`, `calibration.json`, and
 physics health, matching image timestamps, reset epochs and live lidar/odometry.
 
 Source: [demo_unreal.py](/dimos/robot/unitree/g1/demo_unreal.py). The only robot-specific model
-code is still [simulation.py](/dimos/robot/unitree/g1/model.py); Unreal has no
+code is still [model.py](/dimos/robot/unitree/g1/model.py); Unreal has no
 G1 class or separate robot asset definition.
 
 Measured on an M4 Max with UE 5.7.4, 640×480 RGB-D requested at 10 Hz:
@@ -244,20 +245,25 @@ hardware-independent throughput guarantee. The calibrated 5 m plane read
 
 ## Current scope
 
-This is one concrete MuJoCo-to-Unreal integration, validated on Apple Silicon
-with Metal. Windows and Linux packaging have not been validated.
+The renderer consumes neutral poses from MuJoCo or Genesis, validated on Apple
+Silicon with Metal. The full-store navigation run below uses MuJoCo. Windows and
+Linux packaging have not been validated.
 
-Two visual paths share the same physics poses:
+The renderer supports these visual sources:
 
 | Visual source | What Unreal receives | Current material support |
 |---|---|---|
 | Compiled MuJoCo rigid meshes and primitives | Geometry, pose, color and roughness | Opaque colors; no imported UVs or source textures |
 | Referenced native Unreal static meshes | Asset path, pose and scale | The asset's existing opaque materials and textures |
+| Authored native level | A cooked map selected with `--unrealcameramodule.level` | Native materials, overrides, instances, decals and transparency |
 
-Both paths reject partial transparency; the native path also rejects non-opaque
-material blend modes. Deformables and source lighting are not transferred.
-Lighting is currently one fixed Unreal setup. Unsupported geometry or missing
-native assets fail explicitly.
+Manifest-created geometry rejects partial transparency and non-opaque materials.
+An authored level retains its native transparent materials in RGB; Unreal
+`SceneDepth` reports depth-writing surfaces, not invented depths on glass. The
+level retains direct light placement and intensity; lights become movable because
+this renderer disables baked lighting. Baked GI and reflections are not restored.
+Without an authored level, the renderer uses its fixed lighting setup. Missing
+native assets and unsupported manifest geometry fail explicitly.
 
 The camera produces aligned RGB-D with shadows. Point clouds and modeled sensor
 latency are not implemented in this module. Per-reset model changes propagate;
@@ -279,10 +285,11 @@ pivots. Retain the robot's existing joint/physics definition and collision
 geometry. Native assets must use opaque materials and be present in the renderer
 project or its cooked package.
 
-The current exporter handles a small, explicitly selected set of static-mesh
-actors. It is not an arbitrary full-map importer. The renderer starts in its
-empty Entry map and creates the exported asset instances; it does not run the
-authored map's gameplay, lighting or Chaos simulation.
+The small native-asset exporter below handles an explicitly selected set of
+static-mesh actors. Full static levels can instead remain native in Unreal, with
+their collision exported separately. Background actor/component ticks and Chaos
+are disabled; cinematic autoplay must be disabled in the copied map. Articulated
+fixtures and dynamic map gameplay are outside this static-level path.
 
 ## Authoring one scene for Unreal and MuJoCo
 
@@ -405,3 +412,76 @@ performance table describes the procedural logistics scene.
 `MotorScene` removes robosuite's extra editor target gizmos. Unmodified upstream
 tasks may still contain translucent gizmos and require their visibility to be
 configured before using this opaque renderer.
+
+
+## Load the full Konbini store
+
+The local source project is `~/Downloads/Japanese_Convenience_Store_Konbini_UE5`.
+Its full `/Game/Konbini/Maps/Konbini` map contains 6,779 mesh components, including
+stocked shelves, refrigerators, counters and storefront glass. It is already
+copied into the isolated renderer project. The original source assets remain
+unchanged. Other available local projects include CityShoppingMall, its clothing
+store maps, and ShenzhenOffice; those are not prepared physics scenes yet.
+
+The store runs as the native background, with G1 rendered from its existing model.
+All store fixtures and products are static. The copied map's cinematic autoplay
+is disabled. For physics, all 6,771 collidable component instances are exported
+as 6,896 collision geoms with 225 shared meshes under one static world body.
+Collider visuals are hidden only in the Unreal manifest; they stay opaque and
+visible to MuJoCo lidar rays.
+
+Two source colliders needed repair: the building's original single hull filled
+the entire interior, and the window hull sealed the storefront. Unreal convex
+decomposition generated 64 and 63 hulls respectively in the copied assets. These
+are approximate collision pieces, validated for aisle clearance and G1 walking.
+The finite asphalt plane gets an explicit 1 mm thickness below its original
+surface. Shelf openings remain blocked by their source outer hulls; this is a
+navigation scene, not a shelf-manipulation validation.
+
+Preparation and export are reproducible with
+[demo_prepare_konbini.py](/native/unreal/DimosRenderer/Scripts/demo_prepare_konbini.py)
+and [export_level_collisions.py](/native/unreal/DimosRenderer/Scripts/export_level_collisions.py):
+
+```bash skip
+engine_dir="/Users/Shared/Epic Games/UE_5.7"
+store_project="$HOME/.cache/dimos/unreal-konbini/DimosRenderer/DimosRenderer.uproject"
+store_scene="$HOME/.local/state/dimos/unreal/konbini-store"
+
+"$engine_dir/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor" \
+  "$store_project" -unattended -RenderOffscreen -nosound \
+  "-ExecutePythonScript=$PWD/native/unreal/DimosRenderer/Scripts/demo_prepare_konbini.py"
+.venv/bin/python native/unreal/DimosRenderer/Scripts/export_level_collisions.py \
+  /tmp/dimos-konbini-map-audit.json "$store_scene" \
+  --spawn .8 2.1 .13916100885982935 --yaw-deg -90 \
+  --freeze-movable --surface-thickness .001
+```
+
+The audit records original asset hashes, collision repairs and actor transforms.
+The collision manifest maps every exported geom back to its source component.
+The spawn height is the measured support surface in the corrected collision.
+The stock position-servo G1 asset requires a named floor contact; this store run
+uses the existing GR00T torque-control plant.
+
+Add `/Game/Konbini/Maps/Konbini` to the copied project's `MapsToCook`, then package
+with the existing build script into `~/.cache/dimos/unreal-konbini-store-packaged`.
+The already prepared local launch file is:
+
+```bash skip
+"$HOME/.local/state/dimos/unreal/konbini-store/run.sh"
+```
+
+It selects `unitree-g1-groot-wbc-unreal`, the exported store scene, the packaged
+renderer, `--unrealcameramodule.level /Game/Konbini/Maps/Konbini`, and a fixed
+960x640 observer camera above the clear front aisle. It uses the same Desktop
+home/state directory as the earlier proof. Add `--daemon` to run in background.
+Desktop Controller's `color_image` and `depth_image` panels show the new scene;
+click the image before using WASD/QE, and Space to stop.
+
+The isolated G1 walking/reset check can also use the full map:
+
+```bash skip
+.venv/bin/python -m dimos.robot.unitree.g1.demo_unreal \
+  --executable "$HOME/.cache/dimos/unreal-konbini-store-packaged/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer" \
+  --level /Game/Konbini/Maps/Konbini --scene "$store_scene/scene.xml" \
+  --camera front --walk --reset --seconds 20 --output "$store_scene/g1-proof"
+```

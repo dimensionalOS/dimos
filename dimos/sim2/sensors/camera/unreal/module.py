@@ -50,7 +50,7 @@ from dimos.sim2.sensors.camera.unreal.assets import (
     export_scene,
     geom_poses,
 )
-from dimos.sim2.sensors.camera.unreal.client import RenderedFrame, RendererProcess
+from dimos.sim2.sensors.camera.unreal.client import RenderedFrame, RendererProcess, level_package
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.visuals import VisualAttachment, VisualCamera, VisualScene
 from dimos.sim2.world.spec import SimulationSpec
@@ -64,6 +64,10 @@ class UnrealCameraConfig(ModuleConfig):
 
     executable: Path
     project: Path | None = None
+    level: str | None = Field(
+        default=None,
+        description="Copied static Unreal map; export its collisions into the physics scene separately.",
+    )
     robot_id: str | None = None
     sensor: Camera
     startup_timeout: float = Field(default=180.0, gt=0, allow_inf_nan=False)
@@ -73,6 +77,8 @@ class UnrealCameraConfig(ModuleConfig):
 
     @model_validator(mode="after")
     def validate_camera(self) -> UnrealCameraConfig:
+        if self.level is not None:
+            level_package(self.level)
         sensor = self.sensor
         if not 0 < sensor.width <= 4096 or not 0 < sensor.height <= 4096:
             raise ValueError("Unreal image dimensions must be between 1 and 4096")
@@ -258,6 +264,7 @@ class UnrealCameraModule(Module):
                 self.config.executable,
                 log,
                 project=self.config.project,
+                level=self.config.level,
                 startup_timeout=self.config.startup_timeout,
                 capture_timeout=self.config.capture_timeout,
                 offscreen=self.config.offscreen,

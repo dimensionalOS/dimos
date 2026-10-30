@@ -254,6 +254,7 @@ def test_first_capture_uses_latest_state_after_asset_load_and_becomes_ready(
 
 def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module, scene, mocker):
     module, publishers = camera_module
+    module.config.level = "/Game/Maps/Store.Store"
     module._on_state(_snapshot(scene, sequence=1, episode=0, tick=40, timestamp=100.2))
     clock = mocker.patch("dimos.sim2.sensors.camera.unreal.module.time.monotonic", return_value=100)
     native_renderer = mocker.create_autospec(RendererClient, instance=True)
@@ -270,6 +271,7 @@ def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module,
 
     module._run()
 
+    assert factory.call_args.kwargs["level"] == "/Game/Maps/Store.Store"
     assert native_renderer.load.call_args.kwargs["timeout"] == 140
     assert module.renderer_status()["frames"] == 1
 

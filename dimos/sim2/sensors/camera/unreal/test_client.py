@@ -32,6 +32,7 @@ from dimos.sim2.sensors.camera.unreal.client import (
     MAX_HEADER_BYTES,
     RendererClient,
     RendererProcess,
+    level_package,
 )
 
 
@@ -372,15 +373,67 @@ def native_process(mocker):
 
 
 @pytest.fixture
-def renderer(tmp_path, native_process):
+def renderer(tmp_path, native_process, request):
     executable = tmp_path / "UnrealRenderer"
     executable.touch()
-    owner = RendererProcess(executable, tmp_path / "logs" / "renderer.log", startup_timeout=1)
+    owner = RendererProcess(
+        executable,
+        tmp_path / "logs" / "renderer.log",
+        level=getattr(request, "param", None),
+        startup_timeout=1,
+    )
     try:
         yield owner
     finally:
         owner.cancel()
         owner.close()
+
+
+@pytest.mark.parametrize(
+    "renderer", [None, "/Game/Maps/Store", "/Game/Maps/Store.Store"], indirect=True
+)
+@pytest.mark.parametrize("editor", [False, True])
+def test_level_launch_preserves_default_or_selects_authored_map_with_renderer_game_mode(
+    renderer, native_process, tmp_path, editor
+):
+    if editor:
+        project = tmp_path / "Renderer.uproject"
+        project.touch()
+        renderer.project = project
+    renderer.start()
+    args = native_process[0].call_args.args[0]
+    first_map = 2 if editor else 1
+    if renderer.level is None:
+        assert not any(argument.startswith("-DimosLevel=") for argument in args)
+        assert not any("?game=" in argument for argument in args)
+    else:
+        assert (
+            args[first_map] == "/Game/Maps/Store?game=/Script/DimosRenderer.DimosRendererGameMode"
+        )
+        assert "-DimosLevel=/Game/Maps/Store" in args
+    assert ("-game" in args) == editor
+
+
+@pytest.mark.parametrize(
+    "level",
+    [
+        "",
+        "Store",
+        "/tmp/Store.umap",
+        "/Game/Maps/../Store",
+        "/Game/Maps/Store.Other",
+        "/Game/Maps/Store?game=/Script/Other",
+        "/Game/Maps/Store -ExecCmds=Quit",
+        "/Game/Maps/Store/",
+    ],
+)
+def test_level_rejects_travel_options_paths_and_mismatched_objects(tmp_path, level):
+    with pytest.raises(ValueError, match="map package or matching object path"):
+        RendererProcess(tmp_path / "unreal", tmp_path / "log", level=level)
+
+
+def test_engine_map_object_path_is_normalized():
+    assert level_package("/Engine/Maps/Entry.Entry") == "/Engine/Maps/Entry"
 
 
 def test_owned_process_shutdown_is_acknowledged_and_reaped(workers, renderer, native_process):

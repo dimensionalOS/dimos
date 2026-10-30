@@ -1,7 +1,11 @@
 #include "DimosRendererGameMode.h"
 
 #include "Components/DirectionalLightComponent.h"
+#include "Components/DecalComponent.h"
+#include "Components/LightComponentBase.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
+#include "Components/SkyLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/DirectionalLight.h"
@@ -9,6 +13,7 @@
 #include "Engine/Texture.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "HAL/PlatformTime.h"
 #include "HAL/PlatformFileManager.h"
 #include "Interfaces/IPv4/IPv4Address.h"
@@ -27,6 +32,7 @@
 #include "SocketSubsystem.h"
 #include "Sockets.h"
 #include "UnrealClient.h"
+#include "UObject/Package.h"
 
 #include <limits>
 
@@ -104,27 +110,11 @@ void FinishMaterial(UMaterialInterface* Material)
 }
 #endif
 
-bool PrepareStaticMeshes(const TArray<UStaticMesh*>& Meshes, FString& Error)
+bool PrepareMaterials(const TSet<UMaterialInterface*>& Materials, FString& Error)
 {
-#if WITH_EDITOR
-    FStaticMeshCompilingManager::Get().FinishCompilation(Meshes);
-#endif
-    TSet<UMaterialInterface*> Materials;
     TSet<UMaterial*> BaseMaterials;
     TArray<UTexture*> Textures;
-    for (auto* Mesh : Meshes)
-    {
-        if (!Mesh->HasValidRenderData() || Mesh->GetStaticMaterials().IsEmpty())
-        { Error = FString::Printf(TEXT("Static mesh has no render data or materials: %s"), *Mesh->GetPathName()); return false; }
-        for (const auto& Slot : Mesh->GetStaticMaterials())
-        {
-            auto* Material = Slot.MaterialInterface.Get();
-            if (!Material || Material->GetBlendMode() != BLEND_Opaque)
-            { Error = FString::Printf(TEXT("Static mesh requires opaque materials in every slot: %s"), *Mesh->GetPathName()); return false; }
-            Materials.Add(Material);
-            BaseMaterials.Add(Material->GetMaterial());
-        }
-    }
+    for (auto* Material : Materials) BaseMaterials.Add(Material->GetMaterial());
 #if WITH_EDITOR
     // Instances without their own static permutation use their parent's shader
     // resource. Compile missing parents too, synchronously rather than queuing
@@ -165,6 +155,84 @@ bool PrepareStaticMeshes(const TArray<UStaticMesh*>& Meshes, FString& Error)
     FlushRenderingCommands();
     return true;
 }
+
+bool PrepareStaticMeshes(const TArray<UStaticMesh*>& Meshes, FString& Error)
+{
+#if WITH_EDITOR
+    FStaticMeshCompilingManager::Get().FinishCompilation(Meshes);
+#endif
+    TSet<UMaterialInterface*> Materials;
+    for (auto* Mesh : Meshes)
+    {
+        if (!Mesh->HasValidRenderData() || Mesh->GetStaticMaterials().IsEmpty())
+        { Error = FString::Printf(TEXT("Static mesh has no render data or materials: %s"), *Mesh->GetPathName()); return false; }
+        for (const auto& Slot : Mesh->GetStaticMaterials())
+        {
+            auto* Material = Slot.MaterialInterface.Get();
+            if (!Material || Material->GetBlendMode() != BLEND_Opaque)
+            { Error = FString::Printf(TEXT("Static mesh requires opaque materials in every slot: %s"), *Mesh->GetPathName()); return false; }
+            Materials.Add(Material);
+        }
+    }
+    return PrepareMaterials(Materials, Error);
+}
+
+bool PrepareBackground(UWorld* World, AActor* Owner, FString& Error)
+{
+    TArray<UStaticMesh*> Meshes;
+    TSet<UMaterialInterface*> Materials;
+    int32 Primitives = 0, Lights = 0;
+    for (TActorIterator<AActor> Actor(World); Actor; ++Actor)
+    {
+        if (*Actor == Owner) continue;
+        Actor->SetActorTickEnabled(false);
+        TInlineComponentArray<UActorComponent*> Components;
+        Actor->GetComponents(Components);
+        for (auto* Component : Components)
+        {
+            Component->SetComponentTickEnabled(false);
+            if (auto* Primitive = Cast<UPrimitiveComponent>(Component))
+            {
+                // The copied level is a static visual background. Its separately
+                // exported collisions belong to the physics backend, never Chaos.
+                Primitive->SetSimulatePhysics(false);
+                Primitive->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+                Primitive->SetGenerateOverlapEvents(false);
+                Primitive->SetCanEverAffectNavigation(false);
+                ++Primitives;
+                for (int32 Index = 0; Index < Primitive->GetNumMaterials(); ++Index)
+                {
+                    auto* Material = Primitive->GetMaterial(Index);
+                    if (!Material)
+                    { Error = FString::Printf(TEXT("Background component has a missing material: %s"), *Primitive->GetPathName()); return false; }
+                    // Effective component materials preserve overrides and native
+                    // masked/translucent rendering. SceneDepth keeps UE semantics;
+                    // this does not fabricate a depth surface for transparent glass.
+                    Materials.Add(Material);
+                }
+            }
+            if (auto* MeshComponent = Cast<UStaticMeshComponent>(Component))
+                if (auto* Mesh = MeshComponent->GetStaticMesh().Get()) Meshes.AddUnique(Mesh);
+            if (auto* Decal = Cast<UDecalComponent>(Component))
+                if (auto* Material = Decal->GetDecalMaterial()) Materials.Add(Material);
+            if (auto* Light = Cast<ULightComponentBase>(Component))
+            {
+                // This renderer disables baked lighting. Preserve authored light
+                // placement/intensity/color with a live movable light instead.
+                Light->SetMobility(EComponentMobility::Movable);
+                ++Lights;
+            }
+            if (auto* Sky = Cast<USkyLightComponent>(Component)) Sky->RecaptureSky();
+        }
+    }
+#if WITH_EDITOR
+    FStaticMeshCompilingManager::Get().FinishCompilation(Meshes);
+#endif
+    if (!PrepareMaterials(Materials, Error)) return false;
+    UE_LOG(LogTemp, Display, TEXT("DimOS background ready: %d primitives, %d authored lights, %d meshes, %d materials; Chaos disabled"),
+        Primitives, Lights, Meshes.Num(), Materials.Num());
+    return true;
+}
 }
 
 ADimosRendererGameMode::ADimosRendererGameMode()
@@ -203,6 +271,15 @@ ADimosRendererGameMode::ADimosRendererGameMode()
 void ADimosRendererGameMode::StartPlay()
 {
     Super::StartPlay();
+    FString BackgroundLevel;
+    const bool bBackground = FParse::Value(FCommandLine::Get(), TEXT("DimosLevel="), BackgroundLevel);
+    if (bBackground && (!FPackageName::IsValidLongPackageName(BackgroundLevel) ||
+        !GetWorld()->GetPackage()->GetName().Equals(BackgroundLevel, ESearchCase::IgnoreCase)))
+    {
+        UE_LOG(LogTemp, Error, TEXT("DimOS requested level %s but loaded %s"), *BackgroundLevel, *GetWorld()->GetPackage()->GetName());
+        FPlatformMisc::RequestExit(false);
+        return;
+    }
     MeshMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Materials/M_Dimos.M_Dimos"));
     if (!MeshMaterial)
     {
@@ -216,12 +293,28 @@ void ADimosRendererGameMode::StartPlay()
     MeshMaterial->ForceRecompileForRendering();
     if (GShaderCompilingManager) GShaderCompilingManager->FinishAllCompilation();
 #endif
-    for (int32 Index = 0; Index < 2; ++Index)
+    if (bBackground)
     {
-        auto* Light = GetWorld()->SpawnActor<ADirectionalLight>();
-        Light->GetLightComponent()->SetMobility(EComponentMobility::Movable);
-        Light->SetActorRotation(Index == 0 ? FRotator(-45, -35, 0) : FRotator(-25, 145, 0));
-        Light->GetLightComponent()->SetIntensity(Index == 0 ? 5.0f : 1.0f);
+        FString Error;
+        if (!PrepareBackground(GetWorld(), this, Error))
+        {
+            UE_LOG(LogTemp, Error, TEXT("DimOS background setup failed: %s"), *Error);
+            FPlatformMisc::RequestExit(false);
+            return;
+        }
+        ColorCapture->ShowFlags.SetAtmosphere(true);
+        ColorCapture->ShowFlags.SetFog(true);
+        ColorCapture->ShowFlags.SetBloom(true);
+    }
+    else
+    {
+        for (int32 Index = 0; Index < 2; ++Index)
+        {
+            auto* Light = GetWorld()->SpawnActor<ADirectionalLight>();
+            Light->GetLightComponent()->SetMobility(EComponentMobility::Movable);
+            Light->SetActorRotation(Index == 0 ? FRotator(-45, -35, 0) : FRotator(-25, 145, 0));
+            Light->GetLightComponent()->SetIntensity(Index == 0 ? 5.0f : 1.0f);
+        }
     }
     int32 Port = 0;
     if (!FParse::Value(FCommandLine::Get(), TEXT("DimosPort="), Port) || Port < 1 || Port > 65535)

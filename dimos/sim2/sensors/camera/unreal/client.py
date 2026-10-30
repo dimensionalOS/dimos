@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import re
 import socket
 import struct
 import subprocess
@@ -42,6 +43,18 @@ MAX_IMAGE_DIMENSION = 4096
 IDENTITY_FIELDS = ("episode", "sequence", "physics_tick", "sim_time", "timestamp")
 LOOPBACK_HOST = "127.0.0.1"
 IO_POLL_SECONDS = 0.2
+
+
+def level_package(level: str) -> str:
+    """Accept one content map path, never an Unreal travel URL or command line."""
+    match = re.fullmatch(
+        r"(/(?:Game|Engine)/(?:[A-Za-z0-9_]+/)*([A-Za-z0-9_]+))(?:\.([A-Za-z0-9_]+))?", level
+    )
+    if match is None or (match[3] is not None and match[3] != match[2]):
+        raise ValueError(
+            "Unreal level must be a /Game or /Engine map package or matching object path"
+        )
+    return match[1]
 
 
 @dataclass(frozen=True)
@@ -210,6 +223,8 @@ class RendererProcess:
 
     A packaged executable needs only ``executable``. ``project`` supports native
     development with UnrealEditor -game; neither mode uses editor Python.
+    ``level`` selects a static authored background with its native materials.
+    Its collision geometry must already be present in the physics scene.
     """
 
     def __init__(
@@ -218,6 +233,7 @@ class RendererProcess:
         log_path: Path,
         *,
         project: Path | None = None,
+        level: str | None = None,
         startup_timeout: float = 180.0,
         capture_timeout: float = 15.0,
         offscreen: bool = True,
@@ -228,6 +244,7 @@ class RendererProcess:
             raise ValueError("Unreal startup and capture timeouts must be positive and finite")
         self.executable = executable
         self.project = project
+        self.level = level_package(level) if level is not None else None
         self.log_path = log_path
         self.startup_timeout = startup_timeout
         self.capture_timeout = capture_timeout
@@ -273,7 +290,14 @@ class RendererProcess:
             listener.listen(1)
             args = [str(self.executable.resolve())]
             if self.project is not None:
-                args += [str(self.project.resolve()), "-game"]
+                args.append(str(self.project.resolve()))
+            if self.level is not None:
+                args += [
+                    f"{self.level}?game=/Script/DimosRenderer.DimosRendererGameMode",
+                    f"-DimosLevel={self.level}",
+                ]
+            if self.project is not None:
+                args.append("-game")
             args += [
                 "-unattended",
                 "-nosound",

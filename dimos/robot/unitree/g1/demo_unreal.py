@@ -89,6 +89,7 @@ def main() -> None:
         "--control-only", action="store_true", help="Run GR00T and Unreal without lidar/navigation"
     )
     parser.add_argument("--project", type=Path, help="Only needed when using UnrealEditor -game")
+    parser.add_argument("--level", help="Cooked Unreal map, for example /Game/Konbini/Maps/Konbini")
     parser.add_argument(
         "--scene", type=Path, help="Authored MJCF scene or exported scene directory"
     )
@@ -136,6 +137,7 @@ def main() -> None:
         UnrealCameraModule.blueprint(
             executable=args.executable.resolve(),
             project=args.project.resolve() if args.project else None,
+            level=args.level,
             sensor=sensor,
             robot_id=None if args.camera == "observer" else "g1",
             log_path=output / "renderer.log",
