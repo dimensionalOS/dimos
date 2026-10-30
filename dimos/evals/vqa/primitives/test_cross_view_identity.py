@@ -50,6 +50,7 @@ def _view(
     n_views: int = 5,
     score: float = 0.6,
     query: str = "storage box",
+    camera_frame: str = "camera_optical",
 ) -> SightingView:
     return SightingView(
         query=query,
@@ -60,6 +61,7 @@ def _view(
         timestamp=ts,
         n_views=n_views,
         semantic_score=score,
+        camera_frame=camera_frame,
     )
 
 
@@ -222,6 +224,49 @@ def test_same_pairs_skip_when_competing_instance_co_visible() -> None:
     )
     pairs = propose_identity_pairs({"a": a, "b": b}, min_views=2)
     assert not any(p.same_object for p in pairs)
+
+
+def test_same_pairs_keep_when_competitor_on_other_camera() -> None:
+    centered = (70.0, 70.0, 130.0, 130.0)
+    # B is only on another optical frame at the same times — must not kill A's yes pair.
+    a = (
+        _view(
+            instance_id="a",
+            bbox=centered,
+            ts=1.0,
+            n_views=3,
+            score=0.9,
+            camera_frame="cam_front",
+        ),
+        _view(
+            instance_id="a",
+            bbox=centered,
+            ts=20.0,
+            n_views=3,
+            score=0.9,
+            camera_frame="cam_front",
+        ),
+    )
+    b = (
+        _view(
+            instance_id="b",
+            bbox=centered,
+            ts=1.0,
+            n_views=3,
+            score=0.8,
+            camera_frame="cam_chin",
+        ),
+        _view(
+            instance_id="b",
+            bbox=centered,
+            ts=20.0,
+            n_views=3,
+            score=0.8,
+            camera_frame="cam_chin",
+        ),
+    )
+    pairs = propose_identity_pairs({"a": a, "b": b}, min_views=2)
+    assert any(p.same_object and p.left.instance_id == "a" for p in pairs)
 
 
 def test_same_pairs_keep_when_competitor_only_mid_span() -> None:

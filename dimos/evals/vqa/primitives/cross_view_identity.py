@@ -183,9 +183,18 @@ def _instance_visible_at(
     views: Sequence[SightingView],
     timestamp: float,
     *,
+    camera_frame: str = "",
     tol_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
 ) -> bool:
-    return any(abs(v.timestamp - timestamp) <= tol_s for v in views)
+    """True when a view is near ``timestamp`` on the same optical frame (if known)."""
+    for view in views:
+        if abs(view.timestamp - timestamp) > tol_s:
+            continue
+        # Different cameras are different full frames — not co-visible for identity.
+        if camera_frame and view.camera_frame and view.camera_frame != camera_frame:
+            continue
+        return True
+    return False
 
 
 def _competing_instance_visible_at(
@@ -193,13 +202,16 @@ def _competing_instance_visible_at(
     instance_id: str,
     timestamp: float,
     *,
+    camera_frame: str = "",
     tol_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
 ) -> bool:
-    """True when another same-category instance also has a sighting near ``timestamp``."""
+    """True when another same-category instance is sighted on this camera near ``timestamp``."""
     for other_id, views in by_instance.items():
         if other_id == instance_id:
             continue
-        if _instance_visible_at(views, timestamp, tol_s=tol_s):
+        if _instance_visible_at(
+            views, timestamp, camera_frame=camera_frame, tol_s=tol_s
+        ):
             return True
     return False
 
@@ -221,10 +233,20 @@ def _pick_same_pairs(
             continue
         if left.camera_frame and right.camera_frame and left.camera_frame != right.camera_frame:
             continue
-        # Competing same-category instance in either full frame → ambiguous "yes".
+        # Same-camera competing instance in either full frame → ambiguous "yes".
         if competitors and (
-            _competing_instance_visible_at(competitors, left.instance_id, left.timestamp)
-            or _competing_instance_visible_at(competitors, right.instance_id, right.timestamp)
+            _competing_instance_visible_at(
+                competitors,
+                left.instance_id,
+                left.timestamp,
+                camera_frame=left.camera_frame,
+            )
+            or _competing_instance_visible_at(
+                competitors,
+                right.instance_id,
+                right.timestamp,
+                camera_frame=right.camera_frame,
+            )
         ):
             continue
         candidates.append((gap, left, right))
@@ -250,12 +272,13 @@ def _co_visible_at(
     views_b: Sequence[SightingView],
     timestamp: float,
     *,
+    camera_frame: str = "",
     tol_s: float = MIN_DIFF_PAIR_TIME_GAP_S,
 ) -> bool:
-    """True when both instances have a sighting near ``timestamp`` (same full frame)."""
-    return _instance_visible_at(views_a, timestamp, tol_s=tol_s) and _instance_visible_at(
-        views_b, timestamp, tol_s=tol_s
-    )
+    """True when both instances have a same-camera sighting near ``timestamp``."""
+    return _instance_visible_at(
+        views_a, timestamp, camera_frame=camera_frame, tol_s=tol_s
+    ) and _instance_visible_at(views_b, timestamp, camera_frame=camera_frame, tol_s=tol_s)
 
 
 def _pick_diff_pairs(
@@ -285,16 +308,18 @@ def _pick_diff_pairs(
                 gap = abs(right.timestamp - left.timestamp)
                 if gap < min_gap_s:
                     continue
-                # Either endpoint still co-visible with the other instance → ambiguous "no".
-                if _co_visible_at(views_a, views_b, left.timestamp) or _co_visible_at(
-                    views_a, views_b, right.timestamp
-                ):
-                    continue
                 # Clips must come from the same camera optical frame on both sides.
                 if (
                     left.camera_frame
                     and right.camera_frame
                     and left.camera_frame != right.camera_frame
+                ):
+                    continue
+                # Either endpoint still co-visible on that camera → ambiguous "no".
+                if _co_visible_at(
+                    views_a, views_b, left.timestamp, camera_frame=left.camera_frame
+                ) or _co_visible_at(
+                    views_a, views_b, right.timestamp, camera_frame=right.camera_frame
                 ):
                     continue
                 score = left.confidence + right.confidence
@@ -309,12 +334,21 @@ def _pick_diff_pairs(
     return pairs
 
 
-def _clip_pair_key(pair: IdentityPair) -> tuple[str, float, float]:
-    """Visual key for dense clips: category + ordered sighting timestamps."""
-    left_ts, right_ts = pair.left.timestamp, pair.right.timestamp
+def _clip_pair_key(pair: IdentityPair) -> tuple[str, float, float, str, str]:
+    """Visual key for dense clips: category + cameras + ordered sighting timestamps."""
+    left, right = pair.left, pair.right
+    left_ts, right_ts = left.timestamp, right.timestamp
+    left_cam, right_cam = left.camera_frame, right.camera_frame
     if left_ts > right_ts:
         left_ts, right_ts = right_ts, left_ts
-    return pair.query.casefold(), round(left_ts, 3), round(right_ts, 3)
+        left_cam, right_cam = right_cam, left_cam
+    return (
+        pair.query.casefold(),
+        round(left_ts, 3),
+        round(right_ts, 3),
+        left_cam,
+        right_cam,
+    )
 
 
 def dedupe_identity_pairs(pairs: Sequence[IdentityPair]) -> tuple[IdentityPair, ...]:

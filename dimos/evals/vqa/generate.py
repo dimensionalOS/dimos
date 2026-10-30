@@ -552,15 +552,22 @@ def _color_frames_for_view(
     color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]],
 ) -> Sequence[tuple[float, Image]]:
     """Pick the camera stream matching the sighting; fall back to primary frames."""
-    if view.camera_frame:
-        matched = color_frames_by_camera.get(view.camera_frame)
+    camera = view.camera_frame or str(getattr(view.image, "frame_id", "") or "")
+    if camera:
+        matched = color_frames_by_camera.get(camera)
         if matched is not None:
             return matched
         if color_frames_by_camera:
             raise ValueError(
-                f"no color frames for sighting camera {view.camera_frame!r} "
+                f"no color frames for sighting camera {camera!r} "
                 f"(have {sorted(color_frames_by_camera)})"
             )
+    # Multi-cam available but sighting has no optical frame → refuse wrong-camera cut.
+    if color_frames_by_camera:
+        raise ValueError(
+            "sighting has empty camera_frame but color_frames_by_camera is set; "
+            "refusing primary-camera fallback"
+        )
     return color_frames
 
 
