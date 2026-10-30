@@ -445,6 +445,7 @@ class MujocoBackend:
         if self.done:
             raise RuntimeError("native task has terminated; reset before stepping")
         data, model = self.data, self.model
+        env = self.base_environment
         data.xfrc_applied[:] = 0
         data.qfrc_applied[:] = 0
         goals: dict[MotorController, NDArray[np.float64]] = {}
@@ -459,7 +460,14 @@ class MujocoBackend:
                 index = int(model.body_mocapid[self._bodies[command.body]])
                 data.mocap_pos[index] = command.position
                 data.mocap_quat[index] = np.roll(command.orientation, 1)
-        mujoco.mj_forward(model, data)
+        if isinstance(env, MotorScene):
+            # Drives read q/dq directly. Wrenches need current body transforms,
+            # including any mocap target above, but no collision/dynamics solve.
+            if any(isinstance(command, (BodyWrench, KinematicTarget)) for command in commands):
+                mujoco.mj_kinematics(model, data)
+                mujoco.mj_comPos(model, data)
+        else:
+            mujoco.mj_forward(model, data)
         for command in commands:
             if isinstance(command, JointDrive):
                 controller, offset = self._drives[command.joint]
@@ -481,7 +489,6 @@ class MujocoBackend:
                     point = data.xpos[index] + rotation @ point
                 data.xfrc_applied[index, :3] += force
                 data.xfrc_applied[index, 3:] += torque + np.cross(point - data.xipos[index], force)
-        env = self.base_environment
         if isinstance(env, MotorScene):
             if self._scene_controller is not None:
                 controller = self._scene_controller
@@ -502,7 +509,10 @@ class MujocoBackend:
         if isinstance(env, MotorScene):
             assert env.last_actuator_effort is not None
             self._applied_effort = env.last_actuator_effort.copy()
-        self.environment.sim.forward()
+            # MotorScene already refreshes poses and sensors after integration
+            # in _update_observables, after saving the effort actually applied.
+        else:
+            self.environment.sim.forward()
         return BackendStep(observations, float(reward), bool(done), info)
 
     def read_state(self, metadata: FrameMetadata) -> WorldState:

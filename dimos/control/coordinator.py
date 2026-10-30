@@ -191,6 +191,8 @@ class ControlCoordinator(Module):
     """
 
     config: ControlCoordinatorConfig
+    # Control deadlines must not share a Python interpreter with planning or mapping.
+    dedicated_worker = True
 
     # Injected when the blueprint has a MujocoSimModule: the scene that
     # simulated manipulator adapters without one of their own attach to.

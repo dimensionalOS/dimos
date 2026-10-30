@@ -52,12 +52,14 @@ class _StubSession:
         action: np.ndarray,
         call_log: list[str],
         providers: Any = None,
+        sess_options: Any = None,
     ) -> None:
         self.model_path = model_path
         self._label = label
         self._action = action
         self._call_log = call_log
         self._providers = list(providers or [])
+        self.session_options = sess_options
         fake_input = MagicMock()
         fake_input.name = "obs"
         self._inputs = [fake_input]
@@ -77,7 +79,7 @@ class _StubSession:
 def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     call_log: list[str] = []
 
-    def _factory(path: str, providers: Any = None) -> _StubSession:
+    def _factory(path: str, providers: Any = None, sess_options: Any = None) -> _StubSession:
         label = "balance" if "balance" in str(path) else "walk"
         return _StubSession(
             str(path),
@@ -85,6 +87,7 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             action=np.full(15, 0.1, dtype=np.float32),
             call_log=call_log,
             providers=providers,
+            sess_options=sess_options,
         )
 
     monkeypatch.setattr(g1_groot_wbc_task.ort, "InferenceSession", _factory)
@@ -170,6 +173,12 @@ def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
         t_now=t_now,
         dt=0.002,
     )
+
+
+def test_policy_cpu_sessions_use_bounded_thread_counts(task):
+    for session in (task._balance_session, task._walk_session):
+        assert session.session_options.intra_op_num_threads == 1
+        assert session.session_options.inter_op_num_threads == 1
 
 
 def test_nonzero_cmd_uses_walk_until_timeout(
