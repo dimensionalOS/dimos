@@ -27,6 +27,7 @@ use ahash::AHashSet;
 use dimos_gpu_mls::brick_map::{BrickMap, MapConfig, VoxelKey, VoxelSnapshot};
 use dimos_gpu_mls::gpu::Gpu;
 use dimos_gpu_mls::surfaces::{SurfaceConfig, SurfaceExtractor, Window};
+use dimos_mls_planner::mls_planner::{Config as PlannerConfig, Planner};
 use dimos_mls_planner::{surface_cells, wall_distances};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{update_map, Config, VoxelMap};
 
@@ -747,9 +748,280 @@ fn run_export(
     }
 }
 
+/// `reach`'s surface tiles: the core each tile keeps, and the margin of
+/// map it sees around that core so closing and plane fits match an untiled run.
+const TILE_M: f32 = 20.0;
+const TILE_MARGIN_M: f32 = 1.0;
+/// `reach` puts a goal every this many meters along the walked trajectory.
+const GOAL_SPACING_M: f32 = 2.0;
+
+/// The MLS module's defaults (mls_planner_native.py) at this voxel size.
+fn planner_config(voxel_size: f32) -> PlannerConfig {
+    let surface = SurfaceConfig::mls_defaults();
+    PlannerConfig {
+        world_frame: String::new(),
+        base_frame: String::new(),
+        voxel_size,
+        robot_height: surface.robot_height_m,
+        start_z_offset_m: 0.0,
+        max_overhead_m: 2.0,
+        surface_closing_radius: surface.closing_radius_m,
+        node_spacing_m: 1.0,
+        wall_clearance_m: 0.1,
+        wall_buffer_m: 0.75,
+        wall_buffer_weight: 100.0,
+        step_threshold_m: surface.step_threshold_m,
+        step_penalty_weight: 4.0,
+        goal_tolerance: 0.3,
+        viz_publish_hz: 0.0,
+        viz_cell_m: 4.0,
+        viz_sweep_cells: 0,
+        worker_threads: 8,
+    }
+}
+
+/// The GPU surface of the whole map, extracted tile by tile: each cell with
+/// its plane height in meters.
+fn tiled_surface(
+    map: &mut BrickMap,
+    healthy: &[VoxelKey],
+    voxel_size: f32,
+) -> Vec<(VoxelKey, f32)> {
+    let tile = (TILE_M / voxel_size) as i32;
+    let margin = (TILE_MARGIN_M / voxel_size).ceil() as i32;
+    let mut tiles: ahash::AHashMap<(i32, i32), Vec<VoxelKey>> = ahash::AHashMap::new();
+    for &k in healthy {
+        let (tx, ty) = (k.0.div_euclid(tile), k.1.div_euclid(tile));
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let (cx, cy) = (tx + dx, ty + dy);
+                let near = |c: i32, v: i32| v >= c * tile - margin && v < (c + 1) * tile + margin;
+                if near(cx, k.0) && near(cy, k.1) {
+                    tiles.entry((cx, cy)).or_default().push(k);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut keys: Vec<(i32, i32)> = tiles.keys().copied().collect();
+    keys.sort_unstable();
+    for t in keys {
+        let seen = &tiles[&t];
+        let window = Window::covering(seen.iter().copied(), 0).expect("a non-empty tile");
+        let mut extractor = SurfaceExtractor::new(map, window, SurfaceConfig::mls_defaults())
+            .expect("a tile fits the device");
+        extractor.extract(map);
+        map.finish();
+        let result = extractor.read();
+        let core = |v: i32, c: i32| v.div_euclid(tile) == c;
+        for (k, h) in result.surface.iter().zip(&result.heights) {
+            if core(k.0, t.0) && core(k.1, t.1) {
+                out.push((*k, *h));
+            }
+        }
+    }
+    out
+}
+
+/// The top of the nearest occupied voxel within 2 m below `o`, in its own
+/// column or, failing that, the 3 x 3 around it.
+fn floor_below(o: Point, occupied: &AHashSet<VoxelKey>, voxel_size: f32) -> Option<f32> {
+    let (ix, iy) = (
+        (o.0 / voxel_size).floor() as i32,
+        (o.1 / voxel_size).floor() as i32,
+    );
+    let iz = (o.2 / voxel_size).floor() as i32;
+    let reach = (2.0 / voxel_size) as i32;
+    let top = |dx: i32, dy: i32| {
+        (1..reach)
+            .find(|d| occupied.contains(&(ix + dx, iy + dy, iz - d)))
+            .map(|d| (iz - d + 1) as f32 * voxel_size)
+    };
+    top(0, 0).or_else(|| {
+        (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dy| (dx, dy)))
+            .filter_map(|(dx, dy)| top(dx, dy))
+            .max_by(f32::total_cmp)
+    })
+}
+
+/// How far the sensor rides above the floor: the median gap from each origin
+/// down to the floor below it.
+fn sensor_height(origins: &[Point], occupied: &AHashSet<VoxelKey>, voxel_size: f32) -> f32 {
+    let mut gaps: Vec<f32> = origins
+        .iter()
+        .step_by(10)
+        .filter_map(|o| floor_below(*o, occupied, voxel_size).map(|f| o.2 - f))
+        .collect();
+    gaps.sort_by(f32::total_cmp);
+    gaps[gaps.len() / 2]
+}
+
+/// The whole recording on the GPU map, then the MLS planner on its healthy
+/// voxels twice: with the CPU's whole-voxel surface, and with the GPU's
+/// sub-voxel surface and plane heights. Goals sit along the walked
+/// trajectory, so every one should be reachable from the start.
+fn run_reach(path: &str, voxel_size: f32, out: &str) {
+    let gpu = Gpu::new().expect("a GPU");
+    let mut map = gpu_map(&gpu, voxel_size);
+    let mut origins = Vec::new();
+    for (origin, pts) in open_frames(path) {
+        map.integrate(origin, &pts);
+        origins.push(origin);
+    }
+    if origins.is_empty() {
+        eprintln!("{path} has no frames");
+        std::process::exit(1);
+    }
+    map.finish();
+    let healthy: Vec<VoxelKey> = map
+        .snapshot()
+        .iter()
+        .filter(|v| v.health > 0)
+        .map(|v| v.key)
+        .collect();
+    let occupied: AHashSet<VoxelKey> = healthy.iter().copied().collect();
+    let config = planner_config(voxel_size);
+    let lift = sensor_height(&origins, &occupied, voxel_size);
+    println!(
+        "{} frames, {} healthy voxels; sensor rides {lift:.2} m above the floor",
+        origins.len(),
+        healthy.len()
+    );
+
+    let started = Instant::now();
+    let mut cpu = Planner::new(config.worker_threads);
+    let points: Vec<Point> = healthy
+        .iter()
+        .map(|k| {
+            (
+                (k.0 as f32 + 0.5) * voxel_size,
+                (k.1 as f32 + 0.5) * voxel_size,
+                (k.2 as f32 + 0.5) * voxel_size,
+            )
+        })
+        .collect();
+    cpu.update_global_map(&points, &config);
+    let cpu_build = started.elapsed();
+
+    let started = Instant::now();
+    let surface = tiled_surface(&mut map, &healthy, voxel_size);
+    let gpu_surface_time = started.elapsed();
+    let started = Instant::now();
+    let mut gpu_planner = Planner::new(config.worker_threads);
+    let cells: Vec<VoxelKey> = surface.iter().map(|s| s.0).collect();
+    let heights: Vec<f32> = surface.iter().map(|s| s.1).collect();
+    let gpu_config = planner_config(voxel_size);
+    gpu_planner.update_from_surface(&healthy, &cells, Some(&heights), &gpu_config);
+    let gpu_graph_time = started.elapsed();
+    println!(
+        "cpu planner build {:.0} ms ({} surface cells, {} nodes); gpu surface {:.0} ms + graph {:.0} ms ({} surface cells, {} nodes)",
+        cpu_build.as_secs_f64() * 1e3,
+        cpu.graph().cells.ids().count(),
+        cpu.graph().nodes.len(),
+        gpu_surface_time.as_secs_f64() * 1e3,
+        gpu_graph_time.as_secs_f64() * 1e3,
+        cells.len(),
+        gpu_planner.graph().nodes.len()
+    );
+
+    // Each goal sits on the floor mapped under it, since a handheld sensor
+    // rides at no one height. Poses with no floor below (the lidar is blind
+    // close in, so the first one often has none) make no goal.
+    let floor_at =
+        |o: Point| floor_below(o, &occupied, voxel_size).filter(|f| o.2 - f <= 2.0 * lift);
+    let ground = |o: Point| {
+        let floor = floor_at(o).unwrap_or(o.2 - lift);
+        (o.0, o.1, floor + 0.5 * voxel_size)
+    };
+    let floored: Vec<Point> = origins
+        .iter()
+        .copied()
+        .filter(|o| floor_at(*o).is_some())
+        .collect();
+    println!(
+        "{} of {} poses have a floor mapped below them",
+        floored.len(),
+        origins.len()
+    );
+    let mut goals = vec![floored[0]];
+    for &o in &floored {
+        let last = goals[goals.len() - 1];
+        let d = ((o.0 - last.0).powi(2) + (o.1 - last.1).powi(2) + (o.2 - last.2).powi(2)).sqrt();
+        if d >= GOAL_SPACING_M {
+            goals.push(o);
+        }
+    }
+    let start = ground(goals[0]);
+    let mut rows = Vec::new();
+    let (mut both, mut only_cpu, mut only_gpu, mut neither) = (0, 0, 0, 0);
+    let (mut cpu_plan, mut gpu_plan) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    let path_json = |p: &Option<Vec<Point>>| match p {
+        None => "null".to_string(),
+        Some(wp) => format!(
+            "[{}]",
+            wp.iter()
+                .map(|w| format!("[{:.2},{:.2},{:.2}]", w.0, w.1, w.2))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    };
+    for (i, &g) in goals.iter().enumerate() {
+        let goal = ground(g);
+        let t = Instant::now();
+        let c = cpu.plan(start, goal, &config);
+        cpu_plan += t.elapsed();
+        let t = Instant::now();
+        let p = gpu_planner.plan(start, goal, &gpu_config);
+        gpu_plan += t.elapsed();
+        match (c.is_some(), p.is_some()) {
+            (true, true) => both += 1,
+            (true, false) => only_cpu += 1,
+            (false, true) => only_gpu += 1,
+            (false, false) => neither += 1,
+        }
+        rows.push(format!(
+            "{{\"i\":{i},\"goal\":[{:.2},{:.2},{:.2}],\"cpu\":{},\"gpu\":{}}}",
+            goal.0,
+            goal.1,
+            goal.2,
+            path_json(&c),
+            path_json(&p)
+        ));
+    }
+    let n = goals.len() as f64;
+    println!(
+        "REACH from the start to {} goals {GOAL_SPACING_M} m apart along the trajectory: both {both}, only cpu {only_cpu}, only gpu {only_gpu}, neither {neither}; cpu reaches {:.0}%, gpu {:.0}%; mean plan cpu {:.1} ms, gpu {:.1} ms",
+        goals.len(),
+        100.0 * (both + only_cpu) as f64 / n,
+        100.0 * (both + only_gpu) as f64 / n,
+        cpu_plan.as_secs_f64() * 1e3 / n,
+        gpu_plan.as_secs_f64() * 1e3 / n
+    );
+    let surface_json = |cells: Vec<VoxelKey>| {
+        cells
+            .iter()
+            .step_by(4)
+            .map(|k| format!("[{},{},{}]", k.0, k.1, k.2))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    std::fs::write(
+        out,
+        format!(
+            "{{\"voxel_size\":{voxel_size},\"sensor_height\":{lift},\"goals\":[{}],\"cpu_surface\":[{}],\"gpu_surface\":[{}]}}",
+            rows.join(","),
+            surface_json(cpu.surface().collect()),
+            surface_json(cells)
+        ),
+    )
+    .expect("writable output");
+    println!("wrote {out}");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames], or export <voxel_size> <first> <count> <x> <y> <z> <half_m> <out.json>";
+    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames], or reach <voxel_size> <out.json>, or export <voxel_size> <first> <count> <x> <y> <z> <half_m> <out.json>";
     let path = args.get(1).expect(usage);
     let voxel_size = args
         .get(3)
@@ -769,6 +1041,7 @@ fn main() {
                 args.get(10).expect(usage),
             )
         }
+        Some("reach") => run_reach(path, voxel_size, args.get(4).expect(usage)),
         Some("control") => run_control(
             path,
             voxel_size,
