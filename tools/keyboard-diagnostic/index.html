@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keyboard diagnostic</title>
+  <style>
+    body { max-width: 760px; margin: 3rem auto; padding: 0 1rem; font: 16px system-ui, sans-serif; color: #202631; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 180px; padding: .8rem; font: inherit; }
+    button { padding: .6rem .9rem; margin: .3rem .5rem .3rem 0; cursor: pointer; }
+    pre { height: 220px; overflow: auto; background: #f2f4f7; padding: 1rem; white-space: pre-wrap; }
+    #status { color: #374b61; }
+  </style>
+</head>
+<body>
+  <h1>Keyboard diagnostic</h1>
+  <p>Choose a log file, then type in the box below. Only key presses in this box are recorded. Try reproducing the unexpected cursor movement here.</p>
+  <button id="choose">Choose log file</button>
+  <button id="download">Download log</button>
+  <p id="status" role="status">No file selected. Events stay on this page until you download them.</p>
+  <label for="typing">Typing area</label>
+  <textarea id="typing" placeholder="Type here…" spellcheck="false"></textarea>
+  <h2>Recent key presses</h2>
+  <pre id="events" aria-live="off"></pre>
+  <script>
+    const typing = document.querySelector('#typing');
+    const events = document.querySelector('#events');
+    const status = document.querySelector('#status');
+    let lines = [];
+    let fileHandle = null;
+    let saveQueue = Promise.resolve();
+
+    function save() {
+      if (!fileHandle) return;
+      const handle = fileHandle;
+      const snapshot = lines.join('');
+      saveQueue = saveQueue.then(async () => {
+        const writable = await handle.createWritable();
+        await writable.write(snapshot);
+        await writable.close();
+      }).catch(error => {
+        fileHandle = null;
+        status.textContent = `Saving failed: ${error.message}. Download the log to keep it.`;
+      });
+    }
+
+    document.querySelector('#choose').addEventListener('click', async () => {
+      if (!window.showSaveFilePicker) {
+        status.textContent = 'Automatic saving is unavailable in this browser. Use Download log instead.';
+        return;
+      }
+      try {
+        fileHandle = await window.showSaveFilePicker({
+          suggestedName: 'keyboard-diagnostic.log',
+          types: [{ description: 'Log file', accept: { 'text/plain': ['.log'] } }]
+        });
+        status.textContent = `Saving to ${fileHandle.name}. Key presses in the typing area are recorded.`;
+        save();
+        typing.focus();
+      } catch (error) {
+        if (error.name !== 'AbortError') status.textContent = `Could not select a file: ${error.message}`;
+      }
+    });
+
+    typing.addEventListener('keydown', event => {
+      const modifiers = ['ctrlKey', 'altKey', 'shiftKey', 'metaKey']
+        .filter(name => event[name]).map(name => name.replace('Key', ''));
+      const line = `${new Date().toISOString()} key=${JSON.stringify(event.key)} code=${event.code} modifiers=${modifiers.join('+') || 'none'} repeat=${event.repeat}\n`;
+      lines.push(line);
+      events.textContent = lines.slice(-100).join('');
+      events.scrollTop = events.scrollHeight;
+      save();
+    });
+
+    document.querySelector('#download').addEventListener('click', () => {
+      const url = URL.createObjectURL(new Blob(lines, { type: 'text/plain' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'keyboard-diagnostic.log';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  </script>
+</body>
+</html>
