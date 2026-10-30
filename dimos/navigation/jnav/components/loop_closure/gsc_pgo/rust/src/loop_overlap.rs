@@ -40,6 +40,10 @@ pub struct LoopOverlap {
     pub soft_pressure: f64,
     /// Sum over those keyframes of the chance of overlapping each (resolved or not).
     pub expected_overlaps: f64,
+    /// Pressure 2: the chance the newest scan overlaps at least one earlier stretch of the path that no kept loop closure
+    /// ties to the newest stretch, without the position-search factor: 1 when the odometry is exact and an earlier
+    /// stretch is within sensor reach (the newest keyframe's own recent stretch, `newest_closure_target` on, excluded).
+    pub unclosed_overlap_probability: f64,
     /// The keyframe with the highest unresolved overlap chance, and that chance.
     pub most_likely_keyframe: usize,
     pub most_likely_probability: f64,
@@ -229,6 +233,20 @@ impl GscPgo {
         let mut none_overlap = 1.0;
         let mut last_counted: Option<Vec3> = None;
         let mut ln_hazards = Vec::new();
+        // pressure 2: stretches a kept closure already ties to the newest stretch (both ends within sensor reach) are closed
+        let near = |a: &Vec3, b: &Vec3| mat3::norm(&mat3::sub(a, b)) < model.sensor_range;
+        let kept_ties: Vec<(Vec3, Vec3)> = self
+            .committed_closures
+            .iter()
+            .filter(|c| c.gnc_weight > 0.5)
+            .map(|c| {
+                (
+                    self.key_poses[c.source_id].translation_global,
+                    self.key_poses[c.target_id].translation_global,
+                )
+            })
+            .collect();
+        let mut none_unclosed = 1.0;
         for j in 0..self.newest_closure_target() {
             let position = self.key_poses[j].translation_global;
             // keyframes closer than a sensor range along the path see the same place: count one of them
@@ -239,6 +257,13 @@ impl GscPgo {
             }
             last_counted = Some(position);
             let (probability, unresolved, ln_chance) = model.overlap(j);
+            let closed = kept_ties.iter().any(|(source, target)| {
+                (near(source, &model.newest) && near(target, &position))
+                    || (near(target, &model.newest) && near(source, &position))
+            });
+            if !closed {
+                none_unclosed *= 1.0 - probability;
+            }
             let chance = (probability * unresolved).clamp(0.0, 1.0);
             // this place's hazard -ln(1 - chance), in log space: ln(chance) where -ln(1 - chance) ~ chance
             let ln_hazard = if chance > 1e-8 {
@@ -255,6 +280,7 @@ impl GscPgo {
             }
         }
         overlap.unresolved_loop_probability = 1.0 - none_overlap;
+        overlap.unclosed_overlap_probability = 1.0 - none_unclosed;
         let top = ln_hazards.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         overlap.log10_hazard = if top.is_finite() {
             (top + ln_hazards.iter().map(|h| (h - top).exp()).sum::<f64>().ln())
@@ -295,7 +321,7 @@ pub(crate) struct OverlapModel<'a> {
     since_solve: Mat3,
     tip_lever: Mat3,
     reference: usize,
-    newest: Vec3,
+    pub(crate) newest: Vec3,
     pub(crate) sensor_range: f64,
     search_radius: f64,
 }

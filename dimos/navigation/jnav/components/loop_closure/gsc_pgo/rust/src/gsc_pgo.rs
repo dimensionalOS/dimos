@@ -116,6 +116,8 @@ pub struct ClosureCandidateDiag {
     /// keyframes (closure_extended_icp_max_keyframes x (1 - (1 - pressure)(1 - target_overlap)), up to the next doubling step), and the separate places the scan matched as well as
     /// this target, counted only as far as the decision needed (0 when it was never counted).
     pub pressure: f64,
+    /// Pressure 2 when the search started (`LoopOverlap::unclosed_overlap_probability`).
+    pub pressure2: f64,
     /// The odometry noise when the search started, as ratios to the reported variances (xy, z, yaw, roll/pitch;
     /// `GscPgo::odometry_noise`).
     pub odometry_noise: [f64; 4],
@@ -204,6 +206,7 @@ impl ClosureCandidateDiag {
             scan_context_second: f32::NAN,
             lowe_ratio: f32::NAN,
             pressure: 0.0,
+            pressure2: 0.0,
             odometry_noise: [1.0; 4],
             odometry_noise_gate: [1.0; 4],
             innovation: [f64::NAN; 3],
@@ -1754,6 +1757,9 @@ impl GscPgo {
         diag.pressure = self
             .pressure
             .map_or(0.0, |(_, overlap)| overlap.unresolved_loop_probability);
+        diag.pressure2 = self
+            .pressure
+            .map_or(0.0, |(_, overlap)| overlap.unclosed_overlap_probability);
         diag.odometry_noise = self.odometry_noise();
         diag.odometry_noise_gate = self.odometry_noise_for_gate();
         // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
