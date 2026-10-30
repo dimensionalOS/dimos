@@ -192,9 +192,7 @@ class OpenVocabDetectionCatalog:
                 break
         return tuple(names)
 
-    def _detections_for(
-        self, image: Image, queries: Sequence[str]
-    ) -> ImageDetections2D[Any]:
+    def _detections_for(self, image: Image, queries: Sequence[str]) -> ImageDetections2D[Any]:
         cleaned = tuple(query.strip() for query in queries if query.strip())
         key = (str(getattr(image, "frame_id", "") or ""), float(image.ts), cleaned)
         if self._cache_key == key and self._cache is not None:
@@ -205,9 +203,7 @@ class OpenVocabDetectionCatalog:
             self._cache = empty
             return empty
 
-        boxes, rows = self._detector.query_score_rows(
-            image, list(cleaned), threshold=self._floor
-        )
+        boxes, rows = self._detector.query_score_rows(image, list(cleaned), threshold=self._floor)
         detections: list[Detection2DBBox] = []
         if rows.size:
             for j, name in enumerate(cleaned):
@@ -283,9 +279,7 @@ class LocalizeSightingCatalog:
     def stop(self) -> None:
         return
 
-    def _sightings_near(
-        self, image: Image, query: str | None = None
-    ) -> list[SightingView]:
+    def _sightings_near(self, image: Image, query: str | None = None) -> list[SightingView]:
         want = _normalize_name(query) if query is not None else None
         ts = float(image.ts)
         out: list[SightingView] = []
@@ -337,7 +331,5 @@ class TemplateDetectionAuthor:
     def __init__(self, catalog: NameCatalog) -> None:
         self._catalog = catalog
 
-    def propose(
-        self, image: Image, families: Sequence[FamilySpec]
-    ) -> Sequence[QuestionProposal]:
+    def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
         return proposals_from_detected_names(self._catalog.names_for(image), families)

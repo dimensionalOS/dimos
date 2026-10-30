@@ -347,8 +347,7 @@ def discover_object_names_vlm(
 
     queries = tuple(name for name, _ in counts.most_common(max_queries))
     logger.info(
-        f"localize VLM discovery: {len(frames)} frames → "
-        f"{len(queries)} queries {list(queries)}"
+        f"localize VLM discovery: {len(frames)} frames → {len(queries)} queries {list(queries)}"
     )
     return queries
 
@@ -421,8 +420,7 @@ def discover_object_names(
 
     queries = tuple(name for name, _ in counts.most_common(max_queries))
     logger.info(
-        f"localize discovery: {len(frames)} frames → "
-        f"{len(queries)} queries {list(queries)}"
+        f"localize discovery: {len(frames)} frames → {len(queries)} queries {list(queries)}"
     )
     return queries
 
@@ -470,7 +468,7 @@ def localize_window(
         def _warm() -> None:
             try:
                 warmup_detector(shared_detector)
-            except BaseException as exc:  # noqa: BLE001 — surface on join
+            except BaseException as exc:
                 warm_error.append(exc)
                 logger.exception("localize detector warmup failed")
 
