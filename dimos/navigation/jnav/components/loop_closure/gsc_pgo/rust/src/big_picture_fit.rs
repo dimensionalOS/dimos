@@ -1507,7 +1507,8 @@ fn levenberg_marquardt(
 
 /// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers the cost
 /// (whitened squared residuals) by less than `tolerance` of it plus one, the variance of one residual, so a cost near
-/// zero is done instead of shrinking forever, or no step lowers it at all. False if `steps` steps did not get there.
+/// zero is done instead of shrinking forever, or no step lowers it at all where the quadratic model expects no more
+/// than that either. False if `steps` steps did not get there, or it stalled short of a minimum.
 #[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt_steps(
     state: &mut State,
@@ -1549,7 +1550,7 @@ fn levenberg_marquardt_steps(
         );
         let filled = values.len();
         values.resize(filled + size, 0.0);
-        let mut stepped = false;
+        let (mut stepped, mut accepted, mut predicted) = (false, false, None);
         while damping < 1e12 {
             for (i, d) in diagonal.iter().enumerate() {
                 values[filled + i] = damping * (d + 1e-9);
@@ -1565,6 +1566,9 @@ fn levenberg_marquardt_steps(
             };
             let mut step = Mat::<f64>::from_fn(size, 1, |i, _| gradient[i]);
             llt.solve_in_place_with_conj(Conj::No, step.as_mut());
+            // the cost the quadratic model says the least damped step would remove, g^T step
+            predicted
+                .get_or_insert_with(|| (0..size).map(|i| gradient[i] * step[(i, 0)]).sum::<f64>());
             let mut trial = State {
                 rotation: state.rotation.clone(),
                 position: state.position.clone(),
@@ -1602,7 +1606,9 @@ fn levenberg_marquardt_steps(
                 sighting_weights,
             );
             if trial_cost.is_finite() && trial_cost <= current {
-                stepped = current - trial_cost > tolerance * (current + 1.0);
+                // a small drop says the minimum is near only from a step as undamped as the first one tried
+                stepped = current - trial_cost > tolerance * (current + 1.0) || damping > 1e-6;
+                accepted = true;
                 *state = trial;
                 current = trial_cost;
                 damping = (damping / 10.0).max(1e-9);
@@ -1611,7 +1617,8 @@ fn levenberg_marquardt_steps(
             damping *= 10.0;
         }
         if !stepped {
-            return true;
+            // no step lowering the cost is a minimum only if the model sees nothing left there either
+            return accepted || predicted.is_some_and(|p| p <= tolerance * (current + 1.0));
         }
     }
     false
