@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -32,10 +33,13 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
-requires_drake = pytest.mark.skipif(
-    not DRAKE_AVAILABLE,
-    reason="Drake planning-group tests require the manipulation extra",
-)
+
+def requires_drake(test: Callable[..., None]) -> Callable[..., None]:
+    # Drake ships with the planning extra, which only the self-hosted CI jobs install.
+    skip = pytest.mark.skipif(
+        not DRAKE_AVAILABLE, reason="Drake planning-group tests require the manipulation extra"
+    )
+    return pytest.mark.self_hosted(skip(test))
 
 
 def _trajectory(names: list[str], first: list[float], second: list[float]) -> JointTrajectory:
@@ -232,6 +236,8 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
             operation()
     world.finalize()
     assert world.add_obstacle(unnamed) is None
+    with pytest.raises(ValueError, match="touch_links"):
+        world.add_obstacle(replace(obstacle, touch_links=("link1",)))
     assert world.add_obstacle(obstacle) == "box"
     joint_state = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
     assert world.check_config_collision_free(joint_state)

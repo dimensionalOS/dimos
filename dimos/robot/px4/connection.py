@@ -827,7 +827,7 @@ class Px4DroneConnection(Module):
         return out
 
     @rpc
-    def sensor_stats(self) -> dict[str, Any]:
+    def get_sensor_stats(self) -> dict[str, Any]:
         """Per-message counters and ages, ack results, timebase quality, cmd_vel verdicts."""
         io = self._io
         out: dict[str, Any] = {} if io is None else io.stats()

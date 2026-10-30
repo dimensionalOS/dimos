@@ -32,7 +32,6 @@ from dimos.hardware.gimbal.siyi import gimbal as gimbal_module
 from dimos.hardware.gimbal.siyi.frame import (
     GimbalDeviceFlags,
     attitude_msg,
-    decode_flags,
     normalize_attitude,
 )
 from dimos.hardware.gimbal.siyi.gimbal import SiyiA8Gimbal
@@ -81,12 +80,6 @@ def test_bench_mount_negates_pitch_and_shifts_yaw() -> None:
     # Base-down on the bench the A8 reports roll 180 and yaw +180.
     _, pitch, yaw = normalize_attitude(_quat_wxyz(180.0, -20.0, -135.0), inverted=True)
     assert (pitch, yaw) == pytest.approx((20.0, 45.0))
-
-
-def test_decode_flags() -> None:
-    assert decode_flags(0) == "none"
-    flags = GimbalDeviceFlags.YAW_LOCK | GimbalDeviceFlags.YAW_IN_VEHICLE_FRAME
-    assert decode_flags(flags) == "YAW_LOCK|YAW_IN_VEHICLE_FRAME"
 
 
 def test_packet_roundtrip_and_crc() -> None:
@@ -153,7 +146,7 @@ def test_ports(gimbal: tuple[SiyiA8Gimbal, dict[str, list[Any]]]) -> None:
     g, _ = gimbal
     assert set(g.inputs) == {"gimbal_attitude", "target_los"}
     assert set(g.outputs) == {"tf", "camera_info", "gimbal_target"}
-    assert {"aim", "state"} <= set(g.rpcs)
+    assert "aim" in g.rpcs
 
 
 @pytest.mark.parametrize("field", ["tf_hz", "aim_hz", "zoom_poll_s"])
@@ -162,7 +155,7 @@ def test_rates_and_periods_must_be_positive(field: str) -> None:
         SiyiA8Gimbal(**{field: 0.0})
 
 
-def test_start_publishes_tf_and_polls_the_zoom_then_stop_ends_the_threads(
+def test_start_publishes_tf_and_polls_the_zoom_then_stop_ends_the_poll(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     camera = _FakeSdkCamera()
@@ -177,13 +170,13 @@ def test_start_publishes_tf_and_polls_the_zoom_then_stop_ends_the_threads(
         g.start()
         g._on_attitude(_attitude(time.time()))
         deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and not (published["tf"] and g.state()["zoom"]):
+        while time.monotonic() < deadline and not (published["tf"] and g._zoom):
             time.sleep(0.02)
     finally:
         g.stop()
         camera.close()
     assert published["tf"]
-    assert g.state()["zoom"] == 2.5
+    assert g._zoom == 2.5
     assert published["camera_info"] == []  # never while the zoom is unknown or 2.5x
     assert not [t for t in threading.enumerate() if t.name.startswith("siyi-")]
 
@@ -211,7 +204,7 @@ def test_tf_chain_follows_the_attitude(
 ) -> None:
     g, published = gimbal
     g._on_attitude(_attitude(1.0))
-    assert g.publish_transforms()
+    g.publish_transforms()
     (msg,) = published["tf"]
     edges = {(t.frame_id, t.child_frame_id): t for t in msg.transforms}
     assert set(edges) == {
@@ -231,18 +224,17 @@ def test_tf_chain_follows_the_attitude(
         -0.5,
         0.5,
     )
-    assert g.state()["flags"] == "YAW_LOCK|YAW_IN_VEHICLE_FRAME"
 
 
 def test_stale_attitude_publishes_nothing(
     gimbal: tuple[SiyiA8Gimbal, dict[str, list[Any]]],
 ) -> None:
     g, published = gimbal
-    assert not g.publish_transforms()
+    g.publish_transforms()
     g._on_attitude(_attitude(1.0))
     assert g._attitude is not None
     g._attitude.rx_mono -= 5.0  # older than attitude_max_age_s
-    assert not g.publish_transforms()
+    g.publish_transforms()
     assert published["tf"] == []
 
 
@@ -250,12 +242,12 @@ def test_camera_info_is_the_a8_main_stream_and_gated_by_zoom(
     gimbal: tuple[SiyiA8Gimbal, dict[str, list[Any]]],
 ) -> None:
     g, published = gimbal
-    assert g.publish_camera_info()
+    g.publish_camera_info()
     (info,) = published["camera_info"]
     assert (info.width, info.height, info.frame_id) == (1280, 720, "a8_optical")
     assert info.K[0] == pytest.approx(749.3, abs=0.1) and info.K[2] == pytest.approx(640.0)
     g._zoom = 2.0
-    assert not g.publish_camera_info()
+    g.publish_camera_info()
     assert len(published["camera_info"]) == 1
 
 
@@ -276,23 +268,18 @@ def test_zoom_gate_fails_closed() -> None:
     g.camera_info.publish = infos.append
     g._sdk = _ScriptedSdk([None, 1.0, None, 1.0, 2.5, None])  # type: ignore[assignment]
     g._stop_event.set()  # one poll per _zoom_loop call
+    published: list[int] = []
     try:
-        assert not g.publish_camera_info()  # polled, not read yet
-        g._zoom_loop()
-        assert not g.publish_camera_info()  # the first poll went unanswered
-        g._zoom_loop()
-        assert g.publish_camera_info()
-        g._zoom_loop()  # a lost reply: the camera may have zoomed since the 1x reading
-        assert g.state()["zoom"] is None and not g.publish_camera_info()
-        g._zoom_loop()
-        assert g.publish_camera_info()
-        g._zoom_loop()
-        assert not g.publish_camera_info()
-        g._zoom_loop()  # a lost reply does not reopen the gate
-        assert not g.publish_camera_info()
+        g.publish_camera_info()  # polled, not read yet
+        # Unanswered, 1x, a lost reply (the camera may have zoomed since), 1x, 2.5x, and a
+        # lost reply, which does not reopen the gate.
+        for _ in range(6):
+            g._zoom_loop()
+            g.publish_camera_info()
+            published.append(len(infos))
     finally:
         g.stop()
-    assert len(infos) == 2
+    assert published == [0, 1, 1, 2, 2, 2]
 
 
 def test_aim_from_line_of_sight_is_clamped_and_rate_limited(

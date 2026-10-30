@@ -355,7 +355,7 @@ class TestDocLinking:
 
     def test_doc_link_relative_mode(self, file_index, doc_index):
         """Should generate relative paths for doc links."""
-        content = "See [Blueprints](.md)"
+        content = "See [Modules](.md)"
         doc_path = REPO_ROOT / "docs/usage/test.md"
 
         new_content, _changes, errors = process_markdown(
@@ -371,7 +371,7 @@ class TestDocLinking:
 
         assert len(errors) == 0
         # Should be relative path from docs/usage/ to target doc
-        assert "[Blueprints](blueprints.md)" in new_content
+        assert "[Modules](modules.md)" in new_content
 
     def test_doc_not_found_error(self, file_index, doc_index):
         """Should error when doc doesn't exist."""

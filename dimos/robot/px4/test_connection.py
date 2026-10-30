@@ -96,7 +96,7 @@ _REQUIRED_RPCS = {
     "estop_land",
     "estop_clear",
     "status",
-    "sensor_stats",
+    "get_sensor_stats",
     "sitl_enable",
 }
 

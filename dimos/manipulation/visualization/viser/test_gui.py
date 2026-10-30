@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Barrier, Lock
 import time
@@ -807,3 +807,64 @@ def test_execute_rejection_reports_coordinator_reason(executable_gui, module_fac
         status="REJECTED",
         reason=reason,
     )
+
+
+@pytest.mark.parametrize(
+    ("lower", "expected_positions", "expected_error"),
+    [
+        (-1.0, [0.0, 0.0], ""),
+        (
+            0.1,
+            [0.5, 0.5],
+            "Cannot apply Zero preset: Joint 'left/j2' position 0.0 is outside [0.1, 1.0]",
+        ),
+    ],
+    ids=["valid-zero", "out-of-range-zero"],
+)
+def test_zero_preset_validates_selected_targets_without_motion(
+    executable_gui, mocker, lower, expected_positions, expected_error
+):
+    gui, operations, execute = executable_gui
+    left = planning_group("left_arm", ("left/j1", "left/j2"))
+    right = planning_group("right_arm", ("right/j1",))
+    names = ["left/j1", "left/j2", "right/j1", "gripper"]
+    gui.scene_info = replace(
+        gui.scene_info,
+        model=replace(
+            gui.scene_info.model,
+            config=gui.get_model_config().model_copy(update={"joint_names": names}),
+            joint_space=JointSpace(
+                tuple(
+                    JointCoordinate(
+                        name,
+                        "revolute",
+                        CoordinateTopology.INTERVAL,
+                        lower if name == "left/j2" else -1.0,
+                        1.0,
+                        1.0,
+                        1.0,
+                    )
+                    for name in names
+                )
+            ),
+        ),
+        planning_groups=(left, right),
+    )
+    gui.state.selected_group_ids = (left.id,)
+    gui._joint_sliders = {(left.id, name): FakeNumericHandle(0.5) for name in left.joint_names}
+    gui.state.group_joint_targets = gui._target_set_from_sliders()
+    gui._refresh_target_joints_from_groups()
+    dropdown = mocker.Mock(spec=["options"], options=())
+    gui._handles["preset"] = dropdown
+    mocker.patch.object(gui._worker, "submit")
+
+    gui._sync_preset_dropdown()
+    gui._apply_preset("Zero")
+
+    assert "Zero" in dropdown.options
+    assert gui.state.target_joints.name == ["left/j1", "left/j2"]
+    assert gui.state.target_joints.position == expected_positions
+    assert [handle.value for handle in gui._joint_sliders.values()] == expected_positions
+    assert gui.state.error == expected_error
+    assert operations == []
+    execute.assert_not_called()

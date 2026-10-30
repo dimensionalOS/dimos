@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 import webbrowser
 
 from dimos_lcm.std_msgs import Bool
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.utils.data import get_data
@@ -55,6 +56,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.spec import RerunBridgeSpec
 from dimos.web.websocket_vis.optimized_costmap import OptimizedCostmapEncoder
 
 if TYPE_CHECKING:
@@ -68,6 +70,14 @@ _browser_opened = False
 
 
 class WebsocketConfig(ModuleConfig):
+    open_browser: bool | None = Field(
+        default=None,
+        description="Open the command center; by default follows the Rerun bridge's web/both mode.",
+    )
+    show_rerun_dashboard: bool | None = Field(
+        default=None,
+        description="Embed Rerun; by default follows the Rerun bridge's web/both mode.",
+    )
     port: int = 7779
 
 
@@ -91,6 +101,7 @@ class WebsocketVisModule(Module):
     """
 
     config: WebsocketConfig
+    _rerun_bridge: RerunBridgeSpec | None = None
 
     # LCM inputs
     odom: In[PoseStamped]
@@ -111,7 +122,6 @@ class WebsocketVisModule(Module):
 
         Args:
             port: Port to run the web server on
-            cfg: Optional global config for viewer settings
         """
         super().__init__(**kwargs)
         self._uvicorn_server_thread: threading.Thread | None = None
@@ -149,6 +159,7 @@ class WebsocketVisModule(Module):
     def start(self) -> None:
         super().start()
 
+        self._resolve_viewer_settings()
         self._create_server()
         assert self._uvicorn_server is not None
 
@@ -157,8 +168,8 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._uvicorn_server.run, daemon=True)
         self._uvicorn_server_thread.start()
 
-        # Only auto-open when the user chose web-based viewing.
-        if self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both"):
+        # Open the dashboard when requested by this module's configuration.
+        if self.config.open_browser:
             url = f"http://localhost:{self.config.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
@@ -194,6 +205,15 @@ class WebsocketVisModule(Module):
             self.register_disposable(Disposable(unsub))
         except Exception:
             ...
+
+    def _resolve_viewer_settings(self) -> None:
+        if self.config.open_browser is not None and self.config.show_rerun_dashboard is not None:
+            return
+        open_web = self._rerun_bridge is not None and self._rerun_bridge.opens_web_viewer()
+        if self.config.open_browser is None:
+            self.config.open_browser = open_web
+        if self.config.show_rerun_dashboard is None:
+            self.config.show_rerun_dashboard = open_web
 
     @rpc
     def stop(self) -> None:
@@ -241,9 +261,7 @@ class WebsocketVisModule(Module):
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
-            if not (
-                self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both")
-            ):
+            if not self.config.show_rerun_dashboard:
                 return RedirectResponse(url="/command-center")
             return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 

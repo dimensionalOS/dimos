@@ -36,12 +36,14 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
+from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
 class G1SimConfig(ModuleConfig):
+    mujoco: MujocoConfig = Field(default_factory=MujocoConfig)
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
@@ -59,7 +61,9 @@ class G1SimConnection(G1ConnectionBase):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
-        self.connection = MujocoConnection(self.config.g)
+        self.connection = MujocoConnection(
+            self.config.mujoco, robot_model=self.config.g.robot_model
+        )
 
     @rpc
     def start(self) -> None:

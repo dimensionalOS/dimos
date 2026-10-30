@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Coupled WebXR teleoperation for the complete Dual OpenYAM entity."""
+"""WebXR teleoperation for Dual OpenYAM, with each arm engaged by its own controller."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -26,11 +26,12 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     dual_openyam_trajectory_task,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_SIDES,
+    dual_openyam_arm_joints,
     dual_openyam_hardware,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.joints import (
-    DUAL_OPENYAM_ARM_JOINTS,
     DUAL_OPENYAM_GRIPPER_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
@@ -51,31 +52,25 @@ _dual_openyam_webxr_pink = PinkKinematicsConfig(
 )
 _dual_openyam_webxr_hardware = dual_openyam_hardware()
 _dual_openyam_webxr_model = dual_openyam_model_config()
-_dual_openyam_webxr_task = teleop_ik_task(
-    _dual_openyam_webxr_hardware,
-    robot_model=_dual_openyam_webxr_model,
-    name=DUAL_OPENYAM_WEBXR_TASK_NAME,
-    joint_names=DUAL_OPENYAM_ARM_JOINTS,
-    priority=20,
-    solver_type=DualOpenYamPinkPoseTargetSolver,
-    bindings=[
-        {
-            "hand": "left",
-            "target_frame": "left_grasp_frame",
+_dual_openyam_webxr_tasks = {
+    side: teleop_ik_task(
+        _dual_openyam_webxr_hardware,
+        robot_model=_dual_openyam_webxr_model,
+        name=f"{DUAL_OPENYAM_WEBXR_TASK_NAME}_{side}",
+        joint_names=dual_openyam_arm_joints(side),
+        priority=20,
+        solver_type=DualOpenYamPinkPoseTargetSolver,
+        bindings=[{"hand": side, "target_frame": f"{side}_grasp_frame"}],
+        params={
+            "pink": _dual_openyam_webxr_pink,
+            "timeout": 0.5,
+            "max_command_tracking_error_deg": 10.0,
+            "max_joint_velocity_rad_s": 2.0,
+            "joint_command_filter_cutoff_hz": 30.0,
         },
-        {
-            "hand": "right",
-            "target_frame": "right_grasp_frame",
-        },
-    ],
-    params={
-        "pink": _dual_openyam_webxr_pink,
-        "timeout": 0.5,
-        "max_command_tracking_error_deg": 10.0,
-        "max_joint_velocity_rad_s": 2.0,
-        "joint_command_filter_cutoff_hz": 30.0,
-    },
-)
+    )
+    for side in DUAL_OPENYAM_SIDES
+}
 
 
 def build_dual_openyam_webxr(
@@ -83,11 +78,11 @@ def build_dual_openyam_webxr(
 ) -> Blueprint:
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
-        ArmTeleopModule.blueprint(),
+        ArmTeleopModule.blueprint(zero_button="B"),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
-                _dual_openyam_webxr_task,
+                *_dual_openyam_webxr_tasks.values(),
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",

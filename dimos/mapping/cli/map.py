@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 import math
 from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
@@ -156,6 +156,20 @@ def _accumulate(
     return result.data if result is not None else None
 
 
+def _world_frames(
+    obs_iter: Iterable[Observation[PointCloud2]],
+    register: Callable[[Observation[Any]], Transform | None] | None,
+) -> Iterator[tuple[PointCloud2, Any]]:
+    """Each frame lifted into the world frame and stamped with its observation time, with its pose."""
+    for obs in obs_iter:
+        tf = register(obs) if register is not None else None
+        if register is not None and tf is None:
+            continue
+        cloud = obs.data if tf is None else obs.data.transform(tf)
+        cloud.ts = obs.ts
+        yield cloud, obs.pose
+
+
 def _denoise(cloud: PointCloud2 | None) -> PointCloud2 | None:
     """Statistical outlier removal via o3d; drops sparse floaters, keeps colors."""
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -247,7 +261,7 @@ def _log_reconstruction(
             (d.data.orientation.x, d.data.orientation.y, d.data.orientation.z, d.data.orientation.w)
             for d in marker_dets
         ]
-        # One entry per tracked marker session — color stable per track_id.
+        # One entry per tracked marker session, color stable per track_id.
         colors = [
             Color.from_cmap("tab10", (d.data.track_id % 10) / 10.0).rgb_u8() for d in marker_dets
         ]
@@ -328,7 +342,12 @@ def main(
     export: bool = typer.Option(
         False,
         "--export",
-        help="Export PGO map to ./<dataset>.pc2.lcm in cwd (implies --pgo)",
+        help="Export the keyframe pose graph to ./<dataset>.map.db in cwd (unitree-go2 --map-file)",
+    ),
+    export_pc2: bool = typer.Option(
+        False,
+        "--export-pc2",
+        help="Export the PGO map to ./<dataset>.pc2.lcm in cwd, for the Mid-360 stack (implies --pgo)",
     ),
     full_pgo: bool = typer.Option(
         False,
@@ -426,7 +445,8 @@ def main(
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.navigation.go2.loop_closure.pgo import PGO
+    from dimos.navigation.go2.loop_closure.pgo import PGO, PGOKwargs
+    from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
     from dimos.visualization.rerun.init import rerun_init
@@ -435,7 +455,7 @@ def main(
     store = open_store(db_path)
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
-    if export or full_pgo:
+    if export_pc2 or full_pgo:
         pgo = True
 
     lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
@@ -447,7 +467,7 @@ def main(
     # Register clouds into the world frame via the dataset's tf stream. Clouds
     # already stamped with the world frame pass through verbatim; sensor-frame
     # clouds with no tf lookup are dropped. Stored per-frame poses are never
-    # used for registration — only as trajectory metadata (dedup/path) when
+    # used for registration, only as trajectory metadata (dedup/path) when
     # the tf stream can't provide a position.
     from dimos.memory.tf import StreamTF
 
@@ -476,7 +496,7 @@ def main(
     register: Callable[[Observation[Any]], Transform | None] | None = None
     if first_obs is not None and cloud_frame is not None and cloud_frame != world:
         # Fail fast when registration is impossible: probe the first cloud's
-        # timestamp (unbounded tolerance — "possible at all", not "in range").
+        # timestamp (unbounded tolerance: "possible at all", not "in range").
         probe = (
             tf_buf.get(world, cloud_frame, time_point=first_obs.ts) if tf_buf is not None else None
         )
@@ -506,8 +526,7 @@ def main(
                 return None
             return (tf.translation.x, tf.translation.y, tf.translation.z)
         pose = obs.pose
-        # Reject placeholder poses: zero translation OR uninitialized rotation.
-        # Same condition as pgo_keyframes so dedup and PGO see the same frames.
+        # placeholder poses, skipped as `PGO` skips them
         if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
             return (pose.position.x, pose.position.y, pose.position.z)
         return None
@@ -550,7 +569,9 @@ def main(
     if pgo:
         print("running PGO twopass map...")
         with progress(total, "pgo pass 1 (optimizing)") as bar:
-            graph = lidar.tap(bar).transform(PGO()).last().data
+            # keyframe like the live mapper, so a premap and a live run are one kind of graph
+            live = cast("PGOKwargs", LIVE_PGO.model_dump())
+            graph = lidar.tap(bar).transform(PGO(**live)).last().data
 
         pgo_path = [
             (kf.optimized.translation.x, kf.optimized.translation.y, kf.optimized.translation.z)
@@ -642,7 +663,7 @@ def main(
                 )
             all_dets = pipeline.transform(xf).to_list()
         if marker_smoothing > 0:
-            # Keep only the latest emission per track_id — that's the most
+            # Keep only the latest emission per track_id, the most
             # averaged pose, drawn once per tracked marker session.
             by_track: dict[int, Observation[Any]] = {}
             for d in all_dets:
@@ -676,7 +697,7 @@ def main(
     else:
         subprocess.Popen(["rerun", str(out)])
 
-    if export and pgo_map is not None:
+    if export_pc2 and pgo_map is not None:
         out_path = Path.cwd() / f"{db_path.stem}.pc2.lcm"
         print(f"exporting PGO twopass map to {out_path}...")
         out_path.write_bytes(pgo_map.lcm_encode())
@@ -685,6 +706,25 @@ def main(
         print("load back with:")
         print("    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2")
         print(f'    pcd = PointCloud2.lcm_decode(open("{out_path.name}", "rb").read())')
+
+    if export:
+        from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
+        from dimos.navigation.go2.loop_closure.premap import MAP_SUFFIX
+
+        map_path = Path.cwd() / f"{db_path.stem}{MAP_SUFFIX}"
+        print(f"exporting PGO graph to {map_path}...")
+        # the live mapper over every frame, so a map built here is one the robot would build
+        world_map = PGOMap(voxel_size=voxel)
+        with progress(total, "pgo graph (keyframes)") as bar:
+            for cloud, pose in _world_frames(lidar.tap(bar), register):
+                world_map.add(cloud, pose)
+        premap = world_map.joint_premap()
+        world_map.dispose()
+        if premap is None:
+            print("no keyframes, no graph written")
+        else:
+            premap.save(map_path)
+            print(f"wrote {map_path} ({len(premap)} keyframes, {len(premap.edges)} edges)")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from langchain_core.messages import (
 )
 import pytest
 
+from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.web.codecs import resolve_encoder
 from dimos.web.relay_bridge.chat_codec import _CHAT_TEXT_MAX_CHARS, chat_lines, encode_chat
 
@@ -64,6 +65,13 @@ _TS = 1752576000.5
             HumanMessage(content=[{"type": "text", "text": "artefact"}, _IMAGE]),
             [{"role": "human", "text": "artefact"}],
         ),
+        (
+            HumanMessage(
+                content=[{"type": "text", "text": "artefact"}, _IMAGE],
+                additional_kwargs={TOOL_ORIGIN_KEY: "observe"},
+            ),
+            [{"role": "tool", "tool": "observe", "text": "artefact"}],
+        ),
         (ChatMessage("hm", role="critic"), [{"role": "chat", "text": "hm"}]),
     ],
     ids=[
@@ -77,6 +85,7 @@ _TS = 1752576000.5
         "tool_unnamed",
         "system",
         "multimodal",
+        "tool_artefact",
         "unknown_kind",
     ],
 )

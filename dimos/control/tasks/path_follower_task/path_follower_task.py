@@ -147,7 +147,9 @@ class PathFollowerTask(BaseControlTask):
         self._joint_names_list = list(config.joint_names)
         self._joint_names = frozenset(config.joint_names)
 
-        self._controller = PController(global_config, config.speed, config.control_frequency)
+        self._controller = PController(
+            bool(global_config.simulation), config.speed, config.control_frequency
+        )
         # Override the class-level _k_angular for this instance only.
         self._controller._k_angular = config.k_angular
         self._pid: VelocityTrackingPID | None = (

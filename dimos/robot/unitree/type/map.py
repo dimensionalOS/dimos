@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
 
 class MapConfig(ModuleConfig):
+    global_costmap_from_occupancy: Path | None = None
+    global_map_from_pointcloud: Path | None = None
     voxel_size: float = 0.05
     cost_resolution: float = 0.05
     global_publish_interval: float | None = None
@@ -58,7 +60,9 @@ class Map(Module):
         self.global_publish_interval = self.config.global_publish_interval
         self.min_height = self.config.min_height
         self.max_height = self.config.max_height
-        self._point_cloud_accumulator = GeneralPointCloudAccumulator(self.voxel_size, self.config.g)
+        self._point_cloud_accumulator = GeneralPointCloudAccumulator(
+            self.voxel_size, self.config.global_map_from_pointcloud
+        )
 
         if self.config.g.simulation:
             self.min_height = 0.3
@@ -103,9 +107,9 @@ class Map(Module):
         )
 
         # When debugging occupancy navigation, load a predefined occupancy grid.
-        if self.config.g.mujoco_global_costmap_from_occupancy:
+        if self.config.global_costmap_from_occupancy:
             if self._preloaded_occupancy is None:
-                path = Path(self.config.g.mujoco_global_costmap_from_occupancy)
+                path = Path(self.config.global_costmap_from_occupancy)
                 self._preloaded_occupancy = OccupancyGrid.from_path(path)
             occupancygrid = self._preloaded_occupancy
 

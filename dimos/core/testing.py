@@ -69,7 +69,6 @@ class MockRobotClient(Module):
                 if self._stop_event.is_set():
                     return
                 print(odom)
-                odom.pubtime = time.perf_counter()
                 self.odometry.publish(odom)
 
                 lidarmsg = next(lidariter)
