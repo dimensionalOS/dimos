@@ -8,11 +8,10 @@ The Go2 navigation stack uses a simple **column-carving voxel map** strategy: ea
 
 | Workflow                    | When to use                                                            | Blueprint                    | Docs                                                               |
 |-----------------------------|------------------------------------------------------------------------|------------------------------|--------------------------------------------------------------------|
-| **Live mapping**            | Explore a new space where the map updates every frame                  | `unitree-go2`                | [Navigation deep dive](/docs/capabilities/navigation/deep_dive.md) |
-| **Premap + relocalization** | Return to a known space and plan on a loop-closed map                  | `unitree-go2-relocalization` | [Relocalization](/docs/capabilities/navigation/relocalization.md)  |
-| **Live loop closure**       | Map a space with revisits and correct drift while driving              | `unitree-go2-pgo`            |                                                                    |
+| **Live mapping**            | Explore a new space, closing loops live to correct drift               | `unitree-go2`                | [Navigation deep dive](/docs/capabilities/navigation/deep_dive.md) |
+| **Permanent map**           | Return to a known space, relocalize and keep the map up to date        | `unitree-go2-map`            | [Go2 mapping and relocalization](/docs/capabilities/navigation/go2/index.md) |
 
-Live column-carving maps are fast and reactive, but odometry drifts over long distances. `unitree-go2-pgo` closes loops live with pose-graph optimization (PGO). For spaces you return to across sessions, record once, run PGO offline, then relocalize against the exported premap at runtime.
+`unitree-go2` closes loops live with pose-graph optimization (PGO). `unitree-go2-map` also keeps a map across runs, relocalizing against it and saving what it learns.
 
 For hardware setup, simulation, and the full blueprint list, see the [Go2 platform guide](/docs/platforms/quadruped/go2/index.md).
 

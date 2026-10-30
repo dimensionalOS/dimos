@@ -310,6 +310,8 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
+      - name: Check declared dependencies
+        run: uv run --no-sync deptry dimos --config pyproject.toml --github-output
       - name: Mypy
         run: uv run mypy
 
@@ -322,12 +324,14 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
 
       - name: Run pre-commit
         env:
           # fmt is checked in the rust job, lint in cachix-build
-          SKIP: cargo-fmt,native-module-lint
+          # Fork PRs are exempt from the branch naming convention.
+          SKIP: >-
+            cargo-fmt,native-module-lint${{ github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name != github.repository && ',branch-name' || '' }}
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: --all-files --verbose
@@ -393,6 +397,49 @@ jobs:
             target
             !target/debug/incremental
           key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+
+  isolated-python-tests:
+    # Keep each published check name stable as more isolated projects are added.
+    name: ${{ matrix.check_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check_name: isolated-lerobot-tests
+            project: native/python/lerobot
+            tests: [dimos_lerobot]
+            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg]
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Unlike root jobs, uv run must provision the locked isolated project.
+      UV_NO_SYNC: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Install project system dependencies
+        env:
+          SYSTEM_PACKAGES: ${{ toJSON(matrix.system_packages) }}
+        run: |
+          mapfile -t packages < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["SYSTEM_PACKAGES"])))')
+          sudo apt-get update
+          sudo apt-get install -y "${packages[@]}"
+      - name: Test isolated Python project
+        working-directory: ${{ matrix.project }}
+        env:
+          TEST_PATHS: ${{ toJSON(matrix.tests) }}
+        run: |
+          mapfile -t tests < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["TEST_PATHS"])))')
+          env -u VIRTUAL_ENV -u UV_PYTHON -u UV_PROJECT_ENVIRONMENT \
+            uv run --frozen --group tests --with-editable "$GITHUB_WORKSPACE" pytest "${tests[@]}"
+
 
   # The PyO3 extensions, the one rust artefact nix does not build: pytest imports them, so they must
   # match uv's interpreter. They are abi3, so one Python per OS covers every version.
@@ -580,10 +627,10 @@ jobs:
         uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
-      - name: Install native dependencies (pyaudio build, JPEG encoding, audio decode)
+      - name: Install native dependencies (pyaudio build, JPEG encoding)
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
@@ -605,6 +652,41 @@ jobs:
 
       - name: Relay image build  # docker/relay/Dockerfile must not rot silently
         run: docker build -f docker/relay/Dockerfile .
+
+  agent:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    defaults:
+      run:
+        working-directory: dimos/agents
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: dimos/agents/package-lock.json
+
+      - name: Check dependency release ages
+        run: node check-dependency-age.mjs
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
 
   tests:
     if: |
@@ -651,20 +733,21 @@ jobs:
       - name: Extract Deno version
         id: deno-version
         run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+      # No setup-deno cache here: its post step fails when DENO_DIR does not exist,
+      # and nothing creates it until the relay tests first run deno.
       - name: Install Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
-      # pyaudio needs portaudio; relay/audio tests need TurboJPEG and ffmpeg.
+      # pyaudio needs portaudio; relay tests need TurboJPEG.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
-        run: brew install portaudio ffmpeg
+        run: brew install portaudio
       - name: Configure LCM networking (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
@@ -768,7 +851,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      TYPESAFENAVIGATIONAGENT__API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
       # See the `tests` job for why this is set.
       PYTHONFAULTHANDLER: "1"
     timeout-minutes: 45
@@ -847,9 +930,19 @@ jobs:
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
-          brew install ffmpeg
           uv sync --group tests-self-hosted --group browser-tests --frozen
           uv run playwright install chromium firefox
+      - name: Install Node 24 for the Pi and dimcode CLIs
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install the Pi and dimcode CLIs
+        # The agent eval tests (dimos/evals/agents) drive both. Installed outside
+        # the workspace: the no_dimos evals drop PATH entries with a "dimos" path
+        # component, and the CLIs must survive that.
+        run: |
+          bin/install-test-clis "$RUNNER_TEMP/test-clis"
+          echo "$RUNNER_TEMP/test-clis/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment
@@ -948,6 +1041,14 @@ jobs:
                 sudo ln -sfn "$p" "/nix/var/nix/gcroots/dimos-native/$(basename "$p")"
               done
           fi
+      - name: Kill processes left over from earlier jobs (macOS)
+        # Not needed on Linux, as it uses a fresh container on every run.
+        if: matrix.os == 'macOS'
+        run: |
+          pgrep -fl "$GITHUB_WORKSPACE/" || exit 0
+          pkill -f "$GITHUB_WORKSPACE/" || true
+          for _ in $(seq 30); do pgrep -qf "$GITHUB_WORKSPACE/" || exit 0; sleep 0.1; done
+          pkill -KILL -f "$GITHUB_WORKSPACE/" || true
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
@@ -1028,7 +1129,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      TYPESAFENAVIGATIONAGENT__API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
       DIMSIM_RENDER: gpu
       # See the `tests` job for why this is set.
       PYTHONFAULTHANDLER: "1"
@@ -1349,8 +1450,10 @@ jobs:
     - lint
     - rust
     - pyo3
+    - isolated-python-tests
     - md-babel
     - web
+    - agent
     - tests
     - self-hosted-tests
     - benchmark-track

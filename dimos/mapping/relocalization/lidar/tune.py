@@ -15,21 +15,13 @@
 
 """Does relocalization find its place in a prior map, how well, and how fast?
 
-Give it a recording and a premap built from the same world, and it probes:
-accumulate a few lidar scans from one moment of the walk, relocalize that
-little cloud against the premap, and check where it landed. See tune.md
-for the tuning workflow.
+Each probe accumulates a few lidar scans from one moment of a recording,
+relocalizes that cloud against a premap, and checks where it landed. See
+tune.md for the tuning workflow.
 
-The recording and the premap must share a coordinate frame - the usual way
-being one recording, its premap assembled from a different stretch of it.
-Ground truth is then the identity, and the error is how far the recovered
-transform sits from it. Nothing else has to be labelled.
-
-Probes are placed only where the premap actually covers the walk. A loop
-walk revisits little of its route, so a probe from an uncovered stretch has
-no right answer at all, and scoring it caps the eval below what any
-configuration can reach. ``--from/--to`` narrows the search further when
-you already know which stretch built the premap.
+The recording and premap share a coordinate frame, so ground truth is the
+identity. Probes the premap does not cover are the negatives: the right
+answer for them is a refusal. ``--from/--to`` bound where probes are drawn.
 """
 
 from __future__ import annotations
@@ -65,55 +57,25 @@ SPACE = 13
 # Every study lands here; browse with `uvx optuna-dashboard sqlite:///optuna.db`.
 STORAGE = "sqlite:///optuna.db"
 
-# Ground truth, and the only thing that decides whether a fix is right: a
-# probe within this of identity found its place in the map. Real failures
-# are nothing like marginal - they land tens of meters out - so this splits
-# two far-apart populations rather than cutting a continuum.
+# A fix within this of identity is right.
 TOLERANCE_M = 0.5
 TOLERANCE_DEG = 2.0
 
-# Scored when a config never lands a correct fix, so the accuracy objective
-# still has a number optuna can rank. Any real miss is tens of meters.
+# Error scored when a config never lands a correct fix.
 NO_FIX_M = 1e3
 
-# Seconds reserved after the last probe start, so every probe can gather its
-# scans without running past the window. Fixed rather than derived from the
-# frame count, so probes sit at the same places whatever `frames` a trial
-# picks - otherwise trials would be scored on subtly different questions.
+# Seconds reserved after the last probe start; fixed so probe starts do not depend on frame count.
 PROBE_RESERVE_S = 5.0
-
-# A robot does not get one guess. It keeps listening while it thinks, so a
-# failed match is not wasted time - the scans that arrived during it are the
-# next attempt's evidence. Retries therefore need no schedule: the frame
-# count for attempt N is simply everything the lidar has delivered by then,
-# which makes each failure cost the wall clock it actually costs and no
-# more. Where the window starts and ends is `config.min_frames` /
-# `config.max_frames`, because how many sweeps it takes to recognise a place
-# is a fact about the sensor, not about this eval.
-#
-# The price is that every attempt is another chance to accept something
-# wrong, so this needs a stricter cutoff than a single shot would. That is
-# what the false-fix rate over the unmatchable probes is here to measure.
 
 # A local-map point this close to a premap point counts as covered.
 COVERAGE_TOL_M = 0.5
-# Frame count at which coverage is always measured, whatever a trial is
-# using. Whether the premap holds a place has to be a fact about the place,
-# not about how long that trial happened to accumulate: a longer window
-# spans more ground and so drops below MIN_COVERAGE sooner near the edge of
-# the map, which would tie the hit rate's denominator to the very knob the
-# search is trying to judge.
+# Coverage is always measured at this frame count, independent of the trial's window.
 COVERAGE_FRAMES = 10
-# Below this share of the local map present in the premap, the premap does
-# not contain this place. Such a probe is not excluded - it is the negative
-# half of the test. The only right answer for it is a refusal, and accepting
-# it anyway is the failure that matters most, because the module publishes
-# what it accepts and everything downstream believes the TF.
+# Below this covered share the premap does not hold the place; the probe must be refused.
 MIN_COVERAGE = 0.8
 
 
-# Outcome to the colour it prints in. A false fix is the one that matters, so
-# it is the one that shouts.
+# Outcome to the colour it prints in.
 OUTCOME_STYLE = {
     "hit": "green",
     "missed": "yellow",
@@ -123,12 +85,7 @@ OUTCOME_STYLE = {
 
 
 def _table(title: str, *columns: str) -> Table:
-    """A right-aligned table; a column name prefixed with ``<`` aligns left.
-
-    Headers are kept short on purpose: these tables run to ten columns and
-    get read in a half-width terminal, where rich would otherwise truncate
-    cells to `st…` and `NOT in …`.
-    """
+    """A right-aligned table; a column name prefixed with ``<`` aligns left."""
     from rich.table import Table
 
     table = Table(title=title, title_justify="left", title_style="bold", header_style="bold cyan")
@@ -171,13 +128,7 @@ PROBE_COLUMNS = (
 
 
 class Dataset(NamedTuple):
-    """A recording, a premap of the same world, and where they overlap.
-
-    ``window`` bounds the stretch of the recording probes may be drawn
-    from. Leave it ``None`` to search the whole recording and let coverage
-    decide; set it when you know which stretch built the premap and want
-    the rest excluded outright.
-    """
+    """A recording, a premap of the same world, and the stretch (s) probes may come from."""
 
     recording: str
     premap: str
@@ -186,16 +137,11 @@ class Dataset(NamedTuple):
 
 
 DATASETS = {
-    # ~780 s loop walk; its premap was assembled from the scans after 400 s,
-    # so probes come from before that.
+    # ~780 s loop walk; premap built from the scans after 400 s.
     "go2-sf-area1": Dataset(
         recording="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.db",
         premap="recording_go2_mid360_2026-05-29_4-45pm-PST_corrected.pc2.lcm",
-        # Runs the full stretch before the premap's own scans: 0-250 s is
-        # ground the loop revisits after 400 s and the premap therefore
-        # holds, while 250-400 s is a one-time excursion it never saw.
-        # Probes land in both, so every run carries places that must be
-        # found and - about a third of them - places that must be refused.
+        # 0-250 s is revisited after 400 s (in the premap), 250-400 s is not.
         window=(0.0, 400.0),
     ),
 }
@@ -211,38 +157,23 @@ class Probe(NamedTuple):
     translation_m: float
     rotation_deg: float
     tilt_deg: float
-    # How far the recovered transform actually moved the cloud. Rotation and
-    # translation do not add up to a distance on their own - a small angle
-    # about a far-off center displaces a cloud further than a big one about
-    # its middle - so this is the honest "how wrong was it" in meters.
+    # Median distance the recovered transform moved the cloud's points (m)
     displacement_m: float
-    # Median point-to-premap distance with the cloud at the truth pose, and
-    # where the aligner put it. Aligned fitting *better* than truth means
-    # the recording's own poses drifted, not that relocalization missed.
+    # Median point-to-premap distance at the truth pose and at the aligned pose (m)
     fit_truth_m: float
     fit_aligned_m: float
     fitness: float
     rmse: float
-    # Frames the ladder had reached when it stopped, and how many attempts
-    # that took. `accepted` is False when it climbed the whole ladder without
-    # a fix clearing the cutoff - a refusal, not a failure to run.
+    # Frames at the last attempt, attempt count, and whether a fix cleared the cutoff
     frames_used: int
     attempts: int
     accepted: bool
-    # Seconds of scans gathered plus seconds spent matching them: the whole
-    # wait for a fix, which is what the frame count actually trades against.
+    # Whole wait for a fix: scan gathering plus matching (s)
     latency_s: float
-    # Wall-clock seconds actually spent matching, with the waiting for scans
-    # taken out. The gap between this and `latency_s` is how much of the wait
-    # was gathering evidence rather than computing on it.
+    # Wall-clock seconds spent matching
     wall_s: float
-    # CPU seconds across every thread, as `time` reports user+sys. Open3D
-    # threads its FPFH and RANSAC, so this runs several times the wall clock
-    # and by a ratio that is not constant - wall time alone cannot stand in
-    # for it. It is the honest price on a robot sharing its cores with
-    # everything else.
+    # Process CPU seconds spent matching, across all threads
     cpu_s: float
-    # Best minus runner-up fitness across RANSAC restarts; 0 with one restart.
     cloud: PointCloud2
     transform: np.ndarray
 
@@ -258,13 +189,7 @@ class Probe(NamedTuple):
 
     @property
     def outcome(self) -> str:
-        """What this probe proves, once the ladder has stopped.
-
-        ``hit`` and ``refused`` are the two right answers - one for a place
-        the premap holds, one for a place it does not. ``FALSE FIX`` is the
-        dangerous outcome: a transform the module would publish that puts
-        the robot somewhere it is not. ``missed`` merely wastes the attempt.
-        """
+        """``hit`` / ``refused`` are right, ``missed`` is a wasted attempt, ``FALSE FIX`` is a wrong published TF."""
         if not self.accepted:
             return "refused" if not self.answerable else "missed"
         if self.answerable and self.placed:
@@ -314,9 +239,7 @@ def accumulate(
 ) -> PointCloud2:
     """``n_frames`` lidar scans from ``start`` s in, ray-traced into one world cloud.
 
-    ``fastlio_lidar`` clouds arrive already registered into the world frame,
-    so each observation's own pose is only the sensor origin the raycast
-    clears from - there is no tf tree to walk and no odom to join against.
+    Clouds are already in the world frame; each observation's pose is the ray origin.
     ``stop`` bounds the window in seconds from the recording's first scan.
     """
     from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
@@ -329,8 +252,7 @@ def accumulate(
     mapper = VoxelRayMapper(voxel_size=voxel, max_range=max_range, emit_every=1)
     used = 0
     last_ts = t0 + start
-    # A cloud with no pose is skipped, not counted: n_frames is a number of
-    # registered scans, which is what the window question is about.
+    # Scans without a pose are skipped, not counted.
     for obs in islice(frames, n_frames * 4):
         if limit is not None and obs.ts > limit:
             break
@@ -350,12 +272,7 @@ def accumulate(
 
 @lru_cache(maxsize=512)
 def local_map(name: str, frames: int, start: float, voxel: float) -> PointCloud2:
-    """One probe's accumulated cloud, cached: it does not depend on RelocalizeConfig.
-
-    Every trial of a study probes the same starts with the same frame count,
-    so without this the tuning loop spends most of its time re-accumulating
-    clouds it already built.
-    """
+    """One probe's accumulated cloud, cached across trials (it does not depend on the config)."""
     ds = DATASETS[name]
     _, store = fixtures(name)
     return accumulate(
@@ -370,40 +287,21 @@ def local_map(name: str, frames: int, start: float, voxel: float) -> PointCloud2
 
 @lru_cache(maxsize=256)
 def place_coverage(name: str, start: float, voxel: float) -> float:
-    """How much of the premap holds the place a probe stands in.
-
-    Always measured on a ``COVERAGE_FRAMES`` cloud, so two trials asking
-    about the same start get the same answer no matter how many frames each
-    of them accumulates.
-    """
+    """Premap coverage of the place a probe stands in, on a ``COVERAGE_FRAMES`` cloud."""
     return coverage(name, local_map(name, COVERAGE_FRAMES, start, voxel))
 
 
 def coverage(name: str, cloud: PointCloud2) -> float:
-    """Fraction of ``cloud`` the premap contains, with the cloud at its true pose.
-
-    Answers whether the question is answerable at all, separately from
-    whether the aligner answered it: a probe standing where the premap has
-    no points cannot be placed by any parameter setting.
-    """
+    """Fraction of ``cloud`` the premap contains, with the cloud at its true pose."""
     distances = premap_distance(name, np.asarray(cloud.pointcloud.points))
     return float((distances < COVERAGE_TOL_M).mean())
 
 
 @lru_cache(maxsize=32)
 def probe_starts(name: str, samples: int, half_step: bool = False) -> tuple[float, ...]:
-    """``samples`` starts spread evenly over the dataset's window.
+    """``samples`` starts spread evenly over the dataset's window, unfiltered by coverage.
 
-    Deliberately unfiltered. A stretch the premap never saw is not a broken
-    question - it is the negative half of the test, and the only place a
-    false fix can be caught. Coverage labels each probe afterwards; it does
-    not decide which ones are asked.
-
-    ``half_step`` returns the same number of starts, offset from the tuned
-    ones and over the same window - the holdout. A config tuned on one set
-    and still good on the other did not merely memorise which handful of
-    places happen to be easy, and the two rates are comparable only because
-    the counts match.
+    ``half_step`` gives the holdout: the same count, offset from the tuned starts.
     """
     if samples < 1:
         raise ValueError(f"samples must be at least 1, got {samples}")
@@ -412,8 +310,7 @@ def probe_starts(name: str, samples: int, half_step: bool = False) -> tuple[floa
     lidar = store.stream(ds.lidar_stream, PointCloud2)
     span = lidar.get_time_range()[1] - lidar.get_time_range()[0]
     lo, hi = ds.window or (0.0, span)
-    # A window may name an end past the recording - `--from` with no `--to`
-    # does exactly that - and probes scheduled out there have no scans.
+    # The window end may lie past the recording.
     hi = min(hi, span)
     last = hi - PROBE_RESERVE_S
     if last < lo:
@@ -423,14 +320,10 @@ def probe_starts(name: str, samples: int, half_step: bool = False) -> tuple[floa
     tuned = np.linspace(lo, last, samples)
     if not half_step:
         return tuple(float(t) for t in tuned)
-    # Midpoints of a grid one finer: `samples` starts inside the same window,
-    # offset from the tuned ones. Taking midpoints of the tuned grid instead
-    # would return one probe fewer and compare unequal populations.
+    # Midpoints of a grid with `samples` cells, so the count matches the tuned set.
     edges = np.linspace(lo, last, samples + 1)
     starts = edges[:-1] + np.diff(edges) / 2
-    # Two evenly spaced grids over one window share their centre whenever
-    # `samples` is odd. Nudge those off, or the holdout would reuse a place
-    # the config was tuned on.
+    # With odd `samples` both grids share the centre; nudge it off.
     step = (last - lo) / samples
     for i, start in enumerate(starts):
         if np.isclose(start, tuned).any():
@@ -449,15 +342,7 @@ def scan_rate(name: str) -> float:
 
 
 def identity_error(T: np.ndarray) -> tuple[float, float, float]:
-    """``(meters, degrees, tilt degrees)`` that ``T`` sits from identity.
-
-    Tilt is the part of the rotation that takes gravity off vertical. Both
-    clouds come from a lidar-inertial odometry, so a correct fix has none of
-    it and a tilted answer is physically impossible - which makes tilt a
-    free sanity check on a result, separate from how far it landed. A purely
-    yawed miss is the more dangerous kind: the right pose at the wrong place
-    in the map, and it looks perfectly legal.
-    """
+    """``(meters, degrees, tilt degrees)`` that ``T`` sits from identity; tilt is z off vertical."""
     translation = float(np.linalg.norm(T[:3, 3]))
     cos = (float(np.trace(T[:3, :3])) - 1.0) / 2.0
     rotation = float(np.degrees(np.arccos(np.clip(cos, -1.0, 1.0))))
@@ -480,21 +365,12 @@ def run_probes(
     half_step: bool = False,
     on_probe: Callable[[Probe], None] | None = None,
 ) -> list[Probe]:
-    """Retry at each start until a fix clears the config's threshold, or evidence runs out.
+    """Retry at each start until a fix clears the config's threshold or ``max_frames`` is reached.
 
-    Uses :func:`align` rather than :func:`relocalize` so a refused fix is
-    still visible: where a rejected hypothesis actually landed is the whole
-    diagnosis, and the accept decision is a comparison this makes itself.
-
-    Scans keep arriving while a match runs, so each attempt sees everything
-    the lidar has delivered by the time it starts - the clock, not a
-    schedule, decides how much evidence the next try gets. Latency is the
-    whole wait: the scans gathered before the attempt that answered, plus
-    every attempt made along the way, including the failed ones.
+    Each attempt sees every scan delivered by the time it starts (scan rate times
+    elapsed time, matching included). Uses ``align`` so refused fixes stay visible.
     """
     premap, _ = fixtures(name)
-    # The premap's preprocessing depends on the config but not the probe, so
-    # it is paid once per trial rather than once per attempt.
     relocalizer = LidarRelocalizer(premap.pointcloud, config)
     rate = scan_rate(name)
     probes: list[Probe] = []
@@ -502,10 +378,7 @@ def run_probes(
     min_frames, max_frames = config.min_frames, config.max_frames
 
     for start in probe_starts(name, samples, half_step):
-        # `elapsed` is the robot's clock: it starts owing the time it takes to
-        # gather min_frames, and each attempt adds the time that attempt took.
-        # `wall` and `cpu` are what the machine actually spent, which is not
-        # the same number - wall excludes the waiting, cpu counts every thread.
+        # elapsed: robot clock incl. scan gathering; wall/cpu: matching only.
         elapsed, wall, cpu = min_frames / rate, 0.0, 0.0
         attempts, accepted = 0, False
         while True:
@@ -557,41 +430,10 @@ def run_probes(
 
 
 def summarize(probes: list[Probe]) -> tuple[float, float, float, float, float]:
-    """``(hit rate, false fix rate, error, median latency)`` - the objective.
+    """``(hit rate, false fix rate, error m, median latency s, median cpu s)``, the objective.
 
-    Ground truth decides where a fix belongs; ``fitness_threshold`` decides
-    whether the module would have published it. Scoring both together is the
-    point, because relocalization has two ways to be right and they pull
-    against each other:
-
-    * **hit rate** - of the probes the premap actually contains, the share
-      placed correctly *and* accepted. Raising the cutoff costs hits.
-    * **false fix rate** - of *all* probes, the share accepted while wrong,
-      including every probe of a place the premap never saw. This is the
-      outcome that hurts: the module publishes what it accepts, and a
-      confident wrong TF is worse than no TF. Lowering the cutoff costs here.
-
-    A probe of an uncovered place is not a broken question. Refusing it is
-    the right answer, and it is the only evidence that the cutoff rejects
-    anything at all - drop those probes and a config that accepts
-    everything looks flawless.
-
-    ``error`` is the median displacement of the hits, since the rates alone
-    cannot tell a 2 cm fix from a 45 cm one under a 50 cm tolerance.
-
-    ``latency`` is the whole wait, over every probe: from the first scan to
-    the moment there is either a fix or a refusal. It is measured across
-    retries, so it prices the real tradeoff - a slower matcher gets fewer
-    attempts in the same time but each sees more scans, and a stricter
-    cutoff buys safety by spending attempts. Nothing has to schedule the
-    frame count against the compute; the clock does it.
-
-    ``cpu`` is last, and is not what ``latency`` already says: Open3D threads
-    its FPFH and RANSAC, so a config can be quick on the clock while eating
-    every core, and the ratio between the two moves with the parameters. On
-    a robot the cores are shared, so the compute is a real price even when
-    the wait is short. Five objectives make for a wide Pareto front - read
-    it in the order the values come in.
+    hit rate is over in-map probes, false fix rate over all probes, error the
+    median displacement of the hits (``NO_FIX_M`` when there are none).
     """
     if not probes:
         raise ValueError("summarize() needs at least one probe")
@@ -732,8 +574,6 @@ def run(
         f"frames {config.min_frames}-{config.max_frames}",
         *PROBE_COLUMNS,
     )
-    # Live so the rows appear as they are measured - a probe takes seconds,
-    # and a run of thirty should not look hung.
     with Live(table, console=console, refresh_per_second=4):
         probes = run_probes(
             name,
@@ -766,11 +606,7 @@ def run(
 def objective(
     trial: Any, *, name: str, samples: int, voxel: float
 ) -> tuple[float, float, float, float, float]:
-    """One trial: suggest a config, probe with it, return ``(good, bad, error, seconds)``.
-
-    The knobs are declared here by calling ``suggest_*`` - that is the search
-    space, and why a conditional knob costs nothing to add.
-    """
+    """One trial: suggest a config, probe with it, return :func:`summarize`'s tuple."""
     base = PRESETS[DEFAULT_PRESET]
     config = RelocalizeConfig(
         voxel_coarse=trial.suggest_float("voxel_coarse", 0.2, 2.0, log=True),
@@ -785,14 +621,8 @@ def objective(
         icp_stages=trial.suggest_int("icp_stages", 1, 4),
         orient_normals=trial.suggest_categorical("orient_normals", [True, False]),
         ransac_restarts=trial.suggest_int("ransac_restarts", 1, 3),
-        # The publish gate is tuned alongside the aligner - it is what turns
-        # a fitness number into a decision, and it is a field of the same config.
         fitness_threshold=trial.suggest_float("fitness_threshold", 0.0, 0.9),
-        # These belong in the search space - the window trades hit rate
-        # against latency exactly like the knobs above do. Taking them from
-        # the preset instead is a shortcut, and the preset's values are
-        # hand-picked. suggest_int them and bump SPACE when it is worth the
-        # trials.
+        # taken from the preset
         min_frames=base.min_frames,
         max_frames=base.max_frames,
     )
@@ -824,11 +654,7 @@ def tune(
     import optuna
 
     name = _register(dataset, recording, premap, lidar, start_s, stop_s)
-    # Studies resume by name (load_if_exists), so the name carries what a
-    # trial's numbers mean: the dataset and probes they were measured over,
-    # and the version of the space and objective below. Widening the space or
-    # changing the score bumps SPACE rather than silently mixing incomparable
-    # trials into one front. Seeded sampler so a rerun repeats.
+    # Studies resume by name, so the name keys the dataset, probe count and SPACE.
     s = optuna.create_study(
         study_name=f"{name}-v{SPACE}-s{samples}",
         directions=["maximize", "minimize", "minimize", "minimize", "minimize"],
@@ -836,8 +662,6 @@ def tune(
         sampler=optuna.samplers.TPESampler(seed=0),
         load_if_exists=True,
     )
-    # Named, so the dashboard and best_trials read as hit_rate/latency_s
-    # rather than an unlabelled list of floats.
     s.set_metric_names(["hit_rate", "false_fix", "error_m", "latency_s", "cpu_s"])
     s.optimize(partial(objective, name=name, samples=samples, voxel=voxel), n_trials=trials)
     # The front is unordered; read it correctness-first, speed as the tiebreak.
@@ -864,8 +688,6 @@ def tune(
         )
     console = Console()
     console.print(table)
-    # Params below rather than in a column: they are twelve fields wide and
-    # would squeeze every number in the table down to nothing.
     for t in front:
         params = ", ".join(
             f"{k}={v:.3g}" if isinstance(v, float) else f"{k}={v}" for k, v in t.params.items()
@@ -874,11 +696,7 @@ def tune(
 
 
 def config_from_params(params: dict[str, Any]) -> RelocalizeConfig:
-    """Rebuild a trial's config from the params optuna recorded.
-
-    Anything the study did not search (the retry window) comes from the
-    default preset, which is where it was set by hand.
-    """
+    """Rebuild a trial's config from its optuna params; unsearched fields come from the default preset."""
     fields = set(RelocalizeConfig.model_fields)
     searched = {k: v for k, v in params.items() if k in fields}
     return PRESETS[DEFAULT_PRESET].model_copy(update=searched)
@@ -901,11 +719,8 @@ def verify(
 ) -> None:
     """Re-measure a study's best configs, on its own probes and on fresh ones.
 
-    A trial's score is one draw of ``samples`` probes against an unseeded
-    RANSAC, so the trials that top a front are partly the lucky ones. This
-    runs each candidate ``repeats`` times to get a rate worth trusting, and
-    again on the half-step holdout, where a config that merely learned which
-    handful of places are easy will fall over.
+    Each candidate runs ``repeats`` times (RANSAC is unseeded) on the tuned
+    probes and on the half-step holdout.
     """
     import optuna
 
@@ -934,7 +749,6 @@ def verify(
         "stg",
         "rst",
     )
-    # A candidate is two rows and many seconds; show them as they land.
     with Live(table, console=console, refresh_per_second=4):
         for trial in clean[:top]:
             config = config_from_params(trial.params)

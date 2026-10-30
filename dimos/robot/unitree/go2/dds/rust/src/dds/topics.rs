@@ -17,7 +17,9 @@
 pub const CLOUD_DESKEWED: &str = "rt/utlidar/cloud_deskewed";
 pub const CLOUD: &str = "rt/utlidar/cloud";
 pub const IMU: &str = "rt/utlidar/imu";
+pub const HEIGHT_MAP: &str = "rt/utlidar/height_map_array";
 pub const LOWSTATE: &str = "rt/lowstate";
+pub const LOWCMD: &str = "rt/lowcmd";
 pub const ROBOT_ODOM: &str = "rt/utlidar/robot_odom";
 pub const WIRELESS_CONTROLLER: &str = "rt/wirelesscontroller";
 pub const SPORT_REQUEST: &str = "rt/api/sport/request";

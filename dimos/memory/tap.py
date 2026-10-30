@@ -23,7 +23,7 @@ Poses are not resolved here; ``tf`` is recorded like any other stream and
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 import fnmatch
 import os
@@ -40,6 +40,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.stream import Transport
     from dimos.memory.stream import Stream
 
@@ -133,13 +134,15 @@ class TransportRecorder:
 
 
 @contextmanager
-def recording(
-    transports: Mapping[tuple[str, type], Transport[Any]],
-) -> Iterator[None]:
-    """Record every stream in *transports* for the duration of the block when ``--record`` is set."""
+def recording(coordinator: ModuleCoordinator) -> Iterator[None]:
+    """Record streams while ``--record`` is set.
+
+    The Python engine follows runtime additions to the coordinator.
+    """
     if not global_config.record or global_config.replay:
         yield
         return
+    transports = coordinator.transports
     check_topics(global_config.record_topics, {n for n, _ in transports})
     if global_config.record_engine == "rust":
         from dimos.experimental.memory.rust_cli_recorder import (
@@ -159,14 +162,16 @@ def recording(
     store = SqliteStore(path=str(path))
     store.start()
     recorder = TransportRecorder(store, global_config.record_topics)
-    unsubscribes = [
-        unsubscribe
-        for (name, payload_type), transport in transports.items()
-        if (unsubscribe := recorder.tap(name, payload_type, transport)) is not None
-    ]
-    logger.info("Recording to %s", path)
+    unsubscribes: list[Callable[[], None]] = []
+
+    def tap_transport(name: str, payload_type: type, transport: Transport[Any]) -> None:
+        if (unsubscribe := recorder.tap(name, payload_type, transport)) is not None:
+            unsubscribes.append(unsubscribe)
+
     try:
-        yield
+        with coordinator.observe_transports(tap_transport):
+            logger.info("Recording to %s", path)
+            yield
     finally:
         for unsubscribe in unsubscribes:
             unsubscribe()

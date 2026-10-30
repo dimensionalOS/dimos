@@ -1,5 +1,9 @@
 # Agents
 
+To run the on-robot agent, see [The on-robot agent](/docs/usage/agent.md).
+To integrate with a running system, see the [Python agent runtime](/docs/usage/agent/runtime.md) and
+[client SDK](/docs/usage/agent/sdk.md). The sections below cover the native `McpClient` agent and module skills.
+
 LLM agents run as native dimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture
@@ -41,7 +45,7 @@ arrow from Agent.n up 0.5in then left until even with Input.n then to Input.n \
 
 **McpClient** (`dimos/agents/mcp/mcp_client.py`) is a `Module` with:
 - `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`
-- `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
+- `agent: Out[BaseMessage]`: publishes the transcript: human input, agent responses (text, tool calls), tool results, and the turns fed to the model on a tool's behalf (`[tool:<name>]` stream updates, image artefacts tagged with the tool name in `additional_kwargs`), which chat UIs render as tool output
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
 
 The agent uses LangGraph with a configurable LLM. The default is `gpt-5.6-luna` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
@@ -75,7 +79,7 @@ class MySkillContainer(Module):
 | `execute_sport_command(command_name)` | `UnitreeSkillContainer` | Unitree sport commands (sit, stand, flip, etc.) |
 | `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
 | `observe()` | `ObserveSkill` | Capture and return current camera frame |
-| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
+| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description. Returns at once; a tool update reports when the robot stops |
 | `tag_location(location_name)` | `NavigationSkillContainer` | Tag current position for later recall |
 | `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |
 | `follow_person(query)` | `PersonFollowSkillContainer` | Visual servoing to follow a described person |

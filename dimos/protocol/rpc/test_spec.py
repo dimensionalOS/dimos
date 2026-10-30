@@ -19,14 +19,19 @@
 import asyncio
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass
+import enum
 import threading
 import time
 from typing import Any
 
+import numpy as np
 import pytest
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.rpc_utils import RemoteError
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.rpc.pubsubrpc import LCMRPC, RPC_WIRE_VERSION
+from dimos.protocol.rpc.rpc_utils import RemoteError, deserialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
@@ -380,5 +385,171 @@ def test_concurrent_calls(rpc_context, impl_name: str) -> None:
             expected = [i + (i + 1) for i in range(1000)]
             assert sorted(results) == sorted(expected)
 
+        finally:
+            unsub()
+
+
+@dataclass
+class Payload:
+    name: str
+    values: tuple[int, ...]
+
+
+class Level(enum.IntEnum):
+    LOW = 1
+    HIGH = 2
+
+
+def typed_echo(payload, level, array, vector):  # type: ignore[no-untyped-def]
+    return payload, level, array, vector
+
+
+def returns_lock():  # type: ignore[no-untyped-def]
+    return threading.Lock()
+
+
+def raises_with_lock():  # type: ignore[no-untyped-def]
+    raise ValueError("bad", threading.Lock())
+
+
+@pytest.mark.parametrize("rpc_context, impl_name", testdata)
+def test_typed_arguments_and_results_keep_their_types(rpc_context, impl_name: str) -> None:
+    with rpc_context() as (server, client):
+        unsub = server.serve_rpc(typed_echo, "typed_echo")
+        try:
+            args = (
+                Payload("p", (1, 2)),
+                Level.HIGH,
+                np.arange(3, dtype=np.float32),
+                Vector3(1, 2, 3),
+            )
+            result, _ = client.call_sync("typed_echo", (args, {}), rpc_timeout=5.0)
+            payload, level, array, vector = result
+            assert type(result) is tuple
+            assert payload == args[0] and type(payload) is Payload
+            assert level is Level.HIGH
+            assert array.dtype == np.float32 and np.array_equal(array, args[2])
+            assert vector == args[3] and type(vector) is Vector3
+        finally:
+            unsub()
+
+
+@pytest.mark.parametrize("rpc_context, impl_name", testdata)
+def test_unencodable_result_reaches_the_caller_as_type_error(rpc_context, impl_name: str) -> None:
+    with rpc_context() as (server, client):
+        unsubs = [
+            server.serve_rpc(returns_lock, "returns_lock"),
+            server.serve_rpc(add_function, "add"),
+        ]
+        try:
+            with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+                client.call_sync("returns_lock", ([], {}), rpc_timeout=5.0)
+            # The server keeps serving.
+            result, _ = client.call_sync("add", ([1, 2], {}), rpc_timeout=5.0)
+            assert result == 3
+        finally:
+            for unsub in unsubs:
+                unsub()
+
+
+@pytest.mark.parametrize("rpc_context, impl_name", testdata)
+def test_unencodable_argument_fails_at_the_caller(rpc_context, impl_name: str) -> None:
+    with rpc_context() as (server, client):
+        unsub = server.serve_rpc(add_function, "add")
+        try:
+            with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+                client.call_sync("add", ([lambda: None, 2], {}), rpc_timeout=5.0)
+            if impl_name == "zenoh":
+                assert client._pending == {}
+        finally:
+            unsub()
+
+
+@pytest.mark.parametrize("rpc_context, impl_name", testdata)
+def test_unencodable_exception_argument_arrives_as_text(rpc_context, impl_name: str) -> None:
+    with rpc_context() as (server, client):
+        unsub = server.serve_rpc(raises_with_lock, "raises_with_lock")
+        try:
+            with pytest.raises(ValueError) as info:
+                client.call_sync("raises_with_lock", ([], {}), rpc_timeout=5.0)
+            assert info.value.args[0] == "bad"
+            assert "lock" in info.value.args[1]
+        finally:
+            unsub()
+
+
+@pytest.mark.parametrize(
+    "rpc_context, codec_module",
+    [
+        (lcm_rpc_context, "dimos.protocol.rpc.pubsubrpc"),
+        (zenoh_rpc_context, "dimos.protocol.rpc.zenohrpc"),
+    ],
+    ids=["lcm", "zenoh"],
+)
+def test_reply_decode_failure_raises_instead_of_timing_out(
+    rpc_context, codec_module: str, monkeypatch
+) -> None:
+    def corrupt(_payload: bytes) -> Any:
+        raise ValueError("corrupt reply")
+
+    with rpc_context() as (server, client):
+        unsub = server.serve_rpc(add_function, "add")
+        try:
+            monkeypatch.setattr(f"{codec_module}.decode", corrupt)
+            started = time.monotonic()
+            with pytest.raises(ValueError, match="corrupt reply"):
+                client.call_sync("add", ([1, 2], {}), rpc_timeout=10.0)
+            assert time.monotonic() - started < 5.0
+        finally:
+            unsub()
+
+
+def test_lcm_undecodable_request_is_answered_with_the_error() -> None:
+    """The request id lives in the envelope, so a bad body gets an error reply, not silence."""
+    with lcm_rpc_context() as (server, client):
+        unsub = server.serve_rpc(add_function, "add")
+        replies: list[Any] = []
+        event = threading.Event()
+
+        def on_reply(res: Any, _topic: Any) -> None:
+            replies.append(res)
+            event.set()
+
+        unsub_reply = client.subscribe(client.topicgen("add", True), on_reply)
+        try:
+            request = {"v": RPC_WIRE_VERSION, "id": 1.5, "name": "add", "args": b"\xff\xff"}
+            client.publish(client.topicgen("add", False), request)
+            assert event.wait(5.0)
+        finally:
+            unsub_reply()
+            unsub()
+    (reply,) = replies
+    assert reply["id"] == 1.5
+    error = deserialize_exception(decode(reply["exception"]))
+    assert isinstance(error, RemoteError)
+    assert "CborDecodeError" in error.remote_type
+
+
+def test_lcm_request_from_another_wire_version_is_ignored() -> None:
+    calls: list[int] = []
+
+    def record() -> str:
+        calls.append(1)
+        return "ok"
+
+    with lcm_rpc_context() as (server, client):
+        unsub = server.serve_rpc(record, "versioned")
+        try:
+            foreign = {
+                "v": RPC_WIRE_VERSION + 1,
+                "id": 1.0,
+                "name": "versioned",
+                "args": encode(([], {})),
+            }
+            client.publish(client.topicgen("versioned", False), foreign)
+            # Same topic, so this request is handled after the foreign one was dropped.
+            result, _ = client.call_sync("versioned", ([], {}), rpc_timeout=5.0)
+            assert result == "ok"
+            assert calls == [1]
         finally:
             unsub()

@@ -334,6 +334,7 @@ class MujocoSimModule(
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
+    body_poses: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -407,6 +408,11 @@ class MujocoSimModule(
     @rpc
     def get_depth_scale(self) -> float:
         return 1.0
+
+    @rpc
+    def scene_path(self) -> str:
+        """The MJCF the simulated manipulator adapters attach to (their SHM key)."""
+        return str(self.config.robot_mjcf or self.config.address)
 
     @rpc
     def start(self) -> None:
@@ -1002,9 +1008,11 @@ class MujocoSimModule(
                     child_frame_id=self._camera_link,
                     ts=ts,
                 ),
-                *self._body_transforms(),
             )
         )
+        bodies = self._body_transforms()
+        if bodies:
+            self.body_poses.publish(TFMessage(*bodies))
 
     def _body_transforms(self) -> list[Transform]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""

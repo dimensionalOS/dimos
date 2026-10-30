@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import pickle
 import statistics
 import threading
 import time
@@ -26,6 +25,7 @@ import pytest
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.benchmark.tool_replay_bench import CompressedCodec
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
@@ -86,10 +86,10 @@ def test_roundtrip_over_zenoh(retry_until, collector, session_pool) -> None:
     t.stop()
 
 
-def test_pickle_roundtrip() -> None:
-    """The bench pins the codec into blueprints — it must pickle into forkserver workers."""
+def test_cbor_roundtrip() -> None:
+    """The bench pins the codec into blueprints — it must cross into forkserver workers."""
     t = CompressedCodec(LCMTransport("dimos/test/codec_pickle", CompressedImage), quality=50)
-    t2 = pickle.loads(pickle.dumps(t))
+    t2 = decode(encode(t))
     assert isinstance(t2, CompressedCodec)
     assert t2.quality == 50
     assert t2.topic.topic == t.topic.topic

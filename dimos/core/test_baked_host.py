@@ -17,7 +17,6 @@
 from collections.abc import Mapping
 import json
 import pathlib
-import pickle
 from typing import get_args, get_origin, get_type_hints
 
 import pytest
@@ -27,6 +26,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.protocol.encode.cbor import decode, encode
 
 
 class MapperConfig(NativeModuleConfig):
@@ -181,9 +181,9 @@ def test_an_empty_member_map_is_refused() -> None:
 Pickled = baked_host("Pickled", executable="dist/x", members=MEMBERS)
 
 
-def test_the_generated_classes_pickle() -> None:
-    """Deploying to a worker pickles both, so both must resolve by module path."""
-    assert pickle.loads(pickle.dumps(Pickled)) is Pickled
+def test_the_generated_classes_cross_the_worker_pipe() -> None:
+    """Deploying to a worker sends both by reference, so both must resolve by module path."""
+    assert decode(encode(Pickled)) is Pickled
     host = Pickled()
-    assert pickle.loads(pickle.dumps(host.config)).mapper_config.voxel_size == 0.1
+    assert decode(encode(host.config)).mapper_config.voxel_size == 0.1
     host.stop()

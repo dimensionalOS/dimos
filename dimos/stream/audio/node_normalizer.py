@@ -22,10 +22,7 @@ from dimos.stream.audio.base import (
     AbstractAudioTransform,
     AudioEvent,
 )
-from dimos.stream.audio.volume import (
-    calculate_peak_volume,
-    calculate_rms_volume,
-)
+from dimos.stream.audio.volume import calculate_peak_volume
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -162,59 +159,3 @@ class AudioNormalizer(AbstractAudioTransform):
             return disposable.Disposable(dispose)
 
         return create(on_subscribe)
-
-
-if __name__ == "__main__":
-    import sys
-
-    from dimos.stream.audio.node_microphone import (
-        SounddeviceAudioSource,
-    )
-    from dimos.stream.audio.node_output import SounddeviceAudioOutput
-    from dimos.stream.audio.node_simulated import SimulatedAudioSource
-    from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.utils import keepalive
-
-    # Parse command line arguments
-    volume_method = "peak"  # Default to peak
-    use_mic = False  # Default to microphone input
-    target_level = 1  # Default target level
-
-    # Process arguments
-    for arg in sys.argv[1:]:
-        if arg == "rms":
-            volume_method = "rms"
-        elif arg == "peak":
-            volume_method = "peak"
-        elif arg == "mic":
-            use_mic = True
-        elif arg.startswith("level="):
-            try:
-                target_level = float(arg.split("=")[1])  # type: ignore[assignment]
-            except ValueError:
-                print(f"Invalid target level: {arg}")
-                sys.exit(1)
-
-    # Create appropriate audio source
-    if use_mic:
-        audio_source = SounddeviceAudioSource()
-        print("Using microphone input")
-    else:
-        audio_source = SimulatedAudioSource(volume_oscillation=True)
-        print("Using simulated audio source")
-
-    # Select volume function
-    volume_func = calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
-
-    # Create normalizer
-    normalizer = AudioNormalizer(target_level=target_level, volume_func=volume_func)
-
-    # Connect the audio source to the normalizer
-    normalizer.consume_audio(audio_source.emit_audio())
-
-    print(f"Using {volume_method} volume method with target level {target_level}")
-    SounddeviceAudioOutput().consume_audio(normalizer.emit_audio())
-
-    # Monitor the normalized audio
-    monitor(normalizer.emit_audio())
-    keepalive()
