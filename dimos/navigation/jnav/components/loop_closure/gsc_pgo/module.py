@@ -129,10 +129,6 @@ class PGOConfig(NativeModuleConfig):
     closure_noise_from_closures: bool = False
     # True: yank_stdevs = the closure's innovation in standard deviations of its predicted spread (both noise scales)
     closure_yank_gate_principled: bool = False
-    # True: yank_stdevs = the yank in standard deviations of the odometry's drift between the two ends at the stated drift (no ruler from earlier candidates, nothing learned)
-    closure_yank_at_stated_drift: bool = False
-    # True: closure acceptance (solve verdict, uninformative gate, yank spread) sees the learned odometry noise at most its prior's upper bound, the most drift the spread across recordings makes plausible
-    odometry_noise_acceptance_ceiling: bool = False
     # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
     odometry_noise_evidence_core: bool = False
     closure_overlap_score: bool = False
@@ -183,8 +179,8 @@ class PGOConfig(NativeModuleConfig):
     odom_noise_prior_ln_sd_z: float = 1.6
     odom_noise_prior_ln_sd_yaw: float = 2.4
     odom_noise_prior_ln_sd_tilt: float = 1.6
-    # how many closed loops' worth of evidence the stated drift counts as for the learner (its plasticity); 0 = the spreads above
-    odom_noise_prior_loops: float = 0.0
+    # how many closed loops' worth of evidence the stated drift counts as for the learner (its plasticity); 0 = the closures alone, inf = never learned (the config's drift is used)
+    odom_error_stiffness: float = 30.0
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale
