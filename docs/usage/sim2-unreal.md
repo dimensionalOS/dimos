@@ -486,16 +486,36 @@ uses the existing GR00T torque-control plant.
 
 Add `/Game/Konbini/Maps/Konbini` to the copied project's `MapsToCook`, then package
 with the existing build script into `~/.cache/dimos/unreal-konbini-store-packaged`.
-The already prepared local launch file is:
+Run the prepared store with the regular blueprint. Include `simulation-module`
+and its viewer option to open the native MuJoCo inspection window alongside
+Desktop and Unreal:
 
 ```bash skip
-"$HOME/.local/state/dimos/unreal/konbini-store/run.sh"
+source .venv/bin/activate
+export XDG_STATE_HOME="$HOME/.local/state/dimos/unreal/desktop-home/state"
+
+dimos --simulation mujoco --transport zenoh \
+  --scene-package "$HOME/.local/state/dimos/unreal/konbini-store/scene.xml" \
+  run unitree-g1-groot-wbc-unreal simulation-module \
+  --simulationmodule.mujoco-viewer true \
+  --unrealcameramodule.executable \
+  "$HOME/.cache/dimos/unreal-konbini-store-packaged/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer" \
+  --unrealcameramodule.level /Game/Konbini/Maps/Konbini
 ```
 
-It selects `unitree-g1-groot-wbc-unreal`, the exported store scene, the packaged
-renderer, `--unrealcameramodule.level /Game/Konbini/Maps/Konbini`, and G1's
-robot-mounted `front_camera` at 960x640. It uses the same Desktop
-home/state directory as the earlier proof. Add `--daemon` to run in background.
+This explicitly configures the same shared simulation module that would otherwise
+be added automatically. It does not create a second simulator. The viewer runs
+in its own process and reads that simulation's snapshots. Closing its window
+leaves the simulation running; stopping the blueprint also closes the viewer.
+The native window shows MuJoCo collision geometry, not Unreal's materials.
+Use its left-hand visualization controls to inspect contacts and geom groups.
+Its physics controls and mouse perturbations do not control the running world;
+use DimOS for commands, pause and reset. Contact forces are reconstructed from
+snapshots and are not a recorded per-step force trace.
+
+Omit `simulation-module --simulationmodule.mujoco-viewer true` to run without the
+native window. Add `--daemon` to run in the background. G1's `front_camera` stays
+robot-mounted, and the same Desktop home/state directory is used.
 Desktop Controller's `color_image` and `depth_image` panels show the new scene;
 click the image before using WASD/QE, and Space to stop.
 

@@ -57,6 +57,7 @@ from dimos.sim2.spec import RobotInstanceSpec
 from dimos.sim2.visuals import VisualScene
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription
+from dimos.sim2.world.viewer import NativeMujocoViewer
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -108,6 +109,7 @@ class SimulationModuleConfig(ModuleConfig):
     sensors: tuple[tuple[str | None, Sensor], ...] = ()
     snapshot_hz: float = 60.0
     robot_topics: dict[str, dict[str, str]] = {}
+    mujoco_viewer: bool = False
 
 
 class SimulationModule(Module):
@@ -135,6 +137,7 @@ class SimulationModule(Module):
         self._failure: str | None = None
         self._outputs: dict[str, dict[str, Out[Any] | PubSubTransport[Any]]] = {}
         self._rejected: dict[str, int] = {}
+        self._viewer: NativeMujocoViewer | None = None
 
     @rpc
     def build(self) -> None:
@@ -173,12 +176,13 @@ class SimulationModule(Module):
 
     @rpc
     def status(self) -> dict[str, Any]:
+        viewer = self._viewer.status() if self._viewer is not None else None
         runtime = self._runtime
         if runtime is None:
-            return {"running": False, "error": self._failure}
+            return {"running": False, "error": self._failure, "mujoco_viewer": viewer}
         with runtime.lock:
             if runtime is not self._runtime:
-                return {"running": False, "error": self._failure}
+                return {"running": False, "error": self._failure, "mujoco_viewer": viewer}
             return {
                 "running": self._running.is_set()
                 and not self._stop.is_set()
@@ -196,6 +200,7 @@ class SimulationModule(Module):
                 },
                 "done": runtime.backend.done,
                 "backend": runtime.backend.name,
+                "mujoco_viewer": viewer,
             }
 
     @rpc
@@ -281,6 +286,18 @@ class SimulationModule(Module):
         runtime.publish_environment = self.environment_result.publish
         self.register_disposable(Disposable(self.actions.subscribe(self.set_action)))
         self._running.set()
+        if self.config.mujoco_viewer:
+            try:
+                with self._lifecycle_lock:
+                    self._require_runtime()
+                    self._viewer = NativeMujocoViewer(self.describe(), self.snapshots.transport)
+                    self._viewer.start(timeout=30.0)
+            except BaseException:
+                try:
+                    self.stop()
+                except Exception:
+                    logger.exception("simulation cleanup after viewer startup failure failed")
+                raise
 
     def _command(self, robot_id: str, message: MotorCommandArray | Twist) -> None:
         runtime = self._runtime
@@ -339,6 +356,8 @@ class SimulationModule(Module):
                 backend=self.config.backend() if self.config.backend is not None else None,
             )
             runtime.build()
+            if self.config.mujoco_viewer and runtime.backend.name != "mujoco":
+                raise ValueError("mujoco_viewer requires the MuJoCo backend")
             with self._lifecycle_lock:
                 self._runtime = runtime
                 self._ready.set()
@@ -371,6 +390,15 @@ class SimulationModule(Module):
                 self._runtime = None
                 self._running.clear()
                 self._fail_requests()
+            try:
+                if self._viewer is not None:
+                    self._viewer.stop()
+            except Exception as error:
+                cleanup_error = f"viewer close failed: {type(error).__name__}: {error}"
+                self._failure = (
+                    f"{self._failure}; {cleanup_error}" if self._failure else cleanup_error
+                )
+                logger.exception("native viewer cleanup failed")
             try:
                 if runtime is not None:
                     with runtime.lock:
@@ -414,7 +442,7 @@ class SimulationModule(Module):
             if thread is not None:
                 thread.join(timeout=10)
                 if thread.is_alive():
-                    raise RuntimeError("robosuite owner thread did not stop")
+                    raise RuntimeError("physics owner thread did not stop")
                 with self._lifecycle_lock:
                     if self._thread is thread:
                         self._thread = None

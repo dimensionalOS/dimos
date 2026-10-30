@@ -24,6 +24,19 @@ dimos --simulation mujoco run unitree-g1-control
 dimos --simulation mujoco run unitree-g1-groot-control
 ```
 
+To inspect MuJoCo physics alongside Desktop, configure the shared simulator
+explicitly and enable its native viewer:
+
+```bash
+dimos --simulation mujoco run unitree-g1-groot-control simulation-module \
+  --simulationmodule.mujoco-viewer true
+```
+
+The viewer follows the robot, displays collision geometry, and offers contact
+visualization. It reads snapshots in a separate process; closing the window
+does not stop physics. Its local physics controls do not send commands back to
+the simulator. This option requires the MuJoCo backend.
+
 Genesis requires PyTorch 2.8, while the repository's legacy ML test group pins
 an older version. Its locked install uses a separate environment:
 
