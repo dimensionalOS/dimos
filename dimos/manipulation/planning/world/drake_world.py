@@ -559,6 +559,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
+        if obstacle.touch_links:
+            raise ValueError("DrakeWorld does not support Obstacle.touch_links")
         pose_matrix = Transform(
             translation=obstacle.pose.position,
             rotation=obstacle.pose.orientation,

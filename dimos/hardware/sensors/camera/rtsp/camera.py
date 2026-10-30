@@ -16,17 +16,16 @@
 
 The encoded stream goes out untouched (nothing is re-encoded), next to a capped decoded
 ``color_image`` and a small JPEG. Frames are stamped on the system clock at packet read
-minus ``capture_latency_s``. ``url`` is an RTSP URL, a local file, or ``"synthetic"``: a
-clip generated at start, so a simulator needs no capture file.
+minus ``capture_latency_s``. ``url`` is an RTSP URL, or a local file to replay a capture
+through the same code.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from pathlib import Path
+import math
 import re
-import tempfile
 import threading
 import time
 from typing import Any, Literal
@@ -39,7 +38,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.hardware.sensors.camera.rtsp.synthetic import write_synthetic_h265
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -48,8 +46,10 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-SYNTHETIC_URL = "synthetic"
 _RECONNECT_WAIT_S = 2.0
+# While the camera stays unreachable the relay retries every _RECONNECT_WAIT_S; each warning
+# repeats at most this often.
+_WARN_INTERVAL_S = 30.0
 _AV_TIMEOUT_S = 3.0  # av.open's open and read timeouts
 _MAX_PENDING_STAMPS = 64
 # File replay: a longer jump in the capture's timestamps (a stall, a restart) replays as none.
@@ -88,7 +88,7 @@ def _media_time(packet: av.Packet) -> float | None:
 
 @dataclass
 class _StreamStat:
-    """Per-stream counters; see the ``sensor_stats`` rpc."""
+    """Per-stream counters; see the ``get_sensor_stats`` rpc."""
 
     received: int = 0
     published: int = 0
@@ -99,8 +99,7 @@ class _StreamStat:
 
 
 class RtspCameraConfig(ModuleConfig):
-    # RTSP URL of the camera, a local file path to replay a capture, or "synthetic" for a
-    # generated clip (simulator, tests).
+    # RTSP URL of the camera, or a local file path to replay a capture.
     url: str
     rtsp_transport: Literal["tcp", "udp"] = Field(default="tcp")
     # ffmpeg's RTSP reorder buffer. Larger only if the link to the camera drops packets.
@@ -125,9 +124,6 @@ class RtspCameraConfig(ModuleConfig):
 class RtspCamera(Module, perception.Image):
     """RTSP camera relay: encoded passthrough, capped decoded frames, link JPEGs."""
 
-    # Decoding 720p H.265 in software is most of a core; keep it away from every other module.
-    dedicated_worker = True
-
     config: RtspCameraConfig
 
     video: Out[CompressedVideo]
@@ -145,24 +141,16 @@ class RtspCamera(Module, perception.Image):
         self._jpeg_hz = self.config.jpeg_hz
         self._last_color_pub = 0.0
         self._last_jpeg_pub = 0.0
-        # What av.open gets: the URL, the file, or the generated clip once start() wrote it.
-        self._source = self.config.url
-        self._tmp: tempfile.TemporaryDirectory[str] | None = None
+        self._last_warned: dict[str, float] = {}
 
     # Lifecycle
 
     @rpc
     def start(self) -> None:
         super().start()
-        cfg = self.config
-        if cfg.url == SYNTHETIC_URL:
-            self._tmp = tempfile.TemporaryDirectory(prefix="rtsp-synthetic-")
-            clip = Path(self._tmp.name) / "synthetic.mp4"
-            write_synthetic_h265(clip, centered=True)
-            self._source = str(clip)
         self._stop_event.clear()
         self._threads = [threading.Thread(target=self._relay_loop, name="rtsp-relay", daemon=True)]
-        if cfg.sensor_stats_interval_s > 0:
+        if self.config.sensor_stats_interval_s > 0:
             self._threads.append(
                 threading.Thread(target=self._stats_report_loop, name="rtsp-stats", daemon=True)
             )
@@ -177,15 +165,12 @@ class RtspCamera(Module, perception.Image):
             # handshake, then the stream probe); it checks the stop flag after that.
             t.join(timeout=2 * _AV_TIMEOUT_S + DEFAULT_THREAD_JOIN_TIMEOUT)
         self._threads.clear()
-        if self._tmp is not None:
-            self._tmp.cleanup()
-            self._tmp = None
         super().stop()
 
     # Relay
 
     def _is_file(self) -> bool:
-        return "://" not in self._source
+        return "://" not in self.config.url
 
     def _relay_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -193,21 +178,26 @@ class RtspCamera(Module, perception.Image):
                 packets = self.relay_once()
             except (av.FFmpegError, OSError, IndexError, ValueError) as exc:
                 self._count("video", errors=1)
-                logger.warning(
-                    "camera stream unavailable",
-                    url=_redact(self._source, self._source),
-                    error=_redact(str(exc), self._source),
-                )
+                self._warn("camera stream unavailable", error=_redact(str(exc), self.config.url))
                 self._stop_event.wait(_RECONNECT_WAIT_S)
                 continue
+            if packets:
+                self._last_warned.clear()  # the camera answered: warn of its next failure at once
             if self._stop_event.is_set() or (self._is_file() and not self.config.replay_loop):
                 return
             if not self._is_file() or packets == 0:
                 # The server closed a live stream, or a replay holds no video: reopen as
                 # after an error, not in a busy loop.
                 self._count("video", errors=1)
-                logger.warning("camera stream ended", url=_redact(self._source, self._source))
+                self._warn("camera stream ended")
                 self._stop_event.wait(_RECONNECT_WAIT_S)
+
+    def _warn(self, event: str, **fields: Any) -> None:
+        now = time.monotonic()
+        if now - self._last_warned.get(event, -math.inf) < _WARN_INTERVAL_S:
+            return
+        self._last_warned[event] = now
+        logger.warning(event, url=_redact(self.config.url, self.config.url), **fields)
 
     def relay_once(self) -> int:
         """One pass over the stream (until it ends or stop is requested). Returns packets read."""
@@ -224,7 +214,7 @@ class RtspCamera(Module, perception.Image):
         # so stamps are kept by pts and handed to the frame they belong to.
         stamps: dict[int | None, float] = {}
         timeout = (_AV_TIMEOUT_S, _AV_TIMEOUT_S)
-        with av.open(self._source, options=options, timeout=timeout) as container:
+        with av.open(cfg.url, options=options, timeout=timeout) as container:
             if self._stop_event.is_set():  # before a first read blocks for another timeout
                 return packets
             stream = container.streams.video[0]
@@ -386,7 +376,7 @@ class RtspCamera(Module, perception.Image):
         return self._jpeg_hz
 
     @rpc
-    def sensor_stats(self) -> dict[str, Any]:
+    def get_sensor_stats(self) -> dict[str, Any]:
         """Per-stream cumulative counters and last-message age."""
         now = time.monotonic()
         return {

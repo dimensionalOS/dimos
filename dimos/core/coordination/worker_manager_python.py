@@ -210,12 +210,13 @@ class WorkerManagerPython:
 
         logger.info("Shutting down all workers...")
 
-        for worker in reversed(self._workers):
+        def _shutdown_worker(worker: PythonWorker) -> None:
             try:
                 worker.shutdown()
             except Exception as e:
                 logger.error(f"Error shutting down worker: {e}", exc_info=True)
 
+        safe_thread_map(tuple(reversed(self._workers)), _shutdown_worker)
         self._workers.clear()
 
         logger.info("All workers shut down")

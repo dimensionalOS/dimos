@@ -36,22 +36,22 @@ dimos hardware can status can0
 
 ## Run a Piper blueprint
 
-Use the coordinator for the basic manipulation composition:
+Give the coordinator the CAN interface of the arm:
 
 ```bash
-dimos --can-port can0 run coordinator-piper
+dimos run coordinator-piper --controlcoordinator.addresses '{"arm": "can0"}'
 ```
 
 For keyboard Cartesian teleoperation, use:
 
 ```bash
-dimos --can-port can0 run keyboard-teleop-piper
+dimos run keyboard-teleop-piper --controlcoordinator.addresses '{"arm": "can0"}'
 ```
 
 The WebXR teleoperation composition is available as:
 
 ```bash
-dimos --can-port can0 run teleop-webxr-piper
+dimos run teleop-webxr-piper --controlcoordinator.addresses '{"arm": "can0"}'
 ```
 
-Note that ommitting the `--can-port` argument will fallback the control coordinator to use fake hardware adapter. This is good for testing.
+Without an address these blueprints run the mock adapter, which is good for testing. The map can also live in a config file; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

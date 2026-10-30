@@ -18,8 +18,8 @@ Every module but the connection is optional and binds to its streams by name.
 ## Install
 
 ```bash
-uv sync --extra px4
-uv sync --extra px4 --extra agents        # for px4-agentic
+uv sync --extra px4 --inexact
+uv sync --extra px4 --extra agents --inexact    # for px4-agentic
 ```
 
 ## Run
@@ -32,10 +32,11 @@ uv sync --extra px4 --extra agents        # for px4-agentic
 | `px4-agentic`, `px4-sitl-agentic` | `px4` and `px4-sitl` with the skills, the MCP server and the LLM agent |
 
 ```bash
-dimos run px4                                             # router on PX4's companion port
-dimos run px4 --px4droneconnection.link=radio             # router on a telemetry radio
-dimos --record sqlite run px4                             # every stream to recordings/<run-id>/memory.db
-dimos --rerun-open none --rerun-host 0.0.0.0 run px4-a8   # on the aircraft, viewer on a laptop
+dimos run px4                                  # router on PX4's companion port
+dimos run px4 --px4droneconnection.link=radio  # router on a telemetry radio
+dimos --record sqlite run px4                  # every stream to recordings/<run-id>/memory.db
+dimos run px4-a8 --rerunbridgemodule.rerun-open none \
+    --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0  # viewer on a laptop
 ```
 
 With the last form, run the `dimos-viewer --connect ...` line it logs on the laptop.
@@ -87,9 +88,9 @@ position.
 
 ## Agent
 
-1. `uv sync --extra px4 --extra agents` and set `OPENAI_API_KEY`.
+1. `uv sync --extra px4 --extra agents --inexact` and set `OPENAI_API_KEY`.
 2. `dimos run px4-agentic` (or `px4-sitl-agentic`, with QGroundControl open and
-   `drone.sitl_enable(True)` in `dimos shell` first, as in Test).
+   `drone.sitl_enable(True)` in `dimos shell` first, as in Fly in PX4 SITL).
 3. Talk to it in `dimos humancli`, or send commands:
 
 ```bash
@@ -102,17 +103,7 @@ Skills: `takeoff`, `go_to`, `land`, `set_guidance_mode`, `flight_status`. A skil
 connection RPC plus a wait for the outcome. The supervisor refuses a skill exactly as it
 refuses the RPC.
 
-## Test
-
-Unit tests, no hardware and no simulator:
-
-```bash
-uv sync --extra px4
-uv run pytest dimos/robot/px4 dimos/hardware/gimbal/siyi dimos/hardware/sensors/camera/rtsp \
-    dimos/msgs/px4_msgs
-```
-
-In PX4 SITL:
+## Fly in PX4 SITL
 
 1. In a PX4-Autopilot checkout: `make px4_sitl gz_x500`.
 2. Open QGroundControl. PX4 SITL will not arm without a ground station.

@@ -32,6 +32,7 @@ from dimos.imitation.dataprep.schema import (
     DataPrepConfig,
     FeatureSpec,
     OutputConfig,
+    RecordingSchema,
     Sample,
     SyncConfig,
 )
@@ -159,37 +160,39 @@ def _write_collection(path: Path) -> None:
 def _config(source: Path, output: Path) -> DataPrepConfig:
     names = ["shoulder", "wrist"]
     return DataPrepConfig(
-        source=str(source),
-        observation={
-            "observation.images.wrist": FeatureSpec(
-                stream="color_image",
-                field="data",
-                dtype="video",
-                shape=(8, 8, 3),
-                names=["height", "width", "channels"],
+        recording_schema=RecordingSchema(
+            observation={
+                "observation.images.wrist": FeatureSpec(
+                    stream="color_image",
+                    field="data",
+                    dtype="video",
+                    shape=(8, 8, 3),
+                    names=["height", "width", "channels"],
+                ),
+                "observation.state": FeatureSpec(
+                    stream="coordinator_joint_state",
+                    field="position",
+                    dtype="float32",
+                    shape=(2,),
+                    names=names,
+                ),
+            },
+            action={
+                "action": FeatureSpec(
+                    stream="applied_joint_position_command",
+                    field="position",
+                    dtype="float32",
+                    shape=(2,),
+                    names=names,
+                )
+            },
+            sync=SyncConfig(
+                anchor="observation.images.wrist",
+                rate_hz=30.0,
+                tolerance_ms=20.0,
             ),
-            "observation.state": FeatureSpec(
-                stream="coordinator_joint_state",
-                field="position",
-                dtype="float32",
-                shape=(2,),
-                names=names,
-            ),
-        },
-        action={
-            "action": FeatureSpec(
-                stream="applied_joint_position_command",
-                field="position",
-                dtype="float32",
-                shape=(2,),
-                names=names,
-            )
-        },
-        sync=SyncConfig(
-            anchor="observation.images.wrist",
-            rate_hz=30.0,
-            tolerance_ms=20.0,
         ),
+        source=str(source),
         output=OutputConfig(format="hdf5", path=output),
     )
 
@@ -264,7 +267,9 @@ def test_sample_emission_does_not_keep_every_decoded_camera_frame(tmp_path, mock
     recording = tmp_path / "session.mcap"
     _write_collection(recording)
     config = _config(recording, tmp_path / "dataset")
-    config.observation["camera_alias"] = config.observation["observation.images.wrist"]
+    config.recording_schema.observation["camera_alias"] = config.recording_schema.observation[
+        "observation.images.wrist"
+    ]
     decoded = []
     decode = JpegCodec.decode
 
@@ -275,15 +280,15 @@ def test_sample_emission_does_not_keep_every_decoded_camera_frame(tmp_path, mock
 
     mocker.patch.object(JpegCodec, "decode", autospec=True, side_effect=track_decode)
     with _open_recording(recording) as store:
-        episode = extract_episodes(store, config.episodes)[0]
+        episode = extract_episodes(store, config.recording_schema.episodes)[0]
         samples = iter_episode_samples(
             store,
             episode,
-            {**config.observation, **config.action},
-            config.sync,
-            config.quality,
-            obs_keys=set(config.observation),
-            action_keys=set(config.action),
+            {**config.recording_schema.observation, **config.recording_schema.action},
+            config.recording_schema.sync,
+            config.recording_schema.quality,
+            obs_keys=set(config.recording_schema.observation),
+            action_keys=set(config.recording_schema.action),
         )
         first = next(samples)
 

@@ -117,8 +117,12 @@ def get_data_dir(extra_path: str | None = None) -> Path:
     return get_project_root() / "data"
 
 
-def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
-    """A path, a stem in the working directory or project root, or an LFS name to pull."""
+def resolve_named_path(name: str | Path, suffix: str = "", must_exist: bool = True) -> Path:
+    """A path, a stem in the working directory or project root, or an LFS name to pull.
+
+    Without ``must_exist`` a name found nowhere is where it would be created: a
+    bare name in the project root, a path as given; nothing is pulled.
+    """
     s = str(name)
     names = [s] if not suffix or s.endswith(suffix) else [s, s + suffix]
     for candidate in names:
@@ -128,6 +132,8 @@ def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
         if (DIMOS_PROJECT_ROOT / p).exists():
             return DIMOS_PROJECT_ROOT / p
     p = Path(names[-1])
+    if not must_exist:
+        return p if p.is_absolute() or p.parent != Path() else DIMOS_PROJECT_ROOT / p
     if p.is_absolute():
         return p
     try:
@@ -374,7 +380,8 @@ class LfsPath(type(Path())):  # type: ignore[misc]
             return object.__getattribute__(self, name)
 
         # Copying and serializer/type introspection must inspect the lazy wrapper,
-        # not materialize the asset (including probes for absent attributes).
+        # not materialize the asset (including probes for absent attributes). The CBOR
+        # codec is not listed: it looks cbor_encode up on the class, never the instance.
         if name in (
             "_lfs_filename",
             "_lfs_resolved_cache",
@@ -390,6 +397,13 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         # For all other attributes, ensure download first then delegate to resolved path
         resolved = object.__getattribute__(self, "_ensure_downloaded")()
         return getattr(resolved, name)
+
+    def cbor_encode(self) -> str:
+        return str(object.__getattribute__(self, "_lfs_filename"))
+
+    @classmethod
+    def cbor_decode(cls, filename: str) -> "LfsPath":
+        return cls(filename)
 
     def __copy__(self) -> "LfsPath":
         copied = LfsPath(self._lfs_filename)

@@ -52,6 +52,8 @@ DEPTH_TOLERANCE = 0.06  # s - temporal join color->depth
 LIDAR_CELL = 0.05  # m - the merged lidar map keeps one point per cell
 FRAME_TOLERANCE = 0.02  # s - an index timestamp back to its own color frame
 EMBED_HZ = 1.0  # index density for a camera parked over a workspace
+WALK_EMBED_HZ = 3.0  # a walking robot changes viewpoint every frame
+MOBILE_SPAN_M = 3.0  # camera travel beyond this means a mobile base
 TF_ROOT_WINDOW = 2.5  # s - tf read either side of a recording's middle to find its root
 # a lidar map holds what the camera cannot see: keep the visible, split off the background, trim
 LIDAR_FILTERS = [raycast(), range_cluster(), statistical(nb_neighbors=12, std_ratio=2.0)]
@@ -82,6 +84,21 @@ def window_tf(store: Any, t0: float, t1: float) -> MultiTBuffer:
     return tf
 
 
+def _camera_span(cameras: dict[str, RigCamera], tf: StreamTF, world: str) -> float:
+    """Widest diagonal of one camera's positions' bounding box over the recording."""
+    span = 0.0
+    for frame, camera in cameras.items():
+        t0, t1 = camera.color.get_time_range()
+        seen = [
+            tf.get(frame, world, t0 + (t1 - t0) * k / 11, TF_TOLERANCE, warn=False)
+            for k in range(12)
+        ]
+        positions = np.array([(-t).translation.to_numpy() for t in seen if t is not None])
+        if len(positions) > 1:
+            span = max(span, float(np.linalg.norm(np.ptp(positions, axis=0))))
+    return span
+
+
 @dataclass
 class RigCamera:
     """One camera: intrinsics, its colour feed, and the depth aligned to it."""
@@ -97,13 +114,15 @@ class Rig:
 
     A camera lifts through its aligned depth, or without one through every scan
     of ``lidar`` merged, a point cloud stream in the world frame or in a frame
-    tf reaches.
+    tf reaches. A ``mobile`` rig, one on a walking base, is indexed at
+    ``WALK_EMBED_HZ``.
     """
 
     cameras: dict[str, RigCamera]
     tf: TFLookup
     world_frame: str = WORLD_FRAME
     lidar: Any = None
+    mobile: bool = False
     plane_cache: dict[tuple[str, int, int], SupportPlane] = field(default_factory=dict, repr=False)
     _lidar_map: tuple[int, PointCloud2 | None] | None = field(default=None, init=False, repr=False)
 
@@ -165,13 +184,23 @@ class Rig:
         if all(camera.depth is not None for camera in cameras.values()):
             lidar = None
         world = _tf_root(store, next(iter(cameras)))
-        logger.info(f"rig: cameras={list(cameras)} lidar={lidar!r} world={world!r}")
+        span = _camera_span(cameras, tf, world)
+        mobile = span > MOBILE_SPAN_M
+        logger.info(
+            f"rig: cameras={list(cameras)} lidar={lidar!r} world={world!r} "
+            f"span={span:.1f}m mobile={mobile}"
+        )
         return cls(
             cameras=cameras,
             tf=tf,
             world_frame=world,
             lidar=store.stream(lidar) if lidar else None,
+            mobile=mobile,
         )
+
+    @property
+    def embed_hz(self) -> float:
+        return WALK_EMBED_HZ if self.mobile else EMBED_HZ
 
     def time_range(self) -> tuple[float, float]:
         """Earliest and latest colour stamp over every camera."""

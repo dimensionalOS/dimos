@@ -36,6 +36,7 @@ from typer.testing import CliRunner
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.cli.commands.lifecycle import _mcp_url
 from dimos.cli.dimos import main
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -66,14 +67,14 @@ def _clean_registry(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
 
 @pytest.fixture(scope="class")
-def mcp_shared(mcp_url: str) -> Iterator[ModuleCoordinator]:
+def mcp_shared(mcp_url: str, mcp_port: int) -> Iterator[ModuleCoordinator]:
     """Build a shared StressTestModule + McpServer.  Class-scoped -- started
     once, torn down after every test in the class finishes.  Use for
     read-only tests that don't stop/restart the server."""
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(
         StressTestModule.blueprint(),
-        McpServer.blueprint(),
+        McpServer.blueprint(port=mcp_port),
     )
     coord = ModuleCoordinator.build(bp)
     ready = McpAdapter(url=mcp_url).wait_for_ready()
@@ -96,6 +97,7 @@ def mcp_entry(mcp_shared: ModuleCoordinator, tmp_path: object) -> Iterator[RunEn
         log_dir=str(log_dir),
         cli_args=["stress-test"],
         config_overrides={"n_workers": 1},
+        mcp_url=_mcp_url(McpServer.blueprint(), mcp_shared),
     )
     entry.save()
     yield entry
@@ -175,6 +177,7 @@ class TestMCPLifecycle:
         assert "echo" in modules["StressTestModule"]
 
 
+@pytest.mark.usefixtures("mcp_entry")
 class TestMCPCLICommands:
     """Test dimos mcp CLI commands against real MCP server."""
 
@@ -209,6 +212,7 @@ class TestMCPCLICommands:
         assert "echo" in data["modules"]["StressTestModule"]
 
 
+@pytest.mark.usefixtures("mcp_entry")
 class TestMCPErrorHandling:
     """Test MCP error handling and edge cases."""
 
@@ -289,6 +293,7 @@ class TestMCPErrorHandling:
         assert "invalid JSON" in result.output
 
 
+@pytest.mark.usefixtures("mcp_entry")
 class TestAgentSend:
     """Test dimos agent-send CLI and MCP method."""
 
@@ -315,19 +320,19 @@ class TestAgentSend:
 class TestDaemonMCPRecovery:
     """Test MCP recovery after daemon crashes and restarts."""
 
-    def test_restart_after_clean_stop(self, adapter: McpAdapter) -> None:
+    def test_restart_after_clean_stop(self, adapter: McpAdapter, mcp_port: int) -> None:
         """Stop then start again -- MCP should come back."""
         global_config.update(viewer="none", n_workers=1)
 
         # First run
-        bp1 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
+        bp1 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
         coord1 = ModuleCoordinator.build(bp1)
         assert adapter.wait_for_ready(), "First MCP start failed"
         coord1.stop()
         assert adapter.wait_for_down(), "MCP didn't stop"
 
         # Second run -- should work without port conflicts
-        bp2 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
+        bp2 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
         coord2 = ModuleCoordinator.build(bp2)
         assert adapter.wait_for_ready(), "Second MCP start failed (port conflict?)"
         coord2.stop()
@@ -363,12 +368,12 @@ class TestDaemonMCPRecovery:
 class TestMCPRapidRestart:
     """Test rapid stop/start cycles."""
 
-    def test_three_restart_cycles(self, adapter: McpAdapter) -> None:
+    def test_three_restart_cycles(self, adapter: McpAdapter, mcp_port: int) -> None:
         """Start -> stop -> start 3 times -- no port conflicts."""
         global_config.update(viewer="none", n_workers=1)
 
         for cycle in range(3):
-            bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
+            bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
             coord = ModuleCoordinator.build(bp)
             assert adapter.wait_for_ready(timeout=15), f"MCP failed to start on cycle {cycle}"
 
@@ -382,10 +387,10 @@ class TestMCPRapidRestart:
 class TestMCPNoServer:
     """Tests that require NO MCP server running."""
 
-    def test_mcp_dead_after_stop(self, adapter: McpAdapter) -> None:
+    def test_mcp_dead_after_stop(self, adapter: McpAdapter, mcp_port: int) -> None:
         """After coordinator.stop(), MCP should stop responding."""
         global_config.update(viewer="none", n_workers=1)
-        bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
+        bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint(port=mcp_port))
         coord = ModuleCoordinator.build(bp)
         assert adapter.wait_for_ready(), "MCP server did not start"
 

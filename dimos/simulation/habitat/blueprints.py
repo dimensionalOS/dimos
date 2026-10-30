@@ -24,7 +24,6 @@
 
 from typing import Any
 
-from dimos.agents.typesafe.agent import typesafe_api_key
 from dimos.agents.typesafe.navigation import TypeSafeNavigationAgent
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -196,19 +195,15 @@ habitat_nav = autoconnect(
 
 
 # `go to the chair` on /human_input; visible annotated instances are the detections.
-habitat_typesafe = (
-    autoconnect(
-        habitat_teleop,
-        HabitatConnection.blueprint(
-            publish_scan=True, scan_frame=SCAN_FRAME_REGISTERED, publish_objects=True
-        ).remappings(
-            [
-                (HabitatConnection, "registered_scan", "lidar"),
-                (HabitatConnection, "objects", "detections_3d"),
-            ]
-        ),
-        TypeSafeNavigationAgent.blueprint(),
-    )
-    .requirements(typesafe_api_key)
-    .global_config(transport="zenoh")
-)
+habitat_typesafe = autoconnect(
+    habitat_teleop,
+    HabitatConnection.blueprint(
+        publish_scan=True, scan_frame=SCAN_FRAME_REGISTERED, publish_objects=True
+    ).remappings(
+        [
+            (HabitatConnection, "registered_scan", "lidar"),
+            (HabitatConnection, "objects", "detections_3d"),
+        ]
+    ),
+    TypeSafeNavigationAgent.blueprint(),
+).global_config(transport="zenoh")

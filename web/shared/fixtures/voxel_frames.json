@@ -49,7 +49,7 @@
           7
         ]
       ],
-      "payload_b64": "eJxjYEAAZoYRDBgH2gEDDwAJDwAF"
+      "payload_b64": "eAFjQALMDCMYMDKMeAAACQ8ABQ=="
     },
     {
       "name": "across_chunks",
@@ -105,7 +105,7 @@
           2
         ]
       ],
-      "payload_b64": "eJz7+///f0YGBoZ/QJphFAxl0ECpAf+RABXcMwqGLmhA5jAOkCNGweAA9KsfRlPaYAcAjoMY6Q=="
+      "payload_b64": "eAHtwbENACAMwLD08z4OYWVHSKDWHmoAU6X9LDnkhlZZsglaZQFMleuC9rYFjoMY6Q=="
     },
     {
       "name": "coarse_res",
@@ -146,7 +146,7 @@
           5
         ]
       ],
-      "payload_b64": "eJxjYEAFTAyjYKQCRigeOmA0tdIKAAAS8AAH"
+      "payload_b64": "eAFjQANMDKNgpAJGBgYGRoahBJgYRgFtAAAS8AAH"
     },
     {
       "name": "empty",
@@ -160,7 +160,7 @@
       },
       "points": [],
       "voxels": [],
-      "payload_b64": "eJwDAAAAAAE="
+      "payload_b64": "eAEDAAAAAAE="
     }
   ]
 }

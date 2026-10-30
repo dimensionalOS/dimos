@@ -34,11 +34,11 @@ recorder, all wired together.
 
 | Button | Action |
 | --- | --- |
-| **A** (right) / **X** (left) | **Hold to engage** — the arm tracks the controller only while held |
+| **Grip** (middle-finger button) | **Hold to engage** — the arm tracks that controller only while held |
 | **B** | **Toggle record** — press to start an episode, press again to save it |
 | **Y** | **Discard** the in-progress episode |
 
-So a take is: hold **A** to move the arm into place → press **B** to start →
+So a take is: hold the **grip** to move the arm into place → press **B** to start →
 perform the task → press **B** to save (or **Y** to throw it away). The terminal
 prints one line per transition:
 

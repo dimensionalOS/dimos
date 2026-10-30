@@ -689,7 +689,7 @@ class MavlinkIO:
         return refused
 
     # Px4Actuator protocol. Fire-and-forget: the core watches HEARTBEAT for the effect, and
-    # the ack result is kept for sensor_stats.
+    # the ack result is kept for get_sensor_stats.
 
     def set_mode(self, main: int, sub: int = 0) -> None:
         self.send_command(MAV_CMD_DO_SET_MODE, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, main, sub)

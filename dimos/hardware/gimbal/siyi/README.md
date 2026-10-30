@@ -14,7 +14,7 @@ relays the attitude in and the aim requests out.
   your airframe; the module warns while it is 0, 0, 0.
 - The A8 reports yaw relative to the body and pitch stabilised to the earth.
 
-RPCs: `aim(pitch_deg, yaw_deg)`, `state()`.
+RPC: `aim(pitch_deg, yaw_deg)` requests an absolute pitch and yaw (degrees, body frame).
 
 ## Run
 
@@ -24,9 +24,3 @@ dimos run siyi-a8-gimbal --siyia8gimbal.ip=<camera>
 
 Images must carry the frame of `camera_info`: run the camera with
 `--rtspcamera.frame-id=a8_optical`.
-
-## Test
-
-```bash
-uv run pytest dimos/hardware/gimbal/siyi
-```

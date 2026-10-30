@@ -19,8 +19,8 @@ A skill returns a plain statement of what it did and measured, as a
 When the skill's own code or a driver fails, the skill raises instead; the MCP
 server turns the exception into a failed tool call.
 
-The MCP server (``dimos/agents/mcp/mcp_server.py``) calls ``agent_encode`` on
-this class and forwards its output as the tool call's ``content``.
+The MCP server (``dimos/agents/mcp/mcp_server.py``) forwards ``agent_encode``
+as the tool call's ``content`` and ``to_json`` as its ``structuredContent``.
 """
 
 from __future__ import annotations
@@ -46,15 +46,19 @@ class SkillResult:
     duration_ms: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def agent_encode(self) -> list[dict[str, Any]]:
-        """Encode as MCP tool-call content: one text item holding a JSON object."""
+    def to_json(self) -> dict[str, Any]:
+        """The JSON object ``agent_encode`` writes as text."""
         payload: dict[str, Any] = {
             "message": self.message,
             "duration_ms": round(self.duration_ms, 1),
         }
         if self.metadata:
             payload["metadata"] = self.metadata
-        return [{"type": "text", "text": json.dumps(payload)}]
+        return payload
+
+    def agent_encode(self) -> list[dict[str, Any]]:
+        """Encode as MCP tool-call content: one text item holding a JSON object."""
+        return [{"type": "text", "text": json.dumps(self.to_json())}]
 
     def __str__(self) -> str:
         return self.message

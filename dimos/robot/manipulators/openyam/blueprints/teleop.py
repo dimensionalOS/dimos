@@ -123,7 +123,7 @@ _openyam_webxr_task = teleop_ik_task(
 
 # Single-arm WebXR teleop: right controller -> OpenYAM arm
 teleop_webxr_openyam = autoconnect(
-    ArmTeleopModule.blueprint(),
+    ArmTeleopModule.blueprint(zero_button="B"),
     TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_openyam_webxr_hw],
@@ -162,5 +162,7 @@ keyboard_teleop_openyam_planner = autoconnect(
             _gripper_task(),
             _trajectory_task(priority=10),
         ],
+        cls=ArmTwistCoordinator,
+        instance_name="ControlCoordinator",
     ),
 )

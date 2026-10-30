@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import os
 from pathlib import Path
 import platform
@@ -33,14 +33,14 @@ import pytest
 
 from dimos.hardware.sensors.camera.rtsp import camera as camera_module
 from dimos.hardware.sensors.camera.rtsp.camera import RtspCamera
-from dimos.hardware.sensors.camera.rtsp.synthetic import SQUARE, square_origin, write_synthetic_h265
 
 
 @pytest.fixture(scope="module")
-def clip(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, int]:
+def clip(
+    tmp_path_factory: pytest.TempPathFactory, write_synthetic_h265: Callable[..., int]
+) -> tuple[Path, int]:
     path = tmp_path_factory.mktemp("rtsp") / "synthetic.mp4"
-    n = write_synthetic_h265(path, width=320, height=180, fps=25, seconds=2.0)
-    return path, n
+    return path, write_synthetic_h265(path)
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def test_ports(camera: tuple[RtspCamera, dict[str, list[Any]]]) -> None:
     cam, _ = camera
     assert set(cam.inputs) == set()
     assert set(cam.outputs) == {"video", "color_image", "color_jpeg"}
-    assert {"set_video_enabled", "set_jpeg_rate", "sensor_stats"} <= set(cam.rpcs)
+    assert {"set_video_enabled", "set_jpeg_rate", "get_sensor_stats"} <= set(cam.rpcs)
 
 
 def test_every_access_unit_is_passed_through(
@@ -88,7 +88,7 @@ def test_every_access_unit_is_passed_through(
     assert t0 - 0.08 - 0.5 <= first.ts <= time.time() - 0.08
     stamps = [v.ts for v in published["video"]]
     assert stamps == sorted(stamps)
-    assert cam.sensor_stats()["video"]["published"] == clip[1]
+    assert cam.get_sensor_stats()["video"]["published"] == clip[1]
 
 
 def test_an_h264_capture_goes_out_as_h264(tmp_path: Path) -> None:
@@ -123,7 +123,7 @@ def test_published_counts_units_not_calls() -> None:
         )
     finally:
         cam.stop()
-    assert cam.sensor_stats()["video"]["published"] == 2
+    assert cam.get_sensor_stats()["video"]["published"] == 2
 
 
 def _clip_with_a_jump(path: Path, jump_frames: int) -> None:
@@ -226,6 +226,40 @@ def test_logs_carry_no_rtsp_credentials(monkeypatch: pytest.MonkeyPatch) -> None
     assert camera_module._redact("/data/a8.mp4", "/data/a8.mp4") == "/data/a8.mp4"
 
 
+def test_an_unreachable_camera_is_not_logged_on_every_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cam = RtspCamera(url="rtsp://unused/main", sensor_stats_interval_s=0.0)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        camera_module,
+        "logger",
+        SimpleNamespace(warning=lambda event, **_kw: warnings.append(event)),
+    )
+    monkeypatch.setattr(camera_module, "_RECONNECT_WAIT_S", 0.0)
+    # Five refused connections, a stream that plays and ends, five more refusals.
+    outcomes: list[int | OSError] = [OSError("refused")] * 5 + [100] + [OSError("refused")] * 5
+
+    def relay_once() -> int:
+        outcome = outcomes.pop(0)
+        if not outcomes:
+            cam._stop_event.set()
+        if isinstance(outcome, OSError):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(cam, "relay_once", relay_once)
+    try:
+        cam._relay_loop()
+    finally:
+        cam.stop()
+    assert warnings == [
+        "camera stream unavailable",
+        "camera stream ended",
+        "camera stream unavailable",  # the stream played in between: warned at once
+    ]
+
+
 @pytest.mark.parametrize("password", ["s3cret", "p]w[", "p\\w", "a@b", "a:b%40c"])
 def test_redaction_survives_odd_passwords(password: str) -> None:
     url = f"rtsp://admin:{password}@192.168.144.25:8554/main.264"
@@ -245,8 +279,8 @@ def test_decoded_frames_carry_the_moving_square(
     assert len(frames) == clip[1]
     img = frames[10]
     assert img.data.shape == (180, 320, 3)
-    x, y = square_origin(10, 320, 180)
-    assert np.mean(img.data[y : y + SQUARE, x : x + SQUARE]) > 200
+    # Frame 10's 24 px square: 8 px a frame from the left edge, on the middle row.
+    assert np.mean(img.data[78:102, 80:104]) > 200
     assert np.mean(img.data[:20, :20]) < 130
     # No B-frames, as from a live camera: every frame carries its own packet's stamp, in order.
     assert [f.ts for f in frames] == [v.ts for v in published["video"]]
@@ -267,7 +301,7 @@ def test_jpeg_is_small_and_capped(clip: tuple[Path, int]) -> None:
         cam.stop()
     assert len(jpegs) == clip[1]
     assert jpegs[0].format == "jpeg" and 0 < len(jpegs[0].data) < 20_000
-    assert cam.sensor_stats()["color_image"]["published"] == 0
+    assert cam.get_sensor_stats()["color_image"]["published"] == 0
 
 
 def test_missing_libturbojpeg_only_stops_the_jpeg(
@@ -284,7 +318,9 @@ def test_missing_libturbojpeg_only_stops_the_jpeg(
     assert len(published["video"]) == clip[1]
     assert len(published["color_image"]) == clip[1]
     assert published["color_jpeg"] == []
-    assert cam.sensor_stats()["color_jpeg"]["errors"] == 1  # switched off, not retried per frame
+    assert (
+        cam.get_sensor_stats()["color_jpeg"]["errors"] == 1
+    )  # switched off, not retried per frame
     assert cam._jpeg_hz == 0.0
 
 
@@ -310,7 +346,9 @@ def test_replayed_video_is_annexb_with_parameter_sets(
     assert {19, 20} & set(_nal_types(units[0]))  # an IDR follows the parameter sets
 
 
-def test_live_path_forwards_the_units_untouched(tmp_path: Path) -> None:
+def test_live_path_forwards_the_units_untouched(
+    tmp_path: Path, write_synthetic_h265: Callable[..., int]
+) -> None:
     # "://" selects the live branch: no bitstream filter, the demuxed units byte for byte.
     path = tmp_path / "clip.ts"  # MPEG-TS carries Annex-B, as RTSP does
     n = write_synthetic_h265(path, seconds=1.0)
@@ -361,7 +399,7 @@ class _DamagedUnitContainer:
 
 
 def test_a_damaged_access_unit_does_not_end_the_passthrough(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_synthetic_h265: Callable[..., int]
 ) -> None:
     path = tmp_path / "clip.ts"
     n = write_synthetic_h265(path, seconds=1.0)
@@ -380,7 +418,7 @@ def test_a_damaged_access_unit_does_not_end_the_passthrough(
         cam.stop()
     assert len(video) == n
     assert 0 < len(images) < n
-    assert cam.sensor_stats()["color_image"]["errors"] == 1
+    assert cam.get_sensor_stats()["color_image"]["errors"] == 1
 
 
 def test_a_live_stream_that_ends_is_reopened_after_the_wait(
@@ -399,28 +437,6 @@ def test_a_live_stream_that_ends_is_reopened_after_the_wait(
     assert not relay.is_alive()
     assert 2 <= len(opens) <= 4  # not a busy loop
     assert opens[1] - opens[0] >= 0.2
-
-
-@pytest.mark.skipif_no_turbojpeg
-def test_synthetic_source_starts_and_stop_removes_the_clip() -> None:
-    cam = RtspCamera(url="synthetic", color_hz=1e9, jpeg_hz=1e9, sensor_stats_interval_s=0.0)
-    published: dict[str, list[Any]] = {"video": [], "color_image": [], "color_jpeg": []}
-    for name, sink in published.items():
-        getattr(cam, name).publish = sink.append
-    try:
-        cam.start()
-        clip_dir = Path(cam._source).parent
-        assert clip_dir.name.startswith("rtsp-synthetic-") and clip_dir.is_dir()
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline and not all(published.values()):
-            time.sleep(0.02)
-    finally:
-        cam.stop()
-    assert all(published.values())
-    x, y = square_origin(0, 320, 180, centered=True)
-    assert np.mean(published["color_image"][0].data[y : y + SQUARE, x : x + SQUARE]) > 200
-    assert not clip_dir.exists()
-    assert not [t for t in threading.enumerate() if t.name.startswith("rtsp-")]
 
 
 _SDP = (
@@ -512,7 +528,7 @@ def test_video_can_be_disabled_and_jpeg_paced_by_rpc(
     assert cam.set_jpeg_rate(0.5) == 0.5
     cam.relay_once()
     assert published["video"] == []
-    assert cam.sensor_stats()["video"]["dropped"] >= clip[1]
+    assert cam.get_sensor_stats()["video"]["dropped"] >= clip[1]
     assert len(published["color_image"]) == clip[1]  # decoded frames are unaffected
     assert len(published["color_jpeg"]) == 1  # 0.5 Hz over a clip replayed as fast as possible
 
