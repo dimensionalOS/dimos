@@ -55,6 +55,8 @@ async function waitFor<T>(
   }
 }
 
+const LATEST_REFRESH_MS = 2_000;
+
 async function readChannel(
   session: Session,
   spec: ChannelSpec,
@@ -62,6 +64,16 @@ async function readChannel(
   signal: AbortSignal,
 ): Promise<Slot> {
   const previous = session.store.get(spec.ch);
+  // The store stops updating between reads, so a cached slot can be stale.
+  if (mode === "latest" && previous !== null) {
+    const refresh = AbortSignal.timeout(LATEST_REFRESH_MS);
+    try {
+      return await readChannel(session, spec, "next", AbortSignal.any([signal, refresh]));
+    } catch (error) {
+      if (signal.aborted || !refresh.aborted) throw error;
+      return previous;
+    }
+  }
   const stop = session.subscribe(spec.ch, () => {});
   try {
     return await waitFor(
@@ -127,7 +139,7 @@ export function streamTool(options: {
     {
       name: "stream_get",
       description:
-        "Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the SDK's current frame; next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.",
+        "Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame, waiting up to 2 s for a live one; next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.",
       parameters: Parameters,
       execute: async (args, _api, context) => {
         try {
