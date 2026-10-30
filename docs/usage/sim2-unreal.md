@@ -164,6 +164,14 @@ prefix the CLI command with
 can discover and stop it. In Controller, add two Camera panels and select
 `color_image` and `depth_image` respectively.
 
+For lidar, open Controller's 3D panel, set **Fixed frame** to `odom` and
+**Follow frame** to `mid360_link`, and enable `lidar` or `global_map`.
+`lidar_raw` uses the same `mid360_link` frame as the physical driver and can also
+be displayed. The simulator's ground-truth `world` tree is separate from
+Point-LIO's estimated `odom` tree; their origins are not interchangeable.
+Use a full stack restart when respawning in this navigation profile: resetting
+only physics leaves the external controller, Point-LIO and map state stale.
+
 ### Drive with the keyboard
 
 Click inside the camera image before driving. Hold **W/S** to move forward/back,

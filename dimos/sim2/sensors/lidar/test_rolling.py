@@ -14,6 +14,7 @@
 
 """A rolling lidar integrates the snapshot history: motion stays in the raw scan."""
 
+from contextlib import closing
 from dataclasses import replace
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ import pytest
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.backends.mujoco import STATE
 from dimos.sim2.messages import FrameMetadata, StateFrame
+from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.device import LidarDevice
 from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
 from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
@@ -148,6 +150,29 @@ def test_rolling_device_reports_the_scan_interval_and_delivery_delay(history, sc
         assert raw.value.offset_times_u32()[-1] == 80_015_000
     finally:
         device.close()
+
+
+def test_driver_frames_survive_the_robot_and_sensor_binding_names(history, scanner):
+    reader, publish = history
+    module, _, _ = scanner
+    sensor = replace(
+        module.config.sensor,
+        frame_id="mid360_link",
+        imu_frame_id="imu_link",
+        imu=Imu("lidar_imu", "mid360_link"),
+        truth_outputs=False,
+    )
+    with closing(LidarDevice(reader, sensor, "g1", "pelvis")) as device:
+        for tick in range(21):
+            publish(tick * 0.005)
+        measurements = device.poll()
+
+    cloud = next(value.value for value in measurements if value.port == "lidar")
+    imu = [value.value for value in measurements if value.port == "imu"]
+    assert cloud.frame_id == "mid360_link"
+    assert cloud.points().numpy()[:, 0] == pytest.approx(4.9, abs=1e-6)
+    assert imu and {sample.frame_id for sample in imu} == {"imu_link"}
+    assert {measurement.port for measurement in measurements} == {"lidar", "imu"}
 
 
 def test_history_gap_drops_the_scan_instead_of_faking_an_instant_one(history, scanner):

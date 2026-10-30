@@ -39,7 +39,7 @@ class LidarDevice(SensorDevice[Lidar]):
         PointCloud2()
         prefix = self.model_prefix
         self._site = self.reader.model.site(prefix + self.sensor.model_name).id
-        self._frame = self.frame_prefix + self.sensor.name
+        self._frame = self.sensor.frame_id or self.frame_prefix + self.sensor.name
         self._model = self.sensor.model(**self.sensor.model_kwargs)
         self._rays = self._model.directions() if isinstance(self._model, RayPattern) else None
         if isinstance(self._model, TimedRayPattern):
@@ -172,7 +172,7 @@ class LidarDevice(SensorDevice[Lidar]):
                     angular_velocity=Vector3(*self.reader.data.sensor(self._gyro).data),
                     linear_acceleration=Vector3(*self.reader.data.sensor(self._accel).data),
                     orientation_covariance=[-1.0, 0, 0, 0, 0, 0, 0, 0, 0],
-                    frame_id=self.frame_prefix + imu.name,
+                    frame_id=self.sensor.imu_frame_id or self.frame_prefix + imu.name,
                     ts=self._clock_origin + t,
                 ),
                 start=t,
