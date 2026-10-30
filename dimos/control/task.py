@@ -124,7 +124,7 @@ class CoordinatorState:
         joints: Aggregated joint states from all hardware
         imu: Per-whole-body IMU readings, keyed by hardware_id.
             Empty dict when no whole-body hardware exposes IMU this tick.
-        t_now: Current tick time (time.perf_counter())
+        t_now: Control clock in seconds (wall monotonic time or supplied simulation time)
         dt: Time since last tick (seconds)
         sensors: Sensor readings from robots driven through connection
             modules. Empty when none reports a sensor.
@@ -132,7 +132,7 @@ class CoordinatorState:
 
     joints: JointStateSnapshot
     imu: dict[str, IMUState] = field(default_factory=dict)
-    t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
+    t_now: float = 0.0  # Selected control clock; use this rather than time.time().
     dt: float = 0.0  # Time since last tick
     sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
 

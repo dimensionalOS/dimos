@@ -163,6 +163,12 @@ class JointTargets:
     positions: tuple[float, ...]
     ttl: float = 0.25  # simulation seconds; expiration holds measured position
     tick: int | None = None  # response to this exact feedback tick, for paced control
+    # Empty fields use zero velocity/feedforward and the world's Drive gains.
+    # effort = kp*(position-q) + kd*(velocity-dq) + feedforward, at each physics step.
+    velocities: tuple[float, ...] = ()
+    kp: tuple[float, ...] = ()
+    kd: tuple[float, ...] = ()
+    feedforward: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)

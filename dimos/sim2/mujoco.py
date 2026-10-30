@@ -235,9 +235,24 @@ class MujocoBackend:
             ):
                 raise ValueError(f"target outside joint limits: {name}")
             ids.append(self._drives[name])
-        self.model.actuator_gainprm[ids] = self._gain[ids]
-        self.model.actuator_biasprm[ids] = self._bias[ids]
-        self.data.ctrl[ids] = command.positions
+        count = len(ids)
+        for values in (command.velocities, command.kp, command.kd, command.feedforward):
+            if values and (len(values) != count or not np.isfinite(values).all()):
+                raise ValueError("invalid servo vector")
+        kp = np.asarray(command.kp) if command.kp else self._gain[ids, 0]
+        kd = np.asarray(command.kd) if command.kd else -self._bias[ids, 2]
+        if np.any(kp < 0) or np.any(kd < 0):
+            raise ValueError("servo gains must be nonnegative")
+        velocity = np.asarray(command.velocities) if command.velocities else np.zeros(count)
+        feedforward = np.asarray(command.feedforward) if command.feedforward else np.zeros(count)
+        # Affine native actuator: evaluate PD at every integration step, including
+        # MuJoCo's implicit damping treatment. No Python policy in the physics loop.
+        self.model.actuator_gainprm[ids] = 0
+        self.model.actuator_gainprm[ids, 0] = 1
+        self.model.actuator_biasprm[ids] = 0
+        self.model.actuator_biasprm[ids, 1] = -kp
+        self.model.actuator_biasprm[ids, 2] = -kd
+        self.data.ctrl[ids] = kp * command.positions + kd * velocity + feedforward
 
     def efforts(self, command: JointEfforts) -> None:
         if (

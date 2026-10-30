@@ -511,6 +511,11 @@ class JointTrajectoryTask(BaseControlTask):
         if estopped:
             self.cancel()
 
+    def reset_runtime_state(self, reactivate: bool | None = None) -> bool:
+        """Cancel motion across a state discontinuity; await a new trajectory."""
+        self.cancel()
+        return self.reset()
+
     def reset(self) -> bool:
         """Reset to idle state.
 

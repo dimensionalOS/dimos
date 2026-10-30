@@ -29,9 +29,10 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 import functools
 import inspect
+import math
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from reactivex.disposable import Disposable
 
@@ -45,6 +46,7 @@ from dimos.control.components import (
     split_joint_name,
 )
 from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
+from dimos.control.feedback import ControlFeedback, MotorControl
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -70,6 +72,7 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -122,6 +125,13 @@ class ControlCoordinatorConfig(ModuleConfig):
     # How old a robot's newest reading may be, in seconds, before it is no
     # longer commanded.
     reading_timeout_s: float = 0.2
+    # In motor order, joint -> (stiffness, damping). Required for motor ports.
+    motor_gains: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # Optional coherent-feedback clock for one robot per coordinator. Multiple
+    # robots may use separate coordinators against the same world/control barrier.
+    # None retains the ordinary wall-clock loop and per-robot ports.
+    feedback_robot: str | None = None
+    velocity_timeout_s: float = 0.3
 
 
 class ControlCoordinator(Module):
@@ -191,6 +201,9 @@ class ControlCoordinator(Module):
     """
 
     config: ControlCoordinatorConfig
+    dedicated_worker: ClassVar[bool] = True
+    control_feedback: In[ControlFeedback]
+    motor_control: Out[MotorControl]
 
     # Injected when the blueprint has a MujocoSimModule: the scene that
     # simulated manipulator adapters without one of their own attach to.
@@ -247,6 +260,18 @@ class ControlCoordinator(Module):
         self._tasks_estopped = False
         # Held through each set_estop, so a stop and a clear never overlap.
         self._estop_lock = threading.Lock()
+
+        # Feedback clock serializes inference, retransmission and epoch changes.
+        self._feedback_lock = threading.RLock()
+        self._feedback: ControlFeedback | None = None
+        self._reply: MotorControl | None = None
+        self._retired_epochs: set[str] = set()
+        self._feedback_ready = threading.Event()
+        self._velocity_lock = threading.Lock()
+        self._velocity = Twist()
+        self._velocity_until = 0.0
+        self._max_compute_ms = 0.0
+        self._feedback_error = ""
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
@@ -421,6 +446,25 @@ class ControlCoordinator(Module):
                 or this coordinator also has hardware adapters.
         """
         commands = _robot_ports(self.outputs, COMMAND_PORTS)
+        if self.config.feedback_robot is not None:
+            if commands or self.config.hardware or _robot_ports(self.inputs, READING_PORTS):
+                raise ValueError(
+                    "feedback clock cannot be combined with wall-clock robot ports/adapters"
+                )
+            robot = self.config.feedback_robot
+            source = ConnectionSource(
+                robot,
+                ["motor_command"],
+                ["joint_state"],
+                self.config.model,
+                # Receipt drives the loop. Slow inference does not make its own
+                # coherent sample stale, unlike asynchronous hardware readings.
+                float("inf"),
+                self.config.motor_gains,
+            )
+            self._connections[robot] = source
+            self._joint_to_hardware.update((name, robot) for name in source.joint_names)
+            return
         readings = _robot_ports(self.inputs, READING_PORTS)
         robots = list(dict.fromkeys((*commands, *readings)))
         if not robots:
@@ -438,6 +482,11 @@ class ControlCoordinator(Module):
                     readings.get(robot, []),
                     self.config.model,
                     self.config.reading_timeout_s,
+                    {
+                        name: gains
+                        for name, gains in self.config.motor_gains.items()
+                        if name.startswith(robot + "/")
+                    },
                 )
                 self._connections[robot] = source
                 self._command_ports[robot] = {
@@ -457,9 +506,124 @@ class ControlCoordinator(Module):
         which holds ``_hardware_lock``."""
         if self._estopped:
             return
+        if self.config.feedback_robot is not None:
+            assert self._feedback is not None
+            source = self._connections[robot]
+            message = source.command_messages(values, self._feedback.state.joints.timestamp)[
+                0
+            ].message
+            assert isinstance(message, MotorCommandArray)
+            self._reply = MotorControl(
+                self._feedback.epoch,
+                self._feedback.tick,
+                tuple(source.joint_names),
+                message,
+            )
+            self.motor_control.publish(self._reply)
+            return
         ports = self._command_ports[robot]
         for out in self._connections[robot].command_messages(values, time.time()):
             ports[out.port].publish(out.message)
+
+    async def _handle_control_feedback(self, feedback: ControlFeedback) -> None:
+        self.receive_feedback(feedback)
+
+    def receive_feedback(self, feedback: ControlFeedback) -> bool:
+        """Compute once per sample; resend the exact cached reply on duplicates.
+
+        One feedback-clock coordinator owns one robot. Connections preserve
+        epoch/tick through the round trip; the simulator validates it again.
+        Returns whether a new control tick ran, useful to synchronous callers.
+        """
+        robot = self.config.feedback_robot
+        if robot is None or not self._feedback_ready.is_set():
+            return False
+        with self._feedback_lock:
+            if not self._feedback_ready.is_set():
+                return False
+            previous = self._feedback
+            if feedback.epoch in self._retired_epochs:
+                return False
+            if previous is not None and feedback.epoch == previous.epoch:
+                if feedback.tick < previous.tick:
+                    return False
+                if feedback.tick == previous.tick:
+                    with self._hardware_lock:
+                        if self._reply is not None and not self._estopped:
+                            self.motor_control.publish(self._reply)
+                    return False
+                if feedback.state.t_now <= previous.state.t_now:
+                    raise ValueError("feedback time must advance with its tick")
+            state = feedback.state
+            if (
+                feedback.tick < 0
+                or not math.isfinite(state.t_now)
+                or not math.isfinite(state.dt)
+                or state.dt <= 0
+            ):
+                raise ValueError("invalid control clock")
+            source = self._connections[robot]
+            if set(state.joints.joint_positions) != set(source.joint_names):
+                raise ValueError("control feedback must contain this robot's complete joint state")
+            if previous is None or feedback.epoch != previous.epoch:
+                if previous is not None:
+                    self._retired_epochs.add(previous.epoch)
+                self.reset_runtime_state()
+                source.drop_holds()
+                with self._velocity_lock:
+                    self._velocity, self._velocity_until = Twist(), 0.0
+            self._feedback, self._reply = feedback, None
+            self._feedback_error = ""
+            joints = state.joints
+            source.on_message(
+                "joint_state",
+                JointState(
+                    ts=joints.timestamp,
+                    name=list(joints.joint_positions),
+                    position=list(joints.joint_positions.values()),
+                ),
+            )
+            with self._velocity_lock:
+                velocity = self._velocity if time.monotonic() < self._velocity_until else Twist()
+            self._dispatch("twist_command", velocity)
+            assert self._tick_loop is not None
+            started = time.monotonic()
+            try:
+                self._tick_loop.step(state)
+            except Exception as error:
+                self._feedback_error = repr(error)
+                raise
+            self._max_compute_ms = max(self._max_compute_ms, (time.monotonic() - started) * 1000)
+            return True
+
+    @rpc
+    def set_velocity_command(self, twist: Twist, duration: float = 0.0) -> None:
+        """Latch velocity for feedback-paced control, with a wall-time deadman.
+
+        Zero duration uses velocity_timeout_s. Ordinary wall-clock stacks keep
+        using their task-routed twist_command input.
+        """
+        if self.config.feedback_robot is None:
+            raise ValueError("set_velocity_command requires a feedback-clock coordinator")
+        values = (twist.linear.x, twist.linear.y, twist.angular.z, duration)
+        if not all(math.isfinite(v) for v in values) or duration < 0:
+            raise ValueError("velocity/duration must be finite; duration must be nonnegative")
+        with self._velocity_lock:
+            self._velocity = twist
+            self._velocity_until = time.monotonic() + (duration or self.config.velocity_timeout_s)
+
+    @rpc
+    def control_status(self) -> dict[str, Any]:
+        """Control-clock progress; policy state is available through task_invoke."""
+        with self._feedback_lock:
+            return {
+                "clock": "feedback" if self.config.feedback_robot else "wall",
+                "epoch": self._feedback.epoch if self._feedback else None,
+                "tick": self._feedback.tick if self._feedback else None,
+                "computations": self.get_tick_count(),
+                "max_compute_ms": self._max_compute_ms,
+                "error": self._feedback_error,
+            }
 
     @rpc
     def add_hardware(
@@ -742,7 +906,9 @@ class ControlCoordinator(Module):
         acquires ``_subscribe_lock`` while holding either inner lock.
         """
         with self._subscribe_lock:
-            if not (self._tick_loop and self._tick_loop.is_running):
+            if not (
+                self._feedback_ready.is_set() or (self._tick_loop and self._tick_loop.is_running)
+            ):
                 return
             with self._task_lock:
                 active = {stream for stream, entries in self._routes.items() if entries}
@@ -776,6 +942,9 @@ class ControlCoordinator(Module):
         pre_hook = self._stream_pre_hooks.get(stream)
 
         def _on_message(msg: Any) -> None:
+            if stream == "twist_command" and self.config.feedback_robot is not None:
+                self.set_velocity_command(msg)
+                return
             if pre_hook is not None:
                 pre_hook(msg)
             self._dispatch(stream, msg)
@@ -800,12 +969,18 @@ class ControlCoordinator(Module):
         with self._task_lock:
             return [name for name, task in self._tasks.items() if task.is_active()]
 
+    def _command_time(self) -> float:
+        if self.config.feedback_robot is None:
+            return time.perf_counter()
+        with self._feedback_lock:
+            return self._feedback.state.t_now if self._feedback is not None else 0.0
+
     def _dispatch(self, stream: str, msg: Any) -> None:
         """Deliver a stream message to its card-routed tasks per each entry's routing rule.
 
         BROADCAST and DIRECT are ungated, so only CLAIM_OVERLAP appears below.
         """
-        t_now = time.perf_counter()
+        t_now = self._command_time()
         with self._task_lock:
             entries = self._routes.get(stream)
             if not entries:
@@ -953,17 +1128,14 @@ class ControlCoordinator(Module):
         or missing required argument raises to the caller. Undeclared methods
         still dispatch exactly as before but log a nudge to declare them.
         """
+        kwargs = dict(kwargs or {})
+        if "t_now" in kwargs and kwargs["t_now"] is None:
+            kwargs["t_now"] = self._command_time()
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
                 logger.warning(f"Task {task_name} not found")
                 return None
-
-            kwargs = dict(kwargs or {})
-
-            # Auto-inject t_now if requested (None means "use current time")
-            if "t_now" in kwargs and kwargs["t_now"] is None:
-                kwargs["t_now"] = time.perf_counter()
 
             if method in self._task_commands.get(task_name, frozenset()):
                 return self._invoke_declared(task, task_name, method, kwargs)
@@ -1043,7 +1215,7 @@ class ControlCoordinator(Module):
     @rpc
     def start(self) -> None:
         """Start the coordinator control loop."""
-        if self._tick_loop and self._tick_loop.is_running:
+        if self._feedback_ready.is_set() or (self._tick_loop and self._tick_loop.is_running):
             logger.warning("Coordinator already running")
             return
 
@@ -1092,7 +1264,19 @@ class ControlCoordinator(Module):
             connections=self._connections,
             connection_command_callback=self._publish_command,
         )
-        self._tick_loop.start()
+        if self.config.feedback_robot is None:
+            self._tick_loop.start()
+        else:
+            if (
+                not math.isfinite(self.config.velocity_timeout_s)
+                or self.config.velocity_timeout_s <= 0
+            ):
+                raise ValueError("velocity_timeout_s must be positive and finite")
+            self._feedback_ready.set()
+            if self.control_feedback.transport is not None:
+                self.process_observable(
+                    self.control_feedback.pure_observable(), self._handle_control_feedback
+                )
 
         # Subscribe the streams that registered tasks' cards consume, plus
         # twist_command when BASE hardware demands the twist mapping.
@@ -1106,6 +1290,11 @@ class ControlCoordinator(Module):
     def stop(self) -> None:
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
+        self._feedback_ready.clear()
+        # Wait for an in-flight callback before releasing tasks and transports.
+        with self._feedback_lock:
+            self._feedback, self._reply = None, None
+            self._retired_epochs.clear()
 
         # Route/command tables are kept: they track _tasks, which survives stop(),
         # and add_task() skips known names so a restart would never rebuild them.

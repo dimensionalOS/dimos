@@ -703,6 +703,8 @@ class G1GrootWBCTask(BaseControlTask):
 
 
 class G1GrootWBCTaskParams(BaseConfig):
+    # Explicit DDS order when feedback comes from a connection module.
+    all_joint_names: list[str] | None = None
     model_path: str | Path
     hardware_id: str
     auto_arm: bool = False
@@ -714,25 +716,30 @@ class G1GrootWBCTaskParams(BaseConfig):
 def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
     hw = hardware.get(params.hardware_id) if hardware else None
-    if hw is None:
+    if hw is None and params.all_joint_names is None:
         raise ValueError(
             f"G1GrootWBCTask {cfg.name!r} references unknown hardware "
             f"{params.hardware_id!r}. Declare the hardware before the task "
             f"in the blueprint config."
         )
-    if not isinstance(hw, ConnectedWholeBody):
+    if hw is not None and not isinstance(hw, ConnectedWholeBody):
         raise TypeError(
             f"G1GrootWBCTask {cfg.name!r} requires a WHOLE_BODY hardware "
             f"component for {params.hardware_id!r}, got {type(hw).__name__}. "
             f"Set hardware_type=HardwareType.WHOLE_BODY."
         )
 
+    if params.all_joint_names is not None:
+        all_joint_names = params.all_joint_names
+    else:
+        assert hw is not None
+        all_joint_names = hw.joint_names
     model_dir = Path(params.model_path)
     kwargs: dict[str, Any] = dict(
         balance_onnx=model_dir / "balance.onnx",
         walk_onnx=model_dir / "walk.onnx",
         joint_names=cfg.joint_names,
-        all_joint_names=hw.joint_names,
+        all_joint_names=all_joint_names,
         priority=cfg.priority,
         auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
@@ -743,5 +750,5 @@ def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
     return G1GrootWBCTask(
         cfg.name,
         G1GrootWBCTaskConfig(**kwargs),
-        adapter=hw.adapter,
+        adapter=hw.adapter if hw is not None else None,
     )

@@ -49,6 +49,7 @@ from dimos.control.contract.limits import Limits, model_limit, movable_joints
 from dimos.control.contract.sequence import Freshness
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -158,10 +159,12 @@ class ConnectionSource:
         model: Its joints and position limits, named ``<robot>/...``; ``None``
             for a robot with no joint ports.
         reading_timeout_s: How old its newest reading may be, in seconds.
+        motor_gains: Joint -> (kp, kd), in wire motor order. Required for a motor
+            port; targets saturate at the model limits, unspecified joints hold.
+            This path emits position servos; other modes are rejected.
 
     Raises:
-        ValueError: If the coordinator cannot drive it: no reading port, a
-            motor port, joints that can neither take a velocity nor be held
+        ValueError: If the coordinator cannot drive it: no reading port, joints that can neither take a velocity nor be held
             at a position they report, or joint ports without a model.
     """
 
@@ -172,21 +175,23 @@ class ConnectionSource:
         readings: Collection[str],
         model: RobotModel | None,
         reading_timeout_s: float,
+        motor_gains: Mapping[str, tuple[float, float]] | None = None,
     ) -> None:
         if commands and not readings:
             raise ValueError(
                 f"{robot!r} reports nothing, so the coordinator cannot tell it is there; "
                 f"it needs a reading port, e.g. `{robot}_{JOINT_STATE}: In[JointState]`"
             )
-        if MOTOR_COMMAND in commands:
-            raise ValueError(
-                f"{robot!r}: {robot}_{MOTOR_COMMAND} needs stiffness and damping, which the "
-                "coordinator cannot send"
-            )
+        self._motor_gains = dict(motor_gains or {})
+        self._motor_port = MOTOR_COMMAND in commands
+        if self._motor_port and not self._motor_gains:
+            raise ValueError(f"{robot!r}: motor_command needs explicit motor_gains in motor order")
+        if self._motor_port and {POSITION_COMMAND, VELOCITY_COMMAND} & set(commands):
+            raise ValueError("motor_command cannot compete with another joint command port")
         joints: Mapping[str, Limits] = {}
         if _JOINT_PORTS & {*commands, *readings}:
             if VELOCITY_COMMAND not in commands and not (
-                POSITION_COMMAND in commands and JOINT_STATE in readings
+                (POSITION_COMMAND in commands or self._motor_port) and JOINT_STATE in readings
             ):
                 raise ValueError(
                     f"{robot!r}: its joints cannot be held when no task drives them; they need "
@@ -199,11 +204,21 @@ class ConnectionSource:
                     "`model` on the coordinator"
                 )
             joints = _robot_joints(robot, model)
+        if self._motor_port:
+            if set(joints) != set(self._motor_gains):
+                raise ValueError("motor_gains must name every movable joint of this robot exactly")
+            if any(
+                not math.isfinite(v) or v < 0 for pair in self._motor_gains.values() for v in pair
+            ):
+                raise ValueError("motor gains must be finite and nonnegative")
+            joints = {name: joints[name] for name in self._motor_gains}
 
         self._robot = robot
         self._timeout = reading_timeout_s
         self._joint_ports: dict[str, str] = {}
-        if POSITION_COMMAND in commands:
+        if self._motor_port:
+            self._joint_ports[Interface.POSITION] = MOTOR_COMMAND
+        elif POSITION_COMMAND in commands:
             self._joint_ports[Interface.POSITION] = POSITION_COMMAND
         if VELOCITY_COMMAND in commands:
             self._joint_ports[Interface.VELOCITY] = VELOCITY_COMMAND
@@ -399,6 +414,17 @@ class ConnectionSource:
                 readings.setdefault(each.sensor, {})[each.reading] = latest[each.key]
         return readings
 
+    def read_imu(self) -> IMUState | None:
+        """Expose a complete IMU to existing whole-body control tasks."""
+        readings = self.read_sensors().get(f"{self._robot}{SEPARATOR}imu")
+        if readings is None or not all(key in readings for key in IMU_INTERFACES):
+            return None
+        return IMUState(
+            quaternion=(readings["qw"], readings["qx"], readings["qy"], readings["qz"]),
+            gyroscope=(readings["gx"], readings["gy"], readings["gz"]),
+            accelerometer=(readings["ax"], readings["ay"], readings["az"]),
+        )
+
     def command(self, winners: Mapping[str, float], mode: ControlMode | None) -> Values:
         """The complete command to send the robot this tick, by key.
 
@@ -430,13 +456,24 @@ class ConnectionSource:
                 raise ValueError(f"{joint.name} cannot be told its {interface}")
             value = winners[joint.name]
             limit = joint.position_limit
-            if interface == Interface.POSITION and not _within(value, limit):
+            if not math.isfinite(value):
+                raise ValueError(f"nonfinite command for {joint.name}")
+            if (
+                interface == Interface.POSITION
+                and not self._motor_port
+                and not _within(value, limit)
+            ):
                 raise ValueError(f"{joint.name} told {value}, outside {limit.lo}..{limit.hi}")
         values: Values = {}
         for joint in self._joints:
             if joint.name in winners:
                 assert interface is not None
                 value = winners[joint.name]
+                if self._motor_port:
+                    # Motor servos saturate targets at the shared model's joint limits.
+                    limit = joint.position_limit
+                    value = max(value, limit.lo) if limit.lo is not None else value
+                    value = min(value, limit.hi) if limit.hi is not None else value
                 values[joint.command_keys[interface]] = value
                 if interface == Interface.POSITION:
                     self._holds[joint.name] = value
@@ -471,7 +508,23 @@ class ConnectionSource:
         for interface, port in self._joint_ports.items():
             joints = [j.name for j in self._joints if f"{j.name}{SEPARATOR}{interface}" in values]
             if joints:
-                messages.append(PortMessage(port, joint_state_from_values(values, joints, ts)))
+                if port == MOTOR_COMMAND:
+                    messages.append(
+                        PortMessage(
+                            port,
+                            MotorCommandArray(
+                                q=[
+                                    values[f"{name}{SEPARATOR}{Interface.POSITION}"]
+                                    for name in joints
+                                ],
+                                kp=[self._motor_gains[name][0] for name in joints],
+                                kd=[self._motor_gains[name][1] for name in joints],
+                                timestamp=ts,
+                            ),
+                        )
+                    )
+                else:
+                    messages.append(PortMessage(port, joint_state_from_values(values, joints, ts)))
         if self._base_port is not None:
             messages.append(PortMessage(self._base_port, twist_from_values(values, self._base)))
         return messages

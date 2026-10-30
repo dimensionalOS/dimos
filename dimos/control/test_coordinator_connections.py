@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterator
 import threading
 import time
 from typing import Any
+import uuid
 
 from pydantic import Field
 import pytest
@@ -587,7 +588,10 @@ def system() -> Iterator[ModuleCoordinator]:
             (Robots, "go2_odom", "odom"),
         ]
     )
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ={},
+        overrides={"g": {"viewer": "none", "zenoh_domain": "control-test-" + uuid.uuid4().hex}},
+    )
     built = ModuleCoordinator.build(blueprint, parsed)
     yield built
     built.stop()

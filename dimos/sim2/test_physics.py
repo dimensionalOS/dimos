@@ -16,8 +16,11 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
+from dimos.control.feedback import MotorControl
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.urdf_manager import UrdfManager
+from dimos.sim2.client import SimRobotClient
 from dimos.sim2.mujoco import MujocoBackend
 from dimos.sim2.runtime import Runtime
 from dimos.sim2.sensors import MujocoSensors
@@ -170,3 +173,67 @@ def test_lidar_rejects_a_missing_interval_instead_of_bridging_it(runtime, world)
         assert reader.gaps == 1
     finally:
         reader.close()
+
+
+def test_motor_servo_preserves_velocity_gains_and_feedforward(world):
+    runtime = Runtime(MujocoBackend(world))
+    command = JointTargets(
+        runtime.epoch,
+        ("left/slide_x", "left/slide_y"),
+        (0.1, 0.0),
+        velocities=(0.2, -0.1),
+        kp=(40.0, 0.0),
+        kd=(3.0, 2.0),
+        feedforward=(1.5, -1.0),
+    )
+    client = SimRobotClient(command.joints, runtime.submit)
+    client.observe(runtime.snapshot())
+    assert client.write_motors(
+        MotorControl(
+            runtime.epoch,
+            0,
+            command.joints,
+            MotorCommandArray(
+                q=list(command.positions),
+                dq=list(command.velocities),
+                kp=list(command.kp),
+                kd=list(command.kd),
+                tau=list(command.feedforward),
+            ),
+        )
+    )
+    runtime.advance()
+    state = runtime.snapshot()
+    indices = [runtime.backend.layout.joints.index(n) for n in command.joints]
+    q, dq = state.position[indices], state.velocity[indices]
+    expected = np.array(command.kp) * (np.array(command.positions) - q)
+    expected += np.array(command.kd) * (np.array(command.velocities) - dq)
+    expected += command.feedforward
+    assert state.effort[indices] == pytest.approx(expected)
+    assert runtime.rejected == 0
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"kp": (1.0,)},
+        {"kd": (1.0, -1.0)},
+        {"velocities": (0.0, float("nan"))},
+        {"feedforward": (0.0, float("inf"))},
+    ],
+)
+def test_bad_motor_batch_does_not_partially_change_actuators(world, fields):
+    backend = MujocoBackend(world)
+    runtime = Runtime(backend, ("left/slide_x", "left/slide_y"))
+    before_ctrl = backend.data.ctrl.copy()
+    before_gain = backend.model.actuator_gainprm.copy()
+    before_bias = backend.model.actuator_biasprm.copy()
+    runtime.submit(
+        JointTargets(runtime.epoch, ("left/slide_x", "left/slide_y"), (0.2, 0.1), tick=0, **fields)
+    )
+    runtime.prepare()
+    assert runtime.rejected == 1
+    assert not runtime.controlled(("left/slide_x", "left/slide_y"))
+    assert backend.data.ctrl == pytest.approx(before_ctrl)
+    assert backend.model.actuator_gainprm == pytest.approx(before_gain)
+    assert backend.model.actuator_biasprm == pytest.approx(before_bias)
