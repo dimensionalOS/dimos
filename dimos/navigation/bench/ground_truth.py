@@ -31,28 +31,16 @@ from scipy.sparse.csgraph import (
     minimum_spanning_tree,
 )
 
-from dimos.robot.unitree.go2.constants import ROBOT_WIDTH
-from dimos.simulation.go2_sim.world import MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.mjcf import SCENE_GROUPS, add_boxes
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Scene
-from dimos.simulation.sensors.mid360.lidar import SimMid360
-from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import (
     INCLUDE_STATIC,
     NO_BODY_EXCLUDED,
-    MujocoRaycaster,
 )
 
 CELL = 0.05
-STEP_LIMIT = 0.2
-GO2_STAND_HEIGHT = 0.3
-PREMAP_STEP_M = 0.1
-PREMAP_SPEED = 0.5
-PREMAP_SEED = 0
 SEARCH_CACHE = 256
 PROBE_GROUP = 5
-# the Mid-360 on its mount is the highest point of the standing sim Go2
-GO2_CLEARANCE_HEIGHT = 0.6
 CENTERING_CLEARANCE = 0.6
 CLUTTER_NEAR = 0.5
 EPS = 1e-4
@@ -62,16 +50,12 @@ NO_PREDECESSOR = -9999
 
 
 @dataclass(frozen=True)
-class Body:
-    radius: float
-    height: float
+class Envelope:
+    """The room a robot needs to pass."""
+
+    half_width: float
+    headroom: float
     step: float
-    stand: float
-
-
-GO2 = Body(
-    radius=ROBOT_WIDTH / 2, height=GO2_CLEARANCE_HEIGHT, step=STEP_LIMIT, stand=GO2_STAND_HEIGHT
-)
 
 
 @dataclass(frozen=True)
@@ -99,18 +83,18 @@ class Difficulty:
 class GroundTruth:
     """One ground height per column, the cells a body can stand on, and routes between them."""
 
-    def __init__(self, scene: Scene) -> None:
+    def __init__(self, scene: Scene, envelope: Envelope) -> None:
         self.scene = scene
-        self.body = GO2
+        self.envelope = envelope
         self.cell = CELL
         lo, hi = scene.bounds()
         self.origin = (float(lo[0]), float(lo[1]))
         self.shape = (math.ceil((hi[0] - lo[0]) / CELL), math.ceil((hi[1] - lo[1]) / CELL))
-        self._probe = Probe(scene, GO2.height, CELL / 4)
+        self._probe = Probe(scene, envelope.headroom, CELL / 4)
         self.height = self._ground(float(hi[2]), float(hi[2] - lo[2]))
         ground = self._reachable(np.isfinite(self.height), self.index(scene.start))
         self.clearance = ndimage.distance_transform_edt(ground) * CELL
-        self.walkable = ground & (self.clearance >= GO2.radius)
+        self.walkable = ground & (self.clearance >= envelope.half_width)
         self._walk = self._edges(self.walkable)
         self._graphs: dict[bool, csr_matrix] = {}
         self._searches: dict[tuple[int, bool], NDArray[np.int32]] = {}
@@ -174,27 +158,6 @@ class GroundTruth:
             narrowest = min(narrowest, float(self.clearance.flat[node]))
             node = int(predecessors[node])
         return narrowest
-
-    def premap_cloud(self, route: NDArray[np.float64]) -> NDArray[np.float32]:
-        """What the body's Mid-360 returns walking the route, one world-frame point per voxel."""
-        caster = MujocoRaycaster(self._probe.model, self._probe.data, SCENE_GROUPS)
-        lidar = SimMid360.go2(caster, PREMAP_SEED)
-        per_pose = int(POINT_RATE * PREMAP_STEP_M / PREMAP_SPEED)
-        lo, hi = self.scene.bounds()
-        dims = np.ceil((hi - lo) / self.cell).astype(np.int64) + 3
-        seen = np.zeros(dims, dtype=bool)
-        kept = []
-        for position, rotation in sensor_poses(route, self.body.stand, PREMAP_STEP_M):
-            points = (
-                position + lidar.cast(position, rotation, per_pose).astype(np.float64) @ rotation.T
-            )
-            keys = np.clip(np.floor((points - lo) / self.cell).astype(np.int64) + 1, 0, dims - 1)
-            flat = np.ravel_multi_index((keys[:, 0], keys[:, 1], keys[:, 2]), tuple(dims))
-            _, first = np.unique(flat, return_index=True)
-            first = first[~seen.flat[flat[first]]]
-            seen.flat[flat[first]] = True
-            kept.append(points[np.sort(first)].astype(np.float32))
-        return np.concatenate(kept)
 
     def difficulty(self, route: Route) -> Difficulty:
         clutter = [box for box in self.scene.boxes if box.kind == "clutter"]
@@ -287,30 +250,11 @@ class GroundTruth:
             a = (slice(max(0, -dx), nx - max(0, dx)), slice(max(0, -dy), ny - max(0, dy)))
             b = (slice(max(0, dx), nx - max(0, -dx)), slice(max(0, dy), ny - max(0, -dy)))
             dz = self.height[b] - self.height[a]
-            ok = mask[a] & mask[b] & (np.abs(dz) <= self.body.step)
+            ok = mask[a] & mask[b] & (np.abs(dz) <= self.envelope.step)
             sources.append(ids[a][ok])
             targets.append(ids[b][ok])
             weights.append(np.hypot(self.cell * math.hypot(dx, dy), dz[ok]))
         return np.concatenate(sources), np.concatenate(targets), np.concatenate(weights)
-
-
-def sensor_poses(
-    route: NDArray[np.float64], stand: float, step: float
-) -> list[tuple[NDArray[np.float64], NDArray[np.float64]]]:
-    """Mid-360 poses of a body walking the route, facing along it, one every step of arc length."""
-    arc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(route, axis=0), axis=1))])
-    stops = np.minimum(np.arange(0.0, arc[-1] + step / 2, step), arc[-1])
-    bases = np.column_stack([np.interp(stops, arc, route[:, i]) for i in range(3)])
-    poses = []
-    for stop, base in zip(stops, bases, strict=True):
-        k = int(np.clip(np.searchsorted(arc, stop, side="right"), 1, len(route) - 1))
-        heading = route[k, :2] - route[k - 1, :2] if len(route) > 1 else np.array([1.0, 0.0])
-        yaw = math.atan2(heading[1], heading[0])
-        cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
-        rotation = np.array([[cos_yaw, -sin_yaw, 0.0], [sin_yaw, cos_yaw, 0.0], [0.0, 0.0, 1.0]])
-        position = base + [0.0, 0.0, stand] + rotation @ MOUNT_XYZ
-        poses.append((position, rotation @ MOUNT_R))
-    return poses
 
 
 class Probe:

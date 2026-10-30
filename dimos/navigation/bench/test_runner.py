@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
@@ -33,6 +33,7 @@ import pytest
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.navigation.bench.driver import TERMINAL_FILE
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.playback import Puppet, find_episode, frames
 from dimos.navigation.bench.runner import (
@@ -45,6 +46,7 @@ from dimos.navigation.bench.runner import (
     LowDiskError,
     Progress,
     RunConfig,
+    UnscorableRunError,
     _provenance,
     _require_whole,
     _snapshot,
@@ -56,7 +58,10 @@ from dimos.navigation.bench.scorer import Commands, Poses, Recording, score
 from dimos.navigation.bench.snapshot import BACKGROUND, SNAPSHOT_PX, snapshot_path
 from dimos.navigation.bench.suite import Case, Level, Manifest, Rules, Split
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
+from dimos.simulation.go2_sim.world import GO2, SHAPE
 from dimos.simulation.scenes.procedural import Params, block, office
+from dimos.simulation.sim_world.world import display_xml
+from dimos.utils.data import get_data_dir
 
 T0 = 1000.0
 
@@ -100,10 +105,17 @@ store.stop()
 (recording.parent / "rerun.rrd").write_bytes(b"rrd")
 print(f"Recording to {recording}", flush=True)
 reason = case["tag"] if case["tag"] == "driver_error" else "arrived" if arrive else "timeout"
-(out / "terminal.json").write_text(json.dumps({"reason": reason, "t0": t0}))
-print("scene", args["--simgo2world.scene-params"], *[a for a in sys.argv if a.startswith("--set-")], flush=True)
+terminal = {"reason": reason, "t0": t0, "body": BODY, "route_length": case["route_length"]}
+(out / "terminal.json").write_text(json.dumps(terminal))
+print("args", *[a for a in sys.argv[1:] if not a.startswith("--episodedriver.")], flush=True)
 signal.pause()
-"""
+""".replace("BODY", json.dumps(asdict(SHAPE)))
+
+
+def _go2_model(directory: Path) -> Path:
+    path = directory / "robot.xml"
+    path.write_text(display_xml(GO2))
+    return path
 
 
 @pytest.fixture(autouse=True)
@@ -188,7 +200,11 @@ def test_run_scores_every_episode_and_rescores_the_same(
             blueprint="fake",
             procs=3,
             out_dir=tmp_path / "run",
-            overrides=(f"--fake-recordings={tmp_path / 'recordings'}", "--set-x=1"),
+            overrides=(
+                f"--fake-recordings={tmp_path / 'recordings'}",
+                "--set-x=1",
+                "--fake.policy=/some/policy.bin",
+            ),
             command=(sys.executable, str(tmp_path / "fake.py")),
         ),
         reports.append,
@@ -203,10 +219,12 @@ def test_run_scores_every_episode_and_rescores_the_same(
     episode = run_dir / "narrow_door-s1-bbbbbb"
     assert (episode / RECORDING_FILE).exists() and (episode / SCORE_FILE).exists()
     assert (episode / "rerun.rrd").read_bytes() == b"rrd"
-    assert 'scene {"door_width": 0.5} --set-x=1' in (episode / "run.log").read_text()
+    log = (episode / "run.log").read_text()
+    assert "--set-x=1" in log and "simgo2world" not in log
     assert not any((tmp_path / "recordings").iterdir())
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
+    assert meta["policy"] == "/some/policy.bin"
     assert (meta["commit"], meta["dirty"]) == (_git(checkout, "rev-parse", "HEAD"), False)
     assert (meta["procs"], meta["machine"]) == (3, socket.gethostname())
     assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
@@ -328,13 +346,32 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
 
 
+def test_rescoring_refuses_recordings_it_cannot_score_and_keeps_the_results(tmp_path: Path) -> None:
+    recorded, pruned = (_case(f"mined-s1-{i}", "mined", "dev", {}) for i in ("aaaaaa", "bbbbbb"))
+    Manifest("test", Rules(), 0, [recorded, pruned]).save(tmp_path / SUITE_FILE)
+    for case in (recorded, pruned):
+        (tmp_path / case.id).mkdir()
+        terminal = json.dumps({"reason": "arrived", "t0": 1.0})
+        (tmp_path / case.id / TERMINAL_FILE).write_text(terminal)
+    (tmp_path / recorded.id / RECORDING_FILE).touch()
+    (tmp_path / pruned.id / SCORE_FILE).write_text(json.dumps({"outcome": "success"}))
+    (tmp_path / RESULTS_FILE).write_text("kept\n")
+    with pytest.raises(UnscorableRunError, match=recorded.id):
+        rescore(tmp_path)
+    assert (tmp_path / RESULTS_FILE).read_text() == "kept\n"
+    (tmp_path / recorded.id / RECORDING_FILE).unlink()
+    (tmp_path / recorded.id / SCORE_FILE).write_text(json.dumps({"outcome": "stuck"}))
+    rows = map(json.loads, rescore(tmp_path).read_text().splitlines())
+    assert [row["outcome"] for row in rows] == ["stuck", "success"]
+
+
 def test_a_stuck_verdict_is_scored_at_the_drivers_end_and_not_the_shutdown_tail() -> None:
     rules, goal, t_end = Rules(), (20.0, 0.0, 0.0), 30.0
     t = np.arange(0.0, t_end + 0.5 + 1e-9, 0.05)
     x = np.where(t <= 20.0, 0.5 * t, 10.0 + 0.029 * (t - 20.0)) + np.where(
         t > t_end + 0.2, 0.05, 0.0
     )
-    xyz = np.column_stack([x, np.zeros_like(t), np.full_like(t, rules.stand_height_m)])
+    xyz = np.column_stack([x, np.zeros_like(t), np.full_like(t, SHAPE.base_height)])
     recording = Recording(
         end=float(t[-1]),
         pose=Poses(t, xyz, np.zeros_like(xyz)),
@@ -343,9 +380,9 @@ def test_a_stuck_verdict_is_scored_at_the_drivers_end_and_not_the_shutdown_tail(
         arrivals=[],
         contacts=[],
     )
-    assert score(recording, rules, goal, 20.0).outcome == "timeout"
+    assert score(recording, rules, goal, SHAPE, 20.0).outcome == "timeout"
     cut = _until_verdict(recording, {"reason": "stuck", "t_end": t_end})
-    assert score(cut, rules, goal, 20.0).outcome == "stuck"
+    assert score(cut, rules, goal, SHAPE, 20.0).outcome == "stuck"
     assert _until_verdict(recording, {"reason": "arrived", "t_end": t_end}) is recording
 
 
@@ -381,7 +418,9 @@ def test_playback_poses_the_puppet_from_a_recording(tmp_path: Path) -> None:
     store.stop()
     recorded = frames(tmp_path / "memory.db")
     assert [f.position[0] for f in recorded] == [1.0, 2.0, 3.0]
-    puppet = Puppet(office(1))
+    robot = _go2_model(tmp_path)
+    assert str(get_data_dir()) not in robot.read_text()
+    puppet = Puppet(office(1), robot)
     puppet.pose(recorded[-1])
     assert puppet.trunk_position() == pytest.approx([3.0, 2.0, 0.3])
     assert puppet.data.qpos[7:] == pytest.approx([0.2] * len(joints))
@@ -413,10 +452,11 @@ def test_no_snapshot_is_saved_and_nothing_raised_when_no_backend_renders(
 ) -> None:
     run_dir, case = _block_run(tmp_path)
     monkeypatch.setattr("dimos.navigation.bench.runner.GL_BACKENDS", ("missing",))
-    _snapshot(run_dir, [case])
-    assert not snapshot_path(run_dir, case).exists()
-    _snapshot(run_dir, [replace(case, level=None)])
-    assert sorted(p.name for p in run_dir.iterdir()) == [SUITE_FILE]
+    _snapshot(run_dir, case, run_dir / "absent.xml")
+    robot = run_dir / "robot.xml"
+    robot.write_text("<mujoco/>\n")
+    _snapshot(run_dir, case, robot)
+    assert sorted(p.name for p in run_dir.iterdir()) == ["robot.xml", SUITE_FILE]
 
 
 @pytest.mark.self_hosted
@@ -425,7 +465,7 @@ def test_the_snapshot_shows_the_goal_and_the_feature_on_a_plain_background(tmp_p
     scene = block(1, block_height=0.2)
     case = replace(case, feature=(scene.params["block_x"], scene.params["block_y"]))
     Manifest("test", Rules(), 0, [case]).save(run_dir / SUITE_FILE)
-    _snapshot(run_dir, [case])
+    _snapshot(run_dir, case, _go2_model(tmp_path))
     if not snapshot_path(run_dir, case).exists():
         pytest.skip("no GL backend renders here")
     image = cv2.imread(str(snapshot_path(run_dir, case))).astype(int)

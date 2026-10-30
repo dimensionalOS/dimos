@@ -26,6 +26,8 @@ from numpy.typing import NDArray
 from dimos.simulation.sensors.mid360.pattern import Mid360Pattern
 from dimos.utils.data import get_data
 
+HOUSING_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
+
 
 class Raycaster(Protocol):
     def cast(
@@ -88,15 +90,12 @@ class SimMid360:
         self._p_return = np.asarray(self.returns.incidence_p_return)
 
     @classmethod
-    def go2(cls, raycaster: Raycaster, seed: int) -> SimMid360:
-        """The Mid-360 with the fitted pattern and the Go2 mount occlusion."""
-        root = get_data("go2_sim")
-        return cls(
-            raycaster=raycaster,
-            pattern=Mid360Pattern.load(root / "mid360_pattern.npz"),
-            seed=seed,
-            occlusion=OcclusionMap.load(root / "go2_mid360_occlusion.npz"),
-        )
+    def fitted(
+        cls, raycaster: Raycaster, seed: int, occlusion: OcclusionMap | None = None
+    ) -> SimMid360:
+        """The Mid-360 with the fitted pattern, shadowed by its mount's occlusion if given."""
+        pattern = Mid360Pattern.load(get_data("go2_sim") / "mid360_pattern.npz")
+        return cls(raycaster=raycaster, pattern=pattern, seed=seed, occlusion=occlusion)
 
     def cast(
         self,

@@ -20,12 +20,13 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.navigation.bench.ground_truth import GO2, GroundTruth
+from dimos.navigation.bench.ground_truth import GroundTruth
 from dimos.navigation.bench.suite import (
     APPROACH_M,
     GOAL_CLEARANCE,
     MINED,
     NARROW_DOOR_M,
+    REFERENCE_ENVELOPE,
     SIDE_WALL_M,
     FreezeConfig,
     Level,
@@ -44,7 +45,7 @@ def _far_goal(gt: GroundTruth) -> NDArray[np.float64]:
 
 
 def test_ground_truth_finds_floor_walls_and_routes() -> None:
-    gt = GroundTruth(office(1))
+    gt = GroundTruth(office(1), REFERENCE_ENVELOPE)
     z0 = gt.scene.params["z0"]
     assert gt.height[gt.index((1.0, 1.0))] == pytest.approx(z0, abs=1e-6)
     assert np.isnan(gt.height[gt.index((-0.05, 3.0))])
@@ -54,19 +55,7 @@ def test_ground_truth_finds_floor_walls_and_routes() -> None:
     assert route is not None and all(gt.stands(p) for p in route.points)
     assert np.allclose(route.points[-1, :2], goal[:2])
     difficulty = gt.difficulty(route)
-    assert difficulty.min_clearance >= GO2.radius and difficulty.doors >= 1
-
-
-@pytest.mark.self_hosted
-def test_premap_cloud_is_what_the_lidar_sees_along_the_route() -> None:
-    gt = GroundTruth(office(1))
-    z0 = gt.scene.params["z0"]
-    route = gt.route(gt.scene.start, _far_goal(gt), centered=True)
-    assert route is not None
-    cloud = gt.premap_cloud(route.points)
-    lo, hi = gt.scene.bounds()
-    assert len(cloud) > 20_000 and np.all(cloud >= lo - gt.cell) and np.all(cloud <= hi + gt.cell)
-    assert np.mean(np.abs(cloud[:, 2] - z0) < 0.05) > 0.1 and np.any(cloud[:, 2] > z0 + 2.5)
+    assert difficulty.min_clearance >= REFERENCE_ENVELOPE.half_width and difficulty.doors >= 1
 
 
 def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
