@@ -22,7 +22,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recorder import CollectionRecorder, collect
+from dimos.imitation.collection.recorder import CollectionModule, collect
 from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -68,7 +68,7 @@ def profile():
 def test_collect_only_declares_recorder_and_preserves_joint_semantics(profile, tmp_path):
     graph = collect(profile=profile, recording=tmp_path / "session")
     [recorder] = graph.active_blueprints
-    assert recorder.module is CollectionRecorder
+    assert recorder.module is CollectionModule
     assert recorder.kwargs["recording"] == tmp_path / "session"
     schema = recorder.kwargs["recording_schema"]
     assert schema.observation["observation.state"].names == ["right", "left"]

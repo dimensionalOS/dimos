@@ -219,7 +219,6 @@ all_modules = {
     "camera-mux-module": "dimos.teleop.hosted.camera_mux.CameraMuxModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
     "cloud-relocalization": "dimos.mapping.relocalization.lidar.module.CloudRelocalization",
-    "collection-recorder": "dimos.imitation.collection.recorder.CollectionRecorder",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
     "dan-holonomic-tc": "dimos.navigation.experimental.dannav.holonomic_tc.module.DanHolonomicTC",

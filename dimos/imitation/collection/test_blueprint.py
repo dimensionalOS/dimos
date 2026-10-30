@@ -27,8 +27,9 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModule,
     EpisodeMonitorModuleConfig,
 )
-from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.imitation.collection.recorder import CollectionModule
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.get_all_blueprints import get_by_name
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -57,7 +58,7 @@ def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint)
 )
 def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
     recorder = next(
-        atom for atom in blueprint.blueprints if issubclass(atom.module, CollectionRecorder)
+        atom for atom in blueprint.blueprints if issubclass(atom.module, CollectionModule)
     )
 
     assert recorder.kwargs["format"] == "sqlite"
@@ -78,7 +79,7 @@ def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
     [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
 def test_collect_stops_after_producers(blueprint: Blueprint) -> None:
-    assert issubclass(blueprint.active_blueprints[0].module, CollectionRecorder)
+    assert issubclass(blueprint.active_blueprints[0].module, CollectionModule)
 
 
 @pytest.mark.parametrize(
@@ -132,3 +133,9 @@ def test_collection_rejects_camera_dimensions_that_disagree_with_saved_schema(
     parser = BlueprintConfigParser(blueprint)
     with pytest.raises(BlueprintConfigError, match=dimension):
         parser.parse([f"--RealSenseCamera.{dimension}", value], environ={})
+
+
+@pytest.mark.parametrize("name", ["collection-recorder", "collection-module"])
+def test_profile_dependent_collection_module_is_not_a_standalone_command(name):
+    with pytest.raises(ValueError, match="Unknown blueprint or module"):
+        get_by_name(name)

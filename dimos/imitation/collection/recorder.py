@@ -46,7 +46,7 @@ PortTypes = tuple[tuple[str, type[Any]], ...]
 
 
 def _validate_input_types(
-    module: type[CollectionRecorder],
+    module: type[CollectionModule],
     input_types: Mapping[str, type[Any]],
 ) -> dict[str, type[Any]]:
     annotations = {
@@ -67,7 +67,7 @@ def _validate_input_types(
     return dict(input_types)
 
 
-class CollectionRecorderConfig(RustRecorderConfig):
+class CollectionModuleConfig(RustRecorderConfig):
     recording: Path
     format: Literal["mcap", "sqlite"] = "mcap"
     record_tf: bool = False
@@ -85,7 +85,7 @@ class CollectionRecorderConfig(RustRecorderConfig):
         return Path(value).expanduser().resolve()
 
     @model_validator(mode="after")
-    def _collection_store(self) -> CollectionRecorderConfig:
+    def _collection_store(self) -> CollectionModuleConfig:
         store: RustRecordingStoreConfig
         if self.format == "sqlite":
             store = RustSqliteStoreConfig(kind="sqlite", path=str(self.recording / "recording.db"))
@@ -105,8 +105,8 @@ class CollectionRecorderConfig(RustRecorderConfig):
         }
 
 
-class CollectionRecorder(RustRecorder):
-    config: CollectionRecorderConfig
+class CollectionModule(RustRecorder):
+    config: CollectionModuleConfig
 
     status: In[String]
 
@@ -198,7 +198,7 @@ def collect(
             getattr(kind, "lcm_decode", None)
         ):
             raise TypeError(f"Message type {kind!r} does not support native recording")
-    return CollectionRecorder.blueprint(
+    return CollectionModule.blueprint(
         input_types=inputs,
         recording_schema=profile.to_schema(),
         format=format,

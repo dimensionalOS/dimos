@@ -27,7 +27,7 @@ from dimos.core.native_module import NativeModule
 from dimos.core.stream import Out, RemoteIn
 from dimos.imitation.collection import recorder as recorder_module
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recorder import CollectionRecorderConfig, collect
+from dimos.imitation.collection.recorder import CollectionModuleConfig, collect
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -131,7 +131,7 @@ def test_blueprint_pickle_preserves_instance_inputs(tmp_path):
     blueprint = collect(profile=_profile(2), recording=tmp_path / "recording.mcap")
     restored = pickle.loads(pickle.dumps(blueprint))
     atom = restored.active_blueprints[0]
-    assert atom.module is recorder_module.CollectionRecorder
+    assert atom.module is recorder_module.CollectionModule
     assert atom.kwargs["input_types"] == {
         "camera_0": Image,
         "camera_1": Image,
@@ -224,7 +224,7 @@ def test_generated_inputs_survive_forkserver_and_fresh_deployment(
         atom.module, global_config, {**atom.kwargs, "instance_name": "first"}
     )
     deployed_recorders.append(first)
-    reloaded = recorder_module.CollectionRecorder
+    reloaded = recorder_module.CollectionModule
     fresh = worker_manager.deploy_fresh(
         reloaded, global_config, {**atom.kwargs, "instance_name": "fresh"}
     )
@@ -373,7 +373,7 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
     (package / "__init__.py").write_text("")
     (package / "collection.py").write_text(
         "from dimos.core.coordination.blueprints import autoconnect\n"
-        "from dimos.imitation.collection.recorder import CollectionRecorderConfig, collect\n"
+        "from dimos.imitation.collection.recorder import CollectionModuleConfig, collect\n"
         "from dimos.imitation.collection.profile import CollectionProfile\nfrom dimos.imitation.dataprep.schema import FeatureSpec\n"
         "from dimos.imitation.dataprep.core import SyncConfig\n"
         "from dimos.msgs.sensor_msgs.JointState import JointState\n"
@@ -406,8 +406,8 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
 
 @pytest.mark.parametrize("format,payload", [("mcap", "recording.mcap"), ("sqlite", "recording.db")])
 def test_collection_config_roundtrip_keeps_derived_store(tmp_path, format, payload):
-    config = CollectionRecorderConfig(recording=tmp_path / "session", format=format)
-    restored = CollectionRecorderConfig.model_validate(config.model_dump())
+    config = CollectionModuleConfig(recording=tmp_path / "session", format=format)
+    restored = CollectionModuleConfig.model_validate(config.model_dump())
     assert restored.store.path == str(tmp_path / "session" / payload)
     assert restored.to_config_dict() == config.to_config_dict()
 
@@ -426,7 +426,7 @@ def test_collection_config_roundtrip_keeps_derived_store(tmp_path, format, paylo
 def test_collection_rejects_conflicting_file_settings_before_creating_directory(tmp_path, kwargs):
     directory = tmp_path / "session"
     with pytest.raises(ValueError):
-        CollectionRecorderConfig(recording=directory, **kwargs)
+        CollectionModuleConfig(recording=directory, **kwargs)
     assert not directory.exists()
 
 

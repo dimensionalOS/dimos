@@ -17,7 +17,7 @@ hardware, cameras, and transports; profiles can declare any number of cameras.
 Use ordinary `dimos run` configuration and external Blueprint entry points.
 The imitation CLI does not maintain a separate workflow registry.
 
-`CollectionRecorder` extends `RustRecorder` with collection directory and schema
+`CollectionModule` extends `RustRecorder` with collection directory and schema
 preparation; both use the same Rust executable. Import `collect` from
 `dimos.imitation.collection.recorder`.
 

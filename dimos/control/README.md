@@ -300,7 +300,7 @@ Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
 Choose by what the consumer is, not by how many robots the deployment has.
 
 Consumers that capture or model whatever is present read the aggregate:
-`CollectionRecorder`, `WorldBeliefRecorder`, `ManipulationModule`.
+`CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
 reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.
