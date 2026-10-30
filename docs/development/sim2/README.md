@@ -42,10 +42,18 @@ targets = make_transport("/targets", JointTargets)
 targets.start()
 state = sim.reset()
 targets.broadcast(None, JointTargets(state.epoch, ("tool_joint",), (0.75,), ttl=2.0))
+```
 
-# Or apply force directly to the loose box.
+Watch the tool push the box. Then reset and try an independent body force:
+
+```python
 state = sim.reset()
 sim.apply_wrench(Wrench(state.epoch, "box", force=(0.0, 6.0, 0.0), duration=0.2))
+```
+
+After watching the motion, reset and release the command publisher:
+
+```python
 sim.reset()
 targets.stop()                 # when finished publishing joint commands
 ```
