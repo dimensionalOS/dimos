@@ -42,7 +42,7 @@ G1_DESK_WORLD = World(
         Instance(
             "g1",
             G1_SENSOR_MODEL.with_prefix("g1/"),
-            xyz=(0, 0, 0.755),
+            xyz=(0, 0, 0.793),
             floating=True,
             drives=_drives,
         ),

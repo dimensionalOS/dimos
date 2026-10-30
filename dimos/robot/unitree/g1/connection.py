@@ -156,9 +156,5 @@ class G1Connection(G1ConnectionBase):
     @rpc
     def control_status(self) -> dict[str, Any]:
         if isinstance(self.connection, G1SimDevice):
-            return {
-                "controller": "G1 ONNX walking policy",
-                "inferences": self.connection.inferences,
-                "max_inference_ms": self.connection.max_inference_ms,
-            }
+            return self.connection.status()
         return {"controller": "Unitree firmware"}

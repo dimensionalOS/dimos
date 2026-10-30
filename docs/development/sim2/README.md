@@ -10,7 +10,7 @@ The previous sim2 PR stack and running deployments are unchanged.
 ```bash
 cd /Users/pimvandenbosch/Desktop/dimos-sim2-minimal
 source .venv/bin/activate
-# Fresh checkout: uv sync --all-groups
+# Fresh checkout: uv sync --all-groups --extra cpu
 
 dimos run unitree-g1-sim2
 ```
@@ -18,8 +18,9 @@ dimos run unitree-g1-sim2
 Use the normal lifecycle (`--daemon`, `dimos status`, `dimos shell`, `dimos stop`).
 No run.sh. If another blueprint already owns the default bus, stop it yourself
 before starting this one. This change did not stop the existing G1 run.
-The existing `g1_urdf` and `mujoco_sim` LFS packs provide meshes, textures and ONNX
-weights; they resolve through `LfsPath` on a fresh checkout.
+The existing `g1_urdf` and `mujoco_sim` LFS packs provide meshes/textures;
+`groot/balance.onnx` and `groot/walk.onnx` provide the GR00T WBC weights.
+They resolve through `LfsPath` on a fresh checkout.
 
 Open **Controller in DimOS Desktop** on the same bus. Use **world** as fixed frame,
 **g1/pelvis** as robot/follow frame, and the **humanoid** drive profile. WASD/arrows
@@ -48,7 +49,7 @@ integration have been verified.
 In `dimos shell`:
 
 ```python
-app.G1Connection.control_status()
+app.G1Connection.control_status()  # controller: GR00T WBC; model: balance or walk
 app.SimModule.timing()
 app.SimSensorModule.statistics()
 app.SimModule.reset()  # restore G1 and objects; reset policy history via a fresh epoch
@@ -67,7 +68,7 @@ app.SimModule.apply_wrench(Wrench(state.epoch, "parcel/box", (1, 0, 0), duration
 ```text
 Desktop /cmd_vel: Twist
           ↓
-G1Connection → G1SimDevice: existing ONNX walking policy
+G1Connection → G1SimDevice → existing G1GrootWBCTask
           ↑ joint + IMU feedback          ↓ 29 named joint targets
           └────────── SimModule ──────────┘
                         ↓
@@ -81,11 +82,18 @@ physics, connection/control and sensor acquisition each get a dedicated worker;
 four existing UrdfManagers share the other workers.
 
 **ControlCoordinator is a different component.** It schedules control tasks,
-resolves which task owns each joint and combines their motor commands. GR00T's
-whole-body controller currently runs as such a task. It matters when control
-owners must be composed. This example has one walking controller owning all 29
-joints, so it does not instantiate that arbitration layer. GR00T and simultaneous
-arm/leg control are not implemented here.
+resolves which task owns each joint and combines their motor commands. This
+example calls its existing **G1GrootWBCTask** directly, with complete joint and
+pelvis IMU feedback. The task drives the 15 leg/waist joints; the facade holds
+the 14 arm joints at the reference pose. There is one command owner, so this
+example does not instantiate ControlCoordinator. Concurrent arm tasks still need
+that coordinator's arbitration; this example does not implement it again.
+
+The existing task owns balance/walk selection, six-frame observation history,
+action scaling and reset. The facade supplies feedback and sends named targets;
+it does not copy those algorithms. Zero velocity selects balance; movement selects
+walk. There is no empirical velocity bias or fallback to the old walking model.
+Two small ONNX sessions each use one inference thread.
 
 The simulated G1's walking policy is outside physics, in its connection worker.
 The real `G1Connection` still delegates velocity commands to Unitree WebRTC/firmware.
@@ -114,9 +122,13 @@ materialized URDF feeds physics and UrdfManager; no parallel robot MJCF is loade
 
 The walking drive profile adds gains, rotor inertia, friction and initial angles;
 it does not duplicate geometry, kinematics, inertia tensors or joint limits.
-URDF limits prevail. Its foot contacts differ from the policy's old MJCF model,
-so a small measured command bias compensates drift. Balance/driving tests establish
-prototype usability, not training-model equivalence or sim-to-real transfer.
+Gains and initial angles come from the task's shared `profile.py`; URDF limits
+prevail. The policy observes the pelvis, as in the
+[upstream GR00T deployment](https://github.com/NVlabs/GR00T-WholeBodyControl/blob/main/decoupled_wbc/sim2mujoco/scripts/run_mujoco_gear_wbc.py).
+Torso IMU feedback is not interchangeable: the waist moves relative to the base.
+The URDF's mass, contact geometry and some effort limits differ from the GR00T
+reference MJCF. The tests establish prototype usability with this model, not
+training-model equivalence or sim-to-real transfer.
 
 ## Core ownership and data
 
@@ -129,7 +141,8 @@ prototype usability, not training-model equivalence or sim-to-real transfer.
 | `sim2/sensors.py` | Read-only MuJoCo query/render replica; no dynamics stepping |
 | `sim2/sensor_module.py` | Camera/lidar acquisition worker, standard DimOS outputs |
 | `sim2/client.py` | Ordinary device-side named target sender; no process/module |
-| `robot/unitree/g1/sim_device.py` | G1 observation/action convention and ONNX inference |
+| `robot/unitree/g1/sim_device.py` | Adapt shared feedback to the existing GR00T task; deadman, target sending and epoch reset |
+| Existing `control/tasks/g1_groot_wbc_task/` | GR00T observation/action convention, history, balance/walk inference and shared motor profile |
 | `robot/unitree/g1/model.py` | Canonical G1 description, shared mounts and walking drive profile |
 | Existing `robot/urdf_manager.py` | Internal TF edges and model/mesh serving |
 
@@ -159,16 +172,19 @@ native interactive viewer process; the previous stack's viewer remains intact.
 
 ## Verification and measured limits (2026-10-30)
 
-- 64 tests cover the core, shared descriptions, task evaluation, actual G1 ONNX
-  balance/walk/turn/reset, fresh-command gating, and real worker/sensor integration.
-- G1 stands for 60 simulated seconds, moves forward, turns, resets and balances
-  again. The test bounds idle drift; it does not claim perfect station keeping.
+- 87 checks cover the core, shared descriptions, task evaluation, existing GR00T
+  task behavior, actual GR00T control, real workers/sensors and blueprint registry.
+- G1 stands for ten simulated minutes: 8.5 cm total displacement from startup,
+  minimum pelvis height .743 m. Forward/backward and both strafe directions run
+  for 15 s each, then return to balance; both turn directions, deadman expiry,
+  duplicate feedback and reset are checked. No falls in these trials. This does
+  not prove the cause of the earlier reported fall or guarantee obstacle recovery.
 - Normal CLI daemon startup, status, attached state/reset and graceful stop passed
-  on a separate test bus. Startup was about 4.1 s after build began.
-- One CLI sample with the previous G1 viewer still running: real-time factor .83,
-  maximum ONNX inference 1.34 ms, zero rejected commands/publication drops, 216
-  images and 415 scans over 45.82 simulated seconds. One initial scan history gap
-  was discarded. These are this Mac's measurements, not platform guarantees.
+  on a separate test bus. Startup was about 1.6 s after build began.
+- A CLI sample at 19.7 simulated seconds: maximum task compute .69 ms, zero
+  rejected commands/publication drops, 94 images and 183 scans. Two incomplete
+  scan intervals were discarded; there were no acquisition errors. These are
+  measurements on this Mac, not platform guarantees or a low-power acceptance run.
 - Native RGB/depth rendering uses MuJoCo 3.10.0. macOS reports limited depth
   precision without ARB_clip_control. The scanner is an ideal ray model, not a
   calibrated Mid360 noise/intensity simulator. No Desktop UI acceptance yet.
@@ -177,7 +193,7 @@ native interactive viewer process; the previous stack's viewer remains intact.
   computer monitors are decorative. No new asset ingestion framework is involved.
 
 ```bash
-pytest dimos/sim2 dimos/robot/assets/test_model.py -m '' -q
+pytest dimos/sim2 dimos/robot/assets/test_model.py dimos/control/tasks/g1_groot_wbc_task -m '' -q
 pytest dimos/robot/test_all_blueprints_generation.py
 python -m dimos.evals.suites.sim2_lab --out /tmp/sim2-lab-eval
 ```

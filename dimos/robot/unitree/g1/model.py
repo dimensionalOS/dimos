@@ -14,14 +14,20 @@
 
 """One G1 description for TF, visuals, planning and physics; walking drive profile.
 
-The installed ONNX policy's home pose, gains and rotor inertias are a controller
+The GR00T policy's home pose, gains and rotor inertias are a controller
 profile, not another robot geometry/kinematic description. URDF limits prevail.
-Mounts: pelvis IMU from Unitree's model; head camera/lidar are prototype sensors.
+Mounts: pelvis IMU from the GR00T model; head camera/lidar are prototype sensors.
 """
 
 import math
 from pathlib import Path
 
+from dimos.control.components import make_humanoid_joints
+from dimos.control.tasks.g1_groot_wbc_task.profile import (
+    G1_GROOT_DEFAULT_POSITIONS,
+    G1_GROOT_KD,
+    G1_GROOT_KP,
+)
 from dimos.robot.assets.model import RobotModel
 from dimos.sim2.types import Drive
 from dimos.utils.data import LfsPath
@@ -31,6 +37,7 @@ G1_MODEL = RobotModel.from_file(
     package_paths={"g1_description": LfsPath("g1_urdf")},
 ).with_subtree_rooted_at("pelvis")
 G1_SENSOR_MODEL = (
+    # GR00T observes the floating base, not the independently actuated torso.
     G1_MODEL.with_fixed_frame("imu", "pelvis", xyz=(0.04525, 0, -0.08339))
     .with_fixed_frame(
         "camera", "torso_link", xyz=(0.05, 0, 0.40), rpy=(-math.pi / 2, 0, -math.pi / 2)
@@ -38,43 +45,15 @@ G1_SENSOR_MODEL = (
     .with_fixed_frame("lidar", "torso_link", xyz=(0.07, 0, 0.42))
 )
 
-# Policy order is explicit; never infer it from a backend's array ordering.
-_LEG = (
-    ("hip_pitch", -0.312, 75, 2, 0.01017752004),
-    ("hip_roll", 0, 75, 2, 0.025101925),
-    ("hip_yaw", 0, 75, 2, 0.01017752004),
-    ("knee", 0.669, 75, 2, 0.025101925),
-    ("ankle_pitch", -0.363, 20, 1, 0.00721945),
-    ("ankle_roll", 0, 2, 0.2, 0.00721945),
-)
-_ARM = (
-    ("shoulder_pitch", 0.2, 75, 2, 0.003609725),
-    ("shoulder_roll", 0.2, 75, 2, 0.003609725),
-    ("shoulder_yaw", 0, 75, 2, 0.003609725),
-    ("elbow", 0.6, 75, 2, 0.003609725),
-    ("wrist_roll", 0, 2, 0.2, 0.003609725),
-    ("wrist_pitch", 0, 2, 0.2, 0.00425),
-    ("wrist_yaw", 0, 2, 0.2, 0.00425),
-)
-WALKING_DRIVES = (
-    *(
-        Drive(f"{side}_{name}_joint", kp, kd, home, inertia, 0.1)
-        for side in ("left", "right")
-        for name, home, kp, kd, inertia in _LEG
-    ),
-    Drive("waist_yaw_joint", 75, 2, 0, 0.01017752004, 0.1),
-    Drive("waist_roll_joint", 75, 2, 0, 0.00721945, 0.1),
-    Drive("waist_pitch_joint", 75, 2, 0.073, 0.00721945, 0.1),
-    *(
-        Drive(
-            f"{side}_{name}_joint",
-            kp,
-            kd,
-            -home if side == "right" and name == "shoulder_roll" else home,
-            inertia,
-            0.1,
-        )
-        for side in ("left", "right")
-        for name, home, kp, kd, inertia in _ARM
-    ),
+# GR00T DDS order, gains and zero-offset pose; the existing task owns these facts.
+# Reflected inertia/friction follow the existing GR00T simulation motor profile.
+WALKING_DRIVES = tuple(
+    Drive(name.partition("/")[2] + "_joint", kp, kd, home, 0.01, 0.1)
+    for name, kp, kd, home in zip(
+        make_humanoid_joints("g1"),
+        G1_GROOT_KP,
+        G1_GROOT_KD,
+        G1_GROOT_DEFAULT_POSITIONS,
+        strict=True,
+    )
 )

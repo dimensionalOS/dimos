@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Actual G1 URDF, shipped ONNX policy and normal module deployment, not mocks."""
+"""Actual G1 URDF, GR00T balance/walk weights and normal module deployment."""
 
 from dataclasses import replace
 import time
@@ -27,6 +27,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import G1_DESK_WORLD, unitree_g1_sim2
 from dimos.robot.unitree.g1.connection import G1Connection
+import dimos.robot.unitree.g1.sim_device as sim_device
 from dimos.robot.unitree.g1.sim_device import G1SimDevice
 from dimos.sim2.module import SimModule
 from dimos.sim2.mujoco import MujocoBackend
@@ -34,7 +35,7 @@ from dimos.sim2.runtime import Runtime
 from dimos.sim2.sensor_module import SimSensorModule
 from dimos.sim2.types import JointTargets
 
-pytestmark = pytest.mark.mujoco
+pytestmark = pytest.mark.native_e2e
 
 
 @pytest.fixture
@@ -44,7 +45,11 @@ def walking_robot():
     runtime = Runtime(backend, backend.layout.drives)
     device = G1SimDevice("g1", runtime.submit)
     device.bind(runtime.backend.layout)
-    return runtime, device
+    device.start()
+    try:
+        yield runtime, device
+    finally:
+        device.stop()
 
 
 def cycle(runtime, device, count, velocity=None):
@@ -60,23 +65,69 @@ def cycle(runtime, device, count, velocity=None):
     return runtime.snapshot()
 
 
-def test_g1_balances_walks_turns_and_resets(walking_robot):
+def test_g1_balances_for_ten_minutes_and_resets(walking_robot):
     runtime, device = walking_robot
     initial = runtime.snapshot()
-    idle = cycle(runtime, device, 3000)  # a minute, well beyond the previous jitter onset
+    idle = cycle(runtime, device, 30000)  # old policy drifted 2.5 m in ten minutes
     assert np.linalg.norm(idle.poses[0, :2] - initial.poses[0, :2]) < 0.3
-    before = idle.poses[0, :3].copy()
-    heading = Rotation.from_quat(idle.poses[0, 3:].copy()).as_matrix()[:, 0]
-    walking = cycle(runtime, device, 250, Twist(linear=Vector3(0.2, 0, 0)))
-    assert np.dot(walking.poses[0, :3] - before, heading) > 0.6
-    yaw_before = Rotation.from_quat(walking.poses[0, 3:].copy()).as_euler("xyz")[2]
-    turned = cycle(runtime, device, 200, Twist(angular=Vector3(0, 0, 0.3)))
-    yaw_after = Rotation.from_quat(turned.poses[0, 3:].copy()).as_euler("xyz")[2]
-    assert (yaw_after - yaw_before + np.pi) % (2 * np.pi) - np.pi > 0.4
+    assert device.status()["model"] == "balance"
     reset = runtime.reset()
     assert reset.epoch != initial.epoch
     assert reset.poses == pytest.approx(initial.poses)
     cycle(runtime, device, 500)
+
+
+@pytest.mark.parametrize("axis,speed", [(0, 0.5), (0, -0.5), (1, 0.3), (1, -0.3)])
+def test_g1_walks_in_commanded_direction_and_stops(walking_robot, axis, speed):
+    runtime, device = walking_robot
+    before = cycle(runtime, device, 100)
+    heading = Rotation.from_quat(before.poses[0, 3:].copy()).as_matrix()[:, axis]
+    velocity = np.zeros(3)
+    velocity[axis] = speed
+    walking = cycle(runtime, device, 750, Twist(linear=Vector3(*velocity)))
+    distance = np.dot(walking.poses[0, :3] - before.poses[0, :3], heading)
+    assert distance * np.sign(speed) > abs(speed) * 15 * 0.5
+    assert device.status()["model"] == "walk"
+    settled = cycle(runtime, device, 100, Twist())
+    stopped = cycle(runtime, device, 500, Twist())
+    assert device.status()["model"] == "balance"
+    assert np.linalg.norm(stopped.poses[0, :2] - settled.poses[0, :2]) < 0.15
+
+
+@pytest.mark.parametrize("speed", [0.6, -0.6])
+def test_g1_turns_in_commanded_direction(walking_robot, speed):
+    runtime, device = walking_robot
+    before = cycle(runtime, device, 100)
+    after = cycle(runtime, device, 200, Twist(angular=Vector3(0, 0, speed)))
+    yaw_before = Rotation.from_quat(before.poses[0, 3:].copy()).as_euler("xyz")[2]
+    yaw_after = Rotation.from_quat(after.poses[0, 3:].copy()).as_euler("xyz")[2]
+    delta = (yaw_after - yaw_before + np.pi) % (2 * np.pi) - np.pi
+    assert delta * np.sign(speed) > 1.0
+    cycle(runtime, device, 100, Twist())
+    assert device.status()["model"] == "balance"
+
+
+def test_g1_duplicate_feedback_deadman_and_reset(walking_robot, monkeypatch):
+    runtime, device = walking_robot
+    monkeypatch.setattr(sim_device.time, "monotonic", lambda: 100.0)
+    cycle(runtime, device, 100)
+    cycle(runtime, device, 50, Twist(linear=Vector3(0.2, 0, 0)))
+    frame = runtime.capture()
+    assert device.observe(frame)
+    count = device.inferences
+    assert not device.observe(frame)
+    assert device.inferences == count
+    runtime.prepare()
+    assert runtime.controlled(device.names)  # retransmission still releases the gate
+    runtime.advance(10)
+    monkeypatch.setattr(sim_device.time, "monotonic", lambda: 100.31)
+    cycle(runtime, device, 1)
+    assert device.status()["model"] == "balance"
+    cycle(runtime, device, 10, Twist(linear=Vector3(0.2, 0, 0)))
+    assert device.status()["model"] == "walk"
+    runtime.reset()
+    cycle(runtime, device, 1)
+    assert device.status()["model"] == "balance"  # reset clears a still-live command
 
 
 def test_control_barrier_requires_current_epoch_tick_and_valid_targets(walking_robot):
@@ -114,7 +165,7 @@ def deployed_g1(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     blueprint = unitree_g1_sim2.global_config(
-        zenoh_domain="g1-test-" + uuid.uuid4().hex, zenoh_scout_addr="224.0.0.226:7446"
+        zenoh_domain="g1-test-" + uuid.uuid4().hex, zenoh_scout_addr="224.0.0.227:7446"
     )
     coordinator = ModuleCoordinator.build(blueprint)
     try:
@@ -134,11 +185,12 @@ def test_g1_blueprint_drives_with_sensors_then_resets(deployed_g1):
         stats = sensors.statistics()
         assert not stats["error"]
         assert state.poses[0, 2] > 0.68
-        if state.sim_time < 3:
-            connection.move(Twist(linear=Vector3(0.12, 0, 0)))
+        elapsed = state.sim_time - initial.sim_time
+        if elapsed < 3:
+            connection.move(Twist(linear=Vector3(0.2, 0, 0)))
         else:
             connection.move(Twist())
-        if state.sim_time > 5 and stats["images"] >= 10 and stats["scans"] >= 20:
+        if elapsed > 5 and stats["images"] >= 10 and stats["scans"] >= 20:
             break
         time.sleep(0.05)  # poll multiple independent workers with a bounded deadline
     else:
@@ -148,9 +200,10 @@ def test_g1_blueprint_drives_with_sensors_then_resets(deployed_g1):
     assert state.poses[0, 0] - initial.poses[0, 0] > 0.25
     assert not sim.timing()["error"]
     assert sim.timing()["rejected_commands"] == 0
+    assert connection.control_status()["controller"] == "GR00T WBC (balance + walk)"
     reset = sim.reset()
     assert reset.epoch != state.epoch
-    assert reset.poses[0, :3] == pytest.approx([0, 0, 0.755])
+    assert reset.poses[0, :3] == pytest.approx([0, 0, 0.793])
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         state = sim.state()
