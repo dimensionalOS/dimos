@@ -117,6 +117,7 @@ all_blueprints = {
     "real-sense-camera-vis": "dimos.hardware.sensors.camera.realsense.blueprints:real_sense_camera_vis",
     "relocalize-mid360": "dimos.mapping.relocalization.blueprints:relocalize_mid360",
     "replay": "dimos.memory.blueprints:replay",
+    "sim2-basic": "dimos.sim2.demo:sim2_basic",
     "spot": "dimos.experimental.robot.bosdyn.spot.blueprints.spot:spot",
     "spot-record": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_record:spot_record",
     "spot-replay": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_replay:spot_replay",

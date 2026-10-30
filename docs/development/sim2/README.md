@@ -5,6 +5,55 @@ a physics backend interface, and sensor acquisition. G1, walking policies,
 robot connections and ControlCoordinator integration are outside this PR.
 The previous integrated prototype is preserved at `b91c563637`.
 
+## Run and look at it
+
+```bash
+source .venv/bin/activate
+dimos run sim2-basic
+```
+
+Run from this checkout. Open **Controller** in your existing DimOS Desktop instance.
+Set **Transforms → Fixed frame = world**, and **3D view settings → Follow frame = base**.
+You should see the blue sliding pusher and wall model, lidar, a 15 Hz RGB camera
+and depth. The orange loose box appears in RGB/depth and lidar; Desktop's current
+single-URDF model layer renders the pusher, not a separate mesh for the box.
+
+This is three existing module types: SimModule, SimSensorModule and UrdfManager.
+No walking policy, robot connection or control coordinator. The blueprint is
+[dimos/sim2/demo.py](/dimos/sim2/demo.py); its only asset is a tiny generated
+primitive URDF under `assets/sim2_basic`, with no downloaded meshes.
+
+To interact, open a second terminal in the same checkout/venv:
+
+```bash
+dimos shell
+```
+
+```python
+from dimos.core.transport_factory import make_transport
+from dimos.sim2.types import JointTargets, Wrench
+
+sim = app.SimModule
+sim.describe()                 # body/joint names
+sim.state()                    # current world state
+
+# Slide the blue tool forward; contact pushes the orange box.
+targets = make_transport("/targets", JointTargets)
+targets.start()
+state = sim.reset()
+targets.broadcast(None, JointTargets(state.epoch, ("tool_joint",), (0.75,), ttl=2.0))
+
+# Or apply force directly to the loose box.
+state = sim.reset()
+sim.apply_wrench(Wrench(state.epoch, "box", force=(0.0, 6.0, 0.0), duration=0.2))
+sim.reset()
+targets.stop()                 # when finished publishing joint commands
+```
+
+Joint control uses the `targets` stream; operator forces and reset use RPCs.
+Desktop's robot-driving keys and arm-planner buttons are not connected in this
+core example. Use Ctrl-C in the running terminal, or `dimos stop` for a daemon.
+
 ## What lives where
 
 | File | Responsibility / public interface |
@@ -24,7 +73,7 @@ second robot description or change UrdfManager's implementation.
 
 ```python
 # World: what exists, its initial placement, drives and sensors.
-world = World(instances=(...), sensors=(...), dt=0.002)
+from dimos.sim2.demo import WORLD as world  # runnable pusher + box example
 backend = MujocoBackend(world)
 sim = Runtime(backend)
 
