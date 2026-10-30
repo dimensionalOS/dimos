@@ -103,6 +103,7 @@ fn cpu_config(voxel_size: f32) -> Config {
         min_health: -1,
         max_health: 5,
         graze_cos: 0.7,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,

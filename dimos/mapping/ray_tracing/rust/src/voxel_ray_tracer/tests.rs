@@ -187,6 +187,8 @@ fn radius_ties_are_spared() {
         shadow_depth: 0.1,
         grace_depth: 0.2,
         graze_cos: 0.5,
+        map_frame: 0,
+        graze_recent_frames: u32::MAX,
         fine_divisor: None,
     };
     let mut walk = RayWalk::default();
