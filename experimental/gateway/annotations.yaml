@@ -815,6 +815,15 @@ robots:
         desk-marker-tf:
           title: Desk marker tracking
           description: A desk webcam that detects fiducial markers and mirrors them into TF.
+        rtsp-camera-vis:
+          title: RTSP camera viewer
+          description: An RTSP H.264/H.265 camera (or a capture file) in Rerun, with small JPEGs beside it.
+          recommended_config:
+          - module: rtspcamera
+            field: url
+            label: Camera URL
+            placeholder: rtsp://192.168.144.25:8554/main.264
+            required: true
     habitat:
       name: Habitat simulator
       description: 'A simulated robot in Meta''s Habitat scenes: no hardware.'

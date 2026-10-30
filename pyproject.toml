@@ -368,6 +368,11 @@ drone = [
     "pymavlink"
 ]
 
+# PX4 companion stack: RTSP demux for the SIYI A8.
+px4 = [
+    "av",
+]
+
 dds = [
     "cyclonedds>=0.10.5",
 ]
@@ -403,7 +408,7 @@ scene = [
 ]
 
 all = [
-    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
+    "dimos[apriltag,cuda,drone,manipulation,misc,px4,scene,unitree,webrtc]",
 ]
 
 [dependency-groups]

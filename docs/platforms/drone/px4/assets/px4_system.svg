@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 860" width="1200" height="860" role="img" aria-label="PX4 drone with dimOS: hardware, links and where each program runs">
+<title>PX4 drone with dimOS: hardware, links and where each program runs</title>
+<defs><marker id="a64748b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#64748b"/></marker><marker id="a0e7490" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#0e7490"/></marker><marker id="a92400e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#92400e"/></marker></defs>
+<rect width="1200" height="860" fill="#ffffff"/>
+<text x="16" y="26" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="start">Companion computer on the aircraft</text>
+<text x="318" y="26" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#475569" text-anchor="start">link=onboard   ·   px4, px4-agentic, px4-a8, px4-a8-follow</text>
+<rect x="12" y="40" width="688" height="520" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="28" y="64" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5">ON THE AIRCRAFT</text>
+<rect x="712" y="40" width="160" height="520" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="728" y="64" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5">LINK</text>
+<rect x="884" y="40" width="304" height="520" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="900" y="64" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5">ON THE GROUND</text>
+<rect x="40" y="84" width="186" height="52" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="52" y="105" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">GPS + compass</text>
+<text x="52" y="123" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">RTK optional</text>
+<rect x="40" y="156" width="186" height="52" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="52" y="177" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">RC receiver</text>
+<text x="52" y="195" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">any PX4 RC system</text>
+<rect x="330" y="84" width="250" height="124" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="342" y="105" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">PX4 flight controller</text>
+<text x="342" y="123" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">EKF2 · Offboard · failsafes</text>
+<text x="342" y="140" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">TELEM1 · TELEM2 · TELEM3</text>
+<text x="342" y="157" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">tested: Pixhawk 6C, PX4 1.17</text>
+<rect x="40" y="272" width="186" height="92" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="52" y="293" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">SIYI A8 mini</text>
+<text x="52" y="311" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">camera + 3-axis gimbal</text>
+<text x="52" y="328" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">optional</text>
+<rect x="300" y="266" width="384" height="212" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="312" y="288" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Companion computer</text>
+<text x="478" y="288" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">e.g. Jetson</text>
+<rect x="316" y="304" width="172" height="158" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.6"/>
+<text x="328" y="325" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">dimOS</text>
+<text x="328" y="343" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">dimos run px4-a8</text>
+<text x="328" y="360" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">Px4DroneConnection</text>
+<text x="328" y="377" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">on UDP 14556</text>
+<text x="328" y="394" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start"></text>
+<text x="328" y="411" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">topics and RPC stay</text>
+<text x="328" y="428" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">on this machine</text>
+<rect x="504" y="304" width="166" height="92" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="516" y="325" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">mavlink-router</text>
+<text x="516" y="343" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">TELEM2 serial ⇄ UDP</text>
+<text x="516" y="360" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">14556 → dimOS</text>
+<text x="516" y="377" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">14550 → QGC</text>
+<text x="240" y="103" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">UART</text>
+<text x="240" y="175" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">CRSF / SBUS</text>
+<text x="200" y="234" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">gimbal MAVLink (TELEM3)</text>
+<text x="232" y="323" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">RTSP H.265</text>
+<text x="232" y="345" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">Ethernet</text>
+<text x="568" y="244" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">MAVLink v2</text>
+<text x="568" y="259" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">TELEM2, 921600</text>
+<text x="722" y="342" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="700" fill="#0e7490" text-anchor="start">MAVLink UDP</text>
+<text x="722" y="412" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="700" fill="#0e7490" text-anchor="start">Rerun gRPC 9877</text>
+<text x="722" y="462" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="700" fill="#0e7490" text-anchor="start">keys WebSocket 3030</text>
+<text x="722" y="92" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">any IP network:</text>
+<text x="722" y="108" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">Wi-Fi, Ethernet or</text>
+<text x="722" y="124" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">a cellular VPN</text>
+<text x="722" y="146" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">e.g. Tailscale</text>
+<text x="722" y="162" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">over 5G</text>
+<text x="722" y="494" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">plus SSH for</text>
+<text x="722" y="510" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">dimos shell</text>
+<rect x="900" y="300" width="272" height="186" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="912" y="322" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Laptop</text>
+<rect x="916" y="334" width="240" height="46" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="928" y="355" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">QGroundControl</text>
+<text x="928" y="372" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">PX4 will not arm without a GCS</text>
+<rect x="916" y="396" width="240" height="72" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="928" y="417" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">dimos-viewer</text>
+<text x="928" y="435" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">3D, video, battery, status</text>
+<text x="928" y="452" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">keys: W S Q E A D, Space</text>
+<rect x="900" y="84" width="272" height="68" rx="8" fill="#ffffff" stroke="#92400e" stroke-width="1.6"/>
+<text x="912" y="105" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Pilot · RC transmitter</text>
+<text x="912" y="123" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">ch7 = dimOS enable switch</text>
+<text x="912" y="140" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">mode switch = take over</text>
+<text x="60" y="532" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#92400e" text-anchor="start" style="paint-order:stroke;stroke:#ffffff;stroke-width:5px;stroke-linejoin:round">RC 2.4 GHz, straight to PX4: the pilot can take over at any time</text>
+<text x="16" y="586" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="start">Bare kit, dimOS on a laptop</text>
+<text x="244" y="586" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#475569" text-anchor="start">link=radio   ·   px4, px4-agentic</text>
+<rect x="12" y="598" width="1176" height="120" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="28" y="622" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5"></text>
+<rect x="40" y="628" width="200" height="64" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="52" y="649" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">PX4 flight controller</text>
+<text x="52" y="667" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">TELEM1</text>
+<rect x="300" y="628" width="190" height="64" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="312" y="649" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">SiK telemetry radio</text>
+<text x="312" y="667" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">a pair, 57600 baud</text>
+<rect x="540" y="614" width="632" height="92" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="552" y="634" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">Laptop</text>
+<rect x="552" y="642" width="160" height="54" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="564" y="663" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="700" fill="#0f172a" text-anchor="start">mavlink-router</text>
+<text x="564" y="681" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">radio USB ⇄ UDP</text>
+<rect x="782" y="622" width="378" height="36" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.6"/>
+<text x="794" y="643" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#0f172a" text-anchor="start">dimos run px4 --px4droneconnection.link=radio</text>
+<rect x="782" y="664" width="378" height="32" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="794" y="685" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#0f172a" text-anchor="start">QGroundControl</text>
+<text x="722" y="634" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">14556</text>
+<text x="722" y="694" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">14550</text>
+<text x="16" y="742" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="start">No hardware</text>
+<text x="134" y="742" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="13" font-weight="400" fill="#475569" text-anchor="start">px4-sitl, px4-sitl-agentic, px4-sitl-follow</text>
+<rect x="12" y="754" width="1176" height="92" rx="12" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="6 5"/>
+<text x="28" y="778" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="700" fill="#475569" text-anchor="start" letter-spacing="1.5"></text>
+<rect x="40" y="776" width="300" height="52" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="52" y="797" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">PX4 SITL + Gazebo</text>
+<text x="52" y="815" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="12" font-weight="400" fill="#475569" text-anchor="start">make px4_sitl gz_x500</text>
+<rect x="452" y="776" width="300" height="52" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.6"/>
+<text x="464" y="797" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">dimOS</text>
+<text x="464" y="815" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">dimos run px4-sitl</text>
+<rect x="864" y="776" width="296" height="52" rx="8" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+<text x="876" y="797" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="start">QGroundControl</text>
+<text x="876" y="815" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="12" font-weight="400" fill="#475569" text-anchor="start">PX4 will not arm without a GCS</text>
+<text x="360" y="795" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start">UDP 14540</text>
+<text x="560" y="833" font-family="Helvetica, Arial, 'Liberation Sans', sans-serif" font-size="11" font-weight="400" fill="#475569" text-anchor="start" style="paint-order:stroke;stroke:#ffffff;stroke-width:5px;stroke-linejoin:round">UDP 14550</text>
+<path d="M226,110 L330,110" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M226,182 L330,182" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M190,272 L190,240 L380,240 L380,208" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M226,330 L316,330" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M560,208 L560,304" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M504,340 L488,340" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M670,350 L916,350" fill="none" stroke="#0e7490" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0e7490)" marker-start="url(#a0e7490)"/>
+<path d="M488,420 L916,420" fill="none" stroke="#0e7490" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0e7490)"/>
+<path d="M916,446 L488,446" fill="none" stroke="#0e7490" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a0e7490)"/>
+<path d="M1036,152 L1036,186 L888,186 L888,540 L26,540 L26,182 L40,182" fill="none" stroke="#92400e" stroke-width="1.7" stroke-linejoin="round" stroke-dasharray="5 4" marker-end="url(#a92400e)"/>
+<path d="M240,660 L300,660" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M490,660 L552,660" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M712,664 L746,664 L746,640 L782,640" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M712,674 L746,674 L746,680 L782,680" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)"/>
+<path d="M340,802 L452,802" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+<path d="M340,820 L400,820 L400,838 L812,838 L812,802 L864,802" fill="none" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#a64748b)" marker-start="url(#a64748b)"/>
+</svg>
