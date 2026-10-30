@@ -488,6 +488,8 @@ def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture
         module._publish_buttons(buttons)
         mocker.stopall()
         thread.assert_called_once_with(target=module._move_to_zero, daemon=True)
+        left_open = mocker.patch.object(module.left_gripper_command, "publish")
+        right_open = mocker.patch.object(module.right_gripper_command, "publish")
         module._move_to_zero()
     finally:
         module.stop()
@@ -495,9 +497,34 @@ def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture
     target = manipulation.plan_to_joints.call_args.args[0]["manipulator"]
     assert target.name == ["joint1", "joint2"]
     assert list(target.position) == [0.0, 0.0]
+    assert left_open.call_args.args[0].data == 1.0
+    assert right_open.call_args.args[0].data == 1.0
     manipulation.execute.assert_called_once_with(
-        blocking=False, plan_id=manipulation.plan_to_joints.return_value.plan.plan_id
+        blocking=True, plan_id=manipulation.plan_to_joints.return_value.plan.plan_id
     )
+
+
+def test_zero_move_keeps_trigger_commands_from_closing_grippers(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = ArmTeleopModule(server_port=9443, zero_button="B")
+    left_publish = mocker.patch.object(module.left_gripper_command, "publish")
+    right_publish = mocker.patch.object(module.right_gripper_command, "publish")
+    buttons = Buttons()
+    buttons.left_grip = True
+    buttons.right_grip = True
+    module._zeroing.set()
+    try:
+        module._publish_gripper_commands(
+            WebXRControllerState(trigger=1.0),
+            WebXRControllerState(trigger=1.0),
+            buttons,
+        )
+    finally:
+        module.stop()
+
+    left_publish.assert_not_called()
+    right_publish.assert_not_called()
 
 
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:
