@@ -317,7 +317,8 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 
 
 def _keyboard_teleop(arm: XArmType) -> Blueprint:
-    """Jog an xArm's end from the keyboard, through ``XArmConnection``. Arm only, no gripper.
+    """Jog an xArm's end from the keyboard, and open and close its xArm Gripper
+    with ``[`` and ``]``, through ``XArmConnection``.
 
     Wire it up with ``.remappings(_ARM_REMAPS)``. The arm's address is given at
     run time, after the blueprint name (``--xarmconnection.ip 192.168.1.185``)
@@ -333,7 +334,7 @@ def _keyboard_teleop(arm: XArmType) -> Blueprint:
         KeyboardTeleopModule.blueprint(),
         XArmTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=xarm_model(arm, robot="arm"),
+            model=xarm_model(arm, "xarm", robot="arm"),
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,
@@ -347,9 +348,17 @@ def _keyboard_teleop(arm: XArmType) -> Blueprint:
                         "timeout": 0.3,
                     },
                 ),
+                # The keyboard's gripper_command; drive_joint is open at 0 rad.
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/drive_joint"],
+                    priority=20,
+                    params={"open_at": "lower"},
+                ),
             ],
         ),
-        XArmConnection.blueprint(arm=arm),
+        XArmConnection.blueprint(arm=arm, gripper="xarm"),
     )
 
 
