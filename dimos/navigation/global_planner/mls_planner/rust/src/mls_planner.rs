@@ -23,8 +23,8 @@ use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{
-    build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId, SurfaceCells,
-    SurfaceLookup,
+    build_surface_cells, build_surface_cells_by_height, build_surface_lookup, rebuild_edges_around,
+    CellId, SurfaceCells, SurfaceLookup,
 };
 use crate::columns::{
     diff_column, ColumnBuckets, ColumnEdit, ColumnIz, ColumnMask, ColumnWindow, VoxelEdits,
@@ -257,6 +257,43 @@ impl Planner {
             build_surface_lookup(&surface, &mut self.graph.surface_lookup);
 
             self.rebuild_graph(config);
+        });
+    }
+
+    /// update_global_map from a surface extracted elsewhere, such as on the
+    /// GPU: `occupied` is the map the surface came from (walls scan it), and
+    /// `heights`, one per surface cell, links neighbors by height in meters
+    /// instead of by whole voxels.
+    pub fn update_from_surface(
+        &mut self,
+        occupied: &[VoxelKey],
+        surface: &[VoxelKey],
+        heights: Option<&[f32]>,
+        config: &Config,
+    ) {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            self.voxel_map = occupied.iter().copied().collect();
+            self.by_col = ColumnIz::from_voxels(occupied.iter());
+            build_surface_lookup(surface, &mut self.graph.surface_lookup);
+            match heights {
+                Some(heights) => {
+                    let heights: ahash::AHashMap<VoxelKey, f32> = surface
+                        .iter()
+                        .copied()
+                        .zip(heights.iter().copied())
+                        .collect();
+                    build_surface_cells_by_height(
+                        &mut self.graph.cells,
+                        &self.graph.surface_lookup,
+                        &heights,
+                        config.voxel_size,
+                        config.step_threshold_m,
+                    );
+                    self.rebuild_nodes(config);
+                }
+                None => self.rebuild_graph(config),
+            }
         });
     }
 

@@ -245,6 +245,67 @@ pub fn build_surface_cells(
         });
 }
 
+/// build_surface_cells for cells with a measured surface height each, such
+/// as fitted sub-voxel planes: neighbors link when their heights are within
+/// `step_threshold_m`, and the rise is the height change.
+pub fn build_surface_cells_by_height(
+    cells: &mut SurfaceCells,
+    surface_lookup: &SurfaceLookup,
+    heights: &AHashMap<VoxelKey, f32>,
+    voxel_size: f32,
+    step_threshold_m: f32,
+) {
+    cells.clear();
+
+    let mut keys: Vec<(i32, i32)> = surface_lookup.keys().copied().collect();
+    keys.sort_unstable();
+    for &(ix, iy) in &keys {
+        for &iz in &surface_lookup[&(ix, iy)] {
+            cells.insert((ix, iy, iz));
+        }
+    }
+
+    // A plane can sit anywhere in its voxel, so look one cell past the step.
+    let reach = (step_threshold_m / voxel_size).ceil() as i32 + 1;
+    let n = cells.coord.len();
+    cells.edges.resize_with(n, Vec::new);
+    let coord: &[VoxelKey] = &cells.coord;
+    let by_coord: &AHashMap<VoxelKey, CellId> = &cells.by_coord;
+    cells
+        .edges
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(src_id, local)| {
+            let (ix, iy, iz) = coord[src_id];
+            let h = heights[&(ix, iy, iz)];
+            for (dx, dy) in NEIGHBORS_4 {
+                let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
+                    continue;
+                };
+                for &nz in nzs {
+                    if (nz - iz).abs() > reach {
+                        continue;
+                    }
+                    let dh = heights[&(ix + dx, iy + dy, nz)] - h;
+                    if dh.abs() > step_threshold_m {
+                        continue;
+                    }
+                    let dest = *by_coord
+                        .get(&(ix + dx, iy + dy, nz))
+                        .expect("neighbor cell exists in lookup");
+                    let run = ((dx * dx + dy * dy) as f32).sqrt() * voxel_size;
+                    let cost = (run * run + dh * dh).sqrt();
+                    local.push(Edge {
+                        dest,
+                        base_cost: cost,
+                        rise: dh.abs(),
+                        cost,
+                    });
+                }
+            }
+        });
+}
+
 /// Recompute outgoing edges for the affected cells. Call after an incremental
 /// insert or remove with the changed cells and their surface neighbors so the
 /// region matches a full rebuild.
@@ -353,6 +414,33 @@ mod tests {
         assert_eq!(b.len(), 1);
         approx_eq(a[0].1, expected);
         approx_eq(b[0].1, expected);
+    }
+
+    fn build_by_height(cells: &[(VoxelKey, f32)], step_m: f32) -> SurfaceCells {
+        let keys: Vec<VoxelKey> = cells.iter().map(|c| c.0).collect();
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&keys, &mut lookup);
+        let heights: AHashMap<VoxelKey, f32> = cells.iter().copied().collect();
+        let mut sc = SurfaceCells::default();
+        build_surface_cells_by_height(&mut sc, &lookup, &heights, VOXEL, step_m);
+        sc
+    }
+
+    #[test]
+    fn heights_link_a_rise_whole_voxels_would_block() {
+        // Two voxels apart (0.2 m by centers) but planes only 0.15 m apart.
+        let sc = build_by_height(&[((0, 0, 0), 0.09), ((1, 0, 2), 0.24)], 0.16);
+        let a = neighbors_of(&sc, (0, 0, 0));
+        assert_eq!(a.len(), 1);
+        approx_eq(a[0].1, (VOXEL * VOXEL + 0.15 * 0.15).sqrt());
+    }
+
+    #[test]
+    fn heights_block_a_rise_whole_voxels_would_link() {
+        // One voxel apart (0.1 m by centers) but planes 0.18 m apart.
+        let sc = build_by_height(&[((0, 0, 0), 0.01), ((1, 0, 1), 0.19)], 0.16);
+        assert!(neighbors_of(&sc, (0, 0, 0)).is_empty());
+        assert!(neighbors_of(&sc, (1, 0, 1)).is_empty());
     }
 
     #[test]
