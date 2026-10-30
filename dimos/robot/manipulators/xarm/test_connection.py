@@ -369,36 +369,22 @@ def test_a_refused_sdk_call_halts_the_arm_and_shows_in_status(rig: Callable[...,
     )
 
 
-@pytest.mark.parametrize(
-    ("fault", "rearmed"),
-    [({}, True), ({"error_code": 31}, False), ({"warn_code": 11}, False)],
-)
-def test_an_arm_stopped_outside_dimos_is_made_ready_again_unless_it_has_a_fault(
-    rig: Callable[..., Rig], fault: dict[str, int], rearmed: bool
+def test_an_arm_stopped_outside_dimos_takes_no_command_until_its_errors_are_cleared(
+    rig: Callable[..., Rig],
 ) -> None:
     r = rig()
-    # Set straight on the SDK, as if its error callback has not run yet.
-    for name, code in fault.items():
-        setattr(r.sdk, name, code)
-    before = len(r.sdk.calls)
     # What the arm answers once xArm Studio or its stop button has stopped it.
     r.sdk.fail["set_servo_angle_j"] = 9
     r.move(joint1=0.1)
-    if rearmed:
-        assert [(name, args) for name, args, _ in r.sdk.calls[before:]] == [
-            ("set_servo_angle_j", ([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],)),
-            ("set_mode", (1,)),
-            ("set_state", (0,)),
-            ("set_servo_angle_j", ([0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],)),
-        ]
-        assert r.module.status().last_error is None
-    else:
-        assert [call[0] for call in r.sdk.calls[before:]] == ["set_servo_angle_j"]
-        assert "returned code 9" in str(r.module.status().last_error)
-        # Still not ready: the next command is dropped before it reaches the SDK.
-        r.move(joint1=0.1)
-        assert len(r.sdk.sent("set_servo_angle_j")) == 1
-        assert "set_servo_angle_j dropped" in str(r.module.status().last_error)
+    r.move(joint1=0.1)
+    r.jog(joint1=0.1)
+    assert len(r.sdk.sent("set_servo_angle_j")) == 1
+    assert r.sdk.sent("vc_set_joint_velocity") == []
+    assert "clear_errors()" in str(r.module.status().last_error)
+
+    r.module.clear_errors()
+    r.move(joint1=0.1)
+    assert len(r.sdk.sent("set_servo_angle_j")) == 2
 
 
 def test_joint_targets_are_refused_once_the_joint_reading_is_old(
