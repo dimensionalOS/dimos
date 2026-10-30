@@ -349,6 +349,51 @@ def test_vqa_generate_cli_formats_expected_errors(monkeypatch: pytest.MonkeyPatc
     assert "Traceback" not in result.output
 
 
+def test_vqa_generate_cli_accepts_localize_detector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        seen.append(request)
+        return GenerationResult(output=request.output_directory(), cases=())
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--start",
+            "0",
+            "--stop",
+            "10",
+            "--with-localize",
+            "--localize-detector",
+            "yoloe",
+            "--output",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            start=0,
+            stop=10,
+            with_localize=True,
+            localize_detector="yoloe",
+            output=tmp_path / "out",
+        )
+    ]
+
+
 def test_vqa_generate_cli_accepts_with_localize_min_views(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

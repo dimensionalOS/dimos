@@ -125,6 +125,60 @@ class Yoloe2DDetector(Detector):
         """Initialize Ultralytics' predictor with the currently configured prompts."""
         self.predict_image(image)
 
+    def query_score_rows(
+        self,
+        image: Image,
+        queries: list[str],
+        threshold: float = 0.1,
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Score queries as a sparse ``(n_boxes, n_queries)`` matrix (PROMPT mode).
+
+        YOLO-E assigns one class per box. The matrix puts that box's confidence
+        in the matching query column and zeros elsewhere — enough for Dan
+        localize's per-query column filter. Requires :attr:`prompt_mode`
+        ``PROMPT``; sets text prompts to ``queries`` when they differ.
+        """
+        if self.prompt_mode != YoloePromptMode.PROMPT:
+            raise ValueError("query_score_rows requires YoloePromptMode.PROMPT")
+        if not queries:
+            empty_boxes = np.zeros((0, 4), dtype=np.float64)
+            empty_rows = np.zeros((0, 0), dtype=np.float64)
+            return empty_boxes, empty_rows
+
+        self.set_prompts(text=list(queries))
+        prev_conf = self.conf
+        # Ultralytics drops boxes below ``conf`` before we see them; keep the
+        # gate at or below Dan's candidate_floor so the matrix can filter.
+        self.conf = min(prev_conf, float(threshold))
+        try:
+            detections = self.predict_image(image)
+        finally:
+            self.conf = prev_conf
+
+        name_to_j = {name: j for j, name in enumerate(queries)}
+        boxes: list[tuple[float, float, float, float]] = []
+        rows: list[NDArray[np.float64]] = []
+        for det in detections.detections:
+            name = str(getattr(det, "name", "") or "").strip()
+            j = name_to_j.get(name)
+            if j is None:
+                continue
+            score = float(det.confidence)
+            if score < threshold:
+                continue
+            x1, y1, x2, y2 = (float(v) for v in det.bbox)
+            row = np.zeros(len(queries), dtype=np.float64)
+            row[j] = score
+            boxes.append((x1, y1, x2, y2))
+            rows.append(row)
+
+        if not boxes:
+            return (
+                np.zeros((0, 4), dtype=np.float64),
+                np.zeros((0, len(queries)), dtype=np.float64),
+            )
+        return np.asarray(boxes, dtype=np.float64), np.asarray(rows, dtype=np.float64)
+
     def process_image(self, image: Image) -> "ImageDetections2D[Any]":
         """
         Process an image and return detection results.

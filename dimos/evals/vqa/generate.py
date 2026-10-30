@@ -47,6 +47,12 @@ from dimos.evals.vqa.contracts import (
     ObjectRangeEstimator,
     QuestionProposal,
 )
+from dimos.evals.vqa.diversity import (
+    DEFAULT_MAX_PER_CATEGORY,
+    DEFAULT_MAX_PER_FAMILY_CATEGORY,
+    candidates_from_answered_audit,
+    select_diverse_case_ids,
+)
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
@@ -58,6 +64,11 @@ from dimos.evals.vqa.localize_coverage import (
     case_frame_from_id,
     collect_coverage_candidates_from_audit,
     select_localize_coverage_ids,
+)
+from dimos.evals.vqa.template_author import (
+    LocalizeSightingCatalog,
+    OpenVocabDetectionCatalog,
+    TemplateDetectionAuthor,
 )
 from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrame,
@@ -121,6 +132,10 @@ class GenerationRequest(BaseModel):
     min_views: int = Field(default=3, ge=1)
     # Prior lightweight evidence dump; skips Dan when window/dataset match.
     localize_evidence: Path | None = None
+    # Dan open-vocab detector registry name (owlv2 / omdet / gdino / yoloe).
+    localize_detector: NonEmptyString = "owlv2"
+    # Name discovery: vlm (OpenAI, parallel OWL warmup) or lvis (detector vocab).
+    localize_discover: NonEmptyString = "vlm"
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
@@ -130,6 +145,12 @@ class GenerationRequest(BaseModel):
             raise ValueError("localize_coverage_k requires with_localize=True")
         if self.localize_evidence is not None and not self.with_localize:
             raise ValueError("localize_evidence requires with_localize=True")
+        if self.localize_detector != "owlv2" and not self.with_localize:
+            raise ValueError("localize_detector requires with_localize=True")
+        if self.localize_discover not in {"vlm", "lvis"}:
+            raise ValueError("localize_discover must be 'vlm' or 'lvis'")
+        if self.localize_discover != "vlm" and not self.with_localize:
+            raise ValueError("localize_discover requires with_localize=True")
         if self.image_index is not None:
             if self.start is not None or self.stop is not None or self.stride is not None:
                 raise ValueError("image_index cannot be combined with start, stop, or stride")
@@ -183,6 +204,20 @@ class VqaGenerationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     synchronization_tolerance_s: float = Field(default=0.1, gt=0)
+    # template = OWL (+ VLM names if no localize queries) → family slots.
+    # openai = legacy VLM author + Moondream detector.
+    question_author: NonEmptyString = "template"
+    # Publish budget: cap repeats by category; prefer harder answers / rarer families.
+    diversity_max_per_category: int = Field(default=DEFAULT_MAX_PER_CATEGORY, ge=1)
+    diversity_max_per_family_category: int = Field(
+        default=DEFAULT_MAX_PER_FAMILY_CATEGORY, ge=1
+    )
+
+    @model_validator(mode="after")
+    def valid_question_author(self) -> VqaGenerationConfig:
+        if self.question_author not in {"template", "openai"}:
+            raise ValueError("question_author must be 'template' or 'openai'")
+        return self
 
 
 class PublicCase(BaseModel):
@@ -323,18 +358,49 @@ def generate_dataset(
                 from dimos.evals.vqa.localize_recording import localize_window
 
                 localize_ctx = localize_window(
-                    request.dataset, request.localize_queries, localize_after, localize_before
+                    request.dataset,
+                    request.localize_queries,
+                    localize_after,
+                    localize_before,
+                    detector=request.localize_detector,
+                    discover=request.localize_discover,
                 )
 
         with localize_ctx as localize_result:
-            author_model = OpenAIVlModel()
-            detector_model = MoondreamVlModel()
+            author_model: object | None = None
+            detector_model: object | None = None
+            catalog: OpenVocabDetectionCatalog | LocalizeSightingCatalog | None = None
             try:
-                detector = detector_model
-                model_names = {
-                    "author": author_model.config.model_name,
-                    "detector": detector_model.config.model_name,
-                }
+                if config.question_author == "openai":
+                    author_model = OpenAIVlModel()
+                    detector_model = MoondreamVlModel()
+                    author: QuestionAuthor = OpenAIQuestionAuthor(author_model)
+                    detector = detector_model
+                    model_names = {
+                        "author": author_model.config.model_name,
+                        "detector": detector_model.config.model_name,
+                        "question_author": "openai",
+                    }
+                elif localize_result is not None:
+                    # Reuse Dan 2D sightings — no second OWL for image families.
+                    catalog = LocalizeSightingCatalog(localize_result.views_by_query)
+                    author = TemplateDetectionAuthor(catalog)
+                    detector = catalog
+                    model_names = {
+                        "author": "template+localize-sightings",
+                        "detector": catalog.config.model_name,
+                        "question_author": "template",
+                        "catalog_queries": str(len(localize_result.queries)),
+                    }
+                else:
+                    catalog = OpenVocabDetectionCatalog()
+                    author = TemplateDetectionAuthor(catalog)
+                    detector = catalog
+                    model_names = {
+                        "author": "template+owlv2",
+                        "detector": catalog.config.model_name,
+                        "question_author": "template",
+                    }
                 if request.with_localize:
                     reused = request.localize_evidence is not None
                     model_names["localize"] = "evidence" if reused else "dandetect"
@@ -396,7 +462,7 @@ def generate_dataset(
                 return generate_frames_dataset(
                     request,
                     pointcloud_frames(),
-                    OpenAIQuestionAuthor(author_model),
+                    author,
                     detector,
                     LidarRangeEstimator(mask_estimator),
                     mask_estimator,
@@ -408,8 +474,12 @@ def generate_dataset(
                     localize_evidence=localize_evidence_doc,
                 )
             finally:
-                author_model.stop()
-                detector_model.stop()
+                if author_model is not None:
+                    author_model.stop()  # type: ignore[attr-defined]
+                if detector_model is not None:
+                    detector_model.stop()  # type: ignore[attr-defined]
+                if catalog is not None:
+                    catalog.stop()
 
 
 def generate_frames_dataset(
@@ -465,9 +535,7 @@ def generate_frames_dataset(
                     generated_frames, all_cases, all_labels, k=coverage_k
                 )
 
-            # Multi-cam windows may leave color_frames empty; by-camera streams still clip.
-            has_color_streams = bool(color_frames) or bool(color_frames_by_camera)
-            if request.with_localize and has_color_streams:
+            if request.with_localize and color_frames:
                 all_cases, all_labels = _materialize_ego_memory_clips(
                     staging,
                     generated_frames,
@@ -478,7 +546,7 @@ def generate_frames_dataset(
                 )
 
             cross_view_stats: dict[str, object] | None = None
-            if request.with_localize and has_color_streams and views_by_query:
+            if request.with_localize and color_frames and views_by_query:
                 all_cases, all_labels, cross_view_stats = _materialize_cross_view_clips(
                     staging,
                     all_cases,
@@ -490,6 +558,16 @@ def generate_frames_dataset(
                 )
                 if cross_view_stats.get("question_count", 0):
                     used_family_names.add("cross_view_same_object")
+
+            diversity_stats: dict[str, object] | None = None
+            if all_cases:
+                all_cases, all_labels, diversity_stats = _apply_diversity_budget(
+                    generated_frames,
+                    all_cases,
+                    all_labels,
+                    max_per_category=config.diversity_max_per_category,
+                    max_per_family_category=config.diversity_max_per_family_category,
+                )
 
             # Cross-view (and ego clip rewrites) may be the only published cases.
             if not all_cases:
@@ -516,6 +594,8 @@ def generate_frames_dataset(
             }
             if coverage_stats is not None:
                 run_payload["localize_coverage"] = coverage_stats
+            if diversity_stats is not None:
+                run_payload["diversity"] = diversity_stats
             if cross_view_stats is not None:
                 run_payload["cross_view"] = cross_view_stats
             if localize_evidence is not None:
@@ -966,6 +1046,61 @@ def _effective_localize_coverage_k(request: GenerationRequest) -> int | None:
     if request.localize_coverage_k == 0:
         return None
     return request.localize_coverage_k
+
+
+def _apply_diversity_budget(
+    frames: Sequence[_GeneratedFrame],
+    cases: Sequence[PublicCase],
+    labels: Sequence[PrivateLabel],
+    *,
+    max_per_category: int,
+    max_per_family_category: int,
+) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
+    """Thin published cases toward difficulty + category diversity (not coverage)."""
+    labels_by_id = {label.id: label for label in labels}
+    audit_by_id: dict[str, tuple[dict[str, object], ...]] = {}
+    for frame in frames:
+        for case in frame.cases:
+            audit_by_id[case.id] = frame.audit_rows
+
+    candidates = []
+    for case in cases:
+        label = labels_by_id.get(case.id)
+        if label is None:
+            continue
+        family = case_family_from_id(case.id)
+        candidates.append(
+            candidates_from_answered_audit(
+                case_id=case.id,
+                family=family,
+                question=case.question,
+                answer=label.answer,
+                audit_rows=audit_by_id.get(case.id, ()),
+            )
+        )
+    kept_ids = select_diverse_case_ids(
+        candidates,
+        max_per_category=max_per_category,
+        max_per_family_category=max_per_family_category,
+    )
+    filtered_cases = [case for case in cases if case.id in kept_ids]
+    filtered_labels = [label for label in labels if label.id in kept_ids]
+    by_family: dict[str, int] = {}
+    by_category: dict[str, int] = {}
+    for cand in candidates:
+        if cand.case_id not in kept_ids:
+            continue
+        by_family[cand.family] = by_family.get(cand.family, 0) + 1
+        by_category[cand.category] = by_category.get(cand.category, 0) + 1
+    stats: dict[str, object] = {
+        "max_per_category": max_per_category,
+        "max_per_family_category": max_per_family_category,
+        "total_before": len(cases),
+        "total_after": len(filtered_cases),
+        "kept_per_family": dict(sorted(by_family.items())),
+        "kept_per_category": dict(sorted(by_category.items())),
+    }
+    return filtered_cases, filtered_labels, stats
 
 
 def _apply_localize_coverage_budget(

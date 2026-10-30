@@ -53,7 +53,7 @@ def _legend_block(obs: Observation[Any]) -> Blocks:
 
 
 class QuestionAnswerConfig(SingleCallAgentConfig):
-    frames_per_stream: int = Field(default=8, ge=1)
+    frames_per_stream: int = Field(default=3, ge=1)
 
 
 class QuestionAnswer(SingleCallAgent):

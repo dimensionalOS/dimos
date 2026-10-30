@@ -28,7 +28,7 @@ import tempfile
 import time
 from typing import IO, TYPE_CHECKING, Any, ClassVar
 
-from pydantic import Field, JsonValue, TypeAdapter
+from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 
 from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.evals.agents.base import Agent, ModelAgentConfig, strip_dimos
@@ -97,7 +97,12 @@ _json_object = TypeAdapter(dict[str, JsonValue])
 def read_pi_events(
     stream: IO[bytes] | io.RawIOBase, deadline: float
 ) -> Generator[dict[str, JsonValue], None, None]:
-    """Read Pi's JSON events until EOF, raising TimeoutError at the deadline."""
+    """Read Pi's JSON events until EOF, raising TimeoutError at the deadline.
+
+    A final line may omit its trailing newline (Pi does this). A peer that closes
+    mid-line leaves incomplete JSON in ``pending``; that is a truncated frame,
+    not a valid event — raise rather than surfacing a pydantic parse error.
+    """
     pending = b""
     with selectors.DefaultSelector() as selector:
         selector.register(stream, selectors.EVENT_READ)
@@ -108,7 +113,12 @@ def read_pi_events(
             chunk = os.read(stream.fileno(), io.DEFAULT_BUFFER_SIZE)
             if not chunk:
                 if pending:
-                    yield _json_object.validate_json(pending)
+                    try:
+                        yield _json_object.validate_json(pending)
+                    except ValidationError as exc:
+                        raise RuntimeError(
+                            f"truncated NDJSON frame ({len(pending)} bytes, no newline)"
+                        ) from exc
                 return
             # Keep partial lines as bytes so split UTF-8 characters remain intact.
             *lines, pending = (pending + chunk).split(b"\n")

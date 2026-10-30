@@ -1035,8 +1035,11 @@ def test_answer_question_rejects_cross_view_on_frame_path() -> None:
 
 def test_generation_config_validates_synchronization_tolerance() -> None:
     assert VqaGenerationConfig().synchronization_tolerance_s == 0.1
+    assert VqaGenerationConfig().question_author == "template"
     with pytest.raises(ValidationError):
         VqaGenerationConfig(synchronization_tolerance_s=0.0)
+    with pytest.raises(ValidationError):
+        VqaGenerationConfig(question_author="nope")
 
 
 def test_generation_request_selects_frame_range() -> None:
@@ -1095,6 +1098,21 @@ def test_generate_dataset_forwards_quality_window_indices(
         def stop(self) -> None:
             return None
 
+    class _FakeCatalog:
+        def __init__(self) -> None:
+            self.config = type("config", (), {"model_name": "fake-owlv2"})()
+
+        def stop(self) -> None:
+            return None
+
+        def names_for(self, image: object) -> tuple[str, ...]:
+            del image
+            return ("chair",)
+
+        def query_detections(self, image: object, query: str, **_kwargs: object) -> object:
+            del image, query
+            return object()
+
     def fake_select_quality_indices(
         images: object,
         start: int,
@@ -1130,6 +1148,7 @@ def test_generate_dataset_forwards_quality_window_indices(
     monkeypatch.setattr(
         "dimos.evals.vqa.generate.select_quality_indices", fake_select_quality_indices
     )
+    monkeypatch.setattr("dimos.evals.vqa.generate.OpenVocabDetectionCatalog", _FakeCatalog)
     monkeypatch.setattr("dimos.models.vl.openai.OpenAIVlModel", _FakeModel)
     monkeypatch.setattr("dimos.models.vl.moondream.MoondreamVlModel", _FakeModel)
     monkeypatch.setattr(
@@ -1214,6 +1233,21 @@ def test_generate_dataset_attaches_localize_scene_when_enabled(
         def stop(self) -> None:
             return None
 
+    class _FakeCatalog:
+        def __init__(self) -> None:
+            self.config = type("config", (), {"model_name": "fake-owlv2"})()
+
+        def stop(self) -> None:
+            return None
+
+        def names_for(self, image: object) -> tuple[str, ...]:
+            del image
+            return ("chair",)
+
+        def query_detections(self, image: object, query: str, **_kwargs: object) -> object:
+            del image, query
+            return object()
+
     @contextmanager
     def fake_localize_window(
         dataset: object, queries: object, after: float, before: float, **_kwargs: object
@@ -1275,6 +1309,7 @@ def test_generate_dataset_attaches_localize_scene_when_enabled(
     monkeypatch.setattr(
         "dimos.evals.vqa.localize_recording.scene_at_timestamp", fake_scene_at_timestamp
     )
+    monkeypatch.setattr("dimos.evals.vqa.generate.OpenVocabDetectionCatalog", _FakeCatalog)
     monkeypatch.setattr("dimos.models.vl.openai.OpenAIVlModel", _FakeModel)
     monkeypatch.setattr("dimos.models.vl.moondream.MoondreamVlModel", _FakeModel)
     monkeypatch.setattr(

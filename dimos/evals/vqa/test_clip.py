@@ -116,6 +116,14 @@ def test_ego_memory_clip_keeps_extra_anchors_when_truncated() -> None:
     assert 7.0 in {ts for ts, _ in picked}
 
 
+def test_dense_clip_default_is_keyframe_plus_minus_one() -> None:
+    """Default max_frames=3 keeps the anchor and one neighbor on each side."""
+    window = [(float(t), _img(float(t))) for t in (10.0, 10.5, 11.0, 11.5, 12.0)]
+    picked, t0 = dense_clip_around(window, 11.0, radius_s=1.0)
+    assert [ts for ts, _ in picked] == [10.5, 11.0, 11.5]
+    assert t0 == 10.5
+
+
 def test_dense_clip_and_image_clip_env(tmp_path: Path) -> None:
     window = [(float(t), _img(float(t))) for t in (10.0, 10.5, 11.0, 11.5, 12.0)]
     picked, _ = dense_clip_around(window, 11.0, radius_s=1.0, max_frames=8)
