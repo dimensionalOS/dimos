@@ -1874,22 +1874,15 @@ pub(crate) fn odometry_edges(
         .collect()
 }
 
-/// Committed closures as pose-graph edges; a closure's variance is its fit's own (`CommittedClosure::variances`), else its ICP fitness, times `scale`
-/// (`GscPgo::closure_noise_scale`).
-pub(crate) fn closure_edges<'a>(
-    closures: impl Iterator<Item = &'a CommittedClosure>,
-    // [rotation, translation] factors on ICP fitness
-    scale: [f64; 2],
-) -> Vec<Edge> {
+/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness on every axis.
+pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClosure>) -> Vec<Edge> {
     closures
         .map(|l| Edge {
             from: l.target_id,
             to: l.source_id,
             rotation: l.rotation_offset,
             translation: l.translation_offset,
-            variances: std::array::from_fn(|k| {
-                l.variances.map_or(l.score.max(1e-6), |v| v[k]) * scale[k / 3]
-            }),
+            variances: [l.score.max(1e-6); 6],
         })
         .collect()
 }

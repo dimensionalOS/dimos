@@ -78,8 +78,6 @@ struct CommittedClosureEdge {
     score: f64,
     /// 1 kept, 0 rejected by the newest applied solve; NaN until a solve has judged it.
     gnc_weight: f64,
-    /// The closure's own variances (`CommittedClosure::variances`), when it has them.
-    variances: Option<[f64; 6]>,
 }
 
 impl From<&CommittedClosure> for CommittedClosureEdge {
@@ -91,7 +89,6 @@ impl From<&CommittedClosure> for CommittedClosureEdge {
             translation: edge.translation_offset,
             score: edge.score,
             gnc_weight: edge.gnc_weight,
-            variances: edge.variances,
         }
     }
 }

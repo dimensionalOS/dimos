@@ -225,13 +225,7 @@ impl GscPgo {
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let closures = closure_edges(
-            self.committed_closures.iter(),
-            [
-                self.closure_noise_rotation_scale(),
-                self.closure_noise_scale(),
-            ],
-        );
+        let closures = closure_edges(self.committed_closures.iter());
         // keyframe 0 pins the map; the rest start from the odometry, riding its correction
         let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
         let pinned = &self.key_poses[0];
@@ -369,8 +363,6 @@ impl GscPgo {
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
         // the ln the residuals are whitened at (the solve's noise, its lower bound or the estimate)
         self.odometry_noise_ln_dispatched = self.odometry_noise_for_solve().map(f64::ln);
-        self.closure_noise_ln_scale_dispatched = self.closure_noise_ln_scale;
-        self.closure_noise_ln_rotation_scale_dispatched = self.closure_noise_ln_rotation_scale;
         self.odometry_noise_rescale = false;
         self.solving = Some(Solving {
             handle,
@@ -469,7 +461,7 @@ impl GscPgo {
         self.graph_error = solution.error;
         self.update_odometry_noise_scale(solution.odometry_noise_evidence);
         // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned noise,
-        // closure scales, the gravity bound's sd (-1 for none) and the solve's evidence per source as [sum, redundancy]), for tracing the noise learner against ground truth offline
+        // the gravity bound's sd (-1 for none) and the solve's evidence per source as [sum, redundancy]), for tracing the noise learner against ground truth offline
         if let Ok(path) = std::env::var("GSC_LEARN_LOG") {
             use std::io::Write;
             let kept: Vec<usize> = self
@@ -480,13 +472,11 @@ impl GscPgo {
                 .map(|(i, _)| i)
                 .collect();
             let line = format!(
-                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"closure_scale\":[{},{}],\"gravity_sd\":{},\"evidence\":{:?}}}\n",
+                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"gravity_sd\":{},\"evidence\":{:?}}}\n",
                 n,
                 self.committed_closures.len(),
                 kept,
                 self.odometry_noise(),
-                self.closure_noise_rotation_scale(),
-                self.closure_noise_scale(),
                 self.odometry_gravity_variance().map_or(-1.0, f64::sqrt),
                 solution
                     .odometry_noise_evidence

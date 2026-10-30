@@ -108,8 +108,7 @@ fn translation_and_heading_noise_are_measured_apart() {
         .collect();
     let outlier_density = 1.0 / extent.iter().product::<f64>();
     let reported = [1e-4, 1e-4, 3e-6, 1e-6];
-    let (ln, _, share) =
-        fit(&innovations, [0.0; 4], true, false, outlier_density).expect("innovations given");
+    let (ln, share) = fit(&innovations, [0.0; 4], outlier_density).expect("innovations given");
     eprintln!("share of right closures {share:.2} (true 0.8)");
     let (xy, yaw) = (reported[0] * ln[0].exp(), reported[2] * ln[2].exp());
     eprintln!("xy {xy:.2e} (true {true_xy:.0e}), yaw {yaw:.2e} (true {true_yaw:.0e})");
@@ -125,5 +124,5 @@ fn translation_and_heading_noise_are_measured_apart() {
 
 #[test]
 fn no_closures_no_estimate() {
-    assert!(fit(&[], [0.0; 4], true, false, 1e-6).is_none());
+    assert!(fit(&[], [0.0; 4], 1e-6).is_none());
 }

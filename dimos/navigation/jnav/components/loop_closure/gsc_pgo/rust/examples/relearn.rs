@@ -22,8 +22,8 @@
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3};
 
-/// A committed closure as a.json has it: source, target, rotation, translation, ICP fitness, own variances.
-type Closure = (usize, usize, Mat3, [f64; 3], f64, Option<[f64; 6]>);
+/// A committed closure as a.json has it: source, target, rotation, translation, ICP fitness.
+type Closure = (usize, usize, Mat3, [f64; 3], f64);
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -58,7 +58,6 @@ fn main() {
                 serde_json::from_value(e["rotation"].clone()).unwrap(),
                 serde_json::from_value(e["translation"].clone()).unwrap(),
                 e["score"].as_f64().unwrap(),
-                serde_json::from_value::<Option<[f64; 6]>>(e["variances"].clone()).unwrap_or(None),
             )
         })
         .collect();
@@ -76,8 +75,8 @@ fn main() {
             "keyframe {k} was not taken"
         );
         while next < closures.len() && closures[next].0 <= k {
-            let (s, t, rotation, translation, score, variances) = closures[next];
-            pgo.commit_closure_with_variances(s, t, rotation, translation, score, variances);
+            let (s, t, rotation, translation, score) = closures[next];
+            pgo.commit_closure(s, t, rotation, translation, score);
             next += 1;
         }
         if k + 1 >= start && ((k + 1) % every == 0 || k + 1 == start) {
@@ -91,11 +90,9 @@ fn main() {
         .filter(|c| c.gnc_weight > 0.5)
         .count();
     println!(
-        "kept {kept} / {} noise {:?} closure scale rotation {:.3} translation {:.3}",
+        "kept {kept} / {} noise {:?}",
         pgo.committed_closures().len(),
-        pgo.odometry_noise().map(|v| (v * 1000.0).round() / 1000.0),
-        pgo.closure_noise_rotation_scale(),
-        pgo.closure_noise_scale()
+        pgo.odometry_noise().map(|v| (v * 1000.0).round() / 1000.0)
     );
     let mut out = Vec::new();
     for (k, record) in records.iter().enumerate() {

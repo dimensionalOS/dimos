@@ -108,14 +108,10 @@ class PGOConfig(NativeModuleConfig):
     # True: a keyframe whose closure search is rejected tries its next scan-context match, up to 1 + ceil(1/(1 - pressure))
     # tries (2 at no pressure), at most scan_context_top_k
     closure_alternative_places: bool = False
-    # True: skip a scan-context match whose relative position the graph already knows better than accepted closures' median ICP fit
-    closure_skip_known: bool = False
     # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
     closure_pcm: bool = False
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
     closure_gnc_overtrust_check: bool = False
-    # True: a closure's variances are its ICP fit's own pose covariance (point-to-plane Hessian) instead of its ICP fitness on every axis
-    closure_icp_covariance: bool = False
     # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
     odometry_gravity_bound: bool = False
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
@@ -132,8 +128,6 @@ class PGOConfig(NativeModuleConfig):
     closure_rank_by_information: bool = False
     # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
     odometry_noise_from_closures: bool = False
-    # True: scale a closure's ICP-fitness variance the same way, fitted jointly with the odometry's
-    closure_noise_from_closures: bool = False
     # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
     odometry_noise_evidence_core: bool = False
     # True: the noise is learned from kept loops' innovations vs raw odometry, each voting by its drift share of its expected misfit (short loops barely vote)
@@ -165,8 +159,6 @@ class PGOConfig(NativeModuleConfig):
     closure_uninformative_gate: bool = True
     # True: the uninformative gate uses the learned odometry noise's upper bound (thin evidence cannot shut the gate)
     closure_uninformative_noise_upper_bound: bool = False
-    # True (with odometry_noise_from_closures): learn the closures' variance scale jointly with the odometry's from the solved graph's residuals
-    closure_noise_from_residuals: bool = False
     # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
     odometry_noise_solve_lower_bound: bool = False
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation

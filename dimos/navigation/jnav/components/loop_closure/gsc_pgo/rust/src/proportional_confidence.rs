@@ -33,7 +33,7 @@ impl ClosureSearch {
         // the innovation against its predicted spread: the graph's covariance of the two ends' relative position plus the
         // closure's variance, its ICP inliers' mean square (`IcpResult::inlier_mean_square`)
         let p = &diag.innovation_covariance;
-        let c = diag.closure_noise_scale * (diag.icp_fitness * diag.icp_overlap).max(1e-6);
+        let c = (diag.icp_fitness * diag.icp_overlap).max(1e-6);
         let covariance: Mat3 = std::array::from_fn(|i| {
             std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
         });
