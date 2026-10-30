@@ -209,9 +209,7 @@ def _competing_instance_visible_at(
     for other_id, views in by_instance.items():
         if other_id == instance_id:
             continue
-        if _instance_visible_at(
-            views, timestamp, camera_frame=camera_frame, tol_s=tol_s
-        ):
+        if _instance_visible_at(views, timestamp, camera_frame=camera_frame, tol_s=tol_s):
             return True
     return False
 
