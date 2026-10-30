@@ -276,7 +276,7 @@ pub(crate) fn solve_core(
     let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
     let mut sighting_weights = vec![1.0; sightings.len()];
     let mut held = if config.pcm {
-        consistent_closures(&state, &scaled, odometry, config)
+        consistent_closures(&scaled, odometry, config)
     } else {
         vec![false; closures.len()]
     };
@@ -668,7 +668,7 @@ pub(crate) fn solve_core(
             .map(|(i, (e, _))| (i, *e))
             .collect();
         let edges: Vec<Edge> = kept_closures.iter().map(|&(_, e)| e).collect();
-        let consistent = consistent_closures(&state, &edges, odometry, config);
+        let consistent = consistent_closures(&edges, odometry, config);
         let mut weights = vec![0.0; closures.len()];
         for ((i, _), held) in kept_closures.iter().zip(consistent) {
             if held {
@@ -956,95 +956,105 @@ fn odometry_overtrusted(
     sum > redundancy * (1.0 - spread + z * spread.sqrt()).powi(3)
 }
 
-/// The largest set of closures that pairwise agree (PCM): two closures agree when keyframe A.to's position predicted
-/// through closure A equals its position predicted through B and the odometry between their ends, within the
-/// chi-square cutoff of `gnc_inlier_probability` (3 DOF). The disagreement's covariance is the first-order propagation of
-/// every noise on the cycle: both closures' (B's rotation swinging the odometry offset after it) and each odometry step's
-/// between the closures' ends at the variances its edge carries, its translation plus its rotation swinging A.to about
-/// it (a heading error reaches as far as the loop is from where it was made). The set is grown greedily from the
-/// best-agreeing closure (an approximate maximum clique); a set of one is no evidence of agreement, so it holds nothing.
-fn consistent_closures(
-    state: &State,
+/// The largest set of closures that pairwise agree (PCM, Mangelson 2018): two closures agree when the cycle they close
+/// with the raw odometry (A.from through A to A.to, against A.from along the odometry to B.from, through B to B.to,
+/// along the odometry to A.to) lands A.to where A says, within the chi-square cutoff of `gnc_inlier_probability` (3
+/// DOF). The cycle's covariance is the first-order propagation of every noise on it at the variances its edges carry:
+/// both closures' translations, B's rotation swinging the path after it, and each odometry step's translation plus its
+/// rotation swinging the path's end about it (a heading error reaches as far as the loop is from where it was made).
+/// The set is grown greedily from the best-agreeing closure (an approximate maximum clique); a set of one is no
+/// evidence of agreement, so it holds nothing.
+pub fn consistent_closures(
     closures: &[Edge],
     odometry: &[Edge],
     config: &SolveConfig,
 ) -> Vec<bool> {
     let n = closures.len();
     let cutoff = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
+    type Pose = (Mat3, Vec3);
+    let compose = |a: &Pose, b: &Pose| -> Pose {
+        (
+            mat3::mat_mul(&a.0, &b.0),
+            mat3::add(&a.1, &mat3::mat_vec(&a.0, &b.1)),
+        )
+    };
+    let invert = |a: &Pose| -> Pose {
+        let back = mat3::transpose(&a.0);
+        (back, mat3::scale(&mat3::mat_vec(&back, &a.1), -1.0))
+    };
     let world = |rotation: &Mat3, variances: &[f64]| -> Mat3 {
         let scaled: Mat3 =
             std::array::from_fn(|i| std::array::from_fn(|j| rotation[i][j] * variances[j]));
         mat3::mat_mul(&scaled, &mat3::transpose(rotation))
     };
-    // prefix sums over the odometry steps (step k from keyframe k to k + 1) of, in world axes, the translation
-    // covariance T, the rotation covariance A, A P^T and P A P^T (P = skew of the step's end position), so a segment's
-    // covariance at a point q, sum T + [q - p]x A [q - p]x^T, is Q S_A Q^T - Q S_AP - (Q S_AP)^T + S_PAP + S_T
-    let steps = state.position.len().saturating_sub(1);
-    let mut sums = vec![[[[0.0; 3]; 3]; 4]; steps + 1];
-    for e in odometry
-        .iter()
-        .filter(|e| e.to == e.from + 1 && e.to <= steps)
-    {
-        let rotation = &state.rotation[e.from];
+    let around = |lever: &Vec3, covariance: &Mat3| -> Mat3 {
+        let skew = mat3::skew(lever);
+        mat3::mat_mul(&mat3::mat_mul(&skew, covariance), &mat3::transpose(&skew))
+    };
+    // the raw odometry chain's poses, and prefix sums over its steps (step k from keyframe k to k + 1) of, in the
+    // chain's frame, the translation covariance T, the rotation covariance A, A P^T and P A P^T (P = skew of the step's
+    // end), so a stretch's covariance at a point q, sum T + [q - p]x A [q - p]x^T, is
+    // Q S_A Q^T - Q S_AP - (Q S_AP)^T + S_PAP + S_T
+    let keyframes = odometry.iter().map(|e| e.to + 1).max().unwrap_or(0);
+    let mut chain: Vec<Pose> = vec![(mat3::identity(), [0.0; 3]); keyframes];
+    let mut steps = vec![[[[0.0; 3]; 3]; 4]; keyframes];
+    let mut by_from: Vec<Option<&Edge>> = vec![None; keyframes];
+    for e in odometry.iter().filter(|e| e.to == e.from + 1) {
+        by_from[e.from] = Some(e);
+    }
+    for k in 1..keyframes {
+        let Some(e) = by_from[k - 1] else {
+            chain[k] = chain[k - 1];
+            steps[k] = steps[k - 1];
+            continue;
+        };
+        chain[k] = compose(&chain[k - 1], &(e.rotation, e.translation));
+        let rotation = &chain[k - 1].0;
         let a = world(rotation, &e.variances[..3]);
-        let p = mat3::skew(&state.position[e.to]);
+        let p = mat3::skew(&chain[k].1);
         let ap = mat3::mat_mul(&a, &mat3::transpose(&p));
-        let pap = mat3::mat_mul(&p, &ap);
-        sums[e.to] = [world(rotation, &e.variances[3..]), a, ap, pap];
+        let step = [
+            world(rotation, &e.variances[3..]),
+            a,
+            ap,
+            mat3::mat_mul(&p, &ap),
+        ];
+        steps[k] = std::array::from_fn(|m| mat3::add_mat(&steps[k - 1][m], &step[m]));
     }
-    for k in 1..=steps {
-        for m in 0..4 {
-            sums[k][m] = mat3::add_mat(&sums[k][m], &sums[k - 1][m]);
-        }
-    }
-    let segment = |a: usize, b: usize, q: &Vec3| -> Mat3 {
+    let stretch = |a: usize, b: usize, q: &Vec3| -> Mat3 {
         let (low, high) = (a.min(b), a.max(b));
-        let part = |m: usize| mat3::sub_mat(&sums[high][m], &sums[low][m]);
+        let part = |m: usize| mat3::sub_mat(&steps[high][m], &steps[low][m]);
         let skew_q = mat3::skew(q);
         let q_ap = mat3::mat_mul(&skew_q, &part(2));
         let q_a_q = mat3::mat_mul(&mat3::mat_mul(&skew_q, &part(1)), &mat3::transpose(&skew_q));
-        mat3::add_mat(
-            &mat3::add_mat(
-                &mat3::sub_mat(&mat3::sub_mat(&q_a_q, &q_ap), &mat3::transpose(&q_ap)),
-                &part(3),
-            ),
-            &part(0),
-        )
-    };
-    let at = |pose: usize, offset: &Vec3| {
-        mat3::add(
-            &state.position[pose],
-            &mat3::mat_vec(&state.rotation[pose], offset),
-        )
+        let lever = mat3::sub_mat(&mat3::sub_mat(&q_a_q, &q_ap), &mat3::transpose(&q_ap));
+        mat3::add_mat(&mat3::add_mat(&lever, &part(3)), &part(0))
     };
     let agree = |a: &Edge, b: &Edge| -> bool {
-        // a.to through a
-        let through_a = at(a.from, &a.translation);
-        // b.to through b, then a.to through the odometry from b.to (b.to's orientation as b says)
-        let b_to = at(b.from, &b.translation);
-        let b_to_rotation = mat3::mat_mul(&state.rotation[b.from], &b.rotation);
-        let odometry_offset = mat3::mat_vec(
-            &mat3::transpose(&state.rotation[b.to]),
-            &mat3::sub(&state.position[a.to], &state.position[b.to]),
+        if [a.from, a.to, b.from, b.to].iter().any(|&k| k >= keyframes) {
+            return false;
+        }
+        let through_a = compose(&chain[a.from], &(a.rotation, a.translation));
+        let b_to = compose(&chain[b.from], &(b.rotation, b.translation));
+        // the chain after B.to, laid where B puts B.to
+        let laid = compose(&b_to, &invert(&chain[b.to]));
+        let through_b = compose(&laid, &chain[a.to]);
+        let q = through_b.1;
+        let after_b = stretch(
+            b.to,
+            a.to,
+            &mat3::mat_vec(&invert(&laid).0, &mat3::sub(&q, &laid.1)),
         );
-        let through_b = mat3::add(&b_to, &mat3::mat_vec(&b_to_rotation, &odometry_offset));
-        let q = state.position[a.to];
-        let lever = mat3::skew(&mat3::sub(&q, &b_to));
-        let b_rotation = mat3::mat_mul(
-            &mat3::mat_mul(&lever, &world(&b_to_rotation, &b.variances[..3])),
-            &mat3::transpose(&lever),
-        );
-        // a.from and b.from are tied by the odometry too, as are b.to and a.to
         let covariance = [
-            world(&state.rotation[a.from], &a.variances[3..]),
-            world(&state.rotation[b.from], &b.variances[3..]),
-            b_rotation,
-            segment(a.from, b.from, &q),
-            segment(a.to, b.to, &q),
+            world(&chain[a.from].0, &a.variances[3..]),
+            world(&chain[b.from].0, &b.variances[3..]),
+            around(&mat3::sub(&q, &b_to.1), &world(&b_to.0, &b.variances[..3])),
+            stretch(a.from, b.from, &q),
+            mat3::mat_mul(&mat3::mat_mul(&laid.0, &after_b), &mat3::transpose(&laid.0)),
         ]
         .iter()
         .fold([[0.0; 3]; 3], |sum, m| mat3::add_mat(&sum, m));
-        let d = mat3::sub(&through_a, &through_b);
+        let d = mat3::sub(&through_a.1, &q);
         // inverted at unit trace: the variances are far below mat3::inverse's absolute determinant floor
         let trace = covariance[0][0] + covariance[1][1] + covariance[2][2];
         let unit: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| covariance[i][j] / trace));
