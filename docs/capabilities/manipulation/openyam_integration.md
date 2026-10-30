@@ -121,16 +121,19 @@ xArm stack runs (`manipulation_mapping`). Two settings differ from the xArm
 because its wrist camera never sees the rest of the robot while the overhead
 camera sees all of it: the self filter model is the whole rig with the fingers
 fixed, not the arm alone, since the grippers' and wrist cameras' own cells
-otherwise pin the arm at its start pose, and the filter padding is 4 cm, not
-1, since a 2.5 cm table cell next to the post or an arm base straddles that
-static link unless the returns within a cell of it are gone, on top of this
-camera's 1 to 2 cm of slop (scene 56 replays, 2026-10-29). 1 cm cells were
-tried and made the planner's world too heavy on this machine. The
-place target is a taped tray square on the table on the arm's side (0.26,
--0.20 for the right arm, 0.26, 0.20 for the left, tcp released at z 0.05):
-the pick-and-place module places top-down with the grasp orientation and a
-pre-place 0.05 above the target, and the arm's fingers-down reach ends near
-z 0.16 at the bin's x, so the bin rim cannot be cleared on this stack.
+otherwise pin the arm at its start pose, and the filter padding is 8 cm, not
+1: a 2.5 cm table cell next to the post or an arm base straddles that static
+link unless the returns within a cell of it are gone, on top of this camera's
+1 to 2 cm of slop, and the wrist cameras' plugs and cables are not in the
+model, so returns off them during a descent otherwise become cells the lifted
+arm sits against. The planner is blind to anything within that padding of an
+arm link; a modelled cable box would let it drop to 4 cm. 1 cm cells were
+tried and made the planner's world too heavy on this machine. The place
+target is a taped square on the table on the arm's side (0.26, -0.38 for the
+right arm, 0.26, 0.38 for the left, tcp released at z 0.08): the pick-and-place
+module places top-down with the grasp orientation and a pre-place 0.05 above
+the target, and the arm's fingers-down reach ends near z 0.16 at the bin's x,
+so the bin rim cannot be cleared on this stack.
 
 ### Rebuilding a scene
 
@@ -168,7 +171,7 @@ The model's `GripperConfig` (fingertip links as the pads) and `robot=` on
 hands it all 500 samples, as the xArm stack does. One thing differs from the
 xArm: its wrist camera never sees the arm, while the overhead D405 sees the
 arms' bases and links, and the raw depth frame the check reads as its scene
-put the arm on its own image at every grasp (scene 56 replay, 2026-10-29). So
+put the arm on its own image at every grasp. So
 the grasp stacks register the scene through `SelfClearedSceneRegistrationModule`
 (robot folder): the registration module with the robot's returns removed from
 the scene cloud by main's `RoboPlanBodyFilter`, the filter the planner's map

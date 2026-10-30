@@ -139,7 +139,7 @@ def test_rejects_what_the_arm_cannot_reach(checker: GraspContactChecker) -> None
 
 
 def test_open_fingers_clear_objects_up_to_the_jaw_span(checker: GraspContactChecker) -> None:
-    # 98 mm between the open noses (calipers, 2026-10-29): a 9.4 cm object fits at full
+    # 98 mm between the open noses: a 9.4 cm object fits at full
     # finger depth, 10.4 cm does not.
     top = DUAL_OPENYAM_TABLE_TOP_Z + HEIGHT
     assert _clear(checker, _pose(X, Y, top - 0.04), _object(0.094), _table(hole=0.057))

@@ -16,9 +16,9 @@
 
 The pick's grasp contact check reads the full scene cloud from scene registration and
 stands the arm in it. An overhead camera sees the arms' bases and links, so without
-this the arm meets its own image at every grasp (scene 56 replay, 2026-10-29). The
-planner's map already drops those returns through UrdfManagerPointClearing; this
-applies the same body filter to the scene the check reads.
+this the arm meets its own image at every grasp. The planner's map already drops those
+returns through UrdfManagerPointClearing; this applies the same body filter to the
+scene the check reads.
 """
 
 from __future__ import annotations

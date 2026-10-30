@@ -63,31 +63,25 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
-# Planner map cell, the xArm grasp stack's value. 1 cm was tried (2026-10-30, run 9c56):
-# 68k cells, octree rebuilds under the world lock slowed the planner's tf to 4 Hz, a third
-# of the clouds dropped and scans took 13 s.
+# Planner map cell, the xArm grasp stack's value; 1 cm cells starve the planner's tf loop.
 DUAL_OPENYAM_VOXEL_SIZE = 0.025
-# How far past the model a return still counts as the robot in the check's scene. This
-# camera's arm returns sit 1 to 2 cm off the model (1.3 deg extrinsic roll at 0.5 m plus
-# depth noise; scene 56 replay 2026-10-29).
+# How far past the model a return still counts as the robot in the check's scene: this
+# camera's arm returns sit 1 to 2 cm off the model (extrinsic roll plus depth noise).
 DUAL_OPENYAM_SELF_PADDING = 0.02
-# The same for the planner's map. A cell must not straddle a static link, so the padding
-# covers the slop plus one cell (replay of run 77c6: 2 cm left the init pose in collision
-# with table cells at the post and base feet, 4 cm cleared it). 8 cm, because the wrist
-# cameras' USB plugs and cables are not in the model: in runs 2a6c and 777b a return 3 to
-# 6 cm off the bracket box during the descent became a cell the lifted arm then sat
-# against, and every plan from there was refused. A modelled cable box is the real fix.
+# The same for the planner's map: the slop plus one cell, so no table cell straddles the
+# post or a base foot, plus the wrist cameras' plugs and cables, which the model lacks
+# and which otherwise become cells the lifted arm sits against. A modelled cable box
+# would let this drop to 4 cm.
 DUAL_OPENYAM_MAP_PADDING = 0.08
-# One period of the planner's tf (about 110 ms here), so a cloud is not dropped for
-# landing between two publishes.
+# One period of the planner's tf, so a cloud is not dropped for landing between publishes.
 DUAL_OPENYAM_MAP_TF_TOLERANCE = 0.2
-# Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
+# Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock.
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
 # Where the gripper's parts sit along the approach from the tcp, metres, as the xArm
 # stack gives its heuristic: the closed pads' centre behind the tcp (the finger
 # extension above), the fingertips' reach past it and the gripper body behind it, the
-# last two read off the v6 collision meshes (0.8 mm and 82.5 mm).
+# last two read off the collision meshes (0.8 mm and 82.5 mm).
 DUAL_OPENYAM_HEURISTIC_AIM = {
     "pad_behind_tcp": DUAL_OPENYAM_FINGER_EXTENSION["right"],
     "fingertip_reach": 0.001,
@@ -96,7 +90,7 @@ DUAL_OPENYAM_HEURISTIC_AIM = {
 
 # The same gripper in GraspGenX's convention: origin on the gripper link, approach
 # along +Z, jaws closing along X. Pads meet 0.137 m out and the open jaws span 98 mm
-# (measured between the nose faces on 2026-10-29).
+# (calipers between the nose faces).
 DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME = {
     "extents_open": (0.098, 0.028, 0.020),
     "offset_open": (0.0, 0.0, DUAL_OPENYAM_PAD_CENTRE_OFFSET + 0.10),
@@ -239,8 +233,8 @@ DUAL_OPENYAM_VIEW_TOPICS = [
 ]
 
 
-# Frames per second the bridge forwards per image entity. The cameras run at 30 Hz;
-# four such streams kept a laptop viewer at two cores of JPEG decoding (2026-10-27).
+# Frames per second the bridge forwards per image entity: four 30 Hz streams cost a
+# remote viewer two cores of JPEG decoding.
 DUAL_OPENYAM_VIEW_MAX_HZ = {
     "world/color_image": 10.0,
     "world/overlay_image": 10.0,
@@ -298,12 +292,11 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
             # scene comes from the self-cleared registration below.
             robot=model,
             pregrasp_offset=0.05,
-            # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
-            # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
-            # A close that stops on an object which then rolls out pauses for up to 1.05 s
-            # before finishing (power drill, run 9b53); real holds sit still for seconds.
-            # The default 3 samples called the pause a grasp, so a close must hold still
-            # for 1.5 s, and the timeout covers the travel plus that wait.
+            # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object
+            # settles at 0.05 to 0.07, so 0.035 splits them. A close that stops on an object
+            # which then rolls out pauses up to a second before finishing, while a real hold
+            # sits still for seconds, so a close must hold still for 1.5 s; the timeout
+            # covers the travel plus that wait.
             grasp_verification=GraspVerificationConfig(
                 empty_epsilon=0.035, settle_samples=30, timeout=5.0
             ),

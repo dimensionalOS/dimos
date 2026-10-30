@@ -51,9 +51,8 @@ the height the object was grasped at.
 """
 
 # Place square per arm beside the SceneReplica object band (y up to +/-0.26 plus half a
-# footprint), inside the fingers-down pose set verified on 2026-10-07 (y out to 0.45).
-# (0.22, +/-0.47) had no IK solution for the pre-place on 2026-10-22; this one placed the
-# bowl. Z 0.08 keeps low-grasped objects a short drop and tall ones off the table.
+# footprint), inside the fingers-down reach; farther out the pre-place has no IK solution.
+# Z 0.08 keeps low-grasped objects a short drop and tall ones off the table.
 DUAL_OPENYAM_PLACE_POSES = {"left": (0.26, 0.38, 0.08), "right": (0.26, -0.38, 0.08)}
 
 
