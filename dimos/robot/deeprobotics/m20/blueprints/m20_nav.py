@@ -66,7 +66,7 @@ def _m20_rerun_blueprint() -> Any:
             ),
             rrb.Spatial3DView(
                 origin="world",
-                name="M20 KronkNav",
+                name="M20 nav",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(
                     plane=rr.components.Plane3D.XY.with_distance(0.5),
@@ -96,7 +96,7 @@ _rerun_config = {
 }
 
 
-deeprobotics_m20_kronknav_control = (
+m20_nav = (
     autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
