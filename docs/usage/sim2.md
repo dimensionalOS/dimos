@@ -1,11 +1,17 @@
 # robosuite in DimOS
 
-DimOS runs a **robosuite environment**. Robosuite owns model composition, physics,
-controllers, observations, reset and task behavior. DimOS connects that environment
-to the existing robot application and its typed streams.
+DimOS runs a robosuite environment and connects it to typed streams. There are
+two entry paths: an existing robosuite task, or an existing DimOS hardware
+application whose motor device is replaced with a simulated device.
 
-For a native Unreal RGB-D camera attached to the same world, see
-[Unreal cameras for sim2](/docs/usage/sim2-unreal.md).
+| Path | Reused from robosuite | Supplied by DimOS |
+|---|---|---|
+| Stock task, such as Panda Lift | Robot, task, controller, observations, reward and reset | Worker lifecycle, action/result streams and snapshots |
+| Hardware application | `Task`/`RobotModel` composition and `MujocoEnv` stepping/reset | Robot MJCF, external policy, hardware PD semantics and connection binding |
+| MuJoCo camera or standalone IMU | `Observable` sampling, corruption, filtering and delay | Sensor attachment and typed message conversion |
+
+MuJoCo computes physics in both entry paths. A hardware motor binding preserves
+the application's existing controller and motor command semantics.
 
 ## Use an existing robosuite task
 
@@ -52,6 +58,9 @@ Use robosuite's own domain-randomization wrapper in that factory:
 ```python
 from robosuite.wrappers import DomainRandomizationWrapper
 
+from dimos.robot.robosuite.blueprints.robosuite_lift import panda_lift
+from dimos.sim2.module import SimulationModule
+
 
 def randomized_panda_lift():
     return DomainRandomizationWrapper(
@@ -69,9 +78,27 @@ randomized_lift = SimulationModule.blueprint(environment=randomized_panda_lift)
 ```
 
 The same wrapper can wrap `MotorScene`. DimOS calls the wrapper's `step()` and
-`reset()`; robosuite supplies the randomization. Independent lidar workers receive
-the new model on reset, so use per-reset randomization with those workers;
-model changes during an episode are not propagated to their compiled models.
+`reset()`; robosuite supplies the randomization. Snapshot workers receive new
+models on reset; model changes during an episode are not propagated.
+
+## Where simulation attaches
+
+1. [ModuleCoordinator.build()](/dimos/core/coordination/module_coordinator.py)
+   sees `--simulation mujoco` after configuration is resolved and calls
+   [attach_simulation()](/dimos/sim2/composition.py).
+2. The connection's
+   `simulated_robot()` hook
+   supplies the model binding. Attachment adds `SimulationModule` with
+   `MotorScene` and injects a `SimulatedDeviceFactory` into that connection's
+   `simulation_device` config.
+3. [ConnectionModule.connect()](/dimos/control/connection/connection_module.py)
+   starts that injected device. Without simulation, it starts the hardware device.
+   The connection keeps the same command validation, halt behavior and public ports.
+
+Supported standalone sensor drivers are replaced under their existing instance
+names/remaps.
+Automatic attachment currently supports one PD motor connection; explicit
+`MotorScene` composition supports multiple models.
 
 ## Add another robot
 
@@ -87,11 +114,18 @@ For an existing DimOS hardware application:
    units. Declare native position-only joints so halt preserves their positions.
 3. Reuse the same application blueprint. No robot-specific world class is needed.
 
-`MotorController` derives joint/actuator indices and native servo behavior from
-the compiled model. It preserves full PD plus feedforward commands; it does not
+This shares the application, connection and control configuration across real
+and sim. It does **not** yet make every robot description a single source:
+Planning URDFs and simulation MJCFs can remain separate existing assets. Adding a robot
+without a suitable MJCF still requires creating and validating that physics
+model; the binding does not generate it from the hardware connection.
+
+`MotorScene` owns its controllers. The runtime configures public motor units on
+those same controllers. `MotorController` derives joint/actuator indices and
+native servo behavior from the compiled model. It preserves full PD plus feedforward commands; it does not
 replace the external locomotion policy with an upstream position or IK controller.
-Startup holds the model's initial configuration. After control begins, halt and expired commands use the binding's configured
-damping until a new command or reset.
+Startup holds the model's initial configuration. After control begins, halt
+and expired commands damp the motors until a new command or reset.
 
 ## Sensors and reset
 
@@ -102,10 +136,8 @@ acquisition timestamps and are not repeatedly republished. Rendering occurs on
 the environment's owner thread, so camera rendering can slow environment stepping.
 Configure upstream observable modifiers on the environment.
 
-Rolling Mid360 acquisition remains a specialized worker: per-ray timing, motion
-distortion, return modeling and the device's own IMU feed the unchanged Point-LIO
-inputs. It restores authoritative snapshots and never advances a second world.
-Its history/ray model is not replaced by a latest-value observation dictionary.
+Independent lidar workers restore authoritative snapshots without advancing a
+second world. Device-specific ray models can extend their acquisition behavior.
 
 Reset runs on the environment owner thread, drops old commands, advances the
 sensor epoch and refreshes worker model files. This handles upstream hard resets
@@ -129,6 +161,9 @@ randomization is unavailable with this version pair; camera, lighting and dynami
 randomization are tested. macOS workers use `spawn` because native MuJoCo graphics
 can abort in forked processes; Linux workers retain `forkserver`.
 
-A stock robosuite task works through its native action interface. This does not
-claim every RoboCasa task accepts the G1 motor binding: embodiment, action-space
-and task compatibility still have to be established for each integration.
+The stock task example publishes its observation dictionary through
+`environment_result`; it does not automatically expose every observation as a
+Desktop camera topic. RoboCasa, demonstration collection and Gym/RL workflows
+are not configured or validated by this stack. Their embodiment, action-space
+and task compatibility still need integration; wrapping `MotorScene` does not
+supply benchmark task rewards or success conditions.

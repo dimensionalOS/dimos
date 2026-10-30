@@ -69,6 +69,26 @@ def test_upstream_model_calibration_and_placement_are_scoped_to_each_robot(
     assert world.data.body("robotright_base").xpos == pytest.approx([2, 0, 0.3])
 
 
+@pytest.mark.parametrize("hard_reset", [False, True])
+def test_environment_controller_keeps_hardware_units_across_reset(worlds, world_config, hard_reset):
+    world = worlds(
+        config=world_config
+        | {"environment": partial(world_config["environment"], hard_reset=hard_reset)}
+    )
+    assert world.robots["left"].controller.positions == pytest.approx([0.1, 850])
+    assert world.accept_command("left", command())
+    world.step()
+    assert world.data.ctrl[world.robots["left"].controller.actuators[1]] == pytest.approx(0.02)
+
+    world.reset()
+
+    assert world.robots["left"].controller.positions == pytest.approx([0.1, 850])
+    assert world.data.ctrl[world.robots["left"].controller.actuators[1]] == pytest.approx(0)
+    assert world.accept_command("left", command())
+    world.step()
+    assert world.data.ctrl[world.robots["left"].controller.actuators[1]] == pytest.approx(0.02)
+
+
 def test_motor_commands_follow_robot_ids_when_model_and_binding_order_differ(
     worlds, world_config, scene_path, robot_factory
 ):

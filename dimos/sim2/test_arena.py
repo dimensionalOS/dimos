@@ -19,7 +19,6 @@ import numpy as np
 from robosuite.models.tasks.task import Task
 
 from dimos.sim2.arena import AuthoredArena
-from dimos.sim2.unreal.assets import export_scene
 
 
 def test_arena_preserves_anonymous_nested_defaults_units_and_includes(tmp_path):
@@ -141,7 +140,7 @@ def test_arena_keeps_authored_collision_colors_and_inherited_materials(tmp_path)
         np.testing.assert_allclose(copied.rgba, original.rgba)
         np.testing.assert_allclose(copied.friction, original.friction)
         assert imported.mat(int(copied.matid[0])).name == native.mat(int(original.matid[0])).name
-    data = mujoco.MjData(imported)
-    mujoco.mj_forward(imported, data)
-    colors = [geom["rgba"] for geom in export_scene(imported, data)["geoms"]]
-    np.testing.assert_allclose(colors, [[0.8, 0.3, 0.1, 1], [0.6, 0.7, 0.8, 1], [0.8, 0.3, 0.1, 1]])
+    np.testing.assert_allclose(imported.mat("paint").rgba, [0.8, 0.3, 0.1, 1])
+    np.testing.assert_allclose(imported.mat_roughness[imported.mat("paint").id], 0.25)
+    np.testing.assert_allclose(imported.mat("metal").rgba, [0.2, 0.4, 0.6, 1])
+    np.testing.assert_allclose(imported.mat_roughness[imported.mat("metal").id], 0.1)

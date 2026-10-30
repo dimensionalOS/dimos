@@ -144,6 +144,14 @@ class MotorScene(NativeRendering):
             )
         attach_sensors(arena, tuple(s for owner, s in self.sensor_bindings if owner is None), "")
         self.model = Task(arena, list(self.robot_models.values()))
+        # Task merges physical model sections but drops authored custom metadata.
+        authored_custom = arena.root.find("custom")
+        if authored_custom is not None:
+            custom = self.model.root.find("custom")
+            if custom is None:
+                self.model.root.append(deepcopy(authored_custom))
+            else:
+                custom.extend(deepcopy(list(authored_custom)))
         option = self.model.root.find("option")
         if option is None:
             option = ET.SubElement(self.model.root, "option")
@@ -180,6 +188,8 @@ class MotorScene(NativeRendering):
 
     def _setup_references(self) -> None:
         super()._setup_references()
+        # The environment owns one controller per compiled robot. The DimOS
+        # runtime configures its public motor units without replacing it.
         self.controllers = {
             name: MotorController(self.sim, model) for name, model in self.robot_models.items()
         }

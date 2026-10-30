@@ -16,7 +16,7 @@
 
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
-from dimos.sim2.sensors.imu.device import imu_message
+from dimos.sim2.sensors.imu.messages import imu_message
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.observations import (
     ObservationFrame,
