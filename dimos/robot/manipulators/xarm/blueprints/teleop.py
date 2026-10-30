@@ -18,8 +18,11 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.module import ModuleBase
+from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
     teleop_ik_task,
@@ -29,17 +32,23 @@ from dimos.robot.manipulators.common.coordinators import (
     ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
+    XARM_ARMS,
+    XArmType,
     lite6_hardware,
     make_lite6_model_config,
     make_xarm6_model_config,
     make_xarm7_model_config,
     make_xarm_hardware,
+    make_xarm_model_config,
     xarm6_hardware,
     xarm7_hardware,
+    xarm_model,
 )
+from dimos.robot.manipulators.xarm.connection import XArmConnection
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
@@ -288,3 +297,62 @@ coordinator_teleop_xarm6 = autoconnect(
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, len(_xarm6_teleop_hw.joints)),
 )
+
+
+class XArmTwistCoordinator(ArmTwistCoordinator):
+    """End-effector twists in, from the keyboard or a browser; one xArm named "arm" out,
+    driven through ``XArmConnection``."""
+
+    arm_position_command: Out[JointState]
+    arm_velocity_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+# The connection module's ports, onto the coordinator's ports for the robot named "arm".
+_ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
+    (XArmConnection, "position_command", "arm_position_command"),
+    (XArmConnection, "velocity_command", "arm_velocity_command"),
+    (XArmTwistCoordinator, "arm_joint_state", "joint_state"),
+]
+
+
+def _keyboard_teleop(arm: XArmType) -> Blueprint:
+    """Jog an xArm's end from the keyboard, through ``XArmConnection``. Arm only, no gripper.
+
+    Wire it up with ``.remappings(_ARM_REMAPS)``. The arm's address is given at
+    run time, after the blueprint name (``--xarmconnection.ip 192.168.1.185``)
+    or as ``XARMCONNECTION__IP``.
+
+    Args:
+        arm: Which arm, e.g. "xarm7". It picks the coordinator's model, the IK
+            model and the connection's URDF, so they agree.
+    """
+    dof, robot_type = XARM_ARMS[arm]
+    ik_model = make_xarm_model_config(dof, robot_type=robot_type, robot="arm", add_gripper=False)
+    return autoconnect(
+        KeyboardTeleopModule.blueprint(),
+        XArmTwistCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=xarm_model(arm, robot="arm"),
+            tasks=[
+                TaskConfig(
+                    name=EEF_TWIST_TASK_NAME,
+                    type="eef_twist",
+                    joint_names=list(ik_model.joint_names),
+                    priority=10,
+                    params={
+                        "robot_model": ik_model,
+                        "target_frame": f"link{dof}",
+                        # The end stops 0.3 s after the last twist.
+                        "timeout": 0.3,
+                    },
+                ),
+            ],
+        ),
+        XArmConnection.blueprint(arm=arm),
+    )
+
+
+# The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
+xarm7_keyboard_teleop = _keyboard_teleop("xarm7").remappings(_ARM_REMAPS)
+xarm6_keyboard_teleop = _keyboard_teleop("xarm6").remappings(_ARM_REMAPS)
