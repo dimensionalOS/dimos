@@ -331,7 +331,11 @@ pub struct Config {
     pub keyframe_min_rotation_degrees: f64,
     pub keyframe_min_distance_meters: f64,
     pub closure_search_radius: f64,
-    pub closure_score_thresh: f64,
+    /// ICP pairs a source point with its nearest target point only within this distance (m); farther points are
+    /// treated as not seen by the other scan.
+    pub closure_icp_inlier_distance_m: f64,
+    /// A closure whose ICP fit has a larger rms inlier distance (m, sqrt of the fitness) is rejected.
+    pub closure_icp_max_fitness_m: f64,
     pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
@@ -352,7 +356,7 @@ pub struct Config {
     /// a second look on more data instead of an outright reject: each round seeded with the previous
     /// round's ICP (the first round with the single-scan ICP), the source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
     /// keyframes near the matched one in time that those land within `closure_search_radius` of.
-    /// Inliers are source points within sqrt(`closure_score_thresh`) of the target after ICP.
+    /// Inliers are source points within `closure_icp_inlier_distance_m` of the target after ICP.
     /// Each round counts as (extended inliers / single-scan inliers) independent checks, each as
     /// good as the single scan's confidence times how well the overlap held up (extended inlier
     /// fraction / single inlier fraction, at most 1): confidence = 1 - (1 - c_round)^checks.
@@ -485,7 +489,7 @@ pub struct Config {
     /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
     /// by newer wrong closures) no longer drops it (huge overtrust: 24 kept, 0, 24, 0).
     pub closure_commitments: bool,
-    /// When true, the closure ICP's inlier distance (`closure_score_thresh`'s role) is measured instead of configured:
+    /// When true, the closure ICP's inlier distance (`closure_icp_inlier_distance_m`) is measured instead of configured:
     /// each keyframe's scan against the keyframes before it, placed by the odometry (an alignment known to be right),
     /// gives nearest-neighbour distances fitted as half-normal (width w, the points the two see in common) plus uniform
     /// out to the ICP match distance (the rest); the inlier distance is where the median keyframe's w puts a right
@@ -524,6 +528,10 @@ pub struct Config {
     /// (the PCM core) on every solve: a bend two independent loops agree on is drift, a lone closure's may be a wrong
     /// one (huge: kept wrong closures read as yaw x41000). Without it only GM's verdict reads the core.
     pub odometry_noise_evidence_core: bool,
+    /// When true (with `odometry_noise_from_closures`), the noise is learned from the kept loops' innovations against
+    /// the raw odometry at the stated drift, each loop voting on a source by that source's share of its expected misfit
+    /// (its drift over the loop's length against the loop's own fit noise), instead of from the solved graph's residuals.
+    pub odometry_noise_from_loop_drift: bool,
     pub closure_overlap_score: bool,
     pub closure_overlap_sigma_m: f64,
     pub closure_overlap_reach_m: f64,
@@ -539,13 +547,21 @@ pub struct Config {
     pub soft_pressure_decades: f64,
 }
 
+impl Config {
+    /// `closure_icp_inlier_distance_m` squared, the form ICP compares against.
+    pub fn closure_inlier_squared_distance(&self) -> f64 {
+        self.closure_icp_inlier_distance_m.powi(2)
+    }
+}
+
 impl Default for Config {
     fn default() -> Config {
         Config {
             keyframe_min_rotation_degrees: 10.0,
             keyframe_min_distance_meters: 0.5,
             closure_search_radius: 3.0,
-            closure_score_thresh: 0.15,
+            closure_icp_inlier_distance_m: 0.3872983346207417,
+            closure_icp_max_fitness_m: 0.3872983346207417,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,
@@ -604,6 +620,7 @@ impl Default for Config {
             closure_noise_from_closures: false,
             closure_yank_gate_principled: false,
             odometry_noise_evidence_core: false,
+            odometry_noise_from_loop_drift: false,
             closure_overlap_score: false,
             closure_overlap_sigma_m: 0.03,
             closure_overlap_reach_m: 0.5,
@@ -818,7 +835,10 @@ impl ClosureSearch {
         // fit, so it is part of the key
         let cache = self.icp_cache.clone();
         let key_suffix = if self.config.closure_inlier_distance_from_odometry {
-            format!(":{:x}", self.config.closure_score_thresh.to_bits())
+            format!(
+                ":{:x}",
+                self.config.closure_inlier_squared_distance().to_bits()
+            )
         } else {
             String::new()
         };
@@ -894,7 +914,7 @@ impl ClosureSearch {
                 &IcpParams {
                     max_iterations: self.config.closure_icp_max_iterations as usize,
                     max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
-                    inlier_squared_distance: self.config.closure_score_thresh,
+                    inlier_squared_distance: self.config.closure_inlier_squared_distance(),
                 },
             ))
         }));
@@ -925,7 +945,7 @@ impl ClosureSearch {
                     &transform_cloud(source_cloud, &icp.rotation, &icp.translation),
                     target_cloud,
                     target_tree,
-                    self.config.closure_score_thresh,
+                    self.config.closure_inlier_squared_distance(),
                 )]
             })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
@@ -934,7 +954,7 @@ impl ClosureSearch {
             }
         }
 
-        if !icp.converged || icp.fitness > self.config.closure_score_thresh {
+        if !icp.converged || icp.fitness > self.config.closure_icp_max_fitness_m.powi(2) {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
         // the closure's own variances from an alignment's fit, in the target keyframe's frame (`closure_icp_covariance`)
@@ -953,7 +973,7 @@ impl ClosureSearch {
                         &transform_cloud(source_cloud, rotation, translation),
                         target_cloud,
                         target_tree,
-                        self.config.closure_score_thresh,
+                        self.config.closure_inlier_squared_distance(),
                         &origin,
                     )
                     .map_or(Vec::new(), |c| c.iter().flatten().copied().collect())
@@ -1561,7 +1581,54 @@ impl GscPgo {
         // turning from sliding where a closure's single innovation cannot
         let mut ln_odometry = self.odometry_noise_ln;
         let mut redundancy = [0.0; 4];
-        if fit_odometry {
+        if fit_odometry && self.config.odometry_noise_from_loop_drift {
+            // each kept loop votes on each noise source as far as that source's drift over the loop's length explains
+            // its expected misfit (a short loop's is mostly its own ICP noise, so it barely votes), with how surprised
+            // it was: ln of its innovation's squared Mahalanobis distance per axis at the stated drift and its fit's
+            // noise, less that statistic's mean for a right loop, E[ln(chi2_3 / 3)] = digamma(3/2) - ln(3/2). The
+            // stated drift counts as `odom_error_stiffness` loops of no surprise; the spread of ln(chi2_3) is
+            // trigamma(3/2), so the estimate's sd is sqrt(trigamma(3/2) / (stiffness + votes))
+            const MEAN_LN_CHI2_3_OVER_3: f64 = -0.368_975_1;
+            const VAR_LN_CHI2_3: f64 = 0.934_802_2;
+            let closure_scale = self.closure_noise_scale();
+            let mut votes = [0.0; 4];
+            let mut weighted = [0.0; 4];
+            for n in &innovations {
+                let pieces: [f64; 4] =
+                    std::array::from_fn(|c| (0..3).map(|k| n.pieces[c][k][k]).sum::<f64>());
+                let fit = 3.0 * n.fitness * closure_scale;
+                let total = pieces.iter().sum::<f64>() + fit;
+                let covariance: crate::mat3::Mat3 = std::array::from_fn(|i| {
+                    std::array::from_fn(|j| {
+                        (0..4).map(|c| n.pieces[c][i][j]).sum::<f64>()
+                            + if i == j { fit / 3.0 } else { 0.0 }
+                    })
+                });
+                let Some(inverse) = crate::mat3::inverse(&covariance) else {
+                    continue;
+                };
+                let iv = crate::mat3::mat_vec(&inverse, &n.v);
+                let squared = n.v[0] * iv[0] + n.v[1] * iv[1] + n.v[2] * iv[2];
+                if !(total > 0.0 && squared > 0.0 && squared.is_finite()) {
+                    continue;
+                }
+                let surprise = (squared / 3.0).ln() - MEAN_LN_CHI2_3_OVER_3;
+                for c in 0..4 {
+                    let vote = pieces[c] / total;
+                    votes[c] += vote;
+                    weighted[c] += vote * surprise;
+                }
+            }
+            let stiffness = self.config.odom_error_stiffness;
+            for c in 0..4 {
+                redundancy[c] = votes[c];
+                if votes[c] > 0.0 {
+                    ln_odometry[c] = weighted[c] / (stiffness + votes[c]);
+                    self.odometry_noise_ln_sd[c] =
+                        Some((VAR_LN_CHI2_3 / (stiffness + votes[c])).sqrt());
+                }
+            }
+        } else if fit_odometry {
             if let Some(evidence) = evidence {
                 for c in 0..4 {
                     let (sum, r) = evidence[c];
@@ -1955,7 +2022,7 @@ impl GscPgo {
         Some(ClosureSearch {
             key_poses: self.key_poses.clone(),
             config: Config {
-                closure_score_thresh: self.closure_inlier_squared_distance(),
+                closure_icp_inlier_distance_m: self.closure_inlier_squared_distance().sqrt(),
                 ..self.config.clone()
             },
             scored_yanks: self.yank_scale_sample(),
@@ -2144,12 +2211,12 @@ impl GscPgo {
     }
 
     /// The closure ICP's inlier distance squared: measured (`closure_inlier_distance_from_odometry`) once a keyframe has
-    /// been, else `closure_score_thresh`.
+    /// been, else `closure_icp_inlier_distance_m` squared.
     pub fn closure_inlier_squared_distance(&self) -> f64 {
         if !self.config.closure_inlier_distance_from_odometry
             || self.odometry_alignment_widths.is_empty()
         {
-            return self.config.closure_score_thresh;
+            return self.config.closure_inlier_squared_distance();
         }
         let mut widths = self.odometry_alignment_widths.clone();
         widths.sort_by(f64::total_cmp);
