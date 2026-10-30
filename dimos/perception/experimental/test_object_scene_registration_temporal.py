@@ -134,37 +134,6 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
     warning.assert_called_once_with("Failed to lookup transform from camera frame to target frame")
 
 
-def test_mask_erosion_is_configured_and_reaches_the_cloud_builder(monkeypatch: Any) -> None:
-    module = ObjectSceneRegistrationModule(target_frame="map", mask_erode_pixels=10)
-    module._camera_info = MagicMock(name="camera_info")
-    calls: list[dict[str, Any]] = []
-    try:
-        _run_one_scan(monkeypatch, module, calls)
-    finally:
-        module.stop()
-
-    assert module.config.mask_erode_pixels == 10
-    assert type(module.config)().mask_erode_pixels == 3
-    assert [c["mask_erode_pixels"] for c in calls] == [10]
-
-
-def _run_one_scan(
-    monkeypatch: Any, module: ObjectSceneRegistrationModule, calls: list[dict[str, Any]]
-) -> None:
-    def from_2d_to_list(**kwargs: Any) -> list[Any]:
-        calls.append(kwargs)
-        return []
-
-    monkeypatch.setattr(
-        "dimos.perception.experimental.object_scene_registration.Object.from_2d_to_list",
-        from_2d_to_list,
-    )
-    depth = _image(1.0)
-    ObjectSceneRegistrationModule._process_3d_detections(
-        module, MagicMock(spec=ImageDetections2D), depth, depth, MagicMock(name="transform")
-    )
-
-
 def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
     monkeypatch: Any, module: ObjectSceneRegistrationModule
 ) -> None:

@@ -65,10 +65,6 @@ class ObjectSceneRegistrationConfig(ModuleConfig):
     max_distance: float = 0.0
     use_aabb: bool = False
     max_obstacle_width: float = 0.0
-    # Pixels shaved off each mask edge before lifting it to 3D. The edge of a mask holds
-    # the table and the object's slanted sides; an overhead camera needs more than a wrist
-    # camera does, or the object cloud comes out wider than the object.
-    mask_erode_pixels: int = 3
 
 
 class ObjectSceneRegistrationModule(Module):
@@ -115,7 +111,6 @@ class ObjectSceneRegistrationModule(Module):
         self._max_distance = self.config.max_distance
         self._use_aabb = self.config.use_aabb
         self._max_obstacle_width = self.config.max_obstacle_width
-        self._mask_erode_pixels = self.config.mask_erode_pixels
 
         # Initial deployment constructs modules serially within each worker.
         # Resolve only the selected detector before parallel start RPCs; importing
@@ -500,7 +495,6 @@ class ObjectSceneRegistrationModule(Module):
             max_distance=self._max_distance,
             use_aabb=self._use_aabb,
             max_obstacle_width=self._max_obstacle_width,
-            mask_erode_pixels=self._mask_erode_pixels,
         )
 
         # Empty observations still advance pending-object expiry.
