@@ -133,6 +133,13 @@ class Key(str):
         key._source, key._resource, key._interface = parts
         return key
 
+    def cbor_encode(self) -> str:
+        return str(self)
+
+    @classmethod
+    def cbor_decode(cls, value: str) -> Key:
+        return cls(value)
+
     @classmethod
     def of(cls, source: str, resource: str, interface: str) -> Key:
         """Build a name from its three parts.

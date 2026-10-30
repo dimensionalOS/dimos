@@ -38,7 +38,7 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 
-pytestmark = [pytest.mark.self_hosted]
+pytestmark = [pytest.mark.self_hosted_large]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
 BLUEPRINT = "openarm-planner-coordinator"

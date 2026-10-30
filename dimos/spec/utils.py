@@ -115,6 +115,19 @@ def spec_annotation_compliance(
     return True
 
 
+def spec_methods_without_rpc(cls: type, spec: type) -> list[str]:
+    """Methods ``spec`` declares that ``cls`` has without @rpc.
+
+    A module reference is served by an RPC proxy, which can only call methods carrying
+    the ``__rpc__`` marker, so such a provider would fail at call time instead of at build.
+    """
+    return sorted(
+        name
+        for name in get_protocol_method_signatures(spec)
+        if not hasattr(getattr(cls, name, None), "__rpc__")
+    )
+
+
 def _annotation_compatible(spec_ann: Any, impl_ann: Any) -> bool:
     """Return True if an implementation's ``impl_ann`` satisfies the spec's ``spec_ann``.
 

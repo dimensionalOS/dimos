@@ -38,6 +38,13 @@ class GraspCandidateArray:
     def __iter__(self) -> Iterator[GraspCandidate]:
         return iter(self.candidates)
 
+    def cbor_encode(self) -> dict[str, Header | list[GraspCandidate]]:
+        return {"header": self.header, "candidates": self.candidates}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Header | list[GraspCandidate]]) -> GraspCandidateArray:
+        return cls(data["header"], data["candidates"])  # type: ignore[arg-type]
+
     def encode(self) -> bytes:
         """Encode using the repository's pickle transport convention."""
         return pickle.dumps({"header": self.header, "candidates": self.candidates})

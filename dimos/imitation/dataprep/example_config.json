@@ -1,78 +1,80 @@
 {
   "source": "data/recordings/session.db",
-  "episodes": {
-    "extractor": "episode_status",
-    "status_stream": "status"
-  },
-  "observation": {
-    "image": {
-      "stream": "color_image",
-      "field": "data",
-      "dtype": "video",
-      "shape": [
-        480,
-        640,
-        3
-      ],
-      "names": [
-        "height",
-        "width",
-        "channels"
-      ]
-    },
-    "joint_state": {
-      "stream": "coordinator_joint_state",
-      "field": "position",
-      "dtype": "float32",
-      "shape": [
-        8
-      ],
-      "names": [
-        "joint1",
-        "joint2",
-        "joint3",
-        "joint4",
-        "joint5",
-        "joint6",
-        "joint7",
-        "arm/gripper"
-      ]
-    }
-  },
-  "action": {
-    "joint_target": {
-      "stream": "coordinator_joint_state",
-      "field": "position",
-      "dtype": "float32",
-      "shape": [
-        8
-      ],
-      "names": [
-        "joint1",
-        "joint2",
-        "joint3",
-        "joint4",
-        "joint5",
-        "joint6",
-        "joint7",
-        "arm/gripper"
-      ]
-    }
-  },
-  "sync": {
-    "anchor": "image",
-    "rate_hz": 14.0,
-    "tolerance_ms": 80.0
-  },
-  "quality": {
-    "mode": "fill"
-  },
   "output": {
     "format": "lerobot",
     "path": "data/datasets/session",
     "metadata": {
       "robot": "xarm7",
       "repo_id": "dimos/example"
+    }
+  },
+  "recording_schema": {
+    "episodes": {
+      "extractor": "episode_status",
+      "status_stream": "status"
+    },
+    "observation": {
+      "image": {
+        "stream": "color_image",
+        "field": "data",
+        "dtype": "video",
+        "shape": [
+          480,
+          640,
+          3
+        ],
+        "names": [
+          "height",
+          "width",
+          "channels"
+        ]
+      },
+      "joint_state": {
+        "stream": "coordinator_joint_state",
+        "field": "position",
+        "dtype": "float32",
+        "shape": [
+          8
+        ],
+        "names": [
+          "joint1",
+          "joint2",
+          "joint3",
+          "joint4",
+          "joint5",
+          "joint6",
+          "joint7",
+          "arm/gripper"
+        ]
+      }
+    },
+    "action": {
+      "joint_target": {
+        "stream": "coordinator_joint_state",
+        "field": "position",
+        "dtype": "float32",
+        "shape": [
+          8
+        ],
+        "names": [
+          "joint1",
+          "joint2",
+          "joint3",
+          "joint4",
+          "joint5",
+          "joint6",
+          "joint7",
+          "arm/gripper"
+        ]
+      }
+    },
+    "sync": {
+      "anchor": "image",
+      "rate_hz": 14.0,
+      "tolerance_ms": 80.0
+    },
+    "quality": {
+      "mode": "fill"
     }
   }
 }

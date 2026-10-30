@@ -42,6 +42,13 @@ else:
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
+# Python modules saved at runtime, e.g. by an agent. The coordinator and its workers
+# import from here, so a running system can load a module saved after it started.
+RUNTIME_MODULES_DIR = STATE_DIR / "modules"
+
+# The on-robot agent's runtime state: agent module metadata and exports.
+HARNESS_STATE_DIR = STATE_DIR / "harness"
+
 if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"

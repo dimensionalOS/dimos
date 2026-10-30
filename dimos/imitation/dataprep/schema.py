@@ -125,8 +125,13 @@ class OutputConfig(BaseConfig):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class DatasetSchema(BaseConfig):
-    """Dataset features, episode extraction, alignment, and quality rules."""
+class RecordingSchema(BaseConfig):
+    """Portable interpretation of recorded streams for dataset preparation."""
+
+    name: str = "collection"
+    robot_type: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    payload: Literal["recording.mcap", "recording.db"] = "recording.mcap"
 
     episodes: EpisodeExtractor = EpisodeExtractor()
     observation: dict[str, FeatureSpec] = Field(default_factory=dict)
@@ -135,9 +140,32 @@ class DatasetSchema(BaseConfig):
     quality: QualityConfig = QualityConfig()
 
     @model_validator(mode="after")
-    def validate_sources(self) -> DatasetSchema:
+    def validate_sources(self) -> RecordingSchema:
         validate_source_kinds((*self.observation.values(), *self.action.values()))
         return self
+
+    @classmethod
+    def read(cls, directory: Path) -> RecordingSchema:
+        schema = cls.model_validate_json((directory / "schema.json").read_text())
+        if not (directory / schema.payload).is_file():
+            raise FileNotFoundError(f"Recording payload is missing: {directory / schema.payload}")
+        return schema
+
+    def dataprep_config(self, directory: Path, output: OutputConfig) -> DataPrepConfig:
+        return DataPrepConfig(
+            recording_schema=self,
+            source=str(directory / self.payload),
+            output=output.model_copy(
+                update={
+                    "metadata": {
+                        "repo_id": f"local/{self.name}",
+                        **({"robot_type": self.robot_type} if self.robot_type else {}),
+                        **self.metadata,
+                        **output.metadata,
+                    }
+                }
+            ),
+        )
 
 
 def validate_source_kinds(features: Iterable[FeatureSpec]) -> None:
@@ -149,9 +177,10 @@ def validate_source_kinds(features: Iterable[FeatureSpec]) -> None:
             raise ValueError(f"stream {feature.stream!r} has conflicting source kinds")
 
 
-class DataPrepConfig(DatasetSchema):
+class DataPrepConfig(BaseConfig):
     """Dataset interpretation plus this preparation's input and output paths."""
 
+    recording_schema: RecordingSchema = Field(default_factory=RecordingSchema)
     source: str = ""
     output: OutputConfig = OutputConfig(format="lerobot", path=STATE_DIR / "datasets" / "default")
 
