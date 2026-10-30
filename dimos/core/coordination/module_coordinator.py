@@ -440,7 +440,7 @@ class ModuleCoordinator(Resource):
         global_config.update(**global_values)
         if global_config.simulation == "mujoco":
             # Attach the world after CLI/module overrides are resolved. Each
-            # connection's simulated_robot hook supplies its model; the original
+            # connection's describe_simulated_robot hook supplies its model; the original
             # connection remains in the stack and receives a simulation device.
             # MuJoCo is optional, so defer this import until simulation is selected.
             from dimos.sim2.composition import attach_simulation

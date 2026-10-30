@@ -7,11 +7,10 @@ application whose motor device is replaced with a simulated device.
 | Path | Reused from robosuite | Supplied by DimOS |
 |---|---|---|
 | Stock task, such as Panda Lift | Robot, task, controller, observations, reward and reset | Worker lifecycle, action/result streams and snapshots |
-| Hardware application | `Task`/`RobotModel` composition and `MujocoEnv` stepping/reset | Robot MJCF, external policy, hardware PD semantics and connection binding |
+| Hardware-style robot control | Model composition and environment stepping/reset | Stock velocity policy or external controller, shared connection and client |
 | MuJoCo camera or standalone IMU | `Observable` sampling, corruption, filtering and delay | Sensor attachment and typed message conversion |
 
-MuJoCo computes physics in both entry paths. A hardware motor binding preserves
-the application's existing controller and motor command semantics.
+MuJoCo computes physics in both entry paths. Hardware-style locomotion policies are independent of robosuite task controllers.
 
 ## Use an existing robosuite task
 
@@ -79,53 +78,29 @@ randomized_lift = SimulationModule.blueprint(environment=randomized_panda_lift)
 
 The same wrapper can wrap `MotorScene`. DimOS calls the wrapper's `step()` and
 `reset()`; robosuite supplies the randomization. Snapshot workers receive new
-models on reset; model changes during an episode are not propagated.
+models on reset; model changes during an episode are not propagated. These
+modders do not control Unreal's native materials or lighting. Camera changes
+can reach Unreal through named model cameras; its fixed observer mount is
+configured separately.
 
-## Where simulation attaches
+## Attach robot connections
 
-1. [ModuleCoordinator.build()](/dimos/core/coordination/module_coordinator.py)
-   sees `--simulation mujoco` after configuration is resolved and calls
-   [attach_simulation()](/dimos/sim2/composition.py).
-2. The connection's
-   `simulated_robot()` hook
-   supplies the model binding. Attachment adds `SimulationModule` with
-   `MotorScene` and injects a `SimulatedDeviceFactory` into that connection's
-   `simulation_device` config.
-3. [ConnectionModule.connect()](/dimos/control/connection/connection_module.py)
-   starts that injected device. Without simulation, it starts the hardware device.
-   The connection keeps the same command validation, halt behavior and public ports.
+After resolving configuration, `ModuleCoordinator.build()` calls
+`attach_simulation()` for `--simulation mujoco`. It collects every
+`RobotConnectionSpec.describe_simulated_robot(resolved_config)` result into one
+world. Descriptions contain model assets, instance placement and either a motor
+command interface or a velocity interface with a locomotion controller.
 
-Supported standalone sensor drivers are replaced under their existing instance
-names/remaps.
-Automatic attachment currently supports one PD motor connection; explicit
-`MotorScene` composition supports multiple models.
+The retained connections receive non-module `SimRobotClient` instances using
+the selected transport (Zenoh by default). Namespaces separate robot identities,
+private command topics and public feedback. A manually supplied empty
+`SimulationModule.blueprint()` is populated instead of adding another world.
+Explicit sensor workers are collected without duplication; replaced hardware
+sensor workers retain their original names and remaps.
 
-## Add another robot
-
-For a robot already supplied by robosuite, use its existing model/task directly.
-For an existing DimOS hardware application:
-
-1. Supply a robosuite `RobotModel` in the robot package, reusing the physical
-   model asset. Existing upstream models need no new anatomy definition. When
-   importing a raw MJCF, preserve and check its authored physics: robosuite
-   changes some joint defaults unless the model restores them.
-2. Add the connection's `simulated_robot()` binding. Its public motor order must
-   match the model's actuator order; optional scales/offsets express hardware
-   units. Declare native position-only joints so halt preserves their positions.
-3. Reuse the same application blueprint. No robot-specific world class is needed.
-
-This shares the application, connection and control configuration across real
-and sim. It does **not** yet make every robot description a single source:
-Planning URDFs and simulation MJCFs can remain separate existing assets. Adding a robot
-without a suitable MJCF still requires creating and validating that physics
-model; the binding does not generate it from the hardware connection.
-
-`MotorScene` owns its controllers. The runtime configures public motor units on
-those same controllers. `MotorController` derives joint/actuator indices and
-native servo behavior from the compiled model. It preserves full PD plus feedforward commands; it does not
-replace the external locomotion policy with an upstream position or IK controller.
-Startup holds the model's initial configuration. After control begins, halt
-and expired commands damp the motors until a new command or reset.
+The shared MJCF importer preserves authored dynamics and appearance. Robot
+packages supply data; no robot-specific simulator or robosuite subclass is
+required. Existing stock robosuite tasks still use their own native actions.
 
 ## Sensors and reset
 
@@ -136,8 +111,8 @@ acquisition timestamps and are not repeatedly republished. Rendering occurs on
 the environment's owner thread, so camera rendering can slow environment stepping.
 Configure upstream observable modifiers on the environment.
 
-Independent lidar workers restore authoritative snapshots without advancing a
-second world. Device-specific ray models can extend their acquisition behavior.
+Lidar workers restore authoritative world snapshots without advancing physics.
+Their ray models can retain acquisition history independently of Observables.
 
 Reset runs on the environment owner thread, drops old commands, advances the
 sensor epoch and refreshes worker model files. This handles upstream hard resets

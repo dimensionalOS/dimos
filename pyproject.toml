@@ -845,7 +845,7 @@ ignore_missing_imports = true
 
 # robosuite publishes runtime extension bases without Python type metadata.
 [[tool.mypy.overrides]]
-module = ["dimos.sim2.control", "dimos.sim2.environment", "dimos.sim2.arena", "dimos.sim2.rendering"]
+module = ["dimos.sim2.control", "dimos.sim2.environment", "dimos.sim2.arena", "dimos.sim2.rendering", "dimos.sim2.model"]
 disallow_subclassing_any = false
 
 [[tool.mypy.overrides]]

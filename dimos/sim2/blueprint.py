@@ -28,13 +28,13 @@ from dimos.sim2.sensors.imu.module import SimImuModule
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import RobotInstanceSpec
 
 
 def simulation(
     *,
     environment: Callable[[], MujocoEnv | Wrapper],
-    robots: dict[str, SimulatedRobot] | None = None,
+    robots: dict[str, RobotInstanceSpec] | None = None,
     sensors: tuple[tuple[str | None, Sensor], ...] = (),
     snapshot_hz: float = 60.0,
     module: type[SimulationModule] = SimulationModule,

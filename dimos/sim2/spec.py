@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware-interface bindings for upstream robosuite models.
+"""Robot instance descriptions and the connection discovery contract.
 
-Robot anatomy, joints, actuators and placement belong to the upstream model.
-Only public motor names, units and connection startup/watchdog settings live here.
+These descriptions contain data and policy factories, never a robosuite model
+or a running simulator. The world imports each physical model before starting.
 """
 
 from __future__ import annotations
@@ -23,17 +23,50 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import math
+from pathlib import Path
+from typing import Any, Literal, Protocol, runtime_checkable
 
-from robosuite.models.robots.robot_model import RobotModel
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.spec.utils import Spec
+
+
+class VelocityController(Protocol):
+    """A robot-local locomotion policy; the world owns timing and motor writes."""
+
+    def reset(self) -> None: ...
+
+    def step(self, command: Twist) -> MotorCommandArray: ...
+
+
+VelocityFactory = Callable[[Any, Any, str, tuple[str, ...], float], VelocityController]
 
 
 @dataclass(frozen=True)
-class SimulatedRobot:
+class MujocoModelSpec:
+    """Authored physical model and its assets, loaded by the MuJoCo backend."""
+
+    path: Path
+    meshdir: Path | None = None
+    initial_qpos: tuple[float, ...] = ()
+    control_imu: str | None = None
+    keyframe: str | None = None
+
+
+@dataclass(frozen=True)
+class RobotInstanceSpec:
     robot_id: str
-    model: Callable[[], RobotModel]
+    model: MujocoModelSpec
     joint_names: tuple[str, ...]
     frame_id: str
-    control_imu: str | None = None
+    command_kind: Literal["motor", "velocity"] = "motor"
+    base_name: str = ""
+    velocity_controller: VelocityFactory | None = None
+    default_scene: str = "logistics.xml"
+    spawn: str = "default"
+    position: tuple[float, float, float] | None = None
+    rpy: tuple[float, float, float] | None = None
+    timestep: float = 0.005
     startup_kp: tuple[float, ...] = ()
     startup_kd: tuple[float, ...] = ()
     wait_for_first_command: bool = False
@@ -43,11 +76,27 @@ class SimulatedRobot:
     position_offset: tuple[float, ...] = ()
     position_only_joints: tuple[str, ...] = ()
 
+    @property
+    def control_imu(self) -> str | None:
+        return self.model.control_imu
+
     def __post_init__(self) -> None:
-        if not self.robot_id.isidentifier() or self.robot_id == "world":
-            raise ValueError("robot_id must be an identifier; 'world' is reserved")
+        if (
+            not self.robot_id
+            or self.robot_id == "world"
+            or any(not part.isidentifier() for part in self.robot_id.split("/"))
+        ):
+            raise ValueError(
+                "robot_id must contain identifier path components; 'world' is reserved"
+            )
         if not self.joint_names or len(set(self.joint_names)) != len(self.joint_names):
             raise ValueError("public motor names must be nonempty and unique")
+        if self.command_kind == "velocity" and self.velocity_controller is None:
+            raise ValueError("velocity control requires a locomotion controller")
+        if self.command_kind == "velocity" and not self.base_name:
+            raise ValueError("velocity control requires the public base name")
+        if self.command_kind == "motor" and self.velocity_controller is not None:
+            raise ValueError("external motor control cannot also own a velocity controller")
         if not set(self.position_only_joints) <= set(self.joint_names):
             raise ValueError("position-only joints must name public motors")
         for label, values in (
@@ -66,7 +115,20 @@ class SimulatedRobot:
             raise ValueError("motor coordinate scales must be nonzero")
         if not math.isfinite(self.command_timeout) or self.command_timeout <= 0:
             raise ValueError("command_timeout must be finite and positive")
+        if not math.isfinite(self.timestep) or self.timestep <= 0:
+            raise ValueError("timestep must be finite and positive")
         if self.halt_damping is not None and (
             not math.isfinite(self.halt_damping) or self.halt_damping < 0
         ):
             raise ValueError("halt_damping must be finite and nonnegative")
+        for label, pose in (("position", self.position), ("rpy", self.rpy)):
+            if pose is not None and (len(pose) != 3 or not all(map(math.isfinite, pose))):
+                raise ValueError(f"{label} must contain three finite values")
+
+
+@runtime_checkable
+class RobotConnectionSpec(Spec, Protocol):
+    """Build-time description; called before any robot or simulator is started."""
+
+    @staticmethod
+    def describe_simulated_robot(resolved_config: Any) -> RobotInstanceSpec: ...

@@ -12,20 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Add a shared world while keeping each robot's connection in the blueprint.
-
-Connections describe their simulated bodies. This build step resolves those
-descriptions and supplies a simulated device factory; ConnectionModule chooses
-that device at startup. Only standalone sensor drivers are replaced by sensor
-workers. The connection keeps its public ports, RPCs and command validation.
-"""
+"""Collect every robot description and attach one world before module startup."""
 
 from dataclasses import replace
 from functools import partial
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
-from dimos.control.connection.connection_module import ConnectionModule
 from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.global_config import GlobalConfig
@@ -33,121 +26,200 @@ from dimos.core.module import ModuleBase, is_module_type
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.device import SimulatedDeviceFactory
 from dimos.sim2.environment import MotorScene
-from dimos.sim2.module import FEEDBACK_PORTS, PORT_KINDS
+from dimos.sim2.model import model_factory
+from dimos.sim2.module import FEEDBACK_PORTS, PORT_KINDS, SimulationModule
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.sensors.module import SensorModule
+from dimos.sim2.sensors.observations import ObservationModule
+from dimos.sim2.spec import RobotConnectionSpec, RobotInstanceSpec
 from dimos.sim2.world.scene import scene_path
 
-ROBOT_TWIN = "simulated_robot"
-SENSOR_TWIN = "simulated_sensor"
-DEFAULT_SCENE = "default_sim_scene"
+
+@runtime_checkable
+class SensorConnectionSpec(Protocol):
+    @staticmethod
+    def simulated_sensor(config: Any) -> Sensor: ...
 
 
 def has_simulation_binding(module: type[ModuleBase]) -> bool:
-    """Whether a module declares a robot or sensor binding for build-time attachment."""
-    return hasattr(module, ROBOT_TWIN) or hasattr(module, SENSOR_TWIN)
+    """Whether a module contributes a physical instance at world construction."""
+    return isinstance(module, RobotConnectionSpec | SensorConnectionSpec) or issubclass(
+        module, SensorModule | ObservationModule
+    )
 
 
 def attach_simulation(
     blueprint: Blueprint, module_kwargs: dict[str, dict[str, Any]], config: GlobalConfig
 ) -> tuple[Blueprint, dict[str, dict[str, Any]]]:
-    """Attach the world after CLI overrides, before modules are instantiated.
+    """Resolve all instances, then inject clients while retaining robot connections.
 
-    Called by ModuleCoordinator.build when ``--simulation mujoco`` is selected.
-    Connections' simulated_robot declarations supply robot models; retained
-    connections receive device factories bound to this shared world.
-    The current automatic composition supports one robot and its sensors.
-    Explicit MotorScene/SimulationModule composition can contain many robots.
+    Descriptions declare the command capability. Discovery does not depend on a
+    particular connection base class, PD flag, robot family or policy.
     """
     atoms = blueprint.active_blueprints
-    robot_atoms = [a for a in atoms if hasattr(a.module, ROBOT_TWIN)]
-    sensor_atoms = [a for a in atoms if hasattr(a.module, SENSOR_TWIN)]
-    if not robot_atoms and not sensor_atoms:
+    robot_atoms = [a for a in atoms if isinstance(a.module, RobotConnectionSpec)]
+    replaced_sensors = [a for a in atoms if isinstance(a.module, SensorConnectionSpec)]
+    if not robot_atoms:
+        if replaced_sensors:
+            raise ValueError("simulated hardware sensors require a described robot instance")
         return blueprint, module_kwargs
-    if len(robot_atoms) != 1:
-        found = sorted(a.name for a in robot_atoms)
-        raise ValueError(f"sim2 collects exactly one robot connection for now; found {found}")
-    robot_atom = robot_atoms[0]
-    if not issubclass(robot_atom.module, ConnectionModule):
-        raise TypeError(f"{robot_atom.name}.simulated_robot requires a ConnectionModule")
-    resolved = _resolved(robot_atom, module_kwargs, config)
-    if not resolved.pd:
-        raise ValueError("the simulated motor device currently requires the PD command interface")
-    ports = {s.name: s for s in robot_atom.streams}
-    if not ("motor_command" in ports and "motor_states" in ports):
-        raise ValueError(
-            "a simulated motor connection requires motor_command and motor_states ports"
+    world_atoms = [a for a in atoms if issubclass(a.module, SimulationModule)]
+    if len(world_atoms) > 1:
+        raise ValueError("automatic robot collection requires one shared simulation module")
+    explicit_sensors = [a for a in atoms if issubclass(a.module, SensorModule | ObservationModule)]
+    robots: dict[str, RobotInstanceSpec] = {}
+    owners: dict[str, str] = {}
+    kwargs = {name: dict(values) for name, values in module_kwargs.items()}
+    robot_topics: dict[str, dict[str, str]] = {}
+    for atom in robot_atoms:
+        resolved = _resolved(atom, kwargs, config)
+        assert isinstance(atom.module, RobotConnectionSpec)
+        robot = atom.module.describe_simulated_robot(resolved)
+        namespace = atom.name.rpartition("/")[0]
+        robot = replace(
+            robot,
+            robot_id=f"{namespace}/{robot.robot_id}" if namespace else robot.robot_id,
+            frame_id=(
+                f"{resolved.frame_id_prefix}/{robot.frame_id}"
+                if resolved.frame_id_prefix
+                else robot.frame_id
+            ),
         )
-    default_scene = getattr(robot_atom.module, DEFAULT_SCENE, None)
-    if not isinstance(default_scene, str):
-        raise TypeError(f"{robot_atom.name} must declare default_sim_scene next to simulated_robot")
-    scene = scene_path(config.scene_package, default_scene)
-    twin = getattr(robot_atom.module, ROBOT_TWIN)(resolved, scene)
-    if not isinstance(twin, SimulatedRobot):
-        raise TypeError(f"{robot_atom.name}.simulated_robot must return a SimulatedRobot")
-    robot_id = twin.robot_id
-    twin = replace(
-        twin, halt_damping=resolved.halt_damping, command_timeout=resolved.deadman_timeout_s
-    )
-    sensors: list[tuple[str | None, Sensor]] = []
-    names: dict[tuple[str | None, str], str] = {}
-    for atom in sensor_atoms:
-        sensor: Sensor = getattr(atom.module, SENSOR_TWIN)(_resolved(atom, module_kwargs, config))
-        sensor = replace(sensor, name=atom.name)
-        if isinstance(sensor, Lidar) and sensor.imu is not None:
-            sensor = replace(sensor, imu=replace(sensor.imu, name=f"{atom.name}_imu"))
-        sensors.append((robot_id, sensor))
-        names[robot_id, atom.name] = atom.name
+        if robot.robot_id in robots:
+            raise ValueError(f"duplicate simulated robot id {robot.robot_id!r}")
+        robots[robot.robot_id] = robot
+        owners[robot.robot_id] = atom.name
+        ports = {stream.name for stream in atom.streams}
+        feedback = tuple(kind for kind in FEEDBACK_PORTS if kind in ports)
+        command = "cmd_vel" if robot.command_kind == "velocity" else "motor_command"
+        topics = {kind: f"_sim2/{atom.name}/{kind}" for kind in (command, *feedback)}
+        # Ground truth not exposed by the connection remains robot-scoped when
+        # several robots share a world. Preserve the single-robot wire names.
+        truth = {
+            kind: (kind if len(robot_atoms) == 1 else f"{robot.robot_id}/{kind}")
+            for kind in FEEDBACK_PORTS
+        }
+        robot_topics[robot.robot_id] = {**truth, **topics}
+        kwargs.setdefault(atom.name, {})["simulation_device"] = SimulatedDeviceFactory(
+            robot=robot,
+            topics=topics,
+            g=config.model_copy(deep=True),
+            feedback_ports=feedback,
+            halt_damping=robot.halt_damping if robot.halt_damping is not None else 1.0,
+        )
 
-    # The world and its device use private streams; the original connection
-    # remains the only publisher/consumer of its public motor interface.
-    feedback = tuple(kind for kind in FEEDBACK_PORTS if kind in ports)
-    topics = {kind: f"_sim2/{robot_atom.name}/{kind}" for kind in ("motor_command", *feedback)}
-    # Preserve ground-truth streams that hardware does not provide.
-    world_topics = {**{kind: kind for kind in FEEDBACK_PORTS}, **topics}
+    defaults = {robot.default_scene for robot in robots.values()}
+    if config.scene_package in (None, "none") and len(defaults) != 1:
+        raise ValueError("robots specify different default scenes; select --scene-package")
+    scene = scene_path(config.scene_package, next(iter(defaults)))
+    sensors: list[tuple[str | None, Sensor]] = []
+    replacements: list[tuple[str | None, Sensor]] = []
+    names: dict[tuple[str | None, str], str] = {}
+    sensor_owners: dict[str, str | None] = {}
+    for atom in replaced_sensors:
+        resolved = _resolved(atom, kwargs, config)
+        assert isinstance(atom.module, SensorConnectionSpec)
+        robot_id = _sensor_owner(atom, None, owners)
+        sensor = replace(atom.module.simulated_sensor(resolved), name=atom.name.rsplit("/", 1)[-1])
+        if isinstance(sensor, Lidar) and sensor.imu is not None:
+            sensor = replace(sensor, imu=replace(sensor.imu, name=f"{sensor.name}_imu"))
+        sensors.append((robot_id, sensor))
+        replacements.append((robot_id, sensor))
+        names[robot_id, sensor.name] = atom.name
+        sensor_owners[atom.name] = robot_id
+        kwargs.pop(atom.name, None)
+    for atom in explicit_sensors:
+        resolved = _resolved(atom, kwargs, config)
+        robot_id = _sensor_owner(atom, resolved.robot_id, owners)
+        sensors.append((robot_id, resolved.sensor))
+        kwargs.setdefault(atom.name, {})["robot_id"] = robot_id
+    sensor_keys = [(owner, sensor.name) for owner, sensor in sensors]
+    if len(sensor_keys) != len(set(sensor_keys)):
+        raise ValueError("sensor names must be unique within each robot instance")
+
     environment = partial(
-        MotorScene, scene=scene, models={robot_id: twin.model}, sensors=tuple(sensors)
+        MotorScene,
+        scene=scene,
+        models={name: model_factory(robot, scene) for name, robot in robots.items()},
+        sensors=tuple(sensors),
+        timestep=min(robot.timestep for robot in robots.values()),
     )
     generated = simulation(
         environment=environment,
-        robots={robot_id: twin},
-        sensors=tuple(sensors),
+        robots=robots,
+        sensors=tuple(replacements),
         names=names,
-        robot_topics={robot_id: world_topics},
+        robot_topics=robot_topics,
     )
-
-    swapped = {a.name: a for a in sensor_atoms}
+    generated_world = generated.blueprints[0]
+    generated_world = replace(
+        generated_world, kwargs={**generated_world.kwargs, "sensors": tuple(sensors)}
+    )
+    if world_atoms:
+        world = world_atoms[0]
+        world_config = _resolved(world, kwargs, config)
+        if world_config.robots or world_config.robot_topics or world_config.sensors:
+            raise ValueError(
+                "a manually supplied world uses collected robot/sensor descriptions; "
+                "do not also configure robots, robot_topics or sensors on it"
+            )
+        kwargs.setdefault(world.name, {}).update(
+            environment=world_config.environment or environment,
+            robots=robots,
+            robot_topics=robot_topics,
+            sensors=tuple(sensors),
+        )
+        added = generated.blueprints[1:]
+        snapshot_topics = {
+            port: _effective(blueprint, world, port) for port in ("snapshots", "observations")
+        }
+    else:
+        added = (generated_world, *generated.blueprints[1:])
+        snapshot_topics = {port: port for port in ("snapshots", "observations")}
+    swapped = {a.name: a for a in replaced_sensors}
     _check_module_refs(blueprint, swapped)
     kept = [a for a in blueprint.blueprints if a.name not in swapped]
-    remaps = {k: v for k, v in blueprint.remapping_map.items() if k[0] not in swapped}
+    remaps = {key: value for key, value in blueprint.remapping_map.items() if key[0] not in swapped}
     remaps.update(generated.remapping_map)
-    for atom in sensor_atoms:
+    for atom in (*explicit_sensors, *generated.blueprints[1:]):
+        for stream in atom.streams:
+            if stream.direction == "in" and stream.name in snapshot_topics:
+                remaps[atom.name, stream.name] = snapshot_topics[stream.name]
+    for atom in replaced_sensors:
         replacement = next(a for a in generated.blueprints if a.name == atom.name)
         driver_ports = {s.name for s in atom.streams}
+        owner = sensor_owners[atom.name] or "world"
         for stream in replacement.streams:
             if stream.direction != "out" or stream.name == "tf":
                 continue
             remaps[atom.name, stream.name] = (
                 _effective(blueprint, atom, stream.name)
                 if stream.name in driver_ports
-                else f"{robot_id}/{atom.name}/{stream.name}"
+                else f"{owner}/{atom.name.rsplit('/', 1)[-1]}/{stream.name}"
             )
+    return replace(
+        blueprint, blueprints=(*kept, *added), remapping_map=MappingProxyType(remaps)
+    ), kwargs
 
-    composed = replace(
-        blueprint,
-        blueprints=(*kept, *generated.blueprints),
-        remapping_map=MappingProxyType(remaps),
-    )
-    kwargs = {k: dict(v) for k, v in module_kwargs.items() if k not in swapped}
-    kwargs.setdefault(robot_atom.name, {})["simulation_device"] = SimulatedDeviceFactory(
-        robot=twin,
-        topics=topics,
-        g=config.model_copy(deep=True),
-        feedback_ports=feedback,
-        halt_damping=resolved.halt_damping,
-    )
-    return composed, kwargs
+
+def _sensor_owner(atom: BlueprintAtom, requested: str | None, owners: dict[str, str]) -> str | None:
+    if requested == "world":
+        return None
+    namespace = atom.name.rpartition("/")[0]
+    if requested is not None:
+        relative = f"{namespace}/{requested}" if namespace else requested
+        if relative in owners:
+            return relative
+        if requested in owners:
+            return requested
+        raise ValueError(f"{atom.name}: unknown simulated robot {requested!r}")
+    candidates = [robot for robot, name in owners.items() if name.rpartition("/")[0] == namespace]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(owners) == 1:
+        return next(iter(owners))
+    raise ValueError(f"{atom.name}: ambiguous robot ownership; specify robot_id")
 
 
 def _resolved(
