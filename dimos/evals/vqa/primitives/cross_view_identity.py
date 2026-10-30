@@ -351,7 +351,8 @@ def _clip_pair_key(pair: IdentityPair) -> tuple[str, float, float, str, str]:
 
 def dedupe_identity_pairs(pairs: Sequence[IdentityPair]) -> tuple[IdentityPair, ...]:
     """One pair per visual clip key; prefer same-object when yes/no would conflict."""
-    best: dict[tuple[str, float, float], IdentityPair] = {}
+    ClipKey = tuple[str, float, float, str, str]
+    best: dict[ClipKey, IdentityPair] = {}
     for pair in pairs:
         key = _clip_pair_key(pair)
         previous = best.get(key)
@@ -362,6 +363,31 @@ def dedupe_identity_pairs(pairs: Sequence[IdentityPair]) -> tuple[IdentityPair, 
         if pair.same_object and not previous.same_object:
             best[key] = pair
     return tuple(best.values())
+
+
+def _drop_competitor_contaminated_views(
+    instances: Mapping[str, Sequence[SightingView]],
+) -> dict[str, tuple[SightingView, ...]]:
+    """Drop views whose full frame also has another same-category instance.
+
+    Full-frame identity questions cannot mark which box is the referent, so a
+    co-visible competitor makes both "yes" and "no" labels unreliable.
+    """
+    cleaned: dict[str, tuple[SightingView, ...]] = {}
+    for instance_id, views in instances.items():
+        kept = tuple(
+            view
+            for view in views
+            if not _competing_instance_visible_at(
+                instances,
+                instance_id,
+                view.timestamp,
+                camera_frame=view.camera_frame,
+            )
+        )
+        if kept:
+            cleaned[instance_id] = kept
+    return cleaned
 
 
 def propose_identity_pairs(
@@ -378,6 +404,9 @@ def propose_identity_pairs(
         elif len(filtered) == 1:
             # Still usable as a different-pair endpoint.
             kept[instance_id] = filtered
+
+    # Strip frames where two category instances co-appear before pairing.
+    kept = _drop_competitor_contaminated_views(kept)
 
     same: list[IdentityPair] = []
     for views in kept.values():
