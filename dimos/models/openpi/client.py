@@ -238,8 +238,15 @@ class OpenPIClient(Module):
             "prompt": self.config.prompt,
         }
         logger.info("OpenPI websocket infer start")
+        started = time.perf_counter()
         result = self._client.infer(observation)
-        logger.info("OpenPI websocket infer returned")
+        roundtrip_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "OpenPI websocket infer returned",
+            roundtrip_ms=roundtrip_ms,
+            server_infer_ms=result.get("server_timing", {}).get("infer_ms"),
+            policy_reported_ms=result.get("policy_timing", {}).get("infer_ms"),
+        )
         actions = np.asarray(result["actions"], dtype=np.float64)
         if actions.shape != (16, 14) or not np.isfinite(actions).all():
             raise ValueError(f"OpenPI returned invalid action chunk shape {actions.shape}")
