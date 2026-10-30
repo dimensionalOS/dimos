@@ -805,8 +805,8 @@ impl Planner {
         }
     }
 
-    /// The committed route from the robot on, if it is still clear to the
-    /// goal and the fresh plan does not beat it by path_switch_margin.
+    /// The committed route from the robot on, repaired around any blockage,
+    /// unless the fresh plan beats it by path_switch_margin.
     fn keep_committed(
         &self,
         start: (f32, f32, f32),
@@ -818,15 +818,35 @@ impl Planner {
         if *committed_goal != goal {
             return None;
         }
-        let ahead = planner::route_ahead(route, start);
-        let kept_cost = planner::route_cost(&self.graph, &ahead, config);
+        let mut ahead = planner::route_ahead(route, start);
+        let mut kept_cost = planner::route_cost(&self.graph, &ahead, config);
         if !kept_cost.is_finite() {
-            return None;
+            ahead = self.repair_route(&ahead, config)?;
+            kept_cost = planner::route_cost(&self.graph, &ahead, config);
         }
         let fresh_cost = fresh.map_or(f32::INFINITY, |wp| {
             planner::route_cost(&self.graph, wp, config)
         });
         (fresh_cost >= kept_cost * (1.0 - config.path_switch_margin)).then_some(ahead)
+    }
+
+    /// A blocked route rerouted from the robot to the first waypoint past its
+    /// last blocked segment, keeping the rest, so a local obstacle bends the
+    /// route instead of replacing it.
+    fn repair_route(
+        &self,
+        ahead: &[(f32, f32, f32)],
+        config: &Config,
+    ) -> Option<Vec<(f32, f32, f32)>> {
+        let last_blocked = (0..ahead.len().saturating_sub(1))
+            .rev()
+            .find(|&i| !planner::route_cost(&self.graph, &ahead[i..i + 2], config).is_finite())?;
+        let (detour, _) = planner::plan(&self.graph, ahead[0], ahead[last_blocked + 1], config)?;
+        let mut repaired = detour;
+        repaired.extend_from_slice(&ahead[last_blocked + 2..]);
+        planner::route_cost(&self.graph, &repaired, config)
+            .is_finite()
+            .then_some(repaired)
     }
 
     pub fn graph(&self) -> &PlannerGraph {
