@@ -218,6 +218,52 @@ pub fn plan(
     Some((waypoints, path_cells))
 }
 
+/// Penalized cost of a waypoint route on the current surface, the same measure
+/// the smoother minimizes. Infinite when the route is blocked anywhere.
+pub fn route_cost(plg: &PlannerGraph, waypoints: &[(f32, f32, f32)], config: &Config) -> f32 {
+    let wall_cost = WallCost {
+        clearance_m: config.wall_clearance_m,
+        buffer_m: config.wall_buffer_m,
+        buffer_weight: config.wall_buffer_weight,
+        voxel_size: config.voxel_size,
+    };
+    waypoints
+        .windows(2)
+        .map(|w| {
+            crate::smoother::chord_cost(
+                plg,
+                w[0],
+                w[1],
+                config.step_cells(),
+                &wall_cost,
+                config.step_penalty_weight,
+            )
+        })
+        .sum()
+}
+
+/// The part of a published route still ahead of the robot: the start pose,
+/// then every waypoint past the segment the robot is on.
+pub fn route_ahead(
+    waypoints: &[(f32, f32, f32)],
+    start_pose: (f32, f32, f32),
+) -> Vec<(f32, f32, f32)> {
+    let p = (start_pose.0, start_pose.1);
+    let mut on = 0usize;
+    let mut best_d2 = f32::INFINITY;
+    for i in 0..waypoints.len().saturating_sub(1) {
+        let (a, b) = (waypoints[i], waypoints[i + 1]);
+        let d2 = point_segment_dist2((a.0, a.1), (b.0, b.1), p);
+        if d2 < best_d2 {
+            best_d2 = d2;
+            on = i;
+        }
+    }
+    let mut ahead = vec![start_pose];
+    ahead.extend_from_slice(&waypoints[(on + 1).min(waypoints.len())..]);
+    ahead
+}
+
 /// Re-validate a cached path against the current surface. Returns the route
 /// ahead up to a standoff short of the first blockage, or empty when nothing
 /// ahead is safe, which the follower reads as a stop.
@@ -905,6 +951,9 @@ mod tests {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             worker_threads: 4,
+            path_switch_margin: 0.0,
+            obstacle_confirm_updates: 1,
+            min_neighbor_voxels: 0,
         };
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
     }
@@ -936,6 +985,9 @@ mod tests {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             worker_threads: 4,
+            path_switch_margin: 0.0,
+            obstacle_confirm_updates: 1,
+            min_neighbor_voxels: 0,
         }
     }
 
