@@ -195,7 +195,11 @@ impl GscPgo {
             return None;
         }
         let newest = self.key_poses[reference].translation_global;
-        let sums = odometry_noise_sums(&self.key_poses, &self.config, self.odometry_noise());
+        let sums = odometry_noise_sums(
+            &self.key_poses,
+            &self.config,
+            self.odometry_noise_for_acceptance(self.odometry_noise()),
+        );
         let (solved_tip, solved) = match &self.solved_relative_covariance {
             Some((tip, covariance)) if *tip <= reference => (*tip, covariance.as_slice()),
             _ => (0, &[] as &[Mat3]),

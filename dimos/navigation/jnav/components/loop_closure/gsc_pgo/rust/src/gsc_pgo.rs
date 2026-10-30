@@ -529,6 +529,13 @@ pub struct Config {
     /// each solve's estimate fed the next one's, and solves re-using the same loops compounded (huge: yaw x0.3 -> x838000
     /// in 1000 keyframes solving every 20, steady solving every 80).
     pub odometry_noise_evidence_at_stated: bool,
+    /// When true, what decides whether a closure is accepted (the solve's verdict, the uninformative gate, the yank's
+    /// predicted spread) sees the learned odometry noise at most its prior's upper bound at
+    /// `closure_gnc_inlier_probability` (`odometry_noise_acceptance_ceiling`): the most drift the spread across
+    /// recordings makes plausible. A noise learned past it loosened acceptance until wrong closures got in and their
+    /// misfit loosened it further (huge: yaw x59 -> x41000 at keyframe 3360; huge_l1: kept closures 5-9 m off the ground
+    /// truth, yaw x11000).
+    pub odometry_noise_acceptance_ceiling: bool,
     pub closure_overlap_score: bool,
     pub closure_overlap_sigma_m: f64,
     pub closure_overlap_reach_m: f64,
@@ -609,6 +616,7 @@ impl Default for Config {
             closure_yank_gate_principled: false,
             closure_yank_at_stated_drift: false,
             odometry_noise_evidence_at_stated: false,
+            odometry_noise_acceptance_ceiling: false,
             closure_overlap_score: false,
             closure_overlap_sigma_m: 0.03,
             closure_overlap_reach_m: 0.5,
@@ -1261,18 +1269,30 @@ impl GscPgo {
     /// `closure_uninformative_noise_upper_bound` its upper bound at `closure_gnc_inlier_probability`.
     pub(crate) fn odometry_noise_for_gate(&self) -> [f64; 4] {
         if !self.config.closure_uninformative_noise_upper_bound {
-            return self.odometry_noise();
+            return self.odometry_noise_for_acceptance(self.odometry_noise());
         }
-        self.odometry_noise_bound(1.0)
+        self.odometry_noise_for_acceptance(self.odometry_noise_bound(1.0))
     }
 
     /// The factor on each odometry variance the pose-graph solve uses: the estimate, or with
     /// `odometry_noise_solve_lower_bound` its lower bound at `closure_gnc_inlier_probability`.
     pub(crate) fn odometry_noise_for_solve(&self) -> [f64; 4] {
         if !self.config.odometry_noise_solve_lower_bound {
-            return self.odometry_noise();
+            return self.odometry_noise_for_acceptance(self.odometry_noise());
         }
-        self.odometry_noise_bound(-1.0)
+        self.odometry_noise_for_acceptance(self.odometry_noise_bound(-1.0))
+    }
+
+    /// `noise` as closure acceptance sees it: with `odometry_noise_acceptance_ceiling` at most the prior's upper bound
+    /// at `closure_gnc_inlier_probability` (e^(z sd_prior) of the stated noise), else as is.
+    pub(crate) fn odometry_noise_for_acceptance(&self, noise: [f64; 4]) -> [f64; 4] {
+        if !self.config.odometry_noise_acceptance_ceiling {
+            return noise;
+        }
+        let p = self.config.closure_gnc_inlier_probability;
+        let z = crate::landmarks::chi2_inverse(2.0 * p - 1.0, 1).sqrt();
+        let prior = self.odometry_noise_prior();
+        std::array::from_fn(|c| noise[c].min((z * prior[c]).exp()))
     }
 
     /// The learned odometry noise's one-sided bound at `closure_gnc_inlier_probability`, above (`side` 1) or below

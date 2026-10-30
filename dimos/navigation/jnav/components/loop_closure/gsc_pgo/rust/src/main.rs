@@ -133,6 +133,7 @@ config! {
     closure_yank_gate_principled: bool,
     closure_yank_at_stated_drift: bool,
     odometry_noise_evidence_at_stated: bool,
+    odometry_noise_acceptance_ceiling: bool,
     closure_overlap_score: bool,
     closure_overlap_sigma_m: f64,
     closure_overlap_reach_m: f64,
