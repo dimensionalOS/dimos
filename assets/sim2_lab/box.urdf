@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!-- cadpy:sourcePath=../../dimos/robot/sim2_lab/gen_box.py -->
+<!-- cadpy:sourceHash=35faa6e3791f67b3ba643f97c7f04ad7c0b1f75ef2f517fedd42dc416c28142e -->
+<robot name="box">
+  <link name="box">
+    <inertial>
+      <origin xyz="0 0 0" />
+      <mass value="0.2" />
+      <inertia ixx="0.00033333333333333343" iyy="0.00033333333333333343" izz="0.00033333333333333343" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" />
+      <geometry>
+        <box size="0.1 0.1 0.1" />
+      </geometry>
+      <material name="box">
+        <color rgba=".9 .45 .12 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" />
+      <geometry>
+        <box size="0.1 0.1 0.1" />
+      </geometry>
+    </collision>
+  </link>
+</robot>

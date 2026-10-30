@@ -76,8 +76,9 @@ class Renderer:
         camera: int | str | Any = ...,
         scene_option: MjvOption | None = ...,
     ) -> None: ...
-    def render(self) -> NDArray[np.uint8]: ...
+    def render(self) -> NDArray[Any]: ...
     def enable_depth_rendering(self) -> None: ...
+    def disable_depth_rendering(self) -> None: ...
     def enable_segmentation_rendering(self) -> None: ...
     def close(self) -> None: ...
 
@@ -120,6 +121,7 @@ def set_mjcb_control(
 class mjtObj:
     mjOBJ_ACTUATOR: int
     mjOBJ_BODY: int
+    mjOBJ_XBODY: int
     mjOBJ_CAMERA: int
     mjOBJ_GEOM: int
     mjOBJ_JOINT: int
@@ -157,6 +159,7 @@ class mjtLightType:
     mjLIGHT_SPOT: int
 
 class mjtJoint:
+    mjJNT_FREE: int
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
 
@@ -166,3 +169,45 @@ class mjtTrn:
 
 class mjtWrap:
     mjWRAP_JOINT: int
+
+class mjtIntegrator:
+    mjINT_IMPLICITFAST: int
+
+class mjtBias:
+    mjBIAS_AFFINE: int
+
+class mjtSensor:
+    mjSENS_ACCELEROMETER: int
+    mjSENS_GYRO: int
+
+def mj_resetData(model: MjModel, data: MjData) -> None: ...
+def mj_kinematics(model: MjModel, data: MjData) -> None: ...
+def mj_comPos(model: MjModel, data: MjData) -> None: ...
+def mj_camlight(model: MjModel, data: MjData) -> None: ...
+def mj_applyFT(
+    model: MjModel,
+    data: MjData,
+    force: NDArray[np.float64],
+    torque: NDArray[np.float64],
+    point: NDArray[np.float64],
+    body: int,
+    qfrc_target: NDArray[np.float64],
+) -> None: ...
+def mj_objectVelocity(
+    model: MjModel,
+    data: MjData,
+    objtype: int,
+    objid: int,
+    result: NDArray[np.float64],
+    flg_local: int,
+) -> None: ...
+def mj_ray(
+    model: MjModel,
+    data: MjData,
+    pnt: NDArray[np.float64],
+    vec: NDArray[np.float64],
+    geomgroup: NDArray[np.uint8] | None,
+    flg_static: int,
+    bodyexclude: int,
+    geomid: NDArray[np.int32],
+) -> float: ...
