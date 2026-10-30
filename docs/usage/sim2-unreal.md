@@ -113,9 +113,9 @@ capture time, round-trip time, acquisition age and any error.
 ## Run with DimOS Desktop
 
 Use the registered `unitree-g1-groot-wbc-unreal` blueprint. It reuses the G1
-GR00T, Mid360 and Point-LIO stack and adds one Unreal observer camera. It has no
-Rerun modules. The simulation flag is required; an omitted flag is rejected
-before any robot modules start.
+GR00T, Mid360 and Point-LIO stack and renders G1's existing front camera in
+Unreal. It has no Rerun modules. The simulation flag is required; an omitted flag
+is rejected before any robot modules start.
 
 Point Desktop at this checkout. Its Controller app displays the ordinary
 `color_image` and `depth_image` topics. Start the registered blueprint from the
@@ -140,6 +140,9 @@ For Genesis, install the separate environment described in
 
 `unitree-g1-control-unreal` uses the stock locomotion policy instead of GR00T.
 Both control-only variants also work with MuJoCo. They omit lidar and navigation.
+GR00T uses its model's `front_camera`; the stock model calls its camera
+`head_camera`. Both follow the robot's torso and retain the model's mount and
+field of view, without defining a second mount in the blueprint.
 
 The executable can also be supplied through `UNREALCAMERAMODULE__EXECUTABLE`.
 Desktop discovers its state and camera topics on the standard Zenoh domain.
@@ -167,9 +170,9 @@ Click inside the camera image before driving. Hold **W/S** to move forward/back,
 **A/D** to turn, or **Q/E** to strafe; release to stop. **Space** stops immediately.
 Keys do not drive while a text field or an overlay has focus.
 
-The observer camera is fixed in the world. Forward means the direction the
-robot faces, which may be sideways or diagonal on screen. The registered
-blueprint is not a first-person camera view.
+The camera moves and turns with G1. Forward follows the robot's facing direction;
+normal torso motion also moves the image. A fixed observer view is an explicit
+camera override, useful for watching the whole body during testing.
 
 A local three-second W hold published 0.4 m/s at approximately 20 Hz through
 `tele_cmd_vel` and `g1/cmd_vel`, moved the robot about 0.93 m according to
@@ -262,6 +265,14 @@ An authored level retains its native transparent materials in RGB; Unreal
 `SceneDepth` reports depth-writing surfaces, not invented depths on glass. The
 level retains direct light placement and intensity; lights become movable because
 this renderer disables baked lighting. Baked GI and reflections are not restored.
+RGB capture currently forces manual exposure with zero compensation and disables
+anti-aliasing and lens flares. Preserving source materials does not reproduce the
+source project's final appearance. In Konbini, the active unbound post-process
+volumes specify exposure bounds of 2.0, compensation of +1 and Lumen reflections;
+the capture does not retain that exposure configuration or those reflections.
+Konbini already uses movable lights and disables precomputed lighting, so missing
+baked lighting is not the cause of its appearance differences. Matching its
+authored post-processing remains unfinished.
 Without an authored level, the renderer uses its fixed lighting setup. Missing
 native assets and unsupported manifest geometry fail explicitly.
 
@@ -471,8 +482,8 @@ The already prepared local launch file is:
 ```
 
 It selects `unitree-g1-groot-wbc-unreal`, the exported store scene, the packaged
-renderer, `--unrealcameramodule.level /Game/Konbini/Maps/Konbini`, and a fixed
-960x640 observer camera above the clear front aisle. It uses the same Desktop
+renderer, `--unrealcameramodule.level /Game/Konbini/Maps/Konbini`, and G1's
+robot-mounted `front_camera` at 960x640. It uses the same Desktop
 home/state directory as the earlier proof. Add `--daemon` to run in background.
 Desktop Controller's `color_image` and `depth_image` panels show the new scene;
 click the image before using WASD/QE, and Space to stop.

@@ -17,12 +17,10 @@
 Run navigation with ``--simulation mujoco``; control-only blueprints also support
 ``--simulation genesis``. Set ``--unrealcameramodule.executable``
 or ``UNREALCAMERAMODULE__EXECUTABLE`` to the packaged renderer executable.
-The observer camera looks toward the robot's starting position from the room.
+The camera follows the mount and calibration already defined in the robot model.
 """
 
-import math
-
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_control
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
@@ -30,15 +28,14 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
 )
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.camera.unreal.module import UnrealCameraModule
-from dimos.sim2.sensors.spec import Mount
 
-_camera = UnrealCameraModule.blueprint(
-    sensor=Camera(
-        "unreal",
-        Mount("world", xyz=(2.4, -2.4, 1.8), rpy=(1.2707753655437184, 0.0, math.pi / 4)),
-    ),
-    rpc_timeouts={"start": 210.0},
-).global_config(viewer="none")
+
+def _camera(model_camera: str) -> Blueprint:
+    return UnrealCameraModule.blueprint(
+        robot_id="g1",
+        sensor=Camera("unreal", model_camera),
+        rpc_timeouts={"start": 210.0},
+    ).global_config(viewer="none")
 
 
 def _require_simulation() -> str | None:
@@ -47,12 +44,14 @@ def _require_simulation() -> str | None:
     return None
 
 
-unitree_g1_groot_wbc_unreal = autoconnect(g1_groot_wbc_simulation_profile(), _camera)
-
-unitree_g1_groot_control_unreal = autoconnect(
-    g1_groot_wbc_simulation_profile(navigation=False), _camera
+unitree_g1_groot_wbc_unreal = autoconnect(
+    g1_groot_wbc_simulation_profile(), _camera("front_camera")
 )
 
-unitree_g1_control_unreal = autoconnect(unitree_g1_control, _camera).requirements(
+unitree_g1_groot_control_unreal = autoconnect(
+    g1_groot_wbc_simulation_profile(navigation=False), _camera("front_camera")
+)
+
+unitree_g1_control_unreal = autoconnect(unitree_g1_control, _camera("head_camera")).requirements(
     _require_simulation
 )
