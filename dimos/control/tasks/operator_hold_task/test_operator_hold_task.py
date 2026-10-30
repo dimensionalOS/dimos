@@ -147,6 +147,69 @@ def test_acknowledge_clears_everything():
     assert task.compute(_state({"arm/joint1": 0.5})) is None
 
 
+def test_estop_turns_the_hold_on_and_it_commands_nothing_until_cleared():
+    published: list[OperatorHoldStatus] = []
+    task = OperatorHoldTask()
+    task.set_status_publisher(published.append)
+
+    task.set_estop(True)
+
+    status = task.get_status()
+    assert status.on and status.route == "failsafe" and status.reason == "e-stop"
+    assert status.estopped
+    assert published[-1].on and published[-1].estopped
+    assert task.compute(_state({"arm/joint1": 0.5})) is None
+    assert task.claim().joints == frozenset()
+
+
+def test_after_the_clear_it_holds_where_the_arm_is_then_until_acknowledged():
+    published: list[OperatorHoldStatus] = []
+    task = OperatorHoldTask()
+    task.set_status_publisher(published.append)
+    task.request("manual", "stuck")
+    task.compute(_state({"arm/joint1": 0.5}))
+    task.set_estop(True)
+    task.compute(_state({"arm/joint1": 0.6}))
+
+    task.set_estop(False)
+
+    status = task.get_status()
+    assert status.on and status.route == "failsafe" and status.reason == "e-stop"
+    assert not status.estopped
+    assert published[-1].on and not published[-1].estopped
+    # The arm moved while stopped; the hold takes it where it is after the clear.
+    output = task.compute(_state({"arm/joint1": 0.7}))
+    assert output is not None and output.positions == [0.7]
+
+    task.acknowledge()
+    assert not task.is_active()
+
+
+def test_acknowledge_is_refused_while_estopped():
+    task = OperatorHoldTask()
+    task.set_estop(True)
+
+    status = task.acknowledge()
+
+    assert status.on and status.estopped
+    assert task.is_active()
+
+    task.set_estop(False)
+    status = task.acknowledge()
+
+    assert not status.on
+    assert not task.is_active()
+
+
+def test_estop_never_raises(monkeypatch):
+    task = OperatorHoldTask()
+    monkeypatch.setattr(task, "request", lambda *args, **kwargs: 1 / 0)
+
+    task.set_estop(True)
+
+    assert task.get_status().estopped
+
+
 def test_status_interval_must_be_positive():
     with pytest.raises(ValueError):
         OperatorHoldTask(status_interval=0.0)

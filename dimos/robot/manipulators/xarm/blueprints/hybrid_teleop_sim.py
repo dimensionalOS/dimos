@@ -14,21 +14,17 @@
 
 """Simulated xArm7 pick and place that an operator can hold and e-stop.
 
-The same modules as xarm-perception-sim, plus the operator hold task, an
-e-stop RPC, a point cloud of the scene on ``scene_pointcloud`` and the arm's
-URDF, so a Desktop page can show the arm and the scene and stop or hold it.
+The same modules as xarm-perception-sim, plus the operator hold task, on/off
+streams for the hold and the e-stop, a point cloud of the scene on
+``scene_pointcloud`` and the arm's URDF, so a Desktop page can show the arm and
+the scene and stop or hold it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.task import ControlTask
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
-    OPERATOR_HOLD_TASK_NAME,
-    HoldRoute,
     OperatorHoldTask,
     operator_hold_task,
 )
@@ -58,14 +54,15 @@ logger = setup_logger()
 
 
 class OperatorHoldCoordinator(ControlCoordinator):
-    """A ControlCoordinator with an operator e-stop and two on/off status streams.
+    """A ControlCoordinator that only adds on/off streams for the hold and the e-stop.
 
-    The hold is requested, acknowledged and read over ``task_invoke`` (task
-    "operator_hold": "request", "acknowledge", "get_status").
-    ``operator_hold_status`` is True while the hold is on: sent on the first
-    tick after a request, once a second while on, and once on acknowledge.
-    ``operator_estop_status`` is True while the e-stop is latched: sent at
-    start and on every ``set_estop``.
+    The e-stop is ControlCoordinator's own ``set_estop``. The hold is the "operator_hold" task, reached over ``task_invoke``
+    ("request", "acknowledge", "get_status"); an e-stop turns it on and it
+    stays on until acknowledged.
+
+    ``operator_hold_status`` is True while the hold is on, sent each time the
+    hold task sends its status. ``operator_estop_status`` is True while the
+    e-stop is latched, sent at start and on every ``set_estop``.
 
     Combine it with another coordinator subclass by inheriting from both, e.g.
     ``class MyCoordinator(OperatorHoldCoordinator, TeleopControlCoordinator)``.
@@ -106,41 +103,6 @@ class OperatorHoldCoordinator(ControlCoordinator):
             return super().set_estop(estopped)
         finally:
             self._publish_estop_status()
-
-    @rpc
-    def operator_estop(self, stop: bool) -> None:
-        """The operator's e-stop button: stop the arm where it is, or clear the stop.
-
-        Stop latches the e-stop (``set_estop(True)``), holds every joint where
-        it is (hold route "failsafe", reason "e-stop") and cancels the running
-        trajectory, in that order. A step that fails is logged and the next
-        one still runs. Clear only releases the e-stop: the hold stays on
-        until the operator acknowledges it.
-
-        Args:
-            stop: True to stop, False to clear.
-        """
-        if stop:
-            steps: list[tuple[str, Callable[[], Any]]] = [
-                ("set_estop", lambda: self.set_estop(True)),
-                # Hold before cancelling, so no tick passes with nothing commanding the arm.
-                (
-                    "request hold",
-                    lambda: self.task_invoke(
-                        OPERATOR_HOLD_TASK_NAME,
-                        "request",
-                        {"route": HoldRoute.FAILSAFE.value, "reason": "e-stop"},
-                    ),
-                ),
-                ("cancel trajectory", self.cancel_trajectory),
-            ]
-        else:
-            steps = [("set_estop", lambda: self.set_estop(False))]
-        for name, step in steps:
-            try:
-                step()
-            except Exception:
-                logger.exception("E-stop step failed", step=name, stop=stop)
 
     def _publish_estop_status(self) -> None:
         try:
