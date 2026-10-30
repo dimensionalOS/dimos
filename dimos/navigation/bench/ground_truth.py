@@ -37,7 +37,11 @@ from dimos.simulation.scenes.mjcf import SCENE_GROUPS, add_boxes
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Scene
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
+from dimos.simulation.sensors.mujoco_raycaster import (
+    INCLUDE_STATIC,
+    NO_BODY_EXCLUDED,
+    MujocoRaycaster,
+)
 
 CELL = 0.05
 STEP_LIMIT = 0.2
@@ -52,7 +56,7 @@ GO2_CLEARANCE_HEIGHT = 0.6
 CENTERING_CLEARANCE = 0.6
 CLUTTER_NEAR = 0.5
 EPS = 1e-4
-DOWN = np.array([[0.0, 0.0, -1.0]])
+DOWN = np.array([0.0, 0.0, -1.0])
 NEIGHBORS = [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)]
 NO_PREDECESSOR = -9999
 
@@ -204,7 +208,6 @@ class GroundTruth:
     def _ground(self, z_top: float, depth: float) -> NDArray[np.float64]:
         """Per column, the lowest surface with the body's headroom above it. The outside is not ground."""
         probe = self._probe
-        caster = MujocoRaycaster(probe.model, probe.data, SCENE_GROUPS)
         height = np.full(self.shape, np.nan)
         origin = np.array([0.0, 0.0, z_top])
         for ix in range(self.shape[0]):
@@ -212,7 +215,7 @@ class GroundTruth:
             for iy in range(self.shape[1]):
                 origin[1] = self.origin[1] + (iy + 0.5) * self.cell
                 origin[2] = z_top
-                height[ix, iy] = _lowest_surface(caster, probe, origin, depth)
+                height[ix, iy] = _lowest_surface(probe, origin, depth)
         return height
 
     def _search(self, source: int, centered: bool) -> NDArray[np.int32]:
@@ -331,25 +334,36 @@ class Probe:
 
     def free(self, point: NDArray[np.float64]) -> bool:
         self.data.qpos[:3] = point
-        mujoco.mj_forward(self.model, self.data)
+        mujoco.mj_kinematics(self.model, self.data)  # type: ignore[attr-defined]
+        mujoco.mj_collision(self.model, self.data)  # type: ignore[attr-defined]
         return int(self.data.ncon) == 0
 
 
-def _lowest_surface(
-    caster: MujocoRaycaster, probe: Probe, origin: NDArray[np.float64], depth: float
-) -> float:
+def _lowest_surface(probe: Probe, origin: NDArray[np.float64], depth: float) -> float:
     """The lowest surface in the column with room for the body above it, or nan.
 
     Coincident faces can hide a solid from the walk, so the probe confirms every candidate.
     """
     found = math.nan
     gap_top = origin[2]
+    geom = np.full(1, -1, dtype=np.int32)
+    normal = np.zeros(3)
     while True:
-        dist, normals = caster.cast(origin, DOWN, max_range=depth)
-        if dist[0] < 0:
+        dist = mujoco.mj_ray(  # type: ignore[attr-defined]
+            probe.model,
+            probe.data,
+            origin,
+            DOWN,
+            SCENE_GROUPS,
+            INCLUDE_STATIC,
+            NO_BODY_EXCLUDED,
+            geom,
+            normal,
+        )
+        if geom[0] < 0 or dist > depth:
             return found
-        z = origin[2] - dist[0]
-        if normals[0, 2] > 0:
+        z = origin[2] - dist
+        if normal[2] > 0:
             if gap_top - z >= probe.height and probe.free(np.array([origin[0], origin[1], z])):
                 found = z
         else:

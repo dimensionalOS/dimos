@@ -175,3 +175,54 @@ def test_lcm_metadata_does_not_import_payload_module(
     monkeypatch.setattr("dimos.memory.codecs.base.importlib.import_module", fail_import)
     with McapStore(path=str(path)) as store:
         assert store.stream("untrusted").first().data == b"raw payload"
+
+
+@pytest.mark.parametrize("encoding", ["lcm", "lz4+lcm"])
+def test_trusted_metadata_decodes_without_a_caller_codec(tmp_path, encoding):
+    path = tmp_path / "native.mcap"
+    expected = Imu(ts=2.5, frame_id="native")
+    codec = LcmCodec(Imu)
+    payload = Lz4Codec(codec).encode(expected) if encoding == "lz4+lcm" else codec.encode(expected)
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start()
+        channel = writer.register_channel(
+            topic="imu",
+            message_encoding=encoding,
+            schema_id=0,
+            metadata={"dimos.payload_type": "dimos.msgs.sensor_msgs.Imu.Imu"},
+        )
+        writer.add_message(
+            channel_id=channel,
+            log_time=2_500_000_000,
+            publish_time=2_500_000_000,
+            data=payload,
+        )
+        writer.finish()
+    with McapStore(path=str(path), decode_metadata=True) as store:
+        observation = store.stream("imu").first()
+        assert observation.ts == 2.5
+        assert observation.data.lcm_encode() == expected.lcm_encode()
+
+
+def test_explicit_codec_takes_precedence_over_metadata(tmp_path):
+    path = tmp_path / "override.mcap"
+    expected = Imu(ts=1, frame_id="explicit")
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start()
+        channel = writer.register_channel(
+            topic="imu",
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={"dimos.payload_type": "not_installed.Payload"},
+        )
+        writer.add_message(
+            channel_id=channel,
+            log_time=1_000_000_000,
+            publish_time=1_000_000_000,
+            data=expected.lcm_encode(),
+        )
+        writer.finish()
+    with McapStore(path=str(path), codecs={"imu": LcmCodec(Imu)}, decode_metadata=True) as store:
+        assert store.stream("imu").first().data.lcm_encode() == expected.lcm_encode()

@@ -1,0 +1,28 @@
+name: runner-health
+on:
+  schedule:
+    - cron: '0 7 * * 1'  # Monday 07:00 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  runner-health:
+    # Counts last week's self-hosted jobs on main per runner (bin/runner-health)
+    # and files an issue for a runner that failed every job, or significantly
+    # more than the other runners with the same labels.
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read  # To list the jobs of recent runs with their runners
+      contents: read  # For checkout
+      issues: write  # To file a broken runner
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Count the self-hosted job results per runner and file issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 bin/ci/runner-health --days 7 --create-issues
