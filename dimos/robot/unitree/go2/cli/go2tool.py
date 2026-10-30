@@ -103,6 +103,7 @@ def connect_wifi(
     ssid: str | None = typer.Option(None, "--ssid", help="Wi-Fi SSID"),
     password: str | None = typer.Option(None, "--password", help="Wi-Fi password"),
     country: str = typer.Option("US", "--country", help="Two-letter country code"),
+    ap: bool = typer.Option(False, "--ap", help="Host a hotspot with --ssid/--password instead"),
     mac: str | None = typer.Option(None, "--mac", help="BLE MAC (skip scan)"),
     serial: str | None = typer.Option(
         None, "--serial", help="Robot serial — scan and auto-select match"
@@ -185,6 +186,7 @@ def connect_wifi(
                 wifi_ssid,
                 wifi_password,
                 country,
+                ap=ap,
                 on_progress=lambda m: typer.echo(f"  {m}"),
             ),
             attempts=retries,

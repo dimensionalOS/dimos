@@ -107,7 +107,11 @@ async def fetch_stats(relay: RelayReadyInfo) -> dict:
 def test_info_matches_ready_line(relay: RelayReadyInfo) -> None:
     with urllib.request.urlopen(f"http://127.0.0.1:{relay.http_port}/api/info") as response:
         info = json.load(response)
-    assert info == {"wtUrl": relay.wt_url, "certHash": relay.cert_hash, "v": relay.v}
+    assert info == {
+        "wtUrl": relay.wt_url,
+        "certHash": relay.cert_hash,
+        "v": relay.v,
+    }
     assert relay.wt_url.startswith("https://127.0.0.1:")
 
 

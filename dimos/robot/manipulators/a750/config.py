@@ -20,7 +20,6 @@ import math
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -73,17 +72,16 @@ def make_a750_hardware(
     gripper: bool = True,
     auto_enable: bool = True,
     home_joints: list[float] | None = None,
+    mock_without_address: bool = False,
 ) -> HardwareComponent:
     gripper_joints = [f"{hw_id}/finger"] if gripper else []
     initial_positions = [*(home_joints or A750_HOME_JOINTS), *([0.0] * len(gripper_joints))]
     adapter_kwargs: dict[str, object] = {"initial_positions": initial_positions}
-    limits: JointLimits | None = None
-    if adapter_type == "mock":
-        limits = JointLimits(
-            position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
-            position_upper=[*([math.pi] * 6), *([0.06] * len(gripper_joints))],
-            velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
-        )
+    mock_limits = JointLimits(
+        position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
+        position_upper=[*([math.pi] * 6), *([0.06] * len(gripper_joints))],
+        velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+    )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -91,21 +89,20 @@ def make_a750_hardware(
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
-        limits=limits,
+        limits=mock_limits if adapter_type == "mock" else None,
         adapter_kwargs=adapter_kwargs,
+        mock_limits=mock_limits if mock_without_address else None,
     )
 
 
-def a750_hardware(hw_id: str = "arm", *, mock_without_address: bool = False) -> HardwareComponent:
-    if mock_without_address and not global_config.device_path:
-        return make_a750_hardware(
-            hw_id,
-            adapter_type="mock",
-            address=None,
-        )
+def a750_hardware(
+    hw_id: str = "arm", *, mock_without_address: bool = False, address: str | None = None
+) -> HardwareComponent:
+    """The A-750 on a serial port; with ``mock_without_address`` a mock stands in until one is configured."""
     return make_a750_hardware(
         hw_id,
-        address=global_config.device_path or "/dev/ttyACM0",
+        address=address if mock_without_address else address or "/dev/ttyACM0",
+        mock_without_address=mock_without_address,
     )
 
 

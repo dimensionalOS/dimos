@@ -31,6 +31,7 @@ import time
 from reactivex.disposable import Disposable
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import JpegLcmTransport, LCMTransport
@@ -44,12 +45,14 @@ class EmitterModule(Module):
     _thread: threading.Thread | None = None
     _stop_event: threading.Event | None = None
 
+    @rpc
     def start(self) -> None:
         super().start()
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._publish_image, daemon=True)
         self._thread.start()
 
+    @rpc
     def stop(self) -> None:
         if self._thread:
             self._stop_event.set()  # type: ignore[union-attr]
@@ -73,11 +76,13 @@ class ReceiverModule(Module):
 
     _open_file = None
 
+    @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.image.subscribe(self._on_image)))
         self._open_file = open("/tmp/receiver-times", "w")
 
+    @rpc
     def stop(self) -> None:
         self._open_file.close()  # type: ignore[union-attr]
         super().stop()

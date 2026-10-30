@@ -65,8 +65,9 @@ def render_map_region(
     voxel_size: float,
     height_range: tuple[float, float],
     z_band: tuple[float, float] | None = None,
+    static: bool = True,
 ) -> RerunMulti:
-    """One region of the voxel map on its own static entity, empty when the region emptied.
+    """One region of the voxel map on its own entity, empty when the region emptied.
 
     Points outside z_band (world frame) are dropped, to show one storey.
     """
@@ -74,7 +75,7 @@ def render_map_region(
     if z_band is not None:
         pts = pts[(pts[:, 2] >= z_band[0]) & (pts[:, 2] < z_band[1])]
     cell = voxel_map_points(pts, voxel_size, height_range)
-    return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.seq), cell, static=True)]
+    return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.seq), cell, static=static)]
 
 
 def log_loaded_map(points: NDArray[np.float32]) -> None:

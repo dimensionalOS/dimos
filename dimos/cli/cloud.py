@@ -19,7 +19,7 @@ no browser or clipboard needed on this machine. The CLI prints an 8-character co
 you approve it from any signed-in browser (laptop, phone), and the minted API key is
 stored in the system keyring, falling back to a plain-text 0600 file
 (`CREDENTIALS_PATH`, just the key) on headless machines with no keyring
-backend. `DIMOS_API_KEY` (via GlobalConfig) overrides any stored login.
+backend. `DIMOS_CLOUD_API_KEY` overrides any stored login.
 """
 
 import json
@@ -34,21 +34,21 @@ import urllib.request
 
 import typer
 
+from dimos.cloud.config import CloudConfig
 from dimos.constants import CREDENTIALS_PATH
-from dimos.core.global_config import global_config
 
 _KEYRING_SERVICE = "dimos-cloud"
 _KEYRING_USER = "default"
 
 
 def _base() -> str:
-    return global_config.dimos_cloud_url.rstrip("/")
+    return CloudConfig().url.rstrip("/")
 
 
 def _post(path: str, **params: str | int) -> dict[str, Any]:
     url = f"{_base()}{path}?" + urllib.parse.urlencode(params)
     with urllib.request.urlopen(
-        urllib.request.Request(url, method="POST"), timeout=global_config.dimos_http_timeout
+        urllib.request.Request(url, method="POST"), timeout=CloudConfig().http_timeout
     ) as r:
         return cast("dict[str, Any]", json.load(r))
 
@@ -100,11 +100,10 @@ def _forget() -> bool:
     return found
 
 
-def api_key() -> str | None:
-    """The credential for cloud calls: DIMOS_API_KEY first, then the stored login."""
-    if global_config.dimos_api_key:
-        return global_config.dimos_api_key
-    return _load()
+def api_key(config: CloudConfig | None = None) -> str | None:
+    """The configured cloud credential, falling back to the stored login."""
+    settings = config if config is not None else CloudConfig()
+    return settings.api_key or _load()
 
 
 def login() -> None:
@@ -145,7 +144,7 @@ def whoami() -> None:
         f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
+        with urllib.request.urlopen(req, timeout=CloudConfig().http_timeout) as r:
             who = json.load(r)
     except urllib.error.HTTPError as e:
         typer.echo(

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import functools
 import importlib
-import pickle
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -144,16 +143,17 @@ class RemoteModuleSource(ModuleSource):
                 )
                 if descriptor is None:
                     raise AttributeError(f"{remote_name!r} has no stream named {name!r}")
-                stream_type, transport = pickle.loads(descriptor.transport)
-                if isinstance(
-                    transport, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
+                spec = descriptor.transport
+                if issubclass(
+                    spec.cls, (WebRTCTransport, WebRTCVideoTransport, WebRTCAudioTransport)
                 ):
                     raise NotImplementedError(
                         "WebRTC stream subscriptions require an operator client; "
                         "use the hosted teleop client."
                     )
-                # Expose a subscription view for inputs, outputs and IO ports.
-                self._streams[key] = RemoteOut(stream_type, name, remote_name, transport)
+                # Expose a subscription view for inputs, outputs and IO ports. Only the
+                # requested stream's transport is built; descriptors are data.
+                self._streams[key] = RemoteOut(descriptor.type, name, remote_name, spec.build())
             return self._streams[key]
 
     def invalidate(self, name: str) -> None:
@@ -178,6 +178,14 @@ class RemoteModuleSource(ModuleSource):
     def restart_module_by_class_name(self, class_name: str, *, reload_source: bool) -> None:
         self._coord.call("restart_module_by_class_name", class_name, reload_source=reload_source)
         self.invalidate(class_name)
+
+    def unload_module_by_class_name(self, class_name: str) -> None:
+        self._coord.call("unload_module_by_class_name", class_name)
+        with self._lock:
+            deployed = set(self._refresh_descriptors())
+            undeployed = {*self._cache, *(module for module, _ in self._streams)} - deployed
+        for remote_name in undeployed:
+            self.invalidate(remote_name)
 
     def close(self) -> None:
         with self._lock:

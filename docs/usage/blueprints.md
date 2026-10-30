@@ -330,6 +330,10 @@ This works in simulation too: adding `--simulation` starts one MuJoCo instance p
 ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
 ```
 
+## Running across machines
+
+`.hosted(...)` places part of a blueprint on another machine. See [Placing modules](/docs/usage/distributed/blueprints.md).
+
 ## Overriding global configuration.
 
 Each module includes the global config available as `self.config.g`. E.g.:

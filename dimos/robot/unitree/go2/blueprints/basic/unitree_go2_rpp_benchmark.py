@@ -51,8 +51,8 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.control.benchmarking.benchmark import Benchmarker
-from dimos.core.coordination.blueprints import TransportSpec, autoconnect
-from dimos.core.stream import Transport
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_controller import (
@@ -80,5 +80,5 @@ unitree_go2_rpp_benchmark = (
     # operator's teleop nudges.
     .remappings([(Benchmarker, "cmd_vel", "go2_cmd_vel")])
     .transports(_BENCHMARK_TRANSPORTS)
-    .global_config(obstacle_avoidance=False, n_workers=6)
+    .global_config(n_workers=6)
 )

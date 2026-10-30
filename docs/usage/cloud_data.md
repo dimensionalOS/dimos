@@ -22,8 +22,9 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Files are compressed before transfer (lz4 by default, see below), sha256-verified server-side, and deduplicated by content: re-uploading the same bytes reports `already uploaded`.
 - Interrupted uploads resume: the server's part listing is the only resume state, so a killed upload re-sends only the missing parts.
 - Recordings carry a manifest: the stream list from `_streams` plus the blueprint name parsed from the `<stamp>-<blueprint>` run directory. `dimos data ls` shows both.
-- Discovery modes (no argument, `--since`) skip files modified within the last `dimos_upload_quiet_s` seconds (default 30) so a store that is still being written is not shipped mid-run. Naming a path or `latest` is explicit intent and uploads immediately.
-- Compression stages next to the source file (not `/tmp`), with a free-space check first; point `dimos_staging_dir` at a bigger partition if needed.
+- Discovery modes (no argument, `--since`) skip files modified within the last `upload_quiet_s` seconds (default 30) so a store that is still being written is not shipped mid-run. Naming a path or `latest` is explicit intent and uploads immediately.
+- Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
+- Each successful upload prints a `console:` link to it (production and staging APIs only).
 
 ## Pulls
 
@@ -37,7 +38,7 @@ dimos mem rerun downloads/<pulled-file>.db
 
 ## Compression
 
-`dimos_upload_codec` selects the algorithm; the upload's `content_encoding` stamp selects the decoder on pull, so mixed-codec stores coexist.
+`upload_codec` selects the algorithm; the upload's `content_encoding` stamp selects the decoder on pull, so mixed-codec stores coexist.
 
 | codec | ratio* | compress* | notes |
 |-------|--------|-----------|-------|
@@ -49,26 +50,28 @@ dimos mem rerun downloads/<pulled-file>.db
 
 *measured on a 12.6 MB Go2 recording; ratios vary with content.
 
-Like every `GlobalConfig` field, it is settable three ways (global flags go before the subcommand):
+Cloud settings come from `CloudConfig`, loaded when used. Set `DIMOS_CLOUD_` environment variables or `.env` entries; Python callers can pass `CloudData(config=CloudConfig(...))`. Explicit config values override environment values, which override `.env` and defaults:
 
 ```bash
-dimos --dimos-upload-codec xz data upload
-DIMOS_UPLOAD_CODEC=gzip dimos data upload
-echo 'DIMOS_UPLOAD_CODEC=gzip' >> .env
+DIMOS_CLOUD_UPLOAD_CODEC=xz dimos data upload
+DIMOS_CLOUD_UPLOAD_CODEC=gzip dimos data upload
+echo 'DIMOS_CLOUD_UPLOAD_CODEC=gzip' >> .env
 ```
 
 ## Configuration
 
+These fields belong to [`CloudConfig`](/dimos/cloud/config.py). Prefix the uppercase field with `DIMOS_CLOUD_`, for example `DIMOS_CLOUD_STAGING_DIR`.
+
 | Field | Default | Meaning |
 |-------|---------|---------|
-| `dimos_cloud_url` | `https://api.dimensional.org` | API host |
-| `dimos_api_key` | `None` | Overrides the stored `dimos login` credential (`DIMOS_API_KEY` for CI) |
-| `dimos_upload_codec` | `lz4` | `lz4`, `gzip`, `bz2`, `xz`, or `""` for no compression |
-| `dimos_upload_chunk_mb` | `None` | Multipart part size in MB (`--chunk`); server default 64 |
-| `dimos_upload_retries` | `2` | Per-part retries for transfers |
-| `dimos_upload_quiet_s` | `30.0` | Discovery skips files modified this recently |
-| `dimos_http_timeout` | `60.0` | Seconds per API request |
-| `dimos_staging_dir` | `None` | Compression/decode staging dir; default is beside the file |
+| `url` | `https://api.dimensional.org` | API host |
+| `api_key` | `None` | Overrides the stored `dimos login` credential (`DIMOS_CLOUD_API_KEY` for CI) |
+| `upload_codec` | `lz4` | `lz4`, `gzip`, `bz2`, `xz`, or `""` for no compression |
+| `upload_chunk_mb` | `None` | Multipart part size in MB (`--chunk`); server default 64 |
+| `upload_retries` | `2` | Per-part retries for transfers |
+| `upload_quiet_s` | `30.0` | Discovery skips files modified this recently |
+| `http_timeout` | `60.0` | Seconds per API request |
+| `staging_dir` | `None` | Compression/decode staging dir; default is beside the file |
 
 Implementation: [`dimos/cloud/data.py`](/dimos/cloud/data.py); codec table in [`dimos/constants.py`](/dimos/constants.py).
 

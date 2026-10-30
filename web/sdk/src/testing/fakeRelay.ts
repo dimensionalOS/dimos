@@ -58,7 +58,10 @@ export const ROBOT_B: RobotInfo = { id: "b", name: "B", model: "go2" };
  * push control messages and data frames, so robot lifecycle transitions run
  * over the actual wire encoding while the "connection" stays up. */
 export class FakeRelayEnd {
+  /** Viewer control messages, liveness pings excluded. */
   readonly sent: Msg[] = [];
+  pings = 0;
+  answerPings = true;
   /** Decoded datagrams the viewer sent (the teleop twist path). */
   readonly sentDatagrams: Msg[] = [];
   /** Awaited per decoded viewer message: lets a test react at the exact
@@ -79,6 +82,14 @@ export class FakeRelayEnd {
     const writable = new WritableStream<Uint8Array>({
       write: async (chunk) => {
         for (const msg of inbound.push(chunk)) {
+          if (msg.t === "ping") {
+            // The liveness ping: answered like the relay does (and kept out
+            // of `sent`, which tests compare exactly) unless a test holds
+            // the pongs back.
+            this.pings += 1;
+            if (this.answerPings) this.push({ t: "pong", n: msg.n, ts: msg.ts });
+            continue;
+          }
           this.sent.push(msg);
           await this.onMsg?.(msg);
         }

@@ -100,17 +100,16 @@ motors, validates the measured state, holds the measured pose, and then ramps
 gravity compensation:
 
 ```bash
-dimos --can-port a1zcan run keyboard-teleop-a1z
+dimos run keyboard-teleop-a1z --controlcoordinator.addresses '{"arm": "a1zcan"}'
 ```
 
-On Linux, pass another verified SocketCAN interface instead if needed:
+On Linux, name another verified SocketCAN interface instead if needed:
 
 ```bash
-dimos --can-port can0 run keyboard-teleop-a1z
+dimos run keyboard-teleop-a1z --controlcoordinator.addresses '{"arm": "can0"}'
 ```
 
-On macOS, the adapter selects the userspace USB transport automatically; omit
-`--can-port`.
+On macOS, the adapter uses its userspace USB transport; any address selects it. Without an address the blueprint runs a mock arm. The map can live in a config file shared by every A1Z blueprint; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
 
 ## Troubleshooting
 

@@ -14,7 +14,6 @@
 
 import numpy as np
 
-from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -31,7 +30,7 @@ def test_find_wide_path_with_start_inside_inflation() -> None:
     grid[20:40, 30] = 100  # wall at x=1.5m spanning y=1.0..2.0m
     costmap = OccupancyGrid(grid=grid, resolution=resolution, origin=Pose(), frame_id="world")
 
-    planner = GlobalPlanner(GlobalConfig())
+    planner = GlobalPlanner(robot_width=0.3, robot_rotation_diameter=0.6)
     planner.handle_global_costmap(costmap)
 
     # 7 cm in front of the wall: within the inflation radius
