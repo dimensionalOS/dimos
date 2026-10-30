@@ -69,6 +69,8 @@ class EpisodeDriverConfig(ModuleConfig):
     seed_settle_s: float = 4.0
     goal_resend_s: float = 1.0
     goal_wait_s: float = 8.0
+    # False starts the stack with no map, as on a first visit.
+    premap: bool = True
 
 
 class EpisodeDriver(Module):
@@ -165,12 +167,14 @@ class EpisodeDriver(Module):
             return {**record, "reason": "no_reference_route"}
         self.reference_path.publish(_path(route.points))
         self.phase.publish(String("premap"))
-        cloud = self._mapped().premap_cloud(route.points)
-        self.loaded_map.publish(
-            PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
-        )
+        record["premap_points"] = 0
+        if self.config.premap:
+            cloud = self._mapped().premap_cloud(route.points)
+            self.loaded_map.publish(
+                PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
+            )
+            record["premap_points"] = len(cloud)
         self._stop_event.wait(self.config.seed_settle_s)
-        record["premap_points"] = len(cloud)
         record["premap_s"] = round(time.time() - started, 2)
         self.phase.publish(String("goal"))
         t0 = self._send_goal()

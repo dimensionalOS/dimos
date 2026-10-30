@@ -104,7 +104,10 @@ def test_a_premap_without_objects_shows_the_floor_where_the_block_stands() -> No
 
 
 @pytest.mark.self_hosted
-def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) -> None:
+@pytest.mark.parametrize("premap", [True, False])
+def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(
+    tmp_path: Path, premap: bool
+) -> None:
     scene = office(1)
     start = (scene.start[0], scene.start[1], 0.0)
     case = Case(
@@ -138,6 +141,7 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
         seed_settle_s=0.2,
         goal_resend_s=0.2,
         goal_wait_s=3.0,
+        premap=premap,
     )
     for name, transport in transports.items():
         getattr(driver, name).transport = transport
@@ -155,8 +159,11 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
     driver.start()
     try:
         _until(lambda: clicks, 30.0)
-        assert len(seeds) == 1 and seeds[0].frame_id == "odom"
-        assert len(seeds[0].points_f32()) > 10_000
+        if premap:
+            assert len(seeds) == 1 and seeds[0].frame_id == "odom"
+            assert len(seeds[0].points_f32()) > 10_000
+        else:
+            assert not seeds
         assert world.resets[0][:2] == (1.0, 1.0) and len(world.resets) == 1
         echo = PointStamped(clicks[0].x, clicks[0].y, clicks[0].z, ts=time.time(), frame_id="odom")
         transports["goal"].publish(echo)
@@ -171,6 +178,6 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
     record = json.loads((tmp_path / TERMINAL_FILE).read_text())
     assert record["reason"] == "arrived" and record["case_id"] == case.id
     assert record["t0"] == pytest.approx(echo.ts)
-    assert record["premap_points"] == len(seeds[0].points_f32())
+    assert record["premap_points"] == (len(seeds[0].points_f32()) if premap else 0)
     assert len(routes) == 1 and routes[0].poses[-1].position.x == pytest.approx(4.0, abs=0.05)
     assert phases == ["reset", "premap", "goal", "navigate", "arrived"]
