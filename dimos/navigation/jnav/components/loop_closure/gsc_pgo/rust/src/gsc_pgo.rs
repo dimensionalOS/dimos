@@ -157,14 +157,10 @@ pub struct ClosureCandidateDiag {
     pub yank_rotation_deg: f64,
     /// The inputs and outputs of the yank / confidence gate , recorded for every
     /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
-    /// yank_drift_scale = sqrt(keyframe gap);
-    /// sigma_* = 1.4826 x the median yank / drift scale of the candidates ICP scored before it (NaN before any);
-    /// yank_stdevs = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
+    /// yank_stdevs = the closure's innovation in standard deviations of its predicted spread, sqrt(v^T (P + c I)^-1 v):
+    /// P the graph's covariance of the two ends' relative position, c the closure's variance (its ICP inliers' mean square);
     /// (infinite before any, so the first candidate only seeds the scale); each factor is its metric normalized by its own gate and clamped to [0, 1];
     /// confidence = their product; required_confidence = 1 - exp(-yank_stdevs^2 / 2k^2), k = `closure_yank_gate_width`.
-    pub yank_drift_scale: f64,
-    pub sigma_rotation_deg: f64,
-    pub sigma_translation_m: f64,
     pub yank_stdevs: f64,
     pub scan_context_factor: f64,
     pub icp_factor: f64,
@@ -230,9 +226,6 @@ impl ClosureCandidateDiag {
             icp_translation_norm: f64::NAN,
             yank_translation: f64::NAN,
             yank_rotation_deg: f64::NAN,
-            yank_drift_scale: f64::NAN,
-            sigma_rotation_deg: f64::NAN,
-            sigma_translation_m: f64::NAN,
             yank_stdevs: f64::NAN,
             scan_context_factor: f64::NAN,
             icp_factor: f64::NAN,
@@ -521,9 +514,6 @@ pub struct Config {
     /// position (the information a closure would add, ½ ln(1 + known variance / measurement variance), grows with it)
     /// instead of by scan-context distance.
     pub closure_rank_by_information: bool,
-    /// When true, the yank scale (`sigma_*` in the diagnostics) comes from the closures the solve kept rather than from
-    /// every ICP-scored candidate, so a run of large wrong yanks does not make the next large yank look ordinary.
-    pub closure_yank_scale_from_kept: bool,
     /// When true, the odometry's four noise variances (xy, z, yaw, roll/pitch per keyframe) are measured from how far the
     /// kept closures disagreed with the raw odometry (`odometry_noise`), the reported ones as priors, and every solve,
     /// the loop-overlap pressure and the gates use them (the reported ones until a closure is kept).
@@ -531,10 +521,6 @@ pub struct Config {
     /// When true, a closure's variance (its ICP fitness) is scaled the same way, by the factor fitted jointly with the
     /// odometry's from the same innovations (short loops pin the closure's share, long loops the odometry's).
     pub closure_noise_from_closures: bool,
-    /// When true, yank_stdevs is the closure's innovation in standard deviations of its predicted spread,
-    /// sqrt(v^T (s P + c fitness I)^-1 v) with both noise scales, instead of in robust spreads of earlier yanks; the gate
-    /// asks for the evidence z^2 / 2 (the Gaussian log-likelihood ratio of that yank) as before.
-    pub closure_yank_gate_principled: bool,
     /// When true, the noise learner reads only the kept closures that agree pairwise around their raw-odometry cycles
     /// (the PCM core) on every solve: a bend two independent loops agree on is drift, a lone closure's may be a wrong
     /// one (huge: kept wrong closures read as yaw x41000). Without it only GM's verdict reads the core.
@@ -630,10 +616,8 @@ impl Default for Config {
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
             closure_rank_by_information: false,
-            closure_yank_scale_from_kept: false,
             odometry_noise_from_closures: false,
             closure_noise_from_closures: false,
-            closure_yank_gate_principled: false,
             odometry_noise_evidence_core: false,
             odometry_noise_from_loop_drift: false,
             closure_overlap_score: false,
@@ -680,8 +664,6 @@ pub struct GscPgo {
     /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
     /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
     pub(crate) odometry_noise_rescaled: bool,
-    /// Per committed closure: its yank per sqrt keyframe gap (rotation deg, translation m), for `closure_yank_scale_from_kept`.
-    pub(crate) closure_yanks: Vec<(f64, f64)>,
     pub(crate) closure_fit_confidence: Vec<f64>,
     /// A closure was committed since the last `update`.
     pub(crate) new_closure: bool,
@@ -726,7 +708,6 @@ pub struct GscPgo {
     /// gap), the scale new yanks are measured against. Every scored
     /// candidate, not just committed ones: a scale taken only from closures the gate let through would
     /// shrink with each rejection and reject the rest.
-    pub(crate) scored_yanks: Vec<(f64, f64)>,
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// ICP fitness of every accepted closure: the variance a real closure is expected to add (`closure_skip_known`).
     pub(crate) scored_fitness: Vec<f64>,
@@ -766,7 +747,6 @@ pub struct ClosureProposal {
 pub struct ClosureSearch {
     pub(crate) key_poses: Vec<KeyPoseWithCloud>,
     pub(crate) config: Config,
-    pub(crate) scored_yanks: Vec<(f64, f64)>,
     /// The odometry's mean xy variance per keyframe step at the reported noise (`big_picture_fit::mean_step_variances`).
     pub(crate) mean_step_xy_variance: f64,
     /// The closures the newest solve kept.
@@ -787,11 +767,10 @@ pub struct ClosureSearch {
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
-/// fitness), the yank it scored, and the time each stage took.
+/// fitness), and the time each stage took.
 pub struct ClosureSearchResult {
     diag: ClosureCandidateDiag,
     accepted: Option<(Mat3, Vec3, f64, Option<[f64; 6]>)>,
-    scored_yank: Option<(f64, f64)>,
     timing: TimingStats,
     /// The search's place-recognition inputs, for a retry on the next alternative (`closure_alternative_places`).
     retry: Option<(Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize)>,
@@ -801,14 +780,12 @@ pub struct ClosureSearchResult {
 fn rejected(
     mut diag: ClosureCandidateDiag,
     outcome: &'static str,
-    scored_yank: Option<(f64, f64)>,
     timing: TimingStats,
 ) -> ClosureSearchResult {
     diag.outcome = outcome;
     ClosureSearchResult {
         diag,
         accepted: None,
-        scored_yank,
         timing,
         retry: None,
     }
@@ -831,7 +808,6 @@ impl ClosureSearch {
         let (cur_idx, target_idx) = (diag.source_id, self.target_idx);
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
-        let mut scored_yank = None;
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
         let clearance = self.config.closure_ground_clearance_m;
         // the source scan, the target submap and its tree, built only when a computation needs them (never when every
@@ -928,7 +904,7 @@ impl ClosureSearch {
             })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
             if degenerate(diag.degeneracy_min) {
-                return rejected(diag, "degeneracy_reject", scored_yank, timing);
+                return rejected(diag, "degeneracy_reject", timing);
             }
         }
 
@@ -981,12 +957,12 @@ impl ClosureSearch {
             })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
             if degenerate(diag.degeneracy_min) {
-                return rejected(diag, "degeneracy_reject", scored_yank, timing);
+                return rejected(diag, "degeneracy_reject", timing);
             }
         }
 
         if !icp.converged || icp.fitness > self.config.closure_icp_max_fitness_m.powi(2) {
-            return rejected(diag, "icp_reject", scored_yank, timing);
+            return rejected(diag, "icp_reject", timing);
         }
         // the closure's own variances from an alignment's fit, in the target keyframe's frame (`closure_icp_covariance`)
         let closure_variances =
@@ -1101,7 +1077,7 @@ impl ClosureSearch {
             && closure_variance * diag.closure_noise_scale >= known
             && !disagrees
         {
-            return rejected(diag, "uninformative", scored_yank, timing);
+            return rejected(diag, "uninformative", timing);
         }
         if self.config.closure_sharpness_half > 0.0 {
             diag.sharpness = memo("sharp", &mut || {
@@ -1175,7 +1151,7 @@ impl ClosureSearch {
             &mat3::sub(&translation_offset, &current_relative_translation),
         );
 
-        scored_yank = Some(self.score_candidate(&mut diag));
+        self.score_candidate(&mut diag);
         // the solve's record on closures that pulled about as hard as this one (within about one yank unit): rejected
         // closures are the hard pullers, so a gentle closure is not charged for them
         let (kept, judged) =
@@ -1255,7 +1231,7 @@ impl ClosureSearch {
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
             let Some(extended) = extended else {
-                return rejected(diag, "yank_confidence_reject", scored_yank, timing);
+                return rejected(diag, "yank_confidence_reject", timing);
             };
             // the closure measurement comes from the extended alignment, which saw more of both places
             (rotation_offset, translation_offset) =
@@ -1268,7 +1244,6 @@ impl ClosureSearch {
         ClosureSearchResult {
             diag,
             accepted: Some((rotation_offset, translation_offset, score, variances)),
-            scored_yank,
             timing,
             retry: None,
         }
@@ -1786,11 +1761,6 @@ impl GscPgo {
             if outcome == ClosureEdgeState::Committed {
                 self.closure_fit_confidence.push(checked.clamp(0.0, 1.0));
                 self.closure_yank_stdevs.push(diag.yank_stdevs);
-                let drift = diag.yank_drift_scale.max(f64::EPSILON);
-                self.closure_yanks.push((
-                    diag.yank_rotation_deg / drift,
-                    diag.yank_translation / drift,
-                ));
             }
             self.push_edge(source, target, outcome, checked, diag.yank_stdevs);
         }
@@ -2036,23 +2006,6 @@ impl GscPgo {
         };
         self.offer_proposal(proposal);
     }
-    /// The yanks the yank scale is measured from: every ICP-scored candidate's, or with `closure_yank_scale_from_kept` the
-    /// closures the newest solve kept (still every candidate's until a solve has kept one).
-    fn yank_scale_sample(&self) -> Vec<(f64, f64)> {
-        if self.config.closure_yank_scale_from_kept {
-            let kept: Vec<(f64, f64)> = self
-                .committed_closures
-                .iter()
-                .zip(&self.closure_yanks)
-                .filter(|(c, _)| c.gnc_weight > 0.5)
-                .map(|(_, &y)| y)
-                .collect();
-            if !kept.is_empty() {
-                return kept;
-            }
-        }
-        self.scored_yanks.clone()
-    }
     /// The median ICP fitness of the closures accepted so far (None before any).
     fn expected_fitness(&self) -> Option<f64> {
         let mut fitness = self.scored_fitness.clone();
@@ -2151,7 +2104,6 @@ impl GscPgo {
                 closure_icp_inlier_distance_m: self.closure_inlier_squared_distance().sqrt(),
                 ..self.config.clone()
             },
-            scored_yanks: self.yank_scale_sample(),
             mean_step_xy_variance: crate::big_picture_fit::mean_step_variances(
                 &self.key_poses,
                 &self.config,
@@ -2199,7 +2151,6 @@ impl GscPgo {
         let ClosureSearchResult {
             diag,
             accepted,
-            scored_yank,
             timing,
             retry,
         } = result;
@@ -2207,9 +2158,6 @@ impl GscPgo {
         self.timing.icp_s += timing.icp_s;
         self.timing.degeneracy_s += timing.degeneracy_s;
         self.timing.extended_icp_s += timing.extended_icp_s;
-        if let Some(yank) = scored_yank {
-            self.scored_yanks.push(yank);
-        }
         if accepted.is_some() && diag.icp_fitness.is_finite() {
             self.scored_fitness.push(diag.icp_fitness);
         }

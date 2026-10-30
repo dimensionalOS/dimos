@@ -130,14 +130,10 @@ class PGOConfig(NativeModuleConfig):
     closure_likelihood_beam: bool = False
     # True: try a keyframe's scan-context matches in order of how unsure the graph is of their relative position
     closure_rank_by_information: bool = False
-    # True: measure the yank scale from closures the solve kept instead of every ICP-scored candidate
-    closure_yank_scale_from_kept: bool = False
     # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
     odometry_noise_from_closures: bool = False
     # True: scale a closure's ICP-fitness variance the same way, fitted jointly with the odometry's
     closure_noise_from_closures: bool = False
-    # True: yank_stdevs = the closure's innovation in standard deviations of its predicted spread (both noise scales)
-    closure_yank_gate_principled: bool = False
     # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
     odometry_noise_evidence_core: bool = False
     # True: the noise is learned from kept loops' innovations vs raw odometry, each voting by its drift share of its expected misfit (short loops barely vote)
