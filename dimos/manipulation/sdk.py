@@ -43,6 +43,13 @@ if TYPE_CHECKING:
     from dimos.porcelain.dimos import Dimos
 
 SETTLE_TIMEOUT_S = 1.0
+# Gripper calls wait until the fingers reach the target, or hold still this long after
+# moving (closed on an object). Fingers that never start moving count as still after
+# GRIPPER_START_S.
+GRIPPER_STILL_S = 0.3
+GRIPPER_START_S = 0.5
+GRIPPER_STILL_TOLERANCE = 0.005
+GRIPPER_TARGET_TOLERANCE = 0.05
 
 
 class MotionError(RuntimeError):
@@ -275,24 +282,60 @@ class Arm:
             raise MotionError("reset", result)
         return result
 
-    def set_gripper_position(self, position: float) -> CommandResult:
-        """Set normalized gripper travel: 0 closed, 1 open."""
+    def set_gripper_position(self, position: float, *, timeout: float = 2.0) -> CommandResult:
+        """Set normalized gripper travel: 0 closed, 1 open.
+
+        Waits up to ``timeout`` seconds for the fingers to stop, at the target or on an
+        object, and raises ``MotionError`` if they are still moving then; ``timeout=0``
+        returns once the command is accepted. Grippers without position feedback (e.g.
+        Lite6) report the commanded value, so the wait returns at once there.
+        """
         if not math.isfinite(position) or not 0.0 <= position <= 1.0:
             raise ValueError("Gripper position must be finite and between 0 and 1")
+        if not math.isfinite(timeout) or timeout < 0.0:
+            raise ValueError("Gripper timeout must be finite and >= 0")
         if not self.info.has_gripper:
             raise ValueError(f"Arm {self.info.id!r} has no gripper")
         result = self.rpc.set_gripper_position(position, planning_group=self.info.id)
         if not result.succeeded:
             raise MotionError("set_gripper_position", result)
+        if timeout > 0.0:
+            moving_at = self._wait_gripper_still(position, timeout)
+            if moving_at is not None:
+                raise MotionError(
+                    "set_gripper_position",
+                    result,
+                    f"fingers still moving after {timeout:g} s, at {moving_at:.2f} "
+                    f"(target {position:.2f})",
+                )
         return result
 
-    def open_gripper(self) -> CommandResult:
-        """Open the gripper."""
-        return self.set_gripper_position(1.0)
+    def _wait_gripper_still(self, target: float, timeout: float) -> float | None:
+        """Wait for the fingers to stop; return their position if they were still moving at
+        ``timeout``, else None."""
+        deadline = time.monotonic() + timeout
+        last, still_since, moved = None, time.monotonic(), False
+        while time.monotonic() < deadline:
+            current = self.state().gripper_position
+            if current is None:
+                return None
+            if abs(current - target) <= GRIPPER_TARGET_TOLERANCE:
+                return None
+            if last is None or abs(current - last) > GRIPPER_STILL_TOLERANCE:
+                moved = last is not None
+                last, still_since = current, time.monotonic()
+            elif time.monotonic() - still_since >= (GRIPPER_STILL_S if moved else GRIPPER_START_S):
+                return None
+            time.sleep(0.05)
+        return last
 
-    def close_gripper(self) -> CommandResult:
-        """Close the gripper."""
-        return self.set_gripper_position(0.0)
+    def open_gripper(self, *, timeout: float = 2.0) -> CommandResult:
+        """Open the gripper and wait up to ``timeout`` seconds for the fingers to stop."""
+        return self.set_gripper_position(1.0, timeout=timeout)
+
+    def close_gripper(self, *, timeout: float = 2.0) -> CommandResult:
+        """Close the gripper and wait up to ``timeout`` seconds for the fingers to stop."""
+        return self.set_gripper_position(0.0, timeout=timeout)
 
     def home(
         self, *, speed_scale: float | None = None, timeout: float | None = None

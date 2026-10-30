@@ -450,7 +450,7 @@ def test_refused_reset_raises_with_the_result(arm, rpc):
 
 @pytest.mark.parametrize("method,position", [("open_gripper", 1.0), ("close_gripper", 0.0)])
 def test_gripper_shortcuts_use_normalized_positions(arm, rpc, method, position):
-    result = getattr(arm, method)()
+    result = getattr(arm, method)(timeout=0)
 
     rpc.set_gripper_position.assert_called_once_with(position, planning_group="arm")
     assert result is rpc.set_gripper_position.return_value
@@ -471,6 +471,52 @@ def test_gripperless_arm_rejects_gripper_command(rpc):
         arm.open_gripper()
 
     rpc.set_gripper_position.assert_not_called()
+
+
+def _gripper_readings(rpc, *positions):
+    snapshot = rpc.get_state.return_value
+    group = snapshot.groups["arm"]
+    rpc.get_state.side_effect = [
+        replace(snapshot, groups={"arm": replace(group, gripper_position=p)}) for p in positions
+    ]
+
+
+def test_gripper_waits_until_the_fingers_reach_the_target(arm, rpc, mocker):
+    mocker.patch("dimos.manipulation.sdk.time.sleep")
+    _gripper_readings(rpc, 0.6, 0.8, 1.0)
+
+    arm.open_gripper()
+
+    assert rpc.get_state.call_count == 3
+
+
+def _fake_clock(mocker):
+    """time.monotonic advances only through time.sleep."""
+    now = [0.0]
+    mocker.patch("dimos.manipulation.sdk.time.monotonic", side_effect=lambda: now[0])
+    mocker.patch(
+        "dimos.manipulation.sdk.time.sleep",
+        side_effect=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+    return now
+
+
+def test_gripper_stops_waiting_once_the_fingers_hold_on_an_object(arm, rpc, mocker):
+    now = _fake_clock(mocker)
+    _gripper_readings(rpc, 0.5, 0.3, *[0.2] * 20)
+
+    arm.close_gripper(timeout=5.0)
+
+    # Moved twice, then held at 0.2 for the full 0.3 s before returning.
+    assert now[0] == pytest.approx(0.1 + 0.3, abs=0.051)
+
+
+def test_gripper_still_moving_at_the_timeout_raises(arm, rpc, mocker):
+    _fake_clock(mocker)
+    _gripper_readings(rpc, *np.linspace(1.0, 0.5, 30))
+
+    with pytest.raises(MotionError, match="fingers still moving after 0.5 s"):
+        arm.close_gripper(timeout=0.5)
 
 
 def test_gripper_failure_retains_result(arm, rpc):
