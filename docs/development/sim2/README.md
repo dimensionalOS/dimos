@@ -31,7 +31,9 @@ There is no navigation planner or collision avoidance in this example: driving
 into furniture can still make the robot fall.
 
 Camera, depth, lidar and IMU are on `/color_image`, `/depth_image`, `/lidar_raw`
-and `/imu`. `/camera_info` supplies calibration. The camera and lidar are mounted
+and `/imu`. RGB/depth are scheduled at **15 FPS**, 320×240, in simulation time;
+Desktop's wall-time FPS also depends on simulation speed. `/camera_info` supplies
+calibration. The camera and lidar are mounted
 on the torso/head; the policy IMU is mounted on the pelvis. All frames share the
 **world** root. There is no separate `odom` TF tree; `/odom` is expressed in world.
 The G1 model uses the existing `/render_file_request` → `/file_info` protocol.
@@ -181,10 +183,14 @@ native interactive viewer process; the previous stack's viewer remains intact.
   not prove the cause of the earlier reported fall or guarantee obstacle recovery.
 - Normal CLI daemon startup, status, attached state/reset and graceful stop passed
   on a separate test bus. Startup was about 1.6 s after build began.
-- A CLI sample at 19.7 simulated seconds: maximum task compute .69 ms, zero
-  rejected commands/publication drops, 94 images and 183 scans. Two incomplete
+- Before the camera rate increase, a CLI sample at 19.7 simulated seconds showed
+  maximum task compute .69 ms, zero rejected commands/publication drops, 94 images
+  and 183 scans. Two incomplete
   scan intervals were discarded; there were no acquisition errors. These are
   measurements on this Mac, not platform guarantees or a low-power acceptance run.
+- At the requested 15 FPS setting, a subsequent CLI sample delivered 180 RGB/depth
+  pairs over 12.04 sim seconds: **14.95 FPS in sim time, 12.95 FPS in wall time**.
+  No acquisition errors, queue drops or rejected control commands; G1 stayed upright.
 - Native RGB/depth rendering uses MuJoCo 3.10.0. macOS reports limited depth
   precision without ARB_clip_control. The scanner is an ideal ray model, not a
   calibrated Mid360 noise/intensity simulator. No Desktop UI acceptance yet.

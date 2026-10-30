@@ -14,6 +14,7 @@
 
 """Acquisition lives in its own worker; rendering cannot take the physics lock."""
 
+import math
 from queue import Empty, Full, Queue
 import threading
 from typing import Any, ClassVar
@@ -136,7 +137,12 @@ class SimSensorModule(Module):
                     info.ts = state.wall_time
                     self.camera_info.publish(info)
                     self._images += 1
-                    next_camera = state.sim_time + 1 / camera_profile.hz
+                    # Keep the requested cadence on the 50 Hz state stream: adding a
+                    # period to the sampled time would round 15 Hz down to 12.5 Hz.
+                    # Skip missed deadlines rather than rendering a catch-up burst.
+                    next_camera = (
+                        math.floor(state.sim_time * camera_profile.hz) + 1
+                    ) / camera_profile.hz
                 if state.sim_time >= next_lidar:
                     scan = reader.lidar(lidar, duration=1 / lidar_profile.hz)
                     self._gaps = reader.gaps

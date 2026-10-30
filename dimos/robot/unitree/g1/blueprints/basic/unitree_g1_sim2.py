@@ -50,7 +50,7 @@ G1_DESK_WORLD = World(
         Instance("parcel", _box.with_prefix("parcel/"), xyz=(1, 1, 0.05), floating=True),
         Instance("desk_box", _box.with_prefix("desk_box/"), xyz=(2, 0.18, 0.72), floating=True),
     ),
-    sensors=(Camera("g1/camera"), Lidar("g1/lidar", rays=720, packets=10), Imu("g1/imu")),
+    sensors=(Camera("g1/camera", hz=15.0), Lidar("g1/lidar", rays=720, packets=10), Imu("g1/imu")),
 )
 
 unitree_g1_sim2 = autoconnect(
