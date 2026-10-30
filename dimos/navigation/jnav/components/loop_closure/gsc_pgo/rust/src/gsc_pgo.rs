@@ -343,6 +343,7 @@ pub struct Config {
     /// the keyframes just before it, placed by the odometry and re-aligned by a small point-to-plane ICP; each keyframe
     /// is one witness (its points share errors), the estimate the rms of their gap widths, tightening as keyframes come.
     pub scan_noise_from_keyframes: bool,
+
     /// In that measurement, drop points a scan re-sends from earlier scans (the Go2 L1 republishes its last seconds of
     /// points): placed by the scan's odometry pose, such a point lands exactly on its copy in the scan before.
     pub scan_noise_drop_reseen_points: bool,
@@ -574,6 +575,7 @@ impl Default for Config {
             closure_icp_max_fitness_m: 0.3872983346207417,
             closure_icp_point_to_plane: true,
             scan_noise_from_keyframes: false,
+
             scan_noise_drop_reseen_points: true,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
@@ -1058,8 +1060,10 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // the closure's translation variance as the graph will take it: its fit's own (largest axis), else its fitness
-        let closure_variance = variances.map_or(icp.fitness, |v| v[3].max(v[4]).max(v[5]));
+        // the closure's translation variance as the graph will take it: its fit's own (largest axis), else its inliers'
+        // mean squared distance (`IcpResult::inlier_mean_square`)
+        let closure_variance =
+            variances.map_or(icp.inlier_mean_square(), |v| v[3].max(v[4]).max(v[5]));
         // a closure is uninformative only if it also agrees with the graph: one that disagrees beyond the graph's own
         // spread of its two ends plus its fit's (chi-square, 3 DOF, at `closure_gnc_inlier_probability`) says the
         // odometry's noise is understated, the overtrust evidence the solve's check and the learner need, however
@@ -1130,7 +1134,8 @@ impl ClosureSearch {
             diag.overlap_score = overlap[2];
         }
 
-        let mut score = icp.fitness;
+        // the closure's variance per axis: its inliers' mean squared distance, as LIO-SAM takes ICP's fitness score
+        let mut score = icp.inlier_mean_square();
         let (source, target) = (&self.key_poses[cur_idx], &self.key_poses[target_idx]);
         let closure_rotation_transpose = mat3::transpose(&target.rotation_global);
         // the closure measurement an alignment gives: the source keyframe moved by it, in the target's frame
@@ -1255,7 +1260,7 @@ impl ClosureSearch {
             // the closure measurement comes from the extended alignment, which saw more of both places
             (rotation_offset, translation_offset) =
                 measured(&extended.rotation, &extended.translation);
-            score = extended.fitness;
+            score = extended.inlier_mean_square();
             variances = closure_variances("covx", &extended.rotation, &extended.translation);
         }
 
