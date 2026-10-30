@@ -54,6 +54,10 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_max_fitness_m: float = 0.3872983346207417
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
     closure_icp_point_to_plane: bool = True
+    # measure the lidar's per-point error from keyframes against the ones before them (logged, converges over time)
+    scan_noise_from_keyframes: bool = False
+    # in that measurement, drop points a scan re-sends from earlier scans (Go2 L1)
+    scan_noise_drop_reseen_points: bool = True
     closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells

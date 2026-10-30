@@ -77,6 +77,8 @@ config! {
     closure_icp_inlier_distance_m: f64,
     closure_icp_max_fitness_m: f64,
     closure_icp_point_to_plane: bool,
+    scan_noise_from_keyframes: bool,
+    scan_noise_drop_reseen_points: bool,
     closure_submap_half_range: i32,
     submap_resolution: f64,
     closure_min_occupancy: i32,

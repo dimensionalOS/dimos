@@ -463,6 +463,36 @@ pub fn observability(
     mat3::jacobi_eigen(hessian).0[0] / trace
 }
 
+/// Each `moved` point's gap to the target's surface along its normal (point-to-plane), as an absolute distance, for the
+/// points whose nearest target point is within `inlier_squared_distance`.
+pub fn plane_gaps(
+    moved: &[[f32; 3]],
+    target: &[[f32; 3]],
+    tree: &KdTree,
+    inlier_squared_distance: f64,
+) -> Vec<f64> {
+    moved
+        .par_iter()
+        .filter_map(|p| {
+            let (j, d) = tree.nearest(p)?;
+            if d as f64 > inlier_squared_distance {
+                return None;
+            }
+            let neighbours = tree.knn(&target[j], 10);
+            if neighbours.len() < 3 {
+                return None;
+            }
+            let n = least_spread_direction(target, &neighbours);
+            Some(
+                (0..3)
+                    .map(|k| (p[k] as f64 - target[j][k] as f64) * n[k])
+                    .sum::<f64>()
+                    .abs(),
+            )
+        })
+        .collect()
+}
+
 /// The least-spread direction (unit surface normal) of `neighbours`.
 /// The covariance of an aligned pose from its point-to-plane fit (Censi 2007's Hessian form): `moved` is the source
 /// cloud already moved by the alignment, `origin` where the alignment puts the source keyframe. Each source point
