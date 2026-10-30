@@ -439,10 +439,13 @@ class ModuleCoordinator(Resource):
         )
         global_config.update(**global_values)
         if global_config.simulation == "mujoco":
-            # sim2 imports MuJoCo, so this optional dependency is deferred until build.
-            from dimos.sim2.composition import simulate
+            # Attach the world after CLI/module overrides are resolved. Each
+            # connection's simulated_robot hook supplies its model; the original
+            # connection remains in the stack and receives a simulation device.
+            # MuJoCo is optional, so defer this import until simulation is selected.
+            from dimos.sim2.composition import attach_simulation
 
-            blueprint, module_kwargs = simulate(blueprint, module_kwargs, global_config)
+            blueprint, module_kwargs = attach_simulation(blueprint, module_kwargs, global_config)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
@@ -535,9 +538,9 @@ class ModuleCoordinator(Resource):
             blueprint, parsed_config, sparse_globals=True
         )
         if global_values.get("simulation", self._global_config.simulation) == "mujoco":
-            from dimos.sim2.composition import declares_twin
+            from dimos.sim2.composition import has_simulation_binding
 
-            if any(declares_twin(atom.module) for atom in blueprint.active_blueprints):
+            if any(has_simulation_binding(atom.module) for atom in blueprint.active_blueprints):
                 raise ValueError(
                     "simulated robots and sensors must be in the blueprint before build; "
                     "restart with the complete blueprint"

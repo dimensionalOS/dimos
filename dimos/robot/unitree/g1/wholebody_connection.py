@@ -68,7 +68,11 @@ class G1WholeBodyConnection(ConnectionModule):
 
     @staticmethod
     def simulated_robot(config: G1WholeBodyConnectionConfig, scene: Path) -> SimulatedRobot:
-        """The same G1 in MuJoCo, held in the GR00T home pose until the policy commands it."""
+        """Supply the model binding consumed by build-time attach_simulation.
+
+        The connection stays in the blueprint; ConnectionModule selects its
+        injected simulation device. G1 holds the GR00T home pose until commanded.
+        """
         # Hardware imports need no simulation extra; resolve this backend only
         # when composition selects it.
         simulation = import_module("dimos.robot.unitree.g1.simulation")

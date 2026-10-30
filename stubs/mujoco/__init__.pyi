@@ -167,7 +167,6 @@ class mjtObj:
     mjOBJ_MESH: int
     mjOBJ_SITE: int
     mjOBJ_TENDON: int
-    mjOBJ_TEXT: int
 
 class mjtCamera:
     mjCAMERA_FIXED: int

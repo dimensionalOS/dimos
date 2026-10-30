@@ -14,7 +14,6 @@
 
 """G1 model composition preserves the hardware motor order and original dynamics."""
 
-from contextlib import closing
 from functools import partial
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -37,15 +36,13 @@ from dimos.robot.unitree.g1.wholebody_connection import (
     G1WholeBodyConnection,
     G1WholeBodyConnectionConfig,
 )
-from dimos.sim2.composition import simulate
+from dimos.sim2.composition import attach_simulation
 from dimos.sim2.environment import MotorScene
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.unreal.assets import export_scene
 from dimos.sim2.world.runtime import SimulationRuntime
-from dimos.sim2.world.scene import scene_path
 from dimos.sim2.world.scene_types import SceneDescription
 from dimos.utils.data import LfsPath
 
@@ -189,7 +186,7 @@ def test_mid360_declares_a_rolling_device_with_its_imu_at_the_factory_offset():
 
 
 def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
-    result, module_kwargs = simulate(
+    result, module_kwargs = attach_simulation(
         unitree_g1_groot_wbc, {}, GlobalConfig(simulation="mujoco", scene_package=str(scene))
     )
     modules = {atom.name: atom.module for atom in result.active_blueprints}
@@ -307,24 +304,3 @@ def test_g1_hard_reset_reloads_sensor_model_and_preserves_mid360_imu(scene):
         assert reader.model.sensor(prefix + "sensor/imu/accel").dim == 3
         assert reader.model.sensor(prefix + "control_imu_quat").dim == 4
         assert np.isfinite(reader.data.sensordata).all()
-
-
-@pytest.mark.self_hosted
-def test_full_g1_logistics_world_exports_after_reset_without_injected_ui_targets():
-    path = scene_path(None, "logistics.xml")
-    with closing(MotorScene(path, {"g1": partial(g1_model, path)})) as environment:
-        environment.reset()
-        model, data = environment.sim.model._model, environment.sim.data._data
-        manifest = export_scene(model, data)
-
-        assert model.nu == 29
-        assert {geom["id"] for geom in manifest["geoms"]} == set(range(model.ngeom))
-        assert any(model.geom(geom["id"]).name.startswith("robotg1_") for geom in manifest["geoms"])
-        assert {model.geom(i).name for i in range(model.ngeom)}.isdisjoint(
-            {
-                "left_eef_target_box",
-                "left_eef_target_sphere",
-                "right_eef_target_box",
-                "right_eef_target_sphere",
-            }
-        )

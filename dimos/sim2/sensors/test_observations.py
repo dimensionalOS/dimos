@@ -26,9 +26,9 @@ from robosuite.utils.observables import (
 )
 
 from dimos.sim2.messages import FrameMetadata
-from dimos.sim2.sensors.camera.device import camera_messages
+from dimos.sim2.sensors.camera.messages import camera_messages
 from dimos.sim2.sensors.camera.spec import Camera
-from dimos.sim2.sensors.imu.device import imu_message
+from dimos.sim2.sensors.imu.messages import imu_message
 from dimos.sim2.sensors.imu.module import SimImuModule
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.observations import (
@@ -160,7 +160,7 @@ def test_rgb_depth_keep_individual_capture_times_when_observable_rates_differ(
         "render",
         return_value=(np.ones((2, 2, 3), dtype=np.uint8), np.full((2, 2), 0.5)),
     )
-    cloud = mocker.patch("dimos.sim2.sensors.camera.device.PointCloud2.from_rgbd")
+    cloud = mocker.patch("dimos.sim2.sensors.camera.messages.PointCloud2.from_rgbd")
     observables = create_observables(sim, descriptor, "robotarm_", "arm")
     observables["arm/camera/image"].set_sampling_rate(image_rate)
     observables["arm/camera/image"].set_corrupter(create_deterministic_corrupter(0.25))

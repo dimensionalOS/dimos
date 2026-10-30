@@ -44,15 +44,19 @@ SENSOR_TWIN = "simulated_sensor"
 DEFAULT_SCENE = "default_sim_scene"
 
 
-def declares_twin(module: type[ModuleBase]) -> bool:
+def has_simulation_binding(module: type[ModuleBase]) -> bool:
+    """Whether a module declares a robot or sensor binding for build-time attachment."""
     return hasattr(module, ROBOT_TWIN) or hasattr(module, SENSOR_TWIN)
 
 
-def simulate(
+def attach_simulation(
     blueprint: Blueprint, module_kwargs: dict[str, dict[str, Any]], config: GlobalConfig
 ) -> tuple[Blueprint, dict[str, dict[str, Any]]]:
-    """Resolve simulation after CLI overrides, before modules are instantiated.
+    """Attach the world after CLI overrides, before modules are instantiated.
 
+    Called by ModuleCoordinator.build when ``--simulation mujoco`` is selected.
+    Connections' simulated_robot declarations supply robot models; retained
+    connections receive device factories bound to this shared world.
     The current automatic composition supports one robot and its sensors.
     Explicit MotorScene/SimulationModule composition can contain many robots.
     """
@@ -175,4 +179,4 @@ def _check_module_refs(blueprint: Blueprint, swapped: dict[str, BlueprintAtom]) 
                 )
 
 
-__all__ = ["PORT_KINDS", "declares_twin", "simulate"]
+__all__ = ["PORT_KINDS", "attach_simulation", "has_simulation_binding"]

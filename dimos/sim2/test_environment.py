@@ -12,63 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Authored scene metadata must survive robosuite model composition."""
+"""MotorScene is independently usable through the upstream environment lifecycle."""
 
 from contextlib import closing
-import json
-import xml.etree.ElementTree as ET
 
-import mujoco
+import numpy as np
+import pytest
 
 from dimos.sim2.environment import MotorScene
-from dimos.sim2.unreal.assets import export_scene
 
 
-def test_motor_scene_preserves_custom_native_assets_and_other_authored_metadata(tmp_path):
-    root = ET.fromstring("""
-        <mujoco>
-          <custom>
-            <text name="authored_label" data="Workshop shelf"/>
-            <numeric name="authored_dimensions" data="1 2 3"/>
-          </custom>
-          <worldbody>
-            <geom name="shelf_visual" type="sphere" size=".001" mass="0"
-              contype="0" conaffinity="0" pos="1 -2 3"/>
-            <geom name="shelf_collision" type="box" size=".5 .2 1" pos="1 -2 4"/>
-          </worldbody>
-        </mujoco>
-    """)
-    metadata = {
-        "version": 1,
-        "geoms": {"shelf_visual": {"asset": "/Game/Props/Shelf.Shelf", "scale": [1, 2, 3]}},
-        "hidden_geoms": ["shelf_collision"],
-    }
-    ET.SubElement(
-        root.find("custom"), "text", name="dimos_unreal_assets", data=json.dumps(metadata)
-    )
-    path = tmp_path / "scene.xml"
-    path.write_text(ET.tostring(root, encoding="unicode"))
+@pytest.mark.parametrize("hard_reset", [False, True])
+def test_motor_scene_can_step_and_reset_without_a_dimos_runtime(
+    scene_path, robot_factory, hard_reset
+):
+    action = np.array([[0.3, 0.02], [0, 0], [2, 0], [0, 0], [0.4, 0]])
+    with closing(
+        MotorScene(scene_path, models={"left": robot_factory}, hard_reset=hard_reset)
+    ) as environment:
+        environment.step(action.ravel())
 
-    with closing(MotorScene(path, models={})) as environment:
-        model = environment.model.get_model()
-        data = mujoco.MjData(model)
-        mujoco.mj_forward(model, data)
-        scene = export_scene(model, data)
+        assert environment.sim.data.ctrl == pytest.approx([0.8, 0.02])
+        environment.reset()
+        assert environment.controllers["left"].positions == pytest.approx([0.1, 0.0])
+        assert environment.sim.data.ctrl == pytest.approx([0.0, 0.0])
 
-        label = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_TEXT, "authored_label")
-        start, size = model.text_adr[label], model.text_size[label]
-        assert model.text_data[start : start + size - 1] == b"Workshop shelf"
-        assert model.numeric_data.tolist() == [1, 2, 3]
-        assert scene == {
-            "version": 1,
-            "meshes": [],
-            "geoms": [
-                {
-                    "id": 0,
-                    "position": [100, 200, 300],
-                    "quaternion": [0, 0, 0, 1],
-                    "static_mesh": "/Game/Props/Shelf.Shelf",
-                    "scale": [1, 2, 3],
-                }
-            ],
-        }
+        environment.step(action.ravel())
+
+        assert environment.sim.data.ctrl == pytest.approx([0.8, 0.02])

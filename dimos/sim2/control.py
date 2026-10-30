@@ -59,17 +59,6 @@ class MotorController(Controller):
         self.qpos = np.asarray(model.jnt_qposadr[joints], dtype=np.int64)
         self.dofs = np.asarray(model.jnt_dofadr[joints], dtype=np.int64)
         count = len(joints)
-        self.scale = np.ones(count) if scale is None else np.asarray(scale, dtype=np.float64)
-        self.offset = np.zeros(count) if offset is None else np.asarray(offset, dtype=np.float64)
-        if (
-            self.scale.shape != (count,)
-            or self.offset.shape != (count,)
-            or not np.isfinite(self.scale).all()
-            or not np.isfinite(self.offset).all()
-            or np.any(self.scale == 0)
-        ):
-            raise ValueError("motor unit conversions require finite offsets and nonzero scales")
-
         gain = model.actuator_gainprm[self.actuators, 0]
         bias = model.actuator_biasprm[self.actuators]
         bias_type = model.actuator_biastype[self.actuators]
@@ -101,6 +90,26 @@ class MotorController(Controller):
         )
         self.control_dim = 5 * count
         self._goal = np.zeros((5, count))
+        self.set_motor_units(scale=scale, offset=offset)
+
+    def set_motor_units(
+        self, *, scale: Sequence[float] | None = None, offset: Sequence[float] | None = None
+    ) -> None:
+        """Bind public motor units and hold the current pose in those units."""
+        count = len(self.actuators)
+        scales = np.ones(count) if scale is None else np.array(scale, dtype=np.float64, copy=True)
+        offsets = (
+            np.zeros(count) if offset is None else np.array(offset, dtype=np.float64, copy=True)
+        )
+        if (
+            scales.shape != (count,)
+            or offsets.shape != (count,)
+            or not np.isfinite(scales).all()
+            or not np.isfinite(offsets).all()
+            or np.any(scales == 0)
+        ):
+            raise ValueError("motor unit conversions require finite offsets and nonzero scales")
+        self.scale, self.offset = scales, offsets
         self.reset_goal()
 
     @property

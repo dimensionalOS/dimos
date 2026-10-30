@@ -166,13 +166,11 @@ class SimulationRuntime:
                 raise ValueError("motor bindings must match the environment's robot models")
             for name, model in env.robot_models.items():
                 config = self._robot_configs[name]
-                controller = MotorController(
-                    env.sim,
-                    model,
+                controller = env.controllers[name]
+                controller.set_motor_units(
                     scale=config.position_scale or None,
                     offset=config.position_offset or None,
                 )
-                env.controllers[name] = controller
                 if len(controller.actuators) != len(config.joint_names):
                     raise ValueError(f"{name}: hardware motor names do not match model actuators")
                 position_only = {
