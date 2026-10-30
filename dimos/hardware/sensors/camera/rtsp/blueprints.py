@@ -16,7 +16,6 @@
 
 ``dimos run rtsp-camera-vis --rtspcamera.url=rtsp://<camera>:8554/<path>``
 ``dimos run rtsp-camera-vis --rtspcamera.url=clip.mp4``     # replay a capture
-``dimos run rtsp-camera-vis --rtspcamera.url=synthetic``    # no camera
 
 Mirrors the RealSense standalone viewer. The rerun bridge never caps ``world/video``:
 dropping access units breaks in-viewer decode, so the rate is set at the source.

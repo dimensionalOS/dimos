@@ -68,11 +68,6 @@ def normalize_attitude(q: Sequence[float], inverted: bool = False) -> tuple[floa
     return euler.x, pitch, math.degrees(normalize_angle(math.radians(yaw)))
 
 
-def decode_flags(flags: int) -> str:
-    members = GimbalDeviceFlags.__members__.items()
-    return "|".join(name for name, bit in members if bit & flags) or "none"
-
-
 def attitude_msg(
     ts: float,
     roll: float,

@@ -32,6 +32,7 @@ from typing import Any
 
 import numpy as np
 from pydantic import Field
+import reactivex as rx
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -45,7 +46,6 @@ from dimos.hardware.gimbal.siyi.frame import (
     PITCH_MIN_DEG,
     YAW_MAX_DEG,
     YAW_MIN_DEG,
-    decode_flags,
     joints,
 )
 from dimos.hardware.gimbal.siyi.sdk import SiyiSdk
@@ -77,8 +77,6 @@ class _Attitude:
     roll: float  # radians, MAVLink signs
     pitch: float
     yaw: float
-    flags: int
-    failure_flags: int
     ts: float
     rx_mono: float
 
@@ -128,9 +126,8 @@ class SiyiA8Gimbal(Module):
         self._attitude: _Attitude | None = None
         self._zoom: float | None = None
         self._last_aim_mono = 0.0
-        self._aim_sent = 0
         self._stop_event = threading.Event()
-        self._threads: list[threading.Thread] = []
+        self._zoom_thread: threading.Thread | None = None
         self._sdk: SiyiSdk | None = None
         self._camera_info = a8_camera_info(
             *self.config.image_size, frame_id=self.config.optical_frame_id
@@ -139,30 +136,37 @@ class SiyiA8Gimbal(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        if self.config.mount_xyz == (0.0, 0.0, 0.0):
+        cfg = self.config
+        if cfg.mount_xyz == (0.0, 0.0, 0.0):
             logger.warning(
                 "SiyiA8Gimbal mount_xyz is not set: the camera is placed at base_link; "
                 "set the measured base_link -> gimbal base offset (metres, FLU)"
             )
-        if self.config.ip is not None:
-            self._sdk = SiyiSdk(self.config.ip)
         self.register_disposable(Disposable(self.gimbal_attitude.subscribe(self._on_attitude)))
         self.register_disposable(Disposable(self.target_los.subscribe(self._on_target_los)))
-        self._stop_event.clear()
-        self._threads = [threading.Thread(target=self._tf_loop, name="siyi-tf", daemon=True)]
-        if self._sdk is not None:
-            self._threads.append(
-                threading.Thread(target=self._zoom_loop, name="siyi-zoom", daemon=True)
+        self.register_disposable(
+            rx.interval(1.0 / cfg.tf_hz).subscribe(lambda _: self.publish_transforms())
+        )
+        if cfg.camera_info_hz > 0:
+            self.register_disposable(
+                rx.interval(1.0 / cfg.camera_info_hz).subscribe(
+                    lambda _: self.publish_camera_info()
+                )
             )
-        for t in self._threads:
-            t.start()
+        if cfg.ip is not None:
+            self._sdk = SiyiSdk(cfg.ip)
+            self._stop_event.clear()
+            self._zoom_thread = threading.Thread(
+                target=self._zoom_loop, name="siyi-zoom", daemon=True
+            )
+            self._zoom_thread.start()
 
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
-        for t in self._threads:
-            t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        self._threads.clear()
+        if self._zoom_thread is not None:
+            self._zoom_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._zoom_thread = None
         if self._sdk is not None:
             self._sdk.close()
             self._sdk = None
@@ -175,11 +179,9 @@ class SiyiA8Gimbal(Module):
         if angles is None:
             logger.warning("gimbal_attitude without the three gimbal joints", names=msg.name)
             return
-        flags = int(msg.effort[0]) if msg.effort else 0
-        failure = int(msg.effort[1]) if len(msg.effort) > 1 else 0
         roll, pitch, yaw = angles
         with self._lock:
-            self._attitude = _Attitude(roll, pitch, yaw, flags, failure, msg.ts, time.monotonic())
+            self._attitude = _Attitude(roll, pitch, yaw, msg.ts, time.monotonic())
 
     def _on_target_los(self, msg: PoseStamped) -> None:
         if not self.config.aim_enabled:
@@ -210,20 +212,9 @@ class SiyiA8Gimbal(Module):
                 ],
             )
         )
-        self._aim_sent += 1
         return True
 
-    # Threads
-
-    def _tf_loop(self) -> None:
-        cfg = self.config
-        info_every = max(1, round(cfg.tf_hz / cfg.camera_info_hz)) if cfg.camera_info_hz > 0 else 0
-        tick = 0
-        while not self._stop_event.wait(1.0 / cfg.tf_hz):
-            self.publish_transforms()
-            if info_every and tick % info_every == 0:
-                self.publish_camera_info()
-            tick += 1
+    # Periodic
 
     def _zoom_loop(self) -> None:
         assert self._sdk is not None
@@ -235,13 +226,13 @@ class SiyiA8Gimbal(Module):
             if self._stop_event.wait(self.config.zoom_poll_s):
                 return
 
-    def publish_transforms(self) -> bool:
-        """The chain at the latest attitude. Returns False (nothing published) when stale."""
+    def publish_transforms(self) -> None:
+        """The chain at the latest attitude; nothing while the attitude is stale."""
         cfg = self.config
         with self._lock:
             att = self._attitude
         if att is None or time.monotonic() - att.rx_mono > cfg.attitude_max_age_s:
-            return False
+            return
         ts = att.ts
         # MAVLink gimbal angles: yaw clockwise positive, pitch up positive; FLU is the reverse.
         gimbal_rot = Quaternion.from_euler(Vector3(att.roll, -att.pitch, -att.yaw))
@@ -268,20 +259,18 @@ class SiyiA8Gimbal(Module):
                 ),
             )
         )
-        return True
 
-    def publish_camera_info(self) -> bool:
+    def publish_camera_info(self) -> None:
         """Intrinsics of the main stream at 1x; withheld while the polled zoom is unknown
         or not 1x."""
         with self._lock:
             zoom = self._zoom
         if zoom is None:
             if self.config.ip is not None:
-                return False
+                return
         elif abs(zoom - 1.0) > 1e-3:
-            return False
+            return
         self.camera_info.publish(self._camera_info.with_ts(time.time()))
-        return True
 
     # RPCs
 
@@ -290,19 +279,3 @@ class SiyiA8Gimbal(Module):
         """Request an absolute pitch/yaw (degrees, body frame). Returns whether a request
         was published."""
         return self._request_aim(pitch_deg, yaw_deg, time.time())
-
-    @rpc
-    def state(self) -> dict[str, Any]:
-        """Latest reported attitude (degrees), its age, decoded flags, zoom, aim count."""
-        with self._lock:
-            att, zoom = self._attitude, self._zoom
-        if att is None:
-            return {"attitude": None, "zoom": zoom, "aim_sent": self._aim_sent}
-        return {
-            "attitude": {k: math.degrees(getattr(att, k)) for k in ("roll", "pitch", "yaw")},
-            "age_s": time.monotonic() - att.rx_mono,
-            "flags": decode_flags(att.flags),
-            "failure_flags": att.failure_flags,
-            "zoom": zoom,
-            "aim_sent": self._aim_sent,
-        }

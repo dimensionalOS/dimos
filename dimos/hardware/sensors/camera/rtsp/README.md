@@ -8,23 +8,15 @@
   the system library (`sudo apt install libturbojpeg`); without it `color_jpeg` switches
   itself off and the rest keeps running.
 - Frames are stamped at packet read minus `capture_latency_s` (default 0), on the system clock.
-- `url` is an RTSP URL, a file path (replayed through the same code) or `synthetic` (a clip
-  generated at start).
+- `url` is an RTSP URL, or a file path to replay a capture through the same code.
 
 RPCs: `set_video_enabled(enabled)` stops or resumes `video`; `set_jpeg_rate(hz)` sets the
-`color_jpeg` rate (`hz <= 0` stops it); `sensor_stats()` returns per-stream counters.
+`color_jpeg` rate (`hz <= 0` stops it); `get_sensor_stats()` returns per-stream counters.
 
 ## Run
 
 ```bash
-uv sync --extra px4
+uv sync --extra px4 --inexact
 dimos run rtsp-camera-vis --rtspcamera.url=rtsp://<camera>:8554/<path>
 dimos run rtsp-camera-vis --rtspcamera.url=clip.mp4     # replay a capture
-dimos run rtsp-camera-vis --rtspcamera.url=synthetic    # no camera
-```
-
-## Test
-
-```bash
-uv run pytest dimos/hardware/sensors/camera/rtsp
 ```
