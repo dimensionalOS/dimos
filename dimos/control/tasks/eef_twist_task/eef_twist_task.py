@@ -93,12 +93,28 @@ class EEFTwistTask(PoseTargetIKTask):
         if values.shape != (6,) or not np.all(np.isfinite(values)):
             logger.warning("EEFTwistTask rejecting invalid twist", task=self._name)
             return False
+        stopped = False
         with self._input_lock:
             if self._estopped:
                 return False
-            self._latest_twist = None if np.allclose(values, 0.0) else twist
+            if not np.allclose(values, 0.0):
+                self._latest_twist = twist
+            elif self._latest_twist is not None:
+                self._stop_twist()
+                stopped = True
             self._last_twist_time = t_now
+        if stopped:
+            self._reset_command_state()
         return True
+
+    def _stop_twist(self) -> None:
+        """End the twist and re-anchor the target at the measured pose.
+
+        Only on the moving-to-stopped edge. Caller holds ``_input_lock``, then resets the
+        command state.
+        """
+        self._latest_twist = None
+        self._target_pose = None
 
     def set_estop(self, estopped: bool) -> None:
         with self._input_lock:
@@ -121,6 +137,7 @@ class EEFTwistTask(PoseTargetIKTask):
         self._reset_command_state()
 
     def _frame_target_snapshot(self, state: CoordinatorState) -> FrameTargetSnapshot | None:
+        stopped = False
         with self._input_lock:
             if self._estopped:
                 return None
@@ -129,9 +146,12 @@ class EEFTwistTask(PoseTargetIKTask):
                 and self._config.command_timeout > 0.0
                 and state.t_now - self._last_twist_time > self._config.command_timeout
             ):
-                self._latest_twist = None
+                self._stop_twist()
+                stopped = True
             twist = self._latest_twist
             target = self._target_pose
+        if stopped:
+            self._reset_command_state()
 
         if target is None:
             poses = self.current_frame_poses(state, self._config.target_frames)
