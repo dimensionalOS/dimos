@@ -18,6 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+    TrajectoryExecutionStatus,
+)
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
     PlanningGroupSelection,
@@ -115,6 +120,40 @@ def test_materializes_trajectory_and_preserves_source_path() -> None:
     assert plan.planning_time == 0.2
     assert plan.iterations == 12
     assert parametrizer.calls == [0.4]
+
+
+def _untimed(positions: list[list[float]]) -> PlanningResult:
+    return PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[JointState(name=["arm/a", "arm/b"], position=p) for p in positions],
+    )
+
+
+def test_path_that_goes_nowhere_holds_still_without_the_backend() -> None:
+    parametrizer = _FixedParametrizer(_output())
+
+    plan = parametrizer.materialize_plan(
+        MagicMock(spec=WorldSpec),
+        _selection(),
+        _untimed([[0.3, 0.1], [0.3, 0.1], [0.3, 0.1]]),
+    )
+
+    assert parametrizer.calls == []
+    assert [point.positions for point in plan.trajectory.points] == [[0.3, 0.1], [0.3, 0.1]]
+    assert all(point.velocities == [0.0, 0.0] for point in plan.trajectory.points)
+    assert plan.trajectory.duration == pytest.approx(0.01)
+
+
+def test_a_saved_hold_is_refused_once_the_arm_has_moved() -> None:
+    plan = _FixedParametrizer(_output()).materialize_plan(
+        MagicMock(spec=WorldSpec), _selection(), _untimed([[0.0, 0.0], [0.0, 0.0]])
+    )
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/a", "arm/b"]))
+
+    result = task.execute(plan.trajectory, {"arm/a": 0.5, "arm/b": 0.0})
+
+    assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
+    assert not task.is_active()
 
 
 def test_timed_planner_result_bypasses_backend_path_conversion() -> None:
