@@ -81,6 +81,15 @@ DUAL_OPENYAM_MAP_TF_TOLERANCE = 0.2
 # Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
+# Where the gripper's parts sit along the approach from the tcp, metres, as the xArm
+# stack gives its heuristic: the closed pads' centre behind the tcp (the finger
+# extension above), the fingertips' reach past it and the gripper body behind it, the
+# last two read off the v6 collision meshes (0.8 mm and 82.5 mm).
+DUAL_OPENYAM_HEURISTIC_AIM = {
+    "pad_behind_tcp": DUAL_OPENYAM_FINGER_EXTENSION["right"],
+    "fingertip_reach": 0.001,
+    "palm_behind_tcp": 0.0825,
+}
 
 # The same gripper in GraspGenX's convention: origin on the gripper link, approach
 # along +Z, jaws closing along X. Pads meet 0.137 m out and the open jaws span 94 mm.
@@ -117,6 +126,8 @@ DUAL_OPENYAM_RECORD_TOPICS = ",".join(
         "depth_image",
         "camera_info",
         "tf",
+        # The planner's obstacle map, so a refused start pose can be replayed.
+        "voxel_map",
         *(
             f"{side}_wrist_{stream}"
             for side in DUAL_OPENYAM_SIDES
@@ -287,7 +298,7 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
             # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
             grasp_verification=GraspVerificationConfig(empty_epsilon=0.035),
         ),
-        grasp_provider or HeuristicGraspModule.blueprint(),
+        grasp_provider or HeuristicGraspModule.blueprint(**DUAL_OPENYAM_HEURISTIC_AIM),
         # The D405 has no 848x480 at 15 fps mode.
         RealSenseCamera.blueprint(
             width=640,

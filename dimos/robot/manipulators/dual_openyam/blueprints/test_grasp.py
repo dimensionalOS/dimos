@@ -223,5 +223,13 @@ def test_planner_publishes_the_root_frame_the_self_filter_lifts_into() -> None:
     assert model.tf_extra_links == ["dual_openyam_base"]
 
 
+def test_heuristic_aims_the_pads_like_the_xarm_stack() -> None:
+    aim = _atom(dual_openyam_grasp, HeuristicGraspModule).kwargs
+    assert aim["pad_behind_tcp"] == 0.009
+    assert 0.0 < aim["fingertip_reach"] < 0.005
+    assert 0.08 < aim["palm_behind_tcp"] < 0.09
+    assert "voxel_map" in DUAL_OPENYAM_RECORD_TOPICS.split(",")
+
+
 def test_no_model_carries_a_table() -> None:
     assert 'name="table"' not in dual_openyam_grasp_model_config().model.load().xml
