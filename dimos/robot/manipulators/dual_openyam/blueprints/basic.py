@@ -22,6 +22,7 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_SIDES,
     dual_openyam_hardware,
     dual_openyam_model_config,
 )
@@ -30,6 +31,19 @@ from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_GRIPPER_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
+
+DUAL_OPENYAM_GRIPPER_TASKS = {
+    f"{side}_manipulator": f"{side}_arm_gripper" for side in DUAL_OPENYAM_SIDES
+}
+
+
+def dual_openyam_gripper_task(side: str, *, priority: int = 20) -> TaskConfig:
+    return TaskConfig(
+        name=DUAL_OPENYAM_GRIPPER_TASKS[f"{side}_manipulator"],
+        type="gripper",
+        joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[DUAL_OPENYAM_SIDES.index(side)]],
+        priority=priority,
+    )
 
 
 def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
@@ -89,28 +103,15 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
 coordinator_dual_openyam = DualOpenYamCoordinator.blueprint(
     tasks=[
         dual_openyam_trajectory_task(),
-        TaskConfig(
-            name="left_arm_gripper",
-            type="gripper",
-            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
-            priority=20,
-        ),
-        TaskConfig(
-            name="right_arm_gripper",
-            type="gripper",
-            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
-            priority=20,
-        ),
+        dual_openyam_gripper_task("left"),
+        dual_openyam_gripper_task("right"),
     ],
 )
 
 dual_openyam_planner_coordinator = autoconnect(
     planner(
         model=dual_openyam_model_config(),
-        gripper_tasks={
-            "left_manipulator": "left_arm_gripper",
-            "right_manipulator": "right_arm_gripper",
-        },
+        gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
     ),
     coordinator_dual_openyam,
 )
