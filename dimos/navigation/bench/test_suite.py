@@ -26,7 +26,7 @@ from dimos.navigation.bench.suite import (
     GOAL_CLEARANCE,
     MINED,
     NARROW_DOOR_M,
-    REFERENCE_BODY,
+    REFERENCE_ENVELOPE,
     SIDE_WALL_M,
     FreezeConfig,
     Level,
@@ -45,7 +45,7 @@ def _far_goal(gt: GroundTruth) -> NDArray[np.float64]:
 
 
 def test_ground_truth_finds_floor_walls_and_routes() -> None:
-    gt = GroundTruth(office(1), REFERENCE_BODY)
+    gt = GroundTruth(office(1), REFERENCE_ENVELOPE)
     z0 = gt.scene.params["z0"]
     assert gt.height[gt.index((1.0, 1.0))] == pytest.approx(z0, abs=1e-6)
     assert np.isnan(gt.height[gt.index((-0.05, 3.0))])
@@ -55,7 +55,7 @@ def test_ground_truth_finds_floor_walls_and_routes() -> None:
     assert route is not None and all(gt.stands(p) for p in route.points)
     assert np.allclose(route.points[-1, :2], goal[:2])
     difficulty = gt.difficulty(route)
-    assert difficulty.min_clearance >= REFERENCE_BODY.half_width and difficulty.doors >= 1
+    assert difficulty.min_clearance >= REFERENCE_ENVELOPE.half_width and difficulty.doors >= 1
 
 
 def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:

@@ -50,8 +50,8 @@ NO_PREDECESSOR = -9999
 
 
 @dataclass(frozen=True)
-class Body:
-    """The room a body needs: half its width, the headroom above it and the step it climbs."""
+class Envelope:
+    """The room a robot needs to pass."""
 
     half_width: float
     headroom: float
@@ -83,18 +83,18 @@ class Difficulty:
 class GroundTruth:
     """One ground height per column, the cells a body can stand on, and routes between them."""
 
-    def __init__(self, scene: Scene, body: Body) -> None:
+    def __init__(self, scene: Scene, envelope: Envelope) -> None:
         self.scene = scene
-        self.body = body
+        self.envelope = envelope
         self.cell = CELL
         lo, hi = scene.bounds()
         self.origin = (float(lo[0]), float(lo[1]))
         self.shape = (math.ceil((hi[0] - lo[0]) / CELL), math.ceil((hi[1] - lo[1]) / CELL))
-        self._probe = Probe(scene, body.headroom, CELL / 4)
+        self._probe = Probe(scene, envelope.headroom, CELL / 4)
         self.height = self._ground(float(hi[2]), float(hi[2] - lo[2]))
         ground = self._reachable(np.isfinite(self.height), self.index(scene.start))
         self.clearance = ndimage.distance_transform_edt(ground) * CELL
-        self.walkable = ground & (self.clearance >= body.half_width)
+        self.walkable = ground & (self.clearance >= envelope.half_width)
         self._walk = self._edges(self.walkable)
         self._graphs: dict[bool, csr_matrix] = {}
         self._searches: dict[tuple[int, bool], NDArray[np.int32]] = {}
@@ -250,7 +250,7 @@ class GroundTruth:
             a = (slice(max(0, -dx), nx - max(0, dx)), slice(max(0, -dy), ny - max(0, dy)))
             b = (slice(max(0, dx), nx - max(0, -dx)), slice(max(0, dy), ny - max(0, -dy)))
             dz = self.height[b] - self.height[a]
-            ok = mask[a] & mask[b] & (np.abs(dz) <= self.body.step)
+            ok = mask[a] & mask[b] & (np.abs(dz) <= self.envelope.step)
             sources.append(ids[a][ok])
             targets.append(ids[b][ok])
             weights.append(np.hypot(self.cell * math.hypot(dx, dy), dz[ok]))

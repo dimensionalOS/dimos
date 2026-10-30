@@ -132,6 +132,10 @@ class LowDiskError(RuntimeError):
     """Free disk fell below the run's floor, so no further episode starts."""
 
 
+class UnscorableRunError(RuntimeError):
+    """Episodes hold recordings their terminal records cannot score."""
+
+
 def selects(prefix: str, case_id: str) -> bool:
     """Whether a case id is the prefix or continues it at a dash, so s1 does not take s10."""
     return case_id == prefix or case_id.startswith(prefix + "-")
@@ -282,10 +286,19 @@ def stop_all() -> None:
 def rescore(run_dir: Path) -> Path:
     """Score every episode in the run again from its recording, by the suite the run saved."""
     manifest = Manifest.load(run_dir / SUITE_FILE)
+    episode_dirs = sorted(d for d in run_dir.iterdir() if d.is_dir())
+    unscorable = [
+        d.name for d in episode_dirs if (d / RECORDING_FILE).exists() and _lacks_body(_terminal(d))
+    ]
+    if unscorable:
+        raise UnscorableRunError(
+            f"{len(unscorable)} episodes of {run_dir} have no body or route length in their"
+            f" terminal record, results kept: rerun them to score them, first {unscorable[0]}"
+        )
     results = run_dir / RESULTS_FILE
     results.unlink(missing_ok=True)
     with results.open("a") as out:
-        for episode_dir in sorted(d for d in run_dir.iterdir() if d.is_dir()):
+        for episode_dir in episode_dirs:
             episode = Episode(manifest.case(episode_dir.name), episode_dir)
             terminal = _terminal(episode_dir)
             out.write(json.dumps(asdict(_score(manifest, episode, terminal))) + "\n")
@@ -293,7 +306,7 @@ def rescore(run_dir: Path) -> Path:
 
 
 def _snapshot(run_dir: Path, case: Case, robot: Path) -> None:
-    """Save the picture of the run's sample case, or none when no GL backend can render it."""
+    """Save the picture of the run's sample case, if one can be rendered."""
     if not robot.exists():
         return
     command = [
@@ -486,6 +499,13 @@ def _terminal(episode_dir: Path) -> dict[str, object] | None:
     return record
 
 
+def _lacks_body(terminal: dict[str, object] | None) -> bool:
+    """Whether a finished episode's terminal record is missing what scoring its recording needs."""
+    if terminal is None or str(terminal["reason"]) in HARNESS_REASONS:
+        return False
+    return "body" not in terminal or "route_length" not in terminal
+
+
 def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | None) -> Result:
     case = episode.case
     result = Result(
@@ -504,15 +524,15 @@ def _score(manifest: Manifest, episode: Episode, terminal: dict[str, object] | N
     if result.terminal in HARNESS_REASONS:
         result.error = result.terminal
         return result
-    if "body" not in terminal or "route_length" not in terminal:
-        result.error = "terminal record has no body or route length, rerun the case"
-        return result
     if not recording.exists() and not kept.exists():
         result.error = "no recording"
         return result
     if not recording.exists():
         result.metrics = json.loads(kept.read_text())
         result.outcome = cast("Outcome", result.metrics["outcome"])
+        return result
+    if _lacks_body(terminal):
+        result.error = "terminal record has no body or route length, rerun the case"
         return result
     try:
         recorded = Recording.from_store(recording)

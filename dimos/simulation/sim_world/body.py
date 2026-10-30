@@ -34,10 +34,7 @@ CloudFrame = Literal["sensor", "base"]
 
 @dataclass(frozen=True)
 class BodyShape:
-    """The robot from outside: the room it needs, its highest point and what counts as lying down.
-
-    The top box is in the base frame. Its top is the robot's highest point however the base tilts.
-    """
+    """The robot's outside. The top box, in the base frame, bounds its highest point at any tilt."""
 
     half_width: float
     headroom: float
@@ -51,7 +48,7 @@ class BodyShape:
 
 @dataclass(frozen=True)
 class Sensor:
-    """A Mid-360 on the robot: its housing geom's name, its mount on the base and its LIO's blind range."""
+    """A Mid-360 mounted on the robot's base."""
 
     name: str
     mount_xyz: NDArray[np.float64]
@@ -63,10 +60,7 @@ class Sensor:
 
 @dataclass(frozen=True)
 class Rig:
-    """A robot as a scene is built around it: its model, its lidars, its shape, its output frames and its driver.
-
-    Odometry and the cloud are reported at the one sensor or at the base, per cloud_frame.
-    """
+    """A robot as a scene is built around it. Odometry and the cloud report at cloud_frame."""
 
     spec: Callable[[], mujoco.MjSpec]
     base_body: str

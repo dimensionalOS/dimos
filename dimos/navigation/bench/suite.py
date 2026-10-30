@@ -34,8 +34,8 @@ from pydantic import TypeAdapter
 
 from dimos.navigation.bench.ground_truth import (
     CLUTTER_NEAR,
-    Body,
     Difficulty,
+    Envelope,
     GroundTruth,
     Route,
     boxes_near,
@@ -65,10 +65,11 @@ Pose = tuple[float, float, float]
 Point = tuple[float, float, float]
 
 MINED = "mined"
-REFERENCE_BODY = Body(half_width=0.15875, headroom=0.6, step=0.2)
-NARROW_DOOR_M = 2 * REFERENCE_BODY.half_width + 0.12
+# suites are frozen for these numbers, whatever robot runs them
+REFERENCE_ENVELOPE = Envelope(half_width=0.15875, headroom=0.6, step=0.2)
+NARROW_DOOR_M = 2 * REFERENCE_ENVELOPE.half_width + 0.12
 START_CLEARANCE_MIN = 0.4
-AGAINST_WALL_M = REFERENCE_BODY.half_width + 0.08
+AGAINST_WALL_M = REFERENCE_ENVELOPE.half_width + 0.08
 DOOR_BINS = (1, 2)
 CLEARANCE_BINS = (0.35, 0.6)
 STRADDLE_M = (1.2, 1.5, 2.0)
@@ -365,7 +366,7 @@ def _freeze_scene(config: FreezeConfig, seed: int) -> _Mined:
     def truth(params: Params) -> GroundTruth:
         key = json.dumps(params, sort_keys=True)
         if key not in truths:
-            truths[key] = GroundTruth(generate(config.family, seed, **params), REFERENCE_BODY)
+            truths[key] = GroundTruth(generate(config.family, seed, **params), REFERENCE_ENVELOPE)
         return truths[key]
 
     found = _Mined([], [])
@@ -602,7 +603,7 @@ def _straight_past(
     scene = gt.scene
     sx, sy, _ = start
     reach = math.hypot(x - sx, y - sy)
-    offset = (half_width + gt.body.half_width) * (2 * float(rng.random()) - 1)
+    offset = (half_width + gt.envelope.half_width) * (2 * float(rng.random()) - 1)
     heading = math.atan2(y - sy, x - sx) + math.asin(offset / reach)
     meet = math.sqrt(reach**2 - offset**2)
     low, high = PAST_M
@@ -645,7 +646,7 @@ def under_the_slab(gt: GroundTruth, clearance: float, rng: np.random.Generator) 
     x, y = gt.scene.params["slab_x"], gt.scene.params["slab_y"]
     across = min(OVERHANG_SIZE) / 2
     start = _start_facing(gt.scene, x - across, x, y, rng, UNDER_SLAB_RAD)
-    return _straight_past(gt, start, x, y, across - gt.body.half_width, rng)
+    return _straight_past(gt, start, x, y, across - gt.envelope.half_width, rng)
 
 
 OVERHANG = Probe(
@@ -835,7 +836,7 @@ def under_the_bar(gt: GroundTruth, width: float, rng: np.random.Generator) -> Pl
     """A goal straight past the bar near its middle, so the body walking the direct line clears both posts."""
     x, y = gt.scene.params["bar_x"], gt.scene.params["bar_y"]
     start = _start_facing(gt.scene, x - POLE_WIDTH[1] / 2, x, y, rng, UNDER_SLAB_RAD)
-    return _straight_past(gt, start, x, y, BAR_SPAN / 4 - gt.body.half_width, rng)
+    return _straight_past(gt, start, x, y, BAR_SPAN / 4 - gt.envelope.half_width, rng)
 
 
 BAR = Probe(
@@ -903,7 +904,7 @@ def freeze_probe(probe: Probe, sampling_seed: int = 0, rules: Rules = Rules()) -
             rng = np.random.default_rng([sampling_seed, seed])
             params: Params = {} if probe.scene_param is None else {probe.scene_param: value}
             if gt is None or params:
-                gt = GroundTruth(generate(probe.family, seed, **params), REFERENCE_BODY)
+                gt = GroundTruth(generate(probe.family, seed, **params), REFERENCE_ENVELOPE)
             placed = probe.place(gt, value, rng)
             candidate = Candidate(probe.family, seed, params, placed.start, placed.goal, probe.name)
             route = gt.route(placed.start, placed.goal)

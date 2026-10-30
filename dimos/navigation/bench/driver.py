@@ -39,7 +39,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
-from dimos.navigation.bench.ground_truth import Body, GroundTruth
+from dimos.navigation.bench.ground_truth import Envelope, GroundTruth
 from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.sim_world.world_spec import SimWorldSpec
@@ -142,8 +142,10 @@ class EpisodeDriver(Module):
     def _episode(self) -> dict[str, object]:
         case, rules = self._case, self._rules
         self._world.load_scene(case.family, case.seed, case.params)
-        shape = self._world.body()
-        self._truth = GroundTruth(case.scene(), Body(shape.half_width, shape.headroom, shape.step))
+        shape = self._world.shape()
+        self._truth = GroundTruth(
+            case.scene(), Envelope(shape.half_width, shape.headroom, shape.step)
+        )
         record: dict[str, object] = {"case_id": case.id, "body": asdict(shape)}
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         self._world.export_model(self.config.out_dir / ROBOT_FILE)

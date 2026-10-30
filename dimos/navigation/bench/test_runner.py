@@ -33,6 +33,7 @@ import pytest
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.navigation.bench.driver import TERMINAL_FILE
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.playback import Puppet, find_episode, frames
 from dimos.navigation.bench.runner import (
@@ -45,6 +46,7 @@ from dimos.navigation.bench.runner import (
     LowDiskError,
     Progress,
     RunConfig,
+    UnscorableRunError,
     _provenance,
     _require_whole,
     _snapshot,
@@ -58,7 +60,8 @@ from dimos.navigation.bench.suite import Case, Level, Manifest, Rules, Split
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_sim.world import GO2, SHAPE
 from dimos.simulation.scenes.procedural import Params, block, office
-from dimos.simulation.sim_world.world import display_spec
+from dimos.simulation.sim_world.world import display_xml
+from dimos.utils.data import get_data_dir
 
 T0 = 1000.0
 
@@ -111,7 +114,7 @@ signal.pause()
 
 def _go2_model(directory: Path) -> Path:
     path = directory / "robot.xml"
-    path.write_text(display_spec(GO2).to_xml())
+    path.write_text(display_xml(GO2))
     return path
 
 
@@ -197,7 +200,11 @@ def test_run_scores_every_episode_and_rescores_the_same(
             blueprint="fake",
             procs=3,
             out_dir=tmp_path / "run",
-            overrides=(f"--fake-recordings={tmp_path / 'recordings'}", "--set-x=1"),
+            overrides=(
+                f"--fake-recordings={tmp_path / 'recordings'}",
+                "--set-x=1",
+                "--fake.policy=/some/policy.bin",
+            ),
             command=(sys.executable, str(tmp_path / "fake.py")),
         ),
         reports.append,
@@ -217,6 +224,7 @@ def test_run_scores_every_episode_and_rescores_the_same(
     assert not any((tmp_path / "recordings").iterdir())
     meta = json.loads((run_dir / RUN_FILE).read_text())
     assert meta["finished"] is True
+    assert meta["policy"] == "/some/policy.bin"
     assert (meta["commit"], meta["dirty"]) == (_git(checkout, "rev-parse", "HEAD"), False)
     assert (meta["procs"], meta["machine"]) == (3, socket.gethostname())
     assert (tmp_path / "runs").read_text().strip() == str(run_dir.resolve())
@@ -338,6 +346,25 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
     assert set(rescore(run_dir).read_text().splitlines()) == set(results.splitlines())
 
 
+def test_rescoring_refuses_recordings_it_cannot_score_and_keeps_the_results(tmp_path: Path) -> None:
+    recorded, pruned = (_case(f"mined-s1-{i}", "mined", "dev", {}) for i in ("aaaaaa", "bbbbbb"))
+    Manifest("test", Rules(), 0, [recorded, pruned]).save(tmp_path / SUITE_FILE)
+    for case in (recorded, pruned):
+        (tmp_path / case.id).mkdir()
+        terminal = json.dumps({"reason": "arrived", "t0": 1.0})
+        (tmp_path / case.id / TERMINAL_FILE).write_text(terminal)
+    (tmp_path / recorded.id / RECORDING_FILE).touch()
+    (tmp_path / pruned.id / SCORE_FILE).write_text(json.dumps({"outcome": "success"}))
+    (tmp_path / RESULTS_FILE).write_text("kept\n")
+    with pytest.raises(UnscorableRunError, match=recorded.id):
+        rescore(tmp_path)
+    assert (tmp_path / RESULTS_FILE).read_text() == "kept\n"
+    (tmp_path / recorded.id / RECORDING_FILE).unlink()
+    (tmp_path / recorded.id / SCORE_FILE).write_text(json.dumps({"outcome": "stuck"}))
+    rows = map(json.loads, rescore(tmp_path).read_text().splitlines())
+    assert [row["outcome"] for row in rows] == ["stuck", "success"]
+
+
 def test_a_stuck_verdict_is_scored_at_the_drivers_end_and_not_the_shutdown_tail() -> None:
     rules, goal, t_end = Rules(), (20.0, 0.0, 0.0), 30.0
     t = np.arange(0.0, t_end + 0.5 + 1e-9, 0.05)
@@ -391,7 +418,9 @@ def test_playback_poses_the_puppet_from_a_recording(tmp_path: Path) -> None:
     store.stop()
     recorded = frames(tmp_path / "memory.db")
     assert [f.position[0] for f in recorded] == [1.0, 2.0, 3.0]
-    puppet = Puppet(office(1), _go2_model(tmp_path))
+    robot = _go2_model(tmp_path)
+    assert str(get_data_dir()) not in robot.read_text()
+    puppet = Puppet(office(1), robot)
     puppet.pose(recorded[-1])
     assert puppet.trunk_position() == pytest.approx([3.0, 2.0, 0.3])
     assert puppet.data.qpos[7:] == pytest.approx([0.2] * len(joints))

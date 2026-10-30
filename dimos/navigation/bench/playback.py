@@ -39,7 +39,7 @@ from dimos.navigation.bench.runner import (
 )
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.scenes.procedural import Scene
-from dimos.simulation.sim_world.world import ROOT_QUAT, open_viewer, scene_model
+from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, open_viewer, scene_model
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ class Puppet:
     """The scene's model posed from frames, with physics left out."""
 
     def __init__(self, scene: Scene, robot: Path) -> None:
-        self.model = scene_model(scene, mujoco.MjSpec.from_file(str(robot)))
+        self.model = scene_model(scene, load_display_spec(robot))
         self.data = mujoco.MjData(self.model)
         self._trunk = int(self.model.jnt_bodyid[0])
         self._qpos_adr = {
@@ -156,7 +156,12 @@ def open_rerun(replay: Path) -> subprocess.Popen[bytes]:
 
 def play(episode_dir: Path, speed: float = 1.0, loop: bool = True, rerun: bool = True) -> None:
     """Move the recorded body through the episode's scene, with its replay open in Rerun."""
-    puppet = Puppet(episode_scene(episode_dir), episode_dir / ROBOT_FILE)
+    robot = episode_dir / ROBOT_FILE
+    if not robot.exists():
+        raise FileNotFoundError(
+            f"{episode_dir} has no {ROBOT_FILE} to draw. Open its {REPLAY_FILE} in Rerun instead."
+        )
+    puppet = Puppet(episode_scene(episode_dir), robot)
     recorded = frames(episode_dir / RECORDING_FILE)
     puppet.pose(recorded[0])
     replay = episode_dir / REPLAY_FILE

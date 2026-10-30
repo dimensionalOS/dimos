@@ -76,6 +76,9 @@ def test_a_clean_arrival_is_a_success_with_full_metrics() -> None:
         _walk(10.0), RULES, GOAL, SHAPE, feature=((START[0] + GOAL[0]) / 2, START[1] + 0.3)
     )
     assert beside.feature_m == pytest.approx(0.3, abs=0.02)
+    assert s.feature_met is None and beside.feature_met is False
+    met = score(_walk(10.0), RULES, GOAL, SHAPE, feature=(3.0, START[1] + 0.1))
+    assert met.feature_met is True
     assert s.outcome == "success" and s.signature is None and s.signatures == []
     assert s.window == (T0, T0 + 9.9) and s.arrived_s == pytest.approx(9.9)
     assert s.traveled_m == pytest.approx(4.0, abs=0.05) and s.spl == pytest.approx(1.0, abs=0.02)
@@ -95,6 +98,24 @@ def _trunk_on_floor(seconds: float) -> Recording:
             ContactSample(T0 + 3.0 + seconds, [Contact("foot", "floor")]),
         ],
     )
+
+
+def test_the_score_reads_the_body_it_is_given() -> None:
+    other = replace(SHAPE, base_height=0.5, half_width=0.25, lying_parts=("leg",))
+    scene = room(1, width=8.0, length=6.0)
+    scored = score(_walk(10.0), RULES, GOAL, other, scene=scene)
+    assert scored.final_error_z == pytest.approx(0.2)
+    assert scored.margin_m == pytest.approx(1.0 - 0.25)
+    assert score(_trunk_on_floor(RULES.fall_trunk_floor_s + 0.1), RULES, GOAL, other).fell is False
+    leg_down = replace(
+        _walk(10.0),
+        contacts=[
+            ContactSample(T0 - 5.0, [Contact("foot", "floor")]),
+            ContactSample(T0 + 3.0, [Contact("leg", "floor")]),
+            ContactSample(T0 + 4.0, [Contact("foot", "floor")]),
+        ],
+    )
+    assert score(leg_down, RULES, GOAL, other).fell is True
 
 
 def test_every_outcome_is_defined_with_the_limits_of_the_rules() -> None:

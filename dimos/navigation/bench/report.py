@@ -44,7 +44,7 @@ from dimos.navigation.bench.paired import (
 from dimos.navigation.bench.runner import RECORDING_FILE, RESULTS_FILE, RUN_FILE, SUITE_FILE
 from dimos.navigation.bench.scorer import Outcome, contact_name, definitions
 from dimos.navigation.bench.snapshot import bounds, sample, snapshot_path
-from dimos.navigation.bench.suite import PROBES, REFERENCE_BODY, Case, Manifest, Pose, Rules
+from dimos.navigation.bench.suite import PROBES, REFERENCE_ENVELOPE, Case, Manifest, Pose, Rules
 from dimos.simulation.scenes.procedural import Rect
 
 REPORT_FILE = "report.html"
@@ -338,14 +338,11 @@ def _text(value: object) -> str | None:
 
 
 def _feature_met(metrics: dict[str, object]) -> bool | None:
-    """Whether the body came within its half width of the feature.
-
-    Results without the flag are judged at the reference body's half width.
-    """
+    """Whether the body reached the feature, at the reference half width if results lack the flag."""
     if (met := metrics.get("feature_met")) is not None:
         return bool(met)
     feature_m = _float(metrics.get("feature_m"))
-    return None if feature_m is None else feature_m < REFERENCE_BODY.half_width
+    return None if feature_m is None else feature_m < REFERENCE_ENVELOPE.half_width
 
 
 def _float(value: object) -> float | None:
@@ -508,7 +505,7 @@ def thumbnail(report: Report) -> Thumbnail | None:
                 box.center[1] + box.half[1],
             ),
             turn_deg=math.degrees(box.yaw),
-            raised=box.center[2] - box.half[2] > scene.start[2] + REFERENCE_BODY.step,
+            raised=box.center[2] - box.half[2] > scene.start[2] + REFERENCE_ENVELOPE.step,
         )
         for box in scene.boxes
         if box.kind != "floor"

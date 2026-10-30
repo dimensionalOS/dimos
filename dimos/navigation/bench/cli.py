@@ -234,9 +234,13 @@ def score_command(
     run_dir: Path = typer.Argument(..., exists=True, help="A run directory."),
 ) -> None:
     """Score every episode of a run again from its recording."""
-    from dimos.navigation.bench.runner import rescore
+    from dimos.navigation.bench.runner import UnscorableRunError, rescore
 
-    _summary(rescore(run_dir))
+    try:
+        _summary(rescore(run_dir))
+    except UnscorableRunError as refused:
+        typer.echo(str(refused))
+        raise typer.Exit(1) from refused
 
 
 @app.command("report")

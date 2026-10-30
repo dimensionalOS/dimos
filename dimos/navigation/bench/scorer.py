@@ -326,7 +326,7 @@ def score(
         yaw_reversals=_yaw_reversals(recording.commands, rules, t0, t1),
         collisions=collisions.count if collisions else None,
         collision_s=collisions.seconds if collisions else None,
-        trunk_floor_s=collisions.trunk_floor_s if collisions else None,
+        trunk_floor_s=collisions.lying_s if collisions else None,
         fell=fell,
         reached=not fell and _at_goal(rules, error_xy, error_z),
         claimed=arrival is not None,
@@ -473,10 +473,10 @@ def _at(pose: Poses, t: float) -> NDArray[np.float64]:
 class _Collisions:
     count: int
     seconds: float
-    trunk_floor_s: float
+    lying_s: float
     started: Counter[Contact]
     first: tuple[float, Contact] | None
-    trunk_touches: list[tuple[float, float]]
+    lying_spans: list[tuple[float, float]]
 
 
 def _collisions(
@@ -487,32 +487,32 @@ def _collisions(
         return None
     before = [s for s in samples if s.t <= t0]
     state = before[-1].contacts if before else []
-    held, on_trunk = _colliding(state), bool(lying & set(state))
-    count, seconds, trunk_floor = int(bool(held)), 0.0, 0.0
+    held, lying_now = _colliding(state), bool(lying & set(state))
+    count, seconds, lying_s = int(bool(held)), 0.0, 0.0
     started = Counter(held)
     first = (t0, min(held)) if held else None
-    trunk_touches: list[tuple[float, float]] = []
-    trunk_since = t0
+    lying_spans: list[tuple[float, float]] = []
+    lying_since = t0
     t_prev = t0
     for sample in (s for s in samples if t0 < s.t <= t1):
         seconds += (sample.t - t_prev) * bool(held)
-        trunk_floor += (sample.t - t_prev) * on_trunk
+        lying_s += (sample.t - t_prev) * lying_now
         t_prev = sample.t
         now = _colliding(sample.contacts)
         count += int(bool(now) and not held)
         started.update(now - held)
         if first is None and now:
             first = (sample.t, min(now))
-        if on_trunk and not lying & set(sample.contacts):
-            trunk_touches.append((trunk_since, sample.t))
-        if not on_trunk:
-            trunk_since = sample.t
-        held, on_trunk = now, bool(lying & set(sample.contacts))
+        if lying_now and not lying & set(sample.contacts):
+            lying_spans.append((lying_since, sample.t))
+        if not lying_now:
+            lying_since = sample.t
+        held, lying_now = now, bool(lying & set(sample.contacts))
     seconds += (t1 - t_prev) * bool(held)
-    trunk_floor += (t1 - t_prev) * on_trunk
-    if on_trunk:
-        trunk_touches.append((trunk_since, t1))
-    return _Collisions(count, seconds, trunk_floor, started, first, trunk_touches)
+    lying_s += (t1 - t_prev) * lying_now
+    if lying_now:
+        lying_spans.append((lying_since, t1))
+    return _Collisions(count, seconds, lying_s, started, first, lying_spans)
 
 
 def _held_longest(samples: list[ContactSample], t0: float, t1: float) -> Contact | None:
@@ -578,10 +578,10 @@ def _fall_start(pose: Poses, collisions: _Collisions | None, rules: Rules) -> fl
     """When the fall began: the first tilt past the limit, or the trunk touch that reached it."""
     tipped = np.abs(pose.rpy[:, :2]).max(axis=1) > rules.fall_rad
     starts = [float(pose.t[tipped.argmax()])] if tipped.any() else []
-    if collisions is not None and collisions.trunk_floor_s >= rules.fall_trunk_floor_s:
-        lain = np.cumsum([end - start for start, end in collisions.trunk_touches])
+    if collisions is not None and collisions.lying_s >= rules.fall_trunk_floor_s:
+        lain = np.cumsum([end - start for start, end in collisions.lying_spans])
         reached = min(int(np.searchsorted(lain, rules.fall_trunk_floor_s)), len(lain) - 1)
-        starts.append(collisions.trunk_touches[reached][0])
+        starts.append(collisions.lying_spans[reached][0])
     return min(starts, default=None)
 
 

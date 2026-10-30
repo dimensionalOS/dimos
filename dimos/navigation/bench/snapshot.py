@@ -28,7 +28,7 @@ from numpy.typing import NDArray
 from dimos.navigation.bench.suite import Case, Manifest, Point
 from dimos.simulation.scenes.mjcf import geom_name
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Rect, Scene
-from dimos.simulation.sim_world.world import ROOT_QUAT, scene_model
+from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, scene_model
 
 SNAPSHOT_PX = (600, 480)
 ELEVATION_DEG = 55.0
@@ -193,7 +193,7 @@ def render(case: Case, robot: Path) -> NDArray[np.uint8]:
     scene = case.scene()
     seen = view(case, scene)
     floor = scene.start[2]
-    model = scene_model(scene, mujoco.MjSpec.from_file(str(robot)))
+    model = scene_model(scene, load_display_spec(robot))
     model.vis.global_.offwidth, model.vis.global_.offheight = SNAPSHOT_PX
     model.vis.global_.fovy = FOVY_DEG
     model.vis.headlight.diffuse[:] = HEADLIGHT

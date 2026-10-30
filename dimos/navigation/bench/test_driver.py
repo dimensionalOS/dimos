@@ -55,7 +55,7 @@ class FakeWorld:
     def load_scene(self, family: Family, seed: int, params: Params) -> None:
         self.scenes.append((family, seed, params))
 
-    def body(self) -> BodyShape:
+    def shape(self) -> BodyShape:
         return SHAPE
 
     def reset_pose(self, x: float, y: float, z: float, yaw: float) -> None:
@@ -71,7 +71,7 @@ class FakeWorld:
 
     def _publish(self, poses: LCMTransport) -> None:
         while not self.stop.is_set():
-            poses.publish(PoseStamped(*self.xy, self.z, ts=time.time(), frame_id="odom"))
+            poses.publish(PoseStamped(*self.xy, self.z, ts=time.time(), frame_id="map"))
             time.sleep(0.05)
 
 
@@ -106,7 +106,6 @@ def test_a_pacing_robot_ends_the_episode_as_dithering_and_a_still_one_as_stuck()
     assert _verdict(0.0) == "stuck"
 
 
-@pytest.mark.self_hosted
 @pytest.mark.self_hosted
 def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) -> None:
     scene = office(1)
@@ -160,6 +159,7 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
         assert world.scenes == [("office", 1, {})]
         assert len(world.premaps) == 1 and world.premaps[0][1]
         assert world.resets[0][:2] == (1.0, 1.0) and len(world.resets) == 1
+        assert clicks[0].frame_id == "map" and routes[0].frame_id == "map"
         echo = PointStamped(clicks[0].x, clicks[0].y, clicks[0].z, ts=time.time(), frame_id="odom")
         transports["goal"].publish(echo)
         _until(lambda: driver._echo is not None, 5.0)

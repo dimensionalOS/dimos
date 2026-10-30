@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from functools import partial
 import math
+from pathlib import Path
 import time
 
 import numpy as np
@@ -27,18 +29,21 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2
-from dimos.simulation.go2_sim.world import GO2, MID360, MOUNT_R, SimGo2World
-from dimos.simulation.scenes.procedural import Box, Scene, office
+from dimos.simulation.go2_sim.world import GO2, MID360, MOUNT_R, SHAPE, SimGo2World
+from dimos.simulation.scenes.procedural import Box, Scene, block, office
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
+from dimos.simulation.sim_world.premap import premap_cloud, without_objects
 from dimos.simulation.sim_world.world import (
     CONTACTS_HEARTBEAT_DT,
     FRAME_DT,
     LIDAR_GROUPS,
     LidarFrame,
     Sim,
+    display_xml,
     scene_edges,
 )
 
@@ -63,6 +68,14 @@ def sim(scene: Scene, policy: OnnxGo2Policy) -> Sim:
     sim = Sim(scene, 1, GO2, partial(LeggedGo2, policy=policy))
     sim.reset(*scene.start, 0.0)
     return sim
+
+
+@pytest.fixture
+def waiting_world() -> Iterator[SimGo2World]:
+    world = SimGo2World(wait_for_scene=True)
+    world.cmd_vel.transport = LCMTransport("/test_go2_sim_world_wait/cmd_vel", Twist)
+    yield world
+    world.stop()
 
 
 def _yaw(sim: Sim) -> float:
@@ -173,12 +186,13 @@ def test_a_rig_with_two_lidars_reports_both_at_its_base(
     _floor_is_flat(frame, both, scene.params["z0"])
     for got, want in zip(both.odom_pose(), both.base_pose(), strict=True):
         assert np.array_equal(got, want)
-    both.reset(0.6, 3.0, scene.start[2], math.pi)
-    parts = set()
-    for _ in range(100):
-        both.tick(FORWARD)
-        parts |= {c.part for c in both.contacts()}
-    assert "lidar" in parts
+    for got, want in zip(both.odom_velocity(), both.robot.base_velocity(), strict=True):
+        assert np.array_equal(got, want)
+    rear_on_the_wall = (-float(rear.mount_xyz[0]), 3.0, scene.start[2], 0.0)
+    both.reset(*rear_on_the_wall)
+    assert Contact("lidar", "wall") in both.contacts()
+    sim.reset(*rear_on_the_wall)
+    assert Contact("lidar", "wall") not in sim.contacts()
 
 
 def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene: Scene) -> None:
@@ -215,30 +229,44 @@ def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene:
         world.stop()
 
 
-def test_a_waiting_world_publishes_nothing_until_a_scene_is_loaded_and_then_swaps_scenes() -> None:
-    world = SimGo2World(wait_for_scene=True)
-    world.cmd_vel.transport = LCMTransport("/test_go2_sim_world_wait/cmd_vel", Twist)
+def test_a_waiting_world_is_silent_until_it_loads_its_one_scene(
+    waiting_world: SimGo2World,
+) -> None:
     poses: list[PoseStamped] = []
     drawn: list[LineSegments3D] = []
-    world.ground_truth.subscribe(poses.append)
-    world.scene.subscribe(drawn.append)
-    world.start()
-    try:
-        time.sleep(1.0)
-        assert not poses and not drawn
-        world.load_scene("office", 2, {})
-        deadline = time.monotonic() + 10.0
-        while not poses and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert len(drawn[-1].segments) == len(scene_edges(office(2)))
-        world.load_scene("office", 3, {})
-        while (
-            len(drawn[-1].segments) != len(scene_edges(office(3))) and time.monotonic() < deadline
-        ):
-            time.sleep(0.05)
-        assert len(drawn[-1].segments) == len(scene_edges(office(3)))
-    finally:
-        world.stop()
+    waiting_world.ground_truth.subscribe(poses.append)
+    waiting_world.scene.subscribe(drawn.append)
+    waiting_world.start()
+    time.sleep(1.0)
+    assert not poses and not drawn
+    assert waiting_world.shape() == SHAPE
+    waiting_world.load_scene("office", 2, {})
+    deadline = time.monotonic() + 10.0
+    while not drawn and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(drawn[0].segments) == len(scene_edges(office(2)))
+    with pytest.raises(RuntimeError, match="already runs a scene"):
+        waiting_world.load_scene("office", 3, {})
+
+
+def test_the_world_publishes_its_premap_and_exports_its_robot(
+    waiting_world: SimGo2World, tmp_path: Path
+) -> None:
+    maps: list[PointCloud2] = []
+    waiting_world.loaded_map.subscribe(maps.append)
+    waiting_world.start()
+    params = {"block_height": 0.4}
+    waiting_world.load_scene("block", 1, params)
+    scene = block(1, **params)
+    x, y, z0 = (scene.params[k] for k in ("block_x", "block_y", "z0"))
+    walk = np.array([[x - 2.0, y, z0], [x - 1.0, y, z0]])
+    for objects, seen in ((True, scene), (False, without_objects(scene))):
+        count = waiting_world.publish_premap(walk, objects)
+        assert maps[-1].frame_id == "odom" and len(maps[-1].points_f32()) == count
+        assert np.array_equal(maps[-1].points_f32(), premap_cloud(seen, GO2, walk))
+    robot = tmp_path / "robot.xml"
+    waiting_world.export_model(robot)
+    assert robot.read_text() == display_xml(GO2)
 
 
 def test_scene_edges_cover_every_box(scene: Scene) -> None:

@@ -351,7 +351,6 @@ all_modules = {
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",
-    "sim-world": "dimos.simulation.sim_world.world.SimWorld",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",

@@ -100,6 +100,7 @@ class SimGo2World(SimWorld):
     """A generated scene with the legged Go2 and its simulated Mid-360, paced to the wall clock."""
 
     config: SimGo2WorldConfig
+    rig = GO2
 
     @rpc
     def start(self) -> None:
@@ -107,4 +108,4 @@ class SimGo2World(SimWorld):
         super().start()
 
     def _build(self, scene: Scene, seed: int) -> Sim:
-        return Sim(scene, seed, GO2, partial(LeggedGo2, policy=self._policy))
+        return Sim(scene, seed, self.rig, partial(LeggedGo2, policy=self._policy))

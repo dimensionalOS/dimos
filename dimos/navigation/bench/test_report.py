@@ -264,12 +264,13 @@ def test_labels_of_levels_too_close_to_read_go_on_a_second_line(tmp_path: Path) 
 
 
 def test_report_leaves_out_cases_whose_control_never_met_the_feature(tmp_path: Path) -> None:
-    nearest = {1: (0.05, True), 2: (0.40, False), 3: (0.10, True)}
+    nearest = {1: (0.05, True), 2: (0.40, False), 3: (0.10, None)}
     cases, results = [], []
     for seed, (feature_m, met) in nearest.items():
         control = _case(f"leg-s{seed}-ctl", "leg", 0.5, Level("leg_width", 0.0, control=True), seed)
         cases.append(control)
-        results.append(_result(control, "success", feature_m=feature_m, feature_met=met))
+        flag = {} if met is None else {"feature_met": met}
+        results.append(_result(control, "success", feature_m=feature_m, **flag))
         for value in (0.02, 0.08):
             case = _case(f"leg-s{seed}-{value}", "leg", 0.5, Level("leg_width", value), seed)
             cases.append(case)
