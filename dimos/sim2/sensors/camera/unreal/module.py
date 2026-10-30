@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
-import math
 from pathlib import Path
 import queue
 import tempfile
@@ -43,17 +42,17 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.messages import FrameMetadata, StateFrame
+from dimos.sim2.messages import FrameMetadata
+from dimos.sim2.physics import WorldState
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.camera.unreal.assets import (
     camera_parameters,
-    camera_pose,
     export_scene,
     geom_poses,
 )
 from dimos.sim2.sensors.camera.unreal.client import RenderedFrame, RendererProcess
-from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
+from dimos.sim2.visuals import VisualAttachment, VisualCamera, VisualScene
 from dimos.sim2.world.spec import SimulationSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -89,46 +88,34 @@ class UnrealCameraConfig(ModuleConfig):
 
 
 def camera_view(
-    reader: WorldReader, sensor: Camera, robot_id: str | None
+    visuals: VisualScene, state: WorldState, sensor: Camera, robot_id: str | None
 ) -> tuple[dict[str, Any], NDArray[np.float64], NDArray[np.float64]]:
-    """Resolve the existing camera or mount into calibration and optical TF."""
-    prefix = reader.model_prefix(robot_id)
+    """Resolve a named camera or mount from neutral body poses and local frames."""
+    prefix = f"{robot_id}/" if robot_id is not None else ""
     if isinstance(sensor.camera, str):
-        index = reader.model.camera(prefix + sensor.camera).id
-        calibration = camera_parameters(
-            reader.model, reader.data, index, sensor.width, sensor.height
-        )
-        position = reader.data.cam_xpos[index].copy()
-        rotation = reader.data.cam_xmat[index].reshape(3, 3).copy()
+        camera = visuals.cameras[prefix + sensor.camera]
     else:
         mount: Mount = sensor.camera
-        if robot_id is None and mount.link == "world":
-            origin = np.zeros(3)
-            parent = np.eye(3)
+        name = prefix + mount.link
+        if mount.link == "world" and robot_id is None:
+            parent = VisualAttachment("world")
+        elif name in state.bodies:
+            parent = VisualAttachment(name)
         else:
-            name = prefix + mount.link
-            try:
-                index = reader.model.body(name).id
-                origin = reader.data.xpos[index]
-                parent = reader.data.xmat[index].reshape(3, 3)
-            except KeyError:
-                index = reader.model.site(name).id
-                origin = reader.data.site_xpos[index]
-                parent = reader.data.site_xmat[index].reshape(3, 3)
-        position = origin + parent @ np.asarray(mount.xyz)
-        rotation = parent @ Rotation.from_euler("xyz", mount.rpy).as_matrix()
-        focal = sensor.height / (2 * math.tan(math.radians(sensor.fovy or 60.0) / 2))
-        calibration = {
-            **camera_pose(position, rotation),
-            "width": sensor.width,
-            "height": sensor.height,
-            "fx": focal,
-            "fy": focal,
-            "cx": (sensor.width - 1) / 2,
-            "cy": (sensor.height - 1) / 2,
-        }
-    optical = Rotation.from_matrix(rotation @ np.diag([1, -1, -1])).as_quat()
-    return calibration, position, optical
+            parent = visuals.frames[name]
+        parent_rotation = Rotation.from_quat(parent.orientation)
+        local_position = np.asarray(parent.position) + parent_rotation.apply(mount.xyz)
+        # Mount preserves the authored camera convention: -Z forward, +Y up.
+        local_rotation = (
+            parent_rotation
+            * Rotation.from_euler("xyz", mount.rpy)
+            * Rotation.from_euler("x", np.pi)
+        )
+        camera = VisualCamera(
+            VisualAttachment(parent.body, tuple(local_position), tuple(local_rotation.as_quat())),
+            sensor.fovy or 60.0,
+        )
+    return camera_parameters(camera, state, sensor.width, sensor.height)
 
 
 def frame_messages(
@@ -173,7 +160,7 @@ class UnrealCameraModule(Module):
     config: UnrealCameraConfig
     dedicated_worker = True
     _simulation: SimulationSpec
-    snapshots: In[StateFrame]
+    world_state: In[WorldState]
     color_image: Out[Image]
     depth_image: Out[Image]
     camera_info: Out[CameraInfo]
@@ -194,13 +181,12 @@ class UnrealCameraModule(Module):
             "discarded": 0,
             "error": None,
         }
-        self.reader: WorldReader
+        self._latest_state: WorldState | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.reader = WorldReader(self._simulation.describe())
-        self.register_disposable(Disposable(self.snapshots.subscribe(self._on_snapshot)))
+        self.register_disposable(Disposable(self.world_state.subscribe(self._on_state)))
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="unreal-camera", daemon=True)
         self._thread.start()
@@ -208,19 +194,28 @@ class UnrealCameraModule(Module):
         if error is not None:
             raise error
 
-    def _on_snapshot(self, snapshot: StateFrame) -> None:
+    def _on_state(self, state: WorldState) -> None:
         # Serialize reset notification with the final publication check.
         with self._lock:
-            self.reader.push(snapshot)
+            if (
+                self._latest_state is None
+                or state.metadata.sequence > self._latest_state.metadata.sequence
+            ):
+                self._latest_state = state
+
+    def _current_state(self) -> WorldState | None:
+        with self._lock:
+            return self._latest_state
 
     def _publish_frame(
         self,
-        metadata: FrameMetadata,
+        state: WorldState,
         rendered: RenderedFrame,
         calibration: dict[str, Any],
         position: NDArray[np.float64],
         optical: NDArray[np.float64],
     ) -> bool:
+        metadata = state.metadata
         frame_id = f"{self.config.robot_id or 'world'}/{self.config.sensor.name}_optical"
         color, depth, info, transforms = frame_messages(
             rendered,
@@ -230,7 +225,13 @@ class UnrealCameraModule(Module):
             frame_id,
         )
         with self._lock:
-            if self._stop.is_set() or self.reader.latest_episode != metadata.episode_id:
+            latest = self._latest_state
+            if (
+                self._stop.is_set()
+                or latest is None
+                or latest.metadata.episode_id != metadata.episode_id
+                or latest.scene_revision != state.scene_revision
+            ):
                 self._status["discarded"] += 1
                 return False
             self.color_image.publish(color)
@@ -272,24 +273,31 @@ class UnrealCameraModule(Module):
             ):
                 with self._lock:
                     self._status["running"] = True
-                model: Any = None
+                visuals: VisualScene | None = None
                 episode = -1
-                geom_ids: list[int] = []
                 last_tick = -1
                 sensor = self.config.sensor
                 while not self._stop.is_set():
                     started = time.monotonic()
-                    if not self.reader.update():
+                    state = self._current_state()
+                    if state is None:
                         self._stop.wait(0.005)
                         continue
-                    while self.reader.model is not model and not self._stop.is_set():
-                        manifest = export_scene(self.reader.model, self.reader.data)
+                    while (
+                        visuals is None or state.scene_revision != visuals.revision
+                    ) and not self._stop.is_set():
+                        description = self._simulation.describe_visuals()
+                        latest = self._current_state()
+                        if latest is None or latest.scene_revision != description.revision:
+                            self._stop.wait(0.005)
+                            state = latest or state
+                            continue
+                        state = latest
+                        manifest = export_scene(description, state)
                         path = Path(directory) / "scene.json"
                         path.write_text(
                             json.dumps(manifest, allow_nan=False, separators=(",", ":"))
                         )
-                        # Initial asset setup shares the process startup budget;
-                        # later model reloads get a fresh setup budget.
                         load_timeout = (
                             self.config.startup_timeout
                             if ready
@@ -298,18 +306,18 @@ class UnrealCameraModule(Module):
                         if load_timeout <= 0:
                             raise TimeoutError("Unreal asset setup exceeded the startup deadline")
                         client.load(path, timeout=load_timeout)
-                        geom_ids = [geom["id"] for geom in manifest["geoms"]]
-                        model = self.reader.model
+                        visuals = description
                         with self._lock:
-                            self._status.update(geoms=len(geom_ids), meshes=len(manifest["meshes"]))
-                        # Loading native assets may compile shaders. Capture the
-                        # newest state after that wait, including a paused/reset
-                        # state; reload again if a new model arrived meanwhile.
-                        self.reader.update()
+                            self._status.update(
+                                geoms=len(visuals.geometries), meshes=len(visuals.meshes)
+                            )
+                        # Native asset setup may wait for shaders. Always acquire the
+                        # newest body state after that wait, including paused/reset poses.
+                        state = self._current_state() or state
                     if self._stop.is_set():
                         break
-                    metadata = self.reader.metadata
-                    assert metadata is not None
+                    assert visuals is not None
+                    metadata = state.metadata
                     if episode != metadata.episode_id:
                         client.reset(metadata.episode_id)
                         episode = metadata.episode_id
@@ -318,7 +326,7 @@ class UnrealCameraModule(Module):
                         self._stop.wait(0.005)
                         continue
                     calibration, position, optical = camera_view(
-                        self.reader, sensor, self.config.robot_id
+                        visuals, state, sensor, self.config.robot_id
                     )
                     rendered = client.capture(
                         {
@@ -326,21 +334,18 @@ class UnrealCameraModule(Module):
                             "sequence": metadata.sequence,
                             "physics_tick": metadata.physics_tick,
                             "sim_time": metadata.sim_time,
-                            "timestamp": self.reader.timestamp,
-                            "poses": geom_poses(self.reader.data, geom_ids),
+                            "timestamp": state.wall_time,
+                            "poses": geom_poses(visuals, state),
                             "camera": calibration,
                         }
                     )
                     last_tick = metadata.physics_tick
-                    # Reset can arrive while GPU work is in flight. That response
-                    # is valid for its old snapshot, but must never reach the new run.
-                    published = self._publish_frame(
-                        metadata, rendered, calibration, position, optical
-                    )
+                    published = self._publish_frame(state, rendered, calibration, position, optical)
                     if published and not ready:
                         self._ready.put(None)
                         ready = True
                     self._stop.wait(max(0.0, 1 / sensor.rate_hz - (time.monotonic() - started)))
+
         except Exception as error:
             if not self._stop.is_set():
                 with self._lock:

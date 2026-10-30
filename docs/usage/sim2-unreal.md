@@ -1,25 +1,25 @@
 # Unreal cameras for sim2
 
-One running world owns physics. One native Unreal process renders its snapshots.
+One running world owns physics. One native Unreal process renders its body poses.
 
 ```text
-existing robot connection <-> robosuite / MuJoCo
-                                  |
-                         compiled model + poses
-                                  |
-                         UnrealCameraModule
-                                  |
-                      native Unreal application
-                                  |
-                      RGB + axial depth in metres
+G1Connection <-> SimRobotClient <-> SimulationModule <-> MuJoCo / Genesis
+                                         |
+                               WorldState + VisualScene
+                                         |
+                                UnrealCameraModule
+                                         |
+                              native Unreal application
+                                         |
+                             RGB + axial depth in metres
 ```
 
-The renderer imports the **compiled model already used by physics**. Adding a
-robot does not require an Unreal robot class, a second joint definition, or
-hand-placed meshes. Unreal never advances the robot or performs collisions.
-Environment visuals can also reference native Unreal assets: generated MJCF
-contains their physics shapes, placements and asset bindings, while Unreal
-retains the assets' opaque materials and textures.
+The renderer receives static visual assets and named body poses. Asset import
+happens once per scene revision; each frame uses neutral `WorldState`, without
+loading a physics checkpoint or reconstructing an engine state. Adding a robot
+does not require an Unreal robot class or a second joint definition. Unreal does
+not advance physics. Native Unreal assets retain their opaque materials/textures;
+source MJCF supplies collision geometry and visual bindings.
 
 The Python camera worker, protocol client and geometry conversion live under
 `dimos/sim2/sensors/camera/unreal`. The native Unreal project lives separately at
@@ -30,17 +30,16 @@ physics geometry and visual bindings; it is not part of camera acquisition.
 ## Where the world attaches
 
 The G1 blueprint declares `G1Connection` once. With
-`--simulation mujoco`, `ModuleCoordinator.build` calls `attach_simulation` after
+`--simulation mujoco` or `--simulation genesis`, `ModuleCoordinator.build` calls `attach_simulation` after
 resolving CLI settings. It reads `G1Connection.describe_simulated_robot`, adds
 the shared `SimulationModule`, and supplies a simulation device to the retained
 connection. The camera is an additional module: its `SimulationSpec` reference
-and `snapshots` input connect to that world through normal blueprint wiring.
+and `world_state` input connect to that world through normal blueprint wiring.
 Adding `UnrealCameraModule` does not create another simulation.
 
-The `g1_groot_wbc_simulation_profile()` helper only returns the G1 control and
-navigation stack without a viewer and requires the simulation operating profile.
-The world still attaches at build time. See
-[attach_simulation](/dimos/sim2/composition.py) and the
+The control-only G1 blueprints work with either engine. The full navigation
+profile currently needs MuJoCo's camera/lidar acquisition. The world attaches
+at build time in both cases. See [attachment](/dimos/sim2/composition.py) and the
 [connection binding](/dimos/robot/unitree/g1/connection.py).
 
 ## Build on macOS
@@ -128,6 +127,19 @@ CLI, with Desktop and the CLI using the same state directory:
   "$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
 ```
 
+For Genesis, install the separate environment described in
+[sim2](/docs/usage/sim2.md), then use the control-only profile:
+
+```bash
+.venv-genesis/bin/dimos --simulation genesis --transport zenoh \
+  run unitree-g1-groot-control-unreal \
+  --unrealcameramodule.executable \
+  "$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacOS/DimosRenderer"
+```
+
+`unitree-g1-control-unreal` uses the stock locomotion policy instead of GR00T.
+Both control-only variants also work with MuJoCo. They omit lidar and navigation.
+
 The executable can also be supplied through `UNREALCAMERAMODULE__EXECUTABLE`.
 Desktop discovers its state and camera topics on the standard Zenoh domain.
 Use Desktop's Stop control, or `dimos stop` from the same state directory, to
@@ -175,6 +187,17 @@ renderer="$HOME/.cache/dimos/unreal-renderer/Mac/DimosRenderer.app/Contents/MacO
   --output /tmp/dimos-g1-unreal
 ```
 
+For the same control/RGB-D/reset proof with Genesis:
+
+```bash
+.venv-genesis/bin/python -m dimos.robot.unitree.g1.demo_unreal \
+  --engine genesis --control-only --executable "$renderer" --walk --reset \
+  --output /tmp/dimos-g1-genesis-unreal
+```
+
+The control-only check validates RGB-D, movement, the retained connection and
+reset; it does not claim to validate uncomposed lidar/navigation modules.
+
 This is a 30-second headless validation, not an interactive viewer. Ctrl-C saves
 the report and shuts down the renderer and robot stack. `--seconds 0` keeps the
 headless validation running until stopped.
@@ -214,7 +237,7 @@ hardware-independent throughput guarantee. The calibrated 5 m plane read
   newest available snapshot; slow rendering does not create an image backlog.
 - RGB, depth, calibration and TF describe the same snapshot and carry its
   acquisition timestamp. Delivery time is measured separately.
-- Reset reloads the compiled model and scene when needed. A capture from an old
+- Reset reloads visual assets when the scene revision changes. A capture from an old
   episode is discarded if reset arrives before publication.
 - Shutdown cancels pending I/O and reaps only the renderer process this module
   started. No fixed network port or external server is required.

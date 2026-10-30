@@ -16,7 +16,10 @@
 
 from dataclasses import replace
 from functools import partial
+import json
 from pathlib import Path
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 import mujoco
@@ -218,6 +221,72 @@ def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
     assert [(owner, sensor.name) for owner, sensor in world.kwargs["sensors"]] == [("g1", "mid360")]
 
 
+@pytest.mark.parametrize("engine", ["", "mujoco", "genesis"])
+def test_control_only_blueprints_keep_hardware_arming_and_reject_unsupported_navigation(engine):
+    # Operating profiles are selected at import. A fresh interpreter preserves
+    # that real startup boundary without leaking module/global config state.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import json
+import sys
+from importlib import import_module
+from dimos.core.global_config import global_config
+global_config.simulation = sys.argv[1]
+groot = import_module('dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc')
+stock = import_module('dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic')
+unreal = import_module('dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_unreal')
+coordinator = next(atom for atom in groot.unitree_g1_groot_control.active_blueprints
+                   if atom.name == 'ControlCoordinator')
+policy = next(task for task in coordinator.kwargs['tasks'] if task.name == 'groot_wbc')
+print(json.dumps({
+    'groot_modules': [atom.module.__name__ for atom in groot.unitree_g1_groot_control.active_blueprints],
+    'stock_modules': [atom.module.__name__ for atom in stock.unitree_g1_control.active_blueprints],
+    'tick_rate': coordinator.kwargs['tick_rate'],
+    'auto_arm': policy.params['auto_arm'],
+    'dry_run': policy.params['auto_dry_run'],
+    'ramp': policy.params['default_ramp_seconds'],
+    'groot_navigation_rejected': any(check() for check in groot.unitree_g1_groot_wbc.requirement_checks),
+    'stock_navigation_rejected': any(check() for check in stock.unitree_g1_basic.requirement_checks),
+    'groot_unreal_modules': [atom.module.__name__ for atom in unreal.unitree_g1_groot_control_unreal.active_blueprints],
+    'stock_unreal_modules': [atom.module.__name__ for atom in unreal.unitree_g1_control_unreal.active_blueprints],
+    'groot_unreal_requires_simulation': any(check() for check in unreal.unitree_g1_groot_control_unreal.requirement_checks),
+    'stock_unreal_requires_simulation': any(check() for check in unreal.unitree_g1_control_unreal.requirement_checks),
+}))
+""",
+            engine,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    profile = json.loads(result.stdout.splitlines()[-1])
+
+    assert profile["groot_modules"] == ["G1Connection", "_G1GrootCoordinator"]
+    assert profile["stock_modules"] == ["G1Connection", "UnitreeG1SkillContainer"]
+    assert profile["tick_rate"] == (50 if engine else 100)
+    assert profile["auto_arm"] is bool(engine)
+    assert profile["dry_run"] is (not engine)
+    assert profile["ramp"] == (0 if engine else 10)
+    assert profile["groot_navigation_rejected"] is (engine == "genesis")
+    assert profile["stock_navigation_rejected"] is (engine == "genesis")
+    assert profile["groot_unreal_modules"] == [
+        "G1Connection",
+        "_G1GrootCoordinator",
+        "UnrealCameraModule",
+    ]
+    assert profile["stock_unreal_modules"] == [
+        "G1Connection",
+        "UnitreeG1SkillContainer",
+        "UnrealCameraModule",
+    ]
+    assert profile["groot_unreal_requires_simulation"] is (not engine)
+    assert profile["stock_unreal_requires_simulation"] is (not engine)
+
+
 @pytest.mark.self_hosted
 def test_compiled_robot_preserves_the_native_mjcf_physics_and_control_imu(instance):
     path = Path(__file__).parent / "assets" / "g1_29dof.xml"
@@ -279,7 +348,7 @@ def test_g1_commands_and_coherent_feedback_through_the_upstream_environment(
         assert joints.frame_id == imu.frame_id == "g1_pelvis"
         assert joints.ts == imu.ts == odom.ts
         assert np.isfinite(joints.position).all()
-        assert world.data.time == pytest.approx(0.005)
+        assert world.sim_time == pytest.approx(0.005)
 
 
 @pytest.mark.self_hosted
@@ -345,11 +414,11 @@ def test_stock_model_preserves_native_position_servo_physics(scene):
             "actuator_ctrlrange",
         ):
             np.testing.assert_allclose(
-                getattr(world.model, field), getattr(native, field), err_msg=field
+                getattr(world.backend.model, field), getattr(native, field), err_msg=field
             )
-        assert world.model.nu == 29
-        assert world.data.qpos[:3] == pytest.approx([0, 0, 0.755])
-        assert world.robots["g1"].controller.position_servo.all()
+        assert world.backend.model.nu == 29
+        assert world.backend.data.qpos[:3] == pytest.approx([0, 0, 0.755])
+        assert world.backend.robot_controller("g1").position_servo.all()
 
 
 @pytest.mark.self_hosted
@@ -359,25 +428,23 @@ def test_stock_velocity_policies_control_two_instances_and_reset_independently(s
     models = {robot.robot_id: model_factory(robot, scene) for robot in (left, right)}
     factory = partial(MotorScene, scene, models, timestep=0.002)
     with SimulationRuntime(factory, robots={"left": left, "right": right}) as world:
-        left_root = world.robots["left"].root
-        right_root = world.robots["right"].root
         for _ in range(2000):
             world.accept_velocity("left", Twist(linear=Vector3(0.3, 0, 0)))
             world.accept_velocity("right", Twist())
             world.step()
-        left_position = world.data.xpos[left_root].copy()
-        right_position = world.data.xpos[right_root].copy()
+        left_position = world.last_state.robots["left"].base.position
+        right_position = world.last_state.robots["right"].base.position
         assert left_position[0] > right_position[0] + 0.4
         assert left_position[2] > 0.6
         assert right_position[2] > 0.6
 
         world.reset()
-        assert world.data.xpos[left_root] == pytest.approx([0, 0, 0.755])
-        assert world.data.xpos[right_root] == pytest.approx([0, 2, 0.755])
+        assert world.last_state.robots["left"].base.position == pytest.approx([0, 0, 0.755])
+        assert world.last_state.robots["right"].base.position == pytest.approx([0, 2, 0.755])
         # Both histories restart at their authored home before the first policy tick.
         world.step()
         for robot in (left, right):
-            binding = world.robots[robot.robot_id]
-            assert world.data.ctrl[binding.controller.actuators] == pytest.approx(
-                world.base_environment.robot_models[robot.robot_id].init_qpos
+            controller = world.backend.robot_controller(robot.robot_id)
+            assert world.backend.data.ctrl[controller.actuators] == pytest.approx(
+                world.backend.base_environment.robot_models[robot.robot_id].init_qpos
             )

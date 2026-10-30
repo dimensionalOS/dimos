@@ -23,11 +23,11 @@ from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
+from dimos.sim2.backends.factory import create_backend
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.device import SimulatedDeviceFactory
-from dimos.sim2.environment import MotorScene
-from dimos.sim2.model import model_factory
 from dimos.sim2.module import FEEDBACK_PORTS, PORT_KINDS, SimulationModule
+from dimos.sim2.physics import WorldState
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.module import SensorModule
@@ -68,6 +68,11 @@ def attach_simulation(
     if len(world_atoms) > 1:
         raise ValueError("automatic robot collection requires one shared simulation module")
     explicit_sensors = [a for a in atoms if issubclass(a.module, SensorModule | ObservationModule)]
+    state_consumers = [
+        atom
+        for atom in atoms
+        if any(stream.direction == "in" and stream.type is WorldState for stream in atom.streams)
+    ]
     robots: dict[str, RobotInstanceSpec] = {}
     owners: dict[str, str] = {}
     kwargs = {name: dict(values) for name, values in module_kwargs.items()}
@@ -134,19 +139,27 @@ def attach_simulation(
         robot_id = _sensor_owner(atom, resolved.robot_id, owners)
         sensors.append((robot_id, resolved.sensor))
         kwargs.setdefault(atom.name, {})["robot_id"] = robot_id
+    for atom in state_consumers:
+        if "robot_id" in module_config_cls(atom).model_fields:
+            resolved = _resolved(atom, kwargs, config)
+            kwargs.setdefault(atom.name, {})["robot_id"] = (
+                None
+                if resolved.robot_id is None
+                else _sensor_owner(atom, resolved.robot_id, owners)
+            )
     sensor_keys = [(owner, sensor.name) for owner, sensor in sensors]
     if len(sensor_keys) != len(set(sensor_keys)):
         raise ValueError("sensor names must be unique within each robot instance")
 
-    environment = partial(
-        MotorScene,
+    backend = partial(
+        create_backend,
+        name=config.simulation,
+        robots=robots,
         scene=scene,
-        models={name: model_factory(robot, scene) for name, robot in robots.items()},
         sensors=tuple(sensors),
-        timestep=min(robot.timestep for robot in robots.values()),
     )
     generated = simulation(
-        environment=environment,
+        backend=backend,
         robots=robots,
         sensors=tuple(replacements),
         names=names,
@@ -164,19 +177,21 @@ def attach_simulation(
                 "a manually supplied world uses collected robot/sensor descriptions; "
                 "do not also configure robots, robot_topics or sensors on it"
             )
+        backend = partial(backend, snapshot_hz=world_config.snapshot_hz)
         kwargs.setdefault(world.name, {}).update(
-            environment=world_config.environment or environment,
+            backend=world_config.backend or (None if world_config.environment else backend),
             robots=robots,
             robot_topics=robot_topics,
             sensors=tuple(sensors),
         )
         added = generated.blueprints[1:]
         snapshot_topics = {
-            port: _effective(blueprint, world, port) for port in ("snapshots", "observations")
+            port: _effective(blueprint, world, port)
+            for port in ("snapshots", "observations", "world_state")
         }
     else:
         added = (generated_world, *generated.blueprints[1:])
-        snapshot_topics = {port: port for port in ("snapshots", "observations")}
+        snapshot_topics = {port: port for port in ("snapshots", "observations", "world_state")}
     swapped = {a.name: a for a in replaced_sensors}
     _check_module_refs(blueprint, swapped)
     kept = [a for a in blueprint.blueprints if a.name not in swapped]
@@ -186,6 +201,10 @@ def attach_simulation(
         for stream in atom.streams:
             if stream.direction == "in" and stream.name in snapshot_topics:
                 remaps[atom.name, stream.name] = snapshot_topics[stream.name]
+    for atom in state_consumers:
+        for stream in atom.streams:
+            if stream.direction == "in" and stream.type is WorldState:
+                remaps[atom.name, stream.name] = snapshot_topics["world_state"]
     for atom in replaced_sensors:
         replacement = next(a for a in generated.blueprints if a.name == atom.name)
         driver_ports = {s.name for s in atom.streams}

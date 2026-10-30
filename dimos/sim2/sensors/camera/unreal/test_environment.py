@@ -20,7 +20,11 @@ import xml.etree.ElementTree as ET
 
 import mujoco
 
+from dimos.sim2.backends.mjcf_visuals import load_visuals
+from dimos.sim2.backends.mujoco import read_body_states
 from dimos.sim2.environment import MotorScene
+from dimos.sim2.messages import FrameMetadata
+from dimos.sim2.physics import WorldState
 from dimos.sim2.sensors.camera.unreal.assets import export_scene
 
 
@@ -53,7 +57,12 @@ def test_motor_scene_preserves_custom_native_assets_and_other_authored_metadata(
         model = environment.model.get_model()
         data = mujoco.MjData(model)
         mujoco.mj_forward(model, data)
-        scene = export_scene(model, data)
+        body_names = {i: model.body(i).name or f"body_{i}" for i in range(model.nbody)}
+        visuals = load_visuals(model, body_names, str, 0)
+        state = WorldState(
+            FrameMetadata(0, 0, 0, data.time), read_body_states(model, data, body_names), {}, {}
+        )
+        scene = export_scene(visuals, state)
 
         label = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_TEXT, "authored_label")
         start, size = model.text_adr[label], model.text_size[label]

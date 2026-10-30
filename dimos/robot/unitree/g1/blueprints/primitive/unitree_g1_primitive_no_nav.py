@@ -37,7 +37,7 @@ def _create_webcam() -> Webcam:
 
 # Stock simulation uses the camera authored in its model and an ideal scan.
 # These are sensor workers attached to the collected world, not a second sim.
-if global_config.simulation == "mujoco":
+if global_config.simulation:
     # Simulation packages are optional for stock hardware deployments.
     from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
     from dimos.sim2.sensors.camera.spec import Camera
@@ -69,9 +69,22 @@ else:
     )
 
 
-unitree_g1_primitive_no_nav = autoconnect(
-    _sensors,
-    VoxelGridMapper.blueprint(),
-    CostMapper.blueprint(),
-    WavefrontFrontierExplorer.blueprint(),
-).global_config(n_workers=4, robot_model="unitree_g1", viewer="none")
+def _require_sensor_backend() -> str | None:
+    if global_config.simulation == "genesis":
+        return (
+            "Genesis does not yet implement the stock camera/lidar workers; "
+            "run unitree-g1-control, or use --simulation mujoco for navigation."
+        )
+    return None
+
+
+unitree_g1_primitive_no_nav = (
+    autoconnect(
+        _sensors,
+        VoxelGridMapper.blueprint(),
+        CostMapper.blueprint(),
+        WavefrontFrontierExplorer.blueprint(),
+    )
+    .global_config(n_workers=4, robot_model="unitree_g1", viewer="none")
+    .requirements(_require_sensor_backend)
+)

@@ -24,7 +24,34 @@ import pytest
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.sensors.camera.unreal.assets import camera_parameters, export_scene, geom_poses
+from dimos.sim2.backends.mjcf_visuals import load_visuals
+from dimos.sim2.backends.mujoco import read_body_states
+from dimos.sim2.messages import FrameMetadata
+from dimos.sim2.physics import WorldState
+from dimos.sim2.sensors.camera.unreal import assets
+
+
+def _visuals(model, data, **kwargs):
+    names = {i: model.body(i).name or f"body_{i}" for i in range(model.nbody)}
+    return (
+        load_visuals(model, names, str, 0, **kwargs),
+        WorldState(FrameMetadata(0, 0, 0, data.time), read_body_states(model, data, names), {}, {}),
+    )
+
+
+def export_scene(model, data, **kwargs):
+    return assets.export_scene(*_visuals(model, data, **kwargs))
+
+
+def geom_poses(model, data, indices):
+    return assets.geom_poses(*_visuals(model, data), indices)
+
+
+def camera_parameters(model, data, camera_id, width, height):
+    visuals, state = _visuals(model, data)
+    return assets.camera_parameters(
+        visuals.cameras[model.camera(camera_id).name or f"camera_{camera_id}"], state, width, height
+    )[0]
 
 
 def _compiled(xml):
@@ -87,7 +114,7 @@ def test_native_assets_replace_markers_and_follow_static_and_dynamic_poses():
 
     data.qpos[:3] += [1, 2, 3]
     mujoco.mj_forward(model, data)
-    static_pose, dynamic_pose = geom_poses(data, [shelf["id"], moving["id"]])
+    static_pose, dynamic_pose = geom_poses(model, data, [shelf["id"], moving["id"]])
     assert_allclose(static_pose["position"], shelf["position"])
     assert_allclose(dynamic_pose["position"], [100, -300, 500])
 
@@ -239,7 +266,7 @@ def test_shared_mesh_has_independent_poses_and_export_never_steps_physics():
 
     data.qpos[:3] += [1, 2, 3]
     mujoco.mj_forward(model, data)
-    poses = geom_poses(data, [0, 1])
+    poses = geom_poses(model, data, [0, 1])
     assert_allclose(poses[0]["position"], scene["geoms"][0]["position"])
     assert_allclose(
         np.array(poses[1]["position"]) - scene["geoms"][1]["position"], [100, -200, 300]
@@ -282,17 +309,17 @@ def test_visibility_and_material_colors_follow_authored_scene():
             <geom type="sphere" size=".1" material="red" rgba="0 1 0 1"/>
             <geom type="sphere" size=".1" rgba="0 0 1 0"/>
             <geom type="sphere" size=".1" group="5"/>
+            <geom type="sphere" size=".1" group="3" rgba=".2 .6 .2 .3"/>
           </worldbody>
         </mujoco>
     """)
     scene = export_scene(model, data)
-    assert [geom["id"] for geom in scene["geoms"]] == [0, 1, 3]
+    assert [geom["id"] for geom in scene["geoms"]] == [0, 1]
     assert [geom["rgba"] for geom in scene["geoms"]] == [
         [1, 0, 0, 1],
         [0, 1, 0, 1],
-        [0.5, 0.5, 0.5, 1],
     ]
-    assert [geom["roughness"] for geom in scene["geoms"]] == [0.25, 0.25, 0.6]
+    assert [geom["roughness"] for geom in scene["geoms"]] == [0.25, 0.25]
     assert [geom["id"] for geom in export_scene(model, data, geom_groups=(5,))["geoms"]] == [3]
 
 

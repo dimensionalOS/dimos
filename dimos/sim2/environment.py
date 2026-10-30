@@ -23,7 +23,6 @@ through SimulationModule directly, using their own actions and observations.
 from __future__ import annotations
 
 from collections.abc import Callable
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -32,18 +31,18 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 from robosuite.models.robots.robot_model import RobotModel
-from robosuite.models.tasks.task import Task
 from robosuite.utils.mjcf_utils import array_to_string
 from robosuite.utils.observables import Observable
 from scipy.spatial.transform import Rotation
 
 from dimos.sim2.arena import AuthoredArena
+from dimos.sim2.backends.assets import assemble_mjcf
+from dimos.sim2.backends.mujoco_observations import create_observables
 from dimos.sim2.control import MotorController
 from dimos.sim2.rendering import NativeRendering
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.composition import Sensor, mounted_sensors
 from dimos.sim2.sensors.imu.spec import Imu
-from dimos.sim2.sensors.observations import create_observables
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.world.scene import describe_scene
 
@@ -120,6 +119,7 @@ class MotorScene(NativeRendering):
         self.physics_timestep = timestep
         self.robot_models: dict[str, RobotModel] = {}
         self.controllers: dict[str, MotorController] = {}
+        self.last_actuator_effort: NDArray[np.float64] | None = None
         self.description = describe_scene(scene)
         super().__init__(
             control_freq=1 / timestep,
@@ -143,30 +143,15 @@ class MotorScene(NativeRendering):
                 model.naming_prefix,
             )
         attach_sensors(arena, tuple(s for owner, s in self.sensor_bindings if owner is None), "")
-        self.model = Task(arena, list(self.robot_models.values()))
-        # Task merges physical model sections but drops authored custom metadata.
-        authored_custom = arena.root.find("custom")
-        if authored_custom is not None:
-            custom = self.model.root.find("custom")
-            if custom is None:
-                self.model.root.append(deepcopy(authored_custom))
-            else:
-                custom.extend(deepcopy(list(authored_custom)))
+        self.model = assemble_mjcf(
+            arena, self.robot_models, hidden_geom_groups=self.description.hidden_geom_groups
+        )
         option = self.model.root.find("option")
-        if option is None:
-            option = ET.SubElement(self.model.root, "option")
-        authored_option = arena.root.find("option")
-        if authored_option is not None:
-            option.attrib.update(authored_option.attrib)
+        assert option is not None
         option.set("timestep", str(self.physics_timestep))
         option.set("integrator", "implicitfast")
-        # Task uses its standard world defaults; retain the authored visual setup.
         visual = self.model.root.find("visual")
-        if visual is not None:
-            self.model.root.remove(visual)
-        authored_visual = arena.root.find("visual")
-        visual = deepcopy(authored_visual) if authored_visual is not None else ET.Element("visual")
-        self.model.root.append(visual)
+        assert visual is not None
         cameras = [s for _, s in self.sensor_bindings if isinstance(s, Camera)]
         if cameras:
             settings = visual.find("global")
@@ -174,11 +159,6 @@ class MotorScene(NativeRendering):
                 settings = ET.SubElement(visual, "global")
             settings.set("offwidth", str(max(640, *(s.width for s in cameras))))
             settings.set("offheight", str(max(480, *(s.height for s in cameras))))
-        for geom in self.model.worldbody.iter("geom"):
-            if int(geom.get("group", "0")) in self.description.hidden_geom_groups:
-                rgba = np.fromstring(geom.get("rgba", ".5 .5 .5 1"), sep=" ")
-                rgba[3] = 0
-                geom.set("rgba", array_to_string(rgba))
 
     def initialize_time(self, control_freq: float) -> None:
         super().initialize_time(control_freq)
@@ -255,6 +235,9 @@ class MotorScene(NativeRendering):
         return observables
 
     def _update_observables(self, force: bool = False) -> None:
+        # Capture the effort used by the completed integration before forward()
+        # recomputes native servo forces at the new joint positions.
+        self.last_actuator_effort = np.asarray(self.sim.data.qfrc_actuator).copy()
         # Refresh post-integration poses/sensors before labelling observations.
         self.sim.forward()
         super()._update_observables(force)

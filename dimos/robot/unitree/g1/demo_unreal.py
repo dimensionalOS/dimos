@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Validate G1/GR00T/Point-LIO and native Unreal RGB-D in a headless run.
+"""Validate G1/GR00T and native Unreal RGB-D through either physics engine.
 
+MuJoCo also includes Point-LIO navigation unless --control-only is selected.
+Genesis requires --control-only until its lidar sensor workers are available.
 Writes camera captures and a validation report to the output directory.
 
 Example:
     python -m dimos.robot.unitree.g1.demo_unreal --executable /path/to/DimosRenderer --walk --reset
+    python -m dimos.robot.unitree.g1.demo_unreal --engine genesis --control-only --executable /path/to/DimosRenderer --walk --reset
 """
 
 from __future__ import annotations
@@ -81,6 +84,10 @@ def observer_camera() -> Camera:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", required=True, type=Path)
+    parser.add_argument("--engine", choices=("mujoco", "genesis"), default="mujoco")
+    parser.add_argument(
+        "--control-only", action="store_true", help="Run GR00T and Unreal without lidar/navigation"
+    )
     parser.add_argument("--project", type=Path, help="Only needed when using UnrealEditor -game")
     parser.add_argument(
         "--scene", type=Path, help="Authored MJCF scene or exported scene directory"
@@ -99,6 +106,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.seconds != 0 and args.seconds < 10:
         parser.error("--seconds must be 0 (until Ctrl-C) or at least 10")
+    if args.engine == "genesis" and not args.control_only:
+        parser.error("--engine genesis requires --control-only; Genesis lidar is not implemented")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -106,13 +115,13 @@ def main() -> None:
     domain = f"unreal-g1-{uuid4().hex[:10]}"
     bucket = int(uuid4().hex[:4], 16) % 5000
     os.environ.update(
-        SIMULATION="mujoco",
+        SIMULATION=args.engine,
         VIEWER="none",
         ZENOH_DOMAIN=domain,
         ZENOH_SCOUT_ADDR=f"224.0.0.224:{37000 + bucket}",
         LCM_DEFAULT_URL=f"udpm://239.255.76.67:{27000 + bucket}?ttl=0",
     )
-    global_config.simulation = "mujoco"
+    global_config.simulation = args.engine
     global_config.viewer = "none"
     global_config.transport = "zenoh"
     global_config.zenoh_domain = domain
@@ -123,7 +132,7 @@ def main() -> None:
     g1 = import_module("dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc")
     sensor = observer_camera() if args.camera == "observer" else Camera("unreal", "front_camera")
     blueprint = autoconnect(
-        g1.unitree_g1_groot_wbc,
+        g1.unitree_g1_groot_control if args.control_only else g1.unitree_g1_groot_wbc,
         UnrealCameraModule.blueprint(
             executable=args.executable.resolve(),
             project=args.project.resolve() if args.project else None,
@@ -137,7 +146,7 @@ def main() -> None:
         [],
         environ={},
         global_overrides={
-            "simulation": "mujoco",
+            "simulation": args.engine,
             "viewer": "none",
             "transport": "zenoh",
             "zenoh_domain": domain,
@@ -176,15 +185,21 @@ def main() -> None:
                 frame_available.set()
 
     with ExitStack() as resources:
-        for name, kind in (
+        streams = [
             ("color_image", Image),
             ("depth_image", Image),
             ("camera_info", CameraInfo),
             ("frame_metadata", FrameMetadata),
-            ("odometry", Odometry),
-            ("lidar_raw", PointCloud2),
-            ("global_map", PointCloud2),
-        ):
+        ]
+        if not args.control_only:
+            streams.extend(
+                [
+                    ("odometry", Odometry),
+                    ("lidar_raw", PointCloud2),
+                    ("global_map", PointCloud2),
+                ]
+            )
+        for name, kind in streams:
             transport = make_transport(name, kind)
             transport.start()
             resources.callback(transport.stop)
@@ -199,7 +214,7 @@ def main() -> None:
         camera = app.get_instance(UnrealCameraModule)
         coordinator = app.get_instance("ControlCoordinator")
         connection = app.get_instance(g1.G1Connection)
-        lidar = app.get_instance("mid360")
+        lidar = None if args.control_only else app.get_instance("mid360")
         if not frame_available.wait(timeout=60):
             raise RuntimeError(f"No aligned RGB-D frame: {camera.renderer_status()}")
         print("First aligned RGB-D frame received; recording G1 run.", flush=True)
@@ -230,11 +245,24 @@ def main() -> None:
             velocity_commands.publish(Twist(linear=[velocity, 0, 0]))
             if args.reset and not reset_done and elapsed > reset_at:
                 world.set_paused(True)
+                # Quiesce the external motor producer before advancing epochs.
+                # The connection deadman confirms the last command has expired.
+                coordinator.set_estop(True)
+                coordinator.set_dry_run(True)
+                deadline = time.monotonic() + 5.0
+                while not connection.status().deadman_fired:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("G1 commands did not quiesce before reset")
+                    stopped.wait(0.01)
                 world.reset()
                 result = coordinator.reset_runtime_state(reactivate=True)
                 if not result or not all(result.values()):
                     raise RuntimeError(f"Controller reset failed: {result}")
+                # The world waits for a fresh command at its authored posture.
+                # Resume its new epoch before permitting the next motor packet.
                 world.set_paused(False)
+                coordinator.set_estop(False)
+                coordinator.set_dry_run(False)
                 reset_done = True
             if elapsed >= next_record:
                 state, render_state = world.status(), camera.renderer_status()
@@ -289,7 +317,6 @@ def main() -> None:
         final = world.status()
         connection_state = connection.status()
         render_state = camera.renderer_status()
-        lidar_state = lidar.sensor_status()
         duration = time.monotonic() - start
         with lock:
             final_counts = dict(counts)
@@ -303,15 +330,21 @@ def main() -> None:
             and not connection_state.deadman_fired
             and connection_state.last_error is None
             and connection_state.last_rejection is None,
-            "lidar_healthy": lidar_state.get("error") is None
-            and final_counts.get("lidar_raw", 0) > 0,
-            "odometry_received": final_counts.get("odometry", 0) > 0,
             "rgbd_received": render_state["frames"] > 0 and render_state["error"] is None,
             "epochs_monotonic": epoch_order_valid,
             "reset_observed": not args.reset or reset_observed,
             "walk_observed": not args.walk or displacement > 0.15,
         }
+        if lidar is not None:
+            lidar_state = lidar.sensor_status()
+            checks.update(
+                lidar_healthy=lidar_state.get("error") is None
+                and final_counts.get("lidar_raw", 0) > 0,
+                odometry_received=final_counts.get("odometry", 0) > 0,
+            )
         report = {
+            "engine": args.engine,
+            "profile": "control-only" if args.control_only else "navigation",
             "interrupted": stopped.is_set(),
             "checks": checks,
             "duration": duration,

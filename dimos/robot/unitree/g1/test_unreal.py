@@ -20,23 +20,35 @@ import pytest
 
 from dimos.robot.unitree.g1.connection import G1ConnectionConfig
 from dimos.robot.unitree.g1.model import describe_simulated_robot
+from dimos.sim2.backends.mjcf_visuals import load_visuals
+from dimos.sim2.backends.mujoco import read_body_states
 from dimos.sim2.environment import MotorScene
+from dimos.sim2.messages import FrameMetadata
 from dimos.sim2.model import model_factory
+from dimos.sim2.physics import WorldState
 from dimos.sim2.sensors.camera.unreal.assets import export_scene
 from dimos.sim2.world.scene import scene_path
 
 
 @pytest.mark.self_hosted
-def test_full_g1_logistics_world_exports_after_reset_without_injected_ui_targets():
+@pytest.mark.parametrize("control_mode", ["stock", "motors"])
+def test_full_g1_logistics_world_exports_after_reset_without_injected_ui_targets(control_mode):
     path = scene_path(None, "logistics.xml")
-    instance = describe_simulated_robot(G1ConnectionConfig(control_mode="motors"))
+    instance = describe_simulated_robot(G1ConnectionConfig(control_mode=control_mode))
     with closing(MotorScene(path, {"g1": model_factory(instance, path)})) as environment:
         environment.reset()
         model, data = environment.sim.model._model, environment.sim.data._data
-        manifest = export_scene(model, data)
+        body_names = {i: model.body(i).name or f"body_{i}" for i in range(model.nbody)}
+        visuals = load_visuals(model, body_names, str, 0)
+        state = WorldState(
+            FrameMetadata(0, 0, 0, data.time), read_body_states(model, data, body_names), {}, {}
+        )
+        manifest = export_scene(visuals, state)
 
         assert model.nu == 29
-        assert {geom["id"] for geom in manifest["geoms"]} == set(range(model.ngeom))
+        assert {geom["id"] for geom in manifest["geoms"]} == {
+            index for index in range(model.ngeom) if model.geom_group[index] in (0, 1, 2)
+        }
         assert any(
             model.geom(geom["id"]).name.startswith(environment.robot_models["g1"].naming_prefix)
             for geom in manifest["geoms"]

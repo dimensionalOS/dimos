@@ -25,6 +25,7 @@ from robosuite.utils.observables import (
     sensor as observable_sensor,
 )
 
+from dimos.sim2.backends.mujoco_observations import create_observables
 from dimos.sim2.messages import FrameMetadata
 from dimos.sim2.sensors.camera.messages import camera_messages
 from dimos.sim2.sensors.camera.spec import Camera
@@ -34,7 +35,6 @@ from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.observations import (
     ObservationFrame,
     collect_observations,
-    create_observables,
 )
 
 XML = """

@@ -25,7 +25,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.device import SimulatedDeviceFactory
-from dimos.sim2.spec import MujocoModelSpec, RobotInstanceSpec
+from dimos.sim2.spec import ModelAsset, RobotInstanceSpec
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def rig(mocker, tmp_path, request):
     mode = getattr(request, "param", "motor")
     robot = RobotInstanceSpec(
         robot_id="arm",
-        model=MujocoModelSpec(tmp_path / "robot.xml"),
+        model=ModelAsset(tmp_path / "robot.xml"),
         joint_names=("arm/elbow", "arm/wrist", "arm/grip"),
         frame_id="arm/base",
         position_only_joints=("arm/grip",),

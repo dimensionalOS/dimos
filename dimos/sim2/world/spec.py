@@ -21,8 +21,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from dimos.sim2.visuals import VisualScene
 from dimos.spec.utils import Spec
 
 
 class SimulationSpec(Spec, Protocol):
     def describe(self) -> dict[str, Any]: ...
+
+    def describe_visuals(self) -> VisualScene: ...

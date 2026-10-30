@@ -1,231 +1,176 @@
-# robosuite in DimOS
+# G1 with replaceable physics
 
-DimOS runs a robosuite environment and connects it to typed streams. There are
-two entry paths: an existing robosuite task, or an existing DimOS hardware
-application whose motor device is replaced with a simulated device.
-
-| Path | Reused from robosuite | Supplied by DimOS |
-|---|---|---|
-| Stock task, such as Panda Lift | Robot, task, controller, observations, reward and reset | Worker lifecycle, action/result streams and snapshots |
-| G1 stock or external motor control | Model composition and environment stepping/reset | Stock velocity policy or external controller, shared connection and client |
-| MuJoCo camera or standalone IMU | `Observable` sampling, corruption, filtering and delay | Sensor attachment and typed message conversion |
-| Unreal camera and rolling Mid360 | Shared environment state | Independent capture, ray timing and message workers |
-
-MuJoCo computes physics in both entry paths. The G1 locomotion policies are separate from robosuite task controllers; Unreal
-and rolling Mid360 acquisition do not use ordinary camera/IMU Observables.
-
-For a native Unreal RGB-D camera attached to the same world, see
-[Unreal cameras for sim2](/docs/usage/sim2-unreal.md).
-
-## Use an existing robosuite task
-
-This is the shipped `robosuite-lift` example:
-
-```python
-from dimos.sim2.module import SimulationModule
-from dimos.sim2.rendering import make_environment
-
-
-def panda_lift():
-    return make_environment(
-        "Lift",
-        robots="Panda",
-        has_renderer=False,
-        has_offscreen_renderer=False,
-        use_camera_obs=False,
-        control_freq=20,
-        horizon=1000,
-    )
-
-
-robosuite_lift = SimulationModule.blueprint(environment=panda_lift)
-```
-
-```bash
-dimos run robosuite-lift
-```
-
-`make_environment()` creates the upstream task and selects a headless rendering
-context that works inside a worker, including native CGL on macOS. It leaves the
-original task class untouched. The factory executes inside the worker. The module
-receives native actions on
-`actions: In[list[float]]` (or the `set_action()` RPC) and publishes
-`environment_result: Out[EnvironmentStep]` containing the upstream observation
-dictionary, reward, done and info. `reset()` calls the upstream reset. The
-original task's control frequency and horizon are preserved; a terminated task
-waits for reset. No new robot definition or task implementation is required.
-
-Source: [robosuite_lift.py](/dimos/robot/robosuite/blueprints/robosuite_lift.py).
-
-Use robosuite's own domain-randomization wrapper in that factory:
-
-```python
-from robosuite.wrappers import DomainRandomizationWrapper
-
-from dimos.robot.robosuite.blueprints.robosuite_lift import panda_lift
-from dimos.sim2.module import SimulationModule
-
-
-def randomized_panda_lift():
-    return DomainRandomizationWrapper(
-        panda_lift(),
-        randomize_camera=True,
-        randomize_lighting=True,
-        randomize_dynamics=True,
-        randomize_color=False,  # upstream texture randomizer requires MuJoCo 3.1.1
-        randomize_on_reset=True,
-        randomize_every_n_steps=0,
-    )
-
-
-randomized_lift = SimulationModule.blueprint(environment=randomized_panda_lift)
-```
-
-The same wrapper can wrap `MotorScene`. DimOS calls the wrapper's `step()` and
-`reset()`; robosuite supplies the randomization. Snapshot workers receive new
-models on reset; model changes during an episode are not propagated. These
-modders do not control Unreal's native materials or lighting. Camera changes
-can reach Unreal through named model cameras; its fixed observer mount is
-configured separately.
-
-## One G1 connection, two control modes
-
-```python
-from dimos.robot.unitree.g1.connection import G1Connection
-
-stock = G1Connection.blueprint()                        # cmd_vel + vendor RPCs
-stock_dds = G1Connection.blueprint(stock_transport="dds")
-motors = G1Connection.blueprint(control_mode="motors")  # external PD commands
-```
-
-The class is the same on hardware and in simulation. Stock mode uses the Unitree
-WebRTC or DDS locomotion API. Motor mode uses DDS motor IO. GR00T is an external
-controller in the application, not a connection mode or a default robot policy.
-Its blueprint explicitly supplies its initial pose/gains.
-
-```bash
-# Stock firmware interface, hardware:
-dimos --viewer none run unitree-g1-basic --g1connection.stock-transport dds
-
-# Same connection and stock-style velocity interface, shared simulation:
-dimos --simulation mujoco --viewer none run unitree-g1-basic-sim
-
-# External GR00T motor controller, hardware or simulation:
-dimos --viewer none run unitree-g1-groot-wbc
-dimos --simulation mujoco --viewer none run unitree-g1-groot-wbc
-```
+One `G1Connection` works with hardware, MuJoCo or Genesis. Stock mode accepts
+velocity commands; motor mode accepts `MotorCommandArray` from GR00T or another
+controller. The connection keeps its streams, validation and deadman handling.
 
 ```text
-stock application -> G1Connection(stock) -> hardware WebRTC/DDS
-                                        -> SimRobotClient.set_velocity
-                                             -> shared world + stock velocity policy
-
-external controller -> G1Connection(motors) -> hardware motor DDS
-                                          -> SimRobotClient.set_motor_command
-                                               -> shared world
+G1Connection -> SimRobotClient -> SimulationModule -> PhysicsBackend
+     |                                |                 |
+     |                                +-- WorldState <--+
+     |                                       |
+     +-- robot topics --> Desktop <-- images -- UnrealCameraModule
 ```
 
-Stock simulation reuses the existing G1 ONNX locomotion policy. This is a learned
-surrogate for body-velocity commands, not execution of Unitree firmware. Vendor
-arm gestures, stand/lie transitions and firmware mode requests are unsupported
-in simulation and return an explicit error. They do not report simulated success.
-The stock policy does not load GR00T. Each instance owns its policy state; no
-process-global MuJoCo control callback is used.
+## Run G1
 
-### Where simulation attaches
+```bash
+uv sync --extra sim --extra unitree
 
-1. [ModuleCoordinator.build()](/dimos/core/coordination/module_coordinator.py)
-   resolves configuration and calls
-   [attach_simulation()](/dimos/sim2/composition.py) for `--simulation mujoco`.
-2. The collector calls `describe_simulated_robot(resolved_config)` on every
-   connection satisfying `RobotConnectionSpec`. The returned `RobotInstanceSpec`
-   describes the asset, instance pose, command interface and optional stock
-   locomotion controller. It contains no robosuite model object.
-3. All instances are assembled into one world. Each retained connection receives
-   a `SimRobotClient` factory for its own command/feedback topics. The client uses
-   the selected transport, Zenoh by default, without becoming another module.
-4. Camera/lidar workers attach to that world. Standalone sensor-driver bindings
-   retain their names/remaps. Explicit simulated sensor workers are collected
-   without duplication. Unreal independently reads snapshots.
+# Stock locomotion; same connection as stock hardware.
+dimos --simulation mujoco run unitree-g1-control
 
-Source: [G1 connection](/dimos/robot/unitree/g1/connection.py),
-[G1 model declarations](/dimos/robot/unitree/g1/model.py),
-[shared model importer](/dimos/sim2/model.py).
+# The real GR00T controller, motor connection and simulator.
+dimos --simulation mujoco run unitree-g1-groot-control
+```
 
-### Multiple instances
+Genesis requires PyTorch 2.8, while the repository's legacy ML test group pins
+an older version. Its locked install uses a separate environment:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-genesis uv sync --no-default-groups --extra sim-genesis --extra unitree
+
+.venv-genesis/bin/dimos --simulation genesis run unitree-g1-control
+.venv-genesis/bin/dimos --simulation genesis run unitree-g1-groot-control
+```
+
+Both control blueprints publish the existing robot topics for Desktop and omit
+Rerun. Native camera/lidar acquisition and the full mapping/navigation profile
+currently require MuJoCo; selecting Genesis for those profiles reports the
+unsupported capability. Unreal cameras consume neutral body poses and work with
+either engine. See [Unreal cameras](/docs/usage/sim2-unreal.md).
+
+Source: [stock connection](/dimos/robot/unitree/g1/connection.py),
+[GR00T composition](/dimos/robot/unitree/g1/blueprints/basic/unitree_g1_groot_wbc.py).
+
+## Description, state and commands
+
+| Type | Meaning |
+|---|---|
+| `WorldDescription` | Stable body/joint IDs, relationships, motion types, drives and capabilities |
+| `WorldState` | One tick's body poses/velocities and joint configuration/velocity/actuator effort |
+| `CommandBatch` | Named joint drives, body wrenches or kinematic targets, with an epoch and duration |
+| `CommandReport` | Accepted, rejected, applied or expired; includes the relevant physics tick |
+| `VisualScene` | Static meshes, materials and body-local visual/camera attachments |
+
+Body poses and velocities use world coordinates at the body origin. Quaternions
+are xyzw; distances are metres and angles radians. A joint relates bodies: a
+cabinet hinge and a robot elbow have the same physical meaning. A joint need not
+have an actuator. Free-root motion is represented by the root body's state.
+
+`JointDrive` targets a declared scalar actuator. `BodyWrench` applies force and
+torque to a dynamic body, optionally at an offset point. `KinematicTarget`
+prescribes an authored kinematic body's world pose; it never teleports a dynamic
+robot. Genesis currently rejects kinematic targets. Unsupported operations fail
+explicitly. Initialization/reset is separate from physical actuation.
+
+```python
+from contextlib import ExitStack
+
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.sim2.module import SimulationModule
+from dimos.sim2.physics import BodyWrench, CommandBatch
+
+with ExitStack() as cleanup:
+    stack = autoconnect(G1Connection.blueprint()).global_config(
+        simulation="mujoco", viewer="none"
+    )
+    app = ModuleCoordinator.build(stack)
+    cleanup.callback(app.stop)
+    sim = app.get_instance(SimulationModule)
+    state = sim.read_state()
+    pelvis = state.bodies["g1/pelvis"]
+    knee = state.joints["g1/left_knee_joint"]
+
+    receipt = sim.submit(CommandBatch(
+        command_id="pelvis-push",
+        epoch=state.metadata.episode_id,
+        commands=(BodyWrench("g1/pelvis", force=(20.0, 0.0, 0.0)),),
+        duration=0.1,
+    ))
+    assert receipt.status == "accepted"
+    app.loop()  # Run until Ctrl-C; the force lasts 0.1 simulated seconds.
+```
+
+Acceptance queues a command; the `command_reports` stream reports application
+at a physics tick. Zero duration means one step; positive duration uses simulation
+time. Reset and pause/resume clear commands and invalidate their epoch. Multiple
+body wrenches add.
+An explicit scene joint drive overrides the robot's drive for that joint while
+active. Actual movement is read from `world_state`; actuator effort excludes
+contact/reaction forces and represents the last integration interval. A backend
+that cannot report actuator effort returns `None`, including native robosuite tasks.
+
+[`physics.py`](/dimos/sim2/physics.py) defines the contract.
+[`SimulationRuntime`](/dimos/sim2/world/runtime.py) owns timing, command expiry,
+stock policy execution and publications. Backends own model handles, physics
+integration and native command translation. Engine-specific sensor checkpoints
+remain private; they are not portable world state or cross-engine save files.
+
+## Where the simulator attaches
+
+After resolving configuration, the coordinator calls
+[`attach_simulation()`](/dimos/sim2/composition.py). It collects every connection's
+`describe_simulated_robot()` before constructing one shared world, then injects
+one `SimRobotClient` into each retained connection. Namespaces distinguish robot
+instances. A manually supplied empty `SimulationModule` is populated in place.
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.connection import G1Connection
 
-
 two_g1s = autoconnect(
-    G1Connection.blueprint(sim_position=(0.0, 0.0, 0.0)).namespace("left"),
-    G1Connection.blueprint(sim_position=(2.0, 0.0, 0.0)).namespace("right"),
-).global_config(simulation="mujoco", viewer="none")
+    G1Connection.blueprint(sim_position=(0, 0, 0)).namespace("left"),
+    G1Connection.blueprint(sim_position=(2, 0, 0)).namespace("right"),
+).global_config(simulation="genesis", viewer="none")
 ```
 
-Namespaces separate public streams, private client topics and model identities.
-Sensor ownership must be unambiguous; two robots do not implicitly share every
-sensor. The simulator buffers each robot's latest command and applies it on its
-next world tick. Command expiry stops stock velocity commands or damps externally
-controlled effort motors.
+The stock ONNX policy consumes neutral `RobotState`. It never receives native
+engine handles. GR00T remains an external controller using the same motor stream
+on hardware and both engines. Stock simulation models locomotion; Unitree firmware
+gestures and stand/lie transitions remain unsupported.
 
-### Robot descriptions and adding a robot
+## Assets and current limits
 
-A new robot provides its model asset and connection description; the shared
-importer handles robosuite naming, mesh resolution and preservation of authored
-joint/material settings. No robot-specific simulator or robosuite subclass is
-required. A velocity interface additionally needs a locomotion controller; a
-motor interface receives commands from the application's controller.
+Both adapters consume the existing G1 MJCF assets through one source-format
+importer. Genesis uses MuJoCo for MJCF asset parsing only; Genesis owns and steps
+the running physics state. Authored masses/inertias and robot placement are
+preserved. Explicit stock foot/floor contact eligibility is lowered for Genesis,
+whose importer otherwise ignores MJCF contact-pair declarations. Pair-specific
+solver/friction overrides are not equivalent across engines.
 
-The G1 description reuses public motor names and existing assets. Its two existing
-policy plants remain explicit: the stock velocity policy uses its position-servo
-MJCF, while external motor control uses the torque-actuated MJCF. Neither is
-regenerated from the planning URDF yet. These models have differing revisions,
-masses and joint offsets; consolidating them requires choosing authoritative
-anatomy and validating both policies. This integration does not claim that the
-physical model has become a single source of truth.
+Stock position-servo and external torque-control G1 plants remain distinct
+existing assets. Consolidating them with the planning URDF is still unfinished.
+The neutral interface does not claim that a different engine produces identical
+physics, that every source format is supported, or that trained policies transfer
+without validation. The current asset compiler accepts MJCF; URDF conversion is
+not implemented here.
 
-## Sensors and reset
-
-Ordinary cameras and IMUs use robosuite `Observable`: sampling, corruption,
-filtering and delay. Thin DimOS modules convert the latest sampled observation
-into images, calibration, IMU and TF messages. Held observations retain their
-acquisition timestamps and are not repeatedly republished. Rendering occurs on
-the environment's owner thread, so camera rendering can slow environment stepping.
-Configure upstream observable modifiers on the environment.
-
-Rolling Mid360 acquisition remains a specialized worker: per-ray timing, motion
-distortion, return modeling and the device's own IMU feed the unchanged Point-LIO
-inputs. It restores authoritative snapshots and never advances a second world.
-Its history/ray model is not replaced by a latest-value observation dictionary.
-
-Reset runs on the environment owner thread, drops old commands, advances the
-sensor epoch and refreshes worker model files. This handles upstream hard resets
-and model randomization without restoring snapshots into an obsolete model.
-Resetting application maps, planner goals or policy memory remains the
-application's responsibility.
-
-## Dependencies and checks
+Native robosuite tasks remain a MuJoCo integration, with their own action vectors,
+observations, rewards and episode semantics:
 
 ```bash
-uv sync --extra sim
-uv run pytest dimos/sim2
-uv run pytest -m self_hosted dimos/sim2  # native renderer checks
+dimos run robosuite-lift
 ```
 
-Published robosuite 1.5.1 is pinned: 1.5.2's Mink pin conflicts with DimOS's NumPy 2
-and Rerun dependencies. MuJoCo is constrained to `>=3.5,<3.10` for ray normals and
-the controller API supported by this robosuite release. Normal dependency
-resolution is used, without Git dependencies or dependency overrides. Texture
-randomization is unavailable with this version pair; camera, lighting and dynamics
-randomization are tested. macOS workers use `spawn` because native MuJoCo graphics
-can abort in forked processes; Linux workers retain `forkserver`.
+Their task API does not define the generic physics interface. Existing robosuite
+camera/IMU Observables and rolling lidar workers remain available on MuJoCo.
+RoboCasa and RL training workflows are not validated by this change.
 
-The stock task example publishes its observation dictionary through
-`environment_result`; it does not automatically expose every observation as a
-Desktop camera topic. RoboCasa, demonstration collection and Gym/RL workflows
-are not configured or validated by this stack. Their embodiment, action-space
-and task compatibility still need integration; wrapping `MotorScene` does not
-supply benchmark task rewards or success conditions.
+## Reproduce the G1 checks
+
+```bash
+# Two stock G1s, velocity policy, body force, reset and external motor commands.
+python -m dimos.robot.unitree.g1.demo_physics_conformance --engine mujoco
+.venv-genesis/bin/python -m dimos.robot.unitree.g1.demo_physics_conformance --engine genesis
+
+# Actual GR00T blueprint, workers, retained connection and simulation client.
+python -m dimos.robot.unitree.g1.demo_physics_conformance --engine mujoco --scenario groot
+.venv-genesis/bin/python -m dimos.robot.unitree.g1.demo_physics_conformance --engine genesis --scenario groot
+```
+
+These checks use the actual G1 assets and controllers. Reports contain measured
+movement, upright height, command/feedback status and reset results; failed
+checks return a nonzero exit code. Physical hardware was not exercised.

@@ -16,6 +16,8 @@
 
 from dataclasses import replace
 from pathlib import Path
+import subprocess
+import sys
 
 import mujoco
 import numpy as np
@@ -25,17 +27,20 @@ from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
-from dimos.sim2.messages import FrameMetadata, StateFrame
+from dimos.sim2.backends.mjcf_visuals import load_visuals
+from dimos.sim2.backends.mujoco import read_body_states
+from dimos.sim2.messages import FrameMetadata
+from dimos.sim2.physics import WorldState
 from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.camera.unreal.assets import geom_poses
 from dimos.sim2.sensors.camera.unreal.client import RenderedFrame, RendererClient
 from dimos.sim2.sensors.camera.unreal.module import UnrealCameraModule, camera_view, frame_messages
-from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.world.runtime import STATE
+from dimos.sim2.world.spec import SimulationSpec
 
 
 @pytest.fixture
-def reader(tmp_path):
+def scene():
     model = mujoco.MjModel.from_xml_string("""
         <mujoco><worldbody>
           <body name="robotg1_base" pos="1 -2 3" axisangle="0 0 1 90">
@@ -47,28 +52,18 @@ def reader(tmp_path):
           </body>
         </worldbody></mujoco>
     """)
-    path = tmp_path / "world.mjb"
-    mujoco.mj_saveModel(model, str(path))
-    value = WorldReader(
-        {
-            "model": str(path),
-            "model_prefixes": {"g1": "robotg1_"},
-            "physics_dt": 0.005,
-            "snapshot_stride": 1,
-            "snapshot_slots": 8,
-        }
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    names = {i: model.body(i).name.replace("robotg1_", "g1/") for i in range(model.nbody)}
+    visuals = load_visuals(model, names, lambda name: name.replace("robotg1_", "g1/"), 0)
+    return visuals, WorldState(
+        FrameMetadata(0, 0, 0, 0.0), read_body_states(model, data, names), {}, {}
     )
-    mujoco.mj_forward(value.model, value.data)
-    return value
 
 
-def _snapshot(reader, *, sequence, episode, tick, timestamp):
-    reader.data.time = tick * 0.005
-    state = np.empty(mujoco.mj_stateSize(reader.model, STATE))
-    mujoco.mj_getState(reader.model, reader.data, state, STATE)
-    return StateFrame(
-        FrameMetadata(sequence, episode, tick, reader.data.time),
-        {"state": state, "wall_time": np.array([timestamp])},
+def _snapshot(scene, *, sequence, episode, tick, timestamp):
+    return replace(
+        scene[1], metadata=FrameMetadata(sequence, episode, tick, tick * 0.005), wall_time=timestamp
     )
 
 
@@ -83,9 +78,9 @@ def _rendered(timestamp):
     )
 
 
-def test_named_camera_retains_model_calibration_and_publishes_world_optical_pose(reader):
+def test_named_camera_retains_model_calibration_and_publishes_world_optical_pose(scene):
     calibration, position, optical = camera_view(
-        reader, Camera("front", "front_camera", width=1200, height=800), "g1"
+        *scene, Camera("front", "front_camera", width=1200, height=800), "g1"
     )
 
     assert_allclose(
@@ -115,7 +110,7 @@ def test_named_camera_retains_model_calibration_and_publishes_world_optical_pose
     ],
 )
 def test_added_camera_mount_composes_parent_pose_and_local_offset(
-    reader, robot_id, link, expected_position, expected_optical
+    scene, robot_id, link, expected_position, expected_optical
 ):
     sensor = Camera(
         "observer",
@@ -124,7 +119,7 @@ def test_added_camera_mount_composes_parent_pose_and_local_offset(
         height=240,
         fovy=90,
     )
-    calibration, position, optical = camera_view(reader, sensor, robot_id)
+    calibration, position, optical = camera_view(*scene, sensor, robot_id)
 
     assert_allclose(position, expected_position)
     assert_allclose(Rotation.from_quat(optical).as_matrix(), expected_optical, atol=1e-14)
@@ -161,7 +156,7 @@ def test_frame_messages_preserve_pixels_axial_metres_calibration_and_acquisition
 
 
 @pytest.fixture
-def camera_module(reader, mocker):
+def camera_module(scene, mocker):
     # Keep the actual Module lifecycle/event loop; only RPC and output I/O are absent.
     mocker.patch.object(ZenohRPC, "start", autospec=True)
     mocker.patch.object(ZenohRPC, "serve_module_rpc", autospec=True)
@@ -171,7 +166,11 @@ def camera_module(reader, mocker):
         robot_id="g1",
         sensor=Camera("front", "front_camera", width=2, height=2),
     )
-    module.reader = reader
+    simulation = mocker.Mock(spec=SimulationSpec)
+    simulation.describe_visuals.side_effect = lambda: replace(
+        scene[0], revision=(module._current_state() or scene[1]).scene_revision
+    )
+    mocker.patch.object(module, "_simulation", simulation, create=True)
     publishers = {
         name: mocker.patch.object(getattr(module, name), "publish")
         for name in (
@@ -203,30 +202,28 @@ def native_renderer(mocker):
     ("arrival", "expected_loads"), [("paused", 1), ("advance", 1), ("reset", 1), ("model", 2)]
 )
 def test_first_capture_uses_latest_state_after_asset_load_and_becomes_ready(
-    camera_module, native_renderer, tmp_path, arrival, expected_loads
+    camera_module, native_renderer, scene, arrival, expected_loads
 ):
     module, publishers = camera_module
-    first = _snapshot(module.reader, sequence=1, episode=0, tick=40, timestamp=100.2)
+    first = _snapshot(scene, sequence=1, episode=0, tick=40, timestamp=100.2)
     latest = first
     if arrival != "paused":
         latest = _snapshot(
-            module.reader,
+            scene,
             sequence=2,
             episode=1 if arrival == "reset" else 0,
             tick=0 if arrival == "reset" else 50,
             timestamp=101,
         )
     if arrival == "model":
-        model_path = tmp_path / "replacement.mjb"
-        mujoco.mj_saveModel(module.reader.model, str(model_path))
-        latest = replace(latest, model_path=str(model_path))
-    module._on_snapshot(first)
+        latest = replace(latest, scene_revision=1)
+    module._on_state(first)
     pending = iter([latest])
 
     def load_scene(path, *, timeout):
         frame = next(pending, None)
         if frame is not None:
-            module._on_snapshot(frame)
+            module._on_state(frame)
 
     native_renderer.load.side_effect = load_scene
     native_renderer.capture.side_effect = lambda command: _rendered(command["timestamp"])
@@ -248,16 +245,16 @@ def test_first_capture_uses_latest_state_after_asset_load_and_becomes_ready(
         latest.metadata.episode_id,
         latest.metadata.sequence,
         latest.metadata.physics_tick,
-        latest.values["wall_time"][0],
+        latest.wall_time,
     )
     publishers["frame_metadata"].assert_called_once_with(latest.metadata)
     assert module._ready.get_nowait() is None
     assert module.renderer_status()["frames"] == 1
 
 
-def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module, mocker):
+def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module, scene, mocker):
     module, publishers = camera_module
-    module._on_snapshot(_snapshot(module.reader, sequence=1, episode=0, tick=40, timestamp=100.2))
+    module._on_state(_snapshot(scene, sequence=1, episode=0, tick=40, timestamp=100.2))
     clock = mocker.patch("dimos.sim2.sensors.camera.unreal.module.time.monotonic", return_value=100)
     native_renderer = mocker.create_autospec(RendererClient, instance=True)
     # Crossing the external renderer boundary consumes 40 seconds of the same budget.
@@ -277,27 +274,25 @@ def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module,
     assert module.renderer_status()["frames"] == 1
 
 
-def test_reset_received_during_capture_discards_old_episode_before_any_output(camera_module):
+def test_reset_received_during_capture_discards_old_episode_before_any_output(camera_module, scene):
     module, publishers = camera_module
-    first = _snapshot(module.reader, sequence=1, episode=0, tick=40, timestamp=100.2)
-    module._on_snapshot(first)
-    assert module.reader.update()
-    view = camera_view(module.reader, module.config.sensor, "g1")
-    old_metadata = module.reader.metadata
+    first = _snapshot(scene, sequence=1, episode=0, tick=40, timestamp=100.2)
+    module._on_state(first)
+    view = camera_view(scene[0], first, module.config.sensor, "g1")
+    old_metadata = first.metadata
 
-    reset = _snapshot(module.reader, sequence=2, episode=1, tick=0, timestamp=200)
-    module._on_snapshot(reset)
-    # A reset notification invalidates the in-flight capture before update() restores it.
-    assert module.reader.metadata is old_metadata
-    assert module.reader.latest_episode == 1
-    module._publish_frame(old_metadata, _rendered(100.2), *view)
+    reset = _snapshot(scene, sequence=2, episode=1, tick=0, timestamp=200)
+    module._on_state(reset)
+    # The in-flight frame retains its old epoch, even before the next capture.
+    assert first.metadata is old_metadata
+    assert module._current_state().metadata.episode_id == 1
+    module._publish_frame(first, _rendered(100.2), *view)
 
     for publish in publishers.values():
         publish.assert_not_called()
     assert module.renderer_status()["discarded"] == 1
-    assert module.reader.update()
-    new_view = camera_view(module.reader, module.config.sensor, "g1")
-    module._publish_frame(module.reader.metadata, _rendered(module.reader.timestamp), *new_view)
+    new_view = camera_view(scene[0], reset, module.config.sensor, "g1")
+    module._publish_frame(reset, _rendered(reset.wall_time), *new_view)
 
     for publish in publishers.values():
         publish.assert_called_once()
@@ -311,16 +306,74 @@ def test_reset_received_during_capture_discards_old_episode_before_any_output(ca
     assert module.renderer_status()["frames"] == 1
 
 
-def test_stopped_module_never_publishes_a_completed_capture(camera_module):
+def test_stopped_module_never_publishes_a_completed_capture(camera_module, scene):
     module, publishers = camera_module
-    snapshot = _snapshot(module.reader, sequence=1, episode=0, tick=1, timestamp=100)
-    module._on_snapshot(snapshot)
-    assert module.reader.update()
-    view = camera_view(module.reader, module.config.sensor, "g1")
+    snapshot = _snapshot(scene, sequence=1, episode=0, tick=1, timestamp=100)
+    module._on_state(snapshot)
+    view = camera_view(scene[0], snapshot, module.config.sensor, "g1")
     module._stop.set()
 
-    module._publish_frame(module.reader.metadata, _rendered(100), *view)
+    module._publish_frame(snapshot, _rendered(100), *view)
 
     for publish in publishers.values():
         publish.assert_not_called()
     assert module.renderer_status()["discarded"] == 1
+
+
+def test_rendered_placements_follow_neutral_body_state_without_native_model_updates(scene):
+    visuals, initial = scene
+    shifted = replace(
+        initial,
+        bodies={
+            **initial.bodies,
+            "g1/base": replace(initial.bodies["g1/base"], position=(4.0, -2.0, 3.0)),
+        },
+    )
+    before = geom_poses(visuals, initial)
+    after = geom_poses(visuals, shifted)
+    assert_allclose(np.array(after[0]["position"]) - before[0]["position"], (300, 0, 0))
+    sensor = Camera("front", "front_camera", width=600, height=400)
+    _, position_before, _ = camera_view(visuals, initial, sensor, "g1")
+    _, position_after, _ = camera_view(visuals, shifted, sensor, "g1")
+    assert_allclose(position_after - position_before, (3, 0, 0))
+
+
+def test_visual_revision_change_discards_capture_even_within_same_epoch(camera_module, scene):
+    module, publishers = camera_module
+    first = _snapshot(scene, sequence=1, episode=0, tick=1, timestamp=100)
+    module._on_state(first)
+    view = camera_view(scene[0], first, module.config.sensor, "g1")
+    module._on_state(replace(first, metadata=replace(first.metadata, sequence=2), scene_revision=1))
+    assert not module._publish_frame(first, _rendered(100), *view)
+    publishers["color_image"].assert_not_called()
+    assert module.renderer_status()["discarded"] == 1
+
+
+def test_unreal_camera_import_needs_no_physics_engine():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import importlib.abc
+import sys
+from typing import get_type_hints
+class RejectEngines(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'mujoco', 'robosuite', 'genesis'}:
+            raise ImportError('physics engine leaked into Unreal worker: ' + fullname)
+sys.meta_path.insert(0, RejectEngines())
+from dimos.sim2.sensors.camera.unreal.module import UnrealCameraModule
+from dimos.sim2.module import SimulationModule
+from dimos.sim2.visuals import VisualScene
+from dimos.sim2.world.spec import SimulationSpec
+assert 'world_state' in UnrealCameraModule.__annotations__
+assert get_type_hints(SimulationSpec.describe_visuals)['return'] is VisualScene
+assert get_type_hints(SimulationModule.describe_visuals)['return'] is VisualScene
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
