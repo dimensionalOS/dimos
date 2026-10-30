@@ -61,15 +61,17 @@ class RendererClient:
         self._closed = threading.Event()
 
     @contextmanager
-    def _transaction(self) -> Iterator[float | None]:
+    def _transaction(self, timeout: float | None = None) -> Iterator[float | None]:
         with self._request_lock:
-            timeout = self.connection.gettimeout()
+            configured_timeout = self.connection.gettimeout()
+            if timeout is None:
+                timeout = configured_timeout
             deadline = None if timeout is None else time.monotonic() + timeout
             try:
                 yield deadline
             finally:
                 with suppress(OSError):
-                    self.connection.settimeout(timeout)
+                    self.connection.settimeout(configured_timeout)
 
     def _remaining(self, deadline: float | None) -> None:
         if self._closed.is_set():
@@ -143,8 +145,12 @@ class RendererClient:
         with self._transaction() as deadline:
             return self._request(command, expected, deadline)
 
-    def load(self, manifest: Path) -> None:
-        self.request({"type": "load", "manifest": str(manifest.resolve())}, "loaded")
+    def load(self, manifest: Path, *, timeout: float | None = None) -> None:
+        """Allow cold asset setup its own budget, retaining the capture timeout."""
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("Unreal load timeout must be positive and finite")
+        with self._transaction(timeout) as deadline:
+            self._request({"type": "load", "manifest": str(manifest.resolve())}, "loaded", deadline)
 
     def reset(self, episode: int) -> None:
         response = self.request({"type": "reset", "episode": episode}, "reset")

@@ -14,6 +14,7 @@
 
 """Camera calibration, world mounts and reset isolation without a GPU process."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import mujoco
@@ -28,7 +29,7 @@ from dimos.sim2.messages import FrameMetadata, StateFrame
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.unreal.client import RenderedFrame
+from dimos.sim2.unreal.client import RenderedFrame, RendererClient
 from dimos.sim2.unreal.module import UnrealCameraModule, camera_view, frame_messages
 from dimos.sim2.world.runtime import STATE
 
@@ -186,6 +187,92 @@ def camera_module(reader, mocker):
         yield module, publishers
     finally:
         module.stop()
+
+
+@pytest.fixture
+def native_renderer(mocker):
+    process = mocker.patch("dimos.sim2.unreal.module.RendererProcess", autospec=True).return_value
+    client = mocker.create_autospec(RendererClient, instance=True)
+    process.__enter__.return_value = client
+    return client
+
+
+@pytest.mark.parametrize(
+    ("arrival", "expected_loads"), [("paused", 1), ("advance", 1), ("reset", 1), ("model", 2)]
+)
+def test_first_capture_uses_latest_state_after_asset_load_and_becomes_ready(
+    camera_module, native_renderer, tmp_path, arrival, expected_loads
+):
+    module, publishers = camera_module
+    first = _snapshot(module.reader, sequence=1, episode=0, tick=40, timestamp=100.2)
+    latest = first
+    if arrival != "paused":
+        latest = _snapshot(
+            module.reader,
+            sequence=2,
+            episode=1 if arrival == "reset" else 0,
+            tick=0 if arrival == "reset" else 50,
+            timestamp=101,
+        )
+    if arrival == "model":
+        model_path = tmp_path / "replacement.mjb"
+        mujoco.mj_saveModel(module.reader.model, str(model_path))
+        latest = replace(latest, model_path=str(model_path))
+    module._on_snapshot(first)
+    pending = iter([latest])
+
+    def load_scene(path, *, timeout):
+        frame = next(pending, None)
+        if frame is not None:
+            module._on_snapshot(frame)
+
+    native_renderer.load.side_effect = load_scene
+    native_renderer.capture.side_effect = lambda command: _rendered(command["timestamp"])
+    publishers["frame_metadata"].side_effect = lambda _: module._stop.set()
+
+    module._run()
+
+    assert native_renderer.load.call_count == expected_loads
+    for load_call in native_renderer.load.call_args_list:
+        assert 0 < load_call.kwargs["timeout"] <= module.config.startup_timeout
+    native_renderer.reset.assert_called_once_with(latest.metadata.episode_id)
+    command = native_renderer.capture.call_args.args[0]
+    assert (
+        command["episode"],
+        command["sequence"],
+        command["physics_tick"],
+        command["timestamp"],
+    ) == (
+        latest.metadata.episode_id,
+        latest.metadata.sequence,
+        latest.metadata.physics_tick,
+        latest.values["wall_time"][0],
+    )
+    publishers["frame_metadata"].assert_called_once_with(latest.metadata)
+    assert module._ready.get_nowait() is None
+    assert module.renderer_status()["frames"] == 1
+
+
+def test_initial_asset_load_uses_remaining_process_startup_budget(camera_module, mocker):
+    module, publishers = camera_module
+    module._on_snapshot(_snapshot(module.reader, sequence=1, episode=0, tick=40, timestamp=100.2))
+    clock = mocker.patch("dimos.sim2.unreal.module.time.monotonic", return_value=100)
+    native_renderer = mocker.create_autospec(RendererClient, instance=True)
+    # Crossing the external renderer boundary consumes 40 seconds of the same budget.
+    native_renderer.capture.side_effect = lambda command: _rendered(command["timestamp"])
+    publishers["frame_metadata"].side_effect = lambda _: module._stop.set()
+
+    def after_process_start(*args, **kwargs):
+        clock.return_value = 140
+        return native_renderer
+
+    factory = mocker.patch("dimos.sim2.unreal.module.RendererProcess", autospec=True)
+    factory.return_value.__enter__.side_effect = after_process_start
+
+    module._run()
+
+    assert native_renderer.load.call_args.kwargs["timeout"] == 140
+    assert module.renderer_status()["frames"] == 1
 
 
 def test_reset_received_during_capture_discards_old_episode_before_any_output(camera_module):

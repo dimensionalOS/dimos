@@ -245,6 +245,7 @@ class UnrealCameraModule(Module):
 
     def _run(self) -> None:
         ready = False
+        startup_deadline = time.monotonic() + self.config.startup_timeout
         try:
             log = self.config.log_path or STATE_DIR / "unreal" / f"{uuid4().hex}.log"
             process = RendererProcess(
@@ -276,19 +277,34 @@ class UnrealCameraModule(Module):
                     if not self.reader.update():
                         self._stop.wait(0.005)
                         continue
-                    metadata = self.reader.metadata
-                    assert metadata is not None
-                    if self.reader.model is not model:
+                    while self.reader.model is not model and not self._stop.is_set():
                         manifest = export_scene(self.reader.model, self.reader.data)
                         path = Path(directory) / "scene.json"
                         path.write_text(
                             json.dumps(manifest, allow_nan=False, separators=(",", ":"))
                         )
-                        client.load(path)
+                        # Initial asset setup shares the process startup budget;
+                        # later model reloads get a fresh setup budget.
+                        load_timeout = (
+                            self.config.startup_timeout
+                            if ready
+                            else startup_deadline - time.monotonic()
+                        )
+                        if load_timeout <= 0:
+                            raise TimeoutError("Unreal asset setup exceeded the startup deadline")
+                        client.load(path, timeout=load_timeout)
                         geom_ids = [geom["id"] for geom in manifest["geoms"]]
                         model = self.reader.model
                         with self._lock:
                             self._status.update(geoms=len(geom_ids), meshes=len(manifest["meshes"]))
+                        # Loading native assets may compile shaders. Capture the
+                        # newest state after that wait, including a paused/reset
+                        # state; reload again if a new model arrived meanwhile.
+                        self.reader.update()
+                    if self._stop.is_set():
+                        break
+                    metadata = self.reader.metadata
+                    assert metadata is not None
                     if episode != metadata.episode_id:
                         client.reset(metadata.episode_id)
                         episode = metadata.episode_id

@@ -6,7 +6,7 @@
 
 class FSocket;
 class FJsonObject;
-class UProceduralMeshComponent;
+class USceneComponent;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
 class UMaterialInterface;
@@ -39,7 +39,7 @@ private:
     bool bExitAfterSend = false;
     bool bHasScene = false;
 
-    UPROPERTY() TMap<int32, TObjectPtr<UProceduralMeshComponent>> Geometries;
+    UPROPERTY() TMap<int32, TObjectPtr<USceneComponent>> Geometries;
     UPROPERTY() TObjectPtr<USceneCaptureComponent2D> ColorCapture;
     UPROPERTY() TObjectPtr<USceneCaptureComponent2D> DepthCapture;
     UPROPERTY() TObjectPtr<UTextureRenderTarget2D> ColorTarget;

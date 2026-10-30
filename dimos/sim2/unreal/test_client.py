@@ -271,6 +271,67 @@ def test_load_resolves_manifest_and_reset_waits_for_matching_episode(workers, pe
     )
 
 
+def test_load_restores_capture_timeout_after_success(peers, tmp_path):
+    client, native = peers
+    client.connection.settimeout(15)
+    native.sendall(encode_header({"type": "loaded"}))
+
+    client.load(tmp_path / "scene.json", timeout=180)
+
+    assert client.connection.gettimeout() == 15
+    assert receive_command(native) == {
+        "type": "load",
+        "manifest": str(tmp_path / "scene.json"),
+    }
+
+
+def test_load_restores_capture_timeout_after_native_failure(peers, tmp_path):
+    client, native = peers
+    client.connection.settimeout(15)
+    native.sendall(encode_header({"type": "error", "message": "unsupported material"}))
+
+    with pytest.raises(RuntimeError, match="unsupported material"):
+        client.load(tmp_path / "scene.json", timeout=180)
+
+    assert client.connection.gettimeout() == 15
+
+
+def test_load_uses_its_deadline_without_changing_capture_timeout(peers, tmp_path):
+    client, _ = peers
+    client.connection.settimeout(15)
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="deadline"):
+        client.load(tmp_path / "scene.json", timeout=0.02)
+
+    assert time.monotonic() - started < 1
+    assert client.connection.gettimeout() == 15
+
+
+def test_close_interrupts_cold_asset_load(workers, peers, tmp_path):
+    client, native = peers
+    loading = workers.submit(client.load, tmp_path / "scene.json", timeout=180)
+    assert receive_command(native)["type"] == "load"
+
+    client.close()
+
+    assert wait([loading], timeout=2).done == {loading}
+    with pytest.raises(OSError):
+        loading.result()
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+def test_load_rejects_unbounded_or_nonpositive_timeout_before_sending(peers, tmp_path, timeout):
+    client, native = peers
+
+    with pytest.raises(ValueError, match="positive and finite"):
+        client.load(tmp_path / "scene.json", timeout=timeout)
+
+    native.setblocking(False)
+    with pytest.raises(BlockingIOError):
+        native.recv(1)
+
+
 @pytest.mark.parametrize("episode", [2, True])
 def test_reset_rejects_wrong_or_boolean_episode_acknowledgment(peers, episode):
     client, native = peers

@@ -20,24 +20,71 @@ or applying ``mesh_pos`` a second time would misplace the robot's links.
 
 The wire uses Unreal's left-handed centimetres and xyzw quaternions. Conversion
 happens here exactly once; the rendering process must not apply another basis
-change. Materials preserve opaque colour and roughness, not source textures.
-Partial transparency is rejected because the native bridge uses opaque materials.
+change. Procedural materials preserve opaque colour and roughness, not source
+textures; their partial transparency is rejected. Native Unreal asset references
+retain the engine asset's materials instead of copying the marker's appearance.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Annotated, Any
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from scipy.spatial.transform import Rotation
 
 _BASIS = np.diag([1.0, -1.0, 1.0])
 _CAMERA_AXES = np.array([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [-1.0, 0.0, 0.0]])
 _DEFAULT_RGBA = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
 _Geometry = tuple[NDArray[np.float64], NDArray[np.int64], NDArray[np.float64]]
+_Scale = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+
+
+class _NativeAsset(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    asset: str = Field(pattern=r"^/(Game|Engine)/[^\\\s]+\.[^/\\.\s]+$")
+    scale: tuple[_Scale, _Scale, _Scale]
+
+
+class _NativeAssets(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    version: int = Field(ge=1, le=1)
+    geoms: dict[str, _NativeAsset]
+    hidden_geoms: list[str] = Field(default_factory=list)
+
+
+def _native_assets(model: mujoco.MjModel) -> tuple[dict[int, _NativeAsset], set[int]]:
+    """Read renderer bindings embedded in the authoritative compiled MJCF."""
+    text_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_TEXT, "dimos_unreal_assets")
+    if text_id < 0:
+        return {}, set()
+    start = int(model.text_adr[text_id])
+    size = int(model.text_size[text_id])
+    try:
+        metadata = _NativeAssets.model_validate_json(model.text_data[start : start + size - 1])
+    except ValidationError as error:
+        raise ValueError(f"invalid dimos_unreal_assets: {error}") from error
+    if len(metadata.hidden_geoms) != len(set(metadata.hidden_geoms)):
+        raise ValueError("dimos_unreal_assets hidden_geoms must not contain duplicate names")
+    overlap = set(metadata.geoms).intersection(metadata.hidden_geoms)
+    if overlap:
+        raise ValueError(f"dimos_unreal_assets cannot hide native asset markers: {sorted(overlap)}")
+
+    def geom_id(name: str) -> int:
+        index = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+        if index < 0:
+            raise ValueError(f"dimos_unreal_assets references unknown geom {name!r}")
+        return int(index)
+
+    return (
+        {geom_id(name): asset for name, asset in metadata.geoms.items()},
+        {geom_id(name) for name in metadata.hidden_geoms},
+    )
 
 
 def _pose(position: NDArray[np.float64], rotation: NDArray[np.float64]) -> dict[str, Any]:
@@ -239,14 +286,27 @@ def export_scene(
 ) -> dict[str, Any]:
     """Build a renderer manifest from the compiled world's visible rigid geoms.
 
-    Mesh assets are shared between instances. Hidden groups and fully transparent
-    geoms are omitted. Unsupported geometry fails explicitly instead of leaving
-    a silently incomplete scene. Physics is never advanced by this operation.
+    Native Unreal assets bind to marker geoms through ``dimos_unreal_assets``
+    custom text. Its ``hidden_geoms`` omit physics colliders from this renderer
+    without changing their MuJoCo visibility or lidar returns. Procedural mesh
+    assets are shared between instances; hidden groups and fully transparent
+    procedural geoms are omitted. Physics is never advanced by this operation.
     """
+    native_assets, hidden_geoms = _native_assets(model)
     meshes: dict[str, dict[str, Any]] = {}
     geoms = []
     for index in range(model.ngeom):
-        if int(model.geom_group[index]) not in geom_groups:
+        if index in hidden_geoms or int(model.geom_group[index]) not in geom_groups:
+            continue
+        if index in native_assets:
+            asset = native_assets[index]
+            geoms.append(
+                {
+                    **geom_poses(data, [index])[0],
+                    "static_mesh": asset.asset,
+                    "scale": list(asset.scale),
+                }
+            )
             continue
         rgba = np.asarray(model.geom_rgba[index]).copy()
         material = int(model.geom_matid[index])

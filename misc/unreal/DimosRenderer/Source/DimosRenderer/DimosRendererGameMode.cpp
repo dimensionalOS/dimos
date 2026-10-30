@@ -2,8 +2,11 @@
 
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
+#include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/Texture.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
@@ -11,9 +14,12 @@
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/Material.h"
+#include "MaterialShared.h"
+#include "MaterialShaderPrecompileMode.h"
 #include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
+#include "Misc/PackageName.h"
 #include "ProceduralMeshComponent.h"
 #include "RenderingThread.h"
 #include "Serialization/JsonReader.h"
@@ -26,6 +32,8 @@
 
 #if WITH_EDITOR
 #include "ShaderCompiler.h"
+#include "StaticMeshCompiler.h"
+#include "TextureCompiler.h"
 #endif
 
 namespace
@@ -77,6 +85,85 @@ bool ValidPose(const TSharedPtr<FJsonObject>& Object)
     double Length2 = 0;
     for (const auto& Value : Q) Length2 += FMath::Square(Value->AsNumber());
     return FMath::Abs(Length2 - 1) < 0.001;
+}
+
+const FMaterialResource* NativeMaterialResource(UMaterialInterface* Material)
+{
+    const auto* Resource = Material->GetMaterialResource(GMaxRHIShaderPlatform);
+    if ((!Resource || !Resource->GetMaterial()) && Material->GetMaterial())
+        Resource = Material->GetMaterial()->GetMaterialResource(GMaxRHIShaderPlatform);
+    return Resource;
+}
+
+#if WITH_EDITOR
+void FinishMaterial(UMaterialInterface* Material)
+{
+    const auto* Resource = NativeMaterialResource(Material);
+    if (!Resource || !Resource->IsGameThreadShaderMapComplete())
+        Material->ForceRecompileForRendering(EMaterialShaderPrecompileMode::Synchronous);
+}
+#endif
+
+bool PrepareStaticMeshes(const TArray<UStaticMesh*>& Meshes, FString& Error)
+{
+#if WITH_EDITOR
+    FStaticMeshCompilingManager::Get().FinishCompilation(Meshes);
+#endif
+    TSet<UMaterialInterface*> Materials;
+    TSet<UMaterial*> BaseMaterials;
+    TArray<UTexture*> Textures;
+    for (auto* Mesh : Meshes)
+    {
+        if (!Mesh->HasValidRenderData() || Mesh->GetStaticMaterials().IsEmpty())
+        { Error = FString::Printf(TEXT("Static mesh has no render data or materials: %s"), *Mesh->GetPathName()); return false; }
+        for (const auto& Slot : Mesh->GetStaticMaterials())
+        {
+            auto* Material = Slot.MaterialInterface.Get();
+            if (!Material || Material->GetBlendMode() != BLEND_Opaque)
+            { Error = FString::Printf(TEXT("Static mesh requires opaque materials in every slot: %s"), *Mesh->GetPathName()); return false; }
+            Materials.Add(Material);
+            BaseMaterials.Add(Material->GetMaterial());
+        }
+    }
+#if WITH_EDITOR
+    // Instances without their own static permutation use their parent's shader
+    // resource. Compile missing parents too, synchronously rather than queuing
+    // DDC work. Reuse complete resources on reset instead of invalidating them.
+    for (auto* Material : BaseMaterials)
+        if (Material) FinishMaterial(Material);
+#endif
+    for (auto* Material : Materials)
+    {
+        TArray<UTexture*> UsedTextures;
+        Material->GetUsedTextures(UsedTextures);
+        for (auto* Texture : UsedTextures) if (Texture) Textures.AddUnique(Texture);
+#if WITH_EDITOR
+        // Editor -game must finish the source asset's permutations before the
+        // first RGB-D capture; otherwise Unreal silently draws its gray fallback.
+        FinishMaterial(Material);
+#endif
+    }
+#if WITH_EDITOR
+    FTextureCompilingManager::Get().FinishCompilation(Textures);
+    if (GShaderCompilingManager) GShaderCompilingManager->FinishAllCompilation();
+#endif
+    for (auto* Material : Materials)
+    {
+        const auto* Resource = NativeMaterialResource(Material);
+        if (!Resource || !Resource->IsGameThreadShaderMapComplete())
+        {
+            Error = FString::Printf(TEXT("Static mesh material shaders are unavailable: %s (platform=%d, resource=%s)"),
+                *Material->GetPathName(), static_cast<int32>(GMaxRHIShaderPlatform), Resource ? TEXT("incomplete") : TEXT("missing"));
+            return false;
+        }
+    }
+    for (auto* Texture : Textures)
+    {
+        Texture->SetForceMipLevelsToBeResident(30.0f);
+        Texture->WaitForStreaming();
+    }
+    FlushRenderingCommands();
+    return true;
 }
 }
 
@@ -353,16 +440,39 @@ bool ADimosRendererGameMode::LoadScene(const FString& Path, FString& Error)
     }
     // Validate the complete request before mutating the current scene.
     TSet<int32> Ids;
+    TMap<int32, UStaticMesh*> StaticMeshes;
+    TArray<UStaticMesh*> UniqueStaticMeshes;
     for (const auto& Value : *Geoms)
     {
         if (Value->Type != EJson::Object) { Error = TEXT("Invalid geometry"); return false; }
         auto Geom = Value->AsObject();
         FString MeshId;
         int32 Id;
-        if (!ValidPose(Geom) || !IsArray(Geom, TEXT("rgba"), 4) || !Identifier(Geom, TEXT("id"), Id) ||
-            Ids.Contains(Id) || !Geom->TryGetStringField(TEXT("mesh_id"), MeshId) || !MeshMap.Contains(MeshId))
-        { Error = TEXT("Invalid geometry pose, color or mesh reference"); return false; }
+        if (!ValidPose(Geom) || !Identifier(Geom, TEXT("id"), Id) || Ids.Contains(Id))
+        { Error = TEXT("Invalid geometry pose or duplicate id"); return false; }
         Ids.Add(Id);
+        if (Geom->HasField(TEXT("static_mesh")))
+        {
+            FString AssetPath;
+            if (!Geom->TryGetStringField(TEXT("static_mesh"), AssetPath) ||
+                !FPackageName::IsValidObjectPath(AssetPath) ||
+                (!AssetPath.StartsWith(TEXT("/Game/")) && !AssetPath.StartsWith(TEXT("/Engine/"))) ||
+                !IsArray(Geom, TEXT("scale"), 3) || Geom->HasField(TEXT("mesh_id")) ||
+                Geom->HasField(TEXT("rgba")) || Geom->HasField(TEXT("roughness")))
+            { Error = TEXT("Static geometry needs a full content object path and scale, without procedural material fields"); return false; }
+            for (const auto& Axis : Geom->GetArrayField(TEXT("scale")))
+                if (Axis->AsNumber() <= 0)
+                { Error = TEXT("Static mesh scale must be positive and finite"); return false; }
+            auto* StaticMesh = LoadObject<UStaticMesh>(nullptr, *AssetPath);
+            if (!StaticMesh)
+            { Error = FString::Printf(TEXT("Static mesh asset not found: %s"), *AssetPath); return false; }
+            StaticMeshes.Add(Id, StaticMesh);
+            UniqueStaticMeshes.AddUnique(StaticMesh);
+            continue;
+        }
+        if (!IsArray(Geom, TEXT("rgba"), 4) || !Geom->TryGetStringField(TEXT("mesh_id"), MeshId) ||
+            !MeshMap.Contains(MeshId) || Geom->HasField(TEXT("scale")))
+        { Error = TEXT("Invalid procedural geometry color or mesh reference"); return false; }
         const auto& RGBA = Geom->GetArrayField(TEXT("rgba"));
         for (const auto& Channel : RGBA)
             if (Channel->AsNumber() < 0 || Channel->AsNumber() > 1)
@@ -374,11 +484,29 @@ bool ADimosRendererGameMode::LoadScene(const FString& Path, FString& Error)
             (!Number(Geom, TEXT("roughness"), Roughness) || Roughness < 0 || Roughness > 1))
         { Error = TEXT("Roughness must lie in [0, 1]"); return false; }
     }
+    if (!PrepareStaticMeshes(UniqueStaticMeshes, Error)) return false;
     for (auto& Pair : Geometries) Pair.Value->DestroyComponent();
     Geometries.Empty();
     for (const auto& Value : *Geoms)
     {
         auto Geom = Value->AsObject();
+        const auto Id = static_cast<int32>(Geom->GetNumberField(TEXT("id")));
+        if (auto* const* StaticMesh = StaticMeshes.Find(Id))
+        {
+            auto* Component = NewObject<UStaticMeshComponent>(this);
+            Component->SetMobility(EComponentMobility::Movable);
+            Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            Component->SetGenerateOverlapEvents(false);
+            Component->SetSimulatePhysics(false);
+            Component->SetCanEverAffectNavigation(false);
+            Component->SetStaticMesh(*StaticMesh);
+            Component->SetupAttachment(RootComponent);
+            Component->SetRelativeScale3D(Vector(Geom->GetArrayField(TEXT("scale"))));
+            Component->RegisterComponent();
+            SetPose(Component, Geom);
+            Geometries.Add(Id, Component);
+            continue;
+        }
         auto Mesh = MeshMap[Geom->GetStringField(TEXT("mesh_id"))];
         TArray<FVector> Vertices, Normals;
         TArray<int32> Triangles;
@@ -401,7 +529,7 @@ bool ADimosRendererGameMode::LoadScene(const FString& Path, FString& Error)
         Material->SetScalarParameterValue(TEXT("Roughness"), Roughness);
         Component->SetMaterial(0, Material);
         SetPose(Component, Geom);
-        Geometries.Add(static_cast<int32>(Geom->GetNumberField(TEXT("id"))), Component);
+        Geometries.Add(Id, Component);
     }
     bHasScene = true;
     Episode = -1;

@@ -14,6 +14,9 @@
 
 """Geometry and camera contracts of the MuJoCo → Unreal boundary."""
 
+import json
+import xml.etree.ElementTree as ET
+
 import mujoco
 import numpy as np
 from numpy.testing import assert_allclose
@@ -29,6 +32,164 @@ def _compiled(xml):
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     return model, data
+
+
+def _compiled_with_assets(metadata):
+    root = ET.fromstring("""
+        <mujoco><worldbody>
+          <geom name="collider" type="box" size="1 1 1" pos="3 0 0"/>
+          <geom name="shelf_visual" type="sphere" size=".001" mass="0"
+            contype="0" conaffinity="0" rgba="0 0 0 0" pos="1 -2 3" euler="0 0 90"/>
+          <body pos="0 1 2">
+            <freejoint/>
+            <inertial pos="0 0 0" mass="1" diaginertia=".1 .1 .1"/>
+            <geom name="moving_visual" type="sphere" size=".001" mass="0"
+              contype="0" conaffinity="0"/>
+          </body>
+        </worldbody></mujoco>
+    """)
+    ET.SubElement(
+        ET.SubElement(root, "custom"),
+        "text",
+        name="dimos_unreal_assets",
+        data=json.dumps(metadata),
+    )
+    return _compiled(ET.tostring(root, encoding="unicode"))
+
+
+def test_native_assets_replace_markers_and_follow_static_and_dynamic_poses():
+    model, data = _compiled_with_assets(
+        {
+            "version": 1,
+            "geoms": {
+                "shelf_visual": {"asset": "/Game/Props/Shelf.Shelf", "scale": [1, 2, 3]},
+                "moving_visual": {"asset": "/Game/Props/Box.Box", "scale": [0.5, 1, 2]},
+            },
+        }
+    )
+    scene = export_scene(model, data)
+    collider, shelf, moving = scene["geoms"]
+
+    assert collider["mesh_id"] == scene["meshes"][0]["id"]
+    assert len(scene["meshes"]) == 1
+    assert set(shelf) == {"id", "position", "quaternion", "static_mesh", "scale"}
+    assert shelf["static_mesh"] == "/Game/Props/Shelf.Shelf"
+    assert shelf["scale"] == [1, 2, 3]
+    assert_allclose(shelf["position"], [100, 200, 300])
+    assert_allclose(shelf["quaternion"], [0, 0, -np.sqrt(0.5), np.sqrt(0.5)])
+    assert moving == {
+        "id": 2,
+        "position": [0, -100, 200],
+        "quaternion": [0, 0, 0, 1],
+        "static_mesh": "/Game/Props/Box.Box",
+        "scale": [0.5, 1, 2],
+    }
+
+    data.qpos[:3] += [1, 2, 3]
+    mujoco.mj_forward(model, data)
+    static_pose, dynamic_pose = geom_poses(data, [shelf["id"], moving["id"]])
+    assert_allclose(static_pose["position"], shelf["position"])
+    assert_allclose(dynamic_pose["position"], [100, -300, 500])
+
+
+def test_hidden_collider_still_returns_physics_rays_but_is_not_rendered():
+    model, data = _compiled_with_assets(
+        {
+            "version": 1,
+            "geoms": {
+                "shelf_visual": {"asset": "/Game/Props/Shelf.Shelf", "scale": [1, 1, 1]},
+            },
+            "hidden_geoms": ["collider"],
+        }
+    )
+    scene = export_scene(model, data)
+    hit = np.full(1, -1, dtype=np.int32)
+    distance = mujoco.mj_ray(model, data, np.zeros(3), np.array([1.0, 0, 0]), None, True, -1, hit)
+
+    assert [geom["id"] for geom in scene["geoms"]] == [1, 2]
+    assert scene["geoms"][0]["static_mesh"] == "/Game/Props/Shelf.Shelf"
+    assert distance == 2
+    assert hit.tolist() == [0]
+    assert model.geom_rgba[0, 3] == 1
+    assert model.geom_contype[0] == 1
+
+
+def test_native_binding_rejects_missing_geom():
+    model, data = _compiled_with_assets(
+        {
+            "version": 1,
+            "geoms": {"missing": {"asset": "/Game/Props/Shelf.Shelf", "scale": [1, 1, 1]}},
+        }
+    )
+    with pytest.raises(ValueError, match="unknown geom 'missing'"):
+        export_scene(model, data)
+
+
+@pytest.mark.parametrize(
+    "scale",
+    [[0, 1, 1], [-1, 1, 1], [np.inf, 1, 1], [np.nan, 1, 1], [True, 1, 1], ["1", 1, 1], [1, 1]],
+)
+def test_native_binding_rejects_invalid_scale(scale):
+    model, data = _compiled_with_assets(
+        {
+            "version": 1,
+            "geoms": {"shelf_visual": {"asset": "/Game/Props/Shelf.Shelf", "scale": scale}},
+        }
+    )
+    with pytest.raises(ValueError, match="invalid dimos_unreal_assets"):
+        export_scene(model, data)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"version": True, "geoms": {}},
+        {"version": 2, "geoms": {}},
+        {"version": 1, "geoms": {}, "unexpected": 3},
+        {
+            "version": 1,
+            "geoms": {"shelf_visual": {"asset": "Shelf", "scale": [1, 1, 1]}},
+        },
+        {
+            "version": 1,
+            "geoms": {"shelf_visual": {"asset": "/Plugin/Shelf.Shelf", "scale": [1, 1, 1]}},
+        },
+        {
+            "version": 1,
+            "geoms": {
+                "shelf_visual": {
+                    "asset": "/Game/Shelf.Shelf",
+                    "scale": [1, 1, 1],
+                    "rgba": [1, 0, 0, 1],
+                }
+            },
+        },
+    ],
+)
+def test_native_asset_metadata_rejects_unknown_schema_and_unsupported_asset_paths(metadata):
+    model, data = _compiled_with_assets(metadata)
+    with pytest.raises(ValueError, match="invalid dimos_unreal_assets"):
+        export_scene(model, data)
+
+
+@pytest.mark.parametrize(
+    ("hidden", "error"),
+    [
+        (["missing"], "unknown geom 'missing'"),
+        (["collider", "collider"], "duplicate names"),
+        (["shelf_visual"], "cannot hide native asset markers"),
+    ],
+)
+def test_hidden_geom_bindings_reject_missing_duplicate_or_native_markers(hidden, error):
+    model, data = _compiled_with_assets(
+        {
+            "version": 1,
+            "geoms": {"shelf_visual": {"asset": "/Game/Shelf.Shelf", "scale": [1, 1, 1]}},
+            "hidden_geoms": hidden,
+        }
+    )
+    with pytest.raises(ValueError, match=error):
+        export_scene(model, data)
 
 
 def test_mesh_export_preserves_source_scale_and_authored_pose_once():

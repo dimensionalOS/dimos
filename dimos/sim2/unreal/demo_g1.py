@@ -82,6 +82,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--executable", required=True, type=Path)
     parser.add_argument("--project", type=Path, help="Only needed when using UnrealEditor -game")
+    parser.add_argument(
+        "--scene", type=Path, help="Authored MJCF scene or exported scene directory"
+    )
     parser.add_argument("--output", type=Path, default=Path("/tmp/dimos-g1-unreal"))
     parser.add_argument(
         "--seconds", type=float, default=30, help="Headless run duration; 0 runs until Ctrl-C"
@@ -114,6 +117,8 @@ def main() -> None:
     global_config.transport = "zenoh"
     global_config.zenoh_domain = domain
     global_config.zenoh_scout_addr = os.environ["ZENOH_SCOUT_ADDR"]
+    if args.scene is not None:
+        global_config.scene_package = str(args.scene.resolve())
     # This blueprint selects its operating profile at import, after the flags above.
     g1 = import_module("dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc")
     sensor = observer_camera() if args.camera == "observer" else Camera("unreal", "front_camera")
@@ -137,6 +142,7 @@ def main() -> None:
             "transport": "zenoh",
             "zenoh_domain": domain,
             "zenoh_scout_addr": global_config.zenoh_scout_addr,
+            "scene_package": global_config.scene_package,
         },
     )
     counts: dict[str, int] = {}
