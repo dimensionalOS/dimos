@@ -218,6 +218,7 @@ def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
         assert world.kwargs["robot_topics"]["g1"][port] == f"_sim2/{connection.name}/{port}"
     assert result.remapping_map["mid360", "lidar"] == "lidar_raw"
     assert result.remapping_map["mid360", "imu"] == "imu_raw"
+    assert result.remapping_map[connection.name, "odom"] == "g1/odom"
     assert [(owner, sensor.name) for owner, sensor in world.kwargs["sensors"]] == [("g1", "mid360")]
 
 
@@ -237,6 +238,7 @@ from dimos.core.global_config import global_config
 global_config.simulation = sys.argv[1]
 groot = import_module('dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc')
 stock = import_module('dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic')
+unreal = import_module('dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc_unreal')
 coordinator = next(atom for atom in groot.unitree_g1_groot_control.active_blueprints
                    if atom.name == 'ControlCoordinator')
 policy = next(task for task in coordinator.kwargs['tasks'] if task.name == 'groot_wbc')
@@ -249,6 +251,10 @@ print(json.dumps({
     'ramp': policy.params['default_ramp_seconds'],
     'groot_navigation_rejected': any(check() for check in groot.unitree_g1_groot_wbc.requirement_checks),
     'stock_navigation_rejected': any(check() for check in stock.unitree_g1_basic.requirement_checks),
+    'groot_unreal_modules': [atom.module.__name__ for atom in unreal.unitree_g1_groot_control_unreal.active_blueprints],
+    'stock_unreal_modules': [atom.module.__name__ for atom in unreal.unitree_g1_control_unreal.active_blueprints],
+    'groot_unreal_requires_simulation': any(check() for check in unreal.unitree_g1_groot_control_unreal.requirement_checks),
+    'stock_unreal_requires_simulation': any(check() for check in unreal.unitree_g1_control_unreal.requirement_checks),
 }))
 """,
             engine,
@@ -268,6 +274,18 @@ print(json.dumps({
     assert profile["ramp"] == (0 if engine else 10)
     assert profile["groot_navigation_rejected"] is (engine == "genesis")
     assert profile["stock_navigation_rejected"] is (engine == "genesis")
+    assert profile["groot_unreal_modules"] == [
+        "G1Connection",
+        "_G1GrootCoordinator",
+        "UnrealCameraModule",
+    ]
+    assert profile["stock_unreal_modules"] == [
+        "G1Connection",
+        "UnitreeG1SkillContainer",
+        "UnrealCameraModule",
+    ]
+    assert profile["groot_unreal_requires_simulation"] is (not engine)
+    assert profile["stock_unreal_requires_simulation"] is (not engine)
 
 
 @pytest.mark.self_hosted

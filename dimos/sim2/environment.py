@@ -41,7 +41,7 @@ from dimos.sim2.backends.mujoco_observations import create_observables
 from dimos.sim2.control import MotorController
 from dimos.sim2.rendering import NativeRendering
 from dimos.sim2.sensors.camera.spec import Camera
-from dimos.sim2.sensors.composition import Sensor, mounted_sensors
+from dimos.sim2.sensors.composition import Sensor, mounted_sensors, observable_sensors
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.world.scene import describe_scene
@@ -228,10 +228,9 @@ class MotorScene(NativeRendering):
 
     def _setup_observables(self) -> dict[str, Observable]:
         observables: dict[str, Observable] = dict(super()._setup_observables())
-        for owner, device in self.sensor_bindings:
-            if isinstance(device, (Camera, Imu)):
-                prefix = self.robot_models[owner].naming_prefix if owner is not None else ""
-                observables.update(create_observables(self.sim, device, prefix, owner))
+        for owner, device in observable_sensors(self.sensor_bindings):
+            prefix = self.robot_models[owner].naming_prefix if owner is not None else ""
+            observables.update(create_observables(self.sim, device, prefix, owner))
         return observables
 
     def _update_observables(self, force: bool = False) -> None:

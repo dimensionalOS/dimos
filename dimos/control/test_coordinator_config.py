@@ -23,8 +23,30 @@ import pytest
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.global_config import global_config
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module
 from dimos.robot.manipulators.xarm.config import make_xarm_hardware, xarm7_hardware
+
+
+@pytest.fixture
+def control_workers():
+    config = GlobalConfig(n_workers=1)
+    manager = WorkerManagerPython(g=config)
+    manager.start()
+    try:
+        yield manager, config
+    finally:
+        manager.stop()
+
+
+def test_control_loop_gets_separate_process_from_other_modules(control_workers):
+    manager, config = control_workers
+    manager.deploy(ControlCoordinator, config, {})
+    manager.deploy(Module, config, {})
+
+    assert [worker.module_count for worker in manager.workers if worker.dedicated] == [1]
+    assert [worker.module_count for worker in manager.workers if not worker.dedicated] == [1]
 
 
 def test_hardware_configuration_replaces_the_full_list_with_independent_addresses(

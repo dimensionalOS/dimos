@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TypeAlias
 
 from dimos.sim2.sensors.camera.spec import Camera
@@ -35,4 +36,21 @@ def mounted_sensors(sensors: tuple[Sensor, ...]) -> tuple[Sensor, ...]:
             if isinstance(sensor, Lidar) and sensor.imu is not None
             else (sensor,)
         )
+    )
+
+
+def observable_sensors(
+    bindings: tuple[tuple[str | None, Sensor], ...],
+) -> tuple[tuple[str | None, Camera | Imu], ...]:
+    """Acquire integrated IMUs without delay; their bridge schedules delivery."""
+    return tuple(
+        (
+            owner,
+            replace(child, latency=0)
+            if isinstance(sensor, Lidar) and isinstance(child, Imu) and child.latency != 0
+            else child,
+        )
+        for owner, sensor in bindings
+        for child in mounted_sensors((sensor,))
+        if isinstance(child, (Camera, Imu))
     )

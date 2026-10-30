@@ -110,7 +110,13 @@ class Mid360Config(NativeModuleConfig):
         # The rust struct has every key. None crosses as an explicit null.
         for key in ("host_ip", "lidar_ip", "pcap", "replay_rate", "multicast_ip"):
             config[key] = getattr(self, key)
+        config["frame_id"], config["imu_frame_id"] = self.sensor_frames()
         return config
+
+    def sensor_frames(self) -> tuple[str, str]:
+        """Public sensor frames, shared by the native and simulated driver."""
+        prefix = f"{self.frame_id_prefix}/" if self.frame_id_prefix else ""
+        return prefix + self.frame_id, prefix + self.imu_frame_id
 
 
 def _resolved_host_ip(config: Mid360Config) -> str | None:
@@ -142,6 +148,7 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     @staticmethod
     def simulated_sensor(config: Mid360Config) -> SimLidar:
         """A rolling Mid360 at ``frame_id`` with its own IMU, publishing ``lidar`` and ``imu``."""
+        frame_id, imu_frame_id = config.sensor_frames()
         imu = (
             SimImu("imu", Mount(config.frame_id, xyz=MID360_IMU_OFFSET))
             if config.enable_imu
@@ -158,6 +165,8 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
             # housing per robot (Lidar.excluded_meshes) is the way to turn this on.
             self_occlusion=False,
             truth_outputs=False,
+            frame_id=frame_id,
+            imu_frame_id=imu_frame_id,
         )
 
     @rpc

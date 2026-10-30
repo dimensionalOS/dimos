@@ -135,35 +135,55 @@ class WorldReader:
 
     def restore_at(self, time: float) -> None:
         """Interpolate full scene kinematics, including quaternion joints and mocap bodies."""
+        if self._next is None:
+            self._next = mujoco.MjData(self.model)
+        self.timestamp = self.restore_into(time, self.data, self._next)
+
+    def restore_into(
+        self,
+        time: float,
+        data: mujoco.MjData,
+        scratch: mujoco.MjData,
+        *,
+        kinematics_only: bool = False,
+    ) -> float:
+        """Read pinned history into caller-owned data, without mutating the reader.
+
+        Concurrent ray workers own both data objects. The acquisition thread must
+        finish those reads before replacing the pinned interval or model.
+        """
         times = [f.metadata.sim_time for f in self._history]
         if not times or time < times[0] - 1e-9 or time > times[-1] + 1e-9:
             raise ValueError(f"snapshot history does not cover {time}")
         index = min(bisect_left(times, time), len(times) - 1)
         after = self._history[index]
         before = self._history[max(0, index - 1)]
-        mujoco.mj_setState(self.model, self.data, before.values["state"], STATE)
+        mujoco.mj_setState(self.model, data, before.values["state"], STATE)
         duration = after.metadata.sim_time - before.metadata.sim_time
         alpha = (
             0.0 if duration == 0 else np.clip((time - before.metadata.sim_time) / duration, 0, 1)
         )
         if duration > 0:
-            if self._next is None:
-                self._next = mujoco.MjData(self.model)
-            mujoco.mj_setState(self.model, self._next, after.values["state"], STATE)
+            mujoco.mj_setState(self.model, scratch, after.values["state"], STATE)
             velocity = np.empty(self.model.nv)
-            mujoco.mj_differentiatePos(
-                self.model, velocity, duration, self.data.qpos, self._next.qpos
-            )
-            mujoco.mj_integratePos(self.model, self.data.qpos, velocity, float(alpha * duration))
-            self.data.qvel[:] += alpha * (self._next.qvel - self.data.qvel)
-            self.data.mocap_pos[:] += alpha * (self._next.mocap_pos - self.data.mocap_pos)
-            q0, q1 = self.data.mocap_quat, self._next.mocap_quat
+            mujoco.mj_differentiatePos(self.model, velocity, duration, data.qpos, scratch.qpos)
+            mujoco.mj_integratePos(self.model, data.qpos, velocity, float(alpha * duration))
+            data.qvel[:] += alpha * (scratch.qvel - data.qvel)
+            data.mocap_pos[:] += alpha * (scratch.mocap_pos - data.mocap_pos)
+            q0, q1 = data.mocap_quat, scratch.mocap_quat
             q1 = q1 * np.where(np.sum(q0 * q1, axis=1, keepdims=True) < 0, -1, 1)
             q0[:] += alpha * (q1 - q0)
             q0[:] /= np.linalg.norm(q0, axis=1, keepdims=True)
-        self.data.time = time
-        self.timestamp = float(
+        data.time = time
+        timestamp = float(
             before.values["wall_time"][0]
             + alpha * (after.values["wall_time"][0] - before.values["wall_time"][0])
         )
-        mujoco.mj_forward(self.model, self.data)
+        if kinematics_only:
+            # Ray queries use geom transforms and body inertial positions. They
+            # do not need collision detection, constraints, or a dynamics solve.
+            mujoco.mj_kinematics(self.model, data)
+            mujoco.mj_comPos(self.model, data)
+        else:
+            mujoco.mj_forward(self.model, data)
+        return timestamp

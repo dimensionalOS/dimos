@@ -113,6 +113,9 @@ _robot = G1Connection.blueprint(
         (G1Connection, "motor_command", "g1/motor_command"),
         (G1Connection, "motor_states", "g1/motor_states"),
         (G1Connection, "imu", "g1/imu"),
+        # Navigation uses Point-LIO's odometry in the map frame. The connection's
+        # independent pose must not compete for the planner's other pose input.
+        (G1Connection, "odom", "g1/odom"),
     ]
 )
 

@@ -98,6 +98,60 @@ def test_joint_drive_preserves_effort_and_native_position_servo_semantics(backen
         backend.validate((JointDrive("door", effort=1),))
 
 
+def test_motor_scene_trajectory_and_measurements_do_not_need_repeated_forward_solves(
+    world_config, scene_path, robot_path
+):
+    scene_path.write_text(
+        scene_path.read_text()
+        .replace('gravity="0 0 0"', 'gravity="0 0 -9.81"')
+        .replace(
+            "</worldbody>",
+            '<body name="prop" mocap="true" pos="0 3 1">'
+            '<geom type="sphere" size=".1"/></body></worldbody>',
+        )
+    )
+    robot_path.write_text(
+        robot_path.read_text().replace(
+            '<body name="base" pos="0 0 .3">',
+            '<body name="base" pos="0 0 .3"><freejoint name="floating_base"/>',
+        )
+    )
+    with MujocoBackend(**world_config) as optimized, MujocoBackend(**world_config) as repeated:
+        optimized.reset()
+        repeated.reset()
+        for tick in range(80):
+            commands = (
+                JointDrive("left/hinge", position=0.1 + 0.03 * math.sin(tick / 10), kp=2, kd=1),
+                JointDrive("left/finger_joint", position=0.02),
+                BodyWrench("box", force=(0.2, 0, 0), point=(0, 0.1, 0), frame="body"),
+                KinematicTarget("prop", (0.001 * tick, 3, 1), (0, 0, 0, 1)),
+            )
+            # The old bridge redundantly solved before applying its forces and
+            # again after the environment had refreshed post-step measurements.
+            repeated.data.xfrc_applied[:] = 0
+            repeated.data.qfrc_applied[:] = 0
+            repeated.environment.sim.forward()
+            reference = repeated.step(commands)
+            repeated.environment.sim.forward()
+            measured = optimized.step(commands)
+
+            np.testing.assert_allclose(optimized.data.qpos, repeated.data.qpos, atol=1e-12, rtol=0)
+            np.testing.assert_allclose(optimized.data.qvel, repeated.data.qvel, atol=1e-12, rtol=0)
+            np.testing.assert_allclose(
+                optimized.data.sensordata, repeated.data.sensordata, atol=1e-12, rtol=0
+            )
+            assert state(optimized).robots["left"].effort == pytest.approx(
+                state(repeated).robots["left"].effort, abs=1e-12, rel=0
+            )
+            np.testing.assert_allclose(
+                measured.observations["left/imu/imu"],
+                reference.observations["left/imu/imu"],
+                atol=1e-12,
+                rtol=0,
+            )
+            assert state(optimized).bodies["prop"].position == pytest.approx((0.001 * tick, 3, 1))
+
+
 def test_body_force_is_integrated_for_one_step_and_not_held(backend):
     backend.step((BodyWrench("box", force=(2, 0, 0)),))
     pushed = state(backend).bodies["box"]

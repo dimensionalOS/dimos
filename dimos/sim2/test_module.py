@@ -18,6 +18,7 @@ from contextlib import ExitStack
 from functools import partial
 import threading
 import time
+from uuid import uuid4
 
 import pytest
 
@@ -25,12 +26,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import In, Out, Transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.sim2.backends.mujoco import MujocoBackend
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.environment import MotorScene
 from dimos.sim2.module import SimulationModule, robot_ports
@@ -156,7 +158,12 @@ def test_world_publishes_and_consumes_standard_messages_over_streams(
     blueprint = autoconnect(simulation(**world, module=_World), _Driver.blueprint())
     with ExitStack() as stack:
         app = ModuleCoordinator.build(
-            blueprint.global_config(n_workers=1, viewer="none", transport="zenoh")
+            blueprint.global_config(
+                n_workers=1,
+                viewer="none",
+                transport="zenoh",
+                zenoh_domain=f"sim2-module-test-{uuid4().hex}",
+            )
         )
         stack.callback(app.stop)
         sim = app.get_instance(_World)
@@ -247,7 +254,7 @@ def test_stop_fails_queued_requests_before_waiting_for_the_busy_owner(owner_modu
     assert not active.is_alive()
     assert not pending.is_alive()
     assert not stopping.is_alive()
-    assert module.status() == {"running": False, "error": None}
+    assert module.status() == {"running": False, "error": None, "mujoco_viewer": None}
 
 
 def test_close_failure_is_reported_and_does_not_leave_a_stale_runtime(owner_module, mocker):
@@ -270,6 +277,7 @@ def test_close_failure_is_reported_and_does_not_leave_a_stale_runtime(owner_modu
     assert module.status() == {
         "running": False,
         "error": "backend close failed: ValueError: renderer teardown failed",
+        "mujoco_viewer": None,
     }
     with pytest.raises(RuntimeError, match="renderer teardown failed"):
         module.reset()
@@ -337,7 +345,7 @@ def test_request_admission_cannot_leave_a_future_behind_after_owner_shutdown(own
         assert stop_finished.wait(timeout=5)
         assert request_finished.wait(timeout=1)
         assert all(isinstance(error, RuntimeError) for error in errors)
-        assert module.status() == {"running": False, "error": None}
+        assert module.status() == {"running": False, "error": None, "mujoco_viewer": None}
     finally:
         release_admission.set()
         module.stop()
@@ -351,3 +359,110 @@ def test_request_admission_cannot_leave_a_future_behind_after_owner_shutdown(own
             stopping.join(timeout=5)
     assert not requesting.is_alive()
     assert not stopping.is_alive()
+
+
+@pytest.fixture
+def viewer_module(world_config, mocker):
+    factory = mocker.patch("dimos.sim2.module.NativeMujocoViewer", autospec=True)
+    module = SimulationModule(**world_config, mujoco_viewer=True)
+    for port in (module.commands, module.actions, module.snapshots):
+        port.transport = mocker.Mock(spec=Transport)
+    with ExitStack() as cleanup:
+        cleanup.callback(module.stop)
+        yield module, factory
+
+
+def test_viewer_receives_the_live_snapshot_stream_and_closes_before_the_backend(
+    viewer_module, mocker
+):
+    module, factory = viewer_module
+    snapshot = threading.Event()
+    viewer = factory.return_value
+    viewer.start.side_effect = lambda **kwargs: snapshot.wait(timeout=5)
+    viewer.status.return_value = {"running": True, "pid": 123, "error": None, "exitcode": None}
+    with ExitStack() as cleanup:
+        cleanup.callback(module.snapshots.subscribe(lambda frame: snapshot.set()))
+        module.start()
+        runtime = module._require_runtime()
+        closed = []
+        original_close = runtime.close
+
+        def close_backend():
+            closed.append("backend")
+            original_close()
+
+        viewer.stop.side_effect = lambda: closed.append("viewer")
+        mocker.patch.object(runtime, "close", side_effect=close_backend)
+
+        assert snapshot.is_set()
+        factory.assert_called_once_with(module.describe(), module.snapshots.transport)
+        assert module.status()["mujoco_viewer"]["pid"] == 123
+        assert module.status()["running"]
+
+        module.stop()
+
+        assert closed == ["viewer", "backend"]
+        assert not module.status()["running"]
+
+
+def test_viewer_startup_failure_stops_the_physics_owner(viewer_module):
+    module, factory = viewer_module
+    factory.return_value.start.side_effect = RuntimeError("native window failed")
+
+    with pytest.raises(RuntimeError, match="native window failed"):
+        module.start()
+
+    factory.return_value.stop.assert_called_once_with()
+    assert not module.status()["running"]
+    assert module._thread is None
+
+
+def test_viewer_shutdown_failure_still_closes_the_backend(viewer_module, mocker):
+    module, factory = viewer_module
+    module.start()
+    runtime = module._require_runtime()
+    closed = mocker.spy(runtime, "close")
+    factory.return_value.stop.side_effect = RuntimeError("native process failed to exit")
+
+    module.stop()
+
+    closed.assert_called_once_with()
+    assert module._thread is None
+    assert not module.status()["running"]
+    assert "native process failed to exit" in module.status()["error"]
+
+
+def test_physics_failure_closes_the_viewer_before_releasing_its_model(viewer_module, mocker):
+    module, factory = viewer_module
+    module.start()
+    runtime = module._require_runtime()
+    backend_closed = threading.Event()
+    original_close = runtime.close
+    closed = []
+
+    def close_backend():
+        closed.append("backend")
+        original_close()
+        backend_closed.set()
+
+    factory.return_value.stop.side_effect = lambda: closed.append("viewer")
+    mocker.patch.object(runtime, "close", side_effect=close_backend)
+    mocker.patch.object(runtime, "step", side_effect=ValueError("physics step failed"))
+
+    assert backend_closed.wait(timeout=5)
+    assert closed == ["viewer", "backend"]
+    assert module.status()["error"] == "physics step failed"
+    assert not module.status()["running"]
+
+
+def test_native_viewer_rejects_other_backends_before_stepping(viewer_module, monkeypatch, mocker):
+    module, factory = viewer_module
+    monkeypatch.setattr(MujocoBackend, "name", "genesis")
+    step = mocker.spy(MujocoBackend, "step")
+
+    with pytest.raises(RuntimeError, match="mujoco_viewer requires the MuJoCo backend"):
+        module.build()
+
+    factory.assert_not_called()
+    step.assert_not_called()
+    assert not module.status()["running"]

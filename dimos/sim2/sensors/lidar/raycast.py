@@ -76,7 +76,11 @@ class Raycaster:
         directions: NDArray[np.float64],
         max_range: float,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Ranges and world normals, aligned with input rays; misses remain negative."""
+        """Ranges and world normals, aligned with input rays; misses remain negative.
+
+        Concurrent calls must own separate MjData: MuJoCo uses its stack during
+        ray queries even though geometry and the model remain unchanged.
+        """
         rays = np.ascontiguousarray(directions, dtype=np.float64)
         distances = np.full(len(rays), -1.0)
         ids = np.full(len(rays), -1, dtype=np.int32)

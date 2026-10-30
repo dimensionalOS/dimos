@@ -86,6 +86,9 @@ class Lidar:
     # Disable both corrected cloud and truth TF when testing an estimator.
     truth_outputs: bool = True
     latency: float = 0.0
+    # Preserve a replaced driver's public frames independently of its model binding.
+    frame_id: str | None = None
+    imu_frame_id: str | None = None
 
     def __post_init__(self) -> None:
         validate_timing(self.rate_hz, self.latency)

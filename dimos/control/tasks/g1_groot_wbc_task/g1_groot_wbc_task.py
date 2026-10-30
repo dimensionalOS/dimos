@@ -206,8 +206,17 @@ class G1GrootWBCTask(BaseControlTask):
         self._all_joint_names = list(config.all_joint_names)
 
         providers = _preferred_onnx_providers()
-        self._balance_session = ort.InferenceSession(str(config.balance_onnx), providers=providers)
-        self._walk_session = ort.InferenceSession(str(config.walk_onnx), providers=providers)
+        # These small policies run inside the control tick; extra CPU pools
+        # compete with physics and sensing without helping their inference.
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = 1
+        options.inter_op_num_threads = 1
+        self._balance_session = ort.InferenceSession(
+            str(config.balance_onnx), sess_options=options, providers=providers
+        )
+        self._walk_session = ort.InferenceSession(
+            str(config.walk_onnx), sess_options=options, providers=providers
+        )
         self._balance_input = self._balance_session.get_inputs()[0].name
         self._walk_input = self._walk_session.get_inputs()[0].name
         logger.info(

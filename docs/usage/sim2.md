@@ -8,8 +8,8 @@ controller. The connection keeps its streams, validation and deadman handling.
 G1Connection -> SimRobotClient -> SimulationModule -> PhysicsBackend
      |                                |                 |
      |                                +-- WorldState <--+
-     |
-     +-- robot topics --> Desktop
+     |                                       |
+     +-- robot topics --> Desktop <-- images -- UnrealCameraModule
 ```
 
 ## Run G1
@@ -24,6 +24,19 @@ dimos --simulation mujoco run unitree-g1-control
 dimos --simulation mujoco run unitree-g1-groot-control
 ```
 
+To inspect MuJoCo physics alongside Desktop, configure the shared simulator
+explicitly and enable its native viewer:
+
+```bash
+dimos --simulation mujoco run unitree-g1-groot-control simulation-module \
+  --simulationmodule.mujoco-viewer true
+```
+
+The viewer follows the robot, displays collision geometry, and offers contact
+visualization. It reads snapshots in a separate process; closing the window
+does not stop physics. Its local physics controls do not send commands back to
+the simulator. This option requires the MuJoCo backend.
+
 Genesis requires PyTorch 2.8, while the repository's legacy ML test group pins
 an older version. Its locked install uses a separate environment:
 
@@ -37,7 +50,8 @@ UV_PROJECT_ENVIRONMENT=.venv-genesis uv sync --no-default-groups --extra sim-gen
 Both control blueprints publish the existing robot topics for Desktop and omit
 Rerun. Native camera/lidar acquisition and the full mapping/navigation profile
 currently require MuJoCo; selecting Genesis for those profiles reports the
-unsupported capability. Renderer cameras can consume neutral body poses independently of the physics engine.
+unsupported capability. Unreal cameras consume neutral body poses and work with
+either engine. See [Unreal cameras](/docs/usage/sim2-unreal.md).
 
 Source: [stock connection](/dimos/robot/unitree/g1/connection.py),
 [GR00T composition](/dimos/robot/unitree/g1/blueprints/basic/unitree_g1_groot_wbc.py).

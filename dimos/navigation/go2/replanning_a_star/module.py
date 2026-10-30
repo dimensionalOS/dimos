@@ -130,8 +130,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
-        self._planner.handle_goal_request(goal)
-        return True
+        return self._planner.handle_goal_request(goal)
 
     @rpc
     def get_state(self) -> NavigationState:

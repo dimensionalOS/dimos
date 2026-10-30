@@ -105,6 +105,7 @@ class GlobalPlanner(Resource):
         self._replan_event = Event()
         self._replan_reason = None
         self._lock = RLock()
+        self._frame_id: str | None = None
         self._reset_safe_goal_clearance()
 
     def start(self) -> None:
@@ -131,22 +132,44 @@ class GlobalPlanner(Resource):
 
     def handle_odom(self, msg: PoseStamped) -> None:
         with self._lock:
+            if self._frame_id is not None and msg.frame_id != self._frame_id:
+                logger.warning(
+                    "Ignoring odometry outside the navigation map frame",
+                    pose_frame=msg.frame_id,
+                    map_frame=self._frame_id,
+                )
+                return
             self._current_odom = msg
 
         self._local_planner.handle_odom(msg)
         self._position_tracker.add_position(msg)
 
     def handle_global_costmap(self, msg: OccupancyGrid) -> None:
+        with self._lock:
+            changed = self._frame_id is not None and self._frame_id != msg.frame_id
+            self._frame_id = msg.frame_id
+            if self._current_odom is not None and self._current_odom.frame_id != msg.frame_id:
+                self._current_odom = None
+        if changed:
+            self.cancel_goal()
         self._navigation_map.update(msg)
         self._navigation_map_near.update(msg)
 
-    def handle_goal_request(self, goal: PoseStamped) -> None:
-        logger.info("Got new goal", goal=str(goal))
+    def handle_goal_request(self, goal: PoseStamped) -> bool:
         with self._lock:
+            if self._frame_id is None or goal.frame_id != self._frame_id:
+                logger.warning(
+                    "Rejecting goal outside the navigation map frame",
+                    goal_frame=goal.frame_id,
+                    map_frame=self._frame_id,
+                )
+                return False
             self._current_goal = goal
             self._goal_reached = False
+        logger.info("Got new goal", goal=str(goal))
         self._replan_limiter.reset()
         self._plan_path()
+        return True
 
     def set_safe_goal_clearance(self, clearance: float) -> None:
         with self._lock:
@@ -172,11 +195,18 @@ class GlobalPlanner(Resource):
                 self._goal_reached = arrived
                 self._replan_limiter.reset()
 
-        self.path.on_next(Path())
+        self._clear_path()
         self._local_planner.stop_planning()
 
         if not but_will_try_again:
             self.goal_reached.on_next(Bool(arrived))
+
+    def _clear_path(self) -> None:
+        with self._lock:
+            frame_id = self._frame_id or (
+                self._current_odom.frame_id if self._current_odom is not None else "world"
+            )
+        self.path.on_next(Path(frame_id=frame_id))
 
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -277,7 +307,7 @@ class GlobalPlanner(Resource):
     def _handle_stop_message(self, stop_message: StopMessage) -> None:
         # Note, this runs in the monitoring thread.
 
-        self.path.on_next(Path())
+        self._clear_path()
 
         if stop_message == "arrived":
             logger.info("Arrived at goal.")

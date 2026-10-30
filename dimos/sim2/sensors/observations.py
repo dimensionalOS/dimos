@@ -34,7 +34,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.sim2.messages import FrameMetadata
 from dimos.sim2.sensors.camera.spec import Camera
-from dimos.sim2.sensors.composition import Sensor
+from dimos.sim2.sensors.composition import Sensor, observable_sensors
 from dimos.sim2.sensors.imu.spec import Imu
 
 
@@ -62,9 +62,7 @@ def collect_observations(
 ) -> list[ObservationFrame]:
     """Emit each newly acquired latest value once, without re-dating held samples."""
     frames = []
-    for robot_id, sensor in sensors:
-        if not isinstance(sensor, (Camera, Imu)):
-            continue
+    for robot_id, sensor in observable_sensors(sensors):
         key = observation_key(robot_id, sensor)
         names = (
             ("image", "depth")

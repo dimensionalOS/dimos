@@ -50,6 +50,21 @@ def test_config_dict_is_the_wire_config() -> None:
     assert json.loads(json.dumps(wire)) == wire
 
 
+@pytest.mark.parametrize("prefix", [None, "left/g1"])
+def test_simulated_device_keeps_the_drivers_public_sensor_frames(prefix):
+    config = Mid360Config(
+        frame_id="mid360_link", imu_frame_id="mid360_imu_link", frame_id_prefix=prefix
+    )
+    sensor = Mid360.simulated_sensor(config)
+    wire = config.to_config_dict()
+
+    assert sensor.site == "mid360_link"
+    expected = f"{prefix}/" if prefix else ""
+    assert sensor.frame_id == wire["frame_id"] == expected + "mid360_link"
+    assert sensor.imu_frame_id == wire["imu_frame_id"] == expected + "mid360_imu_link"
+    assert not sensor.truth_outputs
+
+
 def test_rust_struct_has_every_config_key() -> None:
     src = (_RUST_MANIFEST.parent / "src" / "module.rs").read_text()
     struct = src.split("struct Config {", 1)[1].split("}", 1)[0]
