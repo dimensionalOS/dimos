@@ -148,10 +148,10 @@ refuses the RPC.
    `drone.go_to(north_m=-2, altitude_m=3)`, then `drone.land()`. The keyboard as above.
 5. Follow: `dimos run px4-sitl-follow` instead. `drone.sitl_enable(True)`,
    `drone.takeoff(3.0)`, and once it hovers `app.PerceptionBridge.select_track(1)` and
-   `drone.set_guidance_mode("FOLLOW")`. `FakeA8Camera`'s square is the target. It never
-   moves in the image, so this checks the wiring, not the tracking: `FOLLOW` keeps flying
-   along the gimbal's bearing and `YAW_TRACK` keeps turning. `clear_selection()` holds,
-   then `HOVER` after 5 s.
+   `drone.set_guidance_mode("FOLLOW")`. `FakeA8Camera`'s square is the target. It sends
+   no video, so the viewer's camera pane stays empty. The square never moves in the image,
+   so this checks the wiring, not the tracking: `FOLLOW` keeps flying along the gimbal's
+   bearing and `YAW_TRACK` keeps turning. `clear_selection()` holds, then `HOVER` after 5 s.
 
 ## Aircraft setup
 
