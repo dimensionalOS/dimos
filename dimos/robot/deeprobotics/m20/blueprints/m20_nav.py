@@ -19,30 +19,17 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
-from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
-from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
-from dimos.navigation.global_planner.viz import render_path
-from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
+from dimos.robot.deeprobotics.m20.blueprints._nav import (
+    _m20_nav,
+    m20_nav_overrides,
+    m20_nav_static,
+)
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
-from dimos.robot.deeprobotics.m20.constants import (
-    BASE_LINK_HEIGHT_M,
-    BODY_LENGTH_M,
-    BODY_WIDTH_M,
-    PLANNING_HEIGHT_M,
-    ROTATION_DIAMETER_M,
-)
 from dimos.visualization.vis_module import vis_module
-
-VOXEL_SIZE_M = 0.1
-WALL_CLEARANCE_M = 0.3
-PLANNER_VIZ_HZ = 0.0
 
 
 def _render_h265(msg: CompressedVideo) -> Any:
@@ -65,21 +52,6 @@ def _render_rear_camera_info(msg: CameraInfo) -> Any:
     )
 
 
-def _static_robot_body(rr: Any) -> list[Any]:
-    return [
-        rr.Boxes3D(
-            half_sizes=[
-                BODY_LENGTH_M * 0.5,
-                BODY_WIDTH_M * 0.5,
-                PLANNING_HEIGHT_M * 0.5,
-            ],
-            centers=[0.0, 0.0, PLANNING_HEIGHT_M * 0.5 - BASE_LINK_HEIGHT_M],
-            colors=[(0, 255, 127)],
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
-
-
 def _m20_rerun_blueprint() -> Any:
     """Go2-style navigation layout with both M20 camera streams."""
     import rerun as rr
@@ -94,7 +66,7 @@ def _m20_rerun_blueprint() -> Any:
             ),
             rrb.Spatial3DView(
                 origin="world",
-                name="M20 KronkNav",
+                name="M20 nav",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(
                     plane=rr.components.Plane3D.XY.with_distance(0.5),
@@ -114,75 +86,25 @@ _rerun_config = {
         "world/local_map": 0.5,
     },
     "visual_override": {
-        # The navigation view shows maps rather than the registered lidar.
-        "world/lidar": None,
-        "world/slam_body_points": None,
-        "world/planner_path": render_path,
-        "world/path": None,
+        **m20_nav_overrides(),
         "world/front_camera": _render_h265,
         "world/rear_camera": _render_h265,
         "world/front_camera_info": _render_front_camera_info,
         "world/rear_camera_info": _render_rear_camera_info,
-        **planner_visual_override(
-            PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
-        ),
     },
-    "static": {
-        "world/robot_body": _static_robot_body,
-    },
+    "static": m20_nav_static(),
 }
 
 
-deeprobotics_m20_kronknav_control = (
+m20_nav = (
     autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
         M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
-        RayTracingVoxelMap.blueprint(
-            voxel_size=VOXEL_SIZE_M,
-            max_range=25.0,
-            ray_subsample=5,
-            emit_every=1,
-            global_emit_every=50,
-            support_min=4,
-            world_frame="map",
-            worker_threads=3,
-        ).remappings([(RayTracingVoxelMap, "lidar", "slam_body_points")]),
-        MLSPlannerNative.blueprint(
-            world_frame="map",
-            base_frame="base_link",
-            voxel_size=VOXEL_SIZE_M,
-            robot_height=PLANNING_HEIGHT_M,
-            start_z_offset_m=BASE_LINK_HEIGHT_M,
-            wall_clearance_m=WALL_CLEARANCE_M,
-            wall_buffer_m=0.85,
-            wall_buffer_weight=100.0,
-            step_threshold_m=0.25,
-            step_penalty_weight=4.0,
-            viz_publish_hz=PLANNER_VIZ_HZ,
-            worker_threads=2,
-        ).remappings(
-            [
-                (MLSPlannerNative, "global_map", "global_map_unused"),
-                (MLSPlannerNative, "path", "planner_path"),
-            ]
-        ),
-        DanLocalPlanner.blueprint(
-            lock_replan=0.4,
-            # Preserve MLS's 3D waypoints; the 2D resampler replaces every Z with zero.
-            resample_spacing_m=0.0,
-        ),
-        DanHolonomicTC.blueprint(
-            run_profile="walk",
-            control_frequency=10.0,
-        ),
-        MovementManager.blueprint(),
+        _m20_nav,
     )
     .global_config(
         n_workers=4,
-        obstacle_avoidance=False,
-        robot_width=BODY_WIDTH_M,
-        robot_rotation_diameter=ROTATION_DIAMETER_M,
         transport="zenoh",
     )
     .transports(

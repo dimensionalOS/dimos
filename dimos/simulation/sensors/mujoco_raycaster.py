@@ -26,11 +26,16 @@ NO_BODY_EXCLUDED = -1
 
 class MujocoRaycaster:
     def __init__(
-        self, model: mujoco.MjModel, data: mujoco.MjData, geom_groups: NDArray[np.uint8]
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        geom_groups: NDArray[np.uint8],
+        excluded_body: int = NO_BODY_EXCLUDED,
     ) -> None:
         self.model = model
         self.data = data
         self.geom_groups = geom_groups
+        self.excluded_body = excluded_body
 
     def cast(
         self, origin: NDArray[np.float64], directions: NDArray[np.float64], max_range: float
@@ -46,7 +51,7 @@ class MujocoRaycaster:
             np.ascontiguousarray(directions, dtype=np.float64).ravel(),
             self.geom_groups,
             INCLUDE_STATIC,
-            NO_BODY_EXCLUDED,
+            self.excluded_body,
             geom,
             dist,
             normals,
