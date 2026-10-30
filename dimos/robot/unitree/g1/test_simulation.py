@@ -14,6 +14,7 @@
 
 """G1 model composition preserves the hardware motor order and original dynamics."""
 
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -28,16 +29,16 @@ from dimos.core.global_config import GlobalConfig
 from dimos.hardware.sensors.lidar.livox.module import MID360_IMU_OFFSET, Mid360, Mid360Config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import unitree_g1_groot_wbc
+from dimos.robot.unitree.g1.connection import G1Connection, G1ConnectionConfig
 from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
-from dimos.robot.unitree.g1.simulation import G1Model, g1_model
-from dimos.robot.unitree.g1.wholebody_connection import (
-    G1WholeBodyConnection,
-    G1WholeBodyConnectionConfig,
-)
+from dimos.robot.unitree.g1.model import describe_simulated_robot
 from dimos.sim2.composition import attach_simulation
 from dimos.sim2.environment import MotorScene
+from dimos.sim2.model import ImportedRobotModel, create_model, model_factory
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.reader import WorldReader
@@ -48,10 +49,25 @@ from dimos.utils.data import LfsPath
 
 
 @pytest.fixture
-def model(tmp_path, mocker):
-    # Model parsing is local; these tests never fetch robot mesh assets.
-    mocker.patch("dimos.robot.unitree.g1.simulation.LfsPath", return_value=tmp_path)
-    return G1Model(idn="g1")
+def motor_config():
+    return G1ConnectionConfig(
+        control_mode="motors",
+        initial_qpos=tuple(G1_GROOT_HOME),
+        startup_kp=tuple(G1_GROOT_KP),
+        startup_kd=tuple(G1_GROOT_KD),
+        wait_for_first_command=True,
+    )
+
+
+@pytest.fixture
+def instance(motor_config):
+    return describe_simulated_robot(motor_config)
+
+
+@pytest.fixture
+def model(instance):
+    # XML import does not load meshes. Compilation is checked separately.
+    return ImportedRobotModel(instance.model, idn="g1")
 
 
 @pytest.fixture
@@ -63,11 +79,11 @@ def scene(tmp_path):
     return path
 
 
-def test_upstream_model_actuator_order_matches_every_hardware_motor(model):
+def test_upstream_model_actuator_order_matches_every_hardware_motor(model, instance):
     assert isinstance(model, RobotModel)
-    assert model.public_motor_names == tuple(make_humanoid_joints("g1"))
+    assert instance.joint_names == tuple(make_humanoid_joints("g1"))
     expected = model.correct_naming(
-        [name.split("/", 1)[1] + "_joint" for name in model.public_motor_names]
+        [name.split("/", 1)[1] + "_joint" for name in instance.joint_names]
     )
     assert model.actuators == expected
     assert [motor.attrib["joint"] for motor in model.actuator] == expected
@@ -114,21 +130,17 @@ def test_upstream_model_preserves_visual_and_contact_geom_colors(model):
         ]
 
 
-def test_contact_geom_material_reference_survives_robot_prefixing(model, mocker):
-    original_parse = ET.parse
+def test_contact_geom_material_reference_survives_robot_prefixing(tmp_path, instance):
+    tree = ET.parse(instance.model.path)
+    source = tree.getroot()
+    ET.SubElement(source.find("asset"), "material", name="paint", rgba=".2 .4 .6 1")
+    for geom in source.findall(".//worldbody//geom[@mesh='pelvis_contour_link']"):
+        geom.set("material", "paint")
+        geom.attrib.pop("rgba")
+    path = tmp_path / "painted.xml"
+    tree.write(path)
 
-    def painted_source(path):
-        tree = original_parse(path)
-        source = tree.getroot()
-        ET.SubElement(source.find("asset"), "material", name="paint", rgba=".2 .4 .6 1")
-        # Give both the visual and contact instances an authored material.
-        for geom in source.findall(".//worldbody//geom[@mesh='pelvis_contour_link']"):
-            geom.set("material", "paint")
-            geom.attrib.pop("rgba")
-        return tree
-
-    mocker.patch.object(ET, "parse", side_effect=painted_source)
-    painted = G1Model(idn="painted")
+    painted = ImportedRobotModel(replace(instance.model, path=path), idn="painted")
     copies = painted.worldbody.findall(
         f".//geom[@mesh='{painted.correct_naming('pelvis_contour_link')}']"
     )
@@ -139,40 +151,40 @@ def test_contact_geom_material_reference_survives_robot_prefixing(model, mocker)
     assert painted.asset.find("material[@name='robotpainted_paint']") is not None
 
 
-def test_groot_startup_uses_existing_home_and_motor_gains(model):
+def test_groot_startup_uses_explicit_application_home_and_motor_gains(model, instance):
     assert model.init_qpos.tolist() == list(G1_GROOT_HOME)
-    assert model.startup_kp == tuple(G1_GROOT_KP)
-    assert model.startup_kd == tuple(G1_GROOT_KD)
-    assert model.wait_for_first_command
+    assert instance.startup_kp == tuple(G1_GROOT_KP)
+    assert instance.startup_kd == tuple(G1_GROOT_KD)
+    assert instance.wait_for_first_command
     # Each caller owns its initial joint array.
     model.init_qpos[:] = 99
     assert model.init_qpos.tolist() == list(G1_GROOT_HOME)
 
 
-def test_factory_places_the_robot_above_an_authored_support(model, scene):
+def test_factory_places_the_robot_above_an_authored_support(instance, scene):
     scene.with_suffix(".json").write_text(
         SceneDescription(id="platform", spawns={"default": Pose(1, 2, 0.4)}).model_dump_json()
     )
 
-    placed = g1_model(scene)
+    placed = create_model(instance, scene)
 
     body = placed.worldbody.find("body")
     assert np.fromstring(body.attrib["pos"], sep=" ") == pytest.approx([1, 2, 1.193])
 
 
-def test_connection_declares_model_lazily_and_preserves_public_frame(scene, mocker):
-    factory = mocker.patch("dimos.robot.unitree.g1.simulation.g1_model")
-
-    twin = G1WholeBodyConnection.simulated_robot(
-        G1WholeBodyConnectionConfig(frame_id="pelvis"), scene
+def test_connection_declares_model_without_loading_assets_or_groot_defaults(mocker):
+    importer = mocker.patch("dimos.sim2.model.ImportedRobotModel")
+    twin = G1Connection.describe_simulated_robot(
+        G1ConnectionConfig(control_mode="motors", source="other", frame_id="pelvis")
     )
 
-    factory.assert_not_called()
-    assert twin.joint_names == tuple(make_humanoid_joints("g1"))
+    importer.assert_not_called()
+    assert twin.joint_names == tuple(make_humanoid_joints("other"))
     assert twin.frame_id == "pelvis"
     assert twin.control_imu == "control_imu"
-    assert twin.startup_kp == tuple(G1_GROOT_KP)
-    assert twin.startup_kd == tuple(G1_GROOT_KD)
+    assert twin.startup_kp == twin.startup_kd == ()
+    assert twin.model.initial_qpos == ()
+    assert twin.velocity_controller is None
 
 
 def test_mid360_declares_a_rolling_device_with_its_imu_at_the_factory_offset():
@@ -190,10 +202,8 @@ def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
         unitree_g1_groot_wbc, {}, GlobalConfig(simulation="mujoco", scene_package=str(scene))
     )
     modules = {atom.name: atom.module for atom in result.active_blueprints}
-    connection = next(a for a in result.active_blueprints if a.module is G1WholeBodyConnection)
-    original = next(
-        a for a in unitree_g1_groot_wbc.active_blueprints if a.module is G1WholeBodyConnection
-    )
+    connection = next(a for a in result.active_blueprints if a.module is G1Connection)
+    original = next(a for a in unitree_g1_groot_wbc.active_blueprints if a.module is G1Connection)
     world = next(a for a in result.blueprints if a.module is SimulationModule)
 
     assert connection.name == original.name
@@ -209,12 +219,12 @@ def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
 
 
 @pytest.mark.self_hosted
-def test_compiled_robot_preserves_the_native_mjcf_physics_and_control_imu():
+def test_compiled_robot_preserves_the_native_mjcf_physics_and_control_imu(instance):
     path = Path(__file__).parent / "assets" / "g1_29dof.xml"
     native_spec = mujoco.MjSpec.from_file(str(path))
     native_spec.meshdir = str(LfsPath("g1_urdf/meshes"))
     native = native_spec.compile()
-    upstream = G1Model()
+    upstream = ImportedRobotModel(instance.model, idn="g1")
     compiled = upstream.get_model()
 
     for field in (
@@ -247,9 +257,11 @@ def test_compiled_robot_preserves_the_native_mjcf_physics_and_control_imu():
 
 
 @pytest.mark.self_hosted
-def test_g1_commands_and_coherent_feedback_through_the_upstream_environment(scene, mocker):
-    twin = G1WholeBodyConnection.simulated_robot(G1WholeBodyConnectionConfig(), scene)
-    factory = partial(MotorScene, scene=scene, models={"g1": twin.model})
+def test_g1_commands_and_coherent_feedback_through_the_upstream_environment(
+    scene, mocker, instance
+):
+    twin = instance
+    factory = partial(MotorScene, scene=scene, models={"g1": model_factory(twin, scene)})
     with SimulationRuntime(factory, robots={"g1": twin}) as world:
         feedback = mocker.patch.object(world, "publish_feedback")
         world.step()
@@ -271,12 +283,16 @@ def test_g1_commands_and_coherent_feedback_through_the_upstream_environment(scen
 
 
 @pytest.mark.self_hosted
-def test_g1_hard_reset_reloads_sensor_model_and_preserves_mid360_imu(scene):
-    twin = G1WholeBodyConnection.simulated_robot(G1WholeBodyConnectionConfig(), scene)
+def test_g1_hard_reset_reloads_sensor_model_and_preserves_mid360_imu(scene, instance):
+    twin = instance
     lidar = Mid360.simulated_sensor(Mid360Config(frame_id="mid360_link"))
     sensors = (("g1", lidar),)
     factory = partial(
-        MotorScene, scene=scene, models={"g1": twin.model}, sensors=sensors, hard_reset=True
+        MotorScene,
+        scene=scene,
+        models={"g1": model_factory(twin, scene)},
+        sensors=sensors,
+        hard_reset=True,
     )
     with SimulationRuntime(factory, robots={"g1": twin}, sensors=sensors) as world:
         reader = WorldReader(world.describe())
@@ -304,3 +320,64 @@ def test_g1_hard_reset_reloads_sensor_model_and_preserves_mid360_imu(scene):
         assert reader.model.sensor(prefix + "sensor/imu/accel").dim == 3
         assert reader.model.sensor(prefix + "control_imu_quat").dim == 4
         assert np.isfinite(reader.data.sensordata).all()
+
+
+@pytest.mark.self_hosted
+def test_stock_model_preserves_native_position_servo_physics(scene):
+    instance = describe_simulated_robot(G1ConnectionConfig())
+    native_spec = mujoco.MjSpec.from_file(str(instance.model.path))
+    for mesh in native_spec.meshes:
+        mesh.file = str(instance.model.meshdir / Path(mesh.file).name)
+    native_spec.worldbody.add_geom(name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[5, 5, 0.1])
+    native = native_spec.compile()
+    factory = partial(MotorScene, scene, {"g1": model_factory(instance, scene)}, timestep=0.002)
+    with SimulationRuntime(factory, robots={"g1": instance}) as world:
+        for field in (
+            "body_mass",
+            "body_inertia",
+            "dof_damping",
+            "dof_armature",
+            "dof_frictionloss",
+            "jnt_range",
+            "actuator_gainprm",
+            "actuator_biasprm",
+            "actuator_gear",
+            "actuator_ctrlrange",
+        ):
+            np.testing.assert_allclose(
+                getattr(world.model, field), getattr(native, field), err_msg=field
+            )
+        assert world.model.nu == 29
+        assert world.data.qpos[:3] == pytest.approx([0, 0, 0.755])
+        assert world.robots["g1"].controller.position_servo.all()
+
+
+@pytest.mark.self_hosted
+def test_stock_velocity_policies_control_two_instances_and_reset_independently(scene):
+    left = describe_simulated_robot(G1ConnectionConfig(source="left", sim_position=(0, 0, 0)))
+    right = describe_simulated_robot(G1ConnectionConfig(source="right", sim_position=(0, 2, 0)))
+    models = {robot.robot_id: model_factory(robot, scene) for robot in (left, right)}
+    factory = partial(MotorScene, scene, models, timestep=0.002)
+    with SimulationRuntime(factory, robots={"left": left, "right": right}) as world:
+        left_root = world.robots["left"].root
+        right_root = world.robots["right"].root
+        for _ in range(2000):
+            world.accept_velocity("left", Twist(linear=Vector3(0.3, 0, 0)))
+            world.accept_velocity("right", Twist())
+            world.step()
+        left_position = world.data.xpos[left_root].copy()
+        right_position = world.data.xpos[right_root].copy()
+        assert left_position[0] > right_position[0] + 0.4
+        assert left_position[2] > 0.6
+        assert right_position[2] > 0.6
+
+        world.reset()
+        assert world.data.xpos[left_root] == pytest.approx([0, 0, 0.755])
+        assert world.data.xpos[right_root] == pytest.approx([0, 2, 0.755])
+        # Both histories restart at their authored home before the first policy tick.
+        world.step()
+        for robot in (left, right):
+            binding = world.robots[robot.robot_id]
+            assert world.data.ctrl[binding.controller.actuators] == pytest.approx(
+                world.base_environment.robot_models[robot.robot_id].init_qpos
+            )

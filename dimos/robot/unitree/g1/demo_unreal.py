@@ -198,7 +198,7 @@ def main() -> None:
         world = app.get_instance(SimulationModule)
         camera = app.get_instance(UnrealCameraModule)
         coordinator = app.get_instance("ControlCoordinator")
-        connection = app.get_instance(g1.G1WholeBodyConnection)
+        connection = app.get_instance(g1.G1Connection)
         lidar = app.get_instance("mid360")
         if not frame_available.wait(timeout=60):
             raise RuntimeError(f"No aligned RGB-D frame: {camera.renderer_status()}")

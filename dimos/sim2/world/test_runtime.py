@@ -24,6 +24,7 @@ import pytest
 import robosuite
 from robosuite.wrappers.domain_randomization_wrapper import DomainRandomizationWrapper
 
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.environment import MotorScene
 from dimos.sim2.world.runtime import SimulationRuntime
@@ -55,9 +56,9 @@ def test_upstream_model_calibration_and_placement_are_scoped_to_each_robot(
     config = world_config | {
         "environment": partial(MotorScene, scene_path, {"left": left, "right": right}),
         "robots": {
-            "left": replace(world_config["robots"]["left"], model=left),
+            "left": world_config["robots"]["left"],
             "right": replace(
-                world_config["robots"]["left"], robot_id="right", model=right, frame_id="right/base"
+                world_config["robots"]["left"], robot_id="right", frame_id="right/base"
             ),
         },
         "sensors": (),
@@ -99,7 +100,7 @@ def test_motor_commands_follow_robot_ids_when_model_and_binding_order_differ(
         "2 0 .3",
     )
     left = world_config["robots"]["left"]
-    right = replace(left, robot_id="right", model=right_factory, frame_id="right/base")
+    right = replace(left, robot_id="right", frame_id="right/base")
     world = worlds(
         config=world_config
         | {
@@ -119,6 +120,93 @@ def test_motor_commands_follow_robot_ids_when_model_and_binding_order_differ(
 
     assert world.data.ctrl[world.robots["left"].controller.actuators[0]] == pytest.approx(1.0)
     assert world.data.ctrl[world.robots["right"].controller.actuators[0]] == pytest.approx(2.0)
+
+
+@pytest.fixture
+def mixed_world(worlds, world_config, scene_path, robot_factory, mocker, request):
+    policy = mocker.Mock()
+    policy.step.side_effect = lambda twist: command(
+        q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[twist.linear.x, 0]
+    )
+    factory = mocker.Mock(return_value=policy)
+    left = replace(
+        world_config["robots"]["left"],
+        command_kind="velocity",
+        velocity_controller=factory,
+        base_name="left/base",
+    )
+    right = replace(
+        world_config["robots"]["left"],
+        robot_id="right",
+        frame_id="right/base",
+        wait_for_first_command=getattr(request, "param", False),
+    )
+    right_factory = partial(
+        _fitted_model,
+        partial(robot_factory.func, *robot_factory.args, idn="right"),
+        1.0,
+        "2 0 .3",
+    )
+    world = worlds(
+        config={
+            "environment": partial(
+                MotorScene, scene_path, {"left": robot_factory, "right": right_factory}
+            ),
+            "robots": {"right": right, "left": left},
+            "sensors": (),
+        }
+    )
+    return world, policy
+
+
+def test_velocity_policy_runs_on_ticks_is_isolated_and_expires_to_zero(mixed_world, mocker):
+    world, policy = mixed_world
+    clock = mocker.patch("dimos.sim2.world.runtime.time.monotonic", return_value=100.0)
+    velocity = Twist(linear=(2, 0, 0))
+    assert world.accept_velocity("left", velocity)
+    velocity.linear.x = 9  # The buffered command owns its sample.
+    assert not world.accept_command("left", command())
+    assert not world.accept_velocity("right", Twist())
+    assert world.accept_command(
+        "right", command(q=[0.1, 850], dq=[0, 0], kp=[0, 0], kd=[0, 0], tau=[3, 0])
+    )
+    policy.step.assert_not_called()
+
+    world.step()
+
+    policy.step.assert_called_once_with(Twist(linear=(2, 0, 0)))
+    assert world.data.ctrl[world.robots["left"].controller.actuators[0]] == 2
+    assert world.data.ctrl[world.robots["right"].controller.actuators[0]] == 3
+    clock.return_value = 101.0
+    world.step()
+    policy.step.assert_called_with(Twist())
+    assert world.data.ctrl[world.robots["left"].controller.actuators[0]] == 0
+
+    assert world.accept_velocity("left", Twist(linear=(1, 0, 0)))
+    world.reset()
+    world.step()
+    policy.step.assert_called_with(Twist())
+    assert policy.reset.call_count == 2
+    assert world.data.ctrl[world.robots["left"].controller.actuators[0]] == 0
+
+
+@pytest.mark.parametrize("mixed_world", [True], indirect=True)
+def test_waiting_for_external_motors_does_not_advance_another_robots_policy(mixed_world, mocker):
+    world, policy = mixed_world
+    clock = mocker.patch("dimos.sim2.world.runtime.time.monotonic", return_value=100.0)
+    assert world.accept_velocity("left", Twist(linear=(2, 0, 0)))
+    for _ in range(5):
+        world.step()
+    assert world.tick == 0
+    policy.step.assert_not_called()
+
+    clock.return_value = 101.0  # The velocity expires while the shared clock is held.
+    assert world.accept_command("right", command())
+    world.step()
+
+    assert world.tick == 1
+    policy.step.assert_called_once_with(Twist())
+    assert world.data.ctrl[world.robots["left"].controller.actuators[0]] == 0
 
 
 def test_command_drives_motors_and_feedback_is_one_tick(worlds, feedback):

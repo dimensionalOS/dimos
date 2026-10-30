@@ -19,7 +19,7 @@ import numpy as np
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.sim2.composition import attach_simulation
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
@@ -32,7 +32,7 @@ def test_mid360_and_its_imu_keep_driver_names_and_public_ports(scene_path, mocke
         return_value=Mid360Pattern(0, 0, 0, 0, np.asarray([[[1, 0, 0]]] * 4, dtype=float)),
     )
     blueprint = autoconnect(
-        G1WholeBodyConnection.blueprint(),
+        G1Connection.blueprint(control_mode="motors"),
         Mid360.blueprint(instance_name="scanner", frame_id="scan"),
     )
 

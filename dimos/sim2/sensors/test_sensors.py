@@ -154,7 +154,8 @@ def test_world_and_robot_cameras_have_distinct_output_topics(world_config):
 
 
 def test_unselected_imu_is_an_observation_bridge(world_config):
-    robot = replace(world_config["robots"]["left"], control_imu=None)
+    original = world_config["robots"]["left"]
+    robot = replace(original, model=replace(original.model, control_imu=None))
     blueprint = simulation(**{**world_config, "robots": {"left": robot}})
     assert sum(atom.module is SimImuModule for atom in blueprint.blueprints) == 1
     assert blueprint.remapping_map["left_imu", "imu"] == "left/imu/imu"

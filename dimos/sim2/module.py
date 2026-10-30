@@ -40,6 +40,7 @@ from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -47,7 +48,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.messages import EnvironmentStep, StateFrame
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.observations import ObservationFrame
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import RobotInstanceSpec
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription
 from dimos.utils.logging_config import setup_logger
@@ -55,10 +56,12 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 COMMAND_PORT = "motor_command"
+COMMAND_PORTS = (COMMAND_PORT, "cmd_vel")
 FEEDBACK_PORTS = ("motor_states", "imu", "odom", "tf")
-PORT_KINDS = (COMMAND_PORT, *FEEDBACK_PORTS)
+PORT_KINDS = (*COMMAND_PORTS, *FEEDBACK_PORTS)
 PORT_TYPES: dict[str, type] = {
     COMMAND_PORT: MotorCommandArray,
+    "cmd_vel": Twist,
     "motor_states": JointState,
     "imu": Imu,
     "odom": PoseStamped,
@@ -91,8 +94,8 @@ def robot_ports(module: type[Module], robots: Iterable[str]) -> dict[str, dict[s
 
 
 class SimulationModuleConfig(ModuleConfig):
-    environment: Callable[[], MujocoEnv | Wrapper]
-    robots: dict[str, SimulatedRobot] = {}
+    environment: Callable[[], MujocoEnv | Wrapper] | None = None
+    robots: dict[str, RobotInstanceSpec] = {}
     sensors: tuple[tuple[str | None, Sensor], ...] = ()
     snapshot_hz: float = 60.0
     robot_topics: dict[str, dict[str, str]] = {}
@@ -210,7 +213,7 @@ class SimulationModule(Module):
             outputs: dict[str, Out[Any] | PubSubTransport[Any]] = {}
             for kind, attribute in names.items():
                 port = getattr(self, attribute)
-                if kind == COMMAND_PORT:
+                if kind in COMMAND_PORTS:
                     assert isinstance(port, In)
                     self.register_disposable(
                         Disposable(port.subscribe(functools.partial(self._command, robot_id)))
@@ -231,7 +234,7 @@ class SimulationModule(Module):
                 transport = make_transport(topic, PORT_TYPES[kind], g=self.config.g)
                 self.register_disposable(Disposable(transport.stop))
                 transport.start()
-                if kind == COMMAND_PORT:
+                if kind in COMMAND_PORTS:
                     self.register_disposable(
                         Disposable(transport.subscribe(functools.partial(self._command, robot_id)))
                     )
@@ -244,14 +247,19 @@ class SimulationModule(Module):
         self.register_disposable(Disposable(self.actions.subscribe(self.set_action)))
         self._running.set()
 
-    def _command(self, robot_id: str, message: MotorCommandArray) -> None:
+    def _command(self, robot_id: str, message: MotorCommandArray | Twist) -> None:
         runtime = self._runtime
         if runtime is None:
             return
         with runtime.lock:
             if runtime is not self._runtime or self._stop.is_set():
                 return
-            if runtime.accept_command(robot_id, message):
+            accepted = (
+                runtime.accept_velocity(robot_id, message)
+                if isinstance(message, Twist)
+                else runtime.accept_command(robot_id, message)
+            )
+            if accepted:
                 return
         count = self._rejected.get(robot_id, 0) + 1
         self._rejected[robot_id] = count
@@ -286,6 +294,8 @@ class SimulationModule(Module):
     def _run(self) -> None:
         runtime: SimulationRuntime | None = None
         try:
+            if self.config.environment is None:
+                raise ValueError("simulation needs an environment or collected robot descriptions")
             runtime = SimulationRuntime(
                 self.config.environment,
                 self.config.robots,

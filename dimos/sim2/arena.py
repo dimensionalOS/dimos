@@ -14,7 +14,6 @@
 
 """Import existing MJCF arenas without losing their authored MuJoCo defaults."""
 
-from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import xml.etree.ElementTree as ET
@@ -22,7 +21,7 @@ import xml.etree.ElementTree as ET
 import mujoco
 from robosuite.models.arenas.arena import Arena
 
-Defaults = dict[str, dict[str, dict[str, str]]]
+from dimos.sim2.model import Defaults, default_classes, inline_defaults
 
 
 class AuthoredArena(Arena):
@@ -62,35 +61,12 @@ class AuthoredArena(Arena):
                     geom.set(attribute, value)
 
     def _get_default_classes(self, default: ET.Element) -> Defaults:
-        result: Defaults = {}
-
-        def visit(node: ET.Element, inherited: dict[str, dict[str, str]]) -> None:
-            values = deepcopy(inherited)
-            for child in node:
-                if child.tag != "default":
-                    values.setdefault(child.tag, {}).update(child.attrib)
-            result[node.get("class", "main")] = values
-            for child in node.findall("default"):
-                visit(child, values)
-
-        visit(default, {})
-        return result
+        return default_classes(default)
 
     def _replace_defaults_inline(self, default_dic: Defaults) -> None:
-        # Arena later appends UI target bodies. Keep element identities so even
-        # an authored body with the same name is preserved by our cleanup hook.
+        # Arena later appends UI target bodies. Track the original elements.
         self._authored_bodies = set(self.worldbody.findall("body"))
-
-        def visit(node: ET.Element, inherited: str) -> None:
-            if node.tag == "default":
-                return
-            active = node.attrib.pop("class", inherited)
-            children = node.attrib.pop("childclass", inherited)
-            node.attrib = {**default_dic[active].get(node.tag, {}), **node.attrib}
-            for child in node:
-                visit(child, children)
-
-        visit(self.root, "main")
+        inline_defaults(self.root, default_dic)
         self._authored_appearance = {
             geom: {attribute: geom.get(attribute) for attribute in ("rgba", "material")}
             for geom in self.worldbody.iter("geom")

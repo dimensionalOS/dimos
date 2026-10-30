@@ -22,7 +22,7 @@ from typing import Any
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+from dimos.robot.unitree.g1.connection import G1Connection
 
 
 def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:
@@ -72,7 +72,7 @@ def main(stdscr: Any) -> None:
     draw_ui(stdscr, "Initializing...")
 
     # Initialize connection
-    conn = G1HighLevelDdsSdk(network_interface="eth0")
+    conn = G1Connection(stock_transport="dds", network_interface="eth0")
     conn.start()
     time.sleep(1)
 

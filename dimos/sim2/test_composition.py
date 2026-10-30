@@ -16,7 +16,6 @@
 
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
 
 import pytest
 
@@ -32,16 +31,18 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.composition import attach_simulation, has_simulation_binding
 from dimos.sim2.device import SimulatedDeviceFactory
 from dimos.sim2.module import SimulationModule
+from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
+from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import RobotInstanceSpec
 
 
 class _ArmConfig(ConnectionConfig):
     source: str = "left"
     pd: bool = True
-    robot: SimulatedRobot
+    robot: RobotInstanceSpec
     frame_id: str = "arm/base"
 
 
@@ -52,12 +53,15 @@ class _Arm(ConnectionModule):
     motor_command: In[MotorCommandArray]
     motor_states: Out[JointState]
     imu: Out[ImuMessage]
-    default_sim_scene: ClassVar[str] = "workbench.xml"
 
     @staticmethod
-    def simulated_robot(config: _ArmConfig, scene: Path) -> SimulatedRobot:
-        assert scene.is_file()
-        return replace(config.robot, frame_id=config.frame_id)
+    def describe_simulated_robot(config: _ArmConfig) -> RobotInstanceSpec:
+        return replace(
+            config.robot,
+            robot_id=config.source,
+            frame_id=config.frame_id,
+            default_scene="workbench.xml",
+        )
 
 
 class _ScannerConfig(ModuleConfig):
@@ -156,14 +160,90 @@ def test_cli_overrides_reach_the_twin(hardware, mujoco):
     assert world.kwargs["robots"]["left"].frame_id == "robot/pelvis"
 
 
-def test_two_robot_connections_are_refused_for_now(world_config, mujoco):
+def test_two_namespaced_connections_share_one_world_and_keep_distinct_clients(world_config, mujoco):
     robot = world_config["robots"]["left"]
     blueprint = autoconnect(
-        _Arm.blueprint(robot=robot, instance_name="a"),
-        _Arm.blueprint(robot=robot, instance_name="b"),
+        _Arm.blueprint(robot=robot).namespace("a"),
+        _Arm.blueprint(robot=robot).namespace("b"),
     )
-    with pytest.raises(ValueError, match="exactly one robot connection"):
+    result, kwargs = attach_simulation(blueprint, {}, mujoco)
+    worlds = [a for a in result.blueprints if a.module is SimulationModule]
+    assert len(worlds) == 1
+    assert set(worlds[0].kwargs["robots"]) == {"a/left", "b/left"}
+    assert (
+        kwargs["a/_arm"]["simulation_device"].topics["motor_command"]
+        == "_sim2/a/_arm/motor_command"
+    )
+    assert (
+        kwargs["b/_arm"]["simulation_device"].topics["motor_command"]
+        == "_sim2/b/_arm/motor_command"
+    )
+
+
+def test_duplicate_robot_ids_are_rejected_before_world_start(world_config, mujoco):
+    blueprint = autoconnect(
+        _Arm.blueprint(robot=world_config["robots"]["left"], instance_name="a"),
+        _Arm.blueprint(robot=world_config["robots"]["left"], instance_name="b"),
+    )
+    with pytest.raises(ValueError, match="duplicate simulated robot id"):
         attach_simulation(blueprint, {}, mujoco)
+
+
+def test_explicit_empty_world_is_populated_instead_of_duplicated(hardware, mujoco):
+    blueprint = autoconnect(hardware, SimulationModule.blueprint(snapshot_hz=17))
+    result, kwargs = attach_simulation(blueprint, {}, mujoco)
+    worlds = [a for a in result.blueprints if a.module is SimulationModule]
+    assert len(worlds) == 1
+    assert worlds[0].kwargs["snapshot_hz"] == 17
+    assert set(kwargs[worlds[0].name]["robots"]) == {"left"}
+
+
+def test_namespaced_copies_compile_distinct_models_in_the_collected_world(
+    world_config, mujoco, worlds
+):
+    robot = world_config["robots"]["left"]
+    blueprint = autoconnect(
+        _Arm.blueprint(robot=replace(robot, position=(1, 0, 0))).namespace("a"),
+        _Arm.blueprint(robot=replace(robot, position=(3, 0, 0))).namespace("b"),
+    )
+    result, _ = attach_simulation(blueprint, {}, mujoco)
+    module = next(a for a in result.blueprints if a.module is SimulationModule)
+    world = worlds(config={key: module.kwargs[key] for key in ("environment", "robots", "sensors")})
+
+    left, right = world.robots["a/left"], world.robots["b/left"]
+    assert world.data.xpos[left.root][0] == 1
+    assert world.data.xpos[right.root][0] == 3
+    assert set(left.controller.actuators).isdisjoint(right.controller.actuators)
+    assert module.kwargs["robots"]["a/left"].frame_id == "a/arm/base"
+
+
+def test_explicit_sensor_workers_keep_public_remaps_and_share_the_global_world(
+    world_config, mujoco
+):
+    stack = autoconnect(
+        _Arm.blueprint(robot=world_config["robots"]["left"]),
+        LidarModule.blueprint(
+            sensor=Lidar("scan", "scan", Fibonacci), robot_id="left", instance_name="scanner"
+        ),
+        SimRGBDCameraModule.blueprint(sensor=Camera("camera", "view"), instance_name="camera"),
+    )
+    result, kwargs = attach_simulation(
+        autoconnect(stack.namespace("a"), stack.namespace("b")), {}, mujoco
+    )
+    world = next(a for a in result.blueprints if a.module is SimulationModule)
+    assert len(result.blueprints) == 7
+    assert {(owner, sensor.name) for owner, sensor in world.kwargs["sensors"]} == {
+        ("a/left", "scan"),
+        ("a/left", "camera"),
+        ("b/left", "scan"),
+        ("b/left", "camera"),
+    }
+    assert kwargs["a/scanner"]["robot_id"] == "a/left"
+    assert kwargs["b/camera"]["robot_id"] == "b/left"
+    assert result.remapping_map["a/scanner", "snapshots"] == "snapshots"
+    assert result.remapping_map["b/camera", "observations"] == "observations"
+    assert result.remapping_map["a/scanner", "lidar"] == "a/lidar"
+    assert result.remapping_map["b/camera", "color_image"] == "b/color_image"
 
 
 def test_direct_dependency_on_the_retained_connection_is_preserved(world_config, mujoco):
@@ -184,4 +264,4 @@ def test_direct_dependency_on_a_replaced_sensor_is_an_error(hardware, mujoco):
 
 def test_robot_id_must_be_usable_as_a_port_prefix(world_config):
     with pytest.raises(ValueError, match="identifier"):
-        replace(world_config["robots"]["left"], robot_id="left/arm")
+        replace(world_config["robots"]["left"], robot_id="left//arm")

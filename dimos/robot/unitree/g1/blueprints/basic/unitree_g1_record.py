@@ -31,9 +31,10 @@ from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for
 from dimos.memory.module import default_recording_dir
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.g1_recorder import G1Recorder
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher
+from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
 from dimos.visualization.vis_module import vis_module
 
 _RECORDING_DIR = default_recording_dir()
@@ -103,7 +104,8 @@ _record_vis = vis_module(
 
 unitree_g1_record = autoconnect(
     MovementManager.blueprint(),
-    G1HighLevelDdsSdk.blueprint(),
+    G1Connection.blueprint(stock_transport="dds"),
+    UnitreeG1SkillContainer.blueprint(),
     mid360_for_pointlio(host_ip="192.168.123.164", lidar_ip="192.168.123.120"),
     PointLio.blueprint(frame_id="world").remappings(
         [

@@ -22,18 +22,18 @@ import pytest
 from dimos.control.contract.convert import motor_command_to_values
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.unitree.g1.connection import G1ConnectionConfig
 from dimos.robot.unitree.g1.motor_device import (
     G1_JOINT_NAMES,
     G1LowStateSnapshot,
     G1MotorDevice,
 )
-from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnectionConfig
 
 
 @pytest.fixture
 def rig(mocker):
     feedback = mocker.Mock()
-    config = G1WholeBodyConnectionConfig(soft_start_seconds=0.0)
+    config = G1ConnectionConfig(control_mode="motors", soft_start_seconds=0.0)
     device = G1MotorDevice(config, feedback)
     frames = []
     publisher = mocker.Mock()

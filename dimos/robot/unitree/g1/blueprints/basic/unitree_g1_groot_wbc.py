@@ -67,11 +67,11 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_urdf_joint_state, g1_urdf_static_robot
-from dimos.robot.unitree.g1.groot_config import G1_GROOT_KD, G1_GROOT_KP
+from dimos.robot.unitree.g1.groot_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
 from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
-from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 from dimos.utils.data import LfsPath
 from dimos.visualization.vis_module import vis_module
 
@@ -110,12 +110,18 @@ _G1_JOINTS_ENTITY = f"world{_G1_JOINTS_TOPIC}"
 # default transport. The retained connection uses these in both modes.
 # This is the sole G1 connection declaration. With --simulation mujoco,
 # ModuleCoordinator.build calls attach_simulation, which resolves this class's
-# simulated_robot hook and injects its device after CLI settings are known.
-_robot = G1WholeBodyConnection.blueprint(release_sport_mode=True).remappings(
+# describe_simulated_robot hook and injects its device after CLI settings are known.
+_robot = G1Connection.blueprint(
+    control_mode="motors",
+    initial_qpos=tuple(G1_GROOT_HOME),
+    startup_kp=tuple(G1_GROOT_KP),
+    startup_kd=tuple(G1_GROOT_KD),
+    wait_for_first_command=True,
+).remappings(
     [
-        (G1WholeBodyConnection, "motor_command", "g1/motor_command"),
-        (G1WholeBodyConnection, "motor_states", "g1/motor_states"),
-        (G1WholeBodyConnection, "imu", "g1/imu"),
+        (G1Connection, "motor_command", "g1/motor_command"),
+        (G1Connection, "motor_states", "g1/motor_states"),
+        (G1Connection, "imu", "g1/imu"),
     ]
 )
 
@@ -357,7 +363,7 @@ def g1_groot_wbc_simulation_profile() -> Blueprint:
     Set ``--simulation mujoco`` before importing this module. The requirement
     rejects a missing or subsequently changed mode before deploying modules.
     This helper does not attach physics: ModuleCoordinator.build resolves the
-    connection's simulated_robot binding after CLI overrides. Cameras and
+    connection's describe_simulated_robot binding after CLI overrides. Cameras and
     viewers are composed separately by the caller.
     """
     return autoconnect(_unitree_g1_groot_wbc_core, _navigation).requirements(

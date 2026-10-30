@@ -29,9 +29,9 @@ physics geometry and visual bindings; it is not part of camera acquisition.
 
 ## Where the world attaches
 
-The G1 blueprint declares `G1WholeBodyConnection` once. With
+The G1 blueprint declares `G1Connection` once. With
 `--simulation mujoco`, `ModuleCoordinator.build` calls `attach_simulation` after
-resolving CLI settings. It reads `G1WholeBodyConnection.simulated_robot`, adds
+resolving CLI settings. It reads `G1Connection.describe_simulated_robot`, adds
 the shared `SimulationModule`, and supplies a simulation device to the retained
 connection. The camera is an additional module: its `SimulationSpec` reference
 and `snapshots` input connect to that world through normal blueprint wiring.
@@ -41,7 +41,7 @@ The `g1_groot_wbc_simulation_profile()` helper only returns the G1 control and
 navigation stack without a viewer and requires the simulation operating profile.
 The world still attaches at build time. See
 [attach_simulation](/dimos/sim2/composition.py) and the
-[connection binding](/dimos/robot/unitree/g1/wholebody_connection.py).
+[connection binding](/dimos/robot/unitree/g1/connection.py).
 
 ## Build on macOS
 
@@ -194,7 +194,7 @@ Outputs: `preview.gif`, `rgb.png`, metric `depth.npy`, `calibration.json`, and
 physics health, matching image timestamps, reset epochs and live lidar/odometry.
 
 Source: [demo_unreal.py](/dimos/robot/unitree/g1/demo_unreal.py). The only robot-specific model
-code is still [simulation.py](/dimos/robot/unitree/g1/simulation.py); Unreal has no
+code is still [simulation.py](/dimos/robot/unitree/g1/model.py); Unreal has no
 G1 class or separate robot asset definition.
 
 Measured on an M4 Max with UE 5.7.4, 640×480 RGB-D requested at 10 Hz:

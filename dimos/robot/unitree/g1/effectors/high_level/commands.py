@@ -88,9 +88,11 @@ def execute_g1_command(
     command_id, _ = command_dict[command_name]
 
     try:
-        publish_request(topic, {"api_id": api_id, "parameter": {"data": command_id}})
+        result = publish_request(topic, {"api_id": api_id, "parameter": {"data": command_id}})
+        if result.get("code", 0) != 0:
+            return f"'{command_name}' was rejected: {result}"
         return f"'{command_name}' command executed successfully."
-    except Exception as exc:
+    except (NotImplementedError, ValueError, RuntimeError, OSError) as exc:
         if logger is not None:
             logger.error(f"Failed to execute {command_name}: {exc}")
-        return "Failed to execute the command."
+        return f"Command unavailable: {exc}"

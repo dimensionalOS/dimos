@@ -15,12 +15,13 @@
 """The G1 scene can be exported to Unreal after resetting its upstream environment."""
 
 from contextlib import closing
-from functools import partial
 
 import pytest
 
-from dimos.robot.unitree.g1.simulation import g1_model
+from dimos.robot.unitree.g1.connection import G1ConnectionConfig
+from dimos.robot.unitree.g1.model import describe_simulated_robot
 from dimos.sim2.environment import MotorScene
+from dimos.sim2.model import model_factory
 from dimos.sim2.sensors.camera.unreal.assets import export_scene
 from dimos.sim2.world.scene import scene_path
 
@@ -28,14 +29,18 @@ from dimos.sim2.world.scene import scene_path
 @pytest.mark.self_hosted
 def test_full_g1_logistics_world_exports_after_reset_without_injected_ui_targets():
     path = scene_path(None, "logistics.xml")
-    with closing(MotorScene(path, {"g1": partial(g1_model, path)})) as environment:
+    instance = describe_simulated_robot(G1ConnectionConfig(control_mode="motors"))
+    with closing(MotorScene(path, {"g1": model_factory(instance, path)})) as environment:
         environment.reset()
         model, data = environment.sim.model._model, environment.sim.data._data
         manifest = export_scene(model, data)
 
         assert model.nu == 29
         assert {geom["id"] for geom in manifest["geoms"]} == set(range(model.ngeom))
-        assert any(model.geom(geom["id"]).name.startswith("robotg1_") for geom in manifest["geoms"])
+        assert any(
+            model.geom(geom["id"]).name.startswith(environment.robot_models["g1"].naming_prefix)
+            for geom in manifest["geoms"]
+        )
         assert {model.geom(i).name for i in range(model.ngeom)}.isdisjoint(
             {
                 "left_eef_target_box",

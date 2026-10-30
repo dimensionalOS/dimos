@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
     from unitree_sdk2py.utils.crc import CRC
 
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnectionConfig
+    from dimos.robot.unitree.g1.connection import G1ConnectionConfig
 
 logger = setup_logger()
 
@@ -90,9 +90,10 @@ class G1LowStateSnapshot:
 class G1MotorDevice:
     """Unitree DDS motor IO owned by a retained connection module."""
 
-    def __init__(self, config: G1WholeBodyConnectionConfig, feedback: Feedback) -> None:
+    def __init__(self, config: G1ConnectionConfig, feedback: Feedback) -> None:
         self._config = config
         self._feedback = feedback
+        self._joint_names = make_humanoid_joints(config.source)
 
         self._publisher: ChannelPublisher | None = None
         self._subscriber: ChannelSubscriber | None = None
@@ -166,7 +167,7 @@ class G1MotorDevice:
         else:
             logger.info("Skipping sport mode release (release_sport_mode=False)")
 
-        logger.info("G1WholeBodyConnection connected", mode_machine=self._mode_machine)
+        logger.info("G1 motor device connected", mode_machine=self._mode_machine)
 
         self._stop_event.clear()
         self._mode_machine_verified = False
@@ -232,7 +233,7 @@ class G1MotorDevice:
         self._mode_machine = None
         self._crc = None
 
-        logger.info("G1WholeBodyConnection disconnected")
+        logger.info("G1 motor device disconnected")
 
     def _drain_low_state(self) -> None:
         """Pull the freshest LowState frame off the subscriber and stash it."""
@@ -305,7 +306,7 @@ class G1MotorDevice:
             JointState(
                 ts=now,
                 frame_id=frame_id,
-                name=G1_JOINT_NAMES,
+                name=self._joint_names,
                 position=sample.positions,
                 velocity=sample.velocities,
                 effort=sample.efforts,
@@ -360,7 +361,7 @@ class G1MotorDevice:
 
     def write(self, values: dict[str, float]) -> None:
         """Send a checked complete PD command in the G1's fixed motor order."""
-        msg = motor_command_from_values(values, G1_JOINT_NAMES)
+        msg = motor_command_from_values(values, self._joint_names)
 
         with self._lock:
             if (

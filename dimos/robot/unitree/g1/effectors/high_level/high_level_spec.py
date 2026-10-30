@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,22 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Spec for G1 high-level control: WebRTC, native SDK, etc. all implement this protocol."""
+"""Stock firmware IO owned by the single G1 connection module."""
 
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
-from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.spec.utils import Spec
+from dimos.control.connection.device import ConnectionDevice
 
 
-class HighLevelG1Spec(Spec, Protocol):
-    """Common high-level control interface for the Unitree G1."""
-
-    cmd_vel: In[Twist]
-
-    def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
-
+@runtime_checkable
+class G1StockDevice(ConnectionDevice, Protocol):
     def get_state(self) -> str: ...
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[str, Any]: ...

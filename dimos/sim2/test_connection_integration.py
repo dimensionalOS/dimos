@@ -16,9 +16,7 @@
 
 from contextlib import ExitStack
 from dataclasses import replace
-from pathlib import Path
 import threading
-from typing import ClassVar
 
 import pytest
 from reactivex.disposable import Disposable
@@ -36,12 +34,12 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.spec import RobotInstanceSpec
 
 
 class _ArmConfig(ConnectionConfig):
     source: str = "left"
-    robot: SimulatedRobot
+    robot: RobotInstanceSpec
     pd: bool = True
     deadman_timeout_s: float = 2.0
 
@@ -50,13 +48,12 @@ class _ArmConnection(ConnectionModule):
     """A test robot deployed in a worker, exercising the actual base lifecycle."""
 
     config: _ArmConfig
-    default_sim_scene: ClassVar[str] = "workbench.xml"
     motor_command: In[MotorCommandArray]
     motor_states: Out[JointState]
     imu: Out[Imu]
 
     @staticmethod
-    def simulated_robot(config: _ArmConfig, scene: Path) -> SimulatedRobot:
+    def describe_simulated_robot(config: _ArmConfig) -> RobotInstanceSpec:
         return config.robot
 
     @property
