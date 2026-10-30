@@ -445,6 +445,10 @@ robots:
           title: xArm pick and place
           description: Perception, grasping and pick-and-place on a real xArm with a RealSense.
           starter: 18
+          recommended_config: &xarm7_connection_config
+          - *robot_or_simulator
+          - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
+            when: {simulation: ''}
         keyboard-teleop-xarm7:
           title: xArm7 keyboard driving
           description: Move an xArm7 with this computer's keyboard.
@@ -485,18 +489,36 @@ robots:
         xarm-grasp-agent:
           title: xArm pick and place agent
           description: Pick-and-place on a real xArm plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_connection_config
         xarm-grasp-graspgenx:
           title: xArm pick and place (GraspGenX)
           description: The xArm grasping stack with GraspGenX grasp generation.
+          recommended_config: *xarm7_connection_config
         xarm-grasp-graspgenx-agent:
           title: xArm GraspGenX agent
           description: GraspGenX grasping plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_connection_config
+        xarm6-grasp:
+          title: xArm6 pick and place
+          description: Perception, grasping and pick-and-place on a real xArm6 with a RealSense.
+          recommended_config: &xarm6_connection_config
+          - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
+        xarm6-grasp-graspgenx:
+          title: xArm6 pick and place (GraspGenX)
+          description: The xArm6 grasping stack with GraspGenX grasp generation.
+          recommended_config: *xarm6_connection_config
         xarm7-planner-coordinator:
           title: xArm7 motion planning
           description: Motion planning and execution for an xArm7.
+          recommended_config: &xarm7_hardware_config [*xarm7_connection_ip]
         xarm7-planner-coordinator-agent:
           title: xArm7 planning agent
           description: xArm7 motion planning plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_hardware_config
+        xarm6-planner-coordinator:
+          title: xArm6 motion planning
+          description: Motion planning and execution for an xArm6.
+          recommended_config: *xarm6_connection_config
         lite6-planner-coordinator:
           title: Lite6 motion planning
           description: Motion planning and execution for a Lite6.

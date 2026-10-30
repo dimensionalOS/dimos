@@ -197,6 +197,9 @@ all_blueprints = {
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
     "xarm-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_sim",
+    "xarm6-grasp": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp",
+    "xarm6-grasp-graspgenx": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp_graspgenx",
+    "xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm6_planner_coordinator",
     "xarm6-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm6_teleop",
     "xarm6-worldbelief": "dimos.experimental.world_belief.xarm6_blueprint:xarm6_worldbelief",
     "xarm7-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm7_planner_coordinator",
@@ -385,6 +388,7 @@ all_modules = {
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
     "x-arm-connection": "dimos.robot.manipulators.xarm.connection.XArmConnection",
+    "x-arm-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic.XArmCoordinator",
     "x-arm-twist-coordinator": "dimos.robot.manipulators.xarm.blueprints.teleop.XArmTwistCoordinator",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }
