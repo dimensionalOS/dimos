@@ -28,11 +28,17 @@ class SimRobotClient:
     def observe(self, state: WorldState) -> None:
         self._state = state
 
-    def write(self, positions: dict[str, float], ttl: float = 0.25) -> None:
+    def write(self, positions: dict[str, float], ttl: float = 0.25, *, paced: bool = False) -> None:
         if self._state is None:
             raise RuntimeError("waiting for simulation feedback")
         if not set(positions) <= set(self.joints):
             raise ValueError("command addresses another robot")
         self._send(
-            JointTargets(self._state.epoch, tuple(positions), tuple(positions.values()), ttl)
+            JointTargets(
+                self._state.epoch,
+                tuple(positions),
+                tuple(positions.values()),
+                ttl,
+                self._state.tick if paced else None,
+            )
         )

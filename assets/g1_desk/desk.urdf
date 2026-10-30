@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<!-- cadpy:sourcePath=../../dimos/robot/unitree/g1/gen_desk.py -->
+<!-- cadpy:sourceHash=96d830615061a592888f530105ead9ae3886336ea7a0d6070880ef2eb6800f8c -->
+<robot name="office_desk">
+  <link name="desk">
+    <visual name="desk/desk">
+      <origin xyz="1.9 4.08 0" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <mesh filename="desk.obj" />
+      </geometry>
+      <material name="desk_desk">
+        <color rgba="1 1 1 1" />
+        <texture filename="package://office/textures/plane_divided_wood_floor_BaseColor.png" />
+      </material>
+    </visual>
+    <visual name="desk/computer">
+      <origin xyz="1.9 4.08 0" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <mesh filename="computer.obj" />
+      </geometry>
+      <material name="desk_computer">
+        <color rgba="1 1 1 1" />
+        <texture filename="package://office/textures/Computer_low_Desktop_BaseColor.png" />
+      </material>
+    </visual>
+    <visual name="desk/chair">
+      <origin xyz="1.9 4.08 0" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <mesh filename="chair.obj" />
+      </geometry>
+      <material name="desk_chair">
+        <color rgba="1 1 1 1" />
+        <texture filename="package://office/textures/SwivlChair_low_SwivlChair_BaseColor.png" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 .635" />
+      <geometry>
+        <box size="1.65 .86 .07" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-.72 0 .315" />
+      <geometry>
+        <box size=".05 .72 .63" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz=".72 0 .315" />
+      <geometry>
+        <box size=".05 .72 .63" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 -.32 .31" />
+      <geometry>
+        <box size="1.44 .04 .40" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-.03 .6 .43" />
+      <geometry>
+        <box size=".58 .55 .10" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-.03 .99 .72" />
+      <geometry>
+        <box size=".55 .08 .46" />
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-.03 .6 .22" />
+      <geometry>
+        <box size=".12 .12 .44" />
+      </geometry>
+    </collision>
+  </link>
+</robot>

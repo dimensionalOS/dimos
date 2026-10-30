@@ -54,6 +54,7 @@ class SimConfig(ModuleConfig):
     world: World
     backend: Callable[[World], PhysicsBackend]
     publish_hz: float = 50.0
+    control_joints: tuple[str, ...] = ()  # when set, wait for all at each publication tick
 
 
 class SimModule(Module):
@@ -63,6 +64,7 @@ class SimModule(Module):
     targets: In[JointTargets]
     wrench: In[Wrench]
     world_frame: Out[Frame]
+    world_layout: Out[Layout]
     efforts: In[JointEfforts]
     joint_state: Out[JointState]
 
@@ -75,6 +77,7 @@ class SimModule(Module):
         self._latest: WorldState | None = None
         self._error = ""
         self._late_steps = 0
+        self._control_wait_seconds = 0.0
         self._dropped_publications = 0
         self._owner: threading.Thread | None = None
         self._publisher: threading.Thread | None = None
@@ -92,9 +95,14 @@ class SimModule(Module):
 
     def _run(self) -> None:
         try:
-            runtime = Runtime(self.config.backend(self.config.world))
+            runtime = Runtime(self.config.backend(self.config.world), self.config.control_joints)
+            if not set(self.config.control_joints) <= set(runtime.backend.layout.drives):
+                raise ValueError("control barrier addresses undriven joints")
+            self._latest = runtime.snapshot()
             self._ready.set_result(runtime)
             every = max(1, round(1 / (self.config.publish_hz * runtime.backend.dt)))
+            last_frame: tuple[str, int] | None = None
+            last_publish = 0.0
             deadline = time.monotonic()
             while not self._done.is_set():
                 try:
@@ -108,19 +116,22 @@ class SimModule(Module):
                         deadline = time.monotonic()
                     except Exception as error:
                         future.set_exception(error)
-                runtime.advance()
-                if runtime.tick % every == 0:
+                runtime.prepare()
+                boundary = runtime.tick % every == 0
+                identity = (runtime.epoch, runtime.tick)
+                # Repeat a waiting sample: startup may precede the controller subscription.
+                now = time.monotonic()
+                if boundary and (identity != last_frame or now - last_publish >= 0.1):
                     frame = runtime.capture()
                     self._latest = frame.state
-                    try:
-                        self._frames.put_nowait(frame)
-                    except Full:
-                        try:
-                            self._frames.get_nowait()
-                        except Empty:
-                            pass
-                        self._frames.put_nowait(frame)
-                        self._dropped_publications += 1
+                    self._queue_frame(frame)
+                    last_frame, last_publish = identity, now
+                if boundary and not runtime.controlled(self.config.control_joints):
+                    self._done.wait(runtime.backend.dt)
+                    self._control_wait_seconds += time.monotonic() - now
+                    deadline = time.monotonic()
+                    continue
+                runtime.advance()
                 deadline += runtime.backend.dt
                 delay = deadline - time.monotonic()
                 if delay < -runtime.backend.dt:
@@ -134,6 +145,17 @@ class SimModule(Module):
                 self._ready.set_exception(error)
             self._done.set()
 
+    def _queue_frame(self, frame: Frame) -> None:
+        try:
+            self._frames.put_nowait(frame)
+        except Full:
+            try:
+                self._frames.get_nowait()
+            except Empty:
+                pass
+            self._frames.put_nowait(frame)
+            self._dropped_publications += 1
+
     def _publish(self) -> None:
         try:
             self._publish_frames()
@@ -144,12 +166,16 @@ class SimModule(Module):
     def _publish_frames(self) -> None:
         layout = self.describe()
         roots = [(name, layout.bodies.index(name)) for name in layout.roots]
+        last_layout = 0.0
         while not self._done.is_set():
             try:
                 frame = self._frames.get(timeout=0.1)
             except Empty:
                 continue
             state = frame.state
+            if time.monotonic() - last_layout >= 1.0:
+                self.world_layout.publish(layout)
+                last_layout = time.monotonic()
             self.world_frame.publish(frame)
             self.joint_state.publish(
                 JointState(
@@ -218,6 +244,7 @@ class SimModule(Module):
         runtime = self._ready.result(timeout=30)
         return {
             "late_steps": self._late_steps,
+            "control_wait_seconds": self._control_wait_seconds,
             "dropped_publications": self._dropped_publications,
             "rejected_commands": runtime.rejected,
             "last_rejection": runtime.last_error,

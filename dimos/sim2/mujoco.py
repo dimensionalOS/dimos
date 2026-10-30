@@ -49,7 +49,23 @@ def compile_world(world: World) -> mujoco.MjModel:
     spec.worldbody.add_geom(
         name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[4, 4, 0.05], rgba=[0.25, 0.3, 0.35, 1]
     )
-    spec.worldbody.add_light(pos=[0, 0, 3], dir=[0, 0, -1], diffuse=[0.9, 0.9, 0.9])
+    spec.worldbody.add_light(
+        pos=[0, -3, 5],
+        dir=[0, 0, -1],
+        type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
+        diffuse=[0.8, 0.8, 0.8],
+    )
+    spec.visual.headlight.ambient = [0.35, 0.35, 0.35]
+    spec.visual.headlight.diffuse = [0.45, 0.45, 0.45]
+    spec.add_texture(
+        name="sky",
+        type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+        builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
+        width=256,
+        height=1536,
+        rgb1=[0.65, 0.73, 0.8],
+        rgb2=[0.85, 0.88, 0.9],
+    )
     ids: set[str] = set()
     mounts: dict[str, tuple[str, Array]] = {}
     for instance in world.instances:
@@ -68,8 +84,14 @@ def compile_world(world: World) -> mujoco.MjModel:
             raise ValueError("prototype supports fixed and independent scalar URDF joints")
         # Import flags must be present before parsing (setting discardvisual afterwards is too late).
         xml = ET.fromstring(model.xml)
+        for extension in xml.findall("mujoco"):
+            xml.remove(extension)
         extension = ET.SubElement(xml, "mujoco")
         ET.SubElement(extension, "compiler", fusestatic="false", discardvisual="false")
+        for link in xml.findall("link"):
+            for shape_kind in ("visual", "collision"):
+                for index, shape in enumerate(link.findall(shape_kind)):
+                    shape.set("name", f"{instance.id}/{link.attrib['name']}/{shape_kind}/{index}")
         child = mujoco.MjSpec.from_string(ET.tostring(xml, encoding="unicode"))
         if instance.floating:
             child.body(model.root_link).add_freejoint(name=model.root_link + "/free")
@@ -77,8 +99,20 @@ def compile_world(world: World) -> mujoco.MjModel:
             joint = model.get_joint(drive.joint)
             if joint is None or joint.type == "fixed" or joint.effort is None:
                 raise ValueError(f"drive requires a scalar joint with effort limit: {drive.joint}")
-            if not np.isfinite([drive.kp, drive.kd]).all() or drive.kp <= 0 or drive.kd < 0:
+            if (
+                not np.isfinite(
+                    [drive.kp, drive.kd, drive.initial, drive.armature, drive.friction]
+                ).all()
+                or drive.kp <= 0
+                or min(drive.kd, drive.armature, drive.friction) < 0
+            ):
                 raise ValueError("invalid servo gains")
+            if (joint.lower is not None and drive.initial < joint.lower) or (
+                joint.upper is not None and drive.initial > joint.upper
+            ):
+                raise ValueError(f"initial position outside joint limits: {drive.joint}")
+            child.joint(drive.joint).armature = drive.armature
+            child.joint(drive.joint).frictionloss = drive.friction
             child.add_actuator(
                 name=drive.joint,
                 target=drive.joint,
@@ -89,7 +123,32 @@ def compile_world(world: World) -> mujoco.MjModel:
                 forcelimited=True,
                 forcerange=[-joint.effort, joint.effort],
             )
-        spec.attach(child, prefix="", frame=spec.worldbody.add_frame(pos=instance.xyz))
+        # MuJoCo's URDF importer retains colors but drops diffuse texture references.
+        # Restore those from the same shared URDF; do not author a second visual asset.
+        for visual in xml.findall(".//visual"):
+            texture = visual.find("material/texture")
+            if texture is None:
+                continue
+            name = visual.get("name")
+            if not name:
+                raise ValueError("textured URDF visuals must have names")
+            child.add_texture(
+                name=name + "/texture",
+                type=mujoco.mjtTexture.mjTEXTURE_2D,
+                file=texture.attrib["filename"],
+            )
+            textures = [""] * int(mujoco.mjtTextureRole.mjNTEXROLE)
+            textures[int(mujoco.mjtTextureRole.mjTEXROLE_RGB)] = name + "/texture"
+            child.add_material(name=name + "/material", textures=textures)
+            child.geom(name).material = name + "/material"
+        spec.attach(
+            child,
+            prefix="",
+            frame=spec.worldbody.add_frame(
+                pos=instance.xyz,
+                quat=Rotation.from_euler("xyz", instance.rpy).as_quat(scalar_first=True),
+            ),
+        )
     frames = {body.name for body in spec.bodies}
     for sensor in world.sensors:
         if sensor.frame not in frames:
@@ -134,6 +193,7 @@ def compile_world(world: World) -> mujoco.MjModel:
 class MujocoBackend:
     def __init__(self, world: World) -> None:
         self.model = compile_world(world)
+        self._initial = {d.joint: d.initial for i in world.instances for d in i.drives}
         self.data = mujoco.MjData(self.model)
         self.dt = world.dt
         self.layout = Layout(
@@ -272,6 +332,8 @@ class MujocoBackend:
 
     def reset(self) -> None:
         mujoco.mj_resetData(self.model, self.data)
+        for name, position in self._initial.items():
+            self.data.qpos[self.model.joint(name).qposadr[0]] = position
         mujoco.mj_forward(self.model, self.data)
         self.hold(self.layout.drives)
 

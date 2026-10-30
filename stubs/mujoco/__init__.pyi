@@ -146,12 +146,15 @@ class mjtGeom:
     mjGEOM_MESH: int
 
 class mjtTexture:
+    mjTEXTURE_SKYBOX: int
     mjTEXTURE_2D: int
 
 class mjtBuiltin:
+    mjBUILTIN_GRADIENT: int
     mjBUILTIN_CHECKER: int
 
 class mjtTextureRole:
+    mjNTEXROLE: int
     mjTEXROLE_RGB: int
 
 class mjtLightType:

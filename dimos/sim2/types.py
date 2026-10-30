@@ -39,6 +39,9 @@ class Drive:
     joint: str
     kp: float = 200.0
     kd: float = 20.0
+    initial: float = 0.0
+    armature: float = 0.0  # reflected rotor inertia, kg m² (rotary) or kg (linear)
+    friction: float = 0.0  # Coulomb joint friction, Nm or N
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class Instance:
     xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     floating: bool = False
     drives: tuple[Drive, ...] = ()
+    rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,7 @@ class World:
                     "id": i.id,
                     "xml": i.model.load().xml,
                     "xyz": i.xyz,
+                    "rpy": i.rpy,
                     "floating": i.floating,
                     "drives": [asdict(d) for d in i.drives],
                 }
@@ -148,6 +153,7 @@ class JointEfforts:
     joints: tuple[str, ...]
     efforts: tuple[float, ...]
     ttl: float = 0.25
+    tick: int | None = None
 
 
 @dataclass(frozen=True)
@@ -156,6 +162,7 @@ class JointTargets:
     joints: tuple[str, ...]
     positions: tuple[float, ...]
     ttl: float = 0.25  # simulation seconds; expiration holds measured position
+    tick: int | None = None  # response to this exact feedback tick, for paced control
 
 
 @dataclass(frozen=True)
