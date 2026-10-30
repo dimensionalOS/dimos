@@ -682,7 +682,7 @@ pub(crate) fn solve_core(
     // the evidence reads the solve of what it weighs (the odometry at its noise, the core's closures, no gravity
     // factors), and only at that solve's minimum: residuals a solve stopped short of removing are no one's noise
     let mut evidence_state = state.clone();
-    let converged = levenberg_marquardt(
+    let converged = levenberg_marquardt_steps(
         &mut evidence_state,
         evidence_pattern,
         odometry,
@@ -693,6 +693,8 @@ pub(crate) fn solve_core(
         sightings,
         &sighting_kept,
         1e-5,
+        // a bound on time only: from the solve's state this is near its minimum, but a flat direction can creep
+        1000,
     );
     let odometry_noise_evidence = converged
         .then(|| {
@@ -1474,9 +1476,8 @@ fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usiz
         .filter(|&(_, _, r, c)| r >= c)
 }
 
-/// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers the cost
-/// (whitened squared residuals) by less than `tolerance` of it plus one, the variance of one residual, so a cost near
-/// zero is done instead of shrinking forever, or no step lowers it at all. False if 100 steps did not get there.
+/// `levenberg_marquardt_steps` with at most 100 steps.
+#[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt(
     state: &mut State,
     pattern: &Pattern,
@@ -1488,6 +1489,38 @@ fn levenberg_marquardt(
     sightings: &[Sighting],
     sighting_weights: &[f64],
     tolerance: f64,
+) -> bool {
+    levenberg_marquardt_steps(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+        tolerance,
+        100,
+    )
+}
+
+/// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers the cost
+/// (whitened squared residuals) by less than `tolerance` of it plus one, the variance of one residual, so a cost near
+/// zero is done instead of shrinking forever, or no step lowers it at all. False if `steps` steps did not get there.
+#[allow(clippy::too_many_arguments)]
+fn levenberg_marquardt_steps(
+    state: &mut State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+    tolerance: f64,
+    steps: usize,
 ) -> bool {
     let size = pattern.size;
     let mut damping = 1e-6;
@@ -1502,7 +1535,7 @@ fn levenberg_marquardt(
         sightings,
         sighting_weights,
     );
-    for _ in 0..100 {
+    for _ in 0..steps {
         let (mut values, gradient, diagonal) = normal_equations(
             state,
             pattern,
