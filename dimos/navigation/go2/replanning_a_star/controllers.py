@@ -103,10 +103,6 @@ class PController:
         return velocity
 
     def _angular_twist(self, angular_velocity: float) -> Twist:
-        # In simulation, we need stroger values
-        if self._simulation and abs(angular_velocity) < 0.8:
-            angular_velocity = 0.8 * np.sign(angular_velocity)
-
         return Twist(
             linear=Vector3(0.0, 0.0, 0.0),
             angular=Vector3(0.0, 0.0, angular_velocity),

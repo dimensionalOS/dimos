@@ -27,8 +27,8 @@ class Imu:
     name: str
     site: str | Mount
     rate_hz: float = 200.0
-    # Standalone IMUs use the upstream Observable delayer. A lidar's integrated
-    # IMU instead follows the lidar worker's timestamped acquisition history.
+    # Standalone IMUs use the upstream Observable delayer. Integrated lidar IMUs
+    # acquire on that clock, then delay delivery in simulation time at the bridge.
     latency: float = 0.0
 
     def __post_init__(self) -> None:

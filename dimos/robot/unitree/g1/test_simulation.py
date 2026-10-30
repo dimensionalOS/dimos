@@ -218,6 +218,7 @@ def test_groot_blueprint_keeps_connection_and_pointlio_wiring(scene):
         assert world.kwargs["robot_topics"]["g1"][port] == f"_sim2/{connection.name}/{port}"
     assert result.remapping_map["mid360", "lidar"] == "lidar_raw"
     assert result.remapping_map["mid360", "imu"] == "imu_raw"
+    assert result.remapping_map[connection.name, "odom"] == "g1/odom"
     assert [(owner, sensor.name) for owner, sensor in world.kwargs["sensors"]] == [("g1", "mid360")]
 
 

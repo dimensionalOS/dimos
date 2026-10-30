@@ -14,10 +14,15 @@
 
 """Independent instantaneous or rolling measurement acquisition, without a Module."""
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from functools import partial
 import math
+import threading
 import time
 from typing import Any
 
+import mujoco
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
@@ -25,12 +30,34 @@ from scipy.spatial.transform import Rotation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.sensors.device import SensorDevice
 from dimos.sim2.sensors.lidar.raycast import Raycaster
-from dimos.sim2.sensors.lidar.spec import Lidar, RangeResponse, RayPattern, TimedRayPattern
+from dimos.sim2.sensors.lidar.spec import (
+    Lidar,
+    RangeResponse,
+    RayPattern,
+    TimedRayPattern,
+    TimedRays,
+)
+
+_RAY_WORKERS = 4
+
+
+@dataclass
+class _RayWorker:
+    data: mujoco.MjData
+    scratch: mujoco.MjData
+
+
+@dataclass(frozen=True)
+class _RayResult:
+    indices: NDArray[np.int64]
+    ranges: NDArray[np.float64]
+    directions: NDArray[np.float64]
+    points: NDArray[np.float64]
+    cos_incidence: NDArray[np.float64]
 
 
 class LidarDevice(SensorDevice[Lidar]):
@@ -43,23 +70,16 @@ class LidarDevice(SensorDevice[Lidar]):
         self._model = self.sensor.model(**self.sensor.model_kwargs)
         self._rays = self._model.directions() if isinstance(self._model, RayPattern) else None
         if isinstance(self._model, TimedRayPattern):
-            # Load the pattern before any IMU publication, not halfway through a scan.
+            # Load the pattern before acquisition, not halfway through a scan.
             self._model.scan(0.0, 1 / self.sensor.rate_hz)
         self._episode = -1
         self._last_scan = 0
-        self._last_imu_time: float | None = None
         self._clock_origin = 0.0
-        if self.sensor.imu is not None:
-            name = f"{prefix}sensor/{self.sensor.imu.name}"
-            self._gyro = self.reader.model.sensor(f"{name}/gyro").id
-            self._accel = self.reader.model.sensor(f"{name}/accel").id
         self._scan_status: dict[str, Any] = {
             "fidelity": "rolling" if isinstance(self._model, TimedRayPattern) else "instantaneous",
             "scans": 0,
             "dropped_scans": 0,
             "history_pending": False,
-            "imu_samples": 0,
-            "dropped_imu_samples": 0,
         }
         self._raycaster = Raycaster(
             self.reader.model,
@@ -69,16 +89,35 @@ class LidarDevice(SensorDevice[Lidar]):
             self_occlusion=self.sensor.self_occlusion,
             excluded_meshes=tuple(prefix + mesh for mesh in self.sensor.excluded_meshes),
         )
+        self._worker_state = threading.local()
+        self._ray_pool = (
+            ThreadPoolExecutor(
+                max_workers=_RAY_WORKERS,
+                thread_name_prefix="sim2-lidar-ray",
+                initializer=self._open_ray_worker,
+            )
+            if isinstance(self._model, TimedRayPattern)
+            else None
+        )
+
+    def _open_ray_worker(self) -> None:
+        self._worker_state.value = _RayWorker(
+            mujoco.MjData(self.reader.model), mujoco.MjData(self.reader.model)
+        )
+
+    def close(self) -> None:
+        if self._ray_pool is not None:
+            self._ray_pool.shutdown(wait=True, cancel_futures=True)
+            self._ray_pool = None
+        super().close()
 
     def reset(self) -> None:
         self._clock_origin = self.reader.timestamp - float(self.reader.data.time)
         self._last_scan = 0
-        self._last_imu_time = None
 
     def capture(self) -> None:
         self._clock_origin = self.reader.timestamp - float(self.reader.data.time)
         if isinstance(self._model, TimedRayPattern):
-            self._capture_imu()
             self._capture_rolling(self._model)
             return
         if self.sample_time(self.sensor.rate_hz) is None:
@@ -134,61 +173,6 @@ class LidarDevice(SensorDevice[Lidar]):
             ),
         )
 
-    def _capture_imu(self) -> None:
-        imu = self.sensor.imu
-        if imu is None:
-            return
-        observations = self.reader.frames()
-        frames = [
-            frame
-            for frame in observations
-            if frame.metadata.episode_id == self._episode
-            and frame.metadata.sequence <= self.reader.sequence
-        ]
-        if not frames:
-            return
-        first = max(
-            math.ceil((frames[0].metadata.sim_time - 1e-9) * imu.rate_hz),
-            0 if self._last_imu_time is None else round(self._last_imu_time * imu.rate_hz) + 1,
-        )
-        last = math.floor((frames[-1].metadata.sim_time + 1e-9) * imu.rate_hz)
-        times = np.array([frame.metadata.sim_time for frame in frames])
-        for sample in range(first, last + 1):
-            t = sample / imu.rate_hz
-            exact = np.flatnonzero(np.isclose(times, t, rtol=0, atol=1e-9))
-            if len(exact):
-                self.reader.restore(frames[int(exact[0])])
-            elif self.reader.history(t, t):
-                # A 200 Hz IMU also works with 500 Hz physics: sample the
-                # bracketing states rather than silently publishing at 100 Hz.
-                self.reader.restore_at(t)
-            else:
-                continue
-            if self.reader.latest_episode != self._episode:
-                return
-            self.emit(
-                "imu",
-                Imu(
-                    angular_velocity=Vector3(*self.reader.data.sensor(self._gyro).data),
-                    linear_acceleration=Vector3(*self.reader.data.sensor(self._accel).data),
-                    orientation_covariance=[-1.0, 0, 0, 0, 0, 0, 0, 0, 0],
-                    frame_id=self.sensor.imu_frame_id or self.frame_prefix + imu.name,
-                    ts=self._clock_origin + t,
-                ),
-                start=t,
-                end=t,
-                latency=imu.latency,
-            )
-            with self._error_lock:
-                self._scan_status["imu_samples"] += 1
-                if self._last_imu_time is not None:
-                    self._scan_status["dropped_imu_samples"] += max(
-                        0, round((t - self._last_imu_time) * imu.rate_hz) - 1
-                    )
-            self._last_imu_time = t
-        if frames:
-            self.reader.restore(frames[-1])
-
     def _capture_rolling(self, pattern: TimedRayPattern) -> None:
         rate = self.sensor.rate_hz
         index = math.floor((float(self.reader.data.time) + 1e-9) * rate)
@@ -209,21 +193,21 @@ class LidarDevice(SensorDevice[Lidar]):
         cos_incidence = np.zeros(len(rays.offsets))
         mapping_visible = np.ones(len(rays.offsets), dtype=bool)
         elevation = self.sensor.maximum_world_elevation
-        for motion_bin in np.unique(bins):
-            indices = np.flatnonzero(bins == motion_bin)
-            self.reader.restore_at(start + float(np.mean(rays.offsets[indices])))
-            origin = self.reader.data.site_xpos[self._site]
-            rotation = self.reader.data.site_xmat[self._site].reshape(3, 3)
-            directions = rays.directions[indices] @ rotation.T
-            ranges, normals = self._raycaster.hits(
-                self.reader.data, origin, directions, pattern.max_range
-            )
-            cos_incidence[indices] = np.einsum("ij,ij->i", directions, normals)
-            distances[indices] = ranges
-            world_rays[indices] = directions
-            world_points[indices] = origin + directions * ranges[:, None]
+        assert self._ray_pool is not None
+        # The interval remains pinned until every bin completes. Workers only
+        # read that history/model and each owns its MuJoCo stack and transforms.
+        cast = partial(self._cast_motion_bin, rays=rays, start=start, max_range=pattern.max_range)
+        groups = [np.flatnonzero(bins == motion_bin) for motion_bin in np.unique(bins)]
+        for result in self._ray_pool.map(cast, groups):
+            indices = result.indices
+            cos_incidence[indices] = result.cos_incidence
+            distances[indices] = result.ranges
+            world_rays[indices] = result.directions
+            world_points[indices] = result.points
             if elevation is not None:
-                mapping_visible[indices] = directions[:, 2] <= np.sin(np.deg2rad(elevation)) + 1e-12
+                mapping_visible[indices] = (
+                    result.directions[:, 2] <= np.sin(np.deg2rad(elevation)) + 1e-12
+                )
         if isinstance(pattern, RangeResponse):
             measured = pattern.measure(distances, cos_incidence, start)
             world_points += world_rays * (measured - distances)[:, None]
@@ -275,6 +259,33 @@ class LidarDevice(SensorDevice[Lidar]):
                 },
             )
         self._last_scan = index
+
+    def _cast_motion_bin(
+        self,
+        indices: NDArray[np.int64],
+        *,
+        rays: TimedRays,
+        start: float,
+        max_range: float,
+    ) -> _RayResult:
+        worker: _RayWorker = self._worker_state.value
+        self.reader.restore_into(
+            start + float(np.mean(rays.offsets[indices])),
+            worker.data,
+            worker.scratch,
+            kinematics_only=True,
+        )
+        origin = worker.data.site_xpos[self._site]
+        rotation = worker.data.site_xmat[self._site].reshape(3, 3)
+        directions = rays.directions[indices] @ rotation.T
+        ranges, normals = self._raycaster.hits(worker.data, origin, directions, max_range)
+        return _RayResult(
+            indices,
+            ranges,
+            directions,
+            origin + directions * ranges[:, None],
+            np.einsum("ij,ij->i", directions, normals),
+        )
 
     def status(self) -> dict[str, Any]:
         with self._error_lock:

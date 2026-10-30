@@ -169,6 +169,9 @@ For lidar, open Controller's 3D panel, set **Fixed frame** to `odom` and
 `lidar_raw` uses the same `mid360_link` frame as the physical driver and can also
 be displayed. The simulator's ground-truth `world` tree is separate from
 Point-LIO's estimated `odom` tree; their origins are not interchangeable.
+Navigation consumes Point-LIO's pose only; the connection's independent pose is
+available on `g1/odom`. Goals and paths use the costmap's frame, and goals in an
+unrelated frame are rejected.
 Use a full stack restart when respawning in this navigation profile: resetting
 only physics leaves the external controller, Point-LIO and map state stale.
 
