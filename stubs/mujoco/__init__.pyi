@@ -23,6 +23,8 @@ class MjModel:
     @classmethod
     def from_xml_path(cls, path: str) -> MjModel: ...
     @classmethod
+    def from_binary_path(cls, path: str) -> MjModel: ...
+    @classmethod
     def from_xml_string(cls, xml: str, assets: dict[str, bytes] | None = ...) -> MjModel: ...
 
 class MjData:
@@ -37,6 +39,7 @@ class MjData:
 
 class MjSpec:
     meshdir: str
+    texturedir: str
     worldbody: Any
     # The MjSpec editing API is large (add_mesh, add_body, attach, …); rare
     # accesses are Any, same approach as MjModel.
@@ -53,6 +56,8 @@ class MjvOption:
     def __init__(self) -> None: ...
 
 class MjvCamera:
+    fixedcamid: int
+    type: int
     lookat: NDArray[np.float64]
     distance: float
     azimuth: float
@@ -63,6 +68,18 @@ class MjvScene:
     flags: NDArray[np.uint8]
     geoms: Any
     ngeom: int
+    def __init__(self, model: MjModel, maxgeom: int = ...) -> None: ...
+
+class MjvPerturb:
+    active: int
+    select: int
+    skinselect: int
+    def __init__(self) -> None: ...
+
+class GLContext:
+    def __init__(self, max_width: int, max_height: int) -> None: ...
+    def make_current(self) -> None: ...
+    def free(self) -> None: ...
 
 class Renderer:
     def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
@@ -76,9 +93,10 @@ class Renderer:
         camera: int | str | Any = ...,
         scene_option: MjvOption | None = ...,
     ) -> None: ...
-    def render(self) -> NDArray[np.uint8]: ...
+    def render(self) -> NDArray[Any]: ...
     def enable_depth_rendering(self) -> None: ...
     def enable_segmentation_rendering(self) -> None: ...
+    def disable_depth_rendering(self) -> None: ...
     def close(self) -> None: ...
 
 # --- top-level functions ----------------------------------------------
@@ -93,6 +111,28 @@ def mjv_initGeom(
     rgba: NDArray[np.float32],
 ) -> None: ...
 def mj_step(model: MjModel, data: MjData, nstep: int = ...) -> None: ...
+def mj_resetData(model: MjModel, data: MjData) -> None: ...
+def mj_stateSize(model: MjModel, spec: int) -> int: ...
+def mj_getState(model: MjModel, data: MjData, state: NDArray[np.float64], spec: int) -> None: ...
+def mj_setState(model: MjModel, data: MjData, state: NDArray[np.float64], spec: int) -> None: ...
+def mj_objectVelocity(
+    model: MjModel,
+    data: MjData,
+    objtype: int,
+    objid: int,
+    result: NDArray[np.float64],
+    flg_local: int,
+) -> None: ...
+def mj_differentiatePos(
+    model: MjModel,
+    qvel: NDArray[np.float64],
+    dt: float,
+    qpos1: NDArray[np.float64],
+    qpos2: NDArray[np.float64],
+) -> None: ...
+def mj_integratePos(
+    model: MjModel, qpos: NDArray[np.float64], qvel: NDArray[np.float64], dt: float
+) -> None: ...
 def mj_resetDataKeyframe(model: MjModel, data: MjData, key: int) -> None: ...
 def mj_name2id(model: MjModel, type: int, name: str | None) -> int: ...
 def mj_id2name(model: MjModel, type: int, id: int) -> str | None: ...
@@ -127,13 +167,16 @@ class mjtObj:
     mjOBJ_MESH: int
     mjOBJ_SITE: int
     mjOBJ_TENDON: int
+    mjOBJ_TEXT: int
 
 class mjtCamera:
+    mjCAMERA_FIXED: int
     mjCAMERA_FREE: int
     mjCAMERA_TRACKING: int
 
 class mjtRndFlag:
     mjRND_REFLECTION: int
+    mjRND_SHADOW: int
 
 class mjtGeom:
     mjGEOM_PLANE: int
@@ -157,6 +200,8 @@ class mjtLightType:
     mjLIGHT_SPOT: int
 
 class mjtJoint:
+    mjJNT_BALL: int
+    mjJNT_FREE: int
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
 
@@ -164,5 +209,33 @@ class mjtTrn:
     mjTRN_JOINT: int
     mjTRN_TENDON: int
 
+class mjtBias:
+    mjBIAS_NONE: int
+    mjBIAS_AFFINE: int
+    mjBIAS_MUSCLE: int
+    mjBIAS_DCMOTOR: int
+    mjBIAS_USER: int
+
+class mjtGain:
+    mjGAIN_FIXED: int
+    mjGAIN_AFFINE: int
+    mjGAIN_MUSCLE: int
+    mjGAIN_DCMOTOR: int
+    mjGAIN_USER: int
+
 class mjtWrap:
     mjWRAP_JOINT: int
+
+class mjtState:
+    mjSTATE_INTEGRATION: int
+
+class mjtIntegrator:
+    mjINT_IMPLICITFAST: int
+
+class mjtSensor:
+    mjSENS_GYRO: int
+    mjSENS_ACCELEROMETER: int
+    mjSENS_FRAMEQUAT: int
+
+class mjtCamLight:
+    mjCAMLIGHT_FIXED: int

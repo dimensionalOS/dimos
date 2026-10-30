@@ -438,6 +438,14 @@ class ModuleCoordinator(Resource):
             blueprint, parsed_config
         )
         global_config.update(**global_values)
+        if global_config.simulation in ("mujoco", "genesis"):
+            # Attach the world after CLI/module overrides are resolved. Each
+            # connection's describe_simulated_robot hook supplies its model; the original
+            # connection remains in the stack and receives a simulation device.
+            # Physics engines are optional; load composition only for simulation.
+            from dimos.sim2.composition import attach_simulation
+
+            blueprint, module_kwargs = attach_simulation(blueprint, module_kwargs, global_config)
         transports = _materialize_transports(blueprint, transport_overrides)
 
         _run_configurators(blueprint)
@@ -529,6 +537,14 @@ class ModuleCoordinator(Resource):
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True
         )
+        if global_values.get("simulation", self._global_config.simulation) in ("mujoco", "genesis"):
+            from dimos.sim2.composition import has_simulation_binding
+
+            if any(has_simulation_binding(atom.module) for atom in blueprint.active_blueprints):
+                raise ValueError(
+                    "simulated robots and sensors must be in the blueprint before build; "
+                    "restart with the complete blueprint"
+                )
         self._global_config.update(**global_values)
         transports = _materialize_transports(blueprint, transport_overrides)
 
