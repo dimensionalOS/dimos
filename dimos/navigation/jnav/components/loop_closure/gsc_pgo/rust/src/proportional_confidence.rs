@@ -245,6 +245,7 @@ impl ClosureSearch {
             max_iterations: self.config.closure_icp_max_iterations as usize,
             max_correspondence_distance: max_distance,
             inlier_squared_distance: self.config.closure_inlier_squared_distance(),
+            point_to_plane: self.config.closure_icp_point_to_plane,
         };
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
         let radius = self.config.closure_search_radius;

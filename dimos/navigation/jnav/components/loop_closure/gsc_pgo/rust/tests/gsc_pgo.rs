@@ -126,6 +126,7 @@ fn icp_recovers_known_transform() {
             max_iterations: 50,
             max_correspondence_distance: 10.0,
             inlier_squared_distance: 0.15,
+            point_to_plane: true,
         },
     );
     assert!(result.converged, "ICP must converge on a clean pair");

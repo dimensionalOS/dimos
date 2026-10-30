@@ -21,8 +21,8 @@ use rayon::prelude::*;
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{transform_cloud, KdTree};
 
-/// A source point moved by the current guess, its nearest target point, and their squared distance.
-type Correspondence = ([f32; 3], [f32; 3], f32);
+/// A source point moved by the current guess, its nearest target point, their squared distance, and the target point's index.
+type Correspondence = ([f32; 3], [f32; 3], f32, usize);
 
 pub struct IcpParams {
     pub max_iterations: usize,
@@ -30,6 +30,9 @@ pub struct IcpParams {
     pub max_correspondence_distance: f64,
     /// A source point overlaps the target when its nearest neighbour is within this squared distance (m²).
     pub inlier_squared_distance: f64,
+    /// Each step minimises the pairs' distances along the target's surface normal (point-to-plane) instead of their
+    /// full distances (point-to-point): two scans never sample the same spots, so a point may slide along the surface.
+    pub point_to_plane: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +64,14 @@ pub fn icp(
     let mut converged = false;
     let limit = (params.max_correspondence_distance * params.max_correspondence_distance) as f32;
     let mut previous_mse = f64::MAX;
+    // target surface normals, found the first time a pair uses the point
+    let normals: Vec<std::sync::OnceLock<Option<[f64; 3]>>> = if params.point_to_plane {
+        (0..target.len())
+            .map(|_| std::sync::OnceLock::new())
+            .collect()
+    } else {
+        Vec::new()
+    };
     if !source.is_empty() && !target.is_empty() {
         for iteration in 1..=params.max_iterations {
             let moved = transform_cloud(source, &rotation, &translation);
@@ -69,13 +80,20 @@ pub fn icp(
                 .filter_map(|p| {
                     tree.nearest(p)
                         .filter(|&(_, d)| d <= limit)
-                        .map(|(i, d)| (*p, target[i], d))
+                        .map(|(i, d)| (*p, target[i], d, i))
                 })
                 .collect();
             if pairs.len() < 3 {
                 break;
             }
-            let (step_rotation, step_translation) = rigid_fit(&pairs);
+            let (step_rotation, step_translation) = if params.point_to_plane {
+                match plane_fit(&pairs, target, tree, &normals) {
+                    Some(step) => step,
+                    None => break,
+                }
+            } else {
+                rigid_fit(&pairs)
+            };
             rotation = mat3::mat_mul(&step_rotation, &rotation);
             translation = mat3::add(
                 &mat3::mat_vec(&step_rotation, &translation),
@@ -693,6 +711,69 @@ pub fn likelihood_ratio(
     )
 }
 
+/// The small rotation and translation that best close each pair's gap along the target point's surface normal
+/// (point-to-plane, linearised: rows [p x n, n], gap (p - q).n), as a rotation matrix and translation. Directions no
+/// pair constrains (eigenvalues of the normal equations at rounding level) are left unmoved. None with too few pairs
+/// on a surface.
+fn plane_fit(
+    pairs: &[Correspondence],
+    target: &[[f32; 3]],
+    tree: &KdTree,
+    normals: &[std::sync::OnceLock<Option<[f64; 3]>>],
+) -> Option<(Mat3, Vec3)> {
+    let mut information = [[0.0; 6]; 6];
+    let mut gradient = [0.0; 6];
+    let mut used = 0;
+    for (p, q, _, i) in pairs {
+        let Some(n) = *normals[*i].get_or_init(|| {
+            let neighbours = tree.knn(&target[*i], 10);
+            (neighbours.len() >= 3).then(|| least_spread_direction(target, &neighbours))
+        }) else {
+            continue;
+        };
+        let (p, q) = (p.map(|v| v as f64), q.map(|v| v as f64));
+        let row = [
+            p[1] * n[2] - p[2] * n[1],
+            p[2] * n[0] - p[0] * n[2],
+            p[0] * n[1] - p[1] * n[0],
+            n[0],
+            n[1],
+            n[2],
+        ];
+        let gap = (0..3).map(|k| (p[k] - q[k]) * n[k]).sum::<f64>();
+        for a in 0..6 {
+            gradient[a] -= row[a] * gap;
+            for b in 0..6 {
+                information[a][b] += row[a] * row[b];
+            }
+        }
+        used += 1;
+    }
+    if used < 6 {
+        return None;
+    }
+    let (values, vectors) = mat3::jacobi_eigen(information);
+    let floor = values[5].abs() * 6.0 * f64::EPSILON;
+    let mut step = [0.0; 6];
+    for k in 0..6 {
+        if values[k] > floor {
+            let along = (0..6).map(|a| vectors[a][k] * gradient[a]).sum::<f64>() / values[k];
+            for a in 0..6 {
+                step[a] += vectors[a][k] * along;
+            }
+        }
+    }
+    let turn = [step[0], step[1], step[2]];
+    let angle = mat3::norm(&turn);
+    let rotation = if angle > 0.0 {
+        let s = (angle / 2.0).sin() / angle;
+        mat3::mat_from_quat(&[(angle / 2.0).cos(), turn[0] * s, turn[1] * s, turn[2] * s])
+    } else {
+        mat3::identity()
+    };
+    Some((rotation, [step[3], step[4], step[5]]))
+}
+
 /// The rotation and translation that best map each pair's first point onto its second (Horn's
 /// quaternion method: the top eigenvector of a 4x4 built from the cross-covariance).
 fn rigid_fit(pairs: &[Correspondence]) -> (Mat3, Vec3) {
@@ -708,7 +789,7 @@ fn rigid_fit(pairs: &[Correspondence]) -> (Mat3, Vec3) {
     };
     let (from_mean, to_mean) = (mean(|p| p.0), mean(|p| p.1));
     let mut s = [[0.0; 3]; 3];
-    for (a, b, _) in pairs {
+    for (a, b, _, _) in pairs {
         for i in 0..3 {
             for j in 0..3 {
                 s[i][j] += (a[i] as f64 - from_mean[i]) * (b[j] as f64 - to_mean[j]);

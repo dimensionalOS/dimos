@@ -336,6 +336,9 @@ pub struct Config {
     pub closure_icp_inlier_distance_m: f64,
     /// A closure whose ICP fit has a larger rms inlier distance (m, sqrt of the fitness) is rejected.
     pub closure_icp_max_fitness_m: f64,
+    /// Closure ICP steps minimise distances along the target's surface normals (point-to-plane); false is the old
+    /// point-to-point.
+    pub closure_icp_point_to_plane: bool,
     pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
@@ -562,6 +565,7 @@ impl Default for Config {
             closure_search_radius: 3.0,
             closure_icp_inlier_distance_m: 0.3872983346207417,
             closure_icp_max_fitness_m: 0.3872983346207417,
+            closure_icp_point_to_plane: true,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,
@@ -834,14 +838,23 @@ impl ClosureSearch {
         // a cloud computation, through the ICP cache when there is one; a measured inlier distance changes every
         // fit, so it is part of the key
         let cache = self.icp_cache.clone();
-        let key_suffix = if self.config.closure_inlier_distance_from_odometry {
-            format!(
-                ":{:x}",
-                self.config.closure_inlier_squared_distance().to_bits()
-            )
-        } else {
-            String::new()
-        };
+        let key_suffix = format!(
+            "{}{}",
+            if self.config.closure_inlier_distance_from_odometry {
+                format!(
+                    ":{:x}",
+                    self.config.closure_inlier_squared_distance().to_bits()
+                )
+            } else {
+                String::new()
+            },
+            // a point-to-plane alignment is a different result from a point-to-point one
+            if self.config.closure_icp_point_to_plane {
+                ":pl"
+            } else {
+                ""
+            }
+        );
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
                 Some(cache) => {
@@ -915,6 +928,7 @@ impl ClosureSearch {
                     max_iterations: self.config.closure_icp_max_iterations as usize,
                     max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
                     inlier_squared_distance: self.config.closure_inlier_squared_distance(),
+                    point_to_plane: self.config.closure_icp_point_to_plane,
                 },
             ))
         }));

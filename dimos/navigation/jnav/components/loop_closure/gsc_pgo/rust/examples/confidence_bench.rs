@@ -220,7 +220,7 @@ fn main() {
                 (mat3::rot_z((rng.next() * 2.0 - 1.0) * std::f64::consts::PI), [0.0; 3])
             };
             let tree_a = KdTree::build(&a);
-            let params = IcpParams { max_iterations: 50, max_correspondence_distance: 10.0, inlier_squared_distance: 0.15 };
+            let params = IcpParams { max_iterations: 50, max_correspondence_distance: 10.0, inlier_squared_distance: 0.15, point_to_plane: true };
             let result = if hard && !overlapping {
                 [sc_yaw, -sc_yaw]
                     .map(|y| icp(&b, &a, &tree_a, &mat3::rot_z(y), &[0.0; 3], &params))

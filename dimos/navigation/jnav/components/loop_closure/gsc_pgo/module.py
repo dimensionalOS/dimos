@@ -52,6 +52,8 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_inlier_distance_m: float = 0.3872983346207417
     # reject a closure whose ICP rms inlier distance (m) is larger
     closure_icp_max_fitness_m: float = 0.3872983346207417
+    # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
+    closure_icp_point_to_plane: bool = True
     closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
