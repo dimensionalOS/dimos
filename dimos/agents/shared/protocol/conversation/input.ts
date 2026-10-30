@@ -16,13 +16,13 @@ export type InputSource =
   | { readonly kind: "job"; readonly job: JobName; readonly run: JobRun }
   /** The steer after a tool round that may have changed the system; it carries only a change. */
   | { readonly kind: "runtime"; readonly after: EntryId }
-  /** A tool call sent to the background has finished, failed, or was lost to a gateway restart. */
+  /** A tool call sent to the background has finished, failed, was stopped, or was lost to a gateway restart. */
   | {
       readonly kind: "background";
       readonly task: TaskId;
       readonly call: CallId;
       readonly tool: string;
-      readonly end: "finished" | "failed" | "interrupted";
+      readonly end: "finished" | "failed" | "stopped" | "interrupted";
     };
 
 /** The data of every input the harness places. One kind for all sources, so one fold, one view and one step mapping cover them. */

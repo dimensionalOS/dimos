@@ -14,12 +14,12 @@
 
 from collections.abc import Callable
 from pathlib import Path
-import pickle
 import xml.etree.ElementTree as ET
 
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.assets.model as robot_model
 from dimos.utils.data import LfsPath
 
@@ -703,7 +703,7 @@ def test_with_fixed_frame_rejects_invalid_model(
         model.load()
 
 
-def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
+def test_roundtrip_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
         "<robot name='before'><link name='base'/><link name='slider'/><link name='camera'/>"
@@ -721,7 +721,7 @@ def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> No
     )
     assert ET.fromstring(model.load().xml).get("name") == "before"
 
-    restored = pickle.loads(pickle.dumps(model))
+    restored = decode(encode(model))
     urdf.write_text(urdf.read_text().replace("name='before'", "name='after'"))
     root = ET.fromstring(restored.load().xml)
 

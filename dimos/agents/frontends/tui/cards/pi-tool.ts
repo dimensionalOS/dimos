@@ -111,7 +111,7 @@ export class PiToolCard implements ToolCard {
       this.result === null
         ? " · running"
         : movedToBackground(this.result)
-          ? " · moved to the background"
+          ? " · in the background"
           : this.result.isError
             ? " · failed"
             : " · done";

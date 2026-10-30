@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import pickle
 from threading import Event
 from unittest.mock import ANY, DEFAULT, MagicMock, call
 
@@ -78,6 +77,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -1099,7 +1099,7 @@ class TestExecute:
         module = module_factory()
         config = _one_joint_config()
         _install_generated_plan(module, config, [0.0], [0.1])
-        original = pickle.loads(pickle.dumps(module._pending_plan))
+        original = decode(encode(module._pending_plan))
         _install_generated_plan(module, config, [0.0], [0.2])
         replacement = module._pending_plan
         coordinator = _control_coordinator()
@@ -1112,9 +1112,7 @@ class TestExecute:
         assert _executed(coordinator) is None
         assert module._pending_plan is replacement
         assert (
-            module.execute(
-                plan_id=pickle.loads(pickle.dumps(replacement)).plan_id, blocking=False
-            ).status
+            module.execute(plan_id=decode(encode(replacement)).plan_id, blocking=False).status
             is ExecutionStatus.ACCEPTED
         )
         assert _executed(coordinator) is not None

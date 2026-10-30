@@ -1,6 +1,6 @@
 import type { AgentTool } from "../tools/base.ts";
 import type { AgentToolName, Background } from "../../shared/protocol/tools/details.ts";
-import type { CallId, Detachable } from "../../shared/protocol/conversation/calls.ts";
+import type { CallId, Detachable, MovedCall } from "../../shared/protocol/conversation/calls.ts";
 import type { Context } from "@earendil-works/chord/context";
 import type {
   ConversationId,
@@ -19,18 +19,31 @@ import type { Live } from "../../shared/protocol/status.ts";
 import type { RenderDetails } from "../../shared/protocol/media.ts";
 import { MovedSchema } from "../../shared/protocol/tools/details.ts";
 import { Status } from "../../shared/protocol/status.ts";
+import type { TSchema } from "typebox";
 import { Type } from "typebox";
 import { awaitWithContext, withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import { defineExtension, defineTask } from "@earendil-works/pi-durable";
 import { epochMs } from "../../shared/protocol/time.ts";
 import { renderOf } from "../tools/details.ts";
 
+/** As often as pi-durable publishes a running call's output. */
+const MOVED_OUTPUT_PACE_MS = 100;
+
+const RUN_IN_BACKGROUND = "run_in_background";
+
+const runInBackgroundSchema = Type.Optional(
+  Type.Boolean({
+    description:
+      "Start the call in the background, for work that runs long: it returns at once with its call id, the background tool reads its output or stops it, and its result arrives later as a message.",
+  }),
+);
+
 export type DetachResult = { readonly kind: "detached"; readonly task: TaskId } | { readonly kind: "not_running" };
 
 /** How background work ended, as its notice tells the model. */
 type Ended =
   | {
-      readonly end: "finished" | "failed";
+      readonly end: "finished" | "failed" | "stopped";
       readonly text: string;
       readonly images: readonly ImageContent[];
       readonly render: RenderDetails | null;
@@ -45,14 +58,69 @@ type BackgroundTask = Task<BackgroundInput, { readonly phase: "waiting" }, { rea
 /** A running call `detach` can move. `letGo` answers the task that took its work, or null when the work finished first. */
 type Running = { readonly detachable: Detachable; readonly letGo: () => Promise<TaskId | null> };
 
-/** Moved work, kept in memory only: a restarted gateway finds none and reports the call `interrupted`. */
-type Adopted = { readonly ended: Promise<Ended>; readonly cancel: () => void };
+/**
+ * One call's work after it moved, kept in memory only: a restarted gateway finds none and reports the call
+ * `interrupted`. It ends once, with the work's own end or with `stopped`, whichever comes first.
+ */
+class Moved {
+  readonly conversation: ConversationId;
+  readonly row: Omit<MovedCall, "output" | "truncated">;
+  readonly ended: Promise<Ended>;
+  /** Aborts the work without ending it here, as stopping its task does. */
+  readonly cancel: () => void;
+  private readonly held: HeldOutput;
+  private readonly onEnd: () => void;
+  private resolve: ((ended: Ended) => void) | null = null;
+
+  constructor(
+    conversation: ConversationId,
+    row: Omit<MovedCall, "output" | "truncated">,
+    held: HeldOutput,
+    cancel: () => void,
+    onEnd: () => void,
+  ) {
+    this.conversation = conversation;
+    this.row = row;
+    this.held = held;
+    this.cancel = cancel;
+    this.onEnd = onEnd;
+    this.ended = new Promise((resolve) => {
+      this.resolve = resolve;
+    });
+  }
+
+  get running(): boolean {
+    return this.resolve !== null;
+  }
+
+  /** Its row with the output so far. */
+  get current(): MovedCall {
+    return { ...this.row, ...this.held.kept() };
+  }
+
+  end(ended: Ended): void {
+    const resolve = this.resolve;
+    if (resolve === null) return;
+    this.resolve = null;
+    resolve(ended);
+    this.onEnd();
+  }
+
+  /** Ends it as `stopped` with its output so far and aborts the work; false once it has ended. */
+  stop(): boolean {
+    if (!this.running) return false;
+    this.end(this.held.stopped());
+    this.cancel();
+    return true;
+  }
+}
 
 /**
  * Hands running tool calls to background tasks, which pi-durable has no detach for. A wrapped call's work runs on its
  * own abort controller with an `api` it can keep using after the call returns. Asked to detach, the call creates a
  * `dimos.background` task owned by the conversation that adopts the work, and returns at once; the task then submits
- * the work's result through InputGate as a `background` input.
+ * the work's result through InputGate as a `background` input. Moved work is listed per conversation until it ends,
+ * and `stop` ends it early.
  */
 export class Detacher {
   private readonly inputs: InputGate;
@@ -62,7 +130,12 @@ export class Detacher {
   private readonly running = new Map<ConversationId, Map<CallId, Running>>();
   /** Only conversations someone asked `of`; the others have nobody to tell. */
   private readonly statuses = new Map<ConversationId, Status<readonly Detachable[]>>();
-  private readonly adopted = new Map<TaskId, Adopted>();
+  /** Keyed by the moved call's own task, which the background task's input names. */
+  private readonly adopted = new Map<TaskId, Moved>();
+  /** Only conversations someone asked `moved`. */
+  private readonly movedStatuses = new Map<ConversationId, Status<readonly MovedCall[]>>();
+  /** Conversations whose moved output changed and will be published when the timer fires. */
+  private readonly pacing = new Map<ConversationId, NodeJS.Timeout>();
 
   constructor(inputs: InputGate, report: (error: unknown) => void) {
     this.inputs = inputs;
@@ -85,7 +158,7 @@ export class Detacher {
                 text: noticeText(tool, call, ended),
                 images: ended.end === "interrupted" ? [] : ended.images,
                 render: ended.end === "interrupted" ? null : ended.render,
-                whenBusy: "followUp",
+                whenBusy: ended.end === "stopped" ? "steer" : "followUp",
               },
               context,
             );
@@ -99,8 +172,10 @@ export class Detacher {
         },
       },
       abort: async (task, runtime, context) => {
-        this.adopted.get(task.input.toolTask)?.cancel();
+        const work = this.adopted.get(task.input.toolTask);
         this.adopted.delete(task.input.toolTask);
+        work?.cancel();
+        if (work !== undefined) this.publishMoved(work.conversation);
         await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context);
       },
     });
@@ -117,6 +192,15 @@ export class Detacher {
     return created;
   }
 
+  /** The conversation's moved calls that still run, oldest first; output changes are published at a running call's pace. */
+  moved(conversation: ConversationId): Live<readonly MovedCall[]> {
+    const known = this.movedStatuses.get(conversation);
+    if (known !== undefined) return known;
+    const created = new Status(this.movedCalls(conversation), this.report);
+    this.movedStatuses.set(conversation, created);
+    return created;
+  }
+
   async detach(conversation: ConversationId, call: CallId, context: Context): Promise<DetachResult> {
     const running = this.running.get(conversation)?.get(call);
     if (running === undefined) return { kind: "not_running" };
@@ -125,15 +209,24 @@ export class Detacher {
     return task === null ? { kind: "not_running" } : { kind: "detached", task };
   }
 
+  /** Ends the conversation's moved call as `stopped` and aborts its work; false when no such call still runs. */
+  stop(conversation: ConversationId, call: CallId): boolean {
+    for (const work of this.adopted.values())
+      if (work.conversation === conversation && work.row.call === call) return work.stop();
+    return false;
+  }
+
   /**
-   * The tool's registration with `execute` wrapped so a running call can move; `toolsExtension` applies it per tool
-   * policy. A moved call's structured output is its background handle, so a declared schema admits that too. Its work's
-   * result goes through the tool's settle step before the notice, as a call that stays does in the afterTool hook.
+   * The tool's registration with `execute` wrapped so a running call can move, and with `run_in_background` added so
+   * the model can start it in the background; `toolsExtension` applies it per tool policy. A moved call's structured output is its
+   * background handle, so a declared schema admits that too. Its work's result goes through the tool's settle step
+   * before the notice, as a call that stays does in the afterTool hook.
    */
   wrap(tool: AgentTool<AgentToolName>): ToolRegistration {
     const schema = tool.registration.structuredOutputSchema;
     return {
       ...tool.registration,
+      parameters: withRunInBackground(tool.registration.parameters),
       ...(schema === undefined ? {} : { structuredOutputSchema: Type.Union([schema, MovedSchema]) }),
       execute: (args, api, context) => this.execute(tool, args, api, context),
     };
@@ -151,49 +244,65 @@ export class Detacher {
     context: Context,
   ): Promise<ToolExecutionResult> {
     const { registration, settle } = tool;
+    const { [RUN_IN_BACKGROUND]: inBackground, ...rest } = args as JsonObject;
     const conversation = api.conversationId;
     const call = api.callId as CallId;
     const own = new AbortController();
     const abortWork = (): void => own.abort();
     context.abortSignal?.addEventListener("abort", abortWork, { once: true });
-    const held = new HeldOutput(api);
+    const held = new HeldOutput(api, () => this.pace(conversation));
     const workContext = withAbortSignal(own.signal, withoutAbortSignal(context));
-    const work = registration.execute(args, held.api, workContext);
+    const work = registration.execute(rest, held.api, workContext);
+    const since = epochMs(Date.now());
     let answer: (task: TaskId | null) => void = () => undefined;
-    const asked = new Promise<void>((resolve) => {
-      this.hold(conversation, call, {
-        detachable: { call, tool: registration.name, since: epochMs(Date.now()) },
-        letGo: () =>
-          new Promise<TaskId | null>((reply) => {
-            answer = reply;
-            resolve();
-          }),
+    if (inBackground !== true) {
+      const asked = new Promise<void>((resolve) => {
+        this.hold(conversation, call, {
+          detachable: { call, tool: registration.name, since },
+          letGo: () =>
+            new Promise<TaskId | null>((reply) => {
+              answer = reply;
+              resolve();
+            }),
+        });
       });
-    });
-    const first = await Promise.race([
-      work.then(
-        () => "finished" as const,
-        () => "finished" as const,
-      ),
-      asked.then(() => "asked" as const),
-    ]);
-    this.release(conversation, call);
-    context.abortSignal?.removeEventListener("abort", abortWork);
-    if (first === "finished") {
-      answer(null);
-      return work;
+      const first = await Promise.race([
+        work.then(
+          () => "finished" as const,
+          () => "finished" as const,
+        ),
+        asked.then(() => "asked" as const),
+      ]);
+      this.release(conversation, call);
+      if (first === "finished") {
+        context.abortSignal?.removeEventListener("abort", abortWork);
+        answer(null);
+        return work;
+      }
     }
+    context.abortSignal?.removeEventListener("abort", abortWork);
     held.move();
     const hookCall = {
       type: "toolCall" as const,
       id: api.callId,
       name: registration.name,
-      arguments: args as JsonObject,
+      arguments: rest,
     };
-    const ended = work
+    const moved = new Moved(
+      conversation,
+      { call, tool: registration.name, arguments: hookCall.arguments, since },
+      held,
+      () => own.abort(),
+      () => this.publishMoved(conversation),
+    );
+    void work
       .then((result) => (settle === null ? held.final(result) : settle(held.final(result), hookCall, workContext)))
-      .then(endedOf, (error: unknown) => held.failed(error));
-    this.adopted.set(api.taskId, { ended, cancel: () => own.abort() });
+      .then(endedOf)
+      .then(
+        (ended) => moved.end(ended),
+        (error: unknown) => moved.end(held.failed(error)),
+      );
+    this.adopted.set(api.taskId, moved);
     try {
       const task = await api.commit(
         (tx) =>
@@ -205,9 +314,15 @@ export class Detacher {
         context,
       );
       answer(task);
+      this.publishMoved(conversation);
       const background: Background = { task };
       return {
-        output: [{ type: "text", text: "Moved to the background. Its result arrives later as a message." }],
+        output: [
+          {
+            type: "text",
+            text: `${inBackground === true ? "Started in" : "Moved to"} the background as call ${call}. Its result arrives later as a message; the background tool lists it, reads its output so far, or stops it.`,
+          },
+        ],
         ...(registration.structuredOutputSchema === undefined ? {} : { structuredOutput: { background } }),
         details: { background },
       };
@@ -220,7 +335,7 @@ export class Detacher {
   }
 
   /** The adopted work's end; stopping the task, as the Harness does when it closes, stops the work. */
-  private async until(work: Adopted, context: Context): Promise<Ended> {
+  private async until(work: Moved, context: Context): Promise<Ended> {
     context.abortSignal?.addEventListener("abort", work.cancel, { once: true });
     try {
       return await awaitWithContext(work.ended, context);
@@ -231,6 +346,27 @@ export class Detacher {
 
   private detachables(conversation: ConversationId): readonly Detachable[] {
     return [...(this.running.get(conversation)?.values() ?? [])].map((running) => running.detachable);
+  }
+
+  private movedCalls(conversation: ConversationId): readonly MovedCall[] {
+    return [...this.adopted.values()]
+      .filter((work) => work.conversation === conversation && work.running)
+      .map((work) => work.current);
+  }
+
+  private publishMoved(conversation: ConversationId): void {
+    this.movedStatuses.get(conversation)?.set(this.movedCalls(conversation));
+  }
+
+  /** Publishes the conversation's moved output once the pace allows; a publish meanwhile does not reset it. */
+  private pace(conversation: ConversationId): void {
+    if (!this.movedStatuses.has(conversation) || this.pacing.has(conversation)) return;
+    const timer = setTimeout(() => {
+      this.pacing.delete(conversation);
+      this.publishMoved(conversation);
+    }, MOVED_OUTPUT_PACE_MS);
+    timer.unref();
+    this.pacing.set(conversation, timer);
   }
 
   private hold(conversation: ConversationId, call: CallId, running: Running): void {
@@ -256,14 +392,17 @@ export class Detacher {
 class HeldOutput {
   readonly api: ToolExecutionApi;
   private readonly call: ToolExecutionApi;
+  /** Told after each chunk once the work moved. */
+  private readonly changed: () => void;
   private readonly decoder = new TextDecoder();
   private readonly diagnostics: ToolDiagnostic[] = [];
   private moved = false;
   private tail = "";
   private truncated = false;
 
-  constructor(call: ToolExecutionApi) {
+  constructor(call: ToolExecutionApi, changed: () => void) {
     this.call = call;
+    this.changed = changed;
     this.api = {
       ...call,
       output: (chunk, skipped) => {
@@ -289,6 +428,11 @@ class HeldOutput {
     this.moved = true;
   }
 
+  /** The kept tail and whether earlier output was cut from it. */
+  kept(): { readonly output: string; readonly truncated: boolean } {
+    return { output: this.tail, truncated: this.truncated };
+  }
+
   /** The result as the Harness gives it to settle: the kept tail when it has no output, the remarks before its own. */
   final(result: ToolExecutionResult): ToolExecutionResult {
     return {
@@ -299,8 +443,17 @@ class HeldOutput {
   }
 
   failed(error: unknown): Ended {
-    const lines = [this.tail, ...this.diagnostics.map((diagnostic) => diagnostic.message), messageOf(error)];
-    return { end: "failed", text: lines.filter((line) => line !== "").join("\n"), images: [], render: null };
+    return { end: "failed", text: this.lines(messageOf(error)), images: [], render: null };
+  }
+
+  /** The end of a stopped call: its output and remarks until now. */
+  stopped(): Ended {
+    return { end: "stopped", text: this.lines(), images: [], render: null };
+  }
+
+  private lines(...more: readonly string[]): string {
+    const lines = [this.tail, ...this.diagnostics.map((diagnostic) => diagnostic.message), ...more];
+    return lines.filter((line) => line !== "").join("\n");
   }
 
   /** The tail the call would have kept: at most its window's size when it has one, as the Harness keeps it. */
@@ -312,7 +465,18 @@ class HeldOutput {
       this.tail = this.tail.slice(-window.maxBytes);
       this.truncated = true;
     }
+    this.changed();
   }
+}
+
+/** The parameters with `run_in_background` added; a TypeBox object and an MCP JSON Schema object are both JSON Schema. */
+function withRunInBackground(parameters: TSchema): TSchema {
+  const properties =
+    "properties" in parameters && typeof parameters["properties"] === "object" ? parameters["properties"] : {};
+  return Type.Unsafe<unknown>({
+    ...parameters,
+    properties: { ...properties, [RUN_IN_BACKGROUND]: runInBackgroundSchema },
+  });
 }
 
 function endedOf(result: ToolExecutionResult): Ended {
@@ -331,6 +495,10 @@ function noticeText(tool: string, call: CallId, ended: Ended): string {
   switch (ended.end) {
     case "interrupted":
       return `${which} was lost: the gateway restarted while it ran.`;
+    case "stopped":
+      return ended.text === ""
+        ? `${which} was stopped before it wrote any output.`
+        : `${which} was stopped. Its output until then:\n${ended.text}`;
     case "finished":
     case "failed":
       return ended.text === "" ? `${which} ${ended.end} with no output.` : `${which} ${ended.end}:\n${ended.text}`;

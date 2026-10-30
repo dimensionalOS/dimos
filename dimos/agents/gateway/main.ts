@@ -52,7 +52,7 @@ async function openServices(launch: GatewayLaunch, report: (error: unknown) => v
   if (migration.kind === "copied")
     process.stderr.write(`Copied ${migration.files.join(", ")} into ${paths.configDir}\n`);
   const config = await ConfigStore.open(paths.configFile);
-  const models = await openModels(paths.authFile, launch.providers);
+  const models = await openModels(paths.authFile, paths.modelsFile, launch.providers, report);
   const catalog = new ModelCatalog(models);
   await catalog.refresh();
   const logins = new LoginFlows(models, catalog, report, 600_000);

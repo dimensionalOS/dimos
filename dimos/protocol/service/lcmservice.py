@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import copy
 import os
 import platform
 import threading
@@ -88,28 +89,18 @@ class LCMService(Service):
         self._thread = None
         self._call_pool = CallPool(max_workers=4)
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Exclude unpicklable runtime attributes when serializing."""
-        state = self.__dict__.copy()
-        # Remove unpicklable attributes
-        state.pop("l", None)
-        state.pop("_stop_event", None)
-        state.pop("_startup_complete", None)
-        state.pop("_thread", None)
-        state.pop("_l_lock", None)
-        state.pop("_pending_unsubs", None)
-        return state
+    # Services ride into workers as blueprint config (``pubsubs=[LCM(...)]``): only
+    # their settings cross, and a copy is a fresh, unstarted service. RPC services are
+    # never sent, so their rpc_timeouts have no place here.
+    def cbor_encode(self) -> dict[str, Any]:
+        return self.config.model_dump(exclude={"lcm"})
 
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        """Restore object from pickled state."""
-        self.__dict__.update(state)
-        # Reinitialize runtime attributes
-        self.l = None
-        self._stop_event = threading.Event()
-        self._startup_complete = threading.Event()
-        self._thread = None
-        self._l_lock = threading.Lock()
-        self._pending_unsubs = []
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> LCMService:
+        return cls(**data)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> LCMService:
+        return type(self).cbor_decode(copy.deepcopy(self.cbor_encode(), memo))
 
     def start(self) -> None:
         """Start dispatch, or raise if a previous shutdown is still in progress.
@@ -122,7 +113,7 @@ class LCMService(Service):
                 raise RuntimeError("LCM service is still stopping; cannot restart yet")
             self._call_pool.start()
             if self._thread is None or not self._thread.is_alive():
-                # Reinitialize LCM if it's None (e.g., after unpickling)
+                # Reinitialize LCM if it's None (e.g. after stop())
                 if self.l is None:
                     # Any pending unsubscribes reference the destroyed instance.
                     self._pending_unsubs.clear()

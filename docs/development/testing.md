@@ -36,6 +36,7 @@ Rather than waste time on classifying tests, it's better to separate tests by ho
 |------------|-------------|---------------|
 | **default** | after each code change | often run with filesystem watchers so tests rerun whenever a file is saved |
 | **self-hosted** | every once in a while to make sure you haven't broken anything | maybe every commit, but definitely before publishing a PR |
+| **e2e** | once a day on `main` (the `e2e` workflow), or by hand on a branch | the whole stack: DimSim navigation, the cockpit and the web SDK in real browsers |
 
 The purpose of running tests in a loop is to get immediate feedback. The faster the loop, the easier it is to identify a problem since the source is the tiny bit of code you changed.
 
@@ -189,7 +190,10 @@ pytest -s dimos/path/to/tool_file.py
 We have a few markers in use now.
 
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
+* `self_hosted_large`: the end-to-end tests (DimSim, the rest of `dimos/e2e_tests/`) and other tests that need the large self-hosted runner.
 * `web_browser`: the Playwright tests of the cockpit and the web SDK in `dimos/e2e_tests/` (see [Development](/docs/web/development.md#tests)).
+
+`self_hosted_large` and `web_browser` tests do not run on pull requests. The `e2e` workflow runs them once a day on `main`; start it by hand on a branch (`workflow_dispatch`) to check a change before merging. Every test module under `dimos/e2e_tests/` must carry one of the two markers; `dimos/codebase_checks/test_e2e_tests_marked.py` enforces that.
 
 If a test needs to be skipped for some reason, please use on of these markers, or add another one.
 

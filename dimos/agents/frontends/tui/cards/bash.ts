@@ -72,7 +72,7 @@ export class BashCard implements ToolCard {
         ? "Running"
         : (stage ?? "Waiting for command output")
       : this.moved
-        ? "Moved to the background"
+        ? "In the background"
         : this.failed
           ? "Failed"
           : `Done${stage === undefined || stageVisible ? "" : ` · ${stage}`}`;

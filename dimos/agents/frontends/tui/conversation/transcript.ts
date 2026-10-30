@@ -39,6 +39,7 @@ function renderOf(result: ToolResult): RenderDetails | null {
     case "edit":
     case "write":
     case "job":
+    case "background":
     case null:
       return null;
   }
@@ -111,7 +112,7 @@ const SELECTED_GUTTER = "┃ ";
 
 const BACKGROUND_ENDS: {
   readonly [E in Extract<DimosInput["source"], { readonly kind: "background" }>["end"]]: string;
-} = { finished: "finished", failed: "failed", interrupted: "was interrupted" };
+} = { finished: "finished", failed: "failed", stopped: "was stopped", interrupted: "was interrupted" };
 
 function queuedLine(row: QueuedRow): string {
   const label = row.from === "you" ? (row.mode === "steer" ? "steer" : "follow") : FROM_LABELS[row.from];

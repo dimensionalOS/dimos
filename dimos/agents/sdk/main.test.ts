@@ -111,6 +111,7 @@ function serveGateway(afterSend: (request: UserRequestId | null) => void = () =>
       agent: cell(self, "agent", {}),
       outcomes: cell(self, "outcomes", []),
       detachable: cell(self, "detachable", []),
+      moved: cell(self, "moved", []),
       modules: cell(self, "modules", []),
       jobs: cell(self, "jobs", []),
       streams: cell(self, "streams", []),
@@ -141,6 +142,7 @@ function serveGateway(afterSend: (request: UserRequestId | null) => void = () =>
       summarizeUpTo: unused,
       summarizeFrom: unused,
       background: unused,
+      stopBackground: unused,
     };
   });
 

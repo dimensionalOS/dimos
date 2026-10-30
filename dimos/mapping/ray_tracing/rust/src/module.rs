@@ -790,6 +790,7 @@ mod tests {
             min_health: 0,
             max_health: 1,
             graze_cos: 0.5,
+            graze_recent_frames: u32::MAX,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
