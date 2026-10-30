@@ -19,7 +19,11 @@ import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.mapping.costmapper import Config, CostMapper
-from dimos.mapping.pointclouds.occupancy import HeightCostConfig, general_occupancy
+from dimos.mapping.pointclouds.occupancy import (
+    HeightCostConfig,
+    general_occupancy,
+    height_cost_occupancy,
+)
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
@@ -65,3 +69,31 @@ def test_partial_height_cost_environment_override_preserves_blueprint_settings()
     config = Config(**parsed.module_kwargs("costmapper"))
 
     assert config.config == replace(height_config, smoothing=0.0, ignore_noise=0.01)
+
+
+def _floor(x_range, y_range, z=0.0):
+    xs, ys = np.meshgrid(np.arange(*x_range, 0.02), np.arange(*y_range, 0.02))
+    return np.column_stack([xs.ravel(), ys.ravel(), np.full(xs.size, z)])
+
+
+def _max_cost_near(grid, x, y, radius=0.1):
+    cell = grid.world_to_grid((x, y, 0.0))
+    cells = int(radius / grid.resolution)
+    col, row = round(cell.x), round(cell.y)
+    return grid.grid[row - cells : row + cells + 1, col - cells : col + cells + 1].max()
+
+
+def test_height_cost_keeps_walls_whose_cells_hold_floor_returns() -> None:
+    # A thin wall at x=1.0 standing on the floor: each wall cell also holds floor points.
+    wall_ys, wall_zs = np.meshgrid(np.arange(0.0, 2.0, 0.02), np.arange(0.0, 1.5, 0.05))
+    wall = np.column_stack([np.full(wall_ys.size, 1.0), wall_ys.ravel(), wall_zs.ravel()])
+    # A table top at x=-1.0, 0.8 m up, which the robot can pass under.
+    table = _floor((-1.2, -0.8), (0.0, 2.0), z=0.8)
+    points = np.vstack([_floor((-2.0, 2.0), (0.0, 2.0)), wall, table])
+
+    grid = height_cost_occupancy(
+        PointCloud2.from_numpy(points, frame_id="map"), can_pass_under=0.6, can_climb=0.15
+    )
+
+    assert _max_cost_near(grid, 1.0, 1.0) == 100
+    assert _max_cost_near(grid, -1.0, 1.0) == 0

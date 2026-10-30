@@ -56,6 +56,31 @@ def height_map_kernel(
                 max_height_map[gy, gx] = z
 
 
+@njit(cache=True)  # type: ignore[untyped-decorator]
+def lowest_above_kernel(
+    points: NDArray[np.floating[Any]],
+    min_height_map: NDArray[np.floating[Any]],
+    lowest_above_map: NDArray[np.floating[Any]],
+    clearance: float,
+    min_x: float,
+    min_y: float,
+    inv_res: float,
+    width: int,
+    height: int,
+) -> None:
+    """Per cell, the lowest point more than `clearance` above that cell's minimum."""
+    n = points.shape[0]
+    for i in range(n):
+        gx = int((points[i, 0] - min_x) * inv_res + 0.5)
+        gy = int((points[i, 1] - min_y) * inv_res + 0.5)
+
+        if 0 <= gx < width and 0 <= gy < height:
+            z = points[i, 2]
+            cur = lowest_above_map[gy, gx]
+            if z > min_height_map[gy, gx] + clearance and (z < cur or cur != cur):
+                lowest_above_map[gy, gx] = z
+
+
 @njit(cache=True, parallel=True)  # type: ignore[untyped-decorator]
 def simple_occupancy_kernel(
     points: NDArray[np.floating[Any]],

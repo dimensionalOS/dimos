@@ -125,7 +125,7 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     max_height_map = np.full((height, width), np.nan, dtype=np.float32)
 
     # numba: a 0.3 s import plus JIT, only paid when a grid is built.
-    from dimos.mapping.pointclouds.occupancy_kernels import height_map_kernel
+    from dimos.mapping.pointclouds.occupancy_kernels import height_map_kernel, lowest_above_kernel
 
     height_map_kernel(
         points,
@@ -139,10 +139,25 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     )
 
     # Step 2: Determine effective height for each cell
-    # If gap between min and max > can_pass_under, robot can pass under - use min (ground)
-    # Otherwise use max (solid obstacle)
+    # Pass under (use min, the ground) only if nothing above can_climb sits below can_pass_under, else use max.
+    # max - min alone reads a wall cell that also holds floor returns as an overhang, erasing the wall.
+    lowest_above_map = np.full((height, width), np.nan, dtype=np.float32)
+    lowest_above_kernel(
+        points,
+        min_height_map,
+        lowest_above_map,
+        cfg.can_climb,
+        min_x,
+        min_y,
+        1.0 / cfg.resolution,
+        width,
+        height,
+    )
+    with np.errstate(invalid="ignore"):
+        blocked_below = lowest_above_map - min_height_map <= cfg.can_pass_under
     height_gap = max_height_map - min_height_map
-    height_map = np.where(height_gap > cfg.can_pass_under, min_height_map, max_height_map)
+    can_pass_under = (height_gap > cfg.can_pass_under) & ~blocked_below
+    height_map = np.where(can_pass_under, min_height_map, max_height_map)
 
     # Track which cells have observations
     observed_mask = ~np.isnan(height_map)
