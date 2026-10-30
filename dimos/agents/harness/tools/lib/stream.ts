@@ -150,7 +150,7 @@ export function streamTool(options: {
     {
       name: "stream_get",
       description:
-        "Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame, waiting up to 2 s for a live one and otherwise returning the last frame with fresh=false; next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.",
+        "Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame, waiting up to 2 s for a live one and otherwise returning the last frame with fresh=false (only latest can return fresh=false); next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.",
       parameters: Parameters,
       execute: async (args, _api, context) => {
         try {

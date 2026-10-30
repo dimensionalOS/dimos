@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { JsonObject } from "@earendil-works/pi-durable";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -23,7 +23,10 @@ import { readChannel, streamTool } from "./lib/stream.ts";
 const dimos = dimosFixture();
 
 /** A session whose store keeps its last slot after the read unsubscribes, like the SDK's. */
-function fakeSession(spec: ChannelSpec) {
+function fakeSession(t: TestContext, spec: ChannelSpec) {
+  // AbortSignal.timeout() does not keep Node alive; the real relay connection does.
+  const alive = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(alive));
   let slot: Slot | null = null;
   const listeners = new Set<() => void>();
   const session = {
@@ -46,8 +49,8 @@ function fakeSession(spec: ChannelSpec) {
 
 const odom = { ch: "odom", dir: "rx", encoding: "pose.json.v1" } as ChannelSpec;
 
-test("latest returns a live frame after an earlier read cached one", async () => {
-  const { session, push } = fakeSession(odom);
+test("latest returns a live frame after an earlier read cached one", async (t) => {
+  const { session, push } = fakeSession(t, odom);
   setTimeout(() => push(1), 50);
   const first = await readChannel(session, odom, "latest", AbortSignal.timeout(1_000));
   assert.deepEqual([first.slot.seq, first.fresh], [1, true]);
@@ -56,8 +59,8 @@ test("latest returns a live frame after an earlier read cached one", async () =>
   assert.deepEqual([second.slot.seq, second.fresh], [2, true]);
 });
 
-test("latest falls back to the cached frame on a quiet stream", async () => {
-  const { session, push } = fakeSession(odom);
+test("latest falls back to the cached frame on a quiet stream", async (t) => {
+  const { session, push } = fakeSession(t, odom);
   push(1);
   const quiet = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
   assert.deepEqual([quiet.slot.seq, quiet.fresh], [1, false]);
@@ -65,8 +68,8 @@ test("latest falls back to the cached frame on a quiet stream", async () => {
   assert.deepEqual([short.slot.seq, short.fresh], [1, false], "a caller timeout under 2 s still gets a frame");
 });
 
-test("latest still fails when the caller cancels", async () => {
-  const { session, push } = fakeSession(odom);
+test("latest still fails when the caller cancels", async (t) => {
+  const { session, push } = fakeSession(t, odom);
   push(1);
   const cancel = new AbortController();
   setTimeout(() => cancel.abort(), 50);
