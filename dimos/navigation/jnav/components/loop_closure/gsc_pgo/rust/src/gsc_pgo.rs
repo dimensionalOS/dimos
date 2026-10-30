@@ -421,6 +421,12 @@ pub struct Config {
     pub odom_noise_prior_ln_sd_z: f64,
     pub odom_noise_prior_ln_sd_yaw: f64,
     pub odom_noise_prior_ln_sd_tilt: f64,
+    /// How many closed loops' worth of evidence the stated drift counts as for the learner (its plasticity): each
+    /// source's estimate is the stated drift held with that many residual checks against the closures' (a closed loop
+    /// gives a source about one), so the first loop nudges it and many agreeing loops decide it. 0 = the spreads above
+    /// (yaw 2.4: about a third of one loop, so one loop's misfit moved huge_l1's yaw x30). Acceptance's ceiling
+    /// (`odometry_noise_acceptance_ceiling`) stays the spreads: what is plausible, not how fast to learn.
+    pub odom_noise_prior_loops: f64,
     pub scan_context_num_rings: i32,
     pub scan_context_num_sectors: i32,
     pub scan_context_max_range_m: f64,
@@ -587,6 +593,7 @@ impl Default for Config {
             odom_noise_prior_ln_sd_z: 1.6,
             odom_noise_prior_ln_sd_yaw: 2.4,
             odom_noise_prior_ln_sd_tilt: 1.6,
+            odom_noise_prior_loops: 0.0,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
             scan_context_max_range_m: 0.0,
@@ -1339,6 +1346,17 @@ impl GscPgo {
         )
     }
 
+    /// The prior sd the learner holds each source's ln estimate to: with `odom_noise_prior_loops` N, the sd whose
+    /// weight is N residual checks (-2 ln curvature 2 / sd^2 = N), else the spreads across recordings.
+    pub(crate) fn odometry_noise_learner_prior(&self) -> [f64; 4] {
+        let loops = self.config.odom_noise_prior_loops;
+        if loops > 0.0 {
+            [(2.0 / loops).sqrt(); 4]
+        } else {
+            self.odometry_noise_prior()
+        }
+    }
+
     pub(crate) fn odometry_noise_prior(&self) -> [f64; 4] {
         let c = &self.config;
         [
@@ -1592,7 +1610,7 @@ impl GscPgo {
                             } else {
                                 self.odometry_noise_ln_dispatched[c]
                             },
-                            self.odometry_noise_prior()[c],
+                            self.odometry_noise_learner_prior()[c],
                         );
                         ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
                             sum, r, dispatched, c, prior_sd,

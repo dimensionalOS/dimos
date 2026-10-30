@@ -183,6 +183,8 @@ class PGOConfig(NativeModuleConfig):
     odom_noise_prior_ln_sd_z: float = 1.6
     odom_noise_prior_ln_sd_yaw: float = 2.4
     odom_noise_prior_ln_sd_tilt: float = 1.6
+    # how many closed loops' worth of evidence the stated drift counts as for the learner (its plasticity); 0 = the spreads above
+    odom_noise_prior_loops: float = 0.0
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale

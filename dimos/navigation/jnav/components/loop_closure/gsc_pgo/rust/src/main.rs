@@ -104,6 +104,7 @@ config! {
     odom_noise_prior_ln_sd_z: f64,
     odom_noise_prior_ln_sd_yaw: f64,
     odom_noise_prior_ln_sd_tilt: f64,
+    odom_noise_prior_loops: f64,
     scan_context_num_rings: i32,
     scan_context_num_sectors: i32,
     scan_context_max_range_m: f64,
