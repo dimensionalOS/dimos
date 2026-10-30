@@ -19,11 +19,16 @@ from collections.abc import Iterator
 import pytest
 
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
     KeyboardTeleopModule,
-    _twist_from_keys,
 )
+import dimos.teleop.keyboard.keyboard_window as keyboard_mod
+from dimos.teleop.keyboard.keyboard_window import KeyboardWindow, _twist_from_keys
+
+
+@pytest.fixture
+def window(module):
+    return KeyboardWindow(0.05, 0.5, module._publish_message, module._stop_event.is_set)
 
 
 class PressedKeys:
@@ -89,12 +94,14 @@ def test_twist_from_keys_maps_rotation_keys_to_eef_angular_twist() -> None:
     assert angular == (0.5, -0.5, 0.5)
 
 
-def test_final_key_release_publishes_zero_velocity(module: KeyboardTeleopModule, mocker) -> None:
+def test_final_key_release_publishes_zero_velocity(
+    module: KeyboardTeleopModule, mocker, window
+) -> None:
     publish = mocker.patch.object(module.ee_twist_command, "publish")
     held = {keyboard_mod.pygame.K_w}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    assert not module._handle_pygame_event(event, held)
+    assert not window._handle_pygame_event(event, held)
 
     assert held == set()
     assert publish.call_count == 1
@@ -103,12 +110,12 @@ def test_final_key_release_publishes_zero_velocity(module: KeyboardTeleopModule,
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
 
 
-def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mocker) -> None:
+def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mocker, window) -> None:
     publish = mocker.patch.object(module.ee_twist_command, "publish")
     held = {keyboard_mod.pygame.K_w, keyboard_mod.pygame.K_a}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    module._handle_pygame_event(event, held)
+    window._handle_pygame_event(event, held)
 
     assert held == {keyboard_mod.pygame.K_a}
     assert publish.call_count == 1
@@ -117,19 +124,19 @@ def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mock
 
 
 def test_keyup_publishes_directly_without_timeout_wait(
-    module: KeyboardTeleopModule, mocker
+    module: KeyboardTeleopModule, mocker, window
 ) -> None:
     publish = mocker.patch.object(module.ee_twist_command, "publish")
     held = {keyboard_mod.pygame.K_w}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    module._handle_pygame_event(event, held)
+    window._handle_pygame_event(event, held)
 
     publish.assert_called_once()
 
 
 def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
-    module: KeyboardTeleopModule, mocker
+    module: KeyboardTeleopModule, mocker, window
 ) -> None:
     publish = mocker.patch.object(module.gripper_command, "publish")
     held: set[int] = set()
@@ -140,14 +147,14 @@ def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
         keyboard_mod.pygame.KEYDOWN, key=keyboard_mod.pygame.K_RIGHTBRACKET
     )
 
-    module._handle_pygame_event(open_event, held)
+    window._handle_pygame_event(open_event, held)
     publish.assert_called_once()
     assert publish.call_args.args[0].data == pytest.approx(1.0)
 
     publish.reset_mock()
-    module._handle_pygame_event(open_event, held)
+    window._handle_pygame_event(open_event, held)
     publish.assert_not_called()
 
-    module._handle_pygame_event(close_event, held)
+    window._handle_pygame_event(close_event, held)
     publish.assert_called_once()
     assert publish.call_args.args[0].data == pytest.approx(0.0)
