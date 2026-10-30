@@ -197,11 +197,11 @@ all_blueprints = {
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
     "xarm-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_sim",
-    "xarm6-keyboard-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm6_keyboard_teleop",
+    "xarm6-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm6_teleop",
     "xarm6-worldbelief": "dimos.experimental.world_belief.xarm6_blueprint:xarm6_worldbelief",
-    "xarm7-keyboard-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm7_keyboard_teleop",
     "xarm7-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm7_planner_coordinator_agent",
+    "xarm7-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm7_teleop",
 }
 
 

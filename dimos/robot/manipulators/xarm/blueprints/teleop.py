@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keyboard teleop blueprints for xArm6 and xArm7."""
+"""Teleop blueprints for xArm6 and xArm7."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
     teleop_ik_task,
@@ -49,6 +50,7 @@ from dimos.robot.manipulators.xarm.config import (
     xarm_model,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
@@ -300,9 +302,10 @@ coordinator_teleop_xarm6 = autoconnect(
 
 
 class XArmTwistCoordinator(ArmTwistCoordinator):
-    """End-effector twists in, from the keyboard or a browser; one xArm named "arm" out,
-    driven through ``XArmConnection``."""
+    """End-effector twists and gripper openings in, from the Desktop Manipulation app;
+    one xArm named "arm" out, driven through ``XArmConnection``."""
 
+    right_gripper_command: In[Float32]
     arm_position_command: Out[JointState]
     arm_velocity_command: Out[JointState]
     arm_joint_state: In[JointState]
@@ -316,9 +319,10 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 ]
 
 
-def _keyboard_teleop(arm: XArmType) -> Blueprint:
-    """Jog an xArm's end from the keyboard, and open and close its xArm Gripper
-    with ``[`` and ``]``, through ``XArmConnection``.
+def _teleop(arm: XArmType) -> Blueprint:
+    """Jog an xArm's end and open and close its xArm Gripper from the Desktop
+    Manipulation app, through ``XArmConnection``. ``UrdfManager`` serves the
+    arm's URDF and puts its joints on tf, so the app can draw it.
 
     Wire it up with ``.remappings(_ARM_REMAPS)``. The arm's address is given at
     run time, after the blueprint name (``--xarmconnection.ip 192.168.1.185``)
@@ -326,15 +330,15 @@ def _keyboard_teleop(arm: XArmType) -> Blueprint:
 
     Args:
         arm: Which arm, e.g. "xarm7". It picks the coordinator's model, the IK
-            model and the connection's URDF, so they agree.
+            model, the connection's URDF and the URDF the app draws, so they agree.
     """
     dof, robot_type = XARM_ARMS[arm]
     ik_model = make_xarm_model_config(dof, robot_type=robot_type, robot="arm", add_gripper=False)
+    model = xarm_model(arm, gripper="xarm", robot="arm")
     return autoconnect(
-        KeyboardTeleopModule.blueprint(),
         XArmTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=xarm_model(arm, "xarm", robot="arm"),
+            model=model,
             tasks=[
                 TaskConfig(
                     name=EEF_TWIST_TASK_NAME,
@@ -344,24 +348,27 @@ def _keyboard_teleop(arm: XArmType) -> Blueprint:
                     params={
                         "robot_model": ik_model,
                         "target_frame": f"link{dof}",
-                        # The end stops 0.3 s after the last twist.
+                        # The app sends twists only while a jog is held: the
+                        # end stops 0.3 s after the last one.
                         "timeout": 0.3,
                     },
                 ),
-                # The keyboard's gripper_command; drive_joint is open at 0 rad.
+                # drive_joint is open at 0 rad.
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
                     joint_names=["arm/drive_joint"],
                     priority=20,
                     params={"open_at": "lower"},
+                    stream_bind={"gripper_command": "right_gripper_command"},
                 ),
             ],
         ),
         XArmConnection.blueprint(arm=arm, gripper="xarm"),
+        UrdfManager.blueprint(model=model),
     )
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-xarm7_keyboard_teleop = _keyboard_teleop("xarm7").remappings(_ARM_REMAPS)
-xarm6_keyboard_teleop = _keyboard_teleop("xarm6").remappings(_ARM_REMAPS)
+xarm7_teleop = _teleop("xarm7").remappings(_ARM_REMAPS)
+xarm6_teleop = _teleop("xarm6").remappings(_ARM_REMAPS)
