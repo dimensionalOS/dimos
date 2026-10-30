@@ -56,11 +56,12 @@ def device(mocker):
     return mocker.create_autospec(ConnectionDevice, instance=True, spec_set=True)
 
 
+@pytest.mark.parametrize("simulation", ["mujoco", "genesis", "another-engine"])
 def test_simulation_device_receives_validated_commands_without_opening_hardware(
-    modules, device, mocker
+    modules, device, mocker, simulation
 ):
     factory = mocker.Mock(return_value=device)
-    module = modules(simulation="mujoco", simulation_device=factory)
+    module = modules(simulation=simulation, simulation_device=factory)
     hardware = mocker.patch.object(module, "create_hardware_device", return_value=device)
 
     module.start()
