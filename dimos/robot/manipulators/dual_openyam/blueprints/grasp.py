@@ -71,10 +71,13 @@ DUAL_OPENYAM_VOXEL_SIZE = 0.025
 # camera's arm returns sit 1 to 2 cm off the model (1.3 deg extrinsic roll at 0.5 m plus
 # depth noise; scene 56 replay 2026-10-29).
 DUAL_OPENYAM_SELF_PADDING = 0.02
-# The same for the planner's map: a cell must not straddle a static link, so the padding
-# covers the slop plus one cell. Replay of run 77c6: 2 cm left the init pose in
-# collision with table cells at the post and base feet, 4 cm cleared it.
-DUAL_OPENYAM_MAP_PADDING = 0.04
+# The same for the planner's map. A cell must not straddle a static link, so the padding
+# covers the slop plus one cell (replay of run 77c6: 2 cm left the init pose in collision
+# with table cells at the post and base feet, 4 cm cleared it). 8 cm, because the wrist
+# cameras' USB plugs and cables are not in the model: in runs 2a6c and 777b a return 3 to
+# 6 cm off the bracket box during the descent became a cell the lifted arm then sat
+# against, and every plan from there was refused. A modelled cable box is the real fix.
+DUAL_OPENYAM_MAP_PADDING = 0.08
 # One period of the planner's tf (about 110 ms here), so a cloud is not dropped for
 # landing between two publishes.
 DUAL_OPENYAM_MAP_TF_TOLERANCE = 0.2

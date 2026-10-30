@@ -207,7 +207,7 @@ def test_planner_maps_the_overhead_cloud_like_the_xarm_stack() -> None:
         assert voxel == _atom(stack, ManipulationModule).kwargs["voxel_map_resolution"] == 0.025
         assert PointCloudBoxFilter in _modules(stack)
         clearing = _atom(stack, UrdfManagerPointClearing).kwargs
-        assert clearing["padding_m"] == 0.04
+        assert clearing["padding_m"] == 0.08
         assert clearing["tf_tolerance_s"] == clearing["tf_forward_tolerance_s"] == 0.2
         loaded = clearing["model"].load()
         xml = loaded.xml
