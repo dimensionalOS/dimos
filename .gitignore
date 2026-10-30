@@ -63,6 +63,7 @@ data/*
 !data/.lfs/
 
 # Runtime output
+/.camera-captures/
 /logs
 /recordings
 /downloads
