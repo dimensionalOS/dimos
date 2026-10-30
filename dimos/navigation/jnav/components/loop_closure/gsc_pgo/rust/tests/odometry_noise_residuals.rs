@@ -98,7 +98,6 @@ fn residuals_measure_translation_and_heading_noise_apart() {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
-        evidence_at_stated: None,
         evidence_core: false,
     };
     // Helmert's iteration: rescale each source by its ratio and solve again until the ratios settle at 1

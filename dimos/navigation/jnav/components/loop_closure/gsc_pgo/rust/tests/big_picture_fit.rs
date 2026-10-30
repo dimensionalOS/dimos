@@ -87,7 +87,6 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             overtrust_noise_headroom: [1.0; 4],
             gravity: Vec::new(),
             committed: Vec::new(),
-            evidence_at_stated: None,
             evidence_core: false,
         },
     );
@@ -150,7 +149,6 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
-        evidence_at_stated: None,
         evidence_core: false,
     };
     let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
@@ -266,7 +264,6 @@ fn overtrusted_square(gnc_overtrust_check: bool) -> (Vec<f64>, f64, f64) {
             overtrust_noise_headroom: [1.0; 4],
             gravity: Vec::new(),
             committed: Vec::new(),
-            evidence_at_stated: None,
             evidence_core: false,
         },
     );
@@ -334,7 +331,6 @@ fn the_overtrust_check_keeps_tls_verdict_on_an_honest_odometry() {
                 overtrust_noise_headroom: [1.0; 4],
                 gravity: Vec::new(),
                 committed: Vec::new(),
-                evidence_at_stated: None,
                 evidence_core: false,
             },
         )
@@ -382,7 +378,6 @@ fn committed_square(committed: bool) -> (Vec<f64>, f64, f64) {
             } else {
                 Vec::new()
             },
-            evidence_at_stated: None,
             evidence_core: false,
         },
     );
@@ -485,7 +480,6 @@ fn closures_agree_around_a_drifting_cycle() {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
-        evidence_at_stated: None,
         evidence_core: false,
     };
     assert_eq!(

@@ -75,10 +75,6 @@ pub struct SolveConfig {
     /// The noise evidence reads only the kept closures' PCM core on every solve, not only on GM's verdict
     /// (`odometry_noise_evidence_core`).
     pub evidence_core: bool,
-    /// When set, per noise source (xy, z, yaw, roll/pitch) the factor the odometry edges' variances carry over the
-    /// stated drift: the noise evidence is then taken with the odometry back at the stated drift
-    /// (`odometry_noise_evidence_at_stated`), a fixed reference, instead of at the noise this solve used.
-    pub evidence_at_stated: Option<[f64; 4]>,
 }
 
 /// A gravity-referenced odometry's tilt as an absolute factor: keyframe `keyframe`'s up direction in its own frame,
@@ -647,18 +643,6 @@ pub(crate) fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
-    // at the stated drift (`evidence_at_stated`), the odometry the evidence reads: each source's variances back over
-    // the factor this solve gave them
-    let stated_odometry: Option<Vec<Edge>> = config.evidence_at_stated.map(|factor| {
-        odometry
-            .iter()
-            .map(|e| Edge {
-                variances: std::array::from_fn(|k| e.variances[k] / factor[RESIDUAL_SOURCE[k]]),
-                ..*e
-            })
-            .collect()
-    });
-    let odometry = stated_odometry.as_deref().unwrap_or(odometry);
     // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
     // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the evidence reads the odometry at)
     // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it

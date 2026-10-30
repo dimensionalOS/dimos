@@ -101,7 +101,6 @@ fn main() {
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
-        evidence_at_stated: None,
         evidence_core: false,
     };
     let rotations: Vec<Mat3> = poses.iter().map(|p| p.0).collect();

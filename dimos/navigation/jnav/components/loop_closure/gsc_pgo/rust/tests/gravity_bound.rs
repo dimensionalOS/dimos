@@ -90,7 +90,6 @@ fn verdict(closure: Edge, gravity_variance: Option<f64>) -> f64 {
             overtrust_noise_headroom: [1.0; 4],
             gravity,
             committed: Vec::new(),
-            evidence_at_stated: None,
             evidence_core: false,
         },
     );
@@ -180,7 +179,6 @@ fn the_noise_evidence_ignores_the_gravity_factors() {
                 overtrust_noise_headroom: [1.0; 4],
                 gravity,
                 committed: Vec::new(),
-                evidence_at_stated: None,
                 evidence_core: false,
             },
         );

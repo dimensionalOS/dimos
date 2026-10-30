@@ -530,11 +530,6 @@ pub struct Config {
     /// the candidates the gate judges, mostly wrong, no longer set its ruler (small_l1: a 2.4 m/sqrt(keyframe) ruler
     /// passed 40-68 m yanks at about 1 standard deviation), and no learned loosening widens it.
     pub closure_yank_at_stated_drift: bool,
-    /// When true (with `odometry_noise_from_closures`), the noise evidence is always taken with the odometry at the
-    /// stated drift and read relative to it, a fixed reference: taken at the learned noise and read relative to that,
-    /// each solve's estimate fed the next one's, and solves re-using the same loops compounded (huge: yaw x0.3 -> x838000
-    /// in 1000 keyframes solving every 20, steady solving every 80).
-    pub odometry_noise_evidence_at_stated: bool,
     /// When true, what decides whether a closure is accepted (the solve's verdict, the uninformative gate, the yank's
     /// predicted spread) sees the learned odometry noise at most its prior's upper bound at
     /// `closure_gnc_inlier_probability` (`odometry_noise_acceptance_ceiling`): the most drift the spread across
@@ -626,7 +621,6 @@ impl Default for Config {
             closure_noise_from_closures: false,
             closure_yank_gate_principled: false,
             closure_yank_at_stated_drift: false,
-            odometry_noise_evidence_at_stated: false,
             odometry_noise_acceptance_ceiling: false,
             odometry_noise_evidence_core: false,
             closure_overlap_score: false,
@@ -1608,13 +1602,8 @@ impl GscPgo {
                     let (sum, r) = evidence[c];
                     redundancy[c] = r;
                     if r > 0.5 && sum.is_finite() {
-                        // the evidence's noise: the stated drift (`odometry_noise_evidence_at_stated`) or the dispatched one
                         let (dispatched, prior_sd) = (
-                            if self.config.odometry_noise_evidence_at_stated {
-                                0.0
-                            } else {
-                                self.odometry_noise_ln_dispatched[c]
-                            },
+                            self.odometry_noise_ln_dispatched[c],
                             self.odometry_noise_learner_prior()[c],
                         );
                         ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
