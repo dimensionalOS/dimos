@@ -41,7 +41,7 @@ from dimos.sim2.sensors.spec import Mount
 
 
 def _description(world, model_path):
-    mujoco.mj_saveModel(world.model, str(model_path), None)
+    mujoco.mj_saveModel(world.backend.model, str(model_path), None)
     return {**world.describe(), "model": str(model_path)}
 
 
@@ -55,10 +55,10 @@ def _with_sensors(config, sensors):
 
 
 @pytest.fixture
-def reader(worlds, tmp_path):
+def reader(worlds, tmp_path, mocker):
     world = worlds()
     observer = WorldReader(_description(world, tmp_path / "world.mjb"))
-    world.publish_snapshot = observer.push
+    mocker.patch.object(world, "publish_snapshot", side_effect=observer.push)
     observer.push(world.last_snapshot)
     return world, observer
 
@@ -67,19 +67,19 @@ def test_lidar_uses_its_own_model_and_sees_scene_mutations(reader):
     world, observer = reader
     assert observer.update()
     prefix = observer.model_prefix("left")
-    groups = world.model.geom_group.copy()
+    groups = world.backend.model.geom_group.copy()
     raycaster = Raycaster(observer.model, observer.model.body(prefix + "base").id)
     rays = np.array([[1.0, 0, 0]])
     origin = np.array([0.0, 0, 0.3])
     assert raycaster.ranges(observer.data, origin, rays, 10) == pytest.approx([1.3])
-    box = world.model.jnt_qposadr[world.model.body("box").jntadr[0]]
-    world.data.qpos[box] = 2.5
-    for _ in range(world.snapshot_stride):
+    box = world.backend.model.jnt_qposadr[world.backend.model.body("box").jntadr[0]]
+    world.backend.data.qpos[box] = 2.5
+    for _ in range(world.describe()["snapshot_stride"]):
         world.step()
     assert observer.update()
     assert raycaster.ranges(observer.data, origin, rays, 10) == pytest.approx([2.3])
-    np.testing.assert_array_equal(world.model.geom_group, groups)
-    assert observer.model is not world.model
+    np.testing.assert_array_equal(world.backend.model.geom_group, groups)
+    assert observer.model is not world.backend.model
     assert prefix == "robotleft_"
 
 
@@ -87,11 +87,11 @@ def test_reader_refreshes_model_parameters_and_generation_on_reset(reader):
     world, observer = reader
     assert observer.update()
     generation = observer.episode
-    world.model.geom_friction[:] *= 1.5
+    world.backend.model.geom_friction[:] *= 1.5
     world.reset()
     assert observer.update()
     assert observer.episode == generation + 1
-    np.testing.assert_array_equal(observer.model.geom_friction, world.model.geom_friction)
+    np.testing.assert_array_equal(observer.model.geom_friction, world.backend.model.geom_friction)
     assert len(observer.frames()) == 1
     assert observer.data.time == 0
 
@@ -287,7 +287,7 @@ def test_reader_history_is_bounded_and_cleared_at_reset(reader):
     for _ in range(100):
         world.step()
     frames = observer.frames()
-    assert len(frames) == world.snapshot_slots
+    assert len(frames) == world.describe()["snapshot_slots"]
     assert all(frame.metadata.episode_id == world.episode for frame in frames)
     world.reset()
     frames = observer.frames()

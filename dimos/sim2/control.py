@@ -15,13 +15,23 @@
 """robosuite controller for the motor command contract used by DimOS connections."""
 
 from collections.abc import Sequence
+from typing import Protocol
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 from robosuite.controllers.parts.controller import Controller
-from robosuite.models.robots.robot_model import RobotModel
 from robosuite.utils.binding_utils import MjSim
+
+
+class MotorModel(Protocol):
+    """Actuator names needed by the shared scalar motor controller."""
+
+    @property
+    def actuators(self) -> Sequence[str]: ...
+
+    @property
+    def naming_prefix(self) -> str: ...
 
 
 class MotorController(Controller):
@@ -35,7 +45,7 @@ class MotorController(Controller):
     def __init__(
         self,
         sim: MjSim,
-        robot_model: RobotModel,
+        robot_model: MotorModel,
         *,
         scale: Sequence[float] | None = None,
         offset: Sequence[float] | None = None,

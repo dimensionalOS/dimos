@@ -344,8 +344,17 @@ sim = [
     "mujoco>=3.5,<3.10",
     # 1.5.2 pins Mink to NumPy <2, conflicting with Rerun's NumPy >=2.
     "robosuite==1.5.1",
+    "h5py>=3.11",  # robosuite camera utilities import h5py at module load.
     "playground>=0.0.5",
     "pygame>=2.6.1",
+]
+
+sim-genesis = [
+    "dimos[sim]",
+    "genesis-world==1.4.5",
+    # Genesis requires PyTorch >=2.8; use a separate environment from legacy ML tests.
+    "torch>=2.8,<2.9",
+    "torchvision>=0.23,<0.24",
 ]
 
 mapping = [
@@ -560,6 +569,11 @@ docs = {requires-python = ">=3.11"}
 [tool.uv]
 required-version = ">=0.9.25"
 default-groups = ["tests"]
+conflicts = [
+    [{ extra = "sim-genesis" }, { group = "project-deps" }],
+    [{ extra = "sim-genesis" }, { group = "tests" }],
+    [{ extra = "sim-genesis" }, { group = "lint" }],
+]
 exclude-newer = "7 days"
 exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
 constraint-dependencies = [
@@ -587,9 +601,6 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
-    # Force the torch 2.7 line even if a transitive dep asks for newer.
-    "torch>=2.1,<2.8",
-    "torchvision>=0.16,<0.23",
 ]
 
 [tool.uv.sources]
@@ -786,6 +797,8 @@ module = [
     "mcap.*",
     "mujoco",
     "mujoco_playground.*",
+    "genesis",
+    "genesis.*",
     "robosuite",
     "robosuite.*",
     "nav_msgs.*",

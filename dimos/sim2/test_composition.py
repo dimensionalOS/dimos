@@ -31,11 +31,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.composition import attach_simulation, has_simulation_binding
 from dimos.sim2.device import SimulatedDeviceFactory
 from dimos.sim2.module import SimulationModule
+from dimos.sim2.physics import WorldState
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
+from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.spec import RobotInstanceSpec
 
 
@@ -90,6 +92,19 @@ class _Skill(Module):
 
 class _SensorSkill(Module):
     _scanner: _Scanner
+
+
+class _StateConsumerConfig(ModuleConfig):
+    robot_id: str | None = None
+
+
+class _StateConsumer(Module):
+    config: _StateConsumerConfig
+    state: In[WorldState]
+
+
+class _WorldStateConsumer(Module):
+    world_state: In[WorldState]
 
 
 @pytest.fixture
@@ -151,7 +166,7 @@ def test_connection_is_retained_with_private_world_io_and_public_sensor_streams(
     assert robot.frame_id == "arm/base"
     attached = next(s for owner, s in world.kwargs["sensors"] if s.name == "scanner")
     assert isinstance(attached, Lidar) and attached.site == "scan"
-    assert world.kwargs["environment"].keywords["scene"] == Path(mujoco.scene_package)
+    assert world.kwargs["backend"].keywords["scene"] == Path(mujoco.scene_package)
 
 
 def test_cli_overrides_reach_the_twin(hardware, mujoco):
@@ -198,6 +213,73 @@ def test_explicit_empty_world_is_populated_instead_of_duplicated(hardware, mujoc
     assert set(kwargs[worlds[0].name]["robots"]) == {"left"}
 
 
+def test_manual_world_snapshot_cadence_matches_sensor_history(hardware, mujoco, worlds):
+    blueprint = autoconnect(hardware, SimulationModule.blueprint(snapshot_hz=17))
+    result, kwargs = attach_simulation(blueprint, {}, mujoco)
+    atom = next(a for a in result.blueprints if a.module is SimulationModule)
+    resolved = {**atom.kwargs, **kwargs[atom.name]}
+    world = worlds(
+        config={
+            "backend": resolved["backend"](),
+            **{key: resolved[key] for key in ("robots", "sensors", "snapshot_hz")},
+        }
+    )
+    reader = WorldReader(world.describe())
+    reader.push(world.last_snapshot)
+    world.publish_snapshot = reader.push
+    for _ in range(40):
+        world.step()
+    assert reader.update()
+    end = reader.metadata.sim_time
+    assert reader.period == pytest.approx(0.055)
+    assert reader.history(end - 2 * reader.period, end)
+
+
+@pytest.mark.parametrize("manual_world", [False, True])
+def test_neutral_state_consumers_resolve_owners_and_share_the_world_without_physics_sensors(
+    world_config, mujoco, manual_world
+):
+    stack = autoconnect(
+        _Arm.blueprint(robot=world_config["robots"]["left"]),
+        _StateConsumer.blueprint(instance_name="camera", robot_id="left"),
+    )
+    blueprint = autoconnect(
+        stack.namespace("a"),
+        stack.namespace("b"),
+        _WorldStateConsumer.blueprint(instance_name="viewer"),
+        _StateConsumer.blueprint(instance_name="world_camera", robot_id="world"),
+        _StateConsumer.blueprint(instance_name="default_world_camera"),
+    )
+    if manual_world:
+        blueprint = autoconnect(
+            blueprint,
+            SimulationModule.blueprint(instance_name="world").remappings(
+                [("world", "world_state", "shared_state")]
+            ),
+        )
+    result, kwargs = attach_simulation(
+        blueprint, {}, mujoco.model_copy(update={"simulation": "genesis"})
+    )
+    world = next(a for a in result.blueprints if a.module is SimulationModule)
+    resolved = {**world.kwargs, **kwargs.get(world.name, {})}
+
+    assert resolved["sensors"] == ()
+    assert resolved["backend"].keywords["sensors"] == ()
+    assert kwargs["a/camera"]["robot_id"] == "a/left"
+    assert kwargs["b/camera"]["robot_id"] == "b/left"
+    assert kwargs["world_camera"]["robot_id"] is None
+    assert kwargs["default_world_camera"]["robot_id"] is None
+    topic = "shared_state" if manual_world else "world_state"
+    for name, port in (
+        ("a/camera", "state"),
+        ("b/camera", "state"),
+        ("viewer", "world_state"),
+        ("world_camera", "state"),
+        ("default_world_camera", "state"),
+    ):
+        assert result.remapping_map[name, port] == topic
+
+
 def test_namespaced_copies_compile_distinct_models_in_the_collected_world(
     world_config, mujoco, worlds
 ):
@@ -208,12 +290,19 @@ def test_namespaced_copies_compile_distinct_models_in_the_collected_world(
     )
     result, _ = attach_simulation(blueprint, {}, mujoco)
     module = next(a for a in result.blueprints if a.module is SimulationModule)
-    world = worlds(config={key: module.kwargs[key] for key in ("environment", "robots", "sensors")})
+    world = worlds(
+        config={
+            "backend": module.kwargs["backend"](),
+            **{key: module.kwargs[key] for key in ("robots", "sensors")},
+        }
+    )
 
-    left, right = world.robots["a/left"], world.robots["b/left"]
-    assert world.data.xpos[left.root][0] == 1
-    assert world.data.xpos[right.root][0] == 3
-    assert set(left.controller.actuators).isdisjoint(right.controller.actuators)
+    left, right = world.last_state.robots["a/left"], world.last_state.robots["b/left"]
+    assert left.base.position[0] == 1
+    assert right.base.position[0] == 3
+    assert set(world.backend.description.robot_joints["a/left"]).isdisjoint(
+        world.backend.description.robot_joints["b/left"]
+    )
     assert module.kwargs["robots"]["a/left"].frame_id == "a/arm/base"
 
 

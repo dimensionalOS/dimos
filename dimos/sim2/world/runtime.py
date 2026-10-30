@@ -12,30 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Command, clock and message bridge around a robosuite environment.
-
-The environment owns model construction, physics, controllers, observations,
-reset and task semantics. This bridge owns wall-clock command expiry and the
-DimOS messages/snapshots published to existing applications.
-"""
+"""Command ownership, clocks and publications above a replaceable physics backend."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
-from pathlib import Path
-import tempfile
 import threading
 import time
-from typing import Any, cast
-from uuid import uuid4
+from typing import Any, Literal
 
-import mujoco
 import numpy as np
 from numpy.typing import NDArray
-from robosuite.environments.base import MujocoEnv
-from robosuite.wrappers.wrapper import Wrapper
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -44,25 +33,28 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.sim2.control import MotorController
-from dimos.sim2.environment import MotorScene
 from dimos.sim2.messages import EnvironmentStep, FrameMetadata, StateFrame
+from dimos.sim2.physics import (
+    BackendStep,
+    CommandBatch,
+    CommandReport,
+    JointDrive,
+    PhysicsBackend,
+    PhysicsCommand,
+    WorldState,
+)
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.observations import ObservationFrame, collect_observations
 from dimos.sim2.spec import RobotInstanceSpec, VelocityController
 from dimos.sim2.world.scene_types import SceneDescription
 
-STATE = mujoco.mjtState.mjSTATE_INTEGRATION
 FeedbackCallback = Callable[[str, JointState, Imu | None, PoseStamped], None]
 
 
 @dataclass
 class RobotBinding:
     config: RobotInstanceSpec
-    controller: MotorController
-    root: int
-    imu: tuple[int, int, int] | None
     idle_position: NDArray[np.float64]
     action: NDArray[np.float64] | None = None
     action_expires: float = 0.0
@@ -72,202 +64,130 @@ class RobotBinding:
     velocity: Twist | None = None
 
 
+@dataclass
+class ActiveBatch:
+    batch: CommandBatch
+    expires: float
+    applied: bool = False
+
+
 class SimulationRuntime:
     def __init__(
         self,
-        environment: Callable[[], MujocoEnv | Wrapper],
+        environment: Callable[[], Any] | None = None,
         robots: dict[str, RobotInstanceSpec] | None = None,
         sensors: tuple[tuple[str | None, Sensor], ...] = (),
         snapshot_hz: float = 60.0,
+        *,
+        backend: PhysicsBackend | None = None,
     ) -> None:
-        self.environment = environment()
-        self.base_environment = (
-            self.environment.unwrapped
-            if isinstance(self.environment, Wrapper)
-            else self.environment
-        )
+        if backend is None:
+            if environment is None:
+                raise ValueError("supply a physics backend or a native robosuite task factory")
+            # Native task compatibility loads this optional engine only when selected.
+            from dimos.sim2.backends.mujoco import MujocoBackend
+
+            backend = MujocoBackend(environment, robots or {}, sensors, snapshot_hz)
+        self.backend: PhysicsBackend = backend
         self.lock = threading.RLock()
-        self.world_id = uuid4().hex
-        self._directory = tempfile.TemporaryDirectory(prefix="dimos-robosuite-")
         self._robot_configs = robots or {}
         self.sensors = sensors
-        self.snapshot_hz = snapshot_hz
+        if not math.isfinite(snapshot_hz) or snapshot_hz <= 0:
+            raise ValueError("snapshot rate must be finite and positive")
+        self._snapshot_hz = max(
+            [snapshot_hz]
+            + [sensor.acquisition.sample_hz for _, sensor in sensors if isinstance(sensor, Lidar)]
+        )
+        self._snapshot_seconds = 1 / self._snapshot_hz
+        self._last_snapshot_time = -math.inf
         self.robots: dict[str, RobotBinding] = {}
         self.episode = 0
         self.tick = 0
         self.paused = False
+        self.waiting_for_control: set[str] = set()
         self._sequence = 0
         self._clock_origin = time.time()
         self._reset_wall_time = 0.0
         self._closed = False
+        self._built = False
         self._observed: dict[str, tuple[int, float]] = {}
-        self._action: NDArray[np.float64] | None = None
+        self._batches: dict[str, ActiveBatch] = {}
         self.publish_feedback: FeedbackCallback | None = None
         self.publish_snapshot: Callable[[StateFrame], None] | None = None
+        self.publish_state: Callable[[WorldState], None] | None = None
+        self.publish_report: Callable[[CommandReport], None] | None = None
         self.publish_observation: Callable[[ObservationFrame], None] | None = None
         self.publish_environment: Callable[[EnvironmentStep], None] | None = None
         self.last_snapshot: StateFrame | None = None
+        self.last_state = WorldState(FrameMetadata(0, 0, 0, 0.0), {}, {}, {})
         self.result: EnvironmentStep | None = None
-        self.description = (
-            self.base_environment.description
-            if isinstance(self.base_environment, MotorScene)
-            else SceneDescription(id=type(self.environment).__name__)
-        )
-        try:
-            self.reset()
-        except BaseException:
-            self.close()
-            raise
 
-    @property
-    def model(self) -> mujoco.MjModel:
-        return cast("mujoco.MjModel", self.environment.sim.model._model)
-
-    @property
-    def data(self) -> mujoco.MjData:
-        return cast("mujoco.MjData", self.environment.sim.data._data)
+    def build(self) -> None:
+        with self.lock:
+            if self._built:
+                return
+            self._require_live()
+            try:
+                self.backend.build()
+                self._snapshot_seconds = (
+                    max(1, math.floor(1 / self._snapshot_hz / self.step_seconds))
+                    * self.step_seconds
+                )
+                self._built = True
+                self.reset()
+            except BaseException:
+                self.close()
+                raise
 
     @property
     def step_seconds(self) -> float:
-        return float(self.environment.control_timestep)
+        return self.backend.step_seconds
+
+    @property
+    def sim_time(self) -> float:
+        return self.backend.sim_time
+
+    @property
+    def description(self) -> SceneDescription:
+        return self.backend.description.scene
 
     def describe(self) -> dict[str, Any]:
-        prefixes = (
-            {
-                name: model.naming_prefix
-                for name, model in self.base_environment.robot_models.items()
-            }
-            if isinstance(self.base_environment, MotorScene)
-            else {}
-        )
-        roots = (
-            {
-                name: model.root_body.removeprefix(model.naming_prefix)
-                for name, model in self.base_environment.robot_models.items()
-            }
-            if isinstance(self.base_environment, MotorScene)
-            else {}
-        )
-        return dict(
-            model=str(self._model_path),
-            physics_dt=float(self.model.opt.timestep),
-            snapshot_stride=self.snapshot_stride,
-            snapshot_slots=self.snapshot_slots,
-            model_prefixes=prefixes,
-            root_bodies=roots,
-        )
+        """Engine-private sensor checkpoint description; applications use WorldState."""
+        return self.backend.sensor_description()
 
-    def _bind(self) -> None:
-        env = self.base_environment
-        if self._robot_configs and not isinstance(env, MotorScene):
-            raise TypeError(
-                "motor device bindings require MotorScene; native tasks use their own actions"
-            )
-        self.robots.clear()
-        if isinstance(env, MotorScene):
-            if set(env.robot_models) != set(self._robot_configs):
-                raise ValueError("motor bindings must match the environment's robot models")
-            for name, model in env.robot_models.items():
-                config = self._robot_configs[name]
-                controller = env.controllers[name]
-                controller.set_motor_units(
-                    scale=config.position_scale or None,
-                    offset=config.position_offset or None,
-                )
-                if len(controller.actuators) != len(config.joint_names):
-                    raise ValueError(f"{name}: hardware motor names do not match model actuators")
-                position_only = {
-                    joint
-                    for joint, servo in zip(
-                        config.joint_names, controller.position_servo, strict=True
-                    )
-                    if servo
-                }
-                if position_only != set(config.position_only_joints):
-                    raise ValueError(
-                        f"{name}: position_only_joints must match the model's native servos: {sorted(position_only)}"
-                    )
-                imu = None
-                if config.control_imu is not None:
-                    addresses = tuple(
-                        int(
-                            self.model.sensor(
-                                model.correct_naming(f"{config.control_imu}_{suffix}")
-                            ).adr[0]
-                        )
-                        for suffix in ("gyro", "accel", "quat")
-                    )
-                    imu = (addresses[0], addresses[1], addresses[2])
-                self.robots[name] = RobotBinding(
-                    config,
-                    controller,
-                    self.model.body(model.root_body).id,
-                    imu,
-                    controller.positions.copy(),
-                )
-                if config.velocity_controller is not None:
-                    policy = config.velocity_controller(
-                        self.model,
-                        self.data,
-                        model.naming_prefix,
-                        config.joint_names,
-                        self.step_seconds,
-                    )
-                    policy.reset()
-                    self.robots[name].velocity_controller = policy
-        self.waiting_for_control = {
-            name for name, binding in self.robots.items() if binding.config.wait_for_first_command
-        }
-        rate = self.snapshot_hz
-        history = 0.0
-        for _, device in self.sensors:
-            if isinstance(device, Lidar):
-                rate = max(rate, device.acquisition.sample_hz)
-                history = max(history, device.acquisition.history_seconds)
-                if device.acquisition.sample_hz > 1 / self.step_seconds + 1e-9:
-                    raise ValueError(
-                        "rolling sensor acquisition cannot exceed the environment step rate"
-                    )
-        if not math.isfinite(rate) or rate <= 0:
-            raise ValueError("snapshot rate must be finite and positive")
-        cadence = max(1, math.floor(1 / rate / self.step_seconds))
-        self.snapshot_stride = cadence * max(
-            1, round(self.step_seconds / float(self.model.opt.timestep))
-        )
-        self._snapshot_seconds = self.snapshot_stride * float(self.model.opt.timestep)
-        self._last_snapshot_time = -math.inf
-        self.snapshot_slots = max(2, math.ceil(history / self._snapshot_seconds) + 2)
-        self._state = np.empty(mujoco.mj_stateSize(self.model, STATE))
-        self._model_path = Path(self._directory.name) / f"world-{self.episode}.mjb"
-        mujoco.mj_saveModel(self.model, str(self._model_path), None)
+    def _metadata(self) -> FrameMetadata:
+        return FrameMetadata(self._sequence, self.episode, self.tick, self.sim_time)
 
     def reset(self) -> None:
         with self.lock:
             self._require_live()
-            observations = self.environment.reset()
+            result = self.backend.reset()
             self.episode += 1
             self._reset_wall_time = time.time()
-            self._clock_origin = self._reset_wall_time - float(self.data.time)
+            self._clock_origin = self._reset_wall_time - self.sim_time
             self._observed.clear()
-            self._action = None
-            self._bind()
-            self._publish(observations, force_snapshot=True, environment_result=True)
-
-    def accept_command(self, robot_id: str, command: MotorCommandArray) -> bool:
-        with self.lock:
-            binding = self.robots[robot_id]
-            if binding.config.command_kind != "motor":
-                return False
-            values = self._command_values(binding, command)
-            if values is None:
-                return False
-            issued = command.timestamp
-            if issued is not None and (not math.isfinite(issued) or issued < self._reset_wall_time):
-                return False
-            binding.action = values
-            binding.action_expires = time.monotonic() + binding.config.command_timeout
-            binding.received_command = True
-            return True
+            self._batches.clear()
+            self._last_snapshot_time = -math.inf
+            initial = self.backend.read_state(self._metadata())
+            self.robots = {}
+            for name, config in self._robot_configs.items():
+                state = initial.robots[name]
+                policy = (
+                    config.velocity_controller(self.step_seconds)
+                    if config.velocity_controller
+                    else None
+                )
+                if policy is not None:
+                    policy.reset()
+                self.robots[name] = RobotBinding(
+                    config, np.asarray(state.position), velocity_controller=policy
+                )
+            self.waiting_for_control = {
+                name
+                for name, binding in self.robots.items()
+                if binding.config.wait_for_first_command
+            }
+            self._publish(result, force_snapshot=True, task_result=True)
 
     @staticmethod
     def _command_values(
@@ -279,18 +199,34 @@ class SimulationRuntime:
         values = np.asarray(rows, dtype=np.float64)
         if not np.isfinite(values).all() or np.any(values[2:4] < 0):
             return None
-        if np.any(values[1:, binding.controller.position_servo] != 0):
+        servo = [name in binding.config.position_only_joints for name in binding.config.joint_names]
+        if np.any(values[1:, servo] != 0):
             return None
         return values
 
+    def accept_command(self, robot_id: str, command: MotorCommandArray) -> bool:
+        with self.lock:
+            binding = self.robots[robot_id]
+            if binding.config.command_kind != "motor":
+                return False
+            values = self._command_values(binding, command)
+            if values is None:
+                return False
+            if not math.isfinite(command.timestamp) or command.timestamp < self._reset_wall_time:
+                return False
+            binding.action = values
+            binding.action_expires = time.monotonic() + binding.config.command_timeout
+            binding.received_command = True
+            return True
+
     def accept_velocity(self, robot_id: str, command: Twist) -> bool:
-        """Buffer one robot's base command; its locomotion policy runs on the tick."""
         with self.lock:
             binding = self.robots[robot_id]
             if binding.config.command_kind != "velocity":
                 return False
-            values = (*command.linear.to_tuple(), *command.angular.to_tuple())
-            if not all(map(math.isfinite, values)):
+            if not all(
+                map(math.isfinite, (*command.linear.to_tuple(), *command.angular.to_tuple()))
+            ):
                 return False
             if command.linear.z != 0 or command.angular.x != 0 or command.angular.y != 0:
                 return False
@@ -300,17 +236,46 @@ class SimulationRuntime:
             return True
 
     def accept_action(self, action: list[float]) -> None:
-        """Set an action in the original upstream task's action space."""
         with self.lock:
-            if self.robots:
-                raise ValueError("motor-bound environments accept motor_command messages")
-            values = np.asarray(action, dtype=np.float64)
-            lower, upper = self.environment.action_spec
-            if values.shape != np.shape(lower) or not np.isfinite(values).all():
-                raise ValueError("action must have the environment's dimension and finite values")
-            if np.any(values < lower) or np.any(values > upper):
-                raise ValueError("action is outside the environment's action_spec")
-            self._action = values
+            self.backend.set_task_action(action)
+
+    def submit(self, batch: CommandBatch) -> CommandReport:
+        with self.lock:
+            self._require_live()
+            self._expire_batches()
+            reason = ""
+            if batch.epoch != self.episode:
+                reason = "command belongs to a different reset epoch"
+            elif not batch.command_id or batch.command_id in self._batches:
+                reason = "command_id must be nonempty and unique among active commands"
+            elif not math.isfinite(batch.duration) or batch.duration < 0:
+                reason = "duration must be finite and nonnegative"
+            else:
+                try:
+                    active = tuple(
+                        command
+                        for entry in self._batches.values()
+                        for command in entry.batch.commands
+                    )
+                    self.backend.validate((*active, *batch.commands))
+                except (ValueError, NotImplementedError) as error:
+                    reason = str(error)
+            status: Literal["rejected", "accepted"] = "rejected" if reason else "accepted"
+            report = CommandReport(batch.command_id, self.episode, self.tick, status, reason)
+            if not reason:
+                self._batches[batch.command_id] = ActiveBatch(batch, self.sim_time + batch.duration)
+            if self.publish_report is not None:
+                self.publish_report(report)
+            return report
+
+    def _expire_batches(self) -> None:
+        for command_id, entry in list(self._batches.items()):
+            if entry.applied and self.sim_time >= entry.expires - 1e-10:
+                del self._batches[command_id]
+                if self.publish_report is not None:
+                    self.publish_report(
+                        CommandReport(command_id, self.episode, self.tick, "expired")
+                    )
 
     def set_paused(self, paused: bool) -> None:
         with self.lock:
@@ -319,171 +284,177 @@ class SimulationRuntime:
             self.paused = paused
             if resumed:
                 self.episode += 1
-                self._clock_origin = time.time() - float(self.data.time)
+                self._clock_origin = time.time() - self.sim_time
                 self._reset_wall_time = time.time()
                 self._observed.clear()
-                self._action = None
-                for binding in self.robots.values():
+                self._batches.clear()
+                state = self.backend.read_state(self._metadata())
+                for name, binding in self.robots.items():
                     binding.action = None
                     binding.velocity = None
-                    binding.idle_position = binding.controller.positions.copy()
+                    binding.idle_position = np.asarray(state.robots[name].position)
                     binding.command_active = False
                     if binding.velocity_controller is not None:
                         binding.velocity_controller.reset()
-                self._publish({}, force_snapshot=True)
+                self._publish(BackendStep(), force_snapshot=True)
 
-    def _motor_action(self, binding: RobotBinding, now: float) -> NDArray[np.float64]:
+    def _motor_drives(self, name: str, binding: RobotBinding, now: float) -> tuple[JointDrive, ...]:
+        config = binding.config
+        state = self.last_state.robots[name]
+        values = None
         if binding.velocity_controller is not None:
             binding.command_active = binding.velocity is not None and now <= binding.action_expires
             command = binding.velocity if binding.command_active else None
             if command is None:
                 binding.velocity = None
             values = self._command_values(
-                binding, binding.velocity_controller.step(command or Twist())
+                binding, binding.velocity_controller.step(state, command or Twist())
             )
             if values is None:
-                raise ValueError(
-                    f"{binding.config.robot_id}: locomotion policy returned invalid motor commands"
-                )
-            return values.ravel()
-        if binding.action is not None and now <= binding.action_expires:
+                raise ValueError(f"{name}: locomotion policy returned invalid motor commands")
+        elif binding.action is not None and now <= binding.action_expires:
             binding.command_active = True
-            return binding.action.ravel()
-        if binding.command_active:
-            binding.idle_position = binding.controller.positions.copy()
-        binding.command_active = False
-        binding.action = None
-        count = len(binding.config.joint_names)
-        action = np.zeros((5, count))
-        action[0] = binding.idle_position
-        action[2] = binding.config.startup_kp or (0.0,) * count
-        action[3] = binding.config.startup_kd or (0.0,) * count
-        if binding.received_command and binding.config.halt_damping is not None:
-            action[2] = 0
-            action[3] = binding.config.halt_damping
-        action[1:, binding.controller.position_servo] = 0
-        return action.ravel()
+            values = binding.action
+        else:
+            if binding.command_active:
+                binding.idle_position = np.asarray(state.position)
+            binding.command_active = False
+            binding.action = None
+            count = len(config.joint_names)
+            values = np.zeros((5, count))
+            values[0] = binding.idle_position
+            values[2] = config.startup_kp or (0.0,) * count
+            values[3] = config.startup_kd or (0.0,) * count
+            if binding.received_command and config.halt_damping is not None:
+                values[2] = 0
+                values[3] = config.halt_damping
+            servo = [joint in config.position_only_joints for joint in config.joint_names]
+            values[1:, servo] = 0
+        scale = config.position_scale or (1.0,) * len(config.joint_names)
+        offset = config.position_offset or (0.0,) * len(config.joint_names)
+        return tuple(
+            JointDrive(joint, float(q * s + o), float(dq * s), float(kp), float(kd), float(tau))
+            for joint, (q, dq, kp, kd, tau), s, o in zip(
+                self.backend.description.robot_joints[name], values.T, scale, offset, strict=True
+            )
+        )
 
     def step(self) -> None:
         with self.lock:
             self._require_live()
-            if self.paused or self.environment.done:
-                self._publish({}, force_snapshot=True)
+            if self.paused or self.backend.done:
+                self._publish(BackendStep(), force_snapshot=True)
                 return
-            if self.robots:
-                now = time.monotonic()
-                self.waiting_for_control.difference_update(
-                    name
-                    for name, binding in self.robots.items()
-                    if (binding.action is not None or binding.velocity is not None)
-                    and now <= binding.action_expires
-                )
-                if self.waiting_for_control:
-                    self._clock_origin = time.time() - float(self.data.time)
-                    self._publish({}, force_snapshot=True)
-                    return
-                action = np.concatenate(
-                    [self._motor_action(binding, now) for binding in self.robots.values()]
-                )
-            else:
-                action = (
-                    self._action
-                    if self._action is not None
-                    else np.zeros_like(self.environment.action_spec[0], dtype=np.float64)
-                )
-            before = float(self.data.time)
-            observations, reward, done, info = self.environment.step(action)
-            self.environment.sim.forward()
-            self.tick += round((float(self.data.time) - before) / float(self.model.opt.timestep))
-            self._publish(
-                observations,
-                reward=float(reward),
-                done=bool(done),
-                info=info,
-                environment_result=True,
+            now = time.monotonic()
+            self.waiting_for_control.difference_update(
+                name
+                for name, binding in self.robots.items()
+                if (binding.action is not None or binding.velocity is not None)
+                and now <= binding.action_expires
             )
+            if self.waiting_for_control:
+                self._clock_origin = time.time() - self.sim_time
+                self._publish(BackendStep(), force_snapshot=True)
+                return
+            drives = {
+                drive.joint: drive
+                for name, binding in self.robots.items()
+                for drive in self._motor_drives(name, binding, now)
+            }
+            other: list[PhysicsCommand] = []
+            active: list[ActiveBatch] = []
+            self._expire_batches()
+            for entry in self._batches.values():
+                active.append(entry)
+                for command in entry.batch.commands:
+                    if isinstance(command, JointDrive):
+                        drives[command.joint] = command
+                    else:
+                        other.append(command)
+            before = self.sim_time
+            result = self.backend.step((*drives.values(), *other))
+            self.tick += round((self.sim_time - before) / self.backend.physics_dt)
+            for entry in active:
+                if not entry.applied and self.publish_report is not None:
+                    self.publish_report(
+                        CommandReport(entry.batch.command_id, self.episode, self.tick, "applied")
+                    )
+                entry.applied = True
+            self._publish(result, task_result=True)
 
     def _publish(
-        self,
-        observations: dict[str, Any],
-        *,
-        force_snapshot: bool = False,
-        reward: float = 0.0,
-        done: bool = False,
-        info: dict[str, Any] | None = None,
-        environment_result: bool = False,
+        self, result: BackendStep, *, force_snapshot: bool = False, task_result: bool = False
     ) -> None:
-        timestamp = self._clock_origin + float(self.data.time)
+        timestamp = self._clock_origin + self.sim_time
         self._sequence += 1
-        metadata = FrameMetadata(self._sequence, self.episode, self.tick, float(self.data.time))
+        metadata = self._metadata()
+        self.last_state = replace(self.backend.read_state(metadata), wall_time=timestamp)
+        if self.publish_state is not None:
+            self.publish_state(self.last_state)
         if self.publish_feedback is not None:
-            for name, binding in self.robots.items():
-                controller = binding.controller
+            for name, state in self.last_state.robots.items():
+                config = self._robot_configs[name]
                 joints = JointState(
-                    name=list(binding.config.joint_names),
-                    position=controller.positions.tolist(),
-                    velocity=controller.velocities.tolist(),
-                    effort=self.data.qfrc_actuator[controller.dofs].tolist(),
+                    name=list(state.joint_names),
+                    position=list(state.position),
+                    velocity=list(state.velocity),
+                    effort=list(state.effort),
                     ts=timestamp,
-                    frame_id=binding.config.frame_id,
+                    frame_id=config.frame_id,
                 )
-                imu = None
-                if binding.imu is not None:
-                    g, a, q = binding.imu
-                    w, x, y, z = self.data.sensordata[q : q + 4]
-                    imu = Imu(
-                        orientation=Quaternion(x, y, z, w),
-                        angular_velocity=Vector3(*self.data.sensordata[g : g + 3]),
-                        linear_acceleration=Vector3(*self.data.sensordata[a : a + 3]),
-                        frame_id=binding.config.frame_id,
+                sensor = state.imu
+                imu = (
+                    None
+                    if sensor is None
+                    else Imu(
+                        orientation=Quaternion(*sensor.orientation),
+                        angular_velocity=Vector3(*sensor.angular_velocity),
+                        linear_acceleration=Vector3(*sensor.linear_acceleration),
+                        frame_id=config.frame_id,
                         ts=timestamp,
                     )
-                w, x, y, z = self.data.xquat[binding.root]
+                )
                 odom = PoseStamped(
-                    position=Vector3(*self.data.xpos[binding.root]),
-                    orientation=Quaternion(x, y, z, w),
+                    position=Vector3(*state.base.position),
+                    orientation=Quaternion(*state.base.orientation),
                     frame_id="world",
                     ts=timestamp,
                 )
                 self.publish_feedback(name, joints, imu, odom)
         if self.publish_observation is not None:
             for frame in collect_observations(
-                observations, self.sensors, metadata, self._clock_origin, self._observed
+                result.observations, self.sensors, metadata, self._clock_origin, self._observed
             ):
                 self.publish_observation(frame)
-        if environment_result:
-            self.result = EnvironmentStep(metadata, observations, reward, done, info or {})
+        if task_result:
+            self.result = EnvironmentStep(
+                metadata, result.observations, result.reward, result.done, result.info
+            )
             if self.publish_environment is not None:
                 self.publish_environment(self.result)
         if (
             force_snapshot
-            or float(self.data.time) - self._last_snapshot_time >= self._snapshot_seconds - 1e-9
+            or self.sim_time - self._last_snapshot_time >= self._snapshot_seconds - 1e-9
         ):
-            self._last_snapshot_time = float(self.data.time)
-            mujoco.mj_getState(self.model, self.data, self._state, STATE)
-            snapshot = StateFrame(
-                metadata,
-                {"state": self._state.copy(), "wall_time": np.array([timestamp])},
-                str(self._model_path),
-            )
+            self._last_snapshot_time = self.sim_time
+            snapshot = self.backend.checkpoint(metadata, timestamp)
             self.last_snapshot = snapshot
-            if self.publish_snapshot is not None:
+            if snapshot is not None and self.publish_snapshot is not None:
                 self.publish_snapshot(snapshot)
 
     def _require_live(self) -> None:
         if self._closed:
-            raise RuntimeError("sim2 environment is closed")
+            raise RuntimeError("simulation is closed")
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            self.environment.close()
-        finally:
-            self._directory.cleanup()
+        with self.lock:
+            if self._closed:
+                return
+            self._closed = True
+            self.backend.close()
 
     def __enter__(self) -> SimulationRuntime:
+        self.build()
         return self
 
     def __exit__(self, *_: Any) -> None:

@@ -24,8 +24,8 @@ from typing import Any
 import mujoco
 import numpy as np
 
+from dimos.sim2.backends.mujoco import STATE
 from dimos.sim2.messages import FrameMetadata, StateFrame
-from dimos.sim2.world.runtime import STATE
 
 
 class WorldReader:
