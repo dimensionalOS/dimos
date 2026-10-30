@@ -61,6 +61,10 @@ class PointLioConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/pointlio/rust"
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin pointlio_native --target-dir ../../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../../target/native/release/pointlio_native"
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id

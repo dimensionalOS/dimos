@@ -31,6 +31,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/navigation/global_planner/mls_planner/rust"
     executable: str = "result/bin/mls_planner"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin mls_planner --target-dir ../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../target/native/release/mls_planner"
     stdin_config: bool = True
 
     world_frame: str = "odom"

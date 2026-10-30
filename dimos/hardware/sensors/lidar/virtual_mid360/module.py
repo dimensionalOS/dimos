@@ -54,6 +54,10 @@ class VirtualMid360Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/virtual_mid360"
     executable: str = "result/bin/virtual_mid360"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin virtual_mid360 --target-dir ../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../target/native/release/virtual_mid360"
     # The rust binary reads its config as a JSON object on stdin (required).
     stdin_config: bool = True
     # Keep the Python-only NIC knobs out of the CLI args mirrored to the binary.
