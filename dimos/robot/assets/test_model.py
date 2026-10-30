@@ -737,3 +737,27 @@ def test_model_rejects_non_urdf_source(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must reference a .urdf or .xacro"):
         model.load()
+
+
+def test_prefix_preserves_mimic_references_and_fixed_mounts(tmp_path):
+    path = tmp_path / "robot.urdf"
+    path.write_text("""<robot name="test"><link name="root"/><link name="arm"/>
+    <link name="finger"/><joint name="drive" type="revolute">
+    <parent link="root"/><child link="arm"/><axis xyz="0 0 1"/>
+    <limit lower="-1" upper="1" effort="5" velocity="2"/></joint>
+    <joint name="copy" type="revolute"><parent link="arm"/><child link="finger"/>
+    <mimic joint="drive" multiplier="-1"/></joint></robot>""")
+    model = robot_model.RobotModel.from_file(path).with_fixed_frame(
+        "camera", "arm", xyz=(0.1, 0.2, 0.3)
+    )
+    namespaced = model.with_prefix("robot_a/")
+    # Worker serialization must preserve variants without materializing a second source file.
+    loaded = decode(encode(namespaced)).load()
+    assert loaded.root_link == "robot_a/root"
+    assert loaded.get_joint("robot_a/copy").mimic == ("robot_a/drive", -1.0, 0.0)
+    parent, mount = loaded.resolve_frame("robot_a/camera")
+    assert parent == "robot_a/arm"
+    assert mount[:3, 3] == pytest.approx([0.1, 0.2, 0.3])
+    assert model.load().root_link == "root"
+    with pytest.raises(ValueError, match="Unknown model frame"):
+        loaded.resolve_frame("camera")
