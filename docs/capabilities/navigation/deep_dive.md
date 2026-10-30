@@ -80,7 +80,7 @@ Live loop closure corrects odometry drift when the robot revisits a place. For r
 
 The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
 
-Algorithm settings live in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot.
+Algorithm settings live in [`pointclouds/occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot.
 
 
 #### Configuration
