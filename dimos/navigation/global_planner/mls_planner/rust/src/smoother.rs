@@ -179,6 +179,21 @@ fn wall_push(plg: &PlannerGraph, p: (f32, f32, f32), wc: &WallCost) -> Option<(f
 
 /// Wall-penalized length plus step penalty of the straight chord between two
 /// world points. INF when the chord is infeasible.
+/// Penalized cost of a waypoint polyline, the measure the smoother minimizes.
+/// Infinite when any chord crosses a wall, a gap or a too-tall step.
+pub(crate) fn path_cost(
+    plg: &PlannerGraph,
+    waypoints: &[(f32, f32, f32)],
+    step_cells: i32,
+    wc: &WallCost,
+    step_weight: f32,
+) -> f32 {
+    waypoints
+        .windows(2)
+        .map(|w| chord_cost(plg, w[0], w[1], step_cells, wc, step_weight))
+        .sum()
+}
+
 fn chord_cost(
     plg: &PlannerGraph,
     a: (f32, f32, f32),

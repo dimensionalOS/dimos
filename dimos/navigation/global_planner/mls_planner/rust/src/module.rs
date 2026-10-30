@@ -875,10 +875,25 @@ fn empty_path(frame_id: &str, stamp: Time) -> Path {
     }
 }
 
+/// Path poses face along the path: each toward the next waypoint, the last
+/// along the final segment.
 fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Path {
+    let mut yaw = 0.0_f64;
     let poses: Vec<PoseStamped> = waypoints
         .iter()
-        .map(|&w| pose_stamped(w, 1.0, frame_id, stamp.clone()))
+        .enumerate()
+        .map(|(i, &w)| {
+            if let Some(&next) = waypoints.get(i + 1) {
+                let (dx, dy) = ((next.0 - w.0) as f64, (next.1 - w.1) as f64);
+                if dx != 0.0 || dy != 0.0 {
+                    yaw = dy.atan2(dx);
+                }
+            }
+            let mut pose = pose_stamped(w, 1.0, frame_id, stamp.clone());
+            pose.pose.orientation.z = (yaw / 2.0).sin();
+            pose.pose.orientation.w = (yaw / 2.0).cos();
+            pose
+        })
         .collect();
     Path {
         header: header(frame_id, stamp),
@@ -1053,6 +1068,27 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_poses_face_along_the_path() {
+        let path = build_path_from_waypoints(
+            &[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0)],
+            "odom",
+            Time::default(),
+        );
+        let yaws: Vec<f64> = path
+            .poses
+            .iter()
+            .map(|p| 2.0 * p.pose.orientation.z.atan2(p.pose.orientation.w))
+            .collect();
+        let quarter = std::f64::consts::FRAC_PI_2;
+        assert!(yaws[0].abs() < 1e-9);
+        assert!((yaws[1] - quarter).abs() < 1e-9);
+        assert!(
+            (yaws[2] - quarter).abs() < 1e-9,
+            "the last pose keeps the final heading"
+        );
+    }
 
     #[test]
     fn is_at_goal_respects_tolerance_and_ignores_z() {

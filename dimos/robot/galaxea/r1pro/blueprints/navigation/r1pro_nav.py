@@ -95,11 +95,19 @@ r1pro_nav = autoconnect(
         robot_height=R1PRO_OVERHEAD_CLEARANCE_M,
         start_z_offset_m=0.0,
         wall_clearance_m=WALL_CLEARANCE_M,
-        wall_buffer_m=R1PRO_CHASSIS_WIDTH_M,
-        wall_buffer_weight=100.0,
+        # A light, narrow wall buffer: at chassis width x100 it sent routes metres around desks (10-28 replay: 7.2 m vs 3.9 m).
+        wall_buffer_m=0.3,
+        wall_buffer_weight=5.0,
+        # Denser nodes reach the gaps between office furniture.
+        node_spacing_m=0.6,
         # MLS rounds steps down to whole voxels and the fused floor spans up to three layers, so floor two layers apart must connect.
         step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, 2 * VOXEL_SIZE_M),
         step_penalty_weight=4.0,
+        # Head depth floor speckle (single voxels, often for one map update) walls off whole corridors, so take neither.
+        min_neighbor_voxels=1,
+        obstacle_confirm_updates=2,
+        # Hold the route being driven unless a replan is clearly cheaper, so near-equal routes don't swing the R1 around.
+        path_switch_margin=0.3,
         viz_publish_hz=PLANNER_VIZ_HZ,
         worker_threads=2,
     ).remappings(

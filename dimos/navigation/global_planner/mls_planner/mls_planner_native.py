@@ -58,6 +58,15 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
+    # A replan replaces the route being followed only when it costs this
+    # fraction less, while that route is still clear to the goal.
+    path_switch_margin: float = 0.1
+    # Consecutive live region updates a voxel must arrive in before it enters
+    # the map. 1 takes every voxel at once; 2 drops one-update sensor speckle.
+    obstacle_confirm_updates: int = 1
+    # Occupied neighbors (of 26) a live-update voxel needs to count. 0 keeps
+    # every voxel; 1 drops lone voxels, which no solid object produces.
+    min_neighbor_voxels: int = 0
 
 
 class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
