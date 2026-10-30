@@ -298,6 +298,12 @@ robots:
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
+        unitree-g1-replay-mesh:
+          title: G1 RGB-D mesh replay
+          description: 'Replays a G1 recording and reconstructs a colored 3D triangle mesh from its RealSense RGB-D stream: no robot needed.'
+          recommended_config:
+          - <<: *recording
+            streams: [[color_image], [realsense_depth_image], [realsense_camera_info], [tf]]
         unitree-g1-teleop:
           title: G1 VR teleop + recording
           description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.

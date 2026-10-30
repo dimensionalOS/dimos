@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A triangle mesh with per-vertex normals, one chunk of a larger mesh keyed by ``key``."""
+"""A triangle mesh with per-vertex normals and optional RGB colors, one chunk of a larger mesh keyed by ``key``."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import numpy as np
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from numpy.typing import ArrayLike, NDArray
     from rerun._baseclasses import Archetype
 
 _HEADER = struct.Struct("<d3iII")
@@ -36,11 +36,12 @@ class TriangleMesh(Timestamped):
 
     def __init__(
         self,
-        vertices: NDArray[np.float32],
-        faces: NDArray[np.uint32],
-        normals: NDArray[np.float32] | None = None,
+        vertices: ArrayLike,
+        faces: ArrayLike,
+        normals: ArrayLike | None = None,
         key: tuple[int, int, int] = (0, 0, 0),
         ts: float | None = None,
+        colors: ArrayLike | None = None,
     ) -> None:
         self.vertices = np.ascontiguousarray(vertices, dtype=np.float32).reshape(-1, 3)
         self.faces = np.ascontiguousarray(faces, dtype=np.uint32).reshape(-1, 3)
@@ -49,12 +50,18 @@ class TriangleMesh(Timestamped):
             if normals is None
             else np.ascontiguousarray(normals, dtype=np.float32).reshape(-1, 3)
         )
+        self.colors: NDArray[np.uint8] | None = (
+            None if colors is None else np.ascontiguousarray(colors, dtype=np.uint8).reshape(-1, 3)
+        )
         self.key = key
         self.ts = time.time() if ts is None else ts
 
     def lcm_encode(self) -> bytes:
         header = _HEADER.pack(self.ts, *self.key, len(self.vertices), len(self.faces))
-        return header + self.vertices.tobytes() + self.normals.tobytes() + self.faces.tobytes()
+        payload = header + self.vertices.tobytes() + self.normals.tobytes() + self.faces.tobytes()
+        if self.colors is not None and len(self.colors) == len(self.vertices):
+            return payload + self.colors.tobytes()
+        return payload
 
     @classmethod
     def lcm_decode(cls, data: bytes, **kwargs: object) -> TriangleMesh:
@@ -63,7 +70,13 @@ class TriangleMesh(Timestamped):
         v = np.frombuffer(data, np.float32, nv * 3, o)
         n = np.frombuffer(data, np.float32, nv * 3, o + nv * 12)
         f = np.frombuffer(data, np.uint32, nf * 3, o + nv * 24)
-        return cls(v, f, n, (i, j, k), ts)
+        c_off = o + nv * 24 + nf * 12
+        c = (
+            np.frombuffer(data, np.uint8, nv * 3, c_off)
+            if nv > 0 and len(data) >= c_off + nv * 3
+            else None
+        )
+        return cls(v, f, n, (i, j, k), ts, colors=c)
 
     def to_rerun(self) -> Archetype:
         import rerun as rr
@@ -74,5 +87,6 @@ class TriangleMesh(Timestamped):
         return rr.Mesh3D(
             vertex_positions=self.vertices,
             vertex_normals=self.normals,
+            vertex_colors=self.colors,
             triangle_indices=self.faces,
         )

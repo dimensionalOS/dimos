@@ -395,7 +395,7 @@ class MeshColours:
 
     def __call__(self, msg: TriangleMesh) -> list[RerunEntry]:
         out = [RerunEntry(_chunk_path(msg.key), msg.to_rerun(), self.static)]
-        if len(msg.faces) == 0:
+        if len(msg.faces) == 0 or msg.colors is not None:
             self._heights.pop(msg.key, None)
             return out
         self._heights[msg.key] = msg.vertices[:, 2].copy()
