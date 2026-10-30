@@ -175,27 +175,19 @@ fn drop_isolated_voxels(points: &[(f32, f32, f32)], config: &Config) -> Vec<(f32
     if config.min_neighbor_voxels == 0 {
         return points.to_vec();
     }
-    let occupied: AHashSet<VoxelKey> = points
-        .iter()
-        .map(|&p| voxelize(p, config.voxel_size))
-        .collect();
+    let vs = config.voxel_size;
+    let occupied: AHashSet<VoxelKey> = points.iter().map(|&p| voxelize(p, vs)).collect();
     let neighbors = |(x, y, z): VoxelKey| {
-        let mut n = 0u32;
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for dz in -1..=1 {
-                    if (dx, dy, dz) != (0, 0, 0) && occupied.contains(&(x + dx, y + dy, z + dz)) {
-                        n += 1;
-                    }
-                }
-            }
-        }
-        n
+        let offsets = (-1..=1)
+            .flat_map(|dx| (-1..=1).flat_map(move |dy| (-1..=1).map(move |dz| (dx, dy, dz))));
+        offsets
+            .filter(|&d| d != (0, 0, 0) && occupied.contains(&(x + d.0, y + d.1, z + d.2)))
+            .count() as u32
     };
     points
         .par_iter()
         .copied()
-        .filter(|&p| neighbors(voxelize(p, config.voxel_size)) >= config.min_neighbor_voxels)
+        .filter(|&p| neighbors(voxelize(p, vs)) >= config.min_neighbor_voxels)
         .collect()
 }
 
@@ -805,8 +797,8 @@ impl Planner {
         }
     }
 
-    /// The committed route from the robot on, repaired around any blockage,
-    /// unless the fresh plan beats it by path_switch_margin.
+    /// The committed route from the robot on, while it stays clear and the
+    /// fresh plan does not beat it by path_switch_margin.
     fn keep_committed(
         &self,
         start: (f32, f32, f32),
@@ -818,35 +810,15 @@ impl Planner {
         if *committed_goal != goal {
             return None;
         }
-        let mut ahead = planner::route_ahead(route, start);
-        let mut kept_cost = planner::route_cost(&self.graph, &ahead, config);
+        let ahead = planner::route_ahead(route, start);
+        let kept_cost = planner::route_cost(&self.graph, &ahead, config);
         if !kept_cost.is_finite() {
-            ahead = self.repair_route(&ahead, config)?;
-            kept_cost = planner::route_cost(&self.graph, &ahead, config);
+            return None;
         }
         let fresh_cost = fresh.map_or(f32::INFINITY, |wp| {
             planner::route_cost(&self.graph, wp, config)
         });
         (fresh_cost >= kept_cost * (1.0 - config.path_switch_margin)).then_some(ahead)
-    }
-
-    /// A blocked route rerouted from the robot to the first waypoint past its
-    /// last blocked segment, keeping the rest, so a local obstacle bends the
-    /// route instead of replacing it.
-    fn repair_route(
-        &self,
-        ahead: &[(f32, f32, f32)],
-        config: &Config,
-    ) -> Option<Vec<(f32, f32, f32)>> {
-        let last_blocked = (0..ahead.len().saturating_sub(1))
-            .rev()
-            .find(|&i| !planner::route_cost(&self.graph, &ahead[i..i + 2], config).is_finite())?;
-        let (detour, _) = planner::plan(&self.graph, ahead[0], ahead[last_blocked + 1], config)?;
-        let mut repaired = detour;
-        repaired.extend_from_slice(&ahead[last_blocked + 2..]);
-        planner::route_cost(&self.graph, &repaired, config)
-            .is_finite()
-            .then_some(repaired)
     }
 
     pub fn graph(&self) -> &PlannerGraph {

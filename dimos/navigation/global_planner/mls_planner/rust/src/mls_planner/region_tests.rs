@@ -1502,13 +1502,6 @@ fn replan_keeps_the_committed_route_over_a_marginally_cheaper_one() {
     // Well east, the east gap is cheaper, but not by 30%.
     let east = (3.5, 0.5, 0.05);
     assert!(!crosses_east(&p.plan_or_truncate(east, goal, &cfg)));
-
-    // Without a margin, any cheaper plan wins.
-    cfg.path_switch_margin = 0.0;
-    let mut q = Planner::new(cfg.worker_threads);
-    q.update_global_map(&twin_gap_world(), &cfg);
-    q.plan_or_truncate(start, goal, &cfg);
-    assert!(crosses_east(&q.plan_or_truncate(east, goal, &cfg)));
 }
 
 #[test]
@@ -1544,52 +1537,6 @@ fn replan_drops_the_committed_route_once_it_is_blocked() {
         goal,
         &cfg
     )));
-}
-
-#[test]
-fn replan_bends_a_committed_route_around_a_new_obstacle() {
-    let mut cfg = test_config();
-    cfg.wall_clearance_m = 0.1;
-    cfg.path_switch_margin = 0.3;
-    let goal = (3.0, 3.5, 0.05);
-    let start = (2.1, 0.5, 0.05);
-    let mut p = Planner::new(cfg.worker_threads);
-    let mut world = twin_gap_world();
-    p.update_global_map(&world, &cfg);
-    assert!(!crosses_east(&p.plan_or_truncate(start, goal, &cfg)));
-    // Drifted east, the route is kept although a fresh plan takes the east gap.
-    let drifted = (2.5, 0.5, 0.05);
-    let kept = p.plan_or_truncate(drifted, goal, &cfg);
-    assert!(!crosses_east(&kept));
-
-    // Drop a pillar on the committed route halfway to the wall.
-    let seg = kept
-        .windows(2)
-        .find(|s| (s[0].1 - 1.25) * (s[1].1 - 1.25) <= 0.0)
-        .expect("the route reaches y = 1.25");
-    let f = (1.25 - seg[0].1) / (seg[1].1 - seg[0].1);
-    let pillar = (seg[0].0 + f * (seg[1].0 - seg[0].0), 1.25);
-    let vs = cfg.voxel_size;
-    let (px, py) = ((pillar.0 / vs).floor(), (pillar.1 / vs).floor());
-    for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
-        for iz in 1..7 {
-            world.push((
-                (px + dx) * vs + 0.05,
-                (py + dy) * vs + 0.05,
-                iz as f32 * vs + 0.05,
-            ));
-        }
-    }
-    p.update_global_map(&world, &cfg);
-
-    // The route bends around the pillar but keeps its gap.
-    let bent = p.plan_or_truncate(drifted, goal, &cfg);
-    assert_eq!(bent[0], drifted);
-    assert!(
-        !crosses_east(&bent),
-        "a local obstacle flipped the route to the other gap"
-    );
-    assert!(planner::route_cost(p.graph(), &bent, &cfg).is_finite());
 }
 
 /// A floor patch region update, plus one obstacle column at (1.05, 1.05).

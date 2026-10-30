@@ -227,13 +227,19 @@ pub fn route_cost(plg: &PlannerGraph, waypoints: &[(f32, f32, f32)], config: &Co
         buffer_weight: config.wall_buffer_weight,
         voxel_size: config.voxel_size,
     };
-    crate::smoother::path_cost(
-        plg,
-        waypoints,
-        config.step_cells(),
-        &wall_cost,
-        config.step_penalty_weight,
-    )
+    waypoints
+        .windows(2)
+        .map(|w| {
+            crate::smoother::chord_cost(
+                plg,
+                w[0],
+                w[1],
+                config.step_cells(),
+                &wall_cost,
+                config.step_penalty_weight,
+            )
+        })
+        .sum()
 }
 
 /// The part of a published route still ahead of the robot: the start pose,
