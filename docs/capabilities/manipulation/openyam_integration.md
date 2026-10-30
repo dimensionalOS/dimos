@@ -149,7 +149,7 @@ From `dimos shell`, `SceneOverlayModule.set_scene("Scene_25")` switches scenes,
 
 ## Model assets
 
-`dual_openyam_workcell_v6`, exported as `DUAL_OPENYAM_MODEL`, is the physical
+`dual_openyam_workcell_v7`, exported as `DUAL_OPENYAM_MODEL`, is the physical
 workcell: the i2rt YAM arm geometry and meshes, the two arm bases and the
 joint 3 zero offsets from the rig calibration of 2026-10-15, the link masses
 and centres of mass from the gravity identification of 2026-10-16 (the Damiao
@@ -174,8 +174,10 @@ the grasp stacks register the scene through `SelfClearedSceneRegistrationModule`
 the scene cloud by main's `RoboPlanBodyFilter`, the filter the planner's map
 chain already runs, padded 2 cm for this camera. v6 dropped the table slab from
 the model, which the same replay found swallowing the camera's table points.
-A revised model ships under a new package name, because LFS extraction caches
-by directory name.
+v7 widens the finger stroke to the measured jaws: calipers read 98 mm between
+the nose faces at full open where the i2rt travel gave 93.9, and the check had
+been denying that 2 mm per side to every jaw-width object. A revised model
+ships under a new package name, because LFS extraction caches by directory name.
 
 ## Safety
 

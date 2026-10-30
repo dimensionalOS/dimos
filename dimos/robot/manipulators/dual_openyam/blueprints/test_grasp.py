@@ -190,7 +190,7 @@ def test_planner_model_carries_the_gripper_config_for_the_check() -> None:
         f"{side}_finger_{jaw}_joint" for side in ("left", "right") for jaw in ("left", "right")
     }
     assert all(
-        opened == -0.04695 and closed == 0.0
+        opened == -0.049 and closed == 0.0
         for opened, closed in robot.gripper.finger_joints.values()
     )
     assert len(robot.gripper.joint_positions()) == 5

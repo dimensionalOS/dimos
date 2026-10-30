@@ -95,11 +95,12 @@ DUAL_OPENYAM_HEURISTIC_AIM = {
 }
 
 # The same gripper in GraspGenX's convention: origin on the gripper link, approach
-# along +Z, jaws closing along X. Pads meet 0.137 m out and the open jaws span 94 mm.
+# along +Z, jaws closing along X. Pads meet 0.137 m out and the open jaws span 98 mm
+# (measured between the nose faces on 2026-10-29).
 DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME = {
-    "extents_open": (0.094, 0.028, 0.020),
+    "extents_open": (0.098, 0.028, 0.020),
     "offset_open": (0.0, 0.0, DUAL_OPENYAM_PAD_CENTRE_OFFSET + 0.10),
-    "extents_half_open": (0.047, 0.028, 0.020),
+    "extents_half_open": (0.049, 0.028, 0.020),
     "offset_half_open": (0.0, 0.0, DUAL_OPENYAM_PAD_CENTRE_OFFSET + 0.10),
     "fingertip_depth": 0.10
     + DUAL_OPENYAM_PAD_CENTRE_OFFSET

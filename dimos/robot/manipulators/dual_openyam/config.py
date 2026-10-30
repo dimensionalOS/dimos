@@ -113,8 +113,9 @@ DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
 
 
 # Finger joint position (metres) at fully open; zero is closed with the pads touching.
-# The i2rt YAM model's joint7 and joint8 travel, kept since dual_openyam_workcell_v5.
-DUAL_OPENYAM_FINGER_OPEN = -0.04695
+# Calipers on the rig's printed fingers, 2026-10-29: 98 mm between the nose faces at
+# full open, so 49 mm of travel per finger (the i2rt travel of 46.95 mm gave 93.9 mm).
+DUAL_OPENYAM_FINGER_OPEN = -0.049
 
 
 def dual_openyam_gripper_config() -> GripperConfig:

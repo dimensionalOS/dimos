@@ -15,7 +15,7 @@
 """The pick's grasp contact check on the dual OpenYAM workcell model.
 
 Grasps sit where the Spam can stood in SceneReplica scene 56, in the right arm's reach.
-The model is dual_openyam_workcell_v6: prismatic fingers, exact fingertip meshes, no table.
+The model is dual_openyam_workcell_v7: prismatic fingers, exact fingertip meshes, no table.
 """
 
 from __future__ import annotations
@@ -126,10 +126,10 @@ def test_rejects_a_sideways_scoop_along_the_table(checker: GraspContactChecker) 
 
 
 def test_rejects_a_neighbour_the_open_finger_would_land_on(checker: GraspContactChecker) -> None:
-    # The open fingers stand 47 mm from the centre: a neighbour starting 45 mm out is hit,
-    # one starting 60 mm out is cleared because the finger tapers above it.
+    # The open noses stand 49 mm from the centre and the finger arches 10 mm behind them:
+    # a neighbour starting 45 mm out is hit, one starting 65 mm out is cleared.
     close = _box((X, Y - 0.06, DUAL_OPENYAM_TABLE_TOP_Z + 0.03), (0.04, 0.03, 0.06))
-    clear = _box((X, Y - 0.075, DUAL_OPENYAM_TABLE_TOP_Z + 0.03), (0.04, 0.03, 0.06))
+    clear = _box((X, Y - 0.08, DUAL_OPENYAM_TABLE_TOP_Z + 0.03), (0.04, 0.03, 0.06))
     assert not _clear(checker, _pose(X, Y, MID), CAN, TABLE, close)
     assert _clear(checker, _pose(X, Y, MID), CAN, TABLE, clear)
 
@@ -139,10 +139,11 @@ def test_rejects_what_the_arm_cannot_reach(checker: GraspContactChecker) -> None
 
 
 def test_open_fingers_clear_objects_up_to_the_jaw_span(checker: GraspContactChecker) -> None:
-    # 94 mm between the open pads: a 9 cm object fits at full finger depth, 10 cm does not.
+    # 98 mm between the open noses (calipers, 2026-10-29): a 9.4 cm object fits at full
+    # finger depth, 10.4 cm does not.
     top = DUAL_OPENYAM_TABLE_TOP_Z + HEIGHT
-    assert _clear(checker, _pose(X, Y, top - 0.04), _object(0.09), _table(hole=0.055))
-    assert not _clear(checker, _pose(X, Y, top - 0.01), _object(0.10), _table(hole=0.06))
+    assert _clear(checker, _pose(X, Y, top - 0.04), _object(0.094), _table(hole=0.057))
+    assert not _clear(checker, _pose(X, Y, top - 0.01), _object(0.104), _table(hole=0.062))
 
 
 def test_rejects_a_grasp_that_puts_the_finger_carriage_into_a_tall_object(
@@ -159,6 +160,6 @@ def test_camera_table_points_under_the_fitted_top_do_not_collide_with_the_model(
     checker: GraspContactChecker,
 ) -> None:
     # The overhead D405 puts the table 3 to 15 mm under the fitted top. v5 carried a slab
-    # 1 cm under it, which swallowed those points and failed every grasp; v6 has no table.
+    # 1 cm under it, which swallowed those points and failed every grasp; v6 on has no table.
     low_table = _table(hole=0.03) - np.array([0.0, 0.0, 0.012])
     assert _clear(checker, _pose(X, Y, MID), CAN, low_table)
