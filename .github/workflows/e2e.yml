@@ -60,7 +60,7 @@ jobs:
           git lfs pull --include="misc/DimSim/**"
           git config --local --unset-all http.https://github.com/.extraheader
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           # We persist on disk, cache would clean some of this up.
           enable-cache: false
@@ -193,12 +193,12 @@ jobs:
         working-directory: web/cockpit
         run: deno task build
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
           prune-cache: true
       - name: Setup Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - name: Install native dependencies (pyaudio build, JPEG encoding)
@@ -253,7 +253,7 @@ jobs:
           git config --global --add safe.directory '*'
           git clean -ffdx
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           # We persist on disk, cache would clean some of this up.
           enable-cache: false
