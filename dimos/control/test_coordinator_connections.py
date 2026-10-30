@@ -26,6 +26,7 @@ worker processes.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -40,7 +41,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
 from dimos.control.contract.convert import motor_joints, pose_from_values, twist_to_values
 from dimos.control.contract.limits import BASE_NAME
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -67,6 +68,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.testing.waiting import wait_until
 
 #: The fake arm's joints as the coordinator names them: "mock/joint1" and so on.
@@ -377,6 +379,43 @@ def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., 
     assert task.last_state is not None
     assert task.last_state.sensors.readings["mock/imu"]["qw"] == 1.0
     assert task.last_state.joints.get_position("mock/joint2") == 0.0
+
+
+def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_its_model(
+    rig: Callable[..., Rig], tmp_path: Path
+) -> None:
+    # One arm joint, and a gripper open at 0 rad and closed at 0.85 rad, as the
+    # xArm Gripper's drive_joint is.
+    urdf = tmp_path / "arm_with_gripper.urdf"
+    urdf.write_text(
+        '<robot name="arm"><link name="base"/><link name="link1"/><link name="knuckle"/>'
+        '<joint name="mock/joint1" type="revolute"><parent link="base"/><child link="link1"/>'
+        '<limit lower="-3.1" upper="3.1" velocity="3" effort="50"/></joint>'
+        '<joint name="mock/drive_joint" type="revolute"><parent link="link1"/>'
+        '<child link="knuckle"/><limit lower="0" upper="0.85" velocity="2" effort="50"/></joint>'
+        "</robot>"
+    )
+    gripper = TaskConfig(
+        name="gripper",
+        type="gripper",
+        joint_names=["mock/drive_joint"],
+        params={"open_at": "lower"},
+    )
+    r = rig(ArmCoordinator, model=RobotModel.from_file(urdf), tasks=[gripper])
+
+    r.report(
+        "mock_joint_state",
+        JointState(name=["mock/joint1", "mock/drive_joint"], position=[0.0, 0.2]),
+    )
+    r.tick()
+    assert r.coordinator.task_invoke("gripper", "get_normalized") == pytest.approx([1 - 0.2 / 0.85])
+
+    r.coordinator.task_invoke("gripper", "set_normalized", {"values": [1.0]})
+    r.tick()
+    r.coordinator.task_invoke("gripper", "set_normalized", {"values": [0.0]})
+    r.tick()
+    # Held where it reads until told, then open, then closed.
+    assert r.positions_sent() == [[0.0, 0.2], [0.0, 0.0], [0.0, 0.85]]
 
 
 def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(

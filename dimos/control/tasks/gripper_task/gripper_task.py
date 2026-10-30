@@ -19,8 +19,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import model_limit, movable_joints
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -33,12 +35,15 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.msgs.std_msgs.Float32 import Float32
+    from dimos.robot.assets.model import RobotModel
 
 logger = setup_logger()
 
 # 0.0 = fully closed, 1.0 = fully open on every scalar API.
 _CLOSED = 0.0
 _OPEN = 1.0
+
+OpenAt = Literal["lower", "upper"]
 
 
 @dataclass
@@ -49,11 +54,14 @@ class GripperControlTaskConfig:
         joint_names: Ordinary joints this task owns, in command order.
         priority: Priority for arbitration.
         hold_duration: Seconds to keep emitting a target; 0.0 holds forever.
+        open_at: Which end of each joint's position range is fully open,
+            "upper" or "lower"; the other end is fully closed.
     """
 
     joint_names: list[str]
     priority: int = 10
     hold_duration: float = 0.0
+    open_at: OpenAt = "upper"
 
 
 class GripperControlTask(BaseControlTask):
@@ -83,6 +91,10 @@ class GripperControlTask(BaseControlTask):
         self._config = config
         self._joint_names = tuple(config.joint_names)
         self._limits = list(limits)
+        # Each joint's (closed, open) positions, the ends of the 0.0-1.0 scale.
+        self._travel = [
+            (hi, lo) if config.open_at == "lower" else (lo, hi) for lo, hi in self._limits
+        ]
 
         self._lock = threading.Lock()
         self._target: list[float] | None = None
@@ -163,7 +175,10 @@ class GripperControlTask(BaseControlTask):
             "set_normalized", values, [(_CLOSED, _OPEN)] * len(self._joint_names)
         ):
             return False
-        native = [lo + (hi - lo) * v for v, (lo, hi) in zip(values, self._limits, strict=True)]
+        native = [
+            closed + (opened - closed) * v
+            for v, (closed, opened) in zip(values, self._travel, strict=True)
+        ]
         return self._latch(native, t_now)
 
     def get_position(self) -> list[float] | None:
@@ -179,7 +194,8 @@ class GripperControlTask(BaseControlTask):
         if positions is None:
             return None
         normalized = [
-            (p - lo) / (hi - lo) for p, (lo, hi) in zip(positions, self._limits, strict=True)
+            (p - closed) / (opened - closed)
+            for p, (closed, opened) in zip(positions, self._travel, strict=True)
         ]
         for name, position, value in zip(self._joint_names, positions, normalized, strict=True):
             if not _CLOSED <= value <= _OPEN:
@@ -240,16 +256,20 @@ class GripperControlTaskParams(BaseConfig):
     """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
+    open_at: OpenAt = "upper"
 
 
-def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
-    """Resolve configured joints against ordinary adapter limit arrays."""
+def _resolve_limits(cfg: Any, hardware: Any, model: RobotModel | None) -> list[tuple[float, float]]:
+    """Each joint's position range: from the adapter that owns it, or, when the
+    coordinator has no adapters, from ``model``."""
     where = f"gripper task {cfg.name!r}"
     joint_names = list(cfg.joint_names)
     if not joint_names:
         raise ValueError(f"{where}: requires at least one joint")
     if len(set(joint_names)) != len(joint_names):
         raise ValueError(f"{where}: joint_names must not contain duplicates")
+    if not hardware:
+        return _model_limits(where, joint_names, model)
     resolved: list[tuple[float, float]] = []
     for joint_name in joint_names:
         owners = [
@@ -285,7 +305,26 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
     return resolved
 
 
-def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
+def _model_limits(
+    where: str, joint_names: list[str], model: RobotModel | None
+) -> list[tuple[float, float]]:
+    """Each joint's position range from the coordinator's model, as the
+    coordinator enforces it on a robot behind a connection module."""
+    if model is None:
+        raise ValueError(f"{where}: the coordinator has no hardware and no model to find joints in")
+    joints = {joint.name: joint for joint in movable_joints(model)}
+    resolved: list[tuple[float, float]] = []
+    for joint_name in joint_names:
+        if joint_name not in joints:
+            raise ValueError(f"{where}: joint {joint_name!r} is not a movable joint of the model")
+        limit = model_limit(joints[joint_name], Interface.POSITION)
+        if limit.lo is None or limit.hi is None:
+            raise ValueError(f"{where}: joint {joint_name!r} has no position range in the model")
+        resolved.append((limit.lo, limit.hi))
+    return resolved
+
+
+def create_task(cfg: Any, hardware: Any, model: RobotModel | None = None) -> GripperControlTask:
     params = GripperControlTaskParams.model_validate(cfg.params)
     return GripperControlTask(
         cfg.name,
@@ -293,6 +332,7 @@ def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
             joint_names=list(cfg.joint_names),
             priority=cfg.priority,
             hold_duration=params.hold_duration,
+            open_at=params.open_at,
         ),
-        limits=_resolve_limits(cfg, hardware),
+        limits=_resolve_limits(cfg, hardware, model),
     )
