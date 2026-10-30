@@ -578,6 +578,12 @@ class ManipulationModule(Module):
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
                 logger.warning("Cannot plan in current state", state=self._state.name)
+                # A FAULT keeps the error that caused it; get_error() still names the cause.
+                if self._state != ManipulationState.FAULT or not self._error_message:
+                    self._error_message = (
+                        f"Cannot plan while manipulation is {self._state.name}; "
+                        "wait for the motion to finish, or call reset()"
+                    )
                 return None
             self._planning_epoch += 1
             self._last_plan = None
@@ -652,13 +658,17 @@ class ManipulationModule(Module):
     ) -> GeneratedPlan | None:
         """Plan over explicit planning groups and store the resulting plan."""
         assert self._world_monitor and self._planner
-        result = self._planner.plan_selected_joint_path(
-            world=self._world_monitor.world,
-            selection=self._world_monitor.planning_groups.select(group_ids),
-            start=start,
-            goal=goal,
-            timeout=self.config.planning_timeout,
-        )
+        try:
+            result = self._planner.plan_selected_joint_path(
+                world=self._world_monitor.world,
+                selection=self._world_monitor.planning_groups.select(group_ids),
+                start=start,
+                goal=goal,
+                timeout=self.config.planning_timeout,
+            )
+        except Exception as exc:
+            self._fail_planning_epoch(planning_epoch, f"Planning failed: {exc}")
+            return None
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
             self._fail_planning_epoch(
@@ -820,9 +830,24 @@ class ManipulationModule(Module):
             goal_names.extend(normalized_target.name)
             goal_positions.extend(normalized_target.position)
 
+        outside = self._outside_position_limits(goal_names, goal_positions)
+        if outside:
+            self._fail_planning_epoch(planning_epoch, f"Joint target outside limits: {outside}")
+            return None
         goal = JointState(name=goal_names, position=goal_positions)
         return self._plan_selected_path(
             group_ids, start, goal, planning_epoch, resolved_speed_scale
+        )
+
+    def _outside_position_limits(self, names: Sequence[str], positions: Sequence[float]) -> str:
+        """Describe each target position outside its joint's limits; empty when all are inside."""
+        assert self._world_monitor is not None
+        joint_space = self._world_monitor.get_prepared_model().joint_space.select(list(names))
+        lower, upper = joint_space.position_limits()
+        return ", ".join(
+            f"{name} target {position:.3f} outside [{lo:.3f}, {hi:.3f}]"
+            for name, position, lo, hi in zip(names, positions, lower, upper, strict=True)
+            if not lo <= position <= hi
         )
 
     def generate_plan_to_pose_targets(
@@ -899,15 +924,19 @@ class ManipulationModule(Module):
                 "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
             }
         )
-        result = self._planner.plan_cartesian_path(
-            world=self._world_monitor.world,
-            selection=selection,
-            start=start,
-            targets=targets,
-            config=scaled_config,
-            auxiliary_groups=auxiliary_ids,
-            check_collision=check_collision,
-        )
+        try:
+            result = self._planner.plan_cartesian_path(
+                world=self._world_monitor.world,
+                selection=selection,
+                start=start,
+                targets=targets,
+                config=scaled_config,
+                auxiliary_groups=auxiliary_ids,
+                check_collision=check_collision,
+            )
+        except Exception as exc:
+            self._fail_planning_epoch(planning_epoch, f"Cartesian planning failed: {exc}")
+            return None
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
             self._fail_planning_epoch(

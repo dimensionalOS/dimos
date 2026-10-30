@@ -799,6 +799,7 @@ class TestPlanningGroupApis:
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
+        module._world_monitor.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -1124,17 +1125,29 @@ class TestPlanningGroupApis:
 
 
 class TestPlanningDiagnostics:
-    def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
-        """Planning diagnostics include the backend message."""
+    @staticmethod
+    def _planning_module(robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
+        module._world_monitor.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
         )
         module._planner = MagicMock()
+        return module
+
+    @staticmethod
+    def _plan(module, robot_config, position):
+        return module.plan_to_joints(
+            {"manipulator": JointState(name=robot_config.joint_names, position=position)}
+        )
+
+    def test_planner_failure_preserves_backend_detail(self, robot_config, module_factory):
+        """Planning diagnostics include the backend message."""
+        module = self._planning_module(robot_config, module_factory)
         module._planner.plan_selected_joint_path.return_value = PlanningResult(
             status=PlanningStatus.TIMEOUT, message="planner timed out"
         )
@@ -1150,6 +1163,34 @@ class TestPlanningDiagnostics:
         assert result.status is PlanStatus.FAILED
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
         assert module._state == ManipulationState.IDLE
+
+    def test_planner_exception_fails_only_that_request(self, robot_config, module_factory):
+        """A backend that raises fails that one request; the next one is planned."""
+        module = self._planning_module(robot_config, module_factory)
+        module._planner.plan_selected_joint_path.side_effect = RuntimeError(
+            "Invalid goal configuration requested, cannot plan!"
+        )
+
+        result = self._plan(module, robot_config, [0.5, 0.5, 0.5])
+
+        assert result.status is PlanStatus.FAILED
+        assert result.message == (
+            "Planning failed: Invalid goal configuration requested, cannot plan!"
+        )
+        assert module._state == ManipulationState.IDLE
+        self._plan(module, robot_config, [0.5, 0.5, 0.5])
+        assert module._planner.plan_selected_joint_path.call_count == 2
+
+    def test_planning_refused_in_fault_keeps_the_fault_reason(self, robot_config, module_factory):
+        module = self._planning_module(robot_config, module_factory)
+        module._state = ManipulationState.FAULT
+        module._error_message = "Execution failed: controller rejected the trajectory"
+
+        result = self._plan(module, robot_config, [0.5, 0.5, 0.5])
+
+        assert result.status is PlanStatus.FAILED
+        assert module.get_error() == "Execution failed: controller rejected the trajectory"
+        module._planner.plan_selected_joint_path.assert_not_called()
 
 
 class TestExecute:
