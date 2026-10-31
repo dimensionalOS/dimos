@@ -443,7 +443,12 @@ impl Worker {
         }
 
         let mapper = &mut state.mapper;
-        let surface_request = state.surface_request.as_ref();
+        // The surface pass costs several frames' time, so it runs only when no
+        // frame is waiting; a skipped one just skips the planner's region update.
+        let surface_request = state
+            .surface_request
+            .as_ref()
+            .filter(|_| self.jobs.is_empty());
         let emit_fine = self.config.emit_fine;
         let process_start = Instant::now();
         let (region, global_points, local_points, fine_points, surface_points) =
