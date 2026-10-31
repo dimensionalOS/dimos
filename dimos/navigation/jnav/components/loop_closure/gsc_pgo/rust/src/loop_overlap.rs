@@ -233,20 +233,31 @@ impl GscPgo {
         let mut none_overlap = 1.0;
         let mut last_counted: Option<Vec3> = None;
         let mut ln_hazards = Vec::new();
-        // pressure 2: stretches a kept closure already ties to the newest stretch (both ends within sensor reach) are closed
+        // pressure 2: a kept closure from the stretch just walked (its source within a sensor range back along the path)
+        // closes the earlier places within a sensor range of its target
         let near = |a: &Vec3, b: &Vec3| mat3::norm(&mat3::sub(a, b)) < model.sensor_range;
-        let kept_ties: Vec<(Vec3, Vec3)> = self
+        let mut none_unclosed = 1.0;
+        // path length from each keyframe to the newest
+        let mut path_from = vec![0.0; self.key_poses.len()];
+        for k in (0..self.key_poses.len().saturating_sub(1)).rev() {
+            path_from[k] = path_from[k + 1]
+                + mat3::norm(&mat3::sub(
+                    &self.key_poses[k + 1].translation_global,
+                    &self.key_poses[k].translation_global,
+                ));
+        }
+        let closed_places: Vec<Vec3> = self
             .committed_closures
             .iter()
             .filter(|c| c.gnc_weight > 0.5)
-            .map(|c| {
-                (
-                    self.key_poses[c.source_id].translation_global,
-                    self.key_poses[c.target_id].translation_global,
-                )
+            .flat_map(|c| [(c.source_id, c.target_id), (c.target_id, c.source_id)])
+            .filter(|&(recent, _)| {
+                path_from
+                    .get(recent)
+                    .is_some_and(|&d| d <= model.sensor_range)
             })
+            .map(|(_, earlier)| self.key_poses[earlier].translation_global)
             .collect();
-        let mut none_unclosed = 1.0;
         for j in 0..self.newest_closure_target() {
             let position = self.key_poses[j].translation_global;
             // keyframes closer than a sensor range along the path see the same place: count one of them
@@ -257,12 +268,10 @@ impl GscPgo {
             }
             last_counted = Some(position);
             let (probability, unresolved, ln_chance) = model.overlap(j);
-            let closed = kept_ties.iter().any(|(source, target)| {
-                (near(source, &model.newest) && near(target, &position))
-                    || (near(target, &model.newest) && near(source, &position))
-            });
-            if !closed {
-                none_unclosed *= 1.0 - probability;
+            let closed = closed_places.iter().any(|place| near(place, &position));
+            // the stretch walked within a sensor range back along the path is continuous odometry, not a loop
+            if !closed && path_from[j] > model.sensor_range {
+                none_unclosed *= 1.0 - model.revisit(j);
             }
             let chance = (probability * unresolved).clamp(0.0, 1.0);
             // this place's hazard -ln(1 - chance), in log space: ln(chance) where -ln(1 - chance) ~ chance
@@ -345,6 +354,20 @@ impl OverlapModel<'_> {
     /// sensor-reach Gaussian of standard deviation sensor_range, e^-1/2 at its edge), and the chance j is off by more than
     /// the position search's radius (3-dof chi tail, isotropic), i.e. that only a search by appearance could find it; and
     /// the log of their product, finite where the product underflows.
+    /// The chance the newest keyframe is back on keyframe j's spot: within the position search's radius of it, with the
+    /// relative position uncertain as `relative` (the same kernel as `overlap`, the radius in place of the sensor reach).
+    pub(crate) fn revisit(&self, j: usize) -> f64 {
+        let covariance = self.relative(j);
+        let radius = self.search_radius * self.search_radius;
+        let blurred = add_mat(
+            &covariance,
+            &[[radius, 0.0, 0.0], [0.0, radius, 0.0], [0.0, 0.0, radius]],
+        );
+        let offset = mat3::sub(&self.key_poses[j].translation_global, &self.newest);
+        ((radius.powi(3) / det(&blurred)).sqrt()
+            * (-0.5 * quadratic_inverse(&blurred, &offset)).exp())
+        .clamp(0.0, 1.0)
+    }
     pub(crate) fn overlap(&self, j: usize) -> (f64, f64, f64) {
         let covariance = self.relative(j);
         let sensor = self.sensor_range * self.sensor_range;
