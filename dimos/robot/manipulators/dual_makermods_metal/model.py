@@ -67,5 +67,6 @@ def dual_metal_model_config(
             )
             for side in SIDES
         ],
+        gripper_hardware_ids={f"{side}_arm": f"{side}_arm" for side in SIDES},
         auto_convert_meshes=True,
     )

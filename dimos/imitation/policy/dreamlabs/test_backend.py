@@ -217,3 +217,25 @@ def test_eef_reply_accepts_sdk_flat_gripper_shape(backend, images):
     trajectory = instance.predict(images, STATE, task="move")
     assert trajectory.points[-1].grippers == {"grip": 0.75}
     assert instance.get_last_action_response()["per_key"]["action.left_grip"] == [0.75] * 48
+
+
+@pytest.mark.parametrize(
+    "roles", [("overhead",), ("wrist_l", "wrist_r"), ("overhead", "wrist_l", "wrist_r")]
+)
+def test_camera_contract_encodes_only_configured_views(
+    policy_config_fixture, images, roles, mocker
+):
+    policy_config_fixture.dreamlabs.camera_roles = roles
+    client = mocker.Mock()
+    mocker.patch("dimos.imitation.policy.dreamlabs.backend.create_client", return_value=client)
+    with closing(DreamlabsBackend(policy_config_fixture)) as instance:
+        selected = {role: images[role] for role in roles}
+        instance.observe(selected, STATE, task="move", timestamp=1000.0)
+        frames = client.set_observation.call_args.args[0]
+        assert set(frames) == {f"video.{role}" for role in roles}
+        assert client.policy.call_args.args[0]["embodiment"]["video"] == {
+            role: f"observation.images.{role}" for role in roles
+        }
+        with pytest.raises(ValueError, match="camera roles"):
+            instance.observe({}, STATE, task="move", timestamp=1000.2)
+        assert client.set_observation.call_count == 1

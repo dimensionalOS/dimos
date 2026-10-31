@@ -134,19 +134,39 @@ def test_derived_model_prefixes_frames_and_keeps_individual_mounts(tmp_path: Pat
     assert model.get_joint("right_joint1").parent_link == "right_base_link"
 
 
-def test_manipulation_grippers_remain_unbound_until_multigripper_pr() -> None:
+def test_gripper_commands_route_to_selected_group_only() -> None:
     config = dual_metal_model_config()
-    module = ManipulationModule(model=config)
-    module._control_coordinator = Mock()
-    module._world_monitor = Mock(planning_groups=PlanningGroupRegistry(config.planning_groups))
+    m = ManipulationModule(model=config)
+    m._control_coordinator = Mock()
+    m._world_monitor = Mock(planning_groups=PlanningGroupRegistry(config.planning_groups))
     try:
-        assert not any(group.has_gripper for group in module.list_planning_groups())
-        for group_id in ("left_arm", "right_arm", None):
-            assert module.set_gripper_position(0.5, group_id).status is CommandStatus.REJECTED
-        module._control_coordinator.task_invoke.assert_not_called()
+        m._control_coordinator.task_invoke.return_value = True
+        assert m.set_gripper_position(0.8, "left_arm").status is CommandStatus.SUCCEEDED
+        m._control_coordinator.task_invoke.assert_called_once_with(
+            "left_arm_gripper", "set_normalized", {"values": [0.8]}
+        )
+        m._control_coordinator.task_invoke.reset_mock()
+        assert m.set_gripper_position(0.2, "right_arm").status is CommandStatus.SUCCEEDED
+        m._control_coordinator.task_invoke.assert_called_once_with(
+            "right_arm_gripper", "set_normalized", {"values": [0.2]}
+        )
+        m._control_coordinator.task_invoke.reset_mock()
+        m.set_gripper_position(0.5)
+        m._control_coordinator.task_invoke.assert_not_called()
+        m._control_coordinator.task_invoke.return_value = [0.8]
+        assert m._get_group_gripper_position("left_arm") == 0.8
+        m._control_coordinator.task_invoke.assert_called_once_with(
+            "left_arm_gripper", "get_normalized", {}
+        )
+        m._control_coordinator.task_invoke.reset_mock()
+        m._control_coordinator.task_invoke.return_value = [0.2]
+        assert m._get_group_gripper_position("right_arm") == 0.2
+        m._control_coordinator.task_invoke.assert_called_once_with(
+            "right_arm_gripper", "get_normalized", {}
+        )
     finally:
-        module._world_monitor = None
-        module.stop()
+        m._world_monitor = None
+        m.stop()
 
 
 @pytest.mark.parametrize("position", [(0.0, float("nan"), 0.0), (0.0, float("inf"), 0.0)])
@@ -158,3 +178,10 @@ def test_rejects_nonfinite_mounts(position) -> None:
 def test_rejects_ambiguous_mount_positions() -> None:
     with pytest.raises(ValueError, match="distinct"):
         dual_metal_model_config(left_xyz=(0, 0, 0), right_xyz=(0, 0, 0))
+
+
+def test_gripper_mapping_rejects_unknown_planning_groups() -> None:
+    config = dual_metal_model_config()
+    with pytest.raises(ValueError, match="declared groups"):
+        type(config)(**{**dict(config), "gripper_hardware_ids": {"missing_arm": "left_arm"}})
+

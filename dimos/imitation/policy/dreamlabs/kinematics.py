@@ -28,6 +28,11 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 class DreamlabsKinematics:
     def __init__(self, config: DreamlabsBackendConfig) -> None:
+        for side, arm in config.arms.items():
+            if arm.target_to_sdk_xyz is None or arm.target_to_sdk_xyzw is None:
+                raise ValueError(
+                    f"Dreamlabs {side} arm requires a calibrated target-to-SDK TCP transform"
+                )
         self.config = config
         self.model = config.model.load()
         self._parents = {joint.child_link: joint for joint in self.model.joints}
