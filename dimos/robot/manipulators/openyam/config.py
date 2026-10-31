@@ -18,8 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
@@ -152,3 +155,50 @@ OPENYAM = DamiaoRobot(
     passive_grippers=frozenset({OPENYAM_GRIPPER_NAME}),
     home_joints=list(OPENYAM_HOME_JOINTS),
 )
+
+
+# ABC Sim's single-arm scenes (data/abc_count, abc_clutter, abc_relative): one YAM
+# drives, the other stays parked. abc_yam/yam.urdf is generated from the simulator's own
+# MJCF so planning and sim agree.
+OPENYAM_SIM_HARDWARE_ID = "arm"
+OPENYAM_SIM_GRIPPER_TASK = "arm_gripper"
+OPENYAM_SIM_MODEL_PATH = LfsPath("abc_yam") / "yam.urdf"
+OPENYAM_SIM_SCENE = LfsPath("abc_count/scene.xml")
+OPENYAM_SIM_RIGHT_BASE = (0.2525, -0.31, 0.75)
+OPENYAM_SIM_LEFT_BASE = (0.2525, 0.31, 0.75)
+
+
+def make_openyam_sim_model_config(
+    base: tuple[float, float, float] = OPENYAM_SIM_RIGHT_BASE,
+) -> RobotModelConfig:
+    """Planning model for one simulated YAM whose base sits at ``base`` in the world."""
+    return RobotModelConfig(
+        model=RobotModel.from_file(OPENYAM_SIM_MODEL_PATH).with_default_joint_acceleration_limit(
+            2.0
+        ),
+        base_pose=PoseStamped(frame_id="world", position=Vector3(*base)),
+        joint_names=list(OPENYAM_ARM_JOINTS),
+        base_link="base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(OPENYAM_ARM_JOINTS),
+                base_link="base",
+                tip_link="grasp_frame",
+            )
+        ],
+        auto_convert_meshes=True,
+        home_joints=list(OPENYAM_HOME_JOINTS),
+        pre_grasp_offset=0.05,
+    )
+
+
+def openyam_sim_hardware() -> HardwareComponent:
+    """The simulated YAM; it attaches to the blueprint's MujocoSimModule."""
+    return HardwareComponent(
+        hardware_id=OPENYAM_SIM_HARDWARE_ID,
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=list(OPENYAM_JOINTS),
+        adapter_type="sim_mujoco",
+        auto_enable=True,
+    )

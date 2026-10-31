@@ -28,12 +28,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import math
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
 
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.types import Outcome, recording
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs.Transform import Transform
 
 T = TypeVar("T")
 
@@ -286,6 +289,68 @@ def hung_tool(outcome: Outcome) -> float:
         and math.hypot(hole_in_frame[1], hole_in_frame[2] - 0.08625) < 0.007
         and abs(np.dot(hole.rotation.to_rotation_matrix()[:, 2], frame_r[:, 0])) > 0.95
     )
+
+
+# ABC Sim (data/abc_*): success rules follow abc_sim/task_eval.
+Box = tuple[tuple[float, float, float], tuple[float, float, float]]
+
+
+def _inside(item: Transform, container: Transform, box: Box) -> bool:
+    """``item``'s origin lies in ``box`` (centre, half sizes) in the container's frame."""
+    local = (
+        container.rotation.to_rotation_matrix().T
+        @ (item.translation - container.translation).to_numpy()
+    )
+    return bool(np.all(np.abs(local - box[0]) <= box[1]))
+
+
+def count_inside(
+    items: Sequence[str], container: str, box: Box, *, want: int
+) -> Callable[[Outcome], float]:
+    """Exactly ``want`` of ``items`` ended inside ``container``."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            try:
+                box_pose = last_body_transform(store, container)
+                poses = [last_body_transform(store, item) for item in items]
+            except LookupError:
+                return 0.0
+        return float(sum(_inside(pose, box_pose, box) for pose in poses) == want)
+
+    return grade
+
+
+def placed_beside(
+    mover: str,
+    reference: str,
+    axis: tuple[float, float],
+    *,
+    along_m: tuple[float, float] = (0.06, 0.30),
+    perp_max_m: float = 0.08,
+    placed_z_m: float = 0.03,
+) -> Callable[[Outcome], float]:
+    """``mover`` rests ``along_m`` from ``reference`` along world ``axis``, within ``perp_max_m``
+    of it, and no higher than ``placed_z_m`` above where it started."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            try:
+                start = first_body_transform(store, mover).translation
+                end = last_body_transform(store, mover).translation
+                ref = last_body_transform(store, reference).translation
+            except LookupError:
+                return 0.0
+        rel = np.array([end.x - ref.x, end.y - ref.y])
+        along = float(rel @ axis)
+        perp = abs(float(rel[0] * axis[1] - rel[1] * axis[0]))
+        return float(
+            along_m[0] <= along <= along_m[1]
+            and perp <= perp_max_m
+            and end.z - start.z <= placed_z_m
+        )
+
+    return grade
 
 
 def human(task: str) -> Callable[[Outcome], float]:

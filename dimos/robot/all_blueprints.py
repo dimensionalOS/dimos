@@ -120,6 +120,7 @@ all_blueprints = {
     "openyam-connection-control": "dimos.robot.manipulators.openyam.blueprints.connection:openyam_connection_control",
     "openyam-lerobot-quest-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_quest_rollout",
     "openyam-lerobot-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_rollout",
+    "openyam-manipulation-sim": "dimos.robot.manipulators.openyam.blueprints.simulation:openyam_manipulation_sim",
     "openyam-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_planner_coordinator",
     "openyam-quest-collection": "dimos.robot.manipulators.openyam.blueprints.learning_quest_collection:openyam_quest_collection",
     "openyam-teach-collection": "dimos.robot.manipulators.openyam.blueprints.learning_collection:openyam_teach_collection",
