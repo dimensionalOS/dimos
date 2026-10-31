@@ -16,20 +16,21 @@
 
 from __future__ import annotations
 
-import math
-
 from dimos.navigation.embodiment.base import ControllerConfig, Embodiment
 from dimos.robot.galaxea.r1pro.config import (
-    R1PRO_CHASSIS_WIDTH_M,
+    R1PRO_CHASSIS_FRONT_X_M,
+    R1PRO_CHASSIS_HALF_WIDTH_M,
+    R1PRO_CHASSIS_REAR_X_M,
+    R1PRO_NAV_STEPPABLE_M,
     R1PRO_OVERHEAD_CLEARANCE_M,
-    R1PRO_ROTATION_DIAMETER_M,
 )
 
 R1PRO = Embodiment(
-    # The chassis box whose diagonal is the rotation diameter.
-    length=math.sqrt(R1PRO_ROTATION_DIAMETER_M**2 - R1PRO_CHASSIS_WIDTH_M**2),
-    width=R1PRO_CHASSIS_WIDTH_M,
-    center_off=0,  # body center relative to the pose point
+    # The URDF's chassis box, which sits behind base_link.
+    length=R1PRO_CHASSIS_FRONT_X_M - R1PRO_CHASSIS_REAR_X_M,
+    width=2 * R1PRO_CHASSIS_HALF_WIDTH_M,
+    # body center relative to the pose point
+    center_off=(R1PRO_CHASSIS_FRONT_X_M + R1PRO_CHASSIS_REAR_X_M) / 2,
     comfort=0.4,  # obstacles-we-care-about radius (m)
     precision=0.05,  # local control tracking accuracy, the clearance floor (m)
     # Ground speed, so the walk inverse below asks 0.97 m/s of the 1.0 m/s R1PRO_PLANAR_BASE limit; the 10-28 drive only measured up to 0.55.
@@ -48,7 +49,7 @@ R1PRO = Embodiment(
     strafe=1.5,  # holonomic, but priced above forward so it turns to face long legs
     reverse=1.8,  # backwards drives into what the torso hides from the head camera
     yaw_w=0.15,  # planner cost per rad of rotation
-    steppable=0.07,  # one voxel layer of the nav map, which cannot resolve the wheels' 3 cm (m)
+    steppable=R1PRO_NAV_STEPPABLE_M,  # two nav map layers, as MLS steps: the fused floor spans them (m)
     height=R1PRO_OVERHEAD_CLEARANCE_M,  # anything above it passes overhead (m)
     base_height=0.0,  # base_link sits at the wheel contact (m)
     control=ControllerConfig(

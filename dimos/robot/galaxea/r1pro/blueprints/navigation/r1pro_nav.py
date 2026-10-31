@@ -31,7 +31,7 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
 )
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_WIDTH_M,
-    R1PRO_MAX_STEP_HEIGHT_M,
+    R1PRO_NAV_VOXEL_SIZE_M,
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
     R1PRO_URDF_MANAGER_CONFIG,
@@ -42,7 +42,7 @@ from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
 
-VOXEL_SIZE_M = 0.07
+VOXEL_SIZE_M = R1PRO_NAV_VOXEL_SIZE_M
 # Turn-in-place radius plus half a voxel, since voxel centres sit up to half a voxel inside the surface they stand for.
 WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2 + VOXEL_SIZE_M / 2
 PLANNER_VIZ_HZ = 0.0
@@ -100,8 +100,8 @@ r1pro_nav = autoconnect(
         wall_buffer_weight=5.0,
         # Denser nodes reach the gaps between office furniture.
         node_spacing_m=0.6,
-        # MLS rounds steps down to whole voxels and the fused floor spans up to three layers, so floor two layers apart must connect.
-        step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, 2 * VOXEL_SIZE_M),
+        # The same step the local planner takes as floor, so MLS never routes over what it calls an obstacle.
+        step_threshold_m=R1PRO.steppable,
         step_penalty_weight=4.0,
         # Head depth floor speckle (single voxels, often for one map update) walls off whole corridors, so take neither.
         min_neighbor_voxels=1,
