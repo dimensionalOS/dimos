@@ -19,7 +19,9 @@
 Joins the ray tracer's "region sent" lines (when the lidar frame arrived) with
 the planner's "region applied" lines (when its region update finished) by
 stamp, and prints the latency and per-stage medians and p95s. Cells retuned
-come from the planner's throttled stage lines, one per few seconds.
+come from the planner's throttled stage lines, one per few seconds, as do
+the CPU planner's redo percentages (columns its region updates read, of the
+region's); the GPU's come from every region sent with a changed column.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import statistics
 
 FIELD = re.compile(r"(\w+)=(\S+)")
 PERCENTILE_95 = 0.95
+PERCENT = 100.0
 
 
 def fields(line: str) -> dict[str, str]:
@@ -57,6 +60,7 @@ def main() -> None:
     applied: dict[str, dict[str, str]] = {}
     errors = 0
     retuned: list[float] = []
+    cpu_redo: list[float] = []
     with open(args.log, errors="replace") as log:
         for line in log:
             if "[err]" in line or " ERROR " in line:
@@ -66,6 +70,10 @@ def main() -> None:
                 sent[f["stamp"]] = f
             elif "gpu surface region update stages" in line:
                 retuned.append(float(fields(line).get("cells_retuned", "0")))
+            elif "region update stages" in line:
+                f = fields(line)
+                if float(f.get("region_columns", "0")) > 0:
+                    cpu_redo.append(PERCENT * float(f["read_columns"]) / float(f["region_columns"]))
             elif "region applied" in line:
                 f = fields(line)
                 applied[f["stamp"]] = f
@@ -74,7 +82,7 @@ def main() -> None:
         raise SystemExit("no 'region sent' lines; was DIMOS_LOG_LEVEL=DEBUG set?")
     start = min(float(f["received_unix_s"]) for f in sent.values()) + args.skip_s
     latency, gpu_latency, tracer_ms, planner_ms = [], [], [], []
-    dirty, bricks, region_bricks, rows = [], [], [], []
+    dirty, bricks, region_bricks, rows, gpu_redo = [], [], [], [], []
     for stamp, s in sent.items():
         if float(s["received_unix_s"]) < start:
             continue
@@ -83,6 +91,8 @@ def main() -> None:
             dirty.append(float(s["dirty_columns"]))
             bricks.append(float(s["surface_bricks"]))
             region_bricks.append(float(s["region_bricks"]))
+        if float(s.get("region_columns", "0")) > 0 and float(s.get("dirty_columns", "0")) > 0:
+            gpu_redo.append(PERCENT * float(s["read_columns"]) / float(s["region_columns"]))
         a = applied.get(stamp)
         if a is None:
             continue
@@ -103,6 +113,8 @@ def main() -> None:
     print(summary("window bricks", bricks))
     print(summary("region bricks", region_bricks))
     print(summary("cells retuned", retuned))
+    print(summary("gpu redo %", gpu_redo))
+    print(summary("cpu redo %", cpu_redo))
 
 
 if __name__ == "__main__":
