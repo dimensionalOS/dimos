@@ -25,6 +25,7 @@ from typing import Any, Literal, Protocol, TypedDict
 
 from pydantic import Field, field_validator
 
+from dimos.control.tasks.eef_trajectory_task.trajectory import EefTrajectory
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.core import rpc
 from dimos.core.stream import In
@@ -32,6 +33,7 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
+from dimos.imitation.policy.dreamlabs.config import DreamlabsBackendConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -79,7 +81,8 @@ class RolloutControlSpec(Spec, Protocol):
 class PolicyModuleConfig(IsolatedPythonModuleConfig):
     """Configuration for one checkpoint shared with the isolated runtime."""
 
-    backend: Literal["lerobot"] = "lerobot"
+    backend: Literal["lerobot", "dreamlabs"] = "lerobot"
+    dreamlabs: DreamlabsBackendConfig = Field(default_factory=DreamlabsBackendConfig)
     image_width: int | None = Field(default=None, gt=0)
     image_height: int | None = Field(default=None, gt=0)
     image_mapping: dict[str, str] = Field(
@@ -173,7 +176,7 @@ class PolicyModule(IsolatedPythonModule):
         raise NotImplementedError
 
     @rpc
-    def get_last_preview(self) -> JointTrajectory | None:
+    def get_last_preview(self) -> JointTrajectory | EefTrajectory | None:
         """Return the last validated policy chunk without dispatching it."""
         raise NotImplementedError
 
@@ -185,7 +188,7 @@ class PolicyModule(IsolatedPythonModule):
 
 def backend_project(backend: str) -> Path:
     """Locate the independently locked dependency project for a backend."""
-    if backend != "lerobot":
+    if backend not in {"dreamlabs", "lerobot"}:
         raise ValueError(f"Unknown policy backend {backend!r}")
     return get_project_root() / "native/python" / backend
 
