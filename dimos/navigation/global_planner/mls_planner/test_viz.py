@@ -25,10 +25,10 @@ def _rgb(packed: int) -> tuple[int, int, int]:
     return (packed >> 24) & 0xFF, (packed >> 16) & 0xFF, (packed >> 8) & 0xFF
 
 
-def test_surface_drops_cells_below_the_wall_clearance() -> None:
+def test_surface_drops_cells_below_the_boundary_clearance() -> None:
     pts = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0]], dtype=np.float32)
     clearance = np.array([0.05, 0.2, 2.0], dtype=np.float32)
-    arch = viz.surface_points(pts, clearance, 0.1, wall_clearance_m=0.1, clearance_clamp_m=1.0)
+    arch = viz.surface_points(pts, clearance, 0.1, boundary_clearance_m=0.1, clearance_clamp_m=1.0)
     assert arch.positions.as_arrow_array().to_pylist() == [[1, 0, 0], [2, 0, 0]]
 
 
@@ -88,7 +88,7 @@ def test_overrides_follow_the_planner_publish_rate() -> None:
     assert isinstance(surface, partial) and surface.func is viz.render_surface_region
     assert surface.keywords == {
         "voxel_size": 0.08,
-        "wall_clearance_m": 0.1,
+        "boundary_clearance_m": 0.1,
         "clearance_clamp_m": 1.0,
         "static": True,
     }

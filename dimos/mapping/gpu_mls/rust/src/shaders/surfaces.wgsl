@@ -1,6 +1,6 @@
 // Surface extraction over a dense window of columns: occupancy from the
 // brick map, per-cell plane heights, the standable test, bit-parallel round
-// hole closing per z slice (32 slices per word op), and jump-flood wall
+// hole closing per z slice (32 slices per word op), and jump-flood boundary
 // distance. Appended to map_common.wgsl and fit.wgsl.
 //
 // Heights are sub-voxel: each occupied cell carries the height of its voxel's
@@ -10,7 +10,7 @@
 // Column bit layout: word (y * W + x) * ZW + z / 32, bit z % 32.
 // Cell layout: (z * H + y) * W + x.
 //
-// Wall distance runs per plane: a connected surface (4-neighbor links with a
+// Boundary distance runs per plane: a connected surface (4-neighbor links with a
 // step of at most step_m between the planes) projected from above.
 // Where a connected surface overlaps itself in x,y (a ramp under a balcony),
 // it splits into sheets: within a column, a cell more than a step above the
@@ -57,10 +57,10 @@ const NO_SEED: u32 = 0xffffffffu;
 @group(1) @binding(2) var<storage, read_write> standable: array<u32>;
 @group(1) @binding(3) var<storage, read_write> grown: array<u32>;
 @group(1) @binding(4) var<storage, read_write> surface: array<u32>;
-@group(1) @binding(5) var<storage, read_write> wall: array<u32>;
+@group(1) @binding(5) var<storage, read_write> boundary: array<u32>;
 @group(1) @binding(6) var<storage, read_write> seeds_a: array<u32>;
 @group(1) @binding(7) var<storage, read_write> seeds_b: array<u32>;
-@group(1) @binding(8) var<storage, read_write> wall_distance: array<f32>;
+@group(1) @binding(8) var<storage, read_write> boundary_distance: array<f32>;
 // Two union-find parent arrays over cells: components, then planes.
 @group(1) @binding(9) var<storage, read_write> labels: array<atomic<u32>>;
 @group(1) @binding(10) var<storage, read_write> heights: array<f32>;
@@ -124,7 +124,7 @@ fn bit_at(x: i32, y: i32, z: i32, which: u32) -> bool {
         case 1u: { word = surface[w]; }
         case 2u: { word = grown[w]; }
         case 4u: { word = atomicLoad(&planar[w]); }
-        default: { word = wall[w]; }
+        default: { word = boundary[w]; }
     }
     return ((word >> (u32(z) & 31u)) & 1u) != 0u;
 }
@@ -146,7 +146,7 @@ fn cell_index(x: i32, y: i32, z: i32) -> u32 {
     return (u32(z) * sp.size.y + u32(y)) * sp.size.x + u32(x);
 }
 
-// A wall seed is its cell index, so it carries the wall's z.
+// A boundary seed is its cell index, so it carries the boundary's z.
 fn seed_dist_sq(x: i32, y: i32, seed: u32) -> i32 {
     if (seed == NO_SEED) {
         return 0x7fffffff;
@@ -752,7 +752,7 @@ fn edge_in_direction(x: i32, y: i32, z: i32, dx: i32, dy: i32) -> bool {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn find_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn find_boundaries(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
@@ -760,7 +760,7 @@ fn find_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
     let y = i32(gid.y);
     let base = column_word(x, y, 0);
     for (var w = 0u; w < sp.size.w; w++) {
-        wall[base + w] = 0u;
+        boundary[base + w] = 0u;
     }
     if (!column_active(x, y)) {
         return;
@@ -770,16 +770,16 @@ fn find_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (!bit_at(x, y, z, 1u)) {
             continue;
         }
-        var is_wall = false;
+        var is_boundary = false;
         for (var k = 0; k < 4; k++) {
             let d = dirs[k];
             if (!surface_linked(x, y, z, x + d.x, y + d.y) && edge_in_direction(x, y, z, d.x, d.y)) {
-                is_wall = true;
+                is_boundary = true;
                 break;
             }
         }
-        if (is_wall) {
-            wall[base + u32(z) / 32u] |= 1u << (u32(z) & 31u);
+        if (is_boundary) {
+            boundary[base + u32(z) / 32u] |= 1u << (u32(z) & 31u);
         }
     }
 }
@@ -978,7 +978,7 @@ struct PlaneInfo {
 @group(3) @binding(6) var<storage, read_write> plane_owner: array<u32>;
 // Per plane cell: the z of the plane's cell in that column, -1 where it has none.
 @group(3) @binding(7) var<storage, read_write> plane_z: array<i32>;
-// export_cells rows of EXPORT_WORDS: x, y, z, height bits, wall distance bits.
+// export_cells rows of EXPORT_WORDS: x, y, z, height bits, boundary distance bits.
 @group(3) @binding(8) var<storage, read_write> export_rows: array<u32>;
 @group(3) @binding(9) var<storage, read_write> export_count: array<atomic<u32>>;
 
@@ -1076,7 +1076,7 @@ fn plane_cell(id: u32, x: i32, y: i32) -> u32 {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn scatter_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn scatter_boundaries(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
@@ -1098,8 +1098,8 @@ fn scatter_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-// The plane has a non-wall cell in this column: on a smeared floor its sheet
-// stacks, and a wall on one layer must not seed the layer walked above it.
+// The plane has a non-boundary cell in this column: on a smeared floor its sheet
+// stacks, and a boundary on one layer must not seed the layer walked above it.
 fn plane_open_in_column(x: i32, y: i32, id: u32) -> bool {
     var word = 0u;
     var bits = 0u;
@@ -1192,7 +1192,7 @@ fn nearest_seed_3d(id: u32, x: i32, y: i32, z: i32) -> f32 {
             best = min(best, seed_dist_sq_3d(x, y, z, plane_read(plane_cell(id, qx, qy))));
         }
     }
-    // A wall of the plane one link away, which an open column keeps out of the flood.
+    // A boundary of the plane one link away, which an open column keeps out of the flood.
     let dirs = array<vec2<i32>, 4>(vec2<i32>(-1, 0), vec2<i32>(1, 0), vec2<i32>(0, -1), vec2<i32>(0, 1));
     for (var k = 0; k < 4; k++) {
         let nx = x + dirs[k].x;
@@ -1211,11 +1211,11 @@ fn nearest_seed_3d(id: u32, x: i32, y: i32, z: i32) -> f32 {
     return best;
 }
 
-// Distance in meters from each surface cell to the nearest wall cell of its
-// plane, rise included, 0 on wall cells, -1 on a plane with no wall. Cells
+// Distance in meters from each surface cell to the nearest boundary cell of its
+// plane, rise included, 0 on boundary cells, -1 on a plane with no boundary. Cells
 // off the surface are left as they were.
 @compute @workgroup_size(8, 8, 1)
-fn measure_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn measure_boundaries(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
@@ -1232,13 +1232,13 @@ fn measure_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
             let id = plane_of_cell(c);
             if (id != NO_SEED) {
                 let best = nearest_seed_3d(id, x, y, z);
-                // Any non-wall cell is at least one cell from a wall.
+                // Any non-boundary cell is at least one cell from a boundary.
                 if (best < NO_DISTANCE) {
                     d = max(sqrt(best), sp.voxel_size);
                 }
             }
         }
-        wall_distance[c] = d;
+        boundary_distance[c] = d;
     }
 }
 
@@ -1261,7 +1261,7 @@ fn export_planes(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 const EXPORT_WORDS: u32 = 5u;
 
-fn export_row(x: i32, y: i32, z: u32, height: f32, wall_dist: f32) {
+fn export_row(x: i32, y: i32, z: u32, height: f32, boundary_dist: f32) {
     let i = atomicAdd(&export_count[0], 1u);
     if (i >= arrayLength(&export_rows) / EXPORT_WORDS) {
         return;
@@ -1271,10 +1271,10 @@ fn export_row(x: i32, y: i32, z: u32, height: f32, wall_dist: f32) {
     export_rows[base + 1u] = bitcast<u32>(y + sp.window_min.y);
     export_rows[base + 2u] = z;
     export_rows[base + 3u] = bitcast<u32>(height);
-    export_rows[base + 4u] = bitcast<u32>(wall_dist);
+    export_rows[base + 4u] = bitcast<u32>(boundary_dist);
 }
 
-// Every surface cell of the write box and z range with its height and wall
+// Every surface cell of the write box and z range with its height and boundary
 // distance, packed for readback.
 @compute @workgroup_size(8, 8, 1)
 fn export_cells(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -1297,7 +1297,7 @@ fn export_cells(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let c = cell_index(x, y, i32(z));
-            export_row(x, y, bitcast<u32>(i32(z) + sp.window_min.z), heights[c], wall_distance[c]);
+            export_row(x, y, bitcast<u32>(i32(z) + sp.window_min.z), heights[c], boundary_distance[c]);
         }
     }
 }

@@ -22,7 +22,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPl
 from dimos.robot.unitree.go2.constants import BASE_LINK_HEIGHT, ROBOT_HEIGHT
 
 voxel_size = 0.08
-wall_clearance_m = 0.1
+boundary_clearance_m = 0.1
 
 ray_tracing_config = RayTracingVoxelMapConfig(
     voxel_size=voxel_size, global_emit_every=50, viz_emit_every=5
@@ -53,7 +53,7 @@ mls_planner_config = MLSPlannerNativeConfig(
     voxel_size=voxel_size,
     robot_height=ROBOT_HEIGHT,
     start_z_offset_m=BASE_LINK_HEIGHT,
-    wall_clearance_m=wall_clearance_m,
+    boundary_clearance_m=boundary_clearance_m,
 )
 
 

@@ -28,7 +28,7 @@ use dimos_gpu_mls::brick_map::{BrickMap, MapConfig, VoxelKey, VoxelSnapshot};
 use dimos_gpu_mls::gpu::Gpu;
 use dimos_gpu_mls::surfaces::{SurfaceConfig, SurfaceExtractor, Window};
 use dimos_mls_planner::mls_planner::{Config as PlannerConfig, Planner};
-use dimos_mls_planner::{surface_cells, wall_distances};
+use dimos_mls_planner::{boundary_distances, surface_cells};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{update_map, Config, VoxelMap};
 
 #[path = "../tests/common/mod.rs"]
@@ -48,7 +48,7 @@ const BOX_M: Point = (20.0, 20.0, 9.0);
 const BOXES: usize = 8;
 /// surface_parity.rs's bounds on the share of the CPU's cells that differ.
 const STANDABLE_DIVERGENCE: f64 = 0.15;
-const WALL_DIVERGENCE: f64 = 0.30;
+const BOUNDARY_DIVERGENCE: f64 = 0.30;
 /// map_parity.rs's bounds: mismatched voxels as a share, and moment error.
 const MAP_MISMATCH: f64 = 1e-3;
 const MOMENT_TOLERANCE: f64 = 1e-4;
@@ -328,18 +328,18 @@ fn check_box(
         surface_cells(&occupied, clearance, 0).into_iter().collect();
     let gpu_standable: AHashSet<VoxelKey> = result.standable.iter().copied().collect();
     let standable = divergence("standable", &cpu_standable, &gpu_standable);
-    let cpu_walls: AHashSet<VoxelKey> =
-        wall_distances(&occupied, &result.surface, clearance, step, voxel_size)
+    let cpu_boundaries: AHashSet<VoxelKey> =
+        boundary_distances(&occupied, &result.surface, clearance, step, voxel_size)
             .into_iter()
             .filter(|(_, d)| *d == 0.0)
             .map(|(k, _)| k)
             .collect();
-    let gpu_walls: AHashSet<VoxelKey> = result.walls.iter().copied().collect();
-    let walls = divergence("wall cells", &cpu_walls, &gpu_walls);
-    explain_walls(
+    let gpu_boundaries: AHashSet<VoxelKey> = result.boundaries.iter().copied().collect();
+    let boundaries = divergence("boundary cells", &cpu_boundaries, &gpu_boundaries);
+    explain_boundaries(
         &result,
-        &cpu_walls,
-        &gpu_walls,
+        &cpu_boundaries,
+        &gpu_boundaries,
         &cpu_standable,
         &gpu_standable,
         step,
@@ -351,17 +351,17 @@ fn check_box(
         &gpu_standable,
         config.max_slope_deg,
     );
-    standable <= STANDABLE_DIVERGENCE && walls <= WALL_DIVERGENCE
+    standable <= STANDABLE_DIVERGENCE && boundaries <= BOUNDARY_DIVERGENCE
 }
 
-/// Splits the walls only the GPU has: a neighbor the CPU links (within its
+/// Splits the boundaries only the GPU has: a neighbor the CPU links (within its
 /// whole-voxel step) that the GPU's plane heights put more than the step
 /// threshold in meters away, or one the GPU turned down as standable.
 #[allow(clippy::too_many_arguments)]
-fn explain_walls(
+fn explain_boundaries(
     result: &dimos_gpu_mls::surfaces::SurfaceResult,
-    cpu_walls: &AHashSet<VoxelKey>,
-    gpu_walls: &AHashSet<VoxelKey>,
+    cpu_boundaries: &AHashSet<VoxelKey>,
+    gpu_boundaries: &AHashSet<VoxelKey>,
     cpu_standable: &AHashSet<VoxelKey>,
     gpu_standable: &AHashSet<VoxelKey>,
     step_cells: i32,
@@ -373,7 +373,7 @@ fn explain_walls(
         .copied()
         .zip(result.heights.iter().copied())
         .collect();
-    let only_gpu: Vec<VoxelKey> = gpu_walls.difference(cpu_walls).copied().collect();
+    let only_gpu: Vec<VoxelKey> = gpu_boundaries.difference(cpu_boundaries).copied().collect();
     let in_band = only_gpu
         .iter()
         .filter(|k| {
@@ -411,7 +411,7 @@ fn explain_walls(
         .count();
     let share = |n: usize| 100.0 * n as f64 / only_gpu.len().max(1) as f64;
     println!(
-        "    of the {} walls only on the gpu: {in_band} ({:.0}%) face a cpu-linked neighbor rising more than {step_m} m, {beside_lost} ({:.0}%) border a cell the gpu turned down as standable, {either} ({:.0}%) either",
+        "    of the {} boundaries only on the gpu: {in_band} ({:.0}%) face a cpu-linked neighbor rising more than {step_m} m, {beside_lost} ({:.0}%) border a cell the gpu turned down as standable, {either} ({:.0}%) either",
         only_gpu.len(),
         share(in_band),
         share(beside_lost),
@@ -593,11 +593,11 @@ const EXPORT_CLASSES: [&str; 10] = [
     "standable only on cpu: plane steeper than the slope limit",
     "standable only on cpu: short of headroom in meters",
     "standable only on gpu",
-    "wall on both",
-    "wall only on gpu: rise over the step threshold",
-    "wall only on gpu: beside a cell the gpu turned down",
-    "wall only on gpu: other",
-    "wall only on cpu",
+    "boundary on both",
+    "boundary only on gpu: rise over the step threshold",
+    "boundary only on gpu: beside a cell the gpu turned down",
+    "boundary only on gpu: other",
+    "boundary only on cpu",
 ];
 
 /// One box of a stretch of the recording as JSON for a voxel viewer: every
@@ -664,13 +664,13 @@ fn run_export(
     let cpu_standable: AHashSet<VoxelKey> =
         surface_cells(&occupied, clearance, 0).into_iter().collect();
     let gpu_standable: AHashSet<VoxelKey> = result.standable.iter().copied().collect();
-    let cpu_walls: AHashSet<VoxelKey> =
-        wall_distances(&occupied, &result.surface, clearance, step, voxel_size)
+    let cpu_boundaries: AHashSet<VoxelKey> =
+        boundary_distances(&occupied, &result.surface, clearance, step, voxel_size)
             .into_iter()
             .filter(|(_, d)| *d == 0.0)
             .map(|(k, _)| k)
             .collect();
-    let gpu_walls: AHashSet<VoxelKey> = result.walls.iter().copied().collect();
+    let gpu_boundaries: AHashSet<VoxelKey> = result.boundaries.iter().copied().collect();
     let height: ahash::AHashMap<VoxelKey, f32> = result
         .surface
         .iter()
@@ -691,7 +691,7 @@ fn run_export(
         .map(|(k, _)| *k)
         .collect();
     let class = |k: VoxelKey| -> usize {
-        let (cw, gw) = (cpu_walls.contains(&k), gpu_walls.contains(&k));
+        let (cw, gw) = (cpu_boundaries.contains(&k), gpu_boundaries.contains(&k));
         if cw && gw {
             return 5;
         }
@@ -771,9 +771,9 @@ fn planner_config(voxel_size: f32) -> PlannerConfig {
         max_overhead_m: 2.0,
         surface_closing_radius: surface.closing_radius_m,
         node_spacing_m: 1.0,
-        wall_clearance_m: 0.1,
-        wall_buffer_m: 0.75,
-        wall_buffer_weight: 100.0,
+        boundary_clearance_m: 0.1,
+        boundary_buffer_m: 0.75,
+        boundary_buffer_weight: 100.0,
         step_threshold_m: surface.step_threshold_m,
         step_penalty_weight: 4.0,
         goal_tolerance: 0.3,
@@ -781,7 +781,7 @@ fn planner_config(voxel_size: f32) -> PlannerConfig {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: false,
-        gpu_wall_distance: false,
+        gpu_boundary_distance: false,
         max_slope_deg: surface.max_slope_deg,
         surface_change_m: 0.01,
         worker_threads: 8,
@@ -789,7 +789,7 @@ fn planner_config(voxel_size: f32) -> PlannerConfig {
 }
 
 /// The GPU surface of the whole map, extracted tile by tile: each cell with
-/// its plane height and wall distance in meters (infinite with no wall).
+/// its plane height and boundary distance in meters (infinite with no boundary).
 fn tiled_surface(
     map: &mut BrickMap,
     healthy: &[VoxelKey],
@@ -820,10 +820,10 @@ fn tiled_surface(
             .expect("a tile fits the device");
         extractor.extract(map);
         map.finish();
-        let (surface, heights, walls) = extractor.read_heights(true);
-        let walls = walls.expect("asked for walls");
+        let (surface, heights, boundaries) = extractor.read_heights(true);
+        let boundaries = boundaries.expect("asked for boundaries");
         let core = |v: i32, c: i32| v.div_euclid(tile) == c;
-        for ((k, h), w) in surface.into_iter().zip(heights).zip(walls) {
+        for ((k, h), w) in surface.into_iter().zip(heights).zip(boundaries) {
             if core(k.0, t.0) && core(k.1, t.1) {
                 out.push((k, h, w.unwrap_or(f32::INFINITY)));
             }
@@ -868,9 +868,9 @@ fn sensor_height(origins: &[Point], occupied: &AHashSet<VoxelKey>, voxel_size: f
 
 /// The whole recording on the GPU map, then the MLS planner on its healthy
 /// voxels twice: with the CPU's whole-voxel surface, and with the GPU's
-/// sub-voxel surface and plane heights, and its wall distances with `gpu-walls`. Goals sit along the walked
+/// sub-voxel surface and plane heights, and its boundary distances with `gpu-boundaries`. Goals sit along the walked
 /// trajectory, so every one should be reachable from the start.
-fn run_reach(path: &str, voxel_size: f32, out: &str, gpu_wall_distance: bool) {
+fn run_reach(path: &str, voxel_size: f32, out: &str, gpu_boundary_distance: bool) {
     let gpu = Gpu::new().expect("a GPU");
     let mut map = gpu_map(&gpu, voxel_size);
     let mut origins = Vec::new();
@@ -920,13 +920,19 @@ fn run_reach(path: &str, voxel_size: f32, out: &str, gpu_wall_distance: bool) {
     let mut gpu_planner = Planner::new(config.worker_threads);
     let cells: Vec<VoxelKey> = surface.iter().map(|s| s.0).collect();
     let heights: Vec<f32> = surface.iter().map(|s| s.1).collect();
-    let walls: Vec<f32> = surface.iter().map(|s| s.2).collect();
+    let boundaries: Vec<f32> = surface.iter().map(|s| s.2).collect();
     let gpu_config = PlannerConfig {
-        gpu_wall_distance,
+        gpu_boundary_distance,
         ..planner_config(voxel_size)
     };
-    let gpu_walls = Some(walls.as_slice()).filter(|_| gpu_wall_distance);
-    gpu_planner.update_from_surface(&healthy, &cells, Some(&heights), gpu_walls, &gpu_config);
+    let gpu_boundaries = Some(boundaries.as_slice()).filter(|_| gpu_boundary_distance);
+    gpu_planner.update_from_surface(
+        &healthy,
+        &cells,
+        Some(&heights),
+        gpu_boundaries,
+        &gpu_config,
+    );
     let gpu_graph_time = started.elapsed();
     println!(
         "cpu planner build {:.0} ms ({} surface cells, {} nodes); gpu surface {:.0} ms + graph {:.0} ms ({} surface cells, {} nodes)",
@@ -1035,7 +1041,7 @@ fn run_reach(path: &str, voxel_size: f32, out: &str, gpu_wall_distance: bool) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames], or reach <voxel_size> <out.json> [gpu-walls], or export <voxel_size> <first> <count> <x> <y> <z> <half_m> <out.json>";
+    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames], or reach <voxel_size> <out.json> [gpu-boundaries], or export <voxel_size> <first> <count> <x> <y> <z> <half_m> <out.json>";
     let path = args.get(1).expect(usage);
     let voxel_size = args
         .get(3)
@@ -1059,7 +1065,7 @@ fn main() {
             path,
             voxel_size,
             args.get(4).expect(usage),
-            args.get(5).is_some_and(|a| a == "gpu-walls"),
+            args.get(5).is_some_and(|a| a == "gpu-boundaries"),
         ),
         Some("control") => run_control(
             path,

@@ -26,5 +26,5 @@ mod smoother;
 mod surfaces;
 pub mod voxel;
 
-pub use nodes::{wall_distances, wall_distances_by_height};
+pub use nodes::{boundary_distances, boundary_distances_by_height};
 pub use surfaces::surface_cells;

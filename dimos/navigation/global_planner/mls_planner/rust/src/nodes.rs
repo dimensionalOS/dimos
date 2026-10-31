@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Node placement: identify standable cells far from any wall, place graph
+//! Node placement: identify standable cells far from any boundary, place graph
 //! nodes at local maxima via NMS, and rescale cell-edge costs to push paths
 //! toward corridor centers.
 
@@ -52,9 +52,9 @@ pub struct PlacementParams {
     pub step_cells: i32,
     pub voxel_size: f32,
     pub node_spacing_m: f32,
-    pub wall_clearance_m: f32,
-    pub wall_buffer_m: f32,
-    pub wall_buffer_weight: f32,
+    pub boundary_clearance_m: f32,
+    pub boundary_buffer_m: f32,
+    pub boundary_buffer_weight: f32,
     pub step_penalty_weight: f32,
 }
 
@@ -281,7 +281,7 @@ pub fn relocate_dead_nodes(
     gone
 }
 
-/// Place graph nodes across the surface, spaced out and biased away from walls.
+/// Place graph nodes across the surface, spaced out and biased away from boundaries.
 pub fn place_nodes(
     cells: &mut SurfaceCells,
     by_col: &ColumnIz,
@@ -295,23 +295,23 @@ pub fn place_nodes(
         return;
     }
 
-    let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_cells(
+    let mut boundary_seeds: Vec<CellId> = Vec::new();
+    collect_boundary_adjacent_cells(
         cells,
         by_col,
         params.clearance_cells,
         params.step_cells,
-        &mut wall_seeds,
+        &mut boundary_seeds,
     );
-    dijkstra(cells, &wall_seeds, state, Weight::Base);
-    place_nodes_on_walls(cells, params, &state.dist, scratch, nodes);
+    dijkstra(cells, &boundary_seeds, state, Weight::Base);
+    place_nodes_on_boundaries(cells, params, &state.dist, scratch, nodes);
 }
 
-/// place_nodes on a wall distance field already measured, one per cell slot.
-pub fn place_nodes_on_walls(
+/// place_nodes on a boundary distance field already measured, one per cell slot.
+pub fn place_nodes_on_boundaries(
     cells: &mut SurfaceCells,
     params: &PlacementParams,
-    wall_dist: &[f32],
+    boundary_dist: &[f32],
     scratch: &mut NodeScratch,
     nodes: &mut Nodes,
 ) {
@@ -320,24 +320,24 @@ pub fn place_nodes_on_walls(
         return;
     }
     // Floor is the hard clearance. NMS already prefers the clearest cells.
-    let node_floor = params.wall_clearance_m;
+    let node_floor = params.boundary_clearance_m;
     let candidates: Vec<CellId> = cells
         .ids()
-        .filter(|&id| wall_dist[id as usize] >= node_floor)
+        .filter(|&id| boundary_dist[id as usize] >= node_floor)
         .collect();
-    place_from_candidates(cells, candidates, wall_dist, params, nodes);
+    place_from_candidates(cells, candidates, boundary_dist, params, nodes);
 
     let live: Vec<CellId> = cells.ids().collect();
     let clusters = window_clusters(cells, &live, &mut scratch.seen);
-    ensure_node_per_component(cells, wall_dist, params, &clusters, None, nodes);
+    ensure_node_per_component(cells, boundary_dist, params, &clusters, None, nodes);
 
-    apply_wall_safe_penalty(cells, wall_dist, params);
+    apply_boundary_safe_penalty(cells, boundary_dist, params);
 }
 
 /// Each surface cell's walked distance over surface links to the nearest
-/// wall-adjacent cell, the field node placement reads. For checking other
-/// wall-distance implementations against this one.
-pub fn wall_distances(
+/// boundary-adjacent cell, the field node placement reads. For checking other
+/// boundary-distance implementations against this one.
+pub fn boundary_distances(
     voxel_map: &AHashSet<VoxelKey>,
     surface: &[VoxelKey],
     clearance_cells: i32,
@@ -350,7 +350,7 @@ pub fn wall_distances(
     let mut cells = SurfaceCells::default();
     build_surface_cells(&mut cells, &lookup, voxel_size, step_cells);
     let mut seeds = Vec::new();
-    collect_wall_adjacent_cells(&cells, &by_col, clearance_cells, step_cells, &mut seeds);
+    collect_boundary_adjacent_cells(&cells, &by_col, clearance_cells, step_cells, &mut seeds);
     let mut state = DijkstraState::default();
     dijkstra(&cells, &seeds, &mut state, Weight::Base);
     cells
@@ -359,9 +359,9 @@ pub fn wall_distances(
         .collect()
 }
 
-/// wall_distances walked over cells linked by surface height, as the
+/// boundary_distances walked over cells linked by surface height, as the
 /// planner links a GPU surface.
-pub fn wall_distances_by_height(
+pub fn boundary_distances_by_height(
     voxel_map: &AHashSet<VoxelKey>,
     surface: &[VoxelKey],
     heights: &AHashMap<VoxelKey, f32>,
@@ -376,7 +376,7 @@ pub fn wall_distances_by_height(
     let mut cells = SurfaceCells::default();
     build_surface_cells_by_height(&mut cells, &lookup, heights, voxel_size, step_threshold_m);
     let mut seeds = Vec::new();
-    collect_wall_adjacent_cells(&cells, &by_col, clearance_cells, step_cells, &mut seeds);
+    collect_boundary_adjacent_cells(&cells, &by_col, clearance_cells, step_cells, &mut seeds);
     let mut state = DijkstraState::default();
     dijkstra(&cells, &seeds, &mut state, Weight::Base);
     cells
@@ -415,35 +415,35 @@ fn place_from_candidates(
     }
 }
 
-/// Repair the wall distance field inside the window.
-pub fn wall_distances_region(
+/// Repair the boundary distance field inside the window.
+pub fn boundary_distances_region(
     cells: &SurfaceCells,
     by_col: &ColumnIz,
     params: &PlacementParams,
     window: &RepairWindow,
-    wall_state: &mut DijkstraState,
+    boundary_state: &mut DijkstraState,
 ) {
-    let mut wall_seeds: Vec<CellId> = Vec::new();
-    collect_wall_adjacent_in_window(
+    let mut boundary_seeds: Vec<CellId> = Vec::new();
+    collect_boundary_adjacent_in_window(
         cells,
         by_col,
         params.clearance_cells,
         params.step_cells,
         window.cells(),
-        &mut wall_seeds,
+        &mut boundary_seeds,
     );
     dijkstra_clusters(
         cells,
-        &wall_seeds,
+        &boundary_seeds,
         window.clusters(),
         window.index(),
-        wall_state,
+        boundary_state,
         Weight::Base,
         Frontier::Any,
     );
 }
 
-/// Regional counterpart to the placement in place_nodes, run on fresh wall
+/// Regional counterpart to the placement in place_nodes, run on fresh boundary
 /// distances. Nodes are sticky: survivors keep their placement, and new nodes
 /// are placed only on cells added by this update, spaced by NMS against every
 /// existing node. Returns the ids of the nodes it dropped.
@@ -452,24 +452,25 @@ pub fn place_nodes_region(
     params: &PlacementParams,
     added: &[CellId],
     window: &RepairWindow,
-    wall_dist: &[f32],
+    boundary_dist: &[f32],
     voronoi: &DijkstraState,
     nodes: &mut Nodes,
 ) -> Vec<NodeId> {
-    let dropped = drop_walled_in_nodes(cells, params, window.cells(), wall_dist, nodes);
+    let dropped = drop_boundary_enclosed_nodes(cells, params, window.cells(), boundary_dist, nodes);
 
     // New nodes only in comfortably open freshly-seen space: transient fringe
-    // cells near walls must not spawn graph structure every frame.
-    let spawn_floor = params.wall_clearance_m + SPAWN_FLOOR_BUFFER_FRAC * params.wall_buffer_m;
+    // cells near boundaries must not spawn graph structure every frame.
+    let spawn_floor =
+        params.boundary_clearance_m + SPAWN_FLOOR_BUFFER_FRAC * params.boundary_buffer_m;
     let candidates: Vec<CellId> = added
         .iter()
         .copied()
-        .filter(|&id| cells.is_live(id) && wall_dist[id as usize] >= spawn_floor)
+        .filter(|&id| cells.is_live(id) && boundary_dist[id as usize] >= spawn_floor)
         .collect();
-    place_from_candidates(cells, candidates, wall_dist, params, nodes);
+    place_from_candidates(cells, candidates, boundary_dist, params, nodes);
     ensure_node_per_component(
         cells,
-        wall_dist,
+        boundary_dist,
         params,
         window.clusters(),
         Some(Beyond {
@@ -481,19 +482,19 @@ pub fn place_nodes_region(
     dropped
 }
 
-/// Drop the window nodes whose fresh wall distance marks their cell
+/// Drop the window nodes whose fresh boundary distance marks their cell
 /// impassable. The field is stale outside the window, so only in-window
 /// nodes are judged by it.
-fn drop_walled_in_nodes(
+fn drop_boundary_enclosed_nodes(
     cells: &SurfaceCells,
     params: &PlacementParams,
     window: &[CellId],
-    wall_dist: &[f32],
+    boundary_dist: &[f32],
     nodes: &mut Nodes,
 ) -> Vec<NodeId> {
     let mut doomed: Vec<usize> = window
         .iter()
-        .filter(|&&w| wall_dist[w as usize] < params.wall_clearance_m)
+        .filter(|&&w| boundary_dist[w as usize] < params.boundary_clearance_m)
         .filter_map(|&w| nodes.node_at(w))
         .collect();
     doomed.sort_unstable_by(|a, b| b.cmp(a));
@@ -504,8 +505,8 @@ fn drop_walled_in_nodes(
         .collect()
 }
 
-/// Wall-adjacency over a cell subset, matching collect_wall_adjacent_cells.
-fn collect_wall_adjacent_in_window(
+/// Boundary-adjacency over a cell subset, matching collect_boundary_adjacent_cells.
+fn collect_boundary_adjacent_in_window(
     cells: &SurfaceCells,
     by_col: &ColumnIz,
     clearance_cells: i32,
@@ -516,7 +517,8 @@ fn collect_wall_adjacent_in_window(
     *out = window
         .par_iter()
         .filter(|&&id| {
-            cells.is_live(id) && real_wall_adjacent(cells, by_col, id, clearance_cells, step_cells)
+            cells.is_live(id)
+                && real_boundary_adjacent(cells, by_col, id, clearance_cells, step_cells)
         })
         .copied()
         .collect();
@@ -528,12 +530,12 @@ pub(crate) const HOLE_SPAN_CELLS: i32 = 4;
 /// Smallest unserved component the fallback seeding still gives a node.
 const MIN_COMPONENT_CELLS: u32 = 4;
 
-/// Fraction of the wall buffer added to the clearance before a fresh cell may
+/// Fraction of the boundary buffer added to the clearance before a fresh cell may
 /// spawn a node.
 const SPAWN_FLOOR_BUFFER_FRAC: f32 = 0.5;
 
 /// True when any missing 4-neighbor opens onto a real edge rather than a hole.
-fn real_wall_adjacent(
+fn real_boundary_adjacent(
     cells: &SurfaceCells,
     by_col: &ColumnIz,
     id: CellId,
@@ -557,7 +559,7 @@ fn real_wall_adjacent(
             continue; // a surface neighbor already connects this direction
         }
         if edge_in_direction(by_col, cx, cy, cz, dx, dy, clearance_cells, step_cells) {
-            return true; // wall, cliff, or drop in this direction
+            return true; // wall, cliff, or drop: a boundary in this direction
         }
     }
     false
@@ -589,9 +591,9 @@ fn edge_in_direction(
     true
 }
 
-/// Rescale edge costs for the window and its neighbors, whose wall distance may
+/// Rescale edge costs for the window and its neighbors, whose boundary distance may
 /// have changed. Idempotent via base_cost.
-pub fn apply_wall_safe_penalty_region(
+pub fn apply_boundary_safe_penalty_region(
     cells: &mut SurfaceCells,
     dist: &[f32],
     params: &PlacementParams,
@@ -624,9 +626,9 @@ pub fn apply_wall_safe_penalty_region(
     }
 }
 
-/// Wall-adjacent cells over the whole graph. Falls back to a single cell so a
-/// fully-enclosed map still seeds the wall-distance field.
-fn collect_wall_adjacent_cells(
+/// Boundary-adjacent cells over the whole graph. Falls back to a single cell so a
+/// fully-enclosed map still seeds the boundary-distance field.
+fn collect_boundary_adjacent_cells(
     cells: &SurfaceCells,
     by_col: &ColumnIz,
     clearance_cells: i32,
@@ -636,7 +638,7 @@ fn collect_wall_adjacent_cells(
     let ids: Vec<CellId> = cells.ids().collect();
     *out = ids
         .par_iter()
-        .filter(|&&id| real_wall_adjacent(cells, by_col, id, clearance_cells, step_cells))
+        .filter(|&&id| real_boundary_adjacent(cells, by_col, id, clearance_cells, step_cells))
         .copied()
         .collect();
     if out.is_empty() {
@@ -646,9 +648,9 @@ fn collect_wall_adjacent_cells(
     }
 }
 
-/// Scale each edge by its endpoints' average wall penalty and add the step
-/// penalty. Unreached cells (dist +INFINITY) collapse the wall penalty to 1.0.
-fn apply_wall_safe_penalty(cells: &mut SurfaceCells, dist: &[f32], params: &PlacementParams) {
+/// Scale each edge by its endpoints' average boundary penalty and add the step
+/// penalty. Unreached cells (dist +INFINITY) collapse the boundary penalty to 1.0.
+fn apply_boundary_safe_penalty(cells: &mut SurfaceCells, dist: &[f32], params: &PlacementParams) {
     let mut edge_lists: Vec<(CellId, &mut Vec<Edge>)> = cells.iter_edges_mut().collect();
     edge_lists
         .par_iter_mut()
@@ -662,9 +664,9 @@ fn scale_edges(edges: &mut [Edge], src: CellId, dist: &[f32], params: &Placement
     let penalty = |d: f32| {
         penalty_of(
             d,
-            params.wall_clearance_m,
-            params.wall_buffer_m,
-            params.wall_buffer_weight,
+            params.boundary_clearance_m,
+            params.boundary_buffer_m,
+            params.boundary_buffer_weight,
         )
     };
     let pu = penalty(dist[src as usize]);
@@ -674,7 +676,7 @@ fn scale_edges(edges: &mut [Edge], src: CellId, dist: &[f32], params: &Placement
     }
 }
 
-/// Lateral wall multiplier: infinite inside clearance, ramping convexly from
+/// Lateral boundary multiplier: infinite inside clearance, ramping convexly from
 /// 1 + weight at the clearance edge down to 1 at clearance_m + buffer_m.
 #[inline]
 pub(crate) fn penalty_of(d: f32, clearance_m: f32, buffer_m: f32, weight: f32) -> f32 {
@@ -760,7 +762,7 @@ fn ensure_node_per_component(
     }
 }
 
-/// Better fallback seed: farther from a wall, ties broken by coordinate.
+/// Better fallback seed: farther from a boundary, ties broken by coordinate.
 fn is_clearer(cells: &SurfaceCells, dist: &[f32], a: CellId, b: CellId) -> bool {
     match dist[a as usize].total_cmp(&dist[b as usize]) {
         Ordering::Greater => true,
@@ -802,15 +804,15 @@ mod tests {
         c
     }
 
-    fn params(wall_clearance_m: f32, step_penalty_weight: f32) -> PlacementParams {
+    fn params(boundary_clearance_m: f32, step_penalty_weight: f32) -> PlacementParams {
         PlacementParams {
             clearance_cells: 5,
             step_cells: 2,
             voxel_size: VOXEL,
             node_spacing_m: 1.0,
-            wall_clearance_m,
-            wall_buffer_m: 0.3,
-            wall_buffer_weight: 1.0,
+            boundary_clearance_m,
+            boundary_buffer_m: 0.3,
+            boundary_buffer_weight: 1.0,
             step_penalty_weight,
         }
     }
@@ -920,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_floor_blocks_new_nodes_near_walls() {
+    fn spawn_floor_blocks_new_nodes_near_boundaries() {
         // A cell inside the spawn floor must not spawn a node, while an open
         // cell that clears it must.
         let surface = open_patch(0, 0, 10);
@@ -933,7 +935,7 @@ mod tests {
             pos: surface_point_xyz(0, 0, 0, VOXEL),
         }];
         let window: Vec<CellId> = sc.ids().collect();
-        let near_wall = sc.id((1, 5, 0)).unwrap();
+        let near_boundary = sc.id((1, 5, 0)).unwrap();
         let open = sc.id((5, 5, 0)).unwrap();
         let p = PlacementParams {
             node_spacing_m: 0.2,
@@ -942,11 +944,11 @@ mod tests {
         let mut nodes = Nodes::from_list(&sc, list, &p);
         let mut cluster_index = ClusterIndex::default();
         let repair = RepairWindow::new(&sc, &window, &mut cluster_index, &mut scratch.seen);
-        wall_distances_region(&sc, &ColumnIz::default(), &p, &repair, &mut state);
+        boundary_distances_region(&sc, &ColumnIz::default(), &p, &repair, &mut state);
         place_nodes_region(
             &sc,
             &p,
-            &[near_wall, open],
+            &[near_boundary, open],
             &repair,
             &state.dist,
             &DijkstraState::default(),
@@ -955,7 +957,7 @@ mod tests {
         let ids: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
         assert!(ids.contains(&open), "open added cell must spawn a node");
         assert!(
-            !ids.contains(&near_wall),
+            !ids.contains(&near_boundary),
             "added cell under the spawn floor must not spawn a node"
         );
     }
@@ -1005,7 +1007,7 @@ mod tests {
 
     #[test]
     fn each_disconnected_component_gets_a_node() {
-        // Two 1-wide strips far apart: every cell is wall-adjacent so none
+        // Two 1-wide strips far apart: every cell is boundary-adjacent so none
         // clears the 0.5 m clearance floor, yet each disconnected strip must
         // still get exactly one node.
         let mut cells_in: Vec<VoxelKey> = (0..8).map(|ix| (ix, 0, 0)).collect();
@@ -1073,8 +1075,8 @@ mod tests {
     }
 
     #[test]
-    fn wall_penalty_doubles_cost_at_the_wall() {
-        // On a 1-wide strip every cell is wall-adjacent (d = 0), so with zero
+    fn boundary_penalty_doubles_cost_at_the_boundary() {
+        // On a 1-wide strip every cell is boundary-adjacent (d = 0), so with zero
         // clearance the ramp peaks at 2 and edge cost is twice the geometric.
         let cells_in: Vec<VoxelKey> = (0..10).map(|ix| (ix, 0, 0)).collect();
         let mut sc = build_cells(&cells_in, 2);
@@ -1096,7 +1098,7 @@ mod tests {
     #[test]
     fn step_penalty_adds_to_vertical_edges() {
         // A 2-cell rise (0.2 m) between adjacent cells. With weight 10 the edge
-        // gains 10 * 0.2 = 2.0 on top of its geometric and wall cost.
+        // gains 10 * 0.2 = 2.0 on top of its geometric and boundary cost.
         let cells_in: Vec<VoxelKey> = vec![(0, 0, 0), (1, 0, 2), (2, 0, 2)];
         let cost_with = |step_weight: f32| {
             let mut sc = build_cells(&cells_in, 2);
@@ -1125,20 +1127,20 @@ mod tests {
     }
 
     /// An isolated cell whose four neighbor columns each hold an occupied,
-    /// standable voxel within a step: sparse real surface, not a wall.
+    /// standable voxel within a step: sparse real surface, not a boundary.
     #[test]
-    fn sparse_step_neighbors_do_not_seed_a_wall() {
+    fn sparse_step_neighbors_do_not_seed_a_boundary() {
         let sc = build_cells(&[(0, 0, 0)], 2);
         let id = sc.id((0, 0, 0)).unwrap();
         let mut by_col = ColumnIz::default();
         for col in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(!real_boundary_adjacent(&sc, &by_col, id, 5, 2));
     }
 
     /// The same cell with one empty neighbor column: a cliff edge that must seed
-    /// the wall-clearance field even though the other three sides are steps.
+    /// the boundary-clearance field even though the other three sides are steps.
     #[test]
     fn empty_neighbor_column_seeds_as_drop() {
         let sc = build_cells(&[(0, 0, 0)], 2);
@@ -1147,13 +1149,13 @@ mod tests {
         for col in [(1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(real_boundary_adjacent(&sc, &by_col, id, 5, 2));
     }
 
     /// An occupied neighbor that rises well beyond the step threshold reads as a
-    /// wall, not a traversable step.
+    /// boundary, not a traversable step.
     #[test]
-    fn step_taller_than_threshold_seeds_as_wall() {
+    fn step_taller_than_threshold_seeds_as_boundary() {
         let sc = build_cells(&[(0, 0, 0)], 2);
         let id = sc.id((0, 0, 0)).unwrap();
         let mut by_col = ColumnIz::default();
@@ -1161,7 +1163,7 @@ mod tests {
         for col in [(-1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(real_boundary_adjacent(&sc, &by_col, id, 5, 2));
     }
 
     /// Immediate neighbor empty but surface resumes within the span at the same
@@ -1175,7 +1177,7 @@ mod tests {
         for col in [(-1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(!real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(!real_boundary_adjacent(&sc, &by_col, id, 5, 2));
     }
 
     /// Empty for more than the span before surface resumes: a real cliff.
@@ -1188,6 +1190,6 @@ mod tests {
         for col in [(-1, 0), (0, -1), (0, 1)] {
             by_col.add((col.0, col.1, 0));
         }
-        assert!(real_wall_adjacent(&sc, &by_col, id, 5, 2));
+        assert!(real_boundary_adjacent(&sc, &by_col, id, 5, 2));
     }
 }

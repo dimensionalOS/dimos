@@ -34,11 +34,11 @@ from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.robot.unitree.go2.nav_3d_config import (
     NAV_VIEWER_TOPICS,
+    boundary_clearance_m,
     mls_planner_config,
     ray_tracing_config,
     relocalization,
     voxel_size,
-    wall_clearance_m,
 )
 from dimos.visualization.vis_module import vis_module
 
@@ -55,11 +55,11 @@ _nav_rerun_config = {
     "memory_limit": "64MB",
     # The robot box hangs off base_link on its own entity: a static transform
     # under world/tf would override the live one.
-    "static": nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, wall_clearance_m),
+    "static": nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, boundary_clearance_m),
     "visual_override": {
         **rerun_config["visual_override"],
         "world/camera_info": None,
-        **nav_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
+        **nav_visual_override(planner_viz_hz, voxel_size, boundary_clearance_m),
     },
 }
 

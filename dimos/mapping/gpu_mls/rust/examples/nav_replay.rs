@@ -35,7 +35,7 @@ type Point = (f32, f32, f32);
 const VOXEL_SIZE_M: f32 = 0.08;
 const MAX_RANGE_M: f32 = 15.0;
 const ROBOT_HEIGHT_M: f32 = 1.86;
-const WALL_CLEARANCE_M: f32 = 0.2;
+const BOUNDARY_CLEARANCE_M: f32 = 0.2;
 const STEP_THRESHOLD_M: f32 = 0.08;
 const GOAL_SPACING_M: f32 = 2.0;
 
@@ -107,9 +107,9 @@ fn planner_config(gpu: bool) -> PlannerConfig {
         max_overhead_m: 2.0,
         surface_closing_radius: 0.3,
         node_spacing_m: 1.0,
-        wall_clearance_m: WALL_CLEARANCE_M,
-        wall_buffer_m: 0.75,
-        wall_buffer_weight: 100.0,
+        boundary_clearance_m: BOUNDARY_CLEARANCE_M,
+        boundary_buffer_m: 0.75,
+        boundary_buffer_weight: 100.0,
         step_threshold_m: STEP_THRESHOLD_M,
         step_penalty_weight: 1.0,
         goal_tolerance: 0.3,
@@ -117,8 +117,8 @@ fn planner_config(gpu: bool) -> PlannerConfig {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: gpu,
-        // NAV_REPLAY_CPU_WALLS leaves wall distance to the planner on the CPU.
-        gpu_wall_distance: gpu && std::env::var("NAV_REPLAY_CPU_WALLS").is_err(),
+        // NAV_REPLAY_CPU_BOUNDARIES leaves boundary distance to the planner on the CPU.
+        gpu_boundary_distance: gpu && std::env::var("NAV_REPLAY_CPU_BOUNDARIES").is_err(),
         max_slope_deg: 45.0,
         surface_change_m: 0.01,
         worker_threads: 4,
@@ -179,8 +179,8 @@ impl Pipeline {
             closing_radius_m: config.surface_closing_radius,
             step_threshold_m: config.step_threshold_m,
             max_slope_deg: config.max_slope_deg,
-            wall_distance: config.gpu_wall_distance,
-            wall_reach_m: config.wall_clearance_m + config.wall_buffer_m,
+            boundary_distance: config.gpu_boundary_distance,
+            boundary_reach_m: config.boundary_clearance_m + config.boundary_buffer_m,
             max_overhead_m: config.max_overhead_m,
         };
         Self {

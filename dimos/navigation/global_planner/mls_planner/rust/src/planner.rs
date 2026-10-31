@@ -192,10 +192,10 @@ pub fn plan(
     // Max traversable step in cells, the hard bound shared with the graph.
     let step_cells = config.step_cells();
 
-    let wall_cost = WallCost {
-        clearance_m: config.wall_clearance_m,
-        buffer_m: config.wall_buffer_m,
-        buffer_weight: config.wall_buffer_weight,
+    let boundary_cost = BoundaryCost {
+        clearance_m: config.boundary_clearance_m,
+        buffer_m: config.boundary_buffer_m,
+        buffer_weight: config.boundary_buffer_weight,
         voxel_size,
     };
     // A direct goal connection carries the whole route in its lead-in.
@@ -205,13 +205,13 @@ pub fn plan(
         &goal_segment
     };
     let cells = assemble_cells(plg, &node_seq, &lead_in, goal_segment);
-    let cells = string_pull(plg, &cells, step_cells, &wall_cost);
+    let cells = string_pull(plg, &cells, step_cells, &boundary_cost);
     let waypoints = cells_to_waypoints(plg, &cells, start_pose, goal_pose, voxel_size);
     let waypoints = crate::smoother::smooth_path(
         plg,
         waypoints,
         step_cells,
-        &wall_cost,
+        &boundary_cost,
         config.step_penalty_weight,
     );
     let path_cells: Vec<VoxelKey> = cells.iter().map(|&id| plg.cells.coord(id)).collect();
@@ -232,10 +232,10 @@ pub fn truncate_to_safe(
     }
     let voxel_size = config.voxel_size;
     let step_cells = config.step_cells();
-    let wall_cost = WallCost {
-        clearance_m: config.wall_clearance_m,
-        buffer_m: config.wall_buffer_m,
-        buffer_weight: config.wall_buffer_weight,
+    let boundary_cost = BoundaryCost {
+        clearance_m: config.boundary_clearance_m,
+        buffer_m: config.boundary_buffer_m,
+        buffer_weight: config.boundary_buffer_weight,
         voxel_size,
     };
 
@@ -253,7 +253,7 @@ pub fn truncate_to_safe(
             cached[j],
             cached[j + 1],
             step_cells,
-            &wall_cost,
+            &boundary_cost,
             voxel_size,
         );
         if cut {
@@ -319,7 +319,7 @@ fn last_safe_on_chord(
     a: VoxelKey,
     b: VoxelKey,
     step_cells: i32,
-    wc: &WallCost,
+    wc: &BoundaryCost,
     voxel_size: f32,
 ) -> (Option<(f32, f32, f32)>, bool) {
     let (dx, dy, dz) = (b.0 - a.0, b.1 - a.1, b.2 - a.2);
@@ -367,13 +367,13 @@ fn last_safe_on_chord(
         }
         let pen = match plg.cells.id((ix, iy, iz)) {
             Some(id) => {
-                let wall_dist = plg
-                    .wall_state
+                let boundary_dist = plg
+                    .boundary_state
                     .dist
                     .get(id as usize)
                     .copied()
                     .unwrap_or(f32::INFINITY);
-                penalty_of(wall_dist, wc.clearance_m, wc.buffer_m, wc.buffer_weight)
+                penalty_of(boundary_dist, wc.clearance_m, wc.buffer_m, wc.buffer_weight)
             }
             None => 1.0,
         };
@@ -492,7 +492,7 @@ fn select_entry(
     None
 }
 
-/// Bounded Dijkstra from the robot cell. Cost is wall-penalized for steering,
+/// Bounded Dijkstra from the robot cell. Cost is boundary-penalized for steering,
 /// but the radius bounds metric distance, not penalized cost.
 fn robot_search(
     cells: &SurfaceCells,
@@ -531,7 +531,7 @@ fn robot_search(
 }
 
 /// Nearest node to `from` by hops, ignoring edge cost so it reaches a node
-/// across cells the wall penalty makes impassable. Returns the node and the
+/// across cells the boundary penalty makes impassable. Returns the node and the
 /// path from `from`.
 fn nearest_node(
     cells: &SurfaceCells,
@@ -710,20 +710,20 @@ fn cells_to_waypoints(
 }
 
 /// Clearance and step limits the smoother holds the path to.
-pub(crate) struct WallCost {
+pub(crate) struct BoundaryCost {
     pub(crate) clearance_m: f32,
     pub(crate) buffer_m: f32,
     pub(crate) buffer_weight: f32,
     pub(crate) voxel_size: f32,
 }
 
-/// Replace runs of cells with straight chords that come no closer to a wall and
+/// Replace runs of cells with straight chords that come no closer to a boundary and
 /// climb no more than the run they replace.
 fn string_pull(
     plg: &PlannerGraph,
     cells: &[CellId],
     step_cells: i32,
-    wc: &WallCost,
+    wc: &BoundaryCost,
 ) -> Vec<CellId> {
     if cells.len() <= 2 {
         return cells.to_vec();
@@ -770,14 +770,14 @@ fn string_pull(
     out
 }
 
-/// Worst wall penalty and total climb along the straight segment a -> b. None if
+/// Worst boundary penalty and total climb along the straight segment a -> b. None if
 /// it leaves the surface, exceeds step_cells, or enters the hard clearance.
 fn segment_metrics(
     plg: &PlannerGraph,
     a: VoxelKey,
     b: VoxelKey,
     step_cells: i32,
-    wc: &WallCost,
+    wc: &BoundaryCost,
 ) -> Option<(f32, f32)> {
     let (dx, dy, dz) = (b.0 - a.0, b.1 - a.1, b.2 - a.2);
     let samples = dx.abs().max(dy.abs()) * 2;
@@ -821,16 +821,16 @@ fn segment_metrics(
             rise_cells += step;
         }
         prev_iz = Some(iz);
-        // Columns on the surface but not in the graph carry no wall penalty.
+        // Columns on the surface but not in the graph carry no boundary penalty.
         let p = match plg.cells.id((ix, iy, iz)) {
             Some(id) => {
-                let wall_dist = plg
-                    .wall_state
+                let boundary_dist = plg
+                    .boundary_state
                     .dist
                     .get(id as usize)
                     .copied()
                     .unwrap_or(f32::INFINITY);
-                penalty_of(wall_dist, wc.clearance_m, wc.buffer_m, wc.buffer_weight)
+                penalty_of(boundary_dist, wc.clearance_m, wc.buffer_m, wc.buffer_weight)
             }
             None => 1.0,
         };
@@ -895,9 +895,9 @@ mod tests {
             max_overhead_m: 2.0,
             surface_closing_radius: 0.0,
             node_spacing_m: 1.0,
-            wall_clearance_m: 0.2,
-            wall_buffer_m: 0.5,
-            wall_buffer_weight: 4.0,
+            boundary_clearance_m: 0.2,
+            boundary_buffer_m: 0.5,
+            boundary_buffer_weight: 4.0,
             step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
@@ -905,7 +905,7 @@ mod tests {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             gpu_surfaces: false,
-            gpu_wall_distance: false,
+            gpu_boundary_distance: false,
             max_slope_deg: 45.0,
             surface_change_m: 0.01,
             worker_threads: 4,
@@ -930,9 +930,9 @@ mod tests {
             max_overhead_m: 2.0,
             surface_closing_radius: 0.0,
             node_spacing_m: 1.0,
-            wall_clearance_m: 0.2,
-            wall_buffer_m: 0.5,
-            wall_buffer_weight: 4.0,
+            boundary_clearance_m: 0.2,
+            boundary_buffer_m: 0.5,
+            boundary_buffer_weight: 4.0,
             step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
@@ -940,7 +940,7 @@ mod tests {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             gpu_surfaces: false,
-            gpu_wall_distance: false,
+            gpu_boundary_distance: false,
             max_slope_deg: 45.0,
             surface_change_m: 0.01,
             worker_threads: 4,
@@ -1106,7 +1106,7 @@ mod tests {
                 "waypoint {w:?} is off the surface"
             );
         }
-        let wc = WallCost {
+        let wc = BoundaryCost {
             clearance_m: 0.2,
             buffer_m: 0.5,
             buffer_weight: 4.0,
@@ -1161,18 +1161,18 @@ mod tests {
         build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
         let path: Vec<CellId> = (0..10).map(|x| plg.cells.id((x, 0, 0)).unwrap()).collect();
 
-        let wc = WallCost {
+        let wc = BoundaryCost {
             clearance_m: 0.2,
             buffer_m: 0.5,
             buffer_weight: 4.0,
             voxel_size: VOXEL,
         };
-        plg.wall_state.dist = vec![f32::INFINITY; plg.cells.slot_capacity()];
+        plg.boundary_state.dist = vec![f32::INFINITY; plg.cells.slot_capacity()];
         let open = string_pull(&plg, &path, 1, &wc);
         assert_eq!(open.len(), 2, "open strip should collapse to its endpoints");
 
         let mid = plg.cells.id((5, 0, 0)).unwrap();
-        plg.wall_state.dist[mid as usize] = 0.1; // below the 0.2 clearance
+        plg.boundary_state.dist[mid as usize] = 0.1; // below the 0.2 clearance
         let guarded = string_pull(&plg, &path, 1, &wc);
         assert!(
             guarded.len() > 2,
@@ -1365,7 +1365,7 @@ mod tests {
     #[test]
     fn segment_metrics_rejects_vertical_chord() {
         let plg = PlannerGraph::new();
-        let wc = WallCost {
+        let wc = BoundaryCost {
             clearance_m: 0.2,
             buffer_m: 0.3,
             buffer_weight: 4.0,

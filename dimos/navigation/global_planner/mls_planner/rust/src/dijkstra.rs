@@ -71,9 +71,9 @@ impl DijkstraState {
 /// Which edge weight a search uses.
 #[derive(Clone, Copy)]
 pub enum Weight {
-    /// Geometric distance, for the wall-distance field.
+    /// Geometric distance, for the boundary-distance field.
     Base,
-    /// Wall-safe penalized cost, for the node Voronoi.
+    /// Boundary-safe penalized cost, for the node Voronoi.
     Penalized,
 }
 

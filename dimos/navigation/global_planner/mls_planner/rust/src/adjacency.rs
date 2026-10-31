@@ -44,7 +44,7 @@ pub struct Edge {
     pub base_cost: f32,
     /// Vertical change of the edge in meters.
     pub rise: f32,
-    /// base_cost scaled by the wall penalty plus the step penalty.
+    /// base_cost scaled by the boundary penalty plus the step penalty.
     pub cost: f32,
 }
 

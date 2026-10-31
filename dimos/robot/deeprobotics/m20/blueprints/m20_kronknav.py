@@ -41,7 +41,7 @@ from dimos.robot.deeprobotics.m20.constants import (
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.1
-WALL_CLEARANCE_M = 0.3
+BOUNDARY_CLEARANCE_M = 0.3
 PLANNER_VIZ_HZ = 0.0
 
 
@@ -124,7 +124,7 @@ _rerun_config = {
         "world/front_camera_info": _render_front_camera_info,
         "world/rear_camera_info": _render_rear_camera_info,
         **planner_visual_override(
-            PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
+            PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, boundary_clearance_m=BOUNDARY_CLEARANCE_M
         ),
     },
     "static": {
@@ -154,9 +154,9 @@ deeprobotics_m20_kronknav_control = (
             voxel_size=VOXEL_SIZE_M,
             robot_height=PLANNING_HEIGHT_M,
             start_z_offset_m=BASE_LINK_HEIGHT_M,
-            wall_clearance_m=WALL_CLEARANCE_M,
-            wall_buffer_m=0.85,
-            wall_buffer_weight=100.0,
+            boundary_clearance_m=BOUNDARY_CLEARANCE_M,
+            boundary_buffer_m=0.85,
+            boundary_buffer_weight=100.0,
             step_threshold_m=0.25,
             step_penalty_weight=4.0,
             viz_publish_hz=PLANNER_VIZ_HZ,

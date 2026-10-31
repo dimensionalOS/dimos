@@ -39,7 +39,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPl
 VOXEL_SIZE_METERS = 0.08
 MAX_RANGE_METERS = 15.0
 ROBOT_HEIGHT_METERS = 1.86
-WALL_CLEARANCE_METERS = 0.20
+BOUNDARY_CLEARANCE_METERS = 0.20
 STEP_THRESHOLD_METERS = 0.08
 
 
@@ -104,12 +104,12 @@ def main() -> None:
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             robot_height=ROBOT_HEIGHT_METERS,
-            wall_clearance_m=WALL_CLEARANCE_METERS,
+            boundary_clearance_m=BOUNDARY_CLEARANCE_METERS,
             step_threshold_m=STEP_THRESHOLD_METERS,
             step_penalty_weight=1.0,
             base_frame=args.sensor_frame,
             gpu_surfaces=gpu and not args.cpu_surfaces,
-            gpu_wall_distance=gpu and not args.cpu_surfaces,
+            gpu_boundary_distance=gpu and not args.cpu_surfaces,
         ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     )
     ModuleCoordinator.build(blueprint).loop()

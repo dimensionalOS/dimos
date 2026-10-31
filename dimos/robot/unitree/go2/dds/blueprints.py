@@ -30,7 +30,7 @@ from dimos.navigation.global_planner.mls_planner.viz import (
 )
 from dimos.navigation.global_planner.viz import HEIGHT_RANGE
 from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
-    WALL_CLEARANCE_M,
+    BOUNDARY_CLEARANCE_M,
     _go2_nav,
     go2_nav_overrides,
     go2_nav_static,
@@ -205,7 +205,7 @@ def nav_viewer(
                     SURFACE_MAP_ENTITY: partial(
                         render_surface_region,
                         voxel_size=voxel_size,
-                        wall_clearance_m=WALL_CLEARANCE_M,
+                        boundary_clearance_m=BOUNDARY_CLEARANCE_M,
                         clearance_clamp_m=1.0,
                     ),
                     **(visual_override or {}),

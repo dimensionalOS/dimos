@@ -88,13 +88,13 @@ def robot_body_box(length: float, width: float, height: float) -> Archetype:
     return rr.Boxes3D(half_sizes=[length / 2, width / 2, height / 2], colors=[BODY_COLOR])
 
 
-def robot_clearance(height: float, wall_clearance_m: float) -> Archetype:
-    """The planner's wall clearance as a cylinder around the body."""
+def robot_clearance(height: float, boundary_clearance_m: float) -> Archetype:
+    """The planner's boundary clearance as a cylinder around the body."""
     import rerun as rr
 
     return rr.Cylinders3D(
         lengths=[height],
-        radii=[wall_clearance_m],
+        radii=[boundary_clearance_m],
         colors=[CLEARANCE_COLOR],
         fill_mode="solid",
     )
@@ -107,12 +107,14 @@ def body_on_base_link(
     return [robot_body_box(length, width, height), rr.Transform3D(parent_frame="tf#/base_link")]
 
 
-def _clearance_on_body(rr: ModuleType, height: float, wall_clearance_m: float) -> list[Archetype]:
-    return [robot_clearance(height, wall_clearance_m)]
+def _clearance_on_body(
+    rr: ModuleType, height: float, boundary_clearance_m: float
+) -> list[Archetype]:
+    return [robot_clearance(height, boundary_clearance_m)]
 
 
 def nav_static(
-    length: float, width: float, height: float, wall_clearance_m: float
+    length: float, width: float, height: float, boundary_clearance_m: float
 ) -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     """Bridge static entities: the body box and clearance cylinder riding on base_link.
 
@@ -121,7 +123,7 @@ def nav_static(
     return {
         "world/robot_body": partial(body_on_base_link, length=length, width=width, height=height),
         "world/robot_body/clearance": partial(
-            _clearance_on_body, height=height, wall_clearance_m=wall_clearance_m
+            _clearance_on_body, height=height, boundary_clearance_m=boundary_clearance_m
         ),
     }
 
@@ -129,7 +131,7 @@ def nav_static(
 def nav_visual_override(
     viz_publish_hz: float,
     voxel_size: float,
-    wall_clearance_m: float,
+    boundary_clearance_m: float,
     clearance_clamp_m: float = 1.0,
     static_regions: bool = True,
 ) -> dict[str, VisualOverride]:
@@ -154,6 +156,6 @@ def nav_visual_override(
         "world/path": render_path,
         "world/goal": render_goal,
         **planner_visual_override(
-            viz_publish_hz, voxel_size, wall_clearance_m, clearance_clamp_m, static_regions
+            viz_publish_hz, voxel_size, boundary_clearance_m, clearance_clamp_m, static_regions
         ),
     }

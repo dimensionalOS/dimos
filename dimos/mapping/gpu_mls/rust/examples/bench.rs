@@ -24,7 +24,7 @@ use dimos_gpu_mls::brick_map::{BrickMap, MapConfig, VoxelKey};
 use dimos_gpu_mls::gpu::{Gpu, PassTimer};
 use dimos_gpu_mls::surfaces::{SurfaceConfig, SurfaceExtractor, Window};
 use dimos_gpu_mls::synthetic::{Lcg, Scene};
-use dimos_mls_planner::{surface_cells, wall_distances};
+use dimos_mls_planner::{boundary_distances, surface_cells};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{update_map, Config, VoxelMap};
 
 const ROOM_M: f32 = 30.0;
@@ -278,7 +278,7 @@ fn main() {
 
 fn print_surfaces(rows: Vec<String>) {
     println!();
-    println!("| map | voxel | window | CPU surfaces | CPU wall dist | GPU plane fit | GPU standable | GPU hole fill | GPU planes | GPU wall dist | GPU wall clock | surface readback |");
+    println!("| map | voxel | window | CPU surfaces | CPU boundary dist | GPU plane fit | GPU standable | GPU hole fill | GPU planes | GPU boundary dist | GPU wall clock | surface readback |");
     println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
     for row in rows {
         println!("{row}");
@@ -398,8 +398,8 @@ fn bench_surfaces(
     let surface = surface_cells(&occupied, clearance, closing as u32);
     let cpu_surface_ms = ms(t);
     let t = Instant::now();
-    wall_distances(&occupied, &surface, clearance, step, voxel_size);
-    let cpu_wall_ms = ms(t);
+    boundary_distances(&occupied, &surface, clearance, step, voxel_size);
+    let cpu_boundary_ms = ms(t);
 
     let mut extractor = SurfaceExtractor::new(map, window, config).expect("window fits the device");
     let mut mean = Mean::default();
@@ -431,12 +431,12 @@ fn bench_surfaces(
         window.size.1,
         window.size.2,
         cpu_surface_ms,
-        cpu_wall_ms,
+        cpu_boundary_ms,
         mean.get("plane fit"),
         mean.get("standable"),
         mean.get("hole fill"),
         mean.get("planes"),
-        mean.get("wall distance"),
+        mean.get("boundary distance"),
         mean.get("wall"),
         mean.get("readback"),
     )

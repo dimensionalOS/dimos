@@ -43,16 +43,16 @@ planner_viz_hz = 2.0
 # Unchanged viz cells re-sent per tick, so cells a wifi viewer lost heal.
 viz_sweep_cells = 1
 BODY_DILATE_M = -0.03
-WALL_CLEARANCE_M = 0.05
+BOUNDARY_CLEARANCE_M = 0.05
 
 _mls_planner = MLSPlannerNative.blueprint(
     world_frame="odom",
     voxel_size=voxel_size,
     robot_height=0.4,
     surface_closing_radius=0.4,
-    wall_clearance_m=WALL_CLEARANCE_M,
-    wall_buffer_m=0.2,
-    wall_buffer_weight=20.0,
+    boundary_clearance_m=BOUNDARY_CLEARANCE_M,
+    boundary_buffer_m=0.2,
+    boundary_buffer_weight=20.0,
     step_threshold_m=0.16,
     step_penalty_weight=4.0,
     viz_publish_hz=planner_viz_hz,
@@ -81,14 +81,14 @@ _go2_nav = autoconnect(
 
 def go2_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     """Bridge static entities for navigation: the body box and clearance cylinder on base_link."""
-    return nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, WALL_CLEARANCE_M)
+    return nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, BOUNDARY_CLEARANCE_M)
 
 
 def go2_nav_overrides(static_regions: bool = True) -> dict[str, VisualOverride]:
     """Bridge overrides for the navigation maps, paths, goal and planner debug entities."""
     return {
         **nav_visual_override(
-            planner_viz_hz, voxel_size, WALL_CLEARANCE_M, static_regions=static_regions
+            planner_viz_hz, voxel_size, BOUNDARY_CLEARANCE_M, static_regions=static_regions
         ),
         **motion_visual_override(embodiment=GO2, body_dilate_m=BODY_DILATE_M),
     }

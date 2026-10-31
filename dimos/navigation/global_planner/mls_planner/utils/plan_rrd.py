@@ -412,9 +412,9 @@ def _build_planners(
             max_overhead_m=max_overhead,
             surface_closing_radius=surface_closing_radius,
             node_spacing_m=node_spacing,
-            wall_clearance_m=clr,
-            wall_buffer_m=buf,
-            wall_buffer_weight=wgt,
+            boundary_clearance_m=clr,
+            boundary_buffer_m=buf,
+            boundary_buffer_weight=wgt,
             step_threshold_m=step_height,
             step_penalty_weight=step_penalty_weight,
         )
@@ -534,16 +534,16 @@ def main(
         help="Hole-fill radius (m); morphological closing fills holes up to twice this wide",
     ),
     node_spacing: float = typer.Option(1.0, "--node-spacing", help="Graph node spacing (m)"),
-    wall_clearance: float = typer.Option(
+    boundary_clearance: float = typer.Option(
         0.1,
-        "--wall-clearance",
-        help="Hard clearance; cells closer to a wall or edge are impassable (m)",
+        "--boundary-clearance",
+        help="Hard clearance; cells closer to a boundary or edge are impassable (m)",
     ),
-    wall_buffer: float = typer.Option(
-        0.75, "--wall-buffer", help="Width of the soft standoff zone beyond clearance (m)"
+    boundary_buffer: float = typer.Option(
+        0.75, "--boundary-buffer", help="Width of the soft standoff zone beyond clearance (m)"
     ),
-    wall_buffer_weight: float = typer.Option(
-        100.0, "--wall-buffer-weight", help="Peak soft wall penalty at the clearance edge"
+    boundary_buffer_weight: float = typer.Option(
+        100.0, "--boundary-buffer-weight", help="Peak soft boundary penalty at the clearance edge"
     ),
     step_height: float = typer.Option(
         0.16,
@@ -557,7 +557,7 @@ def main(
         None,
         "--config",
         help="Repeatable 'clearance,buffer,weight' to overlay as colored paths; "
-        "overrides the single --wall-* flags",
+        "overrides the single --boundary-* flags",
     ),
     goal: tuple[float, float, float] = typer.Option(
         (0.0, 0.0, 0.0), "--goal", help="Planner goal xyz; override per recording"
@@ -646,7 +646,9 @@ def main(
         ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
 
-        configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
+        configs = _parse_configs(
+            config, boundary_clearance, boundary_buffer, boundary_buffer_weight
+        )
         ref_clearance = configs[0][0]
         planners = _build_planners(
             configs,
@@ -679,7 +681,9 @@ def main(
             "world/robot_body", robot_body_box(ROBOT_LENGTH, ROBOT_WIDTH, robot_height), static=True
         )
         rr.log(
-            "world/robot_body/clearance", robot_clearance(robot_height, wall_clearance), static=True
+            "world/robot_body/clearance",
+            robot_clearance(robot_height, boundary_clearance),
+            static=True,
         )
         sensor_trail: list[tuple[float, float, float]] = []
 

@@ -14,7 +14,7 @@
 
 //! Surface extraction: mark cells with robot-height clearance above as
 //! standable, then morphologically close per-z-level holes without bridging
-//! across walls.
+//! across boundaries.
 
 use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;

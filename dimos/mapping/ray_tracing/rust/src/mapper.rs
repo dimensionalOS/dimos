@@ -72,15 +72,15 @@ pub struct SurfaceRequest {
     pub closing_radius_m: f32,
     pub step_threshold_m: f32,
     pub max_slope_deg: f32,
-    /// Read back wall distances too (a second full-window read); without,
+    /// Read back boundary distances too (a second full-window read); without,
     /// they go out infinite.
     #[serde(default)]
-    pub wall_distance: bool,
-    /// The farthest wall distance the planner uses (its clearance plus wall
-    /// buffer): wall distances go out capped there, and a change moves them
+    pub boundary_distance: bool,
+    /// The farthest boundary distance the planner uses (its clearance plus boundary
+    /// buffer): boundary distances go out capped there, and a change moves them
     /// at most this far from it. 0 leaves them uncapped.
     #[serde(default)]
-    pub wall_reach_m: f32,
+    pub boundary_reach_m: f32,
     /// Surface more than this far above the sensor is not the planner's.
     #[serde(default = "unbounded")]
     pub max_overhead_m: f32,
@@ -139,7 +139,7 @@ impl Mapper {
 
     /// The GPU's MLS surface where it changed since the last call, around
     /// the changed columns inside `bounds` and between its z_min and z_max,
-    /// SURFACE_CELL_FLOATS per row: x, y, z voxel center, plane height, wall
+    /// SURFACE_CELL_FLOATS per row: x, y, z voxel center, plane height, boundary
     /// distance. Every rewritten column has a row; one with a NaN z marks a
     /// column left with no surface cell in that z range.
     /// Empty when nothing changed, None on the CPU.
@@ -610,8 +610,8 @@ mod gpu {
 
         /// The MLS surface rewritten around the dirty columns inside
         /// `bounds`, between its z_min and z_max, as rows of x, y, z voxel
-        /// center, plane height and wall distance (capped at the request's
-        /// wall reach); a NaN z marks a rewritten column with no surface.
+        /// center, plane height and boundary distance (capped at the request's
+        /// boundary reach); a NaN z marks a rewritten column with no surface.
         pub fn surfaces(
             &mut self,
             bounds: &Cylinder,
@@ -647,12 +647,12 @@ mod gpu {
             );
             // A changed column moves surfaces within reach of it, their
             // boundary flags a hole's span further and, with boundary
-            // distances, those within the boundary reach of the flags; each
+            // distances, those within boundary_reach_m of the flags; each
             // of those reads as far again around it.
-            let pad = match request.wall_distance {
+            let pad = match request.boundary_distance {
                 true => {
                     config.boundary_reach_cells(voxel_size)
-                        + (request.wall_reach_m * inv).ceil() as i32
+                        + (request.boundary_reach_m * inv).ceil() as i32
                 }
                 false => config.reach_cells(voxel_size),
             };
@@ -744,7 +744,7 @@ mod gpu {
             self.point_extractor(window, config)?;
             let extractor = self.extractor.as_mut().expect("pointed above");
             extractor.mask_columns(&bits(&read), &bits(&write));
-            match request.wall_distance {
+            match request.boundary_distance {
                 true => extractor.extract(&mut self.map),
                 false => extractor.extract_surface(&mut self.map),
             }
@@ -764,12 +764,12 @@ mod gpu {
             let mut with_cells: AHashSet<(i32, i32)> = AHashSet::with_capacity(rows.len());
             for cell in &rows {
                 let (x, y, z) = cell.key;
-                let w = match request.wall_distance {
-                    true if request.wall_reach_m > 0.0 => cell
-                        .wall_m
+                let w = match request.boundary_distance {
+                    true if request.boundary_reach_m > 0.0 => cell
+                        .boundary_m
                         .unwrap_or(f32::INFINITY)
-                        .min(request.wall_reach_m),
-                    true => cell.wall_m.unwrap_or(f32::INFINITY),
+                        .min(request.boundary_reach_m),
+                    true => cell.boundary_m.unwrap_or(f32::INFINITY),
                     false => f32::INFINITY,
                 };
                 out.extend_from_slice(&[center(x), center(y), center(z), cell.height_m, w]);

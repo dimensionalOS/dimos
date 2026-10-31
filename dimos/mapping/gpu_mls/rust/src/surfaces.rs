@@ -14,7 +14,7 @@
 
 //! MLS surface extraction on the GPU over a dense window of columns read
 //! from the brick map: the standable test, exact bit-parallel round hole
-//! closing per z slice, and jump-flood wall distance per connected surface
+//! closing per z slice, and jump-flood boundary distance per connected surface
 //! seen from above.
 
 use std::sync::Arc;
@@ -188,8 +188,8 @@ struct Buffers {
     standable: wgpu::Buffer,
     grown: wgpu::Buffer,
     surface: wgpu::Buffer,
-    wall: wgpu::Buffer,
-    wall_distance: wgpu::Buffer,
+    boundary: wgpu::Buffer,
+    boundary_distance: wgpu::Buffer,
     seeds_b: wgpu::Buffer,
     plane_info: wgpu::Buffer,
     plane_count: wgpu::Buffer,
@@ -221,8 +221,8 @@ struct PlaneCells {
 pub struct ExportedCell {
     pub key: VoxelKey,
     pub height_m: f32,
-    /// None on a plane with no wall.
-    pub wall_m: Option<f32>,
+    /// None on a plane with no boundary.
+    pub boundary_m: Option<f32>,
 }
 
 struct Pipelines {
@@ -232,7 +232,7 @@ struct Pipelines {
     standable_columns: wgpu::ComputePipeline,
     grow_columns: wgpu::ComputePipeline,
     compose_surface: wgpu::ComputePipeline,
-    find_walls: wgpu::ComputePipeline,
+    find_boundaries: wgpu::ComputePipeline,
     uf_init: wgpu::ComputePipeline,
     link_components: wgpu::ComputePipeline,
     flatten_components: wgpu::ComputePipeline,
@@ -241,9 +241,9 @@ struct Pipelines {
     number_planes: wgpu::ComputePipeline,
     bound_planes: wgpu::ComputePipeline,
     init_plane_cells: wgpu::ComputePipeline,
-    scatter_walls: wgpu::ComputePipeline,
+    scatter_boundaries: wgpu::ComputePipeline,
     plane_flood_pass: wgpu::ComputePipeline,
-    measure_walls: wgpu::ComputePipeline,
+    measure_boundaries: wgpu::ComputePipeline,
     export_planes: wgpu::ComputePipeline,
     export_cells: wgpu::ComputePipeline,
 }
@@ -254,8 +254,8 @@ pub struct SurfaceResult {
     pub standable: Vec<VoxelKey>,
     /// Standable cells plus the filled holes.
     pub surface: Vec<VoxelKey>,
-    /// Surface cells next to a wall, cliff or drop.
-    pub walls: Vec<VoxelKey>,
+    /// Surface cells at a boundary: next to a wall, cliff or drop.
+    pub boundaries: Vec<VoxelKey>,
     /// Per surface cell, in `surface` order: its height in meters.
     pub heights: Vec<f32>,
     /// Per surface cell: its plane's upward normal, None for filled or planeless cells.
@@ -322,15 +322,15 @@ impl SurfaceExtractor {
                 gpu.adapter_info.name
             ));
         }
-        // Planes past one per column overflow; their cells get no wall distance.
+        // Planes past one per column overflow; their cells get no boundary distance.
         let plane_capacity = window.columns().min(u32::MAX as u64) as u32;
         let buffers = Buffers {
             occupied: gpu.storage("occupied", bit_words),
             standable: gpu.storage("standable", bit_words),
             grown: gpu.storage("grown", bit_words),
             surface: gpu.storage("surface", bit_words),
-            wall: gpu.storage("wall", bit_words),
-            wall_distance: gpu.storage("wall distance", cells),
+            boundary: gpu.storage("boundary", bit_words),
+            boundary_distance: gpu.storage("boundary distance", cells),
             seeds_b: gpu.storage("seeds b", cells),
             plane_info: gpu.uniform("plane info", std::mem::size_of::<PlaneInfo>() as u64),
             plane_count: gpu.storage("plane count", 4),
@@ -391,10 +391,10 @@ impl SurfaceExtractor {
                 &b.standable,
                 &b.grown,
                 &b.surface,
-                &b.wall,
+                &b.boundary,
                 &seeds_a,
                 &b.seeds_b,
-                &b.wall_distance,
+                &b.boundary_distance,
                 &labels,
                 &b.heights,
                 &b.cell_normals,
@@ -436,7 +436,7 @@ impl SurfaceExtractor {
             standable_columns: column("standable_columns"),
             grow_columns: column("grow_columns"),
             compose_surface: column("compose_surface"),
-            find_walls: plane("find_walls"),
+            find_boundaries: plane("find_boundaries"),
             uf_init: plane("uf_init"),
             link_components: plane("link_components"),
             flatten_components: plane("flatten_components"),
@@ -445,9 +445,9 @@ impl SurfaceExtractor {
             number_planes: plane("number_planes"),
             bound_planes: plane("bound_planes"),
             init_plane_cells: plane("init_plane_cells"),
-            scatter_walls: plane("scatter_walls"),
+            scatter_boundaries: plane("scatter_boundaries"),
             plane_flood_pass: plane("plane_flood_pass"),
-            measure_walls: plane("measure_walls"),
+            measure_boundaries: plane("measure_boundaries"),
             export_planes: plane("export_planes"),
             export_cells: plane("export_cells"),
         };
@@ -694,7 +694,7 @@ impl SurfaceExtractor {
     }
 
     /// Standable test and hole fill only, in one submit and no readback; the
-    /// wall distances `export` then reads are left from before.
+    /// boundary distances `export` then reads are left from before.
     pub fn extract_surface(&mut self, map: &mut BrickMap) {
         let gpu = Arc::clone(&self.gpu);
         let mut timer = map.timer.take();
@@ -707,8 +707,8 @@ impl SurfaceExtractor {
         gpu.queue.submit([encoder.finish()]);
     }
 
-    /// Standable test, hole fill and wall distance. The plane split is read
-    /// back between the two submits to size the wall-distance flood.
+    /// Standable test, hole fill and boundary distance. The plane split is read
+    /// back between the two submits to size the boundary-distance flood.
     pub fn extract(&mut self, map: &mut BrickMap) {
         let gpu = Arc::clone(&self.gpu);
         let mut timer = map.timer.take();
@@ -739,7 +739,7 @@ impl SurfaceExtractor {
         self.write_plane_info(planes, cells as u32);
 
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        self.encode_wall_flood(&mut encoder, timer.as_mut(), cells as u32, widest);
+        self.encode_boundary_flood(&mut encoder, timer.as_mut(), cells as u32, widest);
         if let Some(timer) = &timer {
             timer.resolve(&mut encoder);
         }
@@ -816,7 +816,7 @@ impl SurfaceExtractor {
         );
     }
 
-    /// Wall cells, connected surfaces, their split into planes, and each
+    /// Boundary cells, connected surfaces, their split into planes, and each
     /// plane's bounding box.
     fn encode_planes(
         &mut self,
@@ -827,7 +827,7 @@ impl SurfaceExtractor {
         let mut pass = begin(encoder, "planes", &mut timer);
         let p = &self.pipelines;
         let columns = self.column_groups();
-        self.run(&mut pass, None, &p.find_walls, columns, 1);
+        self.run(&mut pass, None, &p.find_boundaries, columns, 1);
         for pipeline in [
             &p.uf_init,
             &p.link_components,
@@ -841,14 +841,14 @@ impl SurfaceExtractor {
         }
     }
 
-    fn encode_wall_flood(
+    fn encode_boundary_flood(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         mut timer: Option<&mut PassTimer>,
         plane_cells: u32,
         widest: u32,
     ) {
-        let mut pass = begin(encoder, "wall distance", &mut timer);
+        let mut pass = begin(encoder, "boundary distance", &mut timer);
         let (gx, gy) = groups_1d(plane_cells);
         let plane_groups = (gx, gy, 1);
         self.current_in_a = true;
@@ -862,7 +862,7 @@ impl SurfaceExtractor {
         self.run(
             &mut pass,
             None,
-            &self.pipelines.scatter_walls,
+            &self.pipelines.scatter_boundaries,
             self.column_groups(),
             1,
         );
@@ -879,7 +879,7 @@ impl SurfaceExtractor {
         self.run(
             &mut pass,
             None,
-            &self.pipelines.measure_walls,
+            &self.pipelines.measure_boundaries,
             self.column_groups(),
             1,
         );
@@ -970,22 +970,25 @@ impl SurfaceExtractor {
         out
     }
 
-    /// The surface cells with their heights in meters and, with `walls`,
-    /// wall distances in meters (None on a plane with no wall), skipping the
+    /// The surface cells with their heights in meters and, with `boundaries`,
+    /// boundary distances in meters (None on a plane with no boundary), skipping the
     /// rest of `read`.
-    pub fn read_heights(&self, walls: bool) -> (Vec<VoxelKey>, Vec<f32>, Option<Vec<Option<f32>>>) {
+    pub fn read_heights(
+        &self,
+        boundaries: bool,
+    ) -> (Vec<VoxelKey>, Vec<f32>, Option<Vec<Option<f32>>>) {
         let surface = self.read_bits(&self.buffers.surface);
         let cells = self.window.cells() as usize;
         let heights: Vec<f32> = self.gpu.read(&self.buffers.heights, cells);
         let heights = surface.iter().map(|&k| heights[self.cell_of(k)]).collect();
-        let walls = walls.then(|| {
-            let dist: Vec<f32> = self.gpu.read(&self.buffers.wall_distance, cells);
+        let boundaries = boundaries.then(|| {
+            let dist: Vec<f32> = self.gpu.read(&self.buffers.boundary_distance, cells);
             surface
                 .iter()
                 .map(|&k| Some(dist[self.cell_of(k)]).filter(|d| *d >= 0.0))
                 .collect()
         });
-        (surface, heights, walls)
+        (surface, heights, boundaries)
     }
 
     pub fn read(&self) -> SurfaceResult {
@@ -1007,7 +1010,7 @@ impl SurfaceExtractor {
                 })
                 .collect(),
             surface,
-            walls: self.read_bits(&self.buffers.wall),
+            boundaries: self.read_bits(&self.buffers.boundary),
         }
     }
 
@@ -1047,11 +1050,12 @@ impl SurfaceExtractor {
         (lz * w.size.1 as usize + ly) * w.size.0 as usize + lx
     }
 
-    /// Wall distance in meters per surface cell, None on a plane with no wall.
-    pub fn wall_distances(&self) -> Vec<(VoxelKey, Option<f32>)> {
-        let dist: Vec<f32> = self
-            .gpu
-            .read(&self.buffers.wall_distance, self.window.cells() as usize);
+    /// Boundary distance in meters per surface cell, None on a plane with no boundary.
+    pub fn boundary_distances(&self) -> Vec<(VoxelKey, Option<f32>)> {
+        let dist: Vec<f32> = self.gpu.read(
+            &self.buffers.boundary_distance,
+            self.window.cells() as usize,
+        );
         self.read_bits(&self.buffers.surface)
             .into_iter()
             .map(|k| (k, Some(dist[self.cell_of(k)]).filter(|d| *d >= 0.0)))
@@ -1090,11 +1094,11 @@ impl SurfaceExtractor {
             return words
                 .chunks_exact(EXPORT_WORDS)
                 .map(|w| {
-                    let wall = f32::from_bits(w[4]);
+                    let boundary = f32::from_bits(w[4]);
                     ExportedCell {
                         key: (w[0] as i32, w[1] as i32, w[2] as i32),
                         height_m: f32::from_bits(w[3]),
-                        wall_m: (wall >= 0.0).then_some(wall),
+                        boundary_m: (boundary >= 0.0).then_some(boundary),
                     }
                 })
                 .collect();

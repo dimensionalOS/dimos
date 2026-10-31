@@ -396,8 +396,8 @@ pub struct PlannerGraph {
     /// Each cell's nearest node and the predecessor back toward it. The planner
     /// walks these to expand a node-to-node edge into its cell path.
     pub cell_state: DijkstraState,
-    /// Each cell's distance to the nearest wall.
-    pub wall_state: DijkstraState,
+    /// Each cell's distance to the nearest boundary.
+    pub boundary_state: DijkstraState,
     /// Reusable dense scratch for node placement, shared across region frames.
     pub node_scratch: NodeScratch,
     /// Reusable storage for a repair window's clusters.
@@ -685,9 +685,9 @@ mod tests {
             step_cells: 2,
             voxel_size: VOXEL,
             node_spacing_m: 1.0,
-            wall_clearance_m: 0.1,
-            wall_buffer_m: 0.5,
-            wall_buffer_weight: 10.0,
+            boundary_clearance_m: 0.1,
+            boundary_buffer_m: 0.5,
+            boundary_buffer_weight: 10.0,
             step_penalty_weight: 1.0,
         }
     }

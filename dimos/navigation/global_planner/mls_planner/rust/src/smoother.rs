@@ -17,7 +17,7 @@
 use crate::adjacency::rise;
 use crate::edges::PlannerGraph;
 use crate::nodes::penalty_of;
-use crate::planner::WallCost;
+use crate::planner::BoundaryCost;
 
 /// Densify target between smoothed waypoints, in voxels.
 const SMOOTH_SPACING_CELLS: f32 = 2.0;
@@ -25,21 +25,21 @@ const SMOOTH_SPACING_CELLS: f32 = 2.0;
 const SMOOTH_ITERS: u32 = 30;
 /// Pull toward the neighbor midpoint per pass.
 const SMOOTH_ALPHA: f32 = 0.25;
-/// Push up the wall-clearance gradient per pass, in voxels at the clearance edge.
-const SMOOTH_WALL_GAIN: f32 = 0.35;
+/// Push up the boundary-clearance gradient per pass, in voxels at the clearance edge.
+const SMOOTH_BOUNDARY_GAIN: f32 = 0.35;
 /// Cap on a point's total move per pass, in voxels.
 const SMOOTH_MAX_STEP_CELLS: f32 = 0.5;
 /// Proposed moves below this are treated as converged (m).
 const CONVERGED_MOVE_M: f32 = 1e-3;
 
 /// Elastic-band smoothing: pull interior waypoints toward their neighbor
-/// midpoint and up the wall-clearance gradient. A move is kept only when its
+/// midpoint and up the boundary-clearance gradient. A move is kept only when its
 /// two chords stay feasible and their penalized cost does not increase.
 pub(crate) fn smooth_path(
     plg: &PlannerGraph,
     waypoints: Vec<(f32, f32, f32)>,
     step_cells: i32,
-    wc: &WallCost,
+    wc: &BoundaryCost,
     step_weight: f32,
 ) -> Vec<(f32, f32, f32)> {
     if waypoints.len() < 3 {
@@ -62,7 +62,7 @@ pub(crate) fn smooth_path(
             let mut dx = SMOOTH_ALPHA * (mid.0 - p.0);
             let mut dy = SMOOTH_ALPHA * (mid.1 - p.1);
 
-            if let Some((gx, gy)) = wall_push(plg, p, wc) {
+            if let Some((gx, gy)) = boundary_push(plg, p, wc) {
                 dx += gx;
                 dy += gy;
             }
@@ -142,12 +142,12 @@ fn nearest_surface_iz(
     })
 }
 
-/// Wall distance of the surface cell under a world point.
-fn wall_dist_at(plg: &PlannerGraph, ix: i32, iy: i32, z: f32, voxel_size: f32) -> Option<f32> {
+/// Boundary distance of the surface cell under a world point.
+fn boundary_dist_at(plg: &PlannerGraph, ix: i32, iy: i32, z: f32, voxel_size: f32) -> Option<f32> {
     let iz = nearest_surface_iz(plg, ix, iy, z, voxel_size)?;
     let id = plg.cells.id((ix, iy, iz))?;
     Some(
-        plg.wall_state
+        plg.boundary_state
             .dist
             .get(id as usize)
             .copied()
@@ -155,17 +155,17 @@ fn wall_dist_at(plg: &PlannerGraph, ix: i32, iy: i32, z: f32, voxel_size: f32) -
     )
 }
 
-/// Step up the wall-distance gradient, scaled by depth into the soft buffer.
-fn wall_push(plg: &PlannerGraph, p: (f32, f32, f32), wc: &WallCost) -> Option<(f32, f32)> {
+/// Step up the boundary-distance gradient, scaled by depth into the soft buffer.
+fn boundary_push(plg: &PlannerGraph, p: (f32, f32, f32), wc: &BoundaryCost) -> Option<(f32, f32)> {
     let vs = wc.voxel_size;
     let (ix, iy) = ((p.0 / vs).floor() as i32, (p.1 / vs).floor() as i32);
-    let d0 = wall_dist_at(plg, ix, iy, p.2, vs)?;
+    let d0 = boundary_dist_at(plg, ix, iy, p.2, vs)?;
     let outer = wc.clearance_m + wc.buffer_m;
     if d0 >= outer {
         return None;
     }
-    // A missing neighbor column counts as a wall.
-    let sample = |jx: i32, jy: i32| wall_dist_at(plg, jx, jy, p.2, vs).unwrap_or(0.0);
+    // A missing neighbor column counts as a boundary.
+    let sample = |jx: i32, jy: i32| boundary_dist_at(plg, jx, jy, p.2, vs).unwrap_or(0.0);
     let gx = sample(ix + 1, iy) - sample(ix - 1, iy);
     let gy = sample(ix, iy + 1) - sample(ix, iy - 1);
     let norm = (gx * gx + gy * gy).sqrt();
@@ -173,18 +173,18 @@ fn wall_push(plg: &PlannerGraph, p: (f32, f32, f32), wc: &WallCost) -> Option<(f
         return None;
     }
     let depth = ((outer - d0) / wc.buffer_m.max(1e-3)).clamp(0.0, 1.0);
-    let step = SMOOTH_WALL_GAIN * depth * vs;
+    let step = SMOOTH_BOUNDARY_GAIN * depth * vs;
     Some((gx / norm * step, gy / norm * step))
 }
 
-/// Wall-penalized length plus step penalty of the straight chord between two
+/// Boundary-penalized length plus step penalty of the straight chord between two
 /// world points. INF when the chord is infeasible.
 fn chord_cost(
     plg: &PlannerGraph,
     a: (f32, f32, f32),
     b: (f32, f32, f32),
     step_cells: i32,
-    wc: &WallCost,
+    wc: &BoundaryCost,
     step_weight: f32,
 ) -> f32 {
     let vs = wc.voxel_size;
@@ -220,12 +220,12 @@ fn chord_cost(
                 rise_cells += step;
             }
             prev_iz = Some(iz);
-            // Off-graph surface columns carry no wall penalty, matching the
+            // Off-graph surface columns carry no boundary penalty, matching the
             // cell-path validator.
             pen = match plg.cells.id((ix, iy, iz)) {
                 Some(id) => {
                     let dist = plg
-                        .wall_state
+                        .boundary_state
                         .dist
                         .get(id as usize)
                         .copied()
@@ -260,8 +260,8 @@ mod tests {
         plg
     }
 
-    fn wc() -> WallCost {
-        WallCost {
+    fn wc() -> BoundaryCost {
+        BoundaryCost {
             clearance_m: 0.2,
             buffer_m: 0.3,
             buffer_weight: 4.0,

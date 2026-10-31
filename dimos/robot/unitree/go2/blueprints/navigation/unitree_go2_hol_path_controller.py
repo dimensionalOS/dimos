@@ -34,7 +34,7 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.05
-wall_clearance_m = 0.2
+boundary_clearance_m = 0.2
 # Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
 planner_viz_hz = 0.0
 # Height of the head-mounted lidar above the ground while standing.
@@ -60,7 +60,7 @@ _nav_rerun_config = {
         "world/planner_path": None,
         "world/path": render_path,
         **planner_visual_override(
-            planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=wall_clearance_m
+            planner_viz_hz, voxel_size=voxel_size, boundary_clearance_m=boundary_clearance_m
         ),
     },
 }
@@ -78,9 +78,9 @@ unitree_go2_hol_path_controller = autoconnect(
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
         start_z_offset_m=go2_lidar_height,
-        wall_clearance_m=wall_clearance_m,
-        wall_buffer_m=0.75,
-        wall_buffer_weight=100.0,
+        boundary_clearance_m=boundary_clearance_m,
+        boundary_buffer_m=0.75,
+        boundary_buffer_weight=100.0,
         step_threshold_m=0.16,
         step_penalty_weight=1.0,
         viz_publish_hz=planner_viz_hz,

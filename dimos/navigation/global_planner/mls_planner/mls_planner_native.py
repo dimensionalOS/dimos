@@ -46,9 +46,9 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
 
     surface_closing_radius: float = 0.3
     node_spacing_m: float = 1.0
-    wall_clearance_m: float = 0.1
-    wall_buffer_m: float = 0.75
-    wall_buffer_weight: float = 100.0
+    boundary_clearance_m: float = 0.1
+    boundary_buffer_m: float = 0.75
+    boundary_buffer_weight: float = 100.0
     step_threshold_m: float = 0.16
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
@@ -60,11 +60,11 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     # Plan on the GPU surface a GPU ray tracer sends as surface_cells; without one, surfaces are extracted here.
     # Off: on the Orin the CPU's per-column extraction beats the GPU's window, still or moving.
     gpu_surfaces: bool = False
-    # Place nodes on the GPU surface's wall distances instead of measuring them here.
-    gpu_wall_distance: bool = False
+    # Place nodes on the GPU surface's boundary distances instead of measuring them here.
+    gpu_boundary_distance: bool = False
     # The GPU surface's slope gate: planes tilted further are not standable.
     max_slope_deg: float = 45.0
-    # A GPU surface cell whose plane height or wall distance moved less than this keeps the graph it was built on.
+    # A GPU surface cell whose plane height or boundary distance moved less than this keeps the graph it was built on.
     surface_change_m: float = 0.01
     # Worker threads for parallel planner work.
     worker_threads: int = 4

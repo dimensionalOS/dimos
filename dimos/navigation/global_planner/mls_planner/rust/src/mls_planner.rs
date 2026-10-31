@@ -32,8 +32,9 @@ use crate::columns::{
 use crate::dijkstra::{DijkstraState, RepairWindow};
 use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
 use crate::nodes::{
-    apply_wall_safe_penalty_region, place_nodes, place_nodes_on_walls, place_nodes_region,
-    relocate_dead_nodes, wall_distances_region, PlacementParams, HOLE_SPAN_CELLS,
+    apply_boundary_safe_penalty_region, boundary_distances_region, place_nodes,
+    place_nodes_on_boundaries, place_nodes_region, relocate_dead_nodes, PlacementParams,
+    HOLE_SPAN_CELLS,
 };
 use crate::planner;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
@@ -41,7 +42,7 @@ use crate::voxel::{voxelize, VoxelKey};
 
 #[native_config]
 #[derive(Clone)]
-#[validate(schema(function = "validate_wall_buffer"))]
+#[validate(schema(function = "validate_boundary_buffer"))]
 pub struct Config {
     pub world_frame: String,
     /// Frame whose tf pose in the world frame is the planning start.
@@ -63,17 +64,17 @@ pub struct Config {
     pub surface_closing_radius: f32,
     #[validate(range(exclusive_min = 0.0))]
     pub node_spacing_m: f32,
-    /// Hard clearance. Cells closer than this to a wall or edge are impassable.
+    /// Hard clearance. Cells closer than this to a boundary or edge are impassable.
     #[validate(range(min = 0.0))]
-    pub wall_clearance_m: f32,
+    pub boundary_clearance_m: f32,
     /// Width of the soft standoff zone beyond the clearance. Paths prefer to stay
-    /// clearance + buffer from walls.
+    /// clearance + buffer from boundaries.
     #[validate(range(min = 0.0))]
-    pub wall_buffer_m: f32,
-    /// Peak soft wall penalty at the clearance edge: the cost multiplier there is
+    pub boundary_buffer_m: f32,
+    /// Peak soft boundary penalty at the clearance edge: the cost multiplier there is
     /// 1 + this, decaying to 1 at the outer edge of the buffer zone.
     #[validate(range(min = 0.0))]
-    pub wall_buffer_weight: f32,
+    pub boundary_buffer_weight: f32,
     /// Max traversable vertical step. Taller steps are impassable.
     #[validate(range(min = 0.0))]
     pub step_threshold_m: f32,
@@ -95,13 +96,13 @@ pub struct Config {
     /// Plan on the GPU surface a GPU ray tracer sends as surface_cells (plane
     /// heights, slope gate); without one, surfaces are extracted here.
     pub gpu_surfaces: bool,
-    /// Place nodes on the GPU surface's wall distances instead of measuring
+    /// Place nodes on the GPU surface's boundary distances instead of measuring
     /// them here.
-    pub gpu_wall_distance: bool,
+    pub gpu_boundary_distance: bool,
     /// The GPU surface's slope gate: planes tilted further are not standable.
     #[validate(range(min = 0.0, max = 90.0))]
     pub max_slope_deg: f32,
-    /// A GPU surface cell whose plane height or wall distance moved less than
+    /// A GPU surface cell whose plane height or boundary distance moved less than
     /// this keeps the graph it was built on; lidar noise is 1 to 2 cm.
     #[validate(range(min = 0.0))]
     pub surface_change_m: f32,
@@ -110,11 +111,11 @@ pub struct Config {
     pub worker_threads: u32,
 }
 
-/// The soft wall penalty needs a non-zero zone to act in.
-fn validate_wall_buffer(config: &Config) -> Result<(), ValidationError> {
-    if config.wall_buffer_weight > 0.0 && config.wall_buffer_m == 0.0 {
+/// The soft boundary penalty needs a non-zero zone to act in.
+fn validate_boundary_buffer(config: &Config) -> Result<(), ValidationError> {
+    if config.boundary_buffer_weight > 0.0 && config.boundary_buffer_m == 0.0 {
         return Err(ValidationError::new(
-            "wall_buffer_weight requires wall_buffer_m > 0",
+            "boundary_buffer_weight requires boundary_buffer_m > 0",
         ));
     }
     Ok(())
@@ -139,13 +140,13 @@ impl Config {
     /// Radius of the node window around a changed cell: the hard clearance
     /// plus slack. Costs in the wider penalty band lag until a change reaches them.
     pub fn node_window_cells(&self) -> i32 {
-        (self.wall_clearance_m / self.voxel_size).ceil() as i32 + WINDOW_SLACK_CELLS
+        (self.boundary_clearance_m / self.voxel_size).ceil() as i32 + WINDOW_SLACK_CELLS
     }
 
-    /// Radius of the ball for a repair that keeps wall buffer costs exact: the
+    /// Radius of the ball for a repair that keeps boundary buffer costs exact: the
     /// whole penalty band plus slack.
     pub fn buffer_window_cells(&self) -> i32 {
-        ((self.wall_clearance_m + self.wall_buffer_m) / self.voxel_size).ceil() as i32
+        ((self.boundary_clearance_m + self.boundary_buffer_m) / self.voxel_size).ceil() as i32
             + WINDOW_SLACK_CELLS
     }
 
@@ -163,9 +164,9 @@ impl Config {
             step_cells: self.step_cells(),
             voxel_size: self.voxel_size,
             node_spacing_m: self.node_spacing_m,
-            wall_clearance_m: self.wall_clearance_m,
-            wall_buffer_m: self.wall_buffer_m,
-            wall_buffer_weight: self.wall_buffer_weight,
+            boundary_clearance_m: self.boundary_clearance_m,
+            boundary_buffer_m: self.boundary_buffer_m,
+            boundary_buffer_weight: self.boundary_buffer_weight,
             step_penalty_weight: self.step_penalty_weight,
         }
     }
@@ -231,9 +232,9 @@ pub struct Planner {
     // Surface heights in meters from a surface extracted elsewhere; when set,
     // neighbors link by height instead of by voxel.
     heights: Option<ahash::AHashMap<VoxelKey, f32>>,
-    // Wall distances in meters from that surface's extractor; when set, they
-    // stand in for the wall-distance search.
-    walls: Option<ahash::AHashMap<VoxelKey, f32>>,
+    // Boundary distances in meters from that surface's extractor; when set, they
+    // stand in for the boundary-distance search.
+    boundaries: Option<ahash::AHashMap<VoxelKey, f32>>,
     // Last successful path and its goal, for safe truncation when a later
     // replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
@@ -260,7 +261,7 @@ impl Planner {
             voxel_map: AHashSet::new(),
             by_col: ColumnIz::default(),
             heights: None,
-            walls: None,
+            boundaries: None,
             last_path: None,
             last_result: None,
             last_redo: RegionRedo::default(),
@@ -292,23 +293,23 @@ impl Planner {
             );
             build_surface_lookup(&surface, &mut self.graph.surface_lookup);
             self.heights = None;
-            self.walls = None;
+            self.boundaries = None;
 
             self.rebuild_graph(config);
         });
     }
 
     /// update_global_map from a surface extracted elsewhere, such as on the
-    /// GPU: `occupied` is the map the surface came from (walls scan it), and
+    /// GPU: `occupied` is the map the surface came from (boundaries scan it), and
     /// `heights`, one per surface cell, links neighbors by height in meters
-    /// instead of by whole voxels. `walls`, one per surface cell, are its wall
+    /// instead of by whole voxels. `boundaries`, one per surface cell, are its boundary
     /// distances in meters; without them the planner measures its own.
     pub fn update_from_surface(
         &mut self,
         occupied: &[VoxelKey],
         surface: &[VoxelKey],
         heights: Option<&[f32]>,
-        walls: Option<&[f32]>,
+        boundaries: Option<&[f32]>,
         config: &Config,
     ) {
         let pool = Arc::clone(&self.pool);
@@ -331,13 +332,18 @@ impl Planner {
                         config.step_threshold_m,
                     );
                     self.heights = Some(heights);
-                    self.walls = walls
-                        .map(|walls| surface.iter().copied().zip(walls.iter().copied()).collect());
+                    self.boundaries = boundaries.map(|boundaries| {
+                        surface
+                            .iter()
+                            .copied()
+                            .zip(boundaries.iter().copied())
+                            .collect()
+                    });
                     self.rebuild_nodes(config);
                 }
                 None => {
                     self.heights = None;
-                    self.walls = None;
+                    self.boundaries = None;
                     self.rebuild_graph(config)
                 }
             }
@@ -357,12 +363,12 @@ impl Planner {
     }
 
     /// update_region with the region's surface extracted elsewhere (the GPU's):
-    /// `cells`, voxel center, plane height, then wall distance in meters
-    /// (infinite with no wall), replace the surface between the region's
+    /// `cells`, voxel center, plane height, then boundary distance in meters
+    /// (infinite with no boundary), replace the surface between the region's
     /// z_min and z_max in every column they touch, a NaN z marking a column
     /// left with none there. Neighbors link by
-    /// height from then on, and nodes place on those wall distances with
-    /// gpu_wall_distance. A kept cell whose height and wall distance moved
+    /// height from then on, and nodes place on those boundary distances with
+    /// gpu_boundary_distance. A kept cell whose height and boundary distance moved
     /// less than surface_change_m keeps its old values and its graph.
     pub fn update_region_with_surface(
         &mut self,
@@ -372,9 +378,9 @@ impl Planner {
         config: &Config,
     ) -> Option<ColumnWindow> {
         let pool = Arc::clone(&self.pool);
-        // A GPU surface rewrites whole boxes of columns, and wall distances
-        // (GPU or CPU) move up to the wall reach from any cell it changed, so
-        // the repair spans the wall buffer as a seeded region's does; a
+        // A GPU surface rewrites whole boxes of columns, and boundary distances
+        // (GPU or CPU) move up to the boundary reach from any cell it changed, so
+        // the repair spans the boundary buffer as a seeded region's does; a
         // narrower one left stale costs that cut the streamed graph apart.
         let window_steps = config.buffer_window_cells();
         pool.install(|| {
@@ -435,14 +441,14 @@ impl Planner {
             let replace_ms = ms_since(stage);
 
             let heights = self.heights.get_or_insert_with(Default::default);
-            let mut walls = match config.gpu_wall_distance {
-                true => Some(self.walls.get_or_insert_with(Default::default)),
+            let mut boundaries = match config.gpu_boundary_distance {
+                true => Some(self.boundaries.get_or_insert_with(Default::default)),
                 false => None,
             };
             for k in &removed {
                 heights.remove(k);
-                if let Some(walls) = walls.as_mut() {
-                    walls.remove(k);
+                if let Some(boundaries) = boundaries.as_mut() {
+                    boundaries.remove(k);
                 }
             }
             let added_set: AHashSet<VoxelKey> = added.iter().copied().collect();
@@ -456,15 +462,15 @@ impl Planner {
             let mut retuned: Vec<VoxelKey> = Vec::new();
             for &(k, h, w) in &surface {
                 let fresh = added_set.contains(&k);
-                let wall_moved = walls
+                let boundary_moved = boundaries
                     .as_ref()
-                    .is_some_and(|walls| moved(walls.get(&k).copied(), w));
-                if !fresh && !wall_moved && !moved(heights.get(&k).copied(), h) {
+                    .is_some_and(|boundaries| moved(boundaries.get(&k).copied(), w));
+                if !fresh && !boundary_moved && !moved(heights.get(&k).copied(), h) {
                     continue;
                 }
                 heights.insert(k, h);
-                if let Some(walls) = walls.as_mut() {
-                    walls.insert(k, w);
+                if let Some(boundaries) = boundaries.as_mut() {
+                    boundaries.insert(k, w);
                 }
                 if !fresh {
                     retuned.push(k);
@@ -494,7 +500,7 @@ impl Planner {
     }
 
     /// update_region for a region of a seeded map. It repairs out to the full
-    /// wall buffer, so the costs around a seeded wall are exact across region
+    /// boundary buffer, so the costs around a seeded boundary are exact across region
     /// borders.
     pub fn update_seed_region(
         &mut self,
@@ -574,7 +580,7 @@ impl Planner {
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
-    /// A voxel edit can change a wall scan without changing any surface cell,
+    /// A voxel edit can change a boundary scan without changing any surface cell,
     /// so the repair runs for the edits too.
     fn rebuild_region_graph(
         &mut self,
@@ -604,7 +610,7 @@ impl Planner {
             None => config.step_cells(),
         };
         let patch = self.patch_cells(&added, &removed);
-        // A kept cell can open up (its wall distance grows as the space
+        // A kept cell can open up (its boundary distance grows as the space
         // around it is seen), so it may spawn a node like a fresh one.
         let mut spawn = patch.added.clone();
         spawn.extend(retuned.iter().filter_map(|&k| self.graph.cells.id(k)));
@@ -637,14 +643,19 @@ impl Planner {
             &mut graph.cluster_index,
             &mut graph.node_scratch.seen,
         );
-        match &self.walls {
-            Some(walls) => copy_wall_distances(&graph.cells, walls, &window, &mut graph.wall_state),
-            None => wall_distances_region(
+        match &self.boundaries {
+            Some(boundaries) => copy_boundary_distances(
+                &graph.cells,
+                boundaries,
+                &window,
+                &mut graph.boundary_state,
+            ),
+            None => boundary_distances_region(
                 &graph.cells,
                 &self.by_col,
                 &params,
                 &window,
-                &mut graph.wall_state,
+                &mut graph.boundary_state,
             ),
         }
         gone_nodes.extend(place_nodes_region(
@@ -652,13 +663,13 @@ impl Planner {
             &params,
             &spawn,
             &window,
-            &graph.wall_state.dist,
+            &graph.boundary_state.dist,
             &graph.cell_state,
             &mut graph.nodes,
         ));
-        apply_wall_safe_penalty_region(
+        apply_boundary_safe_penalty_region(
             &mut graph.cells,
-            &graph.wall_state.dist,
+            &graph.boundary_state.dist,
             &params,
             &window_cells,
             &mut graph.node_scratch,
@@ -674,10 +685,10 @@ impl Planner {
         );
     }
 
-    /// A surface cell's wall distance in meters, as the node graph uses it.
-    pub fn wall_distance(&self, key: VoxelKey) -> Option<f32> {
+    /// A surface cell's boundary distance in meters, as the node graph uses it.
+    pub fn boundary_distance(&self, key: VoxelKey) -> Option<f32> {
         let id = self.graph.cells.id(key)?;
-        self.graph.wall_state.dist.get(id as usize).copied()
+        self.graph.boundary_state.dist.get(id as usize).copied()
     }
 
     /// Relink the given cells, by height when the surface came with heights.
@@ -901,7 +912,7 @@ impl Planner {
         config: &Config,
     ) -> Vec<CellId> {
         let graph = &mut self.graph;
-        let wall_roots = wall_seed_roots(
+        let boundary_roots = boundary_seed_roots(
             &graph.surface_lookup,
             &self.by_col,
             &graph.cells,
@@ -913,7 +924,7 @@ impl Planner {
             .ensure_capacity(graph.cells.slot_capacity());
         bfs_ball(
             &graph.cells,
-            roots.iter().copied().chain(wall_roots),
+            roots.iter().copied().chain(boundary_roots),
             steps,
             &mut graph.node_scratch.seen,
         )
@@ -922,18 +933,18 @@ impl Planner {
     /// Full rebuild of nodes and node edges from the current cells.
     fn rebuild_nodes(&mut self, config: &Config) {
         let graph = &mut self.graph;
-        match &self.walls {
-            Some(walls) => {
+        match &self.boundaries {
+            Some(boundaries) => {
                 let cells = &graph.cells;
-                graph.wall_state.reset(cells.slot_capacity());
+                graph.boundary_state.reset(cells.slot_capacity());
                 for id in cells.ids() {
-                    let dist = walls.get(&cells.coord(id)).copied();
-                    graph.wall_state.dist[id as usize] = dist.unwrap_or(f32::INFINITY);
+                    let dist = boundaries.get(&cells.coord(id)).copied();
+                    graph.boundary_state.dist[id as usize] = dist.unwrap_or(f32::INFINITY);
                 }
-                place_nodes_on_walls(
+                place_nodes_on_boundaries(
                     &mut graph.cells,
                     &config.placement_params(),
-                    &graph.wall_state.dist,
+                    &graph.boundary_state.dist,
                     &mut graph.node_scratch,
                     &mut graph.nodes,
                 );
@@ -942,7 +953,7 @@ impl Planner {
                 &mut graph.cells,
                 &self.by_col,
                 &config.placement_params(),
-                &mut graph.wall_state,
+                &mut graph.boundary_state,
                 &mut graph.node_scratch,
                 &mut graph.nodes,
             ),
@@ -1027,14 +1038,14 @@ impl Planner {
             .flat_map(|(&(ix, iy), zs)| zs.iter().map(move |&iz| (ix, iy, iz)))
     }
 
-    /// Surface cells paired with their wall clearance, the distance to the
+    /// Surface cells paired with their boundary clearance, the distance to the
     /// nearest untraversable edge. Unreached cells report +inf.
     pub fn surface_clearance(&self) -> Vec<(VoxelKey, f32)> {
         self.surface_clearance_iter().collect()
     }
 
     pub fn surface_clearance_iter(&self) -> impl Iterator<Item = (VoxelKey, f32)> + '_ {
-        let dist = &self.graph.wall_state.dist;
+        let dist = &self.graph.boundary_state.dist;
         self.graph.cells.ids().map(move |id| {
             let d = dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
             (self.graph.cells.coord(id), d)
@@ -1058,9 +1069,9 @@ struct CellPatch {
     dead_nodes: Vec<(usize, VoxelKey)>,
 }
 
-/// Surface cells whose wall adjacency a voxel edit can flip without any
+/// Surface cells whose boundary adjacency a voxel edit can flip without any
 /// surface change, up to HOLE_SPAN_CELLS from the edited column.
-fn wall_seed_roots(
+fn boundary_seed_roots(
     lookup: &SurfaceLookup,
     by_col: &ColumnIz,
     cells: &SurfaceCells,
@@ -1142,20 +1153,20 @@ fn bfs_ball(
     ball
 }
 
-/// Window cells take their distance from `walls`, infinite where it has none.
-fn copy_wall_distances(
+/// Window cells take their distance from `boundaries`, infinite where it has none.
+fn copy_boundary_distances(
     cells: &SurfaceCells,
-    walls: &ahash::AHashMap<VoxelKey, f32>,
+    boundaries: &ahash::AHashMap<VoxelKey, f32>,
     window: &RepairWindow,
-    wall_state: &mut DijkstraState,
+    boundary_state: &mut DijkstraState,
 ) {
     let slots = cells.slot_capacity();
-    if wall_state.dist.len() < slots {
-        wall_state.dist.resize(slots, f32::INFINITY);
+    if boundary_state.dist.len() < slots {
+        boundary_state.dist.resize(slots, f32::INFINITY);
     }
     for &id in window.cells() {
-        let dist = walls.get(&cells.coord(id)).copied();
-        wall_state.dist[id as usize] = dist.unwrap_or(f32::INFINITY);
+        let dist = boundaries.get(&cells.coord(id)).copied();
+        boundary_state.dist[id as usize] = dist.unwrap_or(f32::INFINITY);
     }
 }
 

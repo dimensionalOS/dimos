@@ -46,7 +46,7 @@ enum MapUpdate {
         bounds: PoseStamped,
         received: Instant,
         /// The region's surface from the GPU: voxel center, plane height, then
-        /// wall distance.
+        /// boundary distance.
         surface: Option<Vec<[f32; 5]>>,
     },
     Global {
@@ -63,13 +63,13 @@ const REGIONS_BEFORE_CPU_WARNING: u32 = 50;
 fn surface_request(config: &Config) -> lcm_msgs::std_msgs::String {
     lcm_msgs::std_msgs::String {
         data: format!(
-            r#"{{"robot_height_m":{},"closing_radius_m":{},"step_threshold_m":{},"max_slope_deg":{},"wall_distance":{},"wall_reach_m":{},"max_overhead_m":{}}}"#,
+            r#"{{"robot_height_m":{},"closing_radius_m":{},"step_threshold_m":{},"max_slope_deg":{},"boundary_distance":{},"boundary_reach_m":{},"max_overhead_m":{}}}"#,
             config.robot_height,
             config.surface_closing_radius,
             config.step_threshold_m,
             config.max_slope_deg,
-            config.gpu_wall_distance,
-            config.wall_clearance_m + config.wall_buffer_m,
+            config.gpu_boundary_distance,
+            config.boundary_clearance_m + config.boundary_buffer_m,
             config.max_overhead_m
         ),
     }
@@ -394,7 +394,7 @@ impl MlsPlanner {
         }
         if !self.surfaces_seen {
             info!(
-                wall_distance = self.config.gpu_wall_distance,
+                boundary_distance = self.config.gpu_boundary_distance,
                 "Planning on the ray tracer's GPU surfaces."
             );
             self.surfaces_seen = true;
@@ -429,7 +429,7 @@ impl MlsPlanner {
                 return;
             }
             let cloud = self.pending_surface.take().expect("checked above");
-            match extract_fields(&cloud, ["x", "y", "z", "intensity", "wall_distance"]) {
+            match extract_fields(&cloud, ["x", "y", "z", "intensity", "boundary_distance"]) {
                 Ok(cells) => Some(cells),
                 Err(e) => {
                     warn_throttled!(Duration::from_secs(1), error = %e, "Bad surface_cells, extracting this region on the CPU.");
@@ -1027,7 +1027,7 @@ fn build_segments_path(
     }
 }
 
-/// Like `build_pc2_xyz` plus an `intensity` float carrying the cell's wall clearance.
+/// Like `build_pc2_xyz` plus an `intensity` float carrying the cell's boundary clearance.
 fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
     let n = points.len() as i32;
     let mut data = Vec::with_capacity(points.len() * 16);
@@ -1119,7 +1119,7 @@ fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> 
 }
 
 /// The named float32 fields, x, y, z first, of every point with a finite
-/// position; the other fields may carry infinities (no wall in reach).
+/// position; the other fields may carry infinities (no boundary in reach).
 fn extract_fields<const N: usize>(
     msg: &PointCloud2,
     names: [&'static str; N],
@@ -1179,8 +1179,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn surface_cells_keep_an_infinite_wall_distance_and_drop_a_bad_position() {
-        let names = ["x", "y", "z", "intensity", "wall_distance"];
+    fn surface_cells_keep_an_infinite_boundary_distance_and_drop_a_bad_position() {
+        let names = ["x", "y", "z", "intensity", "boundary_distance"];
         let rows = [
             [1.0, 2.0, 3.0, 3.1, f32::INFINITY],
             [f32::NAN, 2.0, 3.0, 3.1, 0.5],

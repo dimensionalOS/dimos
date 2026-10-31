@@ -58,9 +58,9 @@ fn load_by_regions(p: &mut Planner, points: &[(f32, f32, f32)], center: (f32, f3
     }
 }
 
-/// Wall clearance per cell, clamped to the band a repair keeps exact.
+/// Boundary clearance per cell, clamped to the band a repair keeps exact.
 fn clearance_map(p: &Planner, cfg: &Config) -> BTreeMap<VoxelKey, u32> {
-    let band = cfg.wall_clearance_m + cfg.wall_buffer_m;
+    let band = cfg.boundary_clearance_m + cfg.boundary_buffer_m;
     p.surface_clearance()
         .into_iter()
         .map(|(c, d)| (c, d.min(band).to_bits()))
@@ -82,9 +82,9 @@ fn test_config() -> Config {
         max_overhead_m: 2.0,
         surface_closing_radius: 0.3,
         node_spacing_m: 1.0,
-        wall_clearance_m: 0.0,
-        wall_buffer_m: 0.3,
-        wall_buffer_weight: 1.0,
+        boundary_clearance_m: 0.0,
+        boundary_buffer_m: 0.3,
+        boundary_buffer_weight: 1.0,
         step_threshold_m: 0.25,
         step_penalty_weight: 0.0,
         goal_tolerance: 0.3,
@@ -92,7 +92,7 @@ fn test_config() -> Config {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: false,
-        gpu_wall_distance: false,
+        gpu_boundary_distance: false,
         max_slope_deg: 45.0,
         surface_change_m: 0.01,
         worker_threads: 4,
@@ -204,7 +204,7 @@ fn world_points() -> Vec<(f32, f32, f32)> {
             pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
         }
     }
-    // a wall column from z=0 up, to create wall-adjacency for nodes
+    // a wall column from z=0 up, to create boundary-adjacency for nodes
     for iy in 0..40 {
         for iz in 0..15 {
             pts.push((
@@ -383,7 +383,7 @@ fn raised_floor_relocates_nodes_in_place() {
     }
 }
 
-/// A junk voxel near a node shifts the local wall-distance field. A
+/// A junk voxel near a node shifts the local boundary-distance field. A
 /// fresh re-derivation would move the node to the new local maximum, but
 /// sticky retention must keep it exactly where it was.
 #[test]
@@ -407,7 +407,7 @@ fn sticky_node_keeps_its_place_when_the_field_shifts() {
         })
         .unwrap();
 
-    // Junk appears 0.25 m from the node, shrinking its wall distance.
+    // Junk appears 0.25 m from the node, shrinking its boundary distance.
     let b = RegionBounds {
         origin_x: target.0,
         origin_y: target.1,
@@ -430,7 +430,7 @@ fn sticky_node_keeps_its_place_when_the_field_shifts() {
 #[test]
 fn sticky_node_dies_when_a_wall_grows_next_to_it() {
     let cfg = Config {
-        wall_clearance_m: 0.2,
+        boundary_clearance_m: 0.2,
         ..test_config()
     };
     let all = big_world();
@@ -722,13 +722,13 @@ fn hard_clearance_floor_avoids_narrow_gap() {
     let max_x = |w: &[(f32, f32, f32)]| w.iter().map(|p| p.0).fold(f32::MIN, f32::max);
 
     // No clearance: the shortest route slips straight through the narrow gap.
-    cfg.wall_clearance_m = 0.0;
+    cfg.boundary_clearance_m = 0.0;
     let mut open = Planner::new(cfg.worker_threads);
     open.update_global_map(&pts, &cfg);
     let wp_open = open.plan(start, goal, &cfg).expect("open plan exists");
 
     // Clearance wider than the narrow gap: it is impassable, so detour wide.
-    cfg.wall_clearance_m = 0.2;
+    cfg.boundary_clearance_m = 0.2;
     let mut safe = Planner::new(cfg.worker_threads);
     safe.update_global_map(&pts, &cfg);
     let wp_safe = safe.plan(start, goal, &cfg).expect("safe plan exists");
@@ -748,12 +748,12 @@ fn hard_clearance_floor_avoids_narrow_gap() {
 }
 
 /// Every cell the smoothed path crosses, between waypoints included, must
-/// clear the hard wall distance.
+/// clear the hard boundary distance.
 #[test]
-fn final_path_clears_wall_distance() {
+fn final_path_clears_boundary_distance() {
     let mut cfg = test_config();
-    cfg.wall_clearance_m = 0.2;
-    cfg.wall_buffer_m = 0.5;
+    cfg.boundary_clearance_m = 0.2;
+    cfg.boundary_buffer_m = 0.5;
     let all = big_world();
     let mut p = Planner::new(cfg.worker_threads);
     p.update_global_map(&all, &cfg);
@@ -784,9 +784,9 @@ fn final_path_clears_wall_distance() {
             let z = a.2 + t * (b.2 - a.2);
             if let Some(&c) = clearance.get(&key(x, y, z)) {
                 assert!(
-                    c >= cfg.wall_clearance_m - 1e-4,
-                    "path point ({x:.2},{y:.2}) sits {c:.3} from a wall, under the {} clearance",
-                    cfg.wall_clearance_m
+                    c >= cfg.boundary_clearance_m - 1e-4,
+                    "path point ({x:.2},{y:.2}) sits {c:.3} from a boundary, under the {} clearance",
+                    cfg.boundary_clearance_m
                 );
             }
         }
@@ -823,8 +823,8 @@ fn block_world() -> Vec<(f32, f32, f32)> {
 fn final_path_never_climbs_over_threshold_step() {
     let mut cfg = test_config();
     cfg.surface_closing_radius = 0.0;
-    cfg.wall_clearance_m = 0.0;
-    cfg.wall_buffer_m = 0.0;
+    cfg.boundary_clearance_m = 0.0;
+    cfg.boundary_buffer_m = 0.0;
     cfg.node_spacing_m = 0.5;
     let pts = block_world();
     let mut p = Planner::new(cfg.worker_threads);
@@ -874,8 +874,8 @@ fn ridge_world() -> Vec<(f32, f32, f32)> {
 fn step_penalty_diverts_path_around_ridge() {
     let mut cfg = test_config();
     cfg.surface_closing_radius = 0.0;
-    cfg.wall_clearance_m = 0.0;
-    cfg.wall_buffer_m = 0.0;
+    cfg.boundary_clearance_m = 0.0;
+    cfg.boundary_buffer_m = 0.0;
     cfg.node_spacing_m = 0.5;
     let pts = ridge_world();
     let start = (1.0, 0.5, 0.05);
@@ -929,13 +929,13 @@ fn seed_regions_match_full_rebuild() {
     assert_plans_equivalent(&full, &seeded, &cfg);
 }
 
-/// A seed region repairs out to the whole wall buffer, so the clearance and
-/// the buffer costs around a wall on a region border match a full rebuild.
+/// A seed region repairs out to the whole boundary buffer, so the clearance and
+/// the buffer costs around a boundary on a region border match a full rebuild.
 #[test]
-fn seed_regions_keep_wall_buffer_costs_exact_across_borders() {
+fn seed_regions_keep_boundary_buffer_costs_exact_across_borders() {
     let mut cfg = test_config();
-    cfg.wall_clearance_m = 0.2;
-    cfg.wall_buffer_m = 0.8;
+    cfg.boundary_clearance_m = 0.2;
+    cfg.boundary_buffer_m = 0.8;
     // big_world's wall stands at x = 4.05, just past the region border at 4.0.
     let all = big_world();
 
@@ -1128,9 +1128,9 @@ fn live_and_seed_regions_converge_in_either_order() {
 fn goal_on_subclearance_spur_still_plans() {
     let mut cfg = test_config();
     cfg.surface_closing_radius = 0.0;
-    cfg.wall_clearance_m = 0.3;
-    cfg.wall_buffer_m = 0.0;
-    cfg.wall_buffer_weight = 0.0;
+    cfg.boundary_clearance_m = 0.3;
+    cfg.boundary_buffer_m = 0.0;
+    cfg.boundary_buffer_weight = 0.0;
     cfg.node_spacing_m = 0.5;
 
     let vs = 0.1_f32;
@@ -1141,7 +1141,7 @@ fn goal_on_subclearance_spur_still_plans() {
             pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
         }
     }
-    // A 1-wide spur off the open area: every spur cell is wall-adjacent so
+    // A 1-wide spur off the open area: every spur cell is boundary-adjacent so
     // none clears the clearance and the penalized Voronoi cannot own them.
     for ix in 10..16 {
         pts.push((ix as f32 * vs + half, 5.0 * vs + half, half));
@@ -1188,14 +1188,14 @@ fn deck_over_a_gap(with_middle: bool) -> Vec<(f32, f32, f32)> {
 }
 
 #[test]
-fn a_column_that_empties_under_filled_surface_frees_the_wall_across_the_gap() {
+fn a_column_that_empties_under_filled_surface_frees_the_boundary_across_the_gap() {
     let mut cfg = test_config();
     // One closing pass fills the single-column holes in the ground and leaves
     // the three column gap in the deck open.
     cfg.surface_closing_radius = 0.1;
     let vs = cfg.voxel_size;
     let deck_edge = (4, 3, 30);
-    let wall_distance = |p: &Planner| {
+    let boundary_distance = |p: &Planner| {
         p.surface_clearance()
             .into_iter()
             .find(|&(c, _)| c == deck_edge)
@@ -1207,7 +1207,7 @@ fn a_column_that_empties_under_filled_surface_frees_the_wall_across_the_gap() {
     // column at x 5 and stops on the ground voxel at x 6: a drop.
     let mut p = Planner::new(cfg.worker_threads);
     p.update_global_map(&deck_over_a_gap(true), &cfg);
-    assert_eq!(wall_distance(&p), 0.0);
+    assert_eq!(boundary_distance(&p), 0.0);
     let ground_before: BTreeSet<VoxelKey> =
         surface_set(&p).into_iter().filter(|c| c.2 == 0).collect();
 
@@ -1229,10 +1229,10 @@ fn a_column_that_empties_under_filled_surface_frees_the_wall_across_the_gap() {
     let mut full = Planner::new(cfg.worker_threads);
     full.update_global_map(&world, &cfg);
     assert!(
-        wall_distance(&full) > 0.0,
-        "a full rebuild sees no wall there"
+        boundary_distance(&full) > 0.0,
+        "a full rebuild sees no boundary there"
     );
-    assert_eq!(wall_distance(&p), wall_distance(&full));
+    assert_eq!(boundary_distance(&p), boundary_distance(&full));
 }
 
 /// Two decks a step apart with a one column slot between them on the row
@@ -1266,13 +1266,13 @@ fn decks_with_a_post(with_post_top: bool) -> Vec<(f32, f32, f32)> {
 }
 
 #[test]
-fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
+fn a_voxel_that_goes_under_filled_surface_raises_the_boundary_across_the_gap() {
     let mut cfg = test_config();
     // One closing pass keeps the post's cell filled once its voxel is gone.
     cfg.surface_closing_radius = 0.1;
     let vs = cfg.voxel_size;
     let lower_edge = (4, 3, 19);
-    let wall_distance = |p: &Planner| {
+    let boundary_distance = |p: &Planner| {
         p.surface_clearance()
             .into_iter()
             .find(|&(c, _)| c == lower_edge)
@@ -1281,10 +1281,10 @@ fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
     };
 
     // From the lower deck's edge the scan crosses the empty slot column and
-    // reaches the post top, one step up: no wall.
+    // reaches the post top, one step up: no boundary.
     let mut p = Planner::new(cfg.worker_threads);
     p.update_global_map(&decks_with_a_post(true), &cfg);
-    assert!(wall_distance(&p) > 0.0);
+    assert!(boundary_distance(&p) > 0.0);
     let before = surface_set(&p);
 
     // The post top goes with no surface change and no emptied column, but
@@ -1302,8 +1302,12 @@ fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
 
     let mut full = Planner::new(cfg.worker_threads);
     full.update_global_map(&world, &cfg);
-    assert_eq!(wall_distance(&full), 0.0, "a full rebuild sees the drop");
-    assert_eq!(wall_distance(&p), 0.0);
+    assert_eq!(
+        boundary_distance(&full),
+        0.0,
+        "a full rebuild sees the drop"
+    );
+    assert_eq!(boundary_distance(&p), 0.0);
 }
 
 #[test]

@@ -63,7 +63,7 @@ struct Surfaces {
     /// Surface cell to its height and plane id.
     cells: AHashMap<VoxelKey, (f32, u32)>,
     standable: AHashSet<VoxelKey>,
-    walls: AHashSet<VoxelKey>,
+    boundaries: AHashSet<VoxelKey>,
 }
 
 impl Surfaces {
@@ -93,7 +93,7 @@ impl Surfaces {
                 .map(|(&k, &h)| (k, (h, ids[&k])))
                 .collect(),
             standable: result.standable.into_iter().collect(),
-            walls: result.walls.into_iter().collect(),
+            boundaries: result.boundaries.into_iter().collect(),
         }
     }
 
@@ -248,7 +248,7 @@ fn ten_degree_ramp_is_one_surface_without_edges() {
         "the ramp splits into {} surfaces",
         planes.len()
     );
-    let edges = interior.iter().filter(|k| s.walls.contains(k)).count();
+    let edges = interior.iter().filter(|k| s.boundaries.contains(k)).count();
     assert_eq!(edges, 0, "{edges} fake edges along the ramp");
     for k in &interior {
         let x = (k.0 as f32 + 0.5) * VOXEL;
@@ -320,7 +320,7 @@ fn floor_on_a_grid_line_is_one_surface() {
         );
         let planes: AHashSet<u32> = interior.iter().map(|k| s.cells[k].1).collect();
         assert_eq!(planes.len(), 1);
-        assert!(interior.iter().all(|k| !s.walls.contains(k)));
+        assert!(interior.iter().all(|k| !s.boundaries.contains(k)));
     }
 }
 

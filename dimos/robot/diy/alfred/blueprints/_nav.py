@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 ALFRED_RERUN_ROOT = "world/alfred"
 
 VOXEL_SIZE_METERS = 0.08
-WALL_CLEARANCE_M = 0.20
+BOUNDARY_CLEARANCE_M = 0.20
 STEP_THRESHOLD_M = 0.08
 PLANNER_VIZ_HZ = 2.0
 
@@ -99,7 +99,7 @@ def _alfred_rerun_config() -> dict[str, Any]:
             "world/planner_path": partial(_path_colored, color=(170, 60, 220)),
             **motion_visual_override(embodiment=ALFRED),
             # The planner publishes its surface and edges by cell.
-            **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_METERS, WALL_CLEARANCE_M),
+            **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_METERS, BOUNDARY_CLEARANCE_M),
         },
     }
 
@@ -115,7 +115,7 @@ def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             robot_height=ALFRED.height,
-            wall_clearance_m=WALL_CLEARANCE_M,
+            boundary_clearance_m=BOUNDARY_CLEARANCE_M,
             step_threshold_m=STEP_THRESHOLD_M,
             step_penalty_weight=1.0,
             viz_publish_hz=PLANNER_VIZ_HZ,

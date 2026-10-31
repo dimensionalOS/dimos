@@ -802,7 +802,7 @@ fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
 fn cells_to_cloud(cells: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     let data: Vec<u8> = cells.iter().flat_map(|v| v.to_le_bytes()).collect();
     let n = (cells.len() / SURFACE_CELL_FLOATS) as i32;
-    let names = ["x", "y", "z", "intensity", "wall_distance"];
+    let names = ["x", "y", "z", "intensity", "boundary_distance"];
     make_cloud(data, n, &names, frame_id, stamp)
 }
 

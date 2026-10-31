@@ -31,15 +31,15 @@ const POINTS_PER_FRAME: usize = 20_000;
 /// Cells the streamed surface may differ on from the whole-map build, as a
 /// fraction: each region's window sees only the map up to its frame.
 const SURFACE_TOLERANCE: f64 = 0.02;
-/// Meters the GPU's straight-line wall distance (streamed) may sit from the
+/// Meters the GPU's straight-line boundary distance (streamed) may sit from the
 /// CPU's walk along the surface (whole-map) at the median and 95th percentile:
 /// the GPU measures within a plane, the CPU around corners.
-const WALL_DELTA_MEDIAN: f32 = 0.1;
-const WALL_DELTA_P95: f32 = 0.4;
-/// Fraction of shared cells whose side of the wall clearance may flip.
-const WALL_CLEARANCE_FLIPS: f64 = 0.02;
+const BOUNDARY_DELTA_MEDIAN: f32 = 0.1;
+const BOUNDARY_DELTA_P95: f32 = 0.4;
+/// Fraction of shared cells whose side of the boundary clearance may flip.
+const BOUNDARY_CLEARANCE_FLIPS: f64 = 0.02;
 
-fn planner_config(gpu_wall_distance: bool) -> PlannerConfig {
+fn planner_config(gpu_boundary_distance: bool) -> PlannerConfig {
     PlannerConfig {
         world_frame: String::new(),
         base_frame: String::new(),
@@ -49,9 +49,9 @@ fn planner_config(gpu_wall_distance: bool) -> PlannerConfig {
         max_overhead_m: 2.0,
         surface_closing_radius: 0.3,
         node_spacing_m: 1.0,
-        wall_clearance_m: 0.1,
-        wall_buffer_m: 0.75,
-        wall_buffer_weight: 100.0,
+        boundary_clearance_m: 0.1,
+        boundary_buffer_m: 0.75,
+        boundary_buffer_weight: 100.0,
         step_threshold_m: 0.16,
         step_penalty_weight: 4.0,
         goal_tolerance: 0.3,
@@ -59,7 +59,7 @@ fn planner_config(gpu_wall_distance: bool) -> PlannerConfig {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: true,
-        gpu_wall_distance,
+        gpu_boundary_distance,
         max_slope_deg: 45.0,
         surface_change_m: 0.01,
         worker_threads: 8,
@@ -72,8 +72,8 @@ fn request(cfg: &PlannerConfig) -> SurfaceRequest {
         closing_radius_m: cfg.surface_closing_radius,
         step_threshold_m: cfg.step_threshold_m,
         max_slope_deg: cfg.max_slope_deg,
-        wall_distance: cfg.gpu_wall_distance,
-        wall_reach_m: cfg.wall_clearance_m + cfg.wall_buffer_m,
+        boundary_distance: cfg.gpu_boundary_distance,
+        boundary_reach_m: cfg.boundary_clearance_m + cfg.boundary_buffer_m,
         max_overhead_m: cfg.max_overhead_m,
     }
 }
@@ -97,12 +97,12 @@ fn streamed_gpu_surfaces_match_a_whole_map_build_and_plan() {
 }
 
 #[test]
-fn streamed_gpu_surfaces_with_cpu_wall_distance_match_a_whole_map_build_and_plan() {
+fn streamed_gpu_surfaces_with_cpu_boundary_distance_match_a_whole_map_build_and_plan() {
     streamed_matches_whole_map(false);
 }
 
-fn streamed_matches_whole_map(gpu_wall_distance: bool) {
-    let planner_cfg = planner_config(gpu_wall_distance);
+fn streamed_matches_whole_map(gpu_boundary_distance: bool) {
+    let planner_cfg = planner_config(gpu_boundary_distance);
     let request = request(&planner_cfg);
     let mut mapper = Mapper::new(Config {
         gpu: true,
@@ -178,11 +178,12 @@ fn streamed_matches_whole_map(gpu_wall_distance: bool) {
         "surfaces differ on {differ}"
     );
 
-    let clearance = planner_cfg.wall_clearance_m;
+    let clearance = planner_cfg.boundary_clearance_m;
     let mut deltas: Vec<f32> = Vec::new();
     let (mut flips, mut only_one_finite) = (0usize, 0usize);
     for k in a.intersection(&b) {
-        let (Some(gpu), Some(cpu)) = (streamed.wall_distance(*k), built.wall_distance(*k)) else {
+        let (Some(gpu), Some(cpu)) = (streamed.boundary_distance(*k), built.boundary_distance(*k))
+        else {
             continue;
         };
         match (gpu.is_finite(), cpu.is_finite()) {
@@ -199,18 +200,18 @@ fn streamed_matches_whole_map(gpu_wall_distance: bool) {
     let flip_rate = flips as f64 / shared.max(1) as f64;
     let (median, p95) = (percentile(&deltas, 0.5), percentile(&deltas, 0.95));
     eprintln!(
-        "wall distance gpu vs cpu over {} of {shared} shared cells: |delta| median {median:.3} p95 {p95:.3} max {:.3} m; \
+        "boundary distance gpu vs cpu over {} of {shared} shared cells: |delta| median {median:.3} p95 {p95:.3} max {:.3} m; \
          {flips} flipped sides of the {clearance} m clearance, {only_one_finite} finite on one side only",
         deltas.len(),
         percentile(&deltas, 1.0),
     );
-    assert!(!deltas.is_empty(), "no shared wall distances");
+    assert!(!deltas.is_empty(), "no shared boundary distances");
     assert!(
-        median <= WALL_DELTA_MEDIAN && p95 <= WALL_DELTA_P95,
-        "wall distance median {median} p95 {p95}"
+        median <= BOUNDARY_DELTA_MEDIAN && p95 <= BOUNDARY_DELTA_P95,
+        "boundary distance median {median} p95 {p95}"
     );
     assert!(
-        flip_rate <= WALL_CLEARANCE_FLIPS,
+        flip_rate <= BOUNDARY_CLEARANCE_FLIPS,
         "clearance flips {flip_rate}"
     );
 

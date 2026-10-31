@@ -57,13 +57,13 @@ def surface_points(
     pts: NDArray[np.float32],
     clearance: NDArray[np.float32],
     voxel_size: float,
-    wall_clearance_m: float,
+    boundary_clearance_m: float,
     clearance_clamp_m: float,
 ) -> Archetype:
-    """Floor cells colored by wall clearance, dropping the ones the robot cannot fit on."""
+    """Floor cells colored by boundary clearance, dropping the ones the robot cannot fit on."""
     import rerun as rr
 
-    passable = clearance >= wall_clearance_m
+    passable = clearance >= boundary_clearance_m
     pts, clearance = pts[passable], clearance[passable]
     return rr.Points3D(
         positions=pts,
@@ -76,7 +76,7 @@ def surface_points(
 def render_surface_region(
     msg: PointCloud2,
     voxel_size: float,
-    wall_clearance_m: float,
+    boundary_clearance_m: float,
     clearance_clamp_m: float,
     z_band: tuple[float, float] | None = None,
     static: bool = True,
@@ -97,7 +97,7 @@ def render_surface_region(
         if z_band is not None:
             keep = (pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])
             pts, clearance = pts[keep], clearance[keep]
-        cell = surface_points(pts, clearance, voxel_size, wall_clearance_m, clearance_clamp_m)
+        cell = surface_points(pts, clearance, voxel_size, boundary_clearance_m, clearance_clamp_m)
     return [RerunEntry(region_entity(SURFACE_MAP_ENTITY, seq), cell, static=static)]
 
 
@@ -139,7 +139,7 @@ def render_edge_region(msg: LineSegments3D, static: bool = True) -> RerunMulti:
 def planner_visual_override(
     viz_publish_hz: float,
     voxel_size: float,
-    wall_clearance_m: float,
+    boundary_clearance_m: float,
     clearance_clamp_m: float = 1.0,
     static_regions: bool = True,
 ) -> dict[str, VisualOverride]:
@@ -152,7 +152,7 @@ def planner_visual_override(
     surface = partial(
         render_surface_region,
         voxel_size=voxel_size,
-        wall_clearance_m=wall_clearance_m,
+        boundary_clearance_m=boundary_clearance_m,
         clearance_clamp_m=clearance_clamp_m,
         static=static_regions,
     )
