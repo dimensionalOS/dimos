@@ -316,6 +316,7 @@ all_modules = {
     "object-tracking": "dimos.perception.experimental.object_tracker.ObjectTracking",
     "observe-skill": "dimos.agents.skills.observe_skill.ObserveSkill",
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
+    "odometry-tf": "dimos.mapping.gpu_mls.demo_nav_replay.OdometryTf",
     "open-arm-teleop-coordinator": "dimos.robot.manipulators.openarm.blueprints.teleop.OpenArmTeleopCoordinator",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",
