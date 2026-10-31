@@ -112,6 +112,10 @@ def test_platform_bus_selectors_preserve_logical_mapping(
     usb = mocker.patch.object(can_motor_control, "GsUsbBus", create=True)
     module._make_can_bus("left", {"left": "SERIAL"})
     usb.assert_called_once_with(vendor_id=0x1D50, product_id=0x606F, serial_number="SERIAL")
+    monkeypatch.setattr(common.sys, "platform", "linux")
+    socket = mocker.patch.object(can_motor_control, "SocketCanBus", create=True)
+    module._make_can_bus("right", {"right": "can0"})
+    socket.assert_called_once_with("can0")
     monkeypatch.setattr(common.sys, "platform", "unsupported")
     with pytest.raises(RuntimeError, match="unsupported"):
         module._make_can_bus("left", {"left": "SERIAL"})

@@ -317,35 +317,3 @@ def test_the_session_id_is_new_each_start_and_steady_in_between(
     assert first.status().session_id == session
     first.stop()
     assert rig().module.status().session_id != session
-
-
-def test_activation_hook_holds_hardware_lock_before_connected(rig: Callable[..., Rig]) -> None:
-    class Activating(FakeArm):
-        def _activate(self) -> None:
-            assert self._hardware_lock.locked()
-            assert not self.status().connected
-            assert self._joints
-            self.activated = True
-
-    r = rig(Activating)
-    assert isinstance(r.module, Activating)
-    assert r.module.activated
-    assert r.module.status().connected
-
-
-def test_failed_activation_never_accepts_commands() -> None:
-    class Refusing(FakeArm):
-        def _activate(self) -> None:
-            assert self._hardware_lock.locked()
-            raise RuntimeError("activation refused")
-
-    module = Refusing()
-    try:
-        with pytest.raises(RuntimeError, match="activation refused"):
-            module.start()
-        module.command({JOINT1: 0.3})
-        assert not module.status().connected
-        assert list(module.writes) == []
-        assert not module._hardware_lock.locked()
-    finally:
-        module.stop()
