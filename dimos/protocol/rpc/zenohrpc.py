@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from itertools import count
+import pickle
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,7 @@ import zenoh
 import zenoh.handlers
 
 from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.rpc.controller_requests import is_controller_request, read_controller_request
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
 from dimos.protocol.service.call_pool import CallPool
@@ -178,8 +180,12 @@ class ZenohRPC(RPCSpec, ZenohService):
 
     def _execute_rpc(self, f: Callable[..., Any], name: str, query: zenoh.Query) -> None:
         nowait = query.attachment is not None
+        payload = query.payload.to_bytes()  # type: ignore[union-attr]
+        from_controller = is_controller_request(payload)
+        # The Controller reads its replies as pickle too; writing one runs nothing here.
+        dumps = pickle.dumps if from_controller else encode
         try:
-            args = decode(query.payload.to_bytes())  # type: ignore[union-attr]
+            args = read_controller_request(payload) if from_controller else decode(payload)
             if len(args) > 2 and not _addressed_to(args[2], name):
                 # Never run a handler on another RPC's arguments: on a robot the
                 # wrong method can move hardware. LCMRPC drops these by name too.
@@ -189,11 +195,11 @@ class ZenohRPC(RPCSpec, ZenohService):
                 )
             response = f(*args[0], **args[1])
             if not nowait:
-                query.reply(query.key_expr, encode(response))
+                query.reply(query.key_expr, dumps(response))
         except Exception as e:
             logger.exception(f"Exception in RPC handler for {name}: {e}", exc_info=e)
             if not nowait:
-                query.reply_err(encode(serialize_exception(e)), encoding=EXCEPTION_ENCODING)
+                query.reply_err(dumps(serialize_exception(e)), encoding=EXCEPTION_ENCODING)
         finally:
             query.drop()
 

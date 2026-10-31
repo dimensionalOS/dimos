@@ -15,7 +15,8 @@
 """ZenohRPC refuses a query that zenoh delivered to the wrong queryable."""
 
 from collections.abc import Callable, Iterator
-from typing import Any
+import pickle
+from typing import Any, ClassVar
 
 import pytest
 import zenoh
@@ -99,6 +100,49 @@ def test_misdelivered_call_is_refused_without_running_the_wrong_handler(
 
     assert coordinator.stops == 0
     assert coordinator.invokes == []
+
+
+def _ask(client: ZenohRPC, payload: bytes) -> list[Any]:
+    return list(
+        client.session.get(
+            "dimos/rpc/Coord/task_invoke",
+            payload=payload,
+            target=zenoh.QueryTarget.ALL,
+            consolidation=zenoh.ConsolidationMode.NONE,
+            timeout=5.0,
+        )
+    )
+
+
+def test_a_controller_request_gets_a_pickled_reply(rpc_pair: tuple[ZenohRPC, ZenohRPC]) -> None:
+    """dim-controller's Rust server still speaks pickle."""
+    server, client = rpc_pair
+    server.serve_module_rpc(_Coordinator(), name="Coord")
+
+    replies = _ask(
+        client, pickle.dumps((["right_arm_gripper", "get_normalized", {}], {}), protocol=4)
+    )
+
+    assert [pickle.loads(reply.ok.payload.to_bytes()) for reply in replies if reply.ok] == [0.5]
+
+
+class _RunsCodeWhenRead:
+    ran: ClassVar[list[str]] = []
+
+    def __reduce__(self) -> tuple[Any, tuple[str]]:
+        return (_RunsCodeWhenRead.ran.append, ("ran",))
+
+
+def test_a_pickled_request_cannot_run_code(rpc_pair: tuple[ZenohRPC, ZenohRPC]) -> None:
+    server, client = rpc_pair
+    coordinator = _Coordinator()
+    server.serve_module_rpc(coordinator, name="Coord")
+
+    replies = _ask(client, pickle.dumps(([_RunsCodeWhenRead()], {}), protocol=4))
+
+    assert _RunsCodeWhenRead.ran == []
+    assert coordinator.invokes == []
+    assert [reply for reply in replies if reply.ok] == []
 
 
 def test_caller_without_a_name_is_still_served(rpc_pair: tuple[ZenohRPC, ZenohRPC]) -> None:
