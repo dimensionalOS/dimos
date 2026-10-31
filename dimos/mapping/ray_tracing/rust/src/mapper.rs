@@ -29,6 +29,17 @@ pub type Point = (f32, f32, f32);
 /// Floats per cell `Mapper::surfaces` returns.
 pub const SURFACE_CELL_FLOATS: usize = 5;
 
+/// Where the last GPU frame's time went, for logs.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GpuFrame {
+    /// The GPU passes, from submit until the report's counters read back.
+    pub integrate_ms: f64,
+    /// Reading the report back and mirroring its voxels into the CPU map.
+    pub report_ms: f64,
+    pub mirror_ms: f64,
+    pub reported: usize,
+}
+
 /// What one `Mapper::surfaces` call recomputed, for logs.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SurfaceUpdate {
@@ -151,6 +162,11 @@ impl Mapper {
         if let Some(gpu) = &mut self.gpu {
             gpu.mark_dirty(bounds);
         }
+    }
+
+    /// Where the last frame's time went on the GPU map.
+    pub fn gpu_frame(&self) -> GpuFrame {
+        self.gpu.as_ref().map(|g| g.frame).unwrap_or_default()
     }
 
     /// What the last `surfaces` call recomputed.
@@ -364,7 +380,7 @@ mod gpu {
 
     use dimos_gpu_mls::surfaces::SurfaceConfig;
 
-    use super::{Point, SurfaceRequest, SurfaceUpdate, SURFACE_CELL_FLOATS};
+    use super::{GpuFrame, Point, SurfaceRequest, SurfaceUpdate, SURFACE_CELL_FLOATS};
     use crate::voxel_ray_tracer::{Config, Cylinder, FrameHits, VoxelMap};
 
     /// Headroom a regrown surface window gets over the one that outgrew it.
@@ -386,6 +402,7 @@ mod gpu {
         /// that leaves them none must clear.
         sent_columns: AHashSet<(i32, i32)>,
         surface_update: SurfaceUpdate,
+        pub frame: GpuFrame,
     }
 
     impl GpuMap {
@@ -444,6 +461,7 @@ mod gpu {
                 dirty: AHashSet::new(),
                 sent_columns: AHashSet::new(),
                 surface_update: SurfaceUpdate::default(),
+                frame: GpuFrame::default(),
             })
         }
 
@@ -491,8 +509,12 @@ mod gpu {
             } else {
                 points
             };
+            let started = std::time::Instant::now();
             self.map.integrate(origin, points);
+            self.map.finish();
+            let integrated = std::time::Instant::now();
             let report = self.map.read_report();
+            let read = std::time::Instant::now();
             if report.overflow != 0 {
                 warn!(
                     overflow = report.overflow,
@@ -520,6 +542,13 @@ mod gpu {
                     .filter(|&&k| mirror.is_emitted(k))
                     .map(|&(x, y, _)| (x, y)),
             );
+            let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1e3;
+            self.frame = GpuFrame {
+                integrate_ms: ms(started, integrated),
+                report_ms: ms(integrated, read),
+                mirror_ms: ms(read, std::time::Instant::now()),
+                reported: report.voxels.len(),
+            };
             let fine = match config.fine_layer() {
                 Some((_, fine_size)) if config.emit_fine => {
                     let inv = 1.0 / fine_size;

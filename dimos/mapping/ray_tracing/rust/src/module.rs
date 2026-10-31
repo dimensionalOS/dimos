@@ -514,6 +514,7 @@ impl Worker {
                 .duration_since(UNIX_EPOCH)
                 .map_or(0.0, |d| d.as_secs_f64());
             let update = state.mapper.surface_update();
+            let gpu_frame = state.mapper.gpu_frame();
             debug!(
                 stamp = time_secs(&stamp),
                 received_unix_s,
@@ -523,6 +524,11 @@ impl Worker {
                 dirty_columns = update.dirty_columns,
                 surface_bricks = update.bricks,
                 region_bricks = update.region_bricks,
+                integrate_ms = gpu_frame.integrate_ms,
+                report_ms = gpu_frame.report_ms,
+                mirror_ms = gpu_frame.mirror_ms,
+                reported = gpu_frame.reported,
+                surface_ms = update.extract_ms + update.export_ms,
                 "region sent"
             );
         }
