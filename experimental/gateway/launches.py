@@ -446,7 +446,7 @@ def gossip_env() -> dict[str, str]:
     return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
 
 
-def recordings_flag(launch: LaunchConfig) -> list[str]:
+def recordings_flag(dimos_dir: Path, launch: LaunchConfig) -> list[str]:
     """`--record-dir`: the directory `GET /history/recordings` answers with.
 
     That endpoint is the one answer to where recordings live, so the run is told the directory
@@ -456,14 +456,15 @@ def recordings_flag(launch: LaunchConfig) -> list[str]:
 
     A caller that names the directory itself is left alone, in its config or among the raw args
     of `POST /active/exec`: a root flag is merged after the args `run` is given, so without this
-    check the gateway's directory would silently beat what the user typed.
+    check the gateway's directory would silently beat what the user typed. A checkout whose dimos
+    has no `--record-dir` gets nothing: it would refuse the flag.
     """
     typed = any(
         arg == RECORD_DIR_FLAG or arg.startswith(RECORD_DIR_FLAG + "=") for arg in launch.args
     )
-    if "record_dir" in launch.global_ or typed:
+    if "record_dir" in launch.global_ or typed or not store.takes_record_dir(dimos_dir):
         return []
-    return [f"{RECORD_DIR_FLAG}={store.recordings_dir()}"]
+    return [f"{RECORD_DIR_FLAG}={store.recordings_dir(dimos_dir)}"]
 
 
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
@@ -552,7 +553,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             **gossip_env(),
             **secret_vars,
         }
-        recordings = recordings_flag(launch)
+        recordings = recordings_flag(dimos_dir, launch)
         pid = _spawn(
             [str(program), *recordings, *run_args(blueprint, launch)],
             [*shown_env, "dimos", *recordings, *shown_run],
