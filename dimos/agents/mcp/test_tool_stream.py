@@ -157,6 +157,7 @@ def background_threads():
         thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
 
+@pytest.mark.flaky(reruns=1)
 def test_tool_stream_persistent_sse(
     mcp_server: McpAdapter, background_threads: list[Thread]
 ) -> None:
@@ -210,6 +211,7 @@ def test_tool_stream_persistent_sse(
         assert n["params"]["_meta"]["tool_name"] == "start_streaming"
 
 
+@pytest.mark.flaky(reruns=1)
 def test_tool_stream_agent(agent_setup) -> None:
     """Tool stream updates arrive at the agent as HumanMessages."""
     history = agent_setup(

@@ -7,4 +7,4 @@ bin/fetch-test-data
 
 . .venv/bin/activate
 export PATH="${XDG_CACHE_HOME:-$HOME/.cache}/dimos-test-clis/node_modules/.bin:$PATH"
-exec pytest "$@" -m '' --error-for-skips dimos
+exec pytest "$@" -m '' --error-for-skips

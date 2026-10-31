@@ -1,0 +1,565 @@
+/* The blueprint view's own parts; dimos-react's components and Desktop's tokens style the rest. */
+html,
+body,
+#root {
+  height: 100%;
+}
+/* the page scrolls but never pinch-zooms: two fingers are the graph's */
+html,
+body {
+  touch-action: pan-x pan-y;
+}
+/* one temperature for the whole page: every surface is the module graph's own color (--bg) at another lightness, same
+   hue and chroma (oklch), so the skin's warm panel black never sits next to the graph's cool one. Graph, then the side
+   a step lighter, then headers and the top bar a step lighter again (a step darker in a light skin). */
+:root {
+  --bv-step: -1;
+  --bv-panel: oklch(from var(--bg) calc(l + 0.025 * var(--bv-step)) c h);
+  --bv-head: oklch(from var(--bg) calc(l + 0.06 * var(--bv-step)) c h);
+}
+:root[data-dr-dark] {
+  --bv-step: 1;
+}
+.dr-topbar {
+  background: var(--bv-head);
+}
+body.dr-body,
+#root {
+  display: flex;
+  flex-direction: column;
+  background: var(--bv-panel);
+  font-size: 13px;
+}
+/* an element styled display: flex or grid stays hidden while it has the hidden attribute */
+[hidden] {
+  display: none !important;
+}
+#app {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) 1fr;
+}
+h3,
+h4 {
+  margin: 0 0 8px;
+}
+.note {
+  margin: 0;
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+.alias,
+.sub {
+  margin-left: 6px;
+  color: var(--muted-fg);
+  font: 11px var(--mono);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.count {
+  margin-left: 6px;
+  opacity: 0.7;
+}
+.scroll,
+.fill {
+  flex: 1;
+  min-height: 0;
+}
+.scroll {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* the top bar */
+.failed {
+  max-width: 260px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.relaunch.live {
+  border-color: var(--close-red, var(--danger));
+}
+.relaunch.stale {
+  animation: bv-stale 1.6s ease-in-out infinite alternate;
+}
+@keyframes bv-stale {
+  from {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 35%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 15%, transparent);
+  }
+}
+
+/* a button's label, so a flex row can give every button the same width and cut the long ones (Relaunch counts its
+   steps: "Building the blueprint…") instead of reflowing the row every time the text changes */
+.dr-btn > .label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* a launch that failed: the top bar's one word is easy to miss, and on a phone there is no room for it at all, so
+   the error gets a bar of its own with the way to what the launch printed */
+.bv-failed-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--warn) 13%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+.bv-failed-head {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.bv-failed-why {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+}
+.bv-failed-bar .dr-btn {
+  flex: 0 0 auto;
+}
+
+/* what a launch printed, when it never became a run */
+.launch-output {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.launch-why {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.launch-raw {
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  max-height: 60vh;
+  background: var(--input-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* the side: topic rates and modules, or one module */
+#side {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+}
+.list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.list .dr-disclosure + .dr-disclosure {
+  margin-top: 16px;
+}
+/* the module list's Outputs chip outlined like its Inputs chip (dimos-react's info badge is filled) */
+.module .io .dr-badge--info {
+  background: transparent;
+}
+#side .dr-disclosure__summary {
+  margin: 0 -4px 6px;
+  padding: 6px 8px;
+  background: var(--bv-head);
+}
+.list li > .dr-popover-anchor {
+  display: block;
+}
+.module {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 26px 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.module:is(:hover, :focus-visible) {
+  background: var(--hover);
+  outline: none;
+}
+.module .name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.module .summary,
+.card .d {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+.module .io {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.module .chev {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-fg);
+}
+.flyout {
+  font: 11.5px var(--mono);
+}
+.flyout section + section {
+  margin-top: 9px;
+}
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 440px;
+}
+.pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--type) 35%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--type) 13%, transparent);
+  white-space: nowrap;
+}
+.pill .stype {
+  color: var(--type);
+  font-size: 10px;
+}
+.module-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.module-view .title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.module-view h3 {
+  display: inline;
+  font: 600 17px var(--sans);
+  overflow-wrap: anywhere;
+}
+.module-view .doc {
+  max-height: calc(6 * 1.45em);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: var(--muted-fg);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.module-view .io {
+  display: grid;
+  gap: 14px;
+}
+.stream .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.stream .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--type);
+}
+.stream .row button {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font: 12px var(--mono);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.stream .row .stype {
+  margin-left: auto;
+  color: var(--type);
+}
+.stream .row button:is(:hover, .on) {
+  background: color-mix(in srgb, var(--type) 14%, transparent);
+}
+.stream .ends {
+  margin: 4px 0 6px 13px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--type);
+  background: var(--hover);
+  font-size: 12px;
+}
+.stream .ends .topic {
+  margin-bottom: 4px;
+  color: var(--type);
+  font: 11px var(--mono);
+  overflow-wrap: anywhere;
+}
+.stream .end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  padding: 2px 0;
+}
+.stream .end .k {
+  width: 30px;
+  color: var(--muted-fg);
+  font-size: 11px;
+}
+.stream .end button {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+.stream .end button:hover {
+  background: var(--sel);
+}
+.stream .end .self {
+  color: var(--muted-fg);
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.card:hover {
+  border-color: var(--muted-fg);
+}
+.skills .card,
+.card.open {
+  grid-column: 1 / -1;
+}
+.skills .card {
+  border-color: color-mix(in srgb, var(--violet, var(--info)) 50%, transparent);
+}
+.card .fn {
+  font: 600 12px var(--mono);
+}
+.skills .card .fn {
+  color: var(--violet, var(--info));
+}
+.card .ps,
+.card .r {
+  color: var(--muted-fg);
+  font: 10.5px var(--mono);
+  overflow-wrap: anywhere;
+}
+.card .d {
+  font-size: 11.5px;
+}
+.card.open .d {
+  display: block;
+  white-space: pre-wrap;
+}
+.card .r {
+  margin-top: auto;
+  color: var(--type);
+}
+
+/* the module graph */
+#graph {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+#graph > .bv-graph {
+  position: absolute;
+  inset: 0;
+}
+.graph-head {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+#extras {
+  position: absolute;
+  top: 36px;
+  left: 14px;
+  max-width: min(320px, calc(100% - 28px));
+  max-height: 45%;
+  overflow-y: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--raised) 92%, transparent);
+  color: var(--muted-fg);
+  font: 11px var(--mono);
+}
+#extras summary {
+  cursor: pointer;
+}
+#extras ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+#extras li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* a module's source, over the graph */
+#code {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  background: var(--code-bg, var(--input-bg));
+}
+#code > .note {
+  padding: 12px;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--raised);
+}
+.code-head .file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px var(--mono);
+}
+
+@media (max-width: 720px) {
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
+  }
+  #side {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* a phone (where dimos-react's top bar starts wrapping): the blueprint and its phase keep a row to themselves instead
+   of being squeezed to one letter by the controls, and the controls share the row under it, each the same width
+   whatever its label says, so none of them moves when Relaunch counts its steps. Close keeps its own width. */
+@media (max-width: 700px) {
+  .dr-topbar {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .dr-topbar-left {
+    flex: 1 1 100%;
+    order: 1;
+    gap: 6px;
+  }
+  .dr-topbar-right {
+    flex: 1 1 100%;
+    order: 2;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .dr-topbar-right > .dr-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 8px;
+  }
+  .dr-topbar-right > .dr-btn--icon {
+    flex: 0 0 auto;
+  }
+  .bv-failed-why {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+  .launch-raw {
+    max-height: 50vh;
+  }
+}
+
+/* the Processes table (dtop): dr-rates' look, with a header row, children indented, stale stats faded */
+.processes {
+  max-height: calc(8.5 * 21px + 20px);
+}
+.processes .dr-rates__topic {
+  max-width: 120px;
+}
+.processes th {
+  padding: 0 5px 2px;
+  font-weight: 500;
+  text-align: right;
+  color: var(--muted-fg);
+  position: sticky;
+  top: 0;
+  background: var(--card, var(--bg));
+}
+.processes th:first-child {
+  text-align: left;
+}
+.processes tr.child .dr-rates__topic {
+  padding-left: 14px;
+  color: var(--muted-fg);
+}
+.processes tr.dead .dr-rates__topic {
+  text-decoration: line-through;
+}
+.processes .dr-sparkline {
+  display: block;
+  color: var(--info, var(--primary));
+}
+.processes.stale {
+  opacity: 0.45;
+}

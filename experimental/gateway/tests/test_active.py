@@ -70,7 +70,8 @@ def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(client: TestClient
     assert started.status_code == 200, started.text
     assert started.json()["phase"] == "starting"
     until(output_has(client, "secret k1"))
-    until(output_has(client, "dtop 1"))
+    # dimos's own defaults: a caller wanting dtop (Desktop does) says so in the config
+    until(output_has(client, "dtop None"))
     until(running(client))
     now = client.get("/active").json()
     launch = now["launch"]
@@ -128,6 +129,47 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     until(running(client))
     assert client.get("/active").json()["runId"] != old
     assert launch_of(client)["output"].splitlines()[0].endswith("run demo --n-workers=7")
+
+
+def test_relaunch_waits_for_the_stopped_run_to_be_reaped(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reap = launches._wait_then_tell
+
+    def slow_reap(child: subprocess.Popen[bytes]) -> None:
+        until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, 60)
+        time.sleep(0.5)
+        reap(child)
+
+    monkeypatch.setattr(launches, "_wait_then_tell", slow_reap)
+    client.post("/active/launch", json={"blueprint": "demo"})
+    until(running(client))
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
+
+
+def test_a_launch_right_after_a_stop_starts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reap = launches._wait_then_tell
+
+    def slow_reap(child: subprocess.Popen[bytes]) -> None:
+        until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, 60)
+        time.sleep(0.5)
+        reap(child)
+
+    monkeypatch.setattr(launches, "_wait_then_tell", slow_reap)
+    client.post("/active/launch", json={"blueprint": "demo"})
+    until(running(client))
+    assert client.post("/active/stop").status_code == 200
+    launched = client.post("/active/launch", json={"blueprint": "demo"})
+    assert launched.status_code == 200, launched.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
 
 
 def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) -> None:
@@ -258,10 +300,11 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     assert client.get("/history").json()["runs"][0]["running"]
 
 
-def test_recordings_is_the_served_checkouts_standard_directory(
-    client: TestClient, checkout: Path, tmp_path: Path
+def test_recordings_is_the_standard_directory(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: Path
 ) -> None:
-    """Where the checkout's own dimos records, not the gateway copy's; config.yaml's recordings.dir wins."""
+    # the served checkout isn't the gateway's own (Desktop's pinned copy serves the user's): its default, as its own
+    # dimos would pick it, never the copy's recordings/ (replaced on the next move)
     assert client.get("/history/recordings").json() == {
         "path": str(tmp_path / "state" / "recordings")
     }
@@ -300,19 +343,12 @@ def test_dimos_app_wins_and_config_yaml_in_its_home_is_the_fallback(
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "app_recs")}
 
 
-def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.core.global_config import GlobalConfig
-
-    monkeypatch.setenv(launches.DTOP_ENV, "1")
-    assert GlobalConfig().dtop is True
-
-
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
     launches._save({"blueprint": "demo", "started_at": "x", "pid": os.getpid(), "pid_started": 0.0})
     assert launches.current_launch()["phase"] == "failed"
 
 
-def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
+def test_shared_config_yaml_sets_the_namespace_connect_and_socket_but_not_a_runs_gossip(
     client: TestClient, tmp_path: Path
 ) -> None:
     from experimental.gateway import events, store
@@ -330,8 +366,9 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     assert events.resolve_namespace("given") == "given"
     assert events.resolve_connect(None) == ["tcp/10.0.0.2:7447"]
     assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    # a run's gossip is its launch config's (Desktop puts zenoh.gossip there), not this file's
     client.post("/active/launch", json={"blueprint": "demo"})
-    until(output_has(client, "gossip false"))
+    until(output_has(client, "gossip None"))
 
 
 SCANNED = {

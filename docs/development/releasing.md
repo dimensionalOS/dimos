@@ -21,11 +21,7 @@ Throughout this document, replace `X.Y.Z` with the version you are releasing (e.
 
 ## 2. Creating the release
 
-1. Run the full test suite locally on the release branch.
-
-   ```bash
-   uv run pytest -m '' --error-for-skips
-   ```
+1. Run the [release testing plan](/release/testing/README.md) on `release/X.Y.Z`. Fix the bugs it finds, or file tickets for the ones that can wait.
 
 2. [Run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#running-a-workflow) the `release` workflow on the `release/X.Y.Z` branch.
 3. Monitor the CI run. When it reaches the publish-pypi step, you'll need other team members to approve the release.
@@ -58,8 +54,8 @@ When you need to ship a patch fix:
 1. If the release branch has already been deleted, re-cut from the tag and recreate the label (step 1.4):
 
    ```bash
-   git fetch origin --tags
-   git checkout -b release/X.Y.Z vX.Y.Z
+   git fetch --no-tags origin refs/tags/vX.Y.Z
+   git checkout -b release/X.Y.Z FETCH_HEAD
    git push -u origin release/X.Y.Z
    ```
 
@@ -70,11 +66,11 @@ When you need to ship a patch fix:
 
 ```bash
 gpg --import docs/release-signing-key.asc
-git fetch --tags
-git tag -v vX.Y.Z
+git fetch --no-tags origin refs/tags/vX.Y.Z
+git verify-tag -v FETCH_HEAD
 ```
 
-`git tag -v` exits 0 and reports a good signature from `dimos-release-bot` when the tag is valid. GitHub's web UI shows "Unverified" because the GPG key isn't bound to a GitHub user account. This is expected.
+The fetch puts only that tag into `FETCH_HEAD` and leaves local tags alone, so a stale local tag with the same name does not get in the way. `git verify-tag` exits 0 and reports a good signature from `dimos-release-bot` when the tag is valid. GitHub's web UI shows "Unverified" because the GPG key isn't bound to a GitHub user account. This is expected.
 
 ### Rotating the App private key
 

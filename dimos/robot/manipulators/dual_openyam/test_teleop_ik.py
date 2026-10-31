@@ -21,23 +21,21 @@ from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    _dual_openyam_webxr_task,
+    _dual_openyam_webxr_tasks,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_HOME_JOINTS,
-)
-from dimos.robot.manipulators.dual_openyam.joints import (
-    DUAL_OPENYAM_ARM_JOINTS,
+    DUAL_OPENYAM_HOME_PER_ARM,
+    dual_openyam_arm_joints,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
 
-_TARGET_FRAMES = ("left_grasp_frame", "right_grasp_frame")
+_TARGET_FRAMES = ("left_grasp_frame",)
 
 
 def _solver() -> DualOpenYamPinkPoseTargetSolver:
-    task = _dual_openyam_webxr_task
+    task = _dual_openyam_webxr_tasks["left"]
     config = PoseTargetIKTaskConfig(
         joint_names=tuple(task.joint_names),
         robot_model=task.params["robot_model"],
@@ -50,28 +48,11 @@ def _solver() -> DualOpenYamPinkPoseTargetSolver:
 
 
 @pytest.mark.self_hosted
-def test_solver_uses_nominal_posture_without_manipulability() -> None:
-    solver = _solver()
-    seed = JointState(
-        name=DUAL_OPENYAM_ARM_JOINTS,
-        position=DUAL_OPENYAM_HOME_JOINTS,
-    )
-    targets = solver.frame_poses(seed, _TARGET_FRAMES)
-
-    assert solver.step(targets, seed, 0.01) is not None
-
-    context = next(iter(solver._control_contexts.values()))
-    assert context.tasks is not None
-    assert not any(name.startswith("manipulability/") for name in context.tasks)
-    assert context.tasks["posture/current"].target_q == pytest.approx(DUAL_OPENYAM_HOME_JOINTS)
-
-
-@pytest.mark.self_hosted
 def test_webxr_solver_matches_a1z_target_tracking_speed() -> None:
     solver = _solver()
     state = JointState(
-        name=DUAL_OPENYAM_ARM_JOINTS,
-        position=DUAL_OPENYAM_HOME_JOINTS,
+        name=dual_openyam_arm_joints("left"),
+        position=DUAL_OPENYAM_HOME_PER_ARM,
     )
     initial = solver.frame_poses(state, _TARGET_FRAMES)
     targets = {

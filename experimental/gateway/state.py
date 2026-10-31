@@ -37,7 +37,7 @@ from experimental.gateway.uploads import Uploads
 
 logger = setup_logger()
 
-API_VERSION = "8.0.0"
+API_VERSION = "8.3.0"
 
 
 @dataclass
@@ -88,6 +88,17 @@ class State:
         self.cache = introspect.Cache()
         self.bus.send({"type": "blueprints", "added": added, "removed": removed})
 
+    def config_changed(self, settings: list[str]) -> None:
+        """One event per setting that moved, each on its own topic
+        (`<ns>/dimos/events/config/recordingsDir`), so a listener wakes for the setting it reads
+        rather than busting everything it has cached.
+
+        A bust signal and not the values: `GET /config` stays the one answer, so a listener's cache
+        and these events can never say different things.
+        """
+        for setting in settings:
+            self.bus.send({"type": "config", "setting": setting}, setting)
+
 
 def site_dirs(dimos_dir: Path) -> list[Path]:
     found = sorted((store.venv_dir(dimos_dir) / "lib").glob("python*/site-packages"))
@@ -96,6 +107,7 @@ def site_dirs(dimos_dir: Path) -> list[Path]:
 
 def new_state(dimos_dir: Path, bus: events.Bus | None = None) -> State:
     bus = bus or events.Bus()
+    store.serve(dimos_dir)
     uploads = Uploads(bus, store.gateway_dir() / "uploads.json")
     jobs = Jobs()
     return State(

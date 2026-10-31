@@ -337,7 +337,7 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have CBOR-encoded transports for Python values without an LCM form.
 
 ### LCM (UDP multicast)
 
@@ -445,7 +445,7 @@ Transports often need to serialize messages before sending and deserialize after
 
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
-| `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
+| `CborEncoderMixin`   | CBOR            | Python values with their types kept (tuples, numpy, enums, dataclasses, messages); what RPC uses |
 | `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 
@@ -478,10 +478,10 @@ class MyJsonPubSub(JsonEncoderMixin, Memory):
 Swap serialization by changing the mixin:
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.encoders import PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
 
-class MyPicklePubSub(PickleEncoderMixin, Memory):
+class MyCborPubSub(CborEncoderMixin, Memory):
     pass
 ```
 

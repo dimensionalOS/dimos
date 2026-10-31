@@ -26,7 +26,7 @@ import watchfiles
 
 from dimos.core import run_registry
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import constants, launches, store
+from experimental.gateway import constants, launches, shared_config, store
 
 if TYPE_CHECKING:
     from experimental.gateway.process_stats import ProcessStats
@@ -74,17 +74,34 @@ class Bus:
         self.namespace = namespace
         self.put = put
         self.launch_key: tuple[Any, ...] | None = None
+        self.live_run_id: str | None = None
 
-    def send(self, event: dict[str, Any]) -> None:
+    def send(self, event: dict[str, Any], path: str | None = None) -> None:
+        """Publishes one event under this bus's namespace.
+
+        `path` names what the event is about and extends the topic
+        (`<ns>/dimos/events/config/recordingsDir`), so a listener can subscribe to the one thing it
+        reads instead of waking on every change. A listener that wants all of them subscribes to
+        `<ns>/dimos/events/**`: a single `*` matches one chunk and would miss these.
+        """
         if self.put is None or self.namespace is None:
             return
-        self.put(f"{self.namespace}/dimos/events/{event['type']}", json.dumps(event).encode())
+        topic = f"{self.namespace}/dimos/events/{event['type']}"
+        if path:
+            topic = f"{topic}/{path}"
+        self.put(topic, json.dumps(event).encode())
 
     def launch(self, launch: dict[str, Any] | None) -> None:
-        key = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
+        launch_part = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
+        key = (launch_part, self.live_run_id)
         if key != self.launch_key:
             self.launch_key = key
             self.send({"type": "launch", "launch": launch})
+
+    def active(self, active: dict[str, Any]) -> None:
+        """launches.active()'s view: a run started outside the gateway (a terminal) starting or ending is news too."""
+        self.live_run_id = active["runId"]
+        self.launch(active["launch"])
 
 
 async def set_on_changes(
@@ -154,7 +171,7 @@ async def watch_launch(
     try:
         while True:
             try:
-                bus.launch(await asyncio.to_thread(launches.current_launch))
+                bus.active(await asyncio.to_thread(launches.active))
                 if stats is not None:
                     await asyncio.to_thread(stats.stop_if_nothing_runs)
                 failure = ""
@@ -217,3 +234,45 @@ async def watch_blueprints(
     finally:
         for watcher in watchers:
             watcher.cancel()
+
+
+async def watch_config(
+    changed: Callable[[list[str]], None], debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS
+) -> None:
+    """Calls `changed` with the settings whose answer moved, whenever the shared config.yaml changes
+    what `GET /config` would say.
+
+    Its directory is watched and not the file itself, because Desktop (the file's writer; the gateway
+    only reads it) saves it by renaming a temporary file over it, which replaces the inode a watch of
+    the file would hold. The directory is created if missing so the first config.yaml a machine ever
+    gets is seen too.
+
+    Only the settings that actually moved are reported: a save that rewrites the file without
+    changing an answer, or that changes a key the gateway does not read, is not news.
+    """
+    home = shared_config.dimos_home()
+    home.mkdir(parents=True, exist_ok=True)
+    config_name = shared_config.config_file().name
+
+    def is_shared_config(_change: watchfiles.Change, path: str) -> bool:
+        return Path(path).name == config_name
+
+    wake = asyncio.Event()
+    watcher = asyncio.create_task(
+        set_on_changes(wake, [home], is_shared_config, recursive=False, debounce_ms=debounce_ms)
+    )
+    try:
+        # the first reading is what a change is compared with
+        settings = store.shared_settings()
+        while True:
+            await wake.wait()
+            wake.clear()
+            current = store.shared_settings()
+            moved = sorted(
+                key for key in {*settings, *current} if settings.get(key) != current.get(key)
+            )
+            if moved:
+                settings = current
+                changed(moved)
+    finally:
+        watcher.cancel()

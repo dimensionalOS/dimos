@@ -64,8 +64,9 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("DIMOS_APP", json.dumps({"home": str(tmp_path / "dimos_home")}))
     # read by nothing: DIMOS_APP's home is the only one
     monkeypatch.setenv("DIMOS_HOME", str(tmp_path / "not_this_home"))
-    # nor its DTOP, which a launch passes on
-    monkeypatch.delenv(launches.DTOP_ENV, raising=False)
+    # nor its DTOP or ZENOH_GOSSIP, which a launch passes on as it does the rest of the environment
+    monkeypatch.delenv("DTOP", raising=False)
+    monkeypatch.delenv("ZENOH_GOSSIP", raising=False)
     # nor a git repo the temp dir happens to be inside
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     return tmp_path

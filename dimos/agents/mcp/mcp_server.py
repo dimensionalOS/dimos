@@ -34,6 +34,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
 from dimos.agents.mcp.constants import DEFAULT_MCP_PORT, mcp_url
+from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall, RPCClient
@@ -130,7 +131,7 @@ async def _handle_tools_call(
     rpc_call = rpc_calls.get(name)
     if rpc_call is None:
         logger.warning("MCP tool not found", tool=name)
-        return _jsonrpc_result_text(req_id, f"Tool not found: {name}")
+        return _jsonrpc_tool_error(req_id, f"Tool not found: {name}")
 
     skill_info = app.state.skills_by_name.get(name)
     uses: list[str] = list(skill_info.uses) if skill_info is not None else []
@@ -187,16 +188,16 @@ async def _handle_tools_call(
     t0 = time.monotonic()
 
     # _mcp_context is a reserved kwarg consumed by the `@skill` wrapper; it never
-    # reaches the user-visible skill signature. The acquire token rides along so
-    # a background skill's ToolStream can stamp it on its stop frame for release.
+    # reaches the user-visible skill signature. The caller's whole _meta rides
+    # along as `meta`, so a skill can read who called it. The acquire token rides
+    # along so a background skill's ToolStream can stamp it on its stop frame.
     call_kwargs = dict(args)
-    mcp_context: dict[str, Any] = {}
+    mcp_context: dict[str, Any] = {"meta": meta}
     if progress_token is not None:
         mcp_context["progress_token"] = progress_token
     if uses:
         mcp_context["acquire_token"] = acquire_token
-    if mcp_context:
-        call_kwargs["_mcp_context"] = mcp_context
+    call_kwargs["_mcp_context"] = mcp_context
 
     # Track whether we still hold the caps so we can release on failure even
     # for background skills. On success the background skill keeps them until
@@ -222,6 +223,19 @@ async def _handle_tools_call(
 
     duration = f"{time.monotonic() - t0:.3f}s"
     response = str(result)[:200]
+
+    if isinstance(result, SkillResult):
+        content = result.agent_encode()
+        structured = result.to_json()
+        logger.info("MCP tool done", tool=name, duration=duration, response=response)
+        try:
+            # The response is rendered as strict JSON, which has no NaN or Infinity; the
+            # text content tolerates them, so the call still answers with it alone.
+            json.dumps(structured, allow_nan=False)
+        except ValueError as e:
+            logger.warning("MCP tool result has no strict JSON form", tool=name, error=str(e))
+            return _jsonrpc_result(req_id, {"content": content})
+        return _jsonrpc_result(req_id, {"content": content, "structuredContent": structured})
 
     if hasattr(result, "agent_encode"):
         logger.info("MCP tool done", tool=name, duration=duration, response=response)

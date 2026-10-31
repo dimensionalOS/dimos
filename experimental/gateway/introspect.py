@@ -108,16 +108,23 @@ async def run_child(
 def child_command(dimos_dir: Path) -> list[str]:
     from experimental.gateway.store import python_for
 
-    return [python_for(dimos_dir), "-m", "experimental.gateway.introspect"]
+    # the served checkout may be another one than this gateway's (Desktop runs a pinned copy of the gateway against
+    # the user's checkout), with an older gateway or none in it: this file runs in its python either way
+    return foreign_command(python_for(dimos_dir))
 
 
 def foreign_command(python: str) -> list[str]:
     # the checkout may have no gateway or an older one, so this file runs there, importing that checkout's dimos;
-    # the gateway's checkout goes last on the path, only for the experimental.gateway helpers that one lacks
+    # the gateway's checkout goes last on the path, and experimental.gateway is pinned to this gateway's helpers (a
+    # checkout's own, maybe older, experimental/gateway/ would otherwise come first)
     run = (
-        "import runpy, sys\n"
+        "import os, runpy, sys, types\n"
         "sys.argv.pop(0)\n"
-        "sys.path.append(sys.argv.pop(0))\n"
+        "root = sys.argv.pop(0)\n"
+        "sys.path.append(root)\n"
+        "helpers = types.ModuleType('experimental.gateway')\n"
+        "helpers.__path__ = [os.path.join(root, 'experimental', 'gateway')]\n"
+        "sys.modules['experimental.gateway'] = helpers\n"
         # a startup hook (a sitecustomize, a venv .pth) may have imported another checkout's dimos already
         "for name in [loaded for loaded in sys.modules if loaded == 'dimos' or loaded.startswith('dimos.')]:\n"
         "    del sys.modules[name]\n"

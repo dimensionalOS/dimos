@@ -32,6 +32,7 @@ import psutil
 from pydantic import ValidationError
 
 from dimos.constants import LOG_DIR
+from dimos.core.coordination.process_lifecycle import is_pid_alive
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
 from experimental.gateway import constants, store
 from experimental.gateway.errors import ApiError, StatusError
@@ -41,9 +42,10 @@ ModuleValues = dict[str, dict[str, Any]]
 HIDDEN = "•••"
 STRUCTURED = ("global", "modules", "secrets")
 
-# GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
-DTOP_ENV = "DTOP"
+# held across every change to what runs (start, stop, relaunch), so none sees another half done
 _lock = threading.RLock()
+# the gateway's own children, by pid: set once reaped, which is when the gateway stops counting it as running
+_reaped: dict[int, threading.Event] = {}
 # called from a thread when a launched child exits (the launch watcher wakes on it)
 exit_listeners: list[Callable[[], None]] = []
 
@@ -342,7 +344,10 @@ def started_time(pid: int) -> float | None:
 def is_launched_process(record: dict[str, Any]) -> bool:
     """The recorded launch is still the process at its pid (not a later one the pid was reused for)."""
     pid = int(record["pid"])
-    return alive(pid) and started_time(pid) == record.get("pid_started")
+    if (reaped := _reaped.get(pid)) is not None:
+        return not reaped.is_set()
+    # an earlier gateway's launch, not this one's child: an exited one is a zombie only until its parent reaps it
+    return is_pid_alive(pid) and started_time(pid) == record.get("pid_started")
 
 
 def alive(pid: int, group: bool = True) -> bool:
@@ -390,7 +395,8 @@ def current_launch() -> dict[str, Any] | None:
     pid = int(record["pid"])
     entry = next((run for run in registry_runs() if int(run["pid"]) == pid), None)
     if entry and not record.get("run_id"):
-        record.update(run_id=str(entry["run_id"]), ever_ran=True)
+        # where the run logs is its own dimos's to say: the served checkout's logs/, not this gateway's
+        record.update(run_id=str(entry["run_id"]), log_dir=entry.get("log_dir"), ever_ran=True)
         _save(record)
     running = is_launched_process(record)
     stopping = bool(record.get("stopping"))
@@ -405,7 +411,9 @@ def current_launch() -> dict[str, Any] | None:
     else:
         phase = "failed"
     run_id = record.get("run_id")
-    log_dir = LOG_DIR / run_id if run_id else None
+    log_dir = (
+        Path(record["log_dir"]) if record.get("log_dir") else LOG_DIR / run_id if run_id else None
+    )
     output = _tail(launch_log(), constants.LAUNCH_OUTPUT_TAIL_BYTES)
     launch: dict[str, Any] = {
         "blueprint": record["blueprint"],
@@ -439,11 +447,6 @@ def active() -> dict[str, Any]:
     }
 
 
-def gossip_env() -> dict[str, str]:
-    gossip = store.setting("zenoh", "gossip")
-    return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
-
-
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
     global_, modules = without_secrets(launch.global_, launch.modules, launch.secret_paths())
     if launch.args:
@@ -465,12 +468,16 @@ def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) 
             stderr=log,
             start_new_session=True,
         )
+    _reaped[child.pid] = threading.Event()
     threading.Thread(target=_wait_then_tell, args=(child,), daemon=True).start()
     return child.pid
 
 
 def _wait_then_tell(child: subprocess.Popen[bytes]) -> None:
-    child.wait()
+    try:
+        child.wait()
+    finally:
+        _reaped[child.pid].set()
     for listener in list(exit_listeners):
         listener()
 
@@ -524,10 +531,6 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
             **launch_env_defaults(),
-            # dtop's stats for GET /active/stats; a --no-dtop flag still wins
-            DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
-            # Desktop's zenoh gossip setting, which dimos's GlobalConfig.zenoh_gossip reads from the env
-            **gossip_env(),
             **secret_vars,
         }
         pid = _spawn(
@@ -578,48 +581,55 @@ def kill_starting(launch: dict[str, Any]) -> str:
     return f"Killed {launch['blueprint']} (PID {launch['pid']}) while it was starting"
 
 
-def wait_for_exit(pid: int) -> None:
-    """Until `pid`'s process group is gone, so a launch started next finds the gateway idle."""
-    deadline = time.monotonic() + constants.KILLED_LAUNCH_EXIT_WAIT_S
-    while alive(pid):
-        if time.monotonic() > deadline:
-            raise StillRunningError(f"pid {pid} was killed but hasn't exited yet")
-        time.sleep(constants.KILLED_LAUNCH_POLL_S)
+def _wait_reaped(pid: int) -> None:
+    """Until this gateway's child `pid` is reaped (a stop or kill has made it exit): from then on it isn't running.
+    Bounded only for a SIGKILLed process stuck in the kernel (a driver), so the lock isn't held forever."""
+    reaped = _reaped.get(pid)
+    if reaped is not None and not reaped.wait(constants.KILLED_LAUNCH_EXIT_WAIT_S):
+        raise StillRunningError(f"pid {pid} was killed but hasn't exited yet")
 
 
 def stop() -> str:
     """Exactly `dimos stop`: SIGTERM the newest run, SIGKILL after 5 s. A launch that hasn't registered yet is killed."""
-    entry = get_most_recent(alive_only=True)
-    record = _record()
-    if entry is None:
-        launch = current_launch()
-        if launch is None or launch["phase"] != "starting":
-            raise ApiError(409, "nothing running")
-        return kill_starting(launch)
-    if record is not None and int(record["pid"]) == entry.pid:
-        _save({**record, "stopping": True})
-    message, _ = stop_entry(entry)
-    return f"Stopping {entry.run_id} (PID {entry.pid}) with SIGTERM...\n  {message}"
+    with _lock:
+        entry = get_most_recent(alive_only=True)
+        record = _record()
+        if entry is None:
+            launch = current_launch()
+            if launch is None or launch["phase"] != "starting":
+                raise ApiError(409, "nothing running")
+            message = kill_starting(launch)
+            _wait_reaped(int(launch["pid"]))
+            return message
+        if record is not None and int(record["pid"]) == entry.pid:
+            _save({**record, "stopping": True})
+        message, _ = stop_entry(entry)
+        # stop_entry returns once it has exited; it still counts as running until reaped
+        _wait_reaped(entry.pid)
+        return f"Stopping {entry.run_id} (PID {entry.pid}) with SIGTERM...\n  {message}"
 
 
 def relaunch(dimos_dir: Path) -> dict[str, Any]:
     """Stop the running blueprint and start it again: the gateway's own launch as it was POSTed, another one
     (`dimos run` in a terminal) as a copy of its process."""
-    entry = get_most_recent(alive_only=True)
-    record = _record()
-    ours = entry is not None and record is not None and int(record["pid"]) == entry.pid
-    request = store.read_json(request_file()) if entry is None or ours else None
-    if entry is not None and request is None:
-        request = {"blueprint": entry.blueprint, "copy": copy_of(entry)}
-    if request is None:
-        raise ApiError(409, "nothing running, and the gateway hasn't launched anything to relaunch")
-    if entry is not None:
-        stop()
-    elif (launch := current_launch()) is not None and launch["phase"] == "starting":
-        # a stuck or slow startup: start()'s idle check would refuse while it lives
-        kill_starting(launch)
-        wait_for_exit(int(launch["pid"]))
-    blueprint = str(request["blueprint"])
-    if "copy" in request:
-        return start_copy(blueprint, request["copy"])
-    return start(dimos_dir, blueprint, LaunchConfig.from_json(request))
+    # one change: nothing else starts in between the stop and the start
+    with _lock:
+        entry = get_most_recent(alive_only=True)
+        record = _record()
+        ours = entry is not None and record is not None and int(record["pid"]) == entry.pid
+        request = store.read_json(request_file()) if entry is None or ours else None
+        if entry is not None and request is None:
+            request = {"blueprint": entry.blueprint, "copy": copy_of(entry)}
+        if request is None:
+            raise ApiError(
+                409, "nothing running, and the gateway hasn't launched anything to relaunch"
+            )
+        if entry is not None or (
+            (launch := current_launch()) is not None and launch["phase"] == "starting"
+        ):
+            # a stuck or slow startup too: start()'s idle check would refuse while it lives
+            stop()
+        blueprint = str(request["blueprint"])
+        if "copy" in request:
+            return start_copy(blueprint, request["copy"])
+        return start(dimos_dir, blueprint, LaunchConfig.from_json(request))

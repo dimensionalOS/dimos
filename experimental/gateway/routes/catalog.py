@@ -104,7 +104,7 @@ async def everything(
         catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
     )
     cache = state.scanner.cache()
-    blueprints, modules = catalog.blueprints(entries, cache, notes), catalog.modules(cache)
+    blueprints, modules = catalog.blueprints(entries, cache, notes), catalog.modules(cache, notes)
     if blueprint is not None:
         blueprints = [entry for entry in blueprints if entry["name"] == blueprint]
         names = {name for entry in blueprints for name in entry["modules"]}
@@ -120,6 +120,7 @@ async def everything(
         "rpcs": [rpc_record for rpc_record in catalog.rpcs(cache) if rpc_record["module"] in kept],
         "robots": catalog.robot_list(notes),
         "types": notes.get("types", {}),
+        "abilities": notes.get("abilities", {}),
         "errors": catalog.errors(cache),
         "scan": await scan(state),
     }
@@ -217,8 +218,13 @@ async def global_config() -> dict[str, Any]:
 
 @router.get("/modules", response_model=responses.ModuleList)
 async def modules(state: GatewayState, fields: str | None = None) -> dict[str, Any]:
+    entries = await listed(state)
+    notes = await asyncio.to_thread(
+        catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
+    )
     return picked(
-        {"modules": catalog.modules(state.scanner.cache()), "scan": await scan(state)}, fields
+        {"modules": catalog.modules(state.scanner.cache(), notes), "scan": await scan(state)},
+        fields,
     )
 
 

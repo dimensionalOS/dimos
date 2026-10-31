@@ -2,6 +2,215 @@
 # docs, required, kind: recording (+ streams), choices [{value, label}], when: {<key>: <value>}; a pick's choices `set:` several.
 # A blueprint's recommended_config overrides its robot's defaults. Blueprints named coordinator-*, *test*, *benchmark* are hidden.
 
+# What robots can do (relocalization, loop closure, arm control, …): a module has the abilities `modules:` gives it, and
+# a blueprint the abilities of the modules it runs (the catalog's modules and blueprints say which; GET /catalog the labels).
+abilities:
+  lidar-odometry:
+    label: Lidar-inertial odometry
+    description: Tracks the robot's pose from its lidar and IMU (Point-LIO, FAST-LIO2), the pose maps and navigation build on.
+  visual-slam:
+    label: Visual SLAM
+    description: Tracks the robot's pose from its cameras and IMU (dimSLAM, cuVSLAM fused with other odometry by a Kalman filter).
+  mapping:
+    label: 3D mapping
+    description: Builds a 3D voxel map of what the lidar or depth camera sees as the robot moves.
+  loop-closure:
+    label: Loop closure
+    description: Corrects drift when the robot comes back to a place it has seen, so the global map stays consistent (pose-graph optimization).
+  relocalization:
+    label: Relocalization
+    description: Finds where the robot is on a map made earlier (a premap), by matching its live lidar against it.
+  costmap:
+    label: Costmap
+    description: Turns the 3D map into a 2D map of where the robot can and can't drive.
+  navigation:
+    label: Navigation
+    description: Plans a path to a goal and drives it there, avoiding obstacles (click a spot, or an agent sends a goal).
+  exploration:
+    label: Autonomous exploration
+    description: Explores unknown space on its own, driving to the edges of what it has mapped.
+  patrolling:
+    label: Patrolling
+    description: Patrols an area on its own, on a route or to cover the map.
+  outdoor-navigation:
+    label: GPS and map navigation
+    description: Goes to places by GPS, street address or OpenStreetMap.
+  arm-control:
+    label: Arm control
+    description: Moves a robot arm by joint, end-effector pose or twist, through the control coordinator.
+  motion-planning:
+    label: Arm motion planning
+    description: Plans collision-free arm motion against a model of the robot and its surroundings.
+  grasping:
+    label: Grasping and pick-and-place
+    description: Finds grasps on objects it sees and picks them up and places them.
+  object-detection:
+    label: Object detection
+    description: Finds objects in the camera image, in 2D or placed in 3D.
+  object-tracking:
+    label: Object and person tracking
+    description: Keeps track of an object or person across frames as they move.
+  person-following:
+    label: Person following
+    description: Follows a person around.
+  object-localization:
+    label: Finding things it saw
+    description: Answers where something it saw is, from a memory of what the camera saw and the depth or lidar with it.
+  fiducial-markers:
+    label: Fiducial markers
+    description: Detects AprilTag/ArUco markers and publishes their poses.
+  depth-estimation:
+    label: Depth from a camera
+    description: Estimates depth from a color camera, calibrated against the lidar.
+  spatial-memory:
+    label: Spatial and semantic memory
+    description: Remembers what it saw and where, and answers questions about it (search by text or image, events over time).
+  agent:
+    label: AI agent
+    description: An AI agent you can talk to that uses the robot's skills.
+  mcp-skills:
+    label: Skills over MCP
+    description: Serves the robot's skills over MCP, for an agent (Claude Code, the dimos agent) to call.
+  voice:
+    label: Voice
+    description: Listens for speech and talks back.
+  keyboard-teleop:
+    label: Keyboard driving
+    description: Drive the robot, or jog an arm, from this computer's keyboard.
+  phone-teleop:
+    label: Phone driving
+    description: Drive the robot from a phone's touch controls or motion.
+  vr-teleop:
+    label: VR teleoperation
+    description: Drive the robot or its arms and hands from a VR headset (WebXR), with its camera in the headset.
+  remote-teleop:
+    label: Remote teleoperation
+    description: Drive the robot over the internet, with its video, map and an E-stop, from a hosted operator page.
+  recording:
+    label: Recording
+    description: Records the robot's streams to a file to replay later.
+  data-collection:
+    label: Data collection for learning
+    description: Records teleoperated demonstrations, split into episodes, for training a policy.
+  learned-policy:
+    label: Learned policy
+    description: Runs a trained policy (LeRobot) that turns camera and joint state into joint targets.
+  simulation:
+    label: Simulation
+    description: Runs a simulated robot and world (MuJoCo, Habitat) in place of the real one.
+
+# Per module (all_modules names), what reflection can't know: the abilities it gives a blueprint that runs it.
+modules:
+  arm-command-module: {abilities: [arm-control]}
+  arm-pose-coordinator: {abilities: [arm-control]}
+  arm-pose-twist-coordinator: {abilities: [arm-control]}
+  arm-teleop-module: {abilities: [vr-teleop]}
+  arm-twist-coordinator: {abilities: [arm-control]}
+  basic-path-follower: {abilities: [navigation]}
+  camera-mux-module: {abilities: [remote-teleop]}
+  cartesian-motion-controller: {abilities: [arm-control]}
+  cloud-relocalization: {abilities: [relocalization]}
+  collection-recorder: {abilities: [data-collection]}
+  cost-mapper: {abilities: [costmap]}
+  dan-holonomic-tc: {abilities: [navigation]}
+  dan-local-planner: {abilities: [navigation]}
+  depth2-depth-cloud: {abilities: [depth-estimation]}
+  detection2-d-module: {abilities: [object-detection]}
+  detection3-d-module: {abilities: [object-detection]}
+  dim-slam: {abilities: [visual-slam]}
+  drone-tracking-module: {abilities: [object-tracking]}
+  episode-monitor-module: {abilities: [data-collection]}
+  fast-lio2: {abilities: [lidar-odometry]}
+  fast-lio2-recorder: {abilities: [recording]}
+  g1-collection-recorder: {abilities: [data-collection]}
+  g1-manipulation-module: {abilities: [motion-planning]}
+  g1-recorder: {abilities: [recording]}
+  g1-sim-connection: {abilities: [simulation]}
+  go2-audio-bridge-module: {abilities: [remote-teleop]}
+  go2-command-module: {abilities: [remote-teleop]}
+  go2-l1-lidar: {abilities: [lidar-odometry]}
+  go2-memory: {abilities: [recording]}
+  go2-mid360-recorder: {abilities: [recording]}
+  go2-teleop-module: {abilities: [vr-teleop]}
+  google-maps-skill-container: {abilities: [outdoor-navigation]}
+  gps-nav-skill-container: {abilities: [outdoor-navigation]}
+  grasp-gen-x-module: {abilities: [grasping]}
+  grasping-module: {abilities: [grasping]}
+  habitat-connection: {abilities: [simulation]}
+  hand-teleop-module: {abilities: [vr-teleop]}
+  heuristic-grasp-module: {abilities: [grasping]}
+  hosted-stats-module: {abilities: [remote-teleop]}
+  joint-trajectory-controller: {abilities: [arm-control]}
+  joystick-module: {abilities: [keyboard-teleop]}
+  keyboard-teleop: {abilities: [keyboard-teleop]}
+  keyboard-teleop-module: {abilities: [keyboard-teleop]}
+  le-robot-policy-module: {abilities: [learned-policy]}
+  lidar-window-relocalization: {abilities: [relocalization]}
+  local-map-relocalization: {abilities: [relocalization]}
+  local-planner-native: {abilities: [navigation]}
+  manipulation-module: {abilities: [arm-control, motion-planning]}
+  manipulation-skills: {abilities: [grasping]}
+  map-compress-module: {abilities: [remote-teleop]}
+  marker-detection-stream-module: {abilities: [fiducial-markers]}
+  marker-tf-module: {abilities: [fiducial-markers]}
+  mcp-client: {abilities: [agent]}
+  mcp-server: {abilities: [mcp-skills]}
+  mesh-module: {abilities: [mapping]}
+  mid360-pcap-recorder: {abilities: [recording]}
+  mid360-realsense-recorder: {abilities: [recording]}
+  mls-planner-native: {abilities: [navigation]}
+  mujoco-sim-module: {abilities: [simulation]}
+  navigation-skill-container: {abilities: [navigation]}
+  object-db-module: {abilities: [object-detection]}
+  object-scene-registration-module: {abilities: [object-detection]}
+  object-tracker2-d: {abilities: [object-tracking]}
+  object-tracker3-d: {abilities: [object-tracking]}
+  object-tracking: {abilities: [object-tracking]}
+  osm-skill: {abilities: [outdoor-navigation]}
+  patrolling-module: {abilities: [patrolling]}
+  perceive-loop-skill: {abilities: [object-detection]}
+  perception-localize: {abilities: [object-localization]}
+  person-follow-skill-container: {abilities: [person-following]}
+  person-tracker: {abilities: [object-tracking]}
+  pgo-voxel-mapper: {abilities: [mapping, loop-closure]}
+  phone-teleop-module: {abilities: [phone-teleop]}
+  pick-and-place-module: {abilities: [grasping]}
+  point-lio: {abilities: [lidar-odometry]}
+  point-nav-skill-container: {abilities: [navigation]}
+  pointlio-recorder: {abilities: [recording]}
+  r1-pro-lio: {abilities: [lidar-odometry]}
+  ray-tracing-voxel-map: {abilities: [mapping]}
+  recorder: {abilities: [recording]}
+  reid-module: {abilities: [object-tracking]}
+  relocalization-module: {abilities: [relocalization]}
+  replanning-a-star-planner: {abilities: [navigation]}
+  robo-plan-point-cloud-self-filter: {abilities: [motion-planning]}
+  rust-recorder: {abilities: [recording]}
+  security-module: {abilities: [patrolling]}
+  semantic-search: {abilities: [spatial-memory]}
+  sim-go2-world: {abilities: [simulation]}
+  simple-phone-teleop: {abilities: [phone-teleop]}
+  spatial-memory: {abilities: [spatial-memory]}
+  speak-skill: {abilities: [voice]}
+  spot-recorder: {abilities: [recording]}
+  teleop-control-coordinator: {abilities: [arm-control]}
+  teleop-recorder: {abilities: [recording]}
+  temporal-memory: {abilities: [spatial-memory]}
+  trajectory-follower: {abilities: [navigation]}
+  trajectory-follower-native: {abilities: [navigation]}
+  twist-teleop-module: {abilities: [vr-teleop]}
+  type-safe-agent: {abilities: [agent]}
+  type-safe-navigation-agent: {abilities: [agent]}
+  video-arm-teleop-module: {abilities: [vr-teleop]}
+  virtual-mid360: {abilities: [simulation]}
+  vlm-agent: {abilities: [agent]}
+  voice-input: {abilities: [voice]}
+  voxel-grid-mapper: {abilities: [mapping]}
+  wavefront-frontier-explorer: {abilities: [exploration]}
+  web-xr-teleop-module: {abilities: [vr-teleop]}
+  world-belief-module: {abilities: [spatial-memory]}
+  world-belief-recorder: {abilities: [recording]}
+
 robots:
   # Robot types in launcher order; a robot's `type` is one of these, or null (listed under Other).
   types:
@@ -135,11 +344,16 @@ robots:
         unitree-go2-nav-3d-relocalization:
           title: Go2 3D navigation in a saved map
           description: 3D navigation (Mid-360) that relocalizes in a map you made before.
-          recommended_config: *robot_ip_only
+          recommended_config:
+          - global: robot_ip
+          - &saved_map {module: localmaprelocalization, field: map_file, label: Saved map, required: true}
         unitree-go2-nav-3d-relocalization-replay:
           title: Go2 3D navigation in a saved map (replay)
           description: The relocalized 3D navigation stack driven by a recording instead of a robot.
-          recommended_config: *robot_ip_only
+          recommended_config: &recording_player_config
+          - {module: recordingplayer, field: dataset, label: Recording, kind: recording, streams: [[pointlio_lidar], [tf]], placeholder: the SF office recording}
+          # the map made from the player's default recording, so a launch with nothing filled in relocalizes
+          - {<<: *saved_map, default: go2_mid360_sf_office_outdoors_2026-05-29}
         unitree-go2-map:
           title: Go2 with a permanent map
           description: Map and navigation with live loop closure, kept in a map file that's loaded, extended and saved.
@@ -810,7 +1024,7 @@ robots:
         relocalize-mid360:
           title: Mid-360 relocalization (recording)
           description: Relocalization against a saved map, driven by a recording instead of a robot.
-          recommended_config: [*recording]
+          recommended_config: *recording_player_config
         demo-dim-slam-realsense:
           title: dimSLAM on a RealSense
           description: dimSLAM visual SLAM on a RealSense stereo camera.

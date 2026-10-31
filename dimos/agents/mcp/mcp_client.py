@@ -37,7 +37,7 @@ import requests
 
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -136,9 +136,6 @@ class McpClient(Module):
         self._tool_stream_cleanup = None
         self._mcp_url: str | None = None
         Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
-
-    def __reduce__(self) -> Any:
-        return (self.__class__, (), {})
 
     def _server_url(self) -> str:
         """The MCP endpoint: configured, else the blueprint's McpServer, else the default."""
@@ -422,6 +419,7 @@ class McpClient(Module):
 def _append_image_to_history(
     mcp_client: McpClient, func_name: str, uuid_: str, result: Any
 ) -> None:
+    # Tagged with its tool, or chat UIs would show this user turn as typed input.
     mcp_client.add_message(
         HumanMessage(
             content=[
@@ -430,6 +428,7 @@ def _append_image_to_history(
                     "text": f"This is the artefact for the '{func_name}' tool with UUID:={uuid_}.",
                 },
                 result,
-            ]
+            ],
+            additional_kwargs={TOOL_ORIGIN_KEY: func_name},
         )
     )

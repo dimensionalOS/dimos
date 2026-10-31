@@ -66,6 +66,21 @@ def test_lcm_encode_decode() -> None:
     )
 
 
+def test_lcm_round_trip_without_timestamp() -> None:
+    """An unstamped cloud encodes with a zero header stamp and decodes back to ts=None,
+    also right after a stamped encode: the generated Header shares one default Time."""
+    points = np.array([[2.5, 3.5, 0.5]], dtype=np.float32)
+    PointCloud2.from_numpy(points, frame_id="world", timestamp=1234.5678).lcm_encode()
+    original = PointCloud2.from_numpy(points, frame_id="world")
+    assert original.ts is None
+
+    decoded = PointCloud2.lcm_decode(original.lcm_encode())
+
+    assert decoded.ts is None
+    assert decoded.frame_id == "world"
+    np.testing.assert_array_equal(decoded.as_numpy()[0], points)
+
+
 def test_lcm_intensity_round_trip() -> None:
     """Test that intensity values survive an lcm_encode → lcm_decode round trip."""
     points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)

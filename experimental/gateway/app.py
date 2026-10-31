@@ -25,7 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from experimental.gateway import events
 from experimental.gateway.errors import StatusError
-from experimental.gateway.routes import active, catalog, cloud, history, jobs, server
+from experimental.gateway.routes import active, catalog, cloud, history, jobs, server, web
 from experimental.gateway.state import API_VERSION, State, site_dirs
 
 
@@ -40,6 +40,7 @@ def create_app(state: State, background: bool = True) -> FastAPI:
                 asyncio.create_task(events.watch_launch(state.bus, state.process_stats)),
                 asyncio.create_task(state.uploads.work()),
                 asyncio.create_task(watch),
+                asyncio.create_task(events.watch_config(state.config_changed)),
             ]
         yield
         state.uploads.shutdown()
@@ -82,6 +83,6 @@ def create_app(state: State, background: bool = True) -> FastAPI:
     async def failed(_: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"error": str(error) or type(error).__name__}, status_code=500)
 
-    for module in (server, catalog, active, history, cloud, jobs):
+    for module in (server, catalog, active, history, cloud, jobs, web):
         app.include_router(module.router)
     return app

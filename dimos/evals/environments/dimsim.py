@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.evals.environments.sim import Sim, SimConfig
@@ -25,8 +25,6 @@ from dimos.simulation.dimsim.config import DIMSIM_PORT
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-    from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class DimSimEnvironmentConfig(SimConfig):
@@ -50,8 +48,3 @@ class DimSimEnvironment(Sim):
             self._resources.callback(client.stop)
             client.start()
             self.config.setup(client)
-
-    def latest_pose(self, recording: Store) -> PoseStamped:
-        if "odom" not in recording.streams:
-            raise LookupError("No DimSim odometry recorded")
-        return cast("PoseStamped", recording.streams.odom.last().data)
