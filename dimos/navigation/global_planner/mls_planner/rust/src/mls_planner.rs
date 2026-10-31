@@ -37,7 +37,7 @@ use crate::nodes::{
 };
 use crate::planner;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
-use crate::voxel::{voxelize, VoxelKey};
+use crate::voxel::{voxelize, VoxelKey, Xyz};
 
 #[native_config]
 #[derive(Clone)]
@@ -83,6 +83,18 @@ pub struct Config {
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
+    /// Vertical distance from goal within which the planner counts arrival.
+    #[validate(range(exclusive_min = 0.0))]
+    pub goal_z_tolerance: f32,
+    /// Seconds a goal may go without a safe path before it is aborted.
+    #[validate(range(min = 0.0))]
+    pub blocked_timeout_s: f32,
+    /// Seconds a followed goal may go without the robot moving before it is aborted.
+    #[validate(range(min = 0.0))]
+    pub progress_timeout_s: f32,
+    /// Ground-plane distance the robot must cover to count as moving.
+    #[validate(range(exclusive_min = 0.0))]
+    pub progress_min_m: f32,
     /// Rate cap for the surface_map / nodes / node_edges viz artifacts. 0
     /// disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
@@ -105,6 +117,17 @@ fn validate_wall_buffer(config: &Config) -> Result<(), ValidationError> {
         ));
     }
     Ok(())
+}
+
+/// How a plan toward the goal ended, with the waypoints to follow.
+#[derive(Debug, PartialEq)]
+pub enum Plan {
+    /// A full path to the goal.
+    Full(Vec<Xyz>),
+    /// No full path, so the cached one cut where it stops being safe.
+    Truncated(Vec<Xyz>),
+    /// No full path and nothing safe ahead.
+    Blocked,
 }
 
 impl Config {
@@ -670,13 +693,7 @@ impl Planner {
     }
 
     /// Plan to the goal, or follow the cached path as far as it is still safe.
-    /// Returns the waypoints, empty when nothing ahead is traversable (stop).
-    pub fn plan_or_truncate(
-        &mut self,
-        start: (f32, f32, f32),
-        goal: (f32, f32, f32),
-        config: &Config,
-    ) -> Vec<(f32, f32, f32)> {
+    pub fn plan_or_truncate(&mut self, start: Xyz, goal: Xyz, config: &Config) -> Plan {
         if !self.graph.nodes.is_empty() {
             if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
                 if self.last_result != Some((goal, true)) {
@@ -684,7 +701,7 @@ impl Planner {
                 }
                 self.last_result = Some((goal, true));
                 self.last_path = Some((goal, cells));
-                return waypoints;
+                return Plan::Full(waypoints);
             }
         }
         if self.last_result != Some((goal, false)) {
@@ -694,11 +711,16 @@ impl Planner {
             );
         }
         self.last_result = Some((goal, false));
-        match &self.last_path {
+        let waypoints = match &self.last_path {
             Some((cached_goal, cells)) if *cached_goal == goal => {
                 planner::truncate_to_safe(&self.graph, cells, start, config)
             }
             _ => Vec::new(),
+        };
+        if waypoints.is_empty() {
+            Plan::Blocked
+        } else {
+            Plan::Truncated(waypoints)
         }
     }
 
@@ -841,6 +863,34 @@ fn bfs_ball(
         seen[id as usize] = false;
     }
     ball
+}
+
+#[cfg(test)]
+pub(crate) fn test_config() -> Config {
+    Config {
+        world_frame: String::new(),
+        base_frame: String::new(),
+        voxel_size: 0.1,
+        robot_height: 0.5,
+        start_z_offset_m: 0.0,
+        max_overhead_m: 2.0,
+        surface_closing_radius: 0.3,
+        node_spacing_m: 1.0,
+        wall_clearance_m: 0.0,
+        wall_buffer_m: 0.3,
+        wall_buffer_weight: 1.0,
+        step_threshold_m: 0.25,
+        step_penalty_weight: 0.0,
+        goal_tolerance: 0.3,
+        goal_z_tolerance: 0.5,
+        blocked_timeout_s: 2.0,
+        progress_timeout_s: 10.0,
+        progress_min_m: 0.2,
+        viz_publish_hz: 2.0,
+        viz_cell_m: 4.0,
+        viz_sweep_cells: 0,
+        worker_threads: 4,
+    }
 }
 
 #[cfg(test)]

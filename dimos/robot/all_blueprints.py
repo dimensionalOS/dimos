@@ -330,7 +330,6 @@ all_modules = {
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
     "point-cloud-box-filter": "dimos.mapping.pointclouds.box_filter.PointCloudBoxFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
-    "point-nav-skill-container": "dimos.agents.skills.point_nav.PointNavSkillContainer",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-lio": "dimos.robot.galaxea.r1pro.lio.R1ProLio",
