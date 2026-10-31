@@ -30,7 +30,7 @@ use crate::mat3::{self, Mat3, Vec3};
 /// first `closures_dispatched` committed closures, adopted once it finishes (`GscPgo::update`) or when waited for
 /// (`GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
-    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
+    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>, Option<f64>)>,
     pub(crate) keyframes: usize,
 }
 
@@ -364,7 +364,7 @@ impl GscPgo {
                 } else {
                     held
                 };
-                let solution = match loosen {
+                let (solution, loosened) = match loosen {
                     Some(s) => {
                         let loose_odometry: Vec<Edge> = odometry
                             .iter()
@@ -377,29 +377,33 @@ impl GscPgo {
                         let profile = |m: &Solution, scale: f64| {
                             profiled_cost(m, scale, &odometry, &closures, &solve_config, threshold)
                         };
-                        let (loose_cost, held_cost) = (profile(&loose, s), profile(&solution, 1.0));
+                        let ((loose_cost, best_scale), (held_cost, _)) =
+                            (profile(&loose, s), profile(&solution, 1.0));
                         eprintln!(
                             "gsc_pgo: odometry loosened x{s:.1} at keyframe {}: -2 ln L {loose_cost:.1} vs {held_cost:.1}",
                             rotations.len()
                         );
                         if loose_cost < held_cost {
-                            // the loose map's verdict held in at the stated noise, so the noise learner reads its
-                            // residuals at the noise it learns
-                            run(&SolveConfig {
-                                committed: loose.closure_weights.iter().map(|&w| w > 0.5).collect(),
-                                ..solve_config.clone()
-                            })
+                            // the loose map is adopted and its best fitting scale becomes the noise estimate (its
+                            // evidence was read at the loose noise, not the one the learner's update assumes)
+                            (
+                                Solution {
+                                    odometry_noise_evidence: None,
+                                    ..loose
+                                },
+                                Some(best_scale),
+                            )
                         } else {
-                            solution
+                            (solution, None)
                         }
                     }
-                    None => solution,
+                    None => (solution, None),
                 };
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(solved) = solved {
                     solved();
                 }
-                (solution, seconds, landmark_ids)
+                (solution, seconds, landmark_ids, loosened)
             })
             .expect("spawn pose graph thread");
         // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
@@ -424,8 +428,15 @@ impl GscPgo {
         let Some(solving) = self.solving.take() else {
             return false;
         };
-        let (solution, seconds, landmark_ids) =
+        let (solution, seconds, landmark_ids, loosened) =
             solving.handle.join().expect("pose graph solve panicked");
+        // the likelier map said the odometry is noisier than the solve's noise by this scale
+        if let Some(scale) = loosened {
+            for c in 0..4 {
+                self.odometry_noise_ln[c] = self.odometry_noise_ln[c]
+                    .max(self.odometry_noise_ln_dispatched[c] + scale.ln());
+            }
+        }
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
                 .into_iter()
@@ -548,7 +559,7 @@ impl GscPgo {
 /// misfit m at the stated noise over s, plus its redundancy r x ln s, both from the solve's variance-component evidence
 /// (`Solution::odometry_noise_evidence`, read at `scale` x the stated noise; r is the odometry's share of the loops'
 /// checks, so closures that agree on one loop add one loop's worth); each kept closure's misfit truncated at GNC's cutoff,
-/// and the cutoff for each rejected one. Without the evidence, m from the residuals and r as 6 per kept closure.
+/// and the cutoff for each rejected one; with that best fitting scale. Without the evidence, m from the residuals and r as 6 per kept closure.
 fn profiled_cost(
     map: &Solution,
     scale: f64,
@@ -556,7 +567,7 @@ fn profiled_cost(
     closures: &[Edge],
     config: &SolveConfig,
     threshold: f64,
-) -> f64 {
+) -> (f64, f64) {
     let misfit = |e: &Edge, scale: f64| {
         let pose = |k: usize| (&map.rotations[k], &map.positions[k]);
         let r = edge_residual(e, pose(e.from), pose(e.to));
@@ -591,5 +602,5 @@ fn profiled_cost(
             }
         })
         .sum();
-    m / s + redundancy * s.ln() + closure_cost
+    (m / s + redundancy * s.ln() + closure_cost, s)
 }
