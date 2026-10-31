@@ -36,7 +36,7 @@ How it works:
     2. Queries available hardware/tasks/joints
     3. You add waypoints (joint positions)
     4. Generates trajectory with trapezoidal velocity profile
-    5. Sends trajectory to coordinator via execute_trajectory() RPC
+    5. Sends trajectory through the coordinator task_invoke() RPC
     6. Coordinator's tick loop executes it at 100Hz
 """
 
@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, cast
 from dimos.control.components import split_joint_name
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -128,14 +129,16 @@ class CoordinatorClient:
         """Execute through the coordinator's sole trajectory task."""
         return cast(
             "TrajectoryExecutionResult",
-            self._rpc.execute_trajectory(trajectory),
+            self._rpc.task_invoke(
+                JOINT_TRAJECTORY_TASK_NAME, "execute", {"trajectory": trajectory}
+            ),
         )
 
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
         """Cancel the coordinator's sole trajectory task."""
         return cast(
             "TrajectoryCancellationResult",
-            self._rpc.cancel_trajectory(),
+            self._rpc.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "cancel", {}),
         )
 
     def select_task(self, task_name: str) -> bool:

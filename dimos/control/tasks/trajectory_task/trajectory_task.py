@@ -59,8 +59,7 @@ def joint_trajectory_task(
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
 ) -> TaskConfig:
-    """Build the coordinator's single canonical joint-trajectory task."""
-    # The coordinator imports this module to recognize the canonical JTT.
+    """Build the named joint-trajectory task configuration."""
     from dimos.control.coordinator import TaskConfig
 
     params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
@@ -79,7 +78,6 @@ class TrajectoryExecutionStatus(Enum):
     """Semantic outcome of a trajectory execution request."""
 
     ACCEPTED = auto()
-    NO_TRAJECTORY_TASK = auto()
     INVALID_TRAJECTORY = auto()
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
@@ -89,7 +87,7 @@ class TrajectoryExecutionStatus(Enum):
 
 @dataclass(frozen=True)
 class TrajectoryExecutionResult:
-    """Result returned by the coordinator trajectory execution RPC."""
+    """Result of a trajectory task execution command."""
 
     status: TrajectoryExecutionStatus
     message: str = ""
@@ -100,20 +98,19 @@ class TrajectoryCancellationStatus(Enum):
 
     CANCELLED = auto()
     ALREADY_STOPPED = auto()
-    NO_TRAJECTORY_TASK = auto()
     UNCERTAIN = auto()
 
 
 @dataclass(frozen=True)
 class TrajectoryCancellationResult:
-    """Result returned by the coordinator trajectory cancellation RPC."""
+    """Result of a trajectory task cancellation command."""
 
     status: TrajectoryCancellationStatus
     message: str = ""
 
     @property
     def safe(self) -> bool:
-        """Return whether cancellation reached a deterministic coordinator state."""
+        """Return whether cancellation reached a deterministic task state."""
         return self.status is not TrajectoryCancellationStatus.UNCERTAIN
 
     @property
@@ -247,7 +244,7 @@ class JointTrajectoryTask(BaseControlTask):
             joint_names=[name for name, _ in selected],
             points=[TrajectoryPoint(positions=[position for _, position in selected])],
         )
-        return self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        return self.execute(trajectory).status is TrajectoryExecutionStatus.ACCEPTED
 
     def is_active(self) -> bool:
         """Check if task should run this tick."""
@@ -391,13 +388,11 @@ class JointTrajectoryTask(BaseControlTask):
     def execute(
         self,
         trajectory: JointTrajectory,
-        current_positions: Mapping[str, float],
     ) -> TrajectoryExecutionResult:
         """Start executing a trajectory.
 
         Args:
             trajectory: Trajectory to execute
-            current_positions: Authoritative positions from the coordinator.
 
         Returns:
             Semantic execution acceptance result.
@@ -427,6 +422,11 @@ class JointTrajectoryTask(BaseControlTask):
                 TrajectoryExecutionStatus.INVALID_TRAJECTORY,
                 "Trajectory structure or joints are invalid",
             )
+
+        current_positions: Mapping[str, float] = {}
+        if len(trajectory.points) > 1:
+            state = self.context.get_state()
+            current_positions = state.joints.joint_positions if state is not None else {}
 
         first_positions = list(trajectory.points[0].positions)
         anchored = False

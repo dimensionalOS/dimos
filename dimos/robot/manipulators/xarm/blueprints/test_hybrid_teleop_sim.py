@@ -101,6 +101,7 @@ class Rig:
             tasks=self.coordinator._tasks,
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
+            observation_callback=self.coordinator._set_latest_state,
         )
 
     def tick(self) -> None:
@@ -141,8 +142,11 @@ class TestHoldStatus:
 
         assert [msg.data for msg in rig.hold_statuses] == [True, False]
         assert not rig.hold_task.is_active()
+        rig.tick()
         assert (
-            rig.coordinator.execute_trajectory(_trajectory()).status
+            rig.coordinator.task_invoke(
+                "joint_trajectory", "execute", {"trajectory": _trajectory()}
+            ).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
 

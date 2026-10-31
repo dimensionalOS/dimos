@@ -337,6 +337,6 @@ def test_disable_attempts_every_safety_action(mocker) -> None:
     result = runner.invoke(g1_cli.app, ["disable"])
 
     assert result.exit_code == 0, result.output
-    coordinator.cancel_trajectory.assert_called_once_with()
+    coordinator.task_invoke.assert_called_once_with("joint_trajectory", "cancel", {})
     coordinator.set_dry_run.assert_called_once_with(True)
     coordinator.set_activated.assert_called_once_with(False)

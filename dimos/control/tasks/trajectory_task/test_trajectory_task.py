@@ -14,6 +14,7 @@
 
 import pytest
 
+from dimos.control._control_test_helpers import execute_with_state
 from dimos.control.task import (
     CoordinatorState,
     JointStateSnapshot,
@@ -38,7 +39,7 @@ def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(single_point, 
     first = JointTrajectory(
         joint_names=["joint"], points=[TrajectoryPoint(positions=[first_target])]
     )
-    assert task.execute(first, {}).status is TrajectoryExecutionStatus.ACCEPTED
+    assert execute_with_state(task, first, {}).status is TrajectoryExecutionStatus.ACCEPTED
     output = task.compute(state)
     assert output is not None
     assert output.positions == pytest.approx([0.1])
@@ -58,8 +59,10 @@ def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(single_point, 
             TrajectoryPoint(positions=[-1.2], time_from_start=0.1),
         ]
     assert (
-        task.execute(
-            JointTrajectory(joint_names=["joint"], points=points), state.joints.joint_positions
+        execute_with_state(
+            task,
+            JointTrajectory(joint_names=["joint"], points=points),
+            state.joints.joint_positions,
         ).status
         is TrajectoryExecutionStatus.ACCEPTED
     )
@@ -86,7 +89,7 @@ def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
     initial = JointTrajectory(
         joint_names=["finished", "running"], points=[TrajectoryPoint(positions=[0.1, 1.0])]
     )
-    assert task.execute(initial, {}).status is TrajectoryExecutionStatus.ACCEPTED
+    assert execute_with_state(task, initial, {}).status is TrajectoryExecutionStatus.ACCEPTED
     output = task.compute(CoordinatorState(joints=measured, t_now=0.1, dt=0.1))
     assert output is not None
     assert output.positions == pytest.approx([0.1, 0.1])
@@ -99,7 +102,7 @@ def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
         ],
     )
     assert (
-        task.execute(replacement, measured.joint_positions).status
+        execute_with_state(task, replacement, measured.joint_positions).status
         is TrajectoryExecutionStatus.ACCEPTED
     )
     output = task.compute(CoordinatorState(joints=measured, t_now=0.2, dt=0.1))
@@ -117,7 +120,7 @@ def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
 def test_completed_trajectory_does_not_bypass_start_validation(positions, expected):
     task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
     initial = JointTrajectory(joint_names=["joint"], points=[TrajectoryPoint(positions=[0.1])])
-    assert task.execute(initial, {}).status is TrajectoryExecutionStatus.ACCEPTED
+    assert execute_with_state(task, initial, {}).status is TrajectoryExecutionStatus.ACCEPTED
     task.compute(
         CoordinatorState(
             joints=JointStateSnapshot(joint_positions={"joint": 0.0}), t_now=0.1, dt=0.1
@@ -130,4 +133,4 @@ def test_completed_trajectory_does_not_bypass_start_validation(positions, expect
             TrajectoryPoint(positions=[1.0], time_from_start=2.0),
         ],
     )
-    assert task.execute(trajectory, positions).status is expected
+    assert execute_with_state(task, trajectory, positions).status is expected

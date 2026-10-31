@@ -154,6 +154,14 @@ class Rig:
             tasks=self.coordinator._tasks,
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
+            observation_callback=self.coordinator._set_latest_state,
+        )
+        self.coordinator._set_latest_state(
+            CoordinatorState(
+                joints=JointStateSnapshot(
+                    joint_positions=dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True))
+                )
+            )
         )
 
     def tick(self) -> None:
@@ -224,7 +232,9 @@ class TestRequest:
 class TestWhileHeld:
     def test_running_trajectory_is_preempted(self, rig):
         assert (
-            rig.coordinator.execute_trajectory(_trajectory()).status
+            rig.coordinator.task_invoke(
+                "joint_trajectory", "execute", {"trajectory": _trajectory()}
+            ).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         rig.tick()
@@ -241,7 +251,9 @@ class TestWhileHeld:
         rig.request(reason="arm stuck")
         rig.tick()
 
-        result = rig.coordinator.execute_trajectory(_trajectory())
+        result = rig.coordinator.task_invoke(
+            "joint_trajectory", "execute", {"trajectory": _trajectory()}
+        )
         rig.tick()
 
         assert result.status is TrajectoryExecutionStatus.ACCEPTED
@@ -284,7 +296,7 @@ class TestStatus:
 
 class TestEstop:
     def test_estop_cancels_the_trajectory_and_turns_the_hold_on(self, rig):
-        rig.coordinator.execute_trajectory(_trajectory())
+        rig.coordinator.task_invoke("joint_trajectory", "execute", {"trajectory": _trajectory()})
         rig.tick()
         writes_before = len(rig.arm_writes())
 
@@ -327,7 +339,9 @@ class TestAcknowledge:
         assert not rig.hold_task.is_active()
         assert rig.hold_task.claim().joints == frozenset()
         assert (
-            rig.coordinator.execute_trajectory(_trajectory()).status
+            rig.coordinator.task_invoke(
+                "joint_trajectory", "execute", {"trajectory": _trajectory()}
+            ).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
 
@@ -335,7 +349,9 @@ class TestAcknowledge:
         teleop = TeleopStub([0.4, 0.5, 0.6])
         rig.coordinator.add_task(teleop)
         assert (
-            rig.coordinator.execute_trajectory(_trajectory()).status
+            rig.coordinator.task_invoke(
+                "joint_trajectory", "execute", {"trajectory": _trajectory()}
+            ).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         rig.tick()

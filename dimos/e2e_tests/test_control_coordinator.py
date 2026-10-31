@@ -116,9 +116,10 @@ class TestControlCoordinatorE2E:
                 ],
             )
 
-            # Execute through the coordinator's trajectory RPC (it injects
-            # the authoritative current positions for start-state validation)
-            result = client.execute_trajectory(trajectory)
+            # The task validates its anchor against the latest coordinator tick snapshot.
+            result = client.task_invoke(
+                JOINT_TRAJECTORY_TASK_NAME, "execute", {"trajectory": trajectory}
+            )
             assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
             # Poll for completion
@@ -206,12 +207,14 @@ class TestControlCoordinatorE2E:
             )
 
             # Start trajectory
-            result = client.execute_trajectory(trajectory)
+            result = client.task_invoke(
+                JOINT_TRAJECTORY_TASK_NAME, "execute", {"trajectory": trajectory}
+            )
             assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
             # Wait a bit then cancel
             time.sleep(0.5)
-            cancel_result = client.cancel_trajectory()
+            cancel_result = client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "cancel", {})
             assert cancel_result.status is TrajectoryCancellationStatus.CANCELLED, cancel_result
 
             # Check status is ABORTED
@@ -255,7 +258,9 @@ class TestControlCoordinatorE2E:
                 ],
             )
 
-            result = client.execute_trajectory(trajectory)
+            result = client.task_invoke(
+                JOINT_TRAJECTORY_TASK_NAME, "execute", {"trajectory": trajectory}
+            )
             assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
             wait_until(

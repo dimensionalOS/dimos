@@ -611,7 +611,7 @@ def drive_to_target(system: ModuleCoordinator) -> None:
         ],
     )
 
-    result = coordinator.execute_trajectory(trajectory)
+    result = coordinator.task_invoke("joint_trajectory", "execute", {"trajectory": trajectory})
 
     assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
     wait_until(lambda: positions(system) == pytest.approx(TARGET, abs=1e-6), timeout=10.0)
