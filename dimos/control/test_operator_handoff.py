@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import asdict
 import json
 from pathlib import Path
 import time
@@ -28,9 +29,9 @@ import pytest
 from dimos.control.operator_handoff import OPERATOR_EVENTS_FILE, OperatorHandoff
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
-    OperatorEstopStatus,
     OperatorHoldStatus,
 )
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 
 
@@ -49,6 +50,13 @@ def handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Operato
         yield module
     finally:
         module.stop()
+
+
+def _wait_for(condition: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 5.0
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert condition()
 
 
 def _actions(module: OperatorHandoff) -> list[tuple[str, str]]:
@@ -86,13 +94,22 @@ def test_request_operator_says_when_there_is_no_hold(handoff: OperatorHandoff) -
     assert handoff.get_operator_events() == []
 
 
-def test_hold_and_estop_streams_are_logged_once_per_change(handoff: OperatorHandoff) -> None:
-    handoff._on_hold(_hold(True))
-    handoff._on_hold(_hold(True))  # the hold repeats its status once a second
-    handoff._on_estop(OperatorEstopStatus(estopped=True, stamp=1.5))
-    handoff._on_estop(OperatorEstopStatus(estopped=True, stamp=1.6))
-    handoff._on_estop(OperatorEstopStatus(estopped=False, stamp=1.7))
-    handoff._on_hold(_hold(False))
+def _read(module: OperatorHandoff, hold: OperatorHoldStatus, estopped: bool = False) -> None:
+    """One read of the coordinator's status, as a stream message or the resync timer starts."""
+    _coordinator(module).get_operator_status.return_value = {
+        "hold": {**asdict(hold), "unheld": list(hold.unheld)},
+        "estopped": estopped,
+    }
+    module._resync()
+
+
+def test_hold_and_estop_changes_are_logged_once(handoff: OperatorHandoff) -> None:
+    _read(handoff, _hold(True))
+    _read(handoff, _hold(True))  # the hold repeats its status once a second
+    _read(handoff, _hold(True), estopped=True)
+    _read(handoff, _hold(True), estopped=True)
+    _read(handoff, _hold(True), estopped=False)
+    _read(handoff, _hold(False))
 
     assert [action for action, _ in _actions(handoff)] == [
         "request",
@@ -103,9 +120,29 @@ def test_hold_and_estop_streams_are_logged_once_per_change(handoff: OperatorHand
     assert all(event["reason"] == "arm stuck" for event in handoff.get_operator_events())
 
 
+def test_an_estop_event_carries_the_hold_it_caused(handoff: OperatorHandoff) -> None:
+    _read(handoff, _hold(True, "failsafe", "e-stop"), estopped=True)
+
+    (request, estop) = handoff.get_operator_events()
+    assert (request["action"], request["route"]) == ("request", "failsafe")
+    assert (estop["action"], estop["reason"]) == ("estop", "e-stop")
+
+
+def test_a_stream_message_reads_the_status_at_once(handoff: OperatorHandoff) -> None:
+    _coordinator(handoff).get_operator_status.return_value = {"hold": None, "estopped": False}
+    handoff.start()
+    _wait_for(lambda: _coordinator(handoff).get_operator_status.called)
+    _coordinator(handoff).get_operator_status.reset_mock()
+
+    handoff._on_status(Bool(data=True))
+
+    _wait_for(lambda: _coordinator(handoff).get_operator_status.called)
+    handoff.stop()
+
+
 def test_takeover_marks_events_until_autonomy_restarts(handoff: OperatorHandoff) -> None:
-    handoff._on_hold(_hold(True))
-    handoff._on_hold(_hold(False))
+    _read(handoff, _hold(True))
+    _read(handoff, _hold(False))
     handoff.record_operator_event("takeover")
     handoff.record_operator_event("target", object_id="can-2")
 
@@ -125,10 +162,9 @@ def test_takeover_marks_events_until_autonomy_restarts(handoff: OperatorHandoff)
 
 
 def test_restart_is_refused_while_held_or_estopped(handoff: OperatorHandoff) -> None:
-    handoff._on_hold(_hold(True))
+    _read(handoff, _hold(True))
     held = handoff.restart_autonomy()
-    handoff._on_hold(_hold(False))
-    handoff._on_estop(OperatorEstopStatus(estopped=True, stamp=2.0))
+    _read(handoff, _hold(False), estopped=True)
     latched = handoff.restart_autonomy()
 
     assert not held["ok"] and "acknowledge" in held["error"]
@@ -152,7 +188,7 @@ def test_unknown_page_actions_are_refused(handoff: OperatorHandoff) -> None:
 
 
 def test_events_go_to_the_run_log(handoff: OperatorHandoff, tmp_path: Path) -> None:
-    handoff._on_hold(_hold(True, "agent", "gone"))
+    _read(handoff, _hold(True, "agent", "gone"))
     handoff.record_operator_event("target", object_id="box-3")
 
     lines = (tmp_path / OPERATOR_EVENTS_FILE).read_text().splitlines()
@@ -178,9 +214,7 @@ def test_status_goes_out_as_json(handoff: OperatorHandoff) -> None:
     }
 
     handoff.start()
-    deadline = time.monotonic() + 5.0
-    while not sent and time.monotonic() < deadline:
-        time.sleep(0.01)
+    _wait_for(lambda: bool(sent))
     handoff.stop()
 
     status = json.loads(sent[0].data)

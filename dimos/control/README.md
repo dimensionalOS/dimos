@@ -162,20 +162,21 @@ trajectory is preempted, and a trajectory sent during the hold is accepted
 and then aborted by preemption on the next tick, so the arm stays put.
 Stopping a running policy is the policy's job, not the coordinator's.
 `get_status` answers with an `OperatorHoldStatus` (on, route, reason, start
-time, unheld joints); the same status goes out on `operator_hold_status`
-once a second while on and once more on acknowledge. After acknowledge
-nothing resumes by itself: the next task to command a joint takes it.
+time, unheld joints, e-stop latched); the task also hands the same status to
+whatever `set_status_publisher()` was given, once a second while on, on every
+e-stop change and once more on acknowledge. After acknowledge nothing resumes
+by itself: the next task to command a joint takes it.
 
-`OperatorHoldCoordinator` also takes an e-stop on `operator_estop`, a `Bool`
-(a web page sends a bare JSON `true` or `false` with the `bool.json.v1`
-encoding). True latches `set_estop(True)`, requests the hold (route
-`failsafe`, reason `e-stop`) and cancels the running trajectory; False only
-calls `set_estop(False)`, so the hold stays on until someone acknowledges it.
-`operator_estop_status` sends an `OperatorEstopStatus` (`estopped`, and
-`stamp` in unix seconds) at start and on every `set_estop`. A page that
-calls RPCs instead (a Desktop app through the dimos gateway) uses
-`estop(estopped)` for the same stop and clear, and `get_operator_status()`
-for the hold and the latch as plain JSON.
+The coordinator's `set_estop(True)` turns the hold on (route `failsafe`,
+reason `e-stop`). While stopped the hold commands nothing; after
+`set_estop(False)` it holds each joint where it is then, until acknowledged;
+acknowledge is refused while the e-stop is latched.
+
+`OperatorHoldCoordinator` (`dimos/control/operator_hold_coordinator.py`) adds
+on/off `Bool` streams, `operator_hold_status` and `operator_estop_status`, an
+`operator_estop` `Bool` input for a page's stop, and `estop(estopped)` and
+`get_operator_status()` for a page that calls RPCs (a Desktop app through the
+dimos gateway).
 
 `OperatorHandoff` (`dimos/control/operator_handoff.py`) sits beside it: the
 agent's `request_operator(reason)` skill (route `agent`), the operator event
@@ -323,7 +324,7 @@ Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
 Choose by what the consumer is, not by how many robots the deployment has.
 
 Consumers that capture or model whatever is present read the aggregate:
-`CollectionRecorder`, `WorldBeliefRecorder`, `ManipulationModule`.
+`CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
 reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.

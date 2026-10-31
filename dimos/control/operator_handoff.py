@@ -49,12 +49,12 @@ from dimos.agents.skill_result import SkillResult
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
     HoldRoute,
-    OperatorEstopStatus,
     OperatorHoldStatus,
 )
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import get_run_log_dir, setup_logger
@@ -92,8 +92,9 @@ class OperatorHandoff(Module):
 
     config: OperatorHandoffConfig
 
-    operator_hold_status: In[OperatorHoldStatus]
-    operator_estop_status: In[OperatorEstopStatus]
+    # On/off: each message is a cue to read the whole status back from the coordinator.
+    operator_hold_status: In[Bool]
+    operator_estop_status: In[Bool]
     operator_status: Out[String]
     # The agent's input (McpClient's human_input): restart_autonomy tells it to carry on.
     human_input: Out[str]
@@ -111,6 +112,7 @@ class OperatorHandoff(Module):
         self._events: list[dict[str, Any]] = []
         self._stop_event = threading.Event()
         self._changed = threading.Event()
+        self._read_now = threading.Event()
         self._thread: threading.Thread | None = None
 
     @rpc
@@ -118,10 +120,10 @@ class OperatorHandoff(Module):
         """Follow the hold and e-stop streams and start sending operator_status."""
         super().start()
         subscriptions: list[tuple[str, Callable[[], Callable[[], None]]]] = [
-            ("operator_hold_status", lambda: self.operator_hold_status.subscribe(self._on_hold)),
+            ("operator_hold_status", lambda: self.operator_hold_status.subscribe(self._on_status)),
             (
                 "operator_estop_status",
-                lambda: self.operator_estop_status.subscribe(self._on_estop),
+                lambda: self.operator_estop_status.subscribe(self._on_status),
             ),
         ]
         for port, subscribe in subscriptions:
@@ -247,14 +249,15 @@ class OperatorHandoff(Module):
         with self._lock:
             return [event for event in self._events if event["timestamp"] > since]
 
+    def _on_status(self, _msg: Bool) -> None:
+        # The message arrives on a stream thread: the RPC that reads the status runs in _run.
+        self._read_now.set()
+        self._changed.set()
+
     def _on_hold(self, status: OperatorHoldStatus) -> None:
         hold = {**asdict(status), "unheld": list(status.unheld)}
         with self._lock:
             self._apply_hold_locked(hold)
-
-    def _on_estop(self, status: OperatorEstopStatus) -> None:
-        with self._lock:
-            self._apply_estop_locked(status.estopped)
 
     def _apply_hold_locked(self, hold: dict[str, Any] | None) -> None:
         was = self._hold or {}
@@ -333,7 +336,8 @@ class OperatorHandoff(Module):
         period = 1.0 / self.config.status_hz
         next_resync = time.monotonic()
         while not self._stop_event.is_set():
-            if time.monotonic() >= next_resync:
+            if self._read_now.is_set() or time.monotonic() >= next_resync:
+                self._read_now.clear()
                 next_resync = time.monotonic() + self.config.resync_s
                 self._resync()
             with self._lock:

@@ -1,5 +1,9 @@
 # Agents
 
+To run the on-robot agent, see [The on-robot agent](/docs/usage/agent.md).
+To integrate with a running system, see the [Python agent runtime](/docs/usage/agent/runtime.md) and
+[client SDK](/docs/usage/agent/sdk.md). The sections below cover the native `McpClient` agent and module skills.
+
 LLM agents run as native dimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture
@@ -75,7 +79,7 @@ class MySkillContainer(Module):
 | `execute_sport_command(command_name)` | `UnitreeSkillContainer` | Unitree sport commands (sit, stand, flip, etc.) |
 | `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
 | `observe()` | `ObserveSkill` | Capture and return current camera frame |
-| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
+| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description. Returns at once; a tool update reports when the robot stops |
 | `tag_location(location_name)` | `NavigationSkillContainer` | Tag current position for later recall |
 | `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |
 | `follow_person(query)` | `PersonFollowSkillContainer` | Visual servoing to follow a described person |

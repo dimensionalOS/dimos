@@ -216,6 +216,10 @@ robots:
         go2-sim-nav:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+        go2-sim-nav-episode:
+          title: 'Go2 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
+          hidden: true
         go2-localize:
           title: 'Go2 with object localization'
           description: 'The Go2 plus perception that places what its camera detects in 3D, using the lidar.'
@@ -491,7 +495,7 @@ robots:
           recommended_config: []
         hybrid-teleop-sim:
           title: xArm pick and place with operator hold (sim)
-          description: 'Simulated xArm7 pick and place that an operator can hold and release: no robot needed.'
+          description: 'Simulated xArm7 pick and place that an operator can hold, release and e-stop: no robot needed.'
           recommended_config: []
         xarm-grasp-agent:
           title: xArm pick and place agent
@@ -652,6 +656,9 @@ robots:
         coordinator-openyam:
           title: OpenYAM coordinator
           description: An OpenYAM arm behind a ControlCoordinator (a building block).
+        openyam-quest-collection:
+          title: OpenYAM demonstration recording
+          description: Teleoperate an OpenYAM arm in VR and record demonstrations.
         teleop-webxr-openyam:
           title: OpenYAM VR teleop
           description: Move an OpenYAM arm with a VR headset's right controller.

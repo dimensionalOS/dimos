@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Operator hold through the coordinator: request, preempt, reject, publish, acknowledge, e-stop.
+"""OperatorHoldCoordinator: the hold and e-stop status streams.
 
-A rig wires one mock arm, one mock twist base, the canonical trajectory task
-and the hold task into a real OperatorHoldCoordinator, then ticks it by hand
-so every assertion is deterministic.
+A rig wires one mock arm, the trajectory task and the hold task into a real
+OperatorHoldCoordinator, then ticks it by hand so every assertion is
+deterministic.
 """
 
 from __future__ import annotations
@@ -24,29 +24,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from unittest.mock import MagicMock
 
-from dimos_lcm.std_msgs import Bool
 import pytest
 
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareType,
-    make_joints,
-    make_twist_base_joints,
-)
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.operator_hold_coordinator import OperatorHoldCoordinator
-from dimos.control.task import (
-    BaseControlTask,
-    ControlMode,
-    CoordinatorState,
-    JointCommandOutput,
-    JointStateSnapshot,
-    ResourceClaim,
-)
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
-    OperatorEstopStatus,
-    OperatorHoldCommand,
     OperatorHoldStatus,
     OperatorHoldTask,
     operator_hold_task,
@@ -57,66 +40,13 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.control.tick_loop import TickLoop
-from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
-BASE_JOINTS = make_twist_base_joints("base")
-BASE_ODOMETRY = [1.5, -0.5, 0.25]
-
-
-class TeleopStub(BaseControlTask):
-    """Priority-50 stand-in for operator teleop: commands fixed arm positions once started."""
-
-    def __init__(self, positions: list[float]) -> None:
-        self._name = "teleop"
-        self._positions = positions
-        self.started = False
-
-    def claim(self) -> ResourceClaim:
-        return ResourceClaim(
-            joints=frozenset(ARM_JOINTS), priority=50, mode=ControlMode.SERVO_POSITION
-        )
-
-    def is_active(self) -> bool:
-        return self.started
-
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        return JointCommandOutput(
-            joint_names=list(ARM_JOINTS),
-            positions=list(self._positions),
-            mode=ControlMode.SERVO_POSITION,
-        )
-
-    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        pass
-
-
-class EstopStub(BaseControlTask):
-    """Idle task that records the last set_estop call; None until the first one."""
-
-    def __init__(self) -> None:
-        self._name = "estop_stub"
-        self.estopped: bool | None = None
-
-    def claim(self) -> ResourceClaim:
-        return ResourceClaim(joints=frozenset(), priority=0, mode=ControlMode.SERVO_POSITION)
-
-    def is_active(self) -> bool:
-        return False
-
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        return None
-
-    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        pass
-
-    def set_estop(self, estopped: bool) -> None:
-        self.estopped = estopped
 
 
 def _trajectory() -> JointTrajectory:
@@ -140,23 +70,11 @@ class Rig:
         self.arm.write_joint_positions.return_value = True
         self.arm.set_control_mode.return_value = True
 
-        self.base = MagicMock(spec=TwistBaseAdapter)
-        self.base.get_dof.return_value = len(BASE_JOINTS)
-        self.base.read_velocities.return_value = [0.0] * len(BASE_JOINTS)
-        self.base.read_odometry.return_value = list(BASE_ODOMETRY)
-        self.base.write_velocities.return_value = True
-
         self.coordinator = OperatorHoldCoordinator(publish_joint_state=False)
         self.coordinator.add_hardware(
             self.arm,
             HardwareComponent(
                 hardware_id="arm", hardware_type=HardwareType.MANIPULATOR, joints=ARM_JOINTS
-            ),
-        )
-        self.coordinator.add_hardware(
-            self.base,
-            HardwareComponent(
-                hardware_id="base", hardware_type=HardwareType.BASE, joints=BASE_JOINTS
             ),
         )
         self.trajectory_task = JointTrajectoryTask(
@@ -171,8 +89,10 @@ class Rig:
         self.hold_task = hold
         self.coordinator.add_task(self.hold_task, task_type="operator_hold")
 
-        self.statuses: list[OperatorHoldStatus] = []
-        self.coordinator.operator_hold_status.subscribe(self.statuses.append)
+        self.hold_statuses: list[Bool] = []
+        self.coordinator.operator_hold_status.subscribe(self.hold_statuses.append)
+        self.estop_statuses: list[Bool] = []
+        self.coordinator.operator_estop_status.subscribe(self.estop_statuses.append)
 
         self._loop = TickLoop(
             tick_rate=100.0,
@@ -186,19 +106,8 @@ class Rig:
     def tick(self) -> None:
         self._loop._tick()
 
-    def request(self, route: str = "manual", reason: str = "arm stuck") -> OperatorHoldStatus:
-        return self.coordinator.task_invoke(  # type: ignore[no-any-return]
-            OPERATOR_HOLD_TASK_NAME, "request", {"route": route, "reason": reason}
-        )
-
-    def acknowledge(self) -> OperatorHoldStatus:
-        return self.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "acknowledge")  # type: ignore[no-any-return]
-
     def arm_writes(self) -> list[list[float]]:
         return [call.args[0] for call in self.arm.write_joint_positions.call_args_list]
-
-    def base_writes(self) -> list[list[float]]:
-        return [call.args[0] for call in self.base.write_velocities.call_args_list]
 
 
 @pytest.fixture
@@ -210,214 +119,73 @@ def rig() -> Iterator[Rig]:
         rig.coordinator.stop()
 
 
-class TestRequest:
-    def test_holds_every_joint_where_it_is(self, rig):
-        status = rig.request(route="manual", reason="arm stuck")
-
-        assert status.on and status.route == "manual" and status.reason == "arm stuck"
-        assert status.started_at > 0.0
-        rig.tick()
-        assert rig.hold_task.claim().joints == frozenset(ARM_JOINTS) | frozenset(BASE_JOINTS)
-        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-        # A base "joint" is a velocity, so holding it means zero, not its odometry.
-        assert rig.base_writes()[-1] == [0.0, 0.0, 0.0]
-
-    def test_keeps_the_first_positions_if_the_arm_drifts(self, rig):
-        rig.request()
-        rig.tick()
-        rig.arm.read_joint_positions.return_value = [0.15, 0.2, 0.3]
-
-        rig.tick()
-
-        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-
-    def test_unknown_route_raises_and_holds_nothing(self, rig):
-        with pytest.raises(ValueError):
-            rig.request(route="typo")
-
-        assert not rig.hold_task.is_active()
-        rig.tick()
-        assert rig.arm_writes() == []
-
-    def test_second_hold_task_is_refused_by_name(self, rig):
-        assert rig.coordinator.add_task(OperatorHoldTask(), task_type="operator_hold") is False
-        assert rig.coordinator.describe_task(OPERATOR_HOLD_TASK_NAME)["commands"].keys() == {
-            "request",
-            "acknowledge",
-            "get_status",
-        }
-
-
-class TestWhileHeld:
-    def test_running_trajectory_is_preempted(self, rig):
-        assert (
-            rig.coordinator.execute_trajectory(_trajectory()).status
-            is TrajectoryExecutionStatus.ACCEPTED
+class TestHoldStatus:
+    def test_request_holds_the_arm_and_sends_true(self, rig):
+        status = rig.coordinator.task_invoke(
+            OPERATOR_HOLD_TASK_NAME, "request", {"route": "manual", "reason": "arm stuck"}
         )
-        rig.tick()
-        assert rig.trajectory_task.get_state() is TrajectoryState.EXECUTING
+        assert isinstance(status, OperatorHoldStatus) and status.on
+        assert rig.hold_statuses == []
 
-        rig.request()
         rig.tick()
 
-        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
-        assert not rig.trajectory_task.is_active()
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+        assert [type(msg) for msg in rig.hold_statuses] == [Bool]
+        assert rig.hold_statuses[-1].data is True
 
-    def test_trajectory_sent_during_hold_is_accepted_then_aborted_by_preemption(self, rig):
-        rig.request(reason="arm stuck")
+    def test_acknowledge_releases_and_sends_false(self, rig):
+        rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "request", {"route": "manual"})
         rig.tick()
 
-        result = rig.coordinator.execute_trajectory(_trajectory())
-        rig.tick()
+        rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "acknowledge")
 
-        assert result.status is TrajectoryExecutionStatus.ACCEPTED
-        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
-        assert not rig.trajectory_task.is_active()
-        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)  # the arm did not move
-
-
-class TestStatus:
-    def test_first_tick_publishes(self, rig):
-        rig.request(route="failsafe", reason="fault")
-        assert rig.statuses == []
-
-        rig.tick()
-
-        assert len(rig.statuses) == 1
-        status = rig.statuses[0]
-        assert status.on and status.route == "failsafe" and status.reason == "fault"
-        assert status.started_at > 0.0 and status.stamp >= status.started_at
-
-    def test_repeats_once_per_second_while_on(self, rig):
-        rig.request(route="agent", reason="need help")
-        snapshot = JointStateSnapshot(
-            joint_positions=dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True))
-        )
-
-        for t_now in (0.0, 0.5, 0.99, 1.0, 1.5, 2.0, 2.5, 3.0):
-            rig.hold_task.compute(CoordinatorState(joints=snapshot, t_now=t_now, dt=0.01))
-
-        assert [status.on for status in rig.statuses] == [True, True, True, True]
-        assert {status.route for status in rig.statuses} == {"agent"}
-        assert len({status.started_at for status in rig.statuses}) == 1
-
-    def test_get_status_reads_without_changing_anything(self, rig):
-        assert rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status").on is False
-        rig.request()
-        assert rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status").on is True
-        assert rig.statuses == []
-
-
-class TestAcknowledge:
-    def test_turns_the_hold_off(self, rig):
-        rig.request()
-        rig.tick()
-
-        status = rig.acknowledge()
-
-        assert status.on is False and status.route == "" and status.started_at == 0.0
-        assert rig.statuses[-1].on is False
+        assert [msg.data for msg in rig.hold_statuses] == [True, False]
         assert not rig.hold_task.is_active()
-        assert rig.hold_task.claim().joints == frozenset()
         assert (
             rig.coordinator.execute_trajectory(_trajectory()).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
 
-    def test_autonomy_does_not_resume_but_teleop_can_take_over(self, rig):
-        teleop = TeleopStub([0.4, 0.5, 0.6])
-        rig.coordinator.add_task(teleop)
-        assert (
-            rig.coordinator.execute_trajectory(_trajectory()).status
-            is TrajectoryExecutionStatus.ACCEPTED
-        )
-        rig.tick()
-        rig.request()
-        rig.tick()
 
-        rig.acknowledge()
-        writes_before = len(rig.arm_writes())
-        rig.tick()
+class TestEstopStatus:
+    def test_set_estop_sends_true_then_false(self, rig):
+        rig.coordinator.set_estop(True)
 
-        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
-        assert len(rig.arm_writes()) == writes_before  # nothing is commanding the arm
-        teleop.started = True
-        rig.tick()
-        assert rig.arm_writes()[-1] == pytest.approx([0.4, 0.5, 0.6])
+        assert [type(msg) for msg in rig.estop_statuses] == [Bool]
+        assert rig.estop_statuses[-1].data is True
+        assert rig.hold_task.get_status().estopped
+        assert rig.hold_statuses[-1].data is True  # the e-stop turned the hold on
 
-    def test_acknowledge_when_not_held_publishes_nothing(self, rig):
-        status = rig.acknowledge()
+        rig.coordinator.set_estop(False)
 
-        assert status.on is False
-        assert rig.statuses == []
+        assert [msg.data for msg in rig.estop_statuses] == [True, False]
+        assert rig.hold_statuses[-1].data is True  # on until acknowledged
 
-
-class TestPorts:
-    def test_command_port_requests_and_acknowledges(self, rig):
-        rig.coordinator._dispatch(
-            "operator_hold_command", OperatorHoldCommand(action="request", reason="pressed hold")
-        )
-        rig.tick()
-
-        status = rig.statuses[-1]
-        assert status.on and status.route == "manual" and status.reason == "pressed hold"
-        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-
-        rig.coordinator._dispatch(
-            "operator_hold_command", OperatorHoldCommand(action="acknowledge")
-        )
-
-        assert rig.statuses[-1].on is False
-        assert not rig.hold_task.is_active()
-
-    def test_plain_coordinator_has_no_command_port(self):
-        coordinator = ControlCoordinator(publish_joint_state=False)
+    def test_start_sends_the_current_state(self):
+        coordinator = OperatorHoldCoordinator(publish_joint_state=False)
+        statuses: list[Bool] = []
+        coordinator.operator_estop_status.subscribe(statuses.append)
         try:
-            with pytest.raises(ValueError, match="operator_hold_command"):
-                coordinator.add_task(OperatorHoldTask(), task_type="operator_hold")
+            coordinator.start()
         finally:
             coordinator.stop()
 
+        assert [msg.data for msg in statuses] == [False]
 
-class TestEstopPort:
-    @pytest.fixture
-    def estop(self, rig: Rig) -> tuple[EstopStub, list[OperatorEstopStatus]]:
-        stub = EstopStub()
-        rig.coordinator.add_task(stub)
-        statuses: list[OperatorEstopStatus] = []
-        rig.coordinator.operator_estop_status.subscribe(statuses.append)
-        return stub, statuses
 
-    def test_stop_latches_holds_cancels_and_reports(self, rig, estop):
-        stub, statuses = estop
-        rig.coordinator.execute_trajectory(_trajectory())
-        rig.tick()
-
-        rig.coordinator._on_estop_command(Bool(data=True))
-
-        assert stub.estopped is True
-        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
-        hold = rig.hold_task.get_status()
-        assert hold.on and hold.route == "failsafe" and hold.reason == "e-stop"
-        assert statuses[-1].estopped is True and statuses[-1].stamp > 0.0
-        rig.tick()
-        assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-
-    def test_estop_rpc_stops_like_the_port_and_answers_in_plain_types(self, rig, estop):
-        stub, _ = estop
-        rig.coordinator.execute_trajectory(_trajectory())
-        rig.tick()
-
+class TestPageInterface:
+    def test_estop_rpc_stops_and_answers_in_plain_types(self, rig):
         stopped = rig.coordinator.estop(True)
-        cleared = rig.coordinator.estop(False)
 
-        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
-        assert stopped["estopped"] is True and cleared["estopped"] is False
-        assert stub.estopped is False
-        hold = cleared["hold"]
+        hold = stopped["hold"]
+        assert stopped["estopped"] is True
         assert (hold["on"], hold["route"], hold["reason"]) == (True, "failsafe", "e-stop")
         assert hold["unheld"] == []
+
+        cleared = rig.coordinator.estop(False)
+
+        assert cleared["estopped"] is False
+        assert cleared["hold"]["on"] is True, "the hold stays on until acknowledged"
 
     def test_operator_status_without_a_hold_task(self):
         coordinator = OperatorHoldCoordinator(publish_joint_state=False)
@@ -426,29 +194,21 @@ class TestEstopPort:
         finally:
             coordinator.stop()
 
-    def test_clear_releases_the_latch_but_not_the_hold(self, rig, estop):
-        stub, statuses = estop
+    def test_estop_input_stops_and_clears(self, rig):
         rig.coordinator._on_estop_command(Bool(data=True))
+        assert rig.coordinator.get_operator_status()["estopped"] is True
 
         rig.coordinator._on_estop_command(Bool(data=False))
+        assert rig.coordinator.get_operator_status()["estopped"] is False
 
-        assert stub.estopped is False
-        assert rig.hold_task.get_status().on
-        assert [status.estopped for status in statuses] == [True, False]
-
-    def test_start_listens_and_sends_the_state_stop_unsubscribes(self):
+    def test_start_listens_on_the_estop_input(self):
         coordinator = OperatorHoldCoordinator(publish_joint_state=False)
         transport = MagicMock()
         coordinator.operator_estop.transport = transport
-        statuses: list[OperatorEstopStatus] = []
-        coordinator.operator_estop_status.subscribe(statuses.append)
         try:
             coordinator.start()
-            assert [status.estopped for status in statuses] == [False]
-
             on_message = transport.subscribe.call_args.args[0]
             on_message(Bool(data=True))
-            assert statuses[-1].estopped is True
+            assert coordinator.get_operator_status()["estopped"] is True
         finally:
             coordinator.stop()
-        transport.subscribe.return_value.assert_called_once_with()

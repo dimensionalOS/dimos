@@ -73,7 +73,7 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     config = _config()
     module = MagicMock()
     module.config = SimpleNamespace(default_speed_scale=1.0)
-    module.get_operation_status.return_value = OperationStatus.COMPLETED
+    module.get_operation_status.return_value = OperationStatus.IDLE
     module.get_error.return_value = ""
     module.has_planned_path.return_value = True
     module.get_model_config.return_value = config
@@ -102,7 +102,7 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
 
 def test_status_is_compact() -> None:
     operator, module, _ = _operator()
-    assert operator.status().state == "COMPLETED"
+    assert operator.status().state == "IDLE"
     module.get_state.assert_not_called()
     module.get_model_config.assert_not_called()
 

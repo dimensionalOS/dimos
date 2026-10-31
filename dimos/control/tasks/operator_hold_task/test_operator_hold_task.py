@@ -22,14 +22,11 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
-    OperatorHoldCommand,
     OperatorHoldStatus,
     OperatorHoldTask,
     create_task,
-    decode_operator_hold_command,
     operator_hold_task,
 )
-from dimos.web.codecs import resolve_decoder
 
 
 def _state(positions: dict[str, float], t_now: float = 0.0) -> CoordinatorState:
@@ -150,59 +147,67 @@ def test_acknowledge_clears_everything():
     assert task.compute(_state({"arm/joint1": 0.5})) is None
 
 
-def test_command_messages_request_and_acknowledge():
+def test_estop_turns_the_hold_on_and_it_commands_nothing_until_cleared():
+    published: list[OperatorHoldStatus] = []
     task = OperatorHoldTask()
+    task.set_status_publisher(published.append)
 
-    task.on_command(OperatorHoldCommand(action="request"), t_now=0.0)
-    assert task.get_status().on and task.get_status().route == "manual"
-    assert task.get_status().reason == ""
+    task.set_estop(True)
 
-    task.on_command(
-        OperatorHoldCommand(action="request", route="agent", reason="need help"), t_now=0.1
-    )
-    assert (task.get_status().route, task.get_status().reason) == ("agent", "need help")
+    status = task.get_status()
+    assert status.on and status.route == "failsafe" and status.reason == "e-stop"
+    assert status.estopped
+    assert published[-1].on and published[-1].estopped
+    assert task.compute(_state({"arm/joint1": 0.5})) is None
+    assert task.claim().joints == frozenset()
 
-    task.on_command(OperatorHoldCommand(action="acknowledge"), t_now=0.2)
+
+def test_after_the_clear_it_holds_where_the_arm_is_then_until_acknowledged():
+    published: list[OperatorHoldStatus] = []
+    task = OperatorHoldTask()
+    task.set_status_publisher(published.append)
+    task.request("manual", "stuck")
+    task.compute(_state({"arm/joint1": 0.5}))
+    task.set_estop(True)
+    task.compute(_state({"arm/joint1": 0.6}))
+
+    task.set_estop(False)
+
+    status = task.get_status()
+    assert status.on and status.route == "failsafe" and status.reason == "e-stop"
+    assert not status.estopped
+    assert published[-1].on and not published[-1].estopped
+    # The arm moved while stopped; the hold takes it where it is after the clear.
+    output = task.compute(_state({"arm/joint1": 0.7}))
+    assert output is not None and output.positions == [0.7]
+
+    task.acknowledge()
     assert not task.is_active()
 
 
-def test_command_with_an_unknown_action_raises():
+def test_acknowledge_is_refused_while_estopped():
     task = OperatorHoldTask()
+    task.set_estop(True)
 
-    with pytest.raises(ValueError, match="release"):
-        task.on_command(OperatorHoldCommand(action="release"), t_now=0.0)
+    status = task.acknowledge()
 
+    assert status.on and status.estopped
+    assert task.is_active()
+
+    task.set_estop(False)
+    status = task.acknowledge()
+
+    assert not status.on
     assert not task.is_active()
 
 
-def test_decoder_reads_page_commands():
-    assert decode_operator_hold_command(
-        {"action": "acknowledge", "intent": "resume"}
-    ) == OperatorHoldCommand(action="acknowledge", intent="resume")
-    assert decode_operator_hold_command(
-        {"action": "request", "route": "agent", "reason": "need help"}
-    ) == OperatorHoldCommand(action="request", route="agent", reason="need help")
-    # The cockpit bridge finds it by encoding id and checks the message type.
-    assert (
-        resolve_decoder("operator_hold_command.json.v1", OperatorHoldCommand).decode
-        is decode_operator_hold_command
-    )
+def test_estop_never_raises(monkeypatch):
+    task = OperatorHoldTask()
+    monkeypatch.setattr(task, "request", lambda *args, **kwargs: 1 / 0)
 
+    task.set_estop(True)
 
-@pytest.mark.parametrize(
-    ("value", "complaint"),
-    [
-        ({"route": "manual"}, "action"),
-        ({"action": "release"}, "action"),
-        ({"action": "request", "route": "typo"}, "route"),
-        ({"action": "request", "reason": 3}, "reason"),
-        ({"action": "acknowledge", "intent": None}, "intent"),
-        ("request", "object"),
-    ],
-)
-def test_decoder_rejects_bad_commands(value, complaint):
-    with pytest.raises(ValueError, match=complaint):
-        decode_operator_hold_command(value)
+    assert task.get_status().estopped
 
 
 def test_status_interval_must_be_positive():

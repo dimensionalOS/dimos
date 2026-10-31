@@ -15,12 +15,12 @@
 """ZenohRPC refuses a query that zenoh delivered to the wrong queryable."""
 
 from collections.abc import Callable, Iterator
-import pickle
 from typing import Any
 
 import pytest
 import zenoh
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
@@ -110,12 +110,12 @@ def test_caller_without_a_name_is_still_served(rpc_pair: tuple[ZenohRPC, ZenohRP
     replies = list(
         client.session.get(
             "dimos/rpc/Coord/task_invoke",
-            payload=pickle.dumps((["right_arm_gripper", "get_normalized", {}], {})),
+            payload=encode((["right_arm_gripper", "get_normalized", {}], {})),
             target=zenoh.QueryTarget.ALL,
             consolidation=zenoh.ConsolidationMode.NONE,
             timeout=5.0,
         )
     )
 
-    assert [pickle.loads(reply.ok.payload.to_bytes()) for reply in replies if reply.ok] == [0.5]
+    assert [decode(reply.ok.payload.to_bytes()) for reply in replies if reply.ok] == [0.5]
     assert coordinator.invokes == [("right_arm_gripper", "get_normalized", {})]

@@ -16,12 +16,7 @@ TASK_FACTORIES = {
     "operator_hold": "dimos.control.tasks.operator_hold_task.operator_hold_task:create_task",
 }
 
-# The coordinator needs an operator_hold_command input port for this stream;
-# OperatorHoldCoordinator (dimos/control/operator_hold_coordinator.py) declares it.
-TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
-    "operator_hold": {"operator_hold_command": ("on_command", "direct")},
-}
-
+# No streams: a hold is requested and acknowledged over task_invoke only.
 TASK_EXPOSES: dict[str, list[str]] = {
     "operator_hold": ["request", "acknowledge", "get_status"],
 }

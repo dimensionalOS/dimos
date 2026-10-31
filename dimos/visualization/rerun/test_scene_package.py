@@ -13,11 +13,11 @@
 # limitations under the License.
 
 from pathlib import Path
-import pickle
 from typing import Any
 
 import pytest
 
+from dimos.protocol.encode.cbor import encode
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment, ScenePackage
 from dimos.visualization.rerun.scene_package import (
     resolve_scene_package_for_rerun,
@@ -64,7 +64,7 @@ def test_resolves_composed_mjb_to_scene_package_visual(tmp_path: Path) -> None:
 
     static_entities = scene_package_static_entities(composed_path)
     assert set(static_entities) == {"world/scene"}
-    pickle.dumps(static_entities)
+    encode(static_entities)
 
     transform, asset = static_entities["world/scene"](FakeRerun)
     assert transform.kwargs == {

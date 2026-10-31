@@ -16,11 +16,10 @@
 
 from __future__ import annotations
 
-import pickle
-
 import pytest
 
 from dimos.control.contract.sequence import Freshness, is_newer
+from dimos.protocol.encode.cbor import decode, encode
 
 
 def test_anything_is_newer_than_nothing() -> None:
@@ -78,9 +77,9 @@ def test_marking_again_refreshes() -> None:
     assert not fresh.is_stale(now=20.0, timeout_s=1.0)
 
 
-def test_freshness_pickles() -> None:
+def test_freshness_crosses_processes() -> None:
     """Freshness travels with a source snapshot over RPC."""
     fresh = Freshness()
     fresh.mark(42.0)
 
-    assert pickle.loads(pickle.dumps(fresh)).last_receipt == 42.0
+    assert decode(encode(fresh)).last_receipt == 42.0

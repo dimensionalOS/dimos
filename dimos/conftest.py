@@ -19,7 +19,6 @@ import hashlib
 import os
 import pathlib
 import platform
-import shutil
 import tempfile
 import threading
 import time
@@ -184,12 +183,14 @@ def pytest_configure(config):
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
     )
     config.addinivalue_line(
-        "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
+        "markers",
+        "self_hosted_large: end-to-end and high-memory tests for the large self-hosted "
+        "runner; runs in the daily e2e workflow, not per PR",
     )
     config.addinivalue_line(
         "markers",
         "web_browser: cockpit browser e2e (playwright chromium + firefox); "
-        "runs in the CI web job and the macOS self-hosted-tests job",
+        "runs in the daily e2e workflow (Linux + macOS), not per PR",
     )
     config.addinivalue_line(
         "markers",
@@ -209,9 +210,6 @@ def pytest_configure(config):
         "markers",
         "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "
         "except in CI, where it runs anyway so a missing dep fails loudly",
-    )
-    config.addinivalue_line(
-        "markers", "skipif_no_ffmpeg: skip when the ffmpeg binary is missing, except in CI"
     )
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
@@ -299,10 +297,6 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),
             "native libturbojpeg unavailable",
-        ),
-        "skipif_no_ffmpeg": (
-            shutil.which("ffmpeg") is None and not os.getenv("CI"),
-            "ffmpeg not installed",
         ),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
