@@ -657,6 +657,9 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/dual_openyam]
       blueprints:
+        dual-openyam-quest-collection:
+          title: Dual OpenYAM demonstration recording
+          description: Teleoperate two OpenYAM arms in VR and record demonstrations.
         dual-openyam-planner-coordinator:
           title: Dual OpenYAM motion planning
           description: Motion planning for the two-arm OpenYAM.
