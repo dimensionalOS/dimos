@@ -337,6 +337,10 @@ pub struct Config {
     /// In that measurement, drop points a scan re-sends from earlier scans (the Go2 L1 republishes its last seconds of
     /// points): placed by the scan's odometry pose, such a point lands exactly on its copy in the scan before.
     pub scan_noise_drop_reseen_points: bool,
+    /// Drop the points a scan re-sends from the scan before (placed by the odometry they land exactly on their copies;
+    /// the Go2 L1 republishes its last seconds of points) from every keyframe cloud, so scan context, ICP and the maps
+    /// see each surface once.
+    pub drop_reseen_points: bool,
     pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
@@ -535,6 +539,7 @@ impl Default for Config {
             scan_noise_from_keyframes: false,
 
             scan_noise_drop_reseen_points: true,
+            drop_reseen_points: false,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,
@@ -649,6 +654,8 @@ pub struct GscPgo {
     /// `scan_noise_from_keyframes`: the previous scan's points (odometry frame, 0.1 mm grid), the new points since the
     /// last keyframe, the last keyframes' new points, and each measured keyframe's gap width.
     pub(crate) scan_noise_previous: std::collections::HashSet<[i64; 3]>,
+    /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
+    pub(crate) reseen_previous: std::collections::HashSet<[i64; 3]>,
     pub(crate) scan_noise_fresh: PointCloud,
     pub(crate) scan_noise_recent: std::collections::VecDeque<PointCloud>,
     pub(crate) scan_noise_widths: Vec<f64>,
@@ -1463,8 +1470,13 @@ impl GscPgo {
                 self.measure_scan_noise();
             }
         }
+        let cloud = if self.config.drop_reseen_points {
+            self.drop_reseen(cloud_with_pose)
+        } else {
+            cloud_with_pose.cloud.clone()
+        };
         if keyframe {
-            self.insert_keyframe(&cloud_with_pose.pose, cloud_with_pose.cloud.clone());
+            self.insert_keyframe(&cloud_with_pose.pose, cloud);
         }
         self.scans_seen += 1;
         let frequency = self.config.pressure_check_frequency;
@@ -1474,6 +1486,24 @@ impl GscPgo {
             }
         }
         keyframe
+    }
+    /// The scan's cloud without the points the scan before already sent (`drop_reseen_points`).
+    fn drop_reseen(&mut self, cloud_with_pose: &CloudWithPose) -> Option<Arc<PointCloud>> {
+        let cloud = cloud_with_pose.cloud.as_ref()?;
+        let pose = &cloud_with_pose.pose;
+        let key = |p: &[f32; 3]| p.map(|v| (v as f64 * 1e4).round() as i64);
+        let placed: Vec<[i64; 3]> = transform_cloud(cloud, &pose.rotation, &pose.translation)
+            .iter()
+            .map(key)
+            .collect();
+        let fresh: PointCloud = cloud
+            .iter()
+            .zip(&placed)
+            .filter(|(_, k)| !self.reseen_previous.contains(*k))
+            .map(|(p, _)| *p)
+            .collect();
+        self.reseen_previous = placed.into_iter().collect();
+        Some(Arc::new(fresh))
     }
     /// The scan's points in the odometry frame, the re-sent ones dropped (`scan_noise_drop_reseen_points`), added to the
     /// new points since the last keyframe.

@@ -78,6 +78,7 @@ config! {
     closure_icp_max_fitness_m: f64,
     closure_icp_point_to_plane: bool,
     scan_noise_from_keyframes: bool,
+    drop_reseen_points: bool,
     scan_noise_drop_reseen_points: bool,
     closure_submap_half_range: i32,
     submap_resolution: f64,

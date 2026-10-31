@@ -58,6 +58,8 @@ class PGOConfig(NativeModuleConfig):
     scan_noise_from_keyframes: bool = False
     # in that measurement, drop points a scan re-sends from earlier scans (Go2 L1)
     scan_noise_drop_reseen_points: bool = True
+    # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud
+    drop_reseen_points: bool = False
     closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
