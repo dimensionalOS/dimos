@@ -58,17 +58,19 @@ def test_blueprint_view_and_its_files(
 
 
 def test_the_blueprint_view_builds_when_its_sources_change(tmp_path: Path) -> None:
-    web = tmp_path / "web"
-    (web / "blueprint_view" / "src").mkdir(parents=True)
-    (web / "deno.json").write_text("{}")
-    (web / "blueprint_view" / "src" / "main.tsx").write_text("1")
-    before = web_view.stamp(web, web / "blueprint_view")
-    (web / "blueprint_view" / "src" / "main.test.ts").write_text("tests don't count")
-    (web / "blueprint_view" / "dist").mkdir()
-    (web / "blueprint_view" / "dist" / "index.html").write_text("built output doesn't count")
-    assert web_view.stamp(web, web / "blueprint_view") == before
-    (web / "blueprint_view" / "src" / "main.tsx").write_text("2")
-    assert web_view.stamp(web, web / "blueprint_view") != before
+    app = tmp_path / "blueprint_view"
+    (app / "src").mkdir(parents=True)
+    (app / "deno.json").write_text("{}")
+    (app / "src" / "main.tsx").write_text("1")
+    before = web_view.stamp(app)
+    (app / "src" / "main.test.ts").write_text("tests don't count")
+    (app / "dist").mkdir()
+    (app / "dist" / "index.html").write_text("built output doesn't count")
+    assert web_view.stamp(app) == before
+    (app / "src" / "main.tsx").write_text("2")
+    assert web_view.stamp(app) != before
+    (app / "deno.lock").write_text("{}")
+    assert web_view.stamp(app) != before
 
 
 def test_source_reads_only_python_in_the_checkout(client: TestClient, checkout: Path) -> None:

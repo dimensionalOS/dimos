@@ -45,7 +45,10 @@ async def blueprint_view(
     await find_blueprint(state, name)
     dist = await web_view.built_dist()
     if dist is None:
-        raise ApiError(503, "the blueprint view isn't built (web/blueprint_view: deno task build)")
+        raise ApiError(
+            503,
+            "the blueprint view isn't built (experimental/gateway/blueprint_view: deno task build)",
+        )
     return (dist / "index.html").read_text()
 
 

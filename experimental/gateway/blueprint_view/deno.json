@@ -1,5 +1,16 @@
 {
+  "nodeModulesDir": "auto",
+  "lock": {
+    "path": "./deno.lock",
+    "frozen": true
+  },
   "imports": {
+    "react": "npm:react@^19.2.0",
+    "react/": "npm:/react@^19.2.0/",
+    "react-dom": "npm:react-dom@^19.2.0",
+    "react-dom/": "npm:/react-dom@^19.2.0/",
+    "@types/react": "npm:@types/react@^19.3.0",
+    "@types/react-dom": "npm:@types/react-dom@^19.3.0",
     "dimos-react": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.6/src/index.ts",
     "dimos-react/graph": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.6/src/graph.ts"
   },
@@ -19,5 +30,21 @@
     "build": "deno run -A npm:vite build",
     "test": "deno run -A npm:vitest run",
     "check": "deno check src vite.config.ts"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "exclude": [
+      "dist/"
+    ]
+  },
+  "lint": {
+    "exclude": [
+      "dist/"
+    ],
+    "rules": {
+      "tags": [
+        "recommended"
+      ]
+    }
   }
 }

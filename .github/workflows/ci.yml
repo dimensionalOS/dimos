@@ -618,15 +618,15 @@ jobs:
         run: deno task build
 
       - name: Blueprint view type-check
-        working-directory: web/blueprint_view
+        working-directory: experimental/gateway/blueprint_view
         run: deno task check
 
       - name: Blueprint view vitest
-        working-directory: web/blueprint_view
+        working-directory: experimental/gateway/blueprint_view
         run: deno task test
 
       - name: Blueprint view build
-        working-directory: web/blueprint_view
+        working-directory: experimental/gateway/blueprint_view
         run: deno task build
 
       - name: Relay image build  # docker/relay/Dockerfile must not rot silently

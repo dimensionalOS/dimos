@@ -28,7 +28,6 @@ import time
 from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge import relay_process
-from dimos.web.relay_bridge.locate import find_web_dir
 from experimental.gateway import constants
 
 logger = setup_logger()
@@ -37,11 +36,13 @@ _lock = asyncio.Lock()
 
 
 def app_dir() -> Path:
-    return find_web_dir() / "blueprint_view"
+    """Its own Deno project (deno.json, deno.lock, node_modules), not a member of web/'s workspace: a wheel
+    ships web/ without experimental/, and Deno refuses a workspace whose member is missing."""
+    return Path(__file__).parent / "blueprint_view"
 
 
-def _sources(web_dir: Path, app: Path) -> list[Path]:
-    files = [path for path in (web_dir / "deno.json", web_dir / "deno.lock") if path.is_file()]
+def _sources(app: Path) -> list[Path]:
+    files = []
     for path in sorted(app.rglob("*")):
         parts = path.relative_to(app).parts
         skipped = {"dist", "node_modules"} & set(parts) or any(
@@ -52,10 +53,10 @@ def _sources(web_dir: Path, app: Path) -> list[Path]:
     return files
 
 
-def stamp(web_dir: Path, app: Path) -> str:
+def stamp(app: Path) -> str:
     digest = hashlib.sha256()
-    for path in _sources(web_dir, app):
-        digest.update(str(path.relative_to(web_dir)).encode() + b"\0")
+    for path in _sources(app):
+        digest.update(str(path.relative_to(app)).encode() + b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
 
@@ -75,11 +76,10 @@ def ensure_built(app: Path) -> Path | None:
     # TODO(core): relay_process should expose its build helpers
     dist = app / "dist"
     if (app / "src").is_dir():
-        web_dir = app.parent
         cancel = threading.Event()
         deadline = time.monotonic() + constants.VIEW_BUILD_TIMEOUT_S
-        with relay_process._build_lock(web_dir, deadline, cancel) as locked:
-            wanted = stamp(web_dir, app)
+        with relay_process._build_lock(app, deadline, cancel) as locked:
+            wanted = stamp(app)
             if locked and relay_process._read_stamp(dist) != wanted:
                 logger.warning("blueprint view is missing or stale; building it")
                 out = Path(tempfile.mkdtemp(prefix=".dist-new-", dir=app))
