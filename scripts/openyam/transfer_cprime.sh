@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Copy the tested OpenYAM sources and calibration inputs. Installation is done
-# later on the destination using sanity_reproduce.md.
+# Copy the C-prime checkout and the calibration inputs over SSH. This does not
+# install software or command motors on either machine.
 
 usage() {
   cat <<'EOF'
 Usage: scripts/openyam/transfer_cprime.sh [USER@HOST] [--remote-root ABS_PATH] [--calibration-root ABS_PATH] [--dry-run]
 
-Creates a new ~/openyam-cprime directory on the destination by default.
-The destination needs SSH, Git, and rsync. The script does not install packages
-or send CAN commands. When USER@HOST is omitted, the script prompts for it.
-SSH asks for the destination password once and reuses that connection for rsync.
-Use an SSH config alias if the port is not 22.
+Copies files into ~/openyam-cprime on the destination by default. Existing
+files with the same names are updated; other destination files are left alone.
+If USER@HOST is omitted, the script asks for it. Use an SSH config alias for
+nonstandard ports. See sanity_reproduce.md for the later installation steps.
 EOF
 }
 
@@ -26,7 +25,6 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
   ssh_target=$1
   shift
 fi
-
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 calibration_dir="$HOME/calibration/openyam_camera_calibration_20261027_i3h7w6ox"
 remote_root=""
@@ -43,24 +41,19 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown argument: $1" ;;
   esac
 done
-
 if [[ -z "$ssh_target" ]]; then
   read -r -p 'Destination SSH target (USER@HOST): ' ssh_target
 fi
 [[ "$ssh_target" =~ ^[[:alnum:]_.@:-]+$ && "$ssh_target" != -* ]] || die "invalid SSH target"
 
-branch=codex/feat/openyam-full-tracking
-tested_commit=c7ec34c94
-can_branch=fix/openyam-anvil-parity
-can_commit=20572f3a41dd98d692da44556de0a0d10c2c8d9d
 session_name=openyam_camera_calibration_20261027_i3h7w6ox
 model_dir="$repo_dir/data/dual_openyam_abc_box_v2"
-checker="$calibration_dir/gravity_friction_identification/bounded_integral_stability/check_workspace.py"
-
-[[ -d "$repo_dir/.git" ]] || die "DimOS Git checkout missing: $repo_dir"
-[[ $(git -C "$repo_dir" branch --show-current) == "$branch" ]] || die "run from the C-prime branch ($branch)"
-git -C "$repo_dir" merge-base --is-ancestor "$tested_commit" HEAD || die "tested commit $tested_commit is missing"
+experiment_dir="$calibration_dir/gravity_friction_identification"
+checker="$experiment_dir/bounded_integral_stability/check_workspace.py"
 for path in \
+  "$repo_dir/scripts/openyam/demo_dimos_joint_offset.py" \
+  "$repo_dir/scripts/openyam/demo_test_dimos_joint_offset.py" \
+  "$repo_dir/sanity_reproduce.md" \
   "$model_dir/assets/base.stl" \
   "$checker" \
   "$calibration_dir/robot_model.urdf" \
@@ -70,15 +63,15 @@ done
 
 if [[ $dry_run == 1 ]]; then
   printf 'SSH target: %s\n' "$ssh_target"
-  printf 'DimOS branch: %s (%s)\n' "$branch" "$(git -C "$repo_dir" rev-parse --short HEAD)"
+  printf 'DimOS source: %s\n' "$repo_dir"
   printf 'Calibration source: %s\n' "$calibration_dir"
   printf 'Destination root: %s\n' "${remote_root:-<remote home>/openyam-cprime}"
-  printf 'Copies: DimOS Git history, pinned CAN fork source, OpenYAM model assets, workspace checker, URDF, calibration bundle.\n'
+  printf 'Copies: DimOS files (except .venv, logs and caches), workspace checker, URDF, calibration bundle, model meshes.\n'
   printf 'Installs packages: no; runs motors: no\n'
   exit 0
 fi
 
-for tool in git ssh rsync mktemp; do command -v "$tool" >/dev/null || die "$tool is required"; done
+for tool in ssh rsync mktemp; do command -v "$tool" >/dev/null || die "$tool is required"; done
 temporary=$(mktemp -d)
 control_path="$temporary/ssh-control"
 ssh_cmd=(ssh -o ControlMaster=auto -o ControlPath="$control_path" -o ControlPersist=10m)
@@ -91,73 +84,48 @@ trap cleanup EXIT
 
 printf 'Connecting to %s (enter the destination password if prompted)...\n' "$ssh_target"
 "${ssh_cmd[@]}" -MNf "$ssh_target"
-"${ssh_cmd[@]}" "$ssh_target" 'command -v bash >/dev/null && command -v git >/dev/null && command -v rsync >/dev/null' \
-  || die "destination needs Bash, Git, and rsync"
+"${ssh_cmd[@]}" "$ssh_target" 'command -v rsync >/dev/null' \
+  || die "destination needs rsync"
 remote_home=$("${ssh_cmd[@]}" "$ssh_target" 'printf %s "$HOME"')
 [[ "$remote_home" == /* ]] || die "could not determine destination home directory"
 remote_root=${remote_root:-$remote_home/openyam-cprime}
 remote_root=${remote_root%/}
 [[ "$remote_root" =~ ^/[[:alnum:]_./-]+$ && "$remote_root" != / ]] \
   || die "--remote-root must be an absolute path using letters, numbers, _, -, . and /"
-"${ssh_cmd[@]}" "$ssh_target" "test ! -e '$remote_root'" || die "destination already exists: $remote_root"
-
-source_head=$(git -C "$repo_dir" rev-parse HEAD)
-printf 'Packing committed DimOS branch %s at %s (working-tree edits are skipped)...\n' "$branch" "${source_head:0:10}"
-git -C "$repo_dir" bundle create "$temporary/dimos.bundle" "$branch"
-git -C "$repo_dir" bundle verify "$temporary/dimos.bundle" >/dev/null
-
-printf 'Packing CAN fork commit %s...\n' "$can_commit"
-git clone --quiet --single-branch --branch "$can_branch" \
-  https://github.com/Kaweees/can-motor-control.git "$temporary/can-source"
-git -C "$temporary/can-source" checkout --quiet --detach "$can_commit"
-git -C "$temporary/can-source" branch -f "$can_branch" "$can_commit" >/dev/null
-git -C "$temporary/can-source" bundle create "$temporary/can.bundle" "$can_branch"
-git -C "$temporary/can-source" bundle verify "$temporary/can.bundle" >/dev/null
-
-"${ssh_cmd[@]}" "$ssh_target" "mkdir -p '$remote_root/bundles'"
-rsync -a --partial -e "$rsync_ssh" "$temporary/dimos.bundle" "$temporary/can.bundle" \
-  "$ssh_target:$remote_root/bundles/"
-
-"${ssh_cmd[@]}" "$ssh_target" "bash -s -- '$remote_root' '$branch' '$source_head' '$can_branch' '$can_commit' '$session_name'" <<'REMOTE'
-set -euo pipefail
-root=$1
-branch=$2
-dimos_commit=$3
-can_branch=$4
-can_commit=$5
-session_name=$6
-GIT_LFS_SKIP_SMUDGE=1 git clone --quiet --branch "$branch" "$root/bundles/dimos.bundle" "$root/dimos"
-git -C "$root/dimos" remote set-url origin https://github.com/dimensionalOS/dimos.git
-git clone --quiet --branch "$can_branch" "$root/bundles/can.bundle" "$root/can-motor-control"
-git -C "$root/can-motor-control" remote set-url origin https://github.com/Kaweees/can-motor-control.git
-[[ $(git -C "$root/dimos" rev-parse HEAD) == "$dimos_commit" ]]
-[[ $(git -C "$root/can-motor-control" rev-parse HEAD) == "$can_commit" ]]
-mkdir -p \
-  "$root/dimos/data/dual_openyam_abc_box_v2" \
-  "$root/calibration/$session_name/results" \
-  "$root/calibration/$session_name/gravity_friction_identification/bounded_integral_stability" \
-  "$root/calibration/$session_name/gravity_friction_identification/geometry"
-REMOTE
 
 remote_calibration="$remote_root/calibration/$session_name"
-rsync -a -e "$rsync_ssh" "$model_dir/" "$ssh_target:$remote_root/dimos/data/dual_openyam_abc_box_v2/"
-rsync -a -e "$rsync_ssh" "$calibration_dir/robot_model.urdf" "$ssh_target:$remote_calibration/"
-rsync -a -e "$rsync_ssh" "$calibration_dir/results/calibration_bundle.json" "$ssh_target:$remote_calibration/results/"
-rsync -a -e "$rsync_ssh" "$checker" \
-  "$ssh_target:$remote_calibration/gravity_friction_identification/bounded_integral_stability/"
+remote_experiment="$remote_calibration/gravity_friction_identification"
+"${ssh_cmd[@]}" "$ssh_target" "mkdir -p \
+  '$remote_root/dimos' \
+  '$remote_calibration/results' \
+  '$remote_experiment/bounded_integral_stability' \
+  '$remote_experiment/geometry/dual_openyam_abc_box'"
 
-"${ssh_cmd[@]}" "$ssh_target" "bash -s -- '$remote_root' '$session_name'" <<'REMOTE'
-set -euo pipefail
-root=$1
-session_name=$2
-calibration="$root/calibration/$session_name"
-experiment="$calibration/gravity_friction_identification"
-ln -s "$root/dimos/scripts/openyam/demo_dimos_joint_offset.py" "$experiment/demo_dimos_joint_offset.py"
-ln -s "$root/dimos/scripts/openyam/demo_test_dimos_joint_offset.py" "$experiment/test_dimos_joint_offset.py"
-ln -s "$root/dimos/data/dual_openyam_abc_box_v2" "$experiment/geometry/dual_openyam_abc_box"
-test -f "$root/dimos/sanity_reproduce.md"
-test -f "$experiment/bounded_integral_stability/check_workspace.py"
-test -f "$experiment/geometry/dual_openyam_abc_box/assets/base.stl"
-test -f "$calibration/results/calibration_bundle.json"
-printf 'Transfer complete: %s\nNext steps: %s\n' "$root" "$root/dimos/sanity_reproduce.md"
-REMOTE
+printf 'Copying DimOS files...\n'
+rsync -a --partial --info=progress2 -e "$rsync_ssh" \
+  --exclude='/.venv/' --exclude='/logs/' \
+  --exclude='/.pytest_cache/' --exclude='/.ruff_cache/' \
+  --exclude='__pycache__/' --exclude='*.pyc' \
+  "$repo_dir/" "$ssh_target:$remote_root/dimos/"
+
+printf 'Copying calibration inputs...\n'
+rsync -a -e "$rsync_ssh" "$calibration_dir/robot_model.urdf" \
+  "$ssh_target:$remote_calibration/"
+rsync -a -e "$rsync_ssh" "$calibration_dir/results/calibration_bundle.json" \
+  "$ssh_target:$remote_calibration/results/"
+rsync -a -e "$rsync_ssh" "$checker" \
+  "$ssh_target:$remote_experiment/bounded_integral_stability/"
+rsync -a -e "$rsync_ssh" \
+  "$repo_dir/scripts/openyam/demo_dimos_joint_offset.py" \
+  "$repo_dir/scripts/openyam/demo_test_dimos_joint_offset.py" \
+  "$ssh_target:$remote_experiment/"
+rsync -a -e "$rsync_ssh" "$model_dir/" \
+  "$ssh_target:$remote_experiment/geometry/dual_openyam_abc_box/"
+
+"${ssh_cmd[@]}" "$ssh_target" "test -f '$remote_root/dimos/sanity_reproduce.md' && \
+  test -f '$remote_experiment/demo_dimos_joint_offset.py' && \
+  test -f '$remote_experiment/geometry/dual_openyam_abc_box/assets/base.stl' && \
+  test -f '$remote_calibration/results/calibration_bundle.json'" \
+  || die "copy finished but a required destination file is missing"
+printf 'Copy complete: %s\nNext steps: %s/dimos/sanity_reproduce.md\n' \
+  "$remote_root" "$remote_root"

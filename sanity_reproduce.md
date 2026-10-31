@@ -1,16 +1,18 @@
 # Reproduce the C-prime OpenYAM offset test
 
 Run `scripts/openyam/transfer_cprime.sh user@host` on the source machine. The
-transfer creates `~/openyam-cprime` on the destination. Pass `--remote-root
-/absolute/path` to choose another new directory. It copies the C-prime Git
-branch, the pinned `can-motor-control` source, the OpenYAM model meshes, and the
-small calibration files needed by the offset script. It does not install
-software or command motors.
+transfer copies files into `~/openyam-cprime` on the destination. Pass
+`--remote-root /absolute/path` to choose another directory. It copies the
+DimOS checkout, the OpenYAM model meshes, the offset script, and the small
+calibration files it needs. It can be rerun after an interrupted copy: existing
+matching files are updated and other destination files are left alone. It does
+not install software or command motors.
 
 The tested DimOS robot code is commit `c7ec34c94`; later commits on the same
 branch add unrelated files. The CAN fork is fixed at
-`20572f3a41dd98d692da44556de0a0d10c2c8d9d`. The transfer keeps the local
-DimOS commits and checks both transferred Git revisions.
+`20572f3a41dd98d692da44556de0a0d10c2c8d9d`. The transfer copies the local
+`.git` directory as ordinary files; it does not run Git or Git LFS on the
+destination. The CAN installer downloads that pinned fork later.
 
 ## Install on the destination
 
@@ -22,7 +24,7 @@ DimOS's installer.
 ROOT="$HOME/openyam-cprime"
 cd "$ROOT/dimos"
 bash scripts/install.sh --mode dev --project-dir .
-bash scripts/openyam/install_anvil_parity.sh "$ROOT/can-motor-control"
+bash scripts/openyam/install_anvil_parity.sh
 ```
 
 Install the CAN fork **after** the DimOS environment. `uv.lock` still resolves
@@ -34,8 +36,6 @@ Use `uv run --no-sync` for the experiment, or reinstall the fork after any
 
 ```bash
 cd "$ROOT/dimos"
-git merge-base --is-ancestor c7ec34c94 HEAD
-git -C "$ROOT/can-motor-control" rev-parse HEAD
 .venv/bin/python -c 'import importlib.metadata as m, pinocchio, coal; assert m.version("can-motor-control") == "0.1.0"; print("CAN fork and workspace libraries OK")'
 
 CAL="$ROOT/calibration/openyam_camera_calibration_20261027_i3h7w6ox"
