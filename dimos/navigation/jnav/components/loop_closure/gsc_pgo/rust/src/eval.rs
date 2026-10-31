@@ -58,6 +58,9 @@ struct EvalConfig {
     max_scan_queue: i32,
     /// Multiplies every stated odom_*_drift_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
     odom_drift_scale: f64,
+    /// The frame the odometry's poses are really of, where its child_frame_id misnames it (office555's Point-LIO names
+    /// base_link but reports the lidar's pose: "livox_frame"); empty = the child frame.
+    odom_pose_frame: String,
 }
 
 impl Default for EvalConfig {
@@ -66,6 +69,7 @@ impl Default for EvalConfig {
             pgo: PgoConfig::default(),
             max_scan_queue: 5,
             odom_drift_scale: 1.0,
+            odom_pose_frame: String::new(),
         }
     }
 }
@@ -473,9 +477,14 @@ fn run() -> Result<(), String> {
         );
         Rigid::identity()
     } else {
+        let pose_frame = if config.odom_pose_frame.is_empty() {
+            &odom_child_frame
+        } else {
+            &config.odom_pose_frame
+        };
         tf_tree
-            .lookup(&odom_child_frame, BODY_FRAME)
-            .map_err(|e| format!("odometry child frame -> {BODY_FRAME}: {e}"))?
+            .lookup(pose_frame, BODY_FRAME)
+            .map_err(|e| format!("odometry pose frame {pose_frame:?} -> {BODY_FRAME}: {e}"))?
     };
     for row in &mut odoms {
         row.translation = row.translation.map(|v| v * args.odom_scale);
@@ -491,7 +500,8 @@ fn run() -> Result<(), String> {
     }
     let [qw, qx, qy, qz] = mat3::quat_from_mat(&child_to_body.rotation);
     eprintln!(
-        "pgo-eval: odom {odom_child_frame:?} -> {BODY_FRAME} from tf: t={:?} q(xyzw)={:?}",
+        "pgo-eval: odom {odom_child_frame:?} (poses of {:?}) -> {BODY_FRAME} from tf: t={:?} q(xyzw)={:?}",
+        if config.odom_pose_frame.is_empty() { &odom_child_frame } else { &config.odom_pose_frame },
         child_to_body.translation,
         [qx, qy, qz, qw]
     );
