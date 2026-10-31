@@ -33,6 +33,7 @@ const VOXEL_DATA_WORDS: u64 = 6;
 const LISTS: u64 = 6;
 const COUNTERS: u64 = 10;
 const C_REPORT_HITS: usize = 9;
+const C_NEW: u64 = 1;
 const C_OVERFLOW: usize = 7;
 const C_VOXELS: usize = 8;
 /// Indirect argument slots: the lists, the brick pool's sites, then its voxels.
@@ -95,7 +96,7 @@ struct MapParams {
     table_mask: u32,
     brick_capacity: u32,
     list_capacity: u32,
-    trace_pass: u32,
+    pad0: u32,
     voxel_capacity: u32,
     grace_cells_sq: f32,
     shadow_cells_sq: f32,
@@ -168,7 +169,6 @@ pub struct MapStats {
 pub(crate) struct MapBuffers {
     pub params: wgpu::Buffer,
     /// The params the second, miss-listing walk reads.
-    pub miss_params: wgpu::Buffer,
     pub table_keys: wgpu::Buffer,
     pub table_slots: wgpu::Buffer,
     pub brick_coords: wgpu::Buffer,
@@ -218,6 +218,7 @@ struct Pipelines {
     apply_misses: wgpu::ComputePipeline,
     mark_stale: wgpu::ComputePipeline,
     trace_rays: wgpu::ComputePipeline,
+    resolve_deferred: wgpu::ComputePipeline,
     fit_normals: wgpu::ComputePipeline,
 }
 
@@ -227,7 +228,6 @@ pub struct BrickMap {
     pub(crate) buffers: MapBuffers,
     pub(crate) layout: wgpu::BindGroupLayout,
     pub(crate) bind_group: wgpu::BindGroup,
-    miss_bind_group: wgpu::BindGroup,
     dispatch_group: wgpu::BindGroup,
     dispatch_layout: wgpu::BindGroupLayout,
     pipelines: Pipelines,
@@ -311,7 +311,6 @@ impl BrickMap {
         let voxels = voxel_pool as u64;
         let buffers = MapBuffers {
             params: gpu.uniform("map params", std::mem::size_of::<MapParams>() as u64),
-            miss_params: gpu.uniform("miss params", std::mem::size_of::<MapParams>() as u64),
             table_keys: gpu.storage("table keys", 4 * table_entries),
             table_slots: gpu.storage("table slots", 4 * table_entries),
             brick_coords: gpu.storage("brick coords", 16 * bricks),
@@ -340,7 +339,6 @@ impl BrickMap {
         let layout = gpu.layout("map", MAP_BINDINGS, &[0], false);
         let dispatch_layout = gpu.layout("dispatch", 1, &[], false);
         let bind_group = Self::map_group(&gpu, &layout, &buffers, &buffers.params);
-        let miss_bind_group = Self::map_group(&gpu, &layout, &buffers, &buffers.miss_params);
         let dispatch_group = gpu.bind_group("dispatch", &dispatch_layout, &[&buffers.dispatch]);
 
         let ingest = gpu.module(
@@ -370,6 +368,7 @@ impl BrickMap {
             apply_misses: gpu.pipeline(&ingest, "apply_misses", &map_only),
             mark_stale: gpu.pipeline(&ingest, "mark_stale", &map_only),
             trace_rays: gpu.pipeline(&trace, "trace_rays", &map_only),
+            resolve_deferred: gpu.pipeline(&trace, "resolve_deferred", &map_only),
             fit_normals: gpu.pipeline(&fit, "fit_normals", &map_only),
         };
 
@@ -379,7 +378,6 @@ impl BrickMap {
             buffers,
             layout,
             bind_group,
-            miss_bind_group,
             dispatch_group,
             dispatch_layout,
             pipelines,
@@ -407,7 +405,6 @@ impl BrickMap {
     fn rebind(&mut self) {
         let b = &self.buffers;
         self.bind_group = Self::map_group(&self.gpu, &self.layout, b, &b.params);
-        self.miss_bind_group = Self::map_group(&self.gpu, &self.layout, b, &b.miss_params);
         self.dispatch_group =
             self.gpu
                 .bind_group("dispatch", &self.dispatch_layout, &[&b.dispatch]);
@@ -606,7 +603,7 @@ impl BrickMap {
             table_mask: self.table_mask,
             brick_capacity: self.brick_pool,
             list_capacity: c.list_capacity,
-            trace_pass: 0,
+            pad0: 0,
             voxel_capacity: self.voxel_pool,
             grace_cells_sq: depth_cells_sq(c.grace_depth, c.voxel_size),
             shadow_cells_sq: depth_cells_sq(c.shadow_depth, c.voxel_size),
@@ -627,15 +624,6 @@ impl BrickMap {
         let params = self.params(origin, packed.len() as u32, mode);
         gpu.queue
             .write_buffer(&self.buffers.params, 0, bytemuck::bytes_of(&params));
-        let miss_params = MapParams {
-            trace_pass: 1,
-            ..params
-        };
-        gpu.queue.write_buffer(
-            &self.buffers.miss_params,
-            0,
-            bytemuck::bytes_of(&miss_params),
-        );
         gpu.queue
             .write_buffer(&self.buffers.points, 0, bytemuck::cast_slice(packed));
         // List counters restart each frame; the brick count carries over.
@@ -667,16 +655,17 @@ impl BrickMap {
         });
 
         if mode == MODE_TRACE {
+            // The walk's deferred crossings reuse the new-brick list, so its
+            // count starts over once the bricks are assigned.
+            encoder.clear_buffer(&self.buffers.counters, 4 * C_NEW, Some(4));
             self.pass(&mut encoder, "trace walk", |map, pass| {
                 map.dispatch(pass, &map.pipelines.trace_rays, ray_groups);
                 map.prepare(pass);
             });
             self.pass(&mut encoder, "trace fit", |map, pass| {
                 map.dispatch_list(pass, &map.pipelines.fit_normals, 2);
-            });
-            self.pass(&mut encoder, "trace walk 2", |map, pass| {
-                pass.set_bind_group(0, &map.miss_bind_group, &[]);
-                map.dispatch(pass, &map.pipelines.trace_rays, ray_groups);
+                // List 0's slot now sizes the deferred crossings.
+                map.dispatch_list(pass, &map.pipelines.resolve_deferred, 0);
                 map.prepare(pass);
             });
         }

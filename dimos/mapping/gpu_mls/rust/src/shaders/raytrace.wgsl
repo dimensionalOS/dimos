@@ -1,6 +1,11 @@
-// One thread per ray: the CPU find_misses_along_ray walk. Pass 0 lists the
-// stale voxels a ray needs fitted, pass 1 lists the misses. Appended to
-// map_common.wgsl.
+// One thread per ray: the CPU find_misses_along_ray walk. A crossed voxel
+// with a fresh normal is judged a miss (or a spared graze) at once; a stale
+// one is listed for a fit and deferred, with its ray, to resolve_deferred.
+// Appended to map_common.wgsl.
+
+// Deferred (voxel, ray) pairs reuse the new-brick list, done with by now.
+const L_DEFER: u32 = 0u;
+const C_DEFER: u32 = 1u;
 
 // Stands in for the CPU walk's infinities, which fast math does not keep.
 const FAR: f32 = 3.0e38;
@@ -169,15 +174,45 @@ fn trace_rays(
                 }
             }
         }
-        if (params.trace_pass == 0u) {
-            if ((state & S_STALE) != 0u && atomicExchange(&stamps[v * 3u + STAMP_FIT], params.frame) != params.frame) {
+        if ((state & S_STALE) != 0u) {
+            if (atomicExchange(&stamps[v * 3u + STAMP_FIT], params.frame) != params.frame) {
                 push(L_FITS, C_FITS, v);
+            }
+            let k = atomicAdd(&counters[C_DEFER], 1u);
+            if (2u * k + 1u < params.list_capacity) {
+                lists[L_DEFER * params.list_capacity + 2u * k] = v;
+                lists[L_DEFER * params.list_capacity + 2u * k + 1u] = i;
+            } else {
+                atomicOr(&counters[C_OVERFLOW], 1u << L_DEFER);
             }
             continue;
         }
-        let spare = (state & S_PLANAR) != 0u && abs(dot(ray_unit, unpack_normal(normal_of(v)))) < params.graze_cos;
-        if (!spare && atomicExchange(&stamps[v * 3u + STAMP_MISS], params.frame) != params.frame) {
-            push(L_MISSES, C_MISSES, v);
-        }
+        judge_miss(v, state, ray_unit);
     }
+}
+
+// A crossed voxel is a miss unless the ray grazes its plane.
+fn judge_miss(v: u32, state: u32, ray_unit: vec3<f32>) {
+    let spare = (state & S_PLANAR) != 0u && abs(dot(ray_unit, unpack_normal(normal_of(v)))) < params.graze_cos;
+    if (!spare && atomicExchange(&stamps[v * 3u + STAMP_MISS], params.frame) != params.frame) {
+        push(L_MISSES, C_MISSES, v);
+    }
+}
+
+// After the fit: judge each deferred crossing on its voxel's fresh normal.
+@compute @workgroup_size(64)
+fn resolve_deferred(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) li: u32,
+) {
+    let k = thread_index(wg, nwg, li);
+    if (k >= min(atomicLoad(&counters[C_DEFER]), params.list_capacity / 2u)) {
+        return;
+    }
+    let v = lists[L_DEFER * params.list_capacity + 2u * k];
+    let i = lists[L_DEFER * params.list_capacity + 2u * k + 1u];
+    let d = points[i].xyz - params.origin.xyz;
+    let ray_unit = d / max(sqrt(dot(d, d)), 1.1920929e-7);
+    judge_miss(v, atomicLoad(&voxel_state[v]), ray_unit);
 }

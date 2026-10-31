@@ -17,7 +17,7 @@ struct MapParams {
     table_mask: u32,
     brick_capacity: u32,
     list_capacity: u32,
-    trace_pass: u32,
+    pad0: u32,
     voxel_capacity: u32,
     // The grace and shadow depths squared, in cells.
     grace_cells_sq: f32,
