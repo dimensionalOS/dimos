@@ -53,6 +53,8 @@ def get_assets() -> dict[str, bytes]:
     menagerie = menagerie_path()
     _update_assets(assets, menagerie / "unitree_go1" / "assets")
     _update_assets(assets, menagerie / "unitree_g1" / "assets")
+    # The 29-DOF G1 WBC MJCF includes hand meshes absent from Menagerie's G1.
+    _update_assets(assets, get_data("g1_urdf/meshes"), "*.STL")
 
     # From: https://sketchfab.com/3d-models/jeong-seun-34-42956ca979404a038b8e0d3e496160fd
     person_dir = get_data("person")
