@@ -631,6 +631,9 @@ robots:
         coordinator-openyam:
           title: OpenYAM coordinator
           description: An OpenYAM arm behind a ControlCoordinator (a building block).
+        openyam-quest-collection:
+          title: OpenYAM demonstration recording
+          description: Teleoperate an OpenYAM arm in VR and record demonstrations.
         teleop-webxr-openyam:
           title: OpenYAM VR teleop
           description: Move an OpenYAM arm with a VR headset's right controller.

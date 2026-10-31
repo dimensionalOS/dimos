@@ -82,8 +82,8 @@ def _write_collection(path: Path) -> None:
             "coordinator_joint_state": _register_channel(
                 writer, "coordinator_joint_state", JointState
             ),
-            "applied_joint_position_command": _register_channel(
-                writer, "applied_joint_position_command", JointState
+            "coordinator_joint_command": _register_channel(
+                writer, "coordinator_joint_command", JointState
             ),
             "status": _register_channel(writer, "status", String, "json"),
         }
@@ -130,7 +130,7 @@ def _write_collection(path: Path) -> None:
             )
             _write_message(
                 writer,
-                channels["applied_joint_position_command"],
+                channels["coordinator_joint_command"],
                 ts,
                 JointState(
                     ts=ts,
@@ -179,7 +179,7 @@ def _config(source: Path, output: Path) -> DataPrepConfig:
             },
             action={
                 "action": FeatureSpec(
-                    stream="applied_joint_position_command",
+                    stream="coordinator_joint_command",
                     field="position",
                     dtype="float32",
                     shape=(2,),
@@ -213,7 +213,7 @@ def test_mcap_recording_inspects_and_produces_valid_samples(tmp_path: Path) -> N
     dataset_path = run_dataprep(config, writer=writer)
 
     assert info["streams"] == {
-        "applied_joint_position_command": 3,
+        "coordinator_joint_command": 3,
         "color_image": 3,
         "coordinator_joint_state": 3,
         "status": 2,
