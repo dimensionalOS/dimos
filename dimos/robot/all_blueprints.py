@@ -285,6 +285,7 @@ all_modules = {
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "le-robot-policy-module": "dimos.imitation.policy.lerobot.module.LeRobotPolicyModule",
     "lidar-window-relocalization": "dimos.mapping.relocalization.lidar.module.LidarWindowRelocalization",
+    "livox-sim": "dimos.sim2.livox.LivoxSim",
     "local-map-relocalization": "dimos.mapping.relocalization.lidar.module.LocalMapRelocalization",
     "local-planner-native": "dimos.navigation.local_planner.native.LocalPlannerNative",
     "m20-camera-relay": "dimos.robot.deeprobotics.m20.camera.M20CameraRelay",
