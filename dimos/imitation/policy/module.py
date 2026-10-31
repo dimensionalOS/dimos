@@ -1,0 +1,248 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Host contract for isolated, configurable policy rollout."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from functools import cache
+import json
+import keyword
+from pathlib import Path
+from typing import Any, Literal, Protocol, TypedDict
+
+from pydantic import Field, field_validator
+
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.core import rpc
+from dimos.core.stream import In
+from dimos.experimental.isolated_python.module import (
+    IsolatedPythonModule,
+    IsolatedPythonModuleConfig,
+)
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.spec.utils import Spec
+from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
+from dimos.utils.data import get_project_root
+from dimos.utils.generic import classproperty
+
+
+class PolicyControlSpec(Spec, Protocol):
+    """Coordinator operations used by policy rollout."""
+
+    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any]) -> Any: ...
+
+    def list_tasks(self) -> list[str]: ...
+
+
+class RolloutStatus(TypedDict):
+    """Operator-facing state of the configured policy rollout."""
+
+    backend: str
+    active: bool
+    policy_path: str
+    task: str
+    device: str | None
+    policy_ready: bool
+    observations_ready: bool
+    busy: bool
+    dispatch_actions: bool
+    chunks_received: int
+    chunks_completed: int
+    chunks_accepted: int
+    last_error: str | None
+
+
+class RolloutControlSpec(Spec, Protocol):
+    """The existing policy's operator controls, discoverable by attached clients."""
+
+    def preflight_rollout(self) -> RolloutStatus: ...
+    def start_rollout(self, dispatch_actions: bool | None = None) -> RolloutStatus: ...
+    def stop_rollout(self) -> RolloutStatus: ...
+    def rollout_status(self) -> RolloutStatus: ...
+
+
+class PolicyModuleConfig(IsolatedPythonModuleConfig):
+    """Configuration for one checkpoint shared with the isolated runtime."""
+
+    backend: Literal["lerobot"] = "lerobot"
+    image_width: int | None = Field(default=None, gt=0)
+    image_height: int | None = Field(default=None, gt=0)
+    image_mapping: dict[str, str] = Field(
+        default_factory=lambda: {"color_image": "observation.images.wrist"}, min_length=1
+    )
+    policy_joint_names: list[str] | None = None
+    execution_steps: int | None = Field(default=None, gt=0)
+    policy_path: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    device: str | None = None
+    joint_names: list[str] = Field(min_length=1)
+    fps: float | None = Field(default=None, gt=0)
+    robot_type: str = ""
+    max_observation_age_s: float = Field(default=0.5, gt=0)
+    max_observation_skew_s: float = Field(default=0.1, gt=0)
+    rollout_button: str = "A"
+
+    @field_validator("image_mapping")
+    @classmethod
+    def image_mapping_must_be_valid(cls, mapping: dict[str, str]) -> dict[str, str]:
+        return validate_image_mapping(mapping)
+
+    @field_validator("policy_path")
+    @classmethod
+    def policy_path_must_not_be_blank(cls, policy_path: str) -> str:
+        if not policy_path.strip():
+            raise ValueError("policy_path must not be blank")
+        if policy_path.startswith("https://"):
+            return policy_path
+        path = Path(policy_path).expanduser()
+        return str(path.resolve()) if path.exists() else policy_path
+
+    @field_validator("joint_names")
+    @classmethod
+    def joint_names_must_be_unique(cls, joint_names: list[str]) -> list[str]:
+        if len(set(joint_names)) != len(joint_names):
+            raise ValueError("joint_names must not contain duplicates")
+        return joint_names
+
+    @field_validator("rollout_button")
+    @classmethod
+    def rollout_button_must_be_digital(cls, name: str) -> str:
+        if BUTTON_ALIASES.get(name, name) not in Buttons.BITS:
+            raise ValueError(f"unknown Quest button {name!r}")
+        return name
+
+
+class PolicyModule(IsolatedPythonModule):
+    """Convert live image and joint-state observations into joint targets."""
+
+    implementation = "dimos.imitation.policy.runtime:_PolicyRuntime"
+    config: PolicyModuleConfig
+
+    coordinator_joint_state: In[JointState]
+    button_pressed: In[Buttons]
+    teleop_buttons: In[Buttons]
+
+    _control: PolicyControlSpec
+
+    @classproperty
+    def blueprint(self) -> Callable[..., Blueprint]:
+        return policy_module
+
+    @property
+    def runtime_project(self) -> Path:
+        return backend_project(self.config.backend)
+
+    @rpc
+    def preflight_rollout(self) -> RolloutStatus:
+        """Load and validate the policy and live inputs without moving the robot."""
+        raise NotImplementedError
+
+    @rpc
+    def start_rollout(self, dispatch_actions: bool | None = None) -> RolloutStatus:
+        """Start the configured policy until explicitly stopped or it fails."""
+        raise NotImplementedError
+
+    @rpc
+    def stop_rollout(self) -> RolloutStatus:
+        """Stop rollout publication and clear the policy action queue."""
+        raise NotImplementedError
+
+    @rpc
+    def rollout_status(self) -> RolloutStatus:
+        """Return the lifecycle and observation state of the configured policy."""
+        raise NotImplementedError
+
+    @rpc
+    def get_last_action_response(self) -> dict[str, Any] | None:
+        """Return backend response diagnostics without making an inference request."""
+        raise NotImplementedError
+
+    @rpc
+    def get_last_preview(self) -> JointTrajectory | None:
+        """Return the last validated policy chunk without dispatching it."""
+        raise NotImplementedError
+
+    @rpc
+    def set_task(self, task: str) -> RolloutStatus:
+        """Stop the current rollout and set the language for the next episode."""
+        raise NotImplementedError
+
+
+def backend_project(backend: str) -> Path:
+    """Locate the independently locked dependency project for a backend."""
+    if backend != "lerobot":
+        raise ValueError(f"Unknown policy backend {backend!r}")
+    return get_project_root() / "native/python" / backend
+
+
+def validate_image_mapping(mapping: dict[str, str]) -> dict[str, str]:
+    for port, feature in mapping.items():
+        if (
+            not port.isidentifier()
+            or keyword.iskeyword(port)
+            or port.startswith("_")
+            or port in dir(PolicyModule)
+            or port in {"coordinator_joint_state", "button_pressed", "teleop_buttons"}
+        ):
+            raise ValueError(f"Invalid or reserved policy image port {port!r}")
+        if not feature.strip():
+            raise ValueError("Policy image feature names must not be blank")
+    if not mapping or len(set(mapping.values())) != len(mapping):
+        raise ValueError("Policy image features must be nonempty and unique")
+    return mapping
+
+
+@cache
+def policy_class(ports: tuple[str, ...]) -> type[PolicyModule]:
+    """Encode ports in the import name so ordinary pickle works in fresh workers."""
+    validate_image_mapping({port: port for port in ports})
+    suffix = json.dumps(list(ports), separators=(",", ":")).encode().hex()
+    name = "PolicyModule_" + suffix
+    cls = type(
+        name,
+        (PolicyModule,),
+        {
+            "__module__": __name__,
+            "__annotations__": {port: In[Image] for port in ports},
+            "implementation": "dimos.imitation.policy.runtime:PolicyRuntime_" + suffix,
+        },
+    )
+    globals()[name] = cls
+    return cls
+
+
+def __getattr__(name: str) -> Any:
+    if name.startswith("PolicyModule_"):
+        ports = tuple(json.loads(bytes.fromhex(name.removeprefix("PolicyModule_")).decode()))
+        return policy_class(ports)
+    raise AttributeError(name)
+
+
+def policy_module(
+    *, image_mapping: dict[str, str] | None = None, instance_name: str = "policy", **kwargs: Any
+) -> Blueprint:
+    """Declare typed camera ports before blueprint autoconnection."""
+    mapping = validate_image_mapping(
+        image_mapping if image_mapping is not None else {"color_image": "observation.images.wrist"}
+    )
+    return Blueprint.create(
+        policy_class(tuple(sorted(mapping))),
+        image_mapping=mapping,
+        instance_name=instance_name,
+        **kwargs,
+    )
