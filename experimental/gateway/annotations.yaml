@@ -614,6 +614,54 @@ robots:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+    makermods_metal:
+      name: MakerMods Metal
+      description: The six-joint Metal arm and gripper, over CAN.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: can_port, label: CAN port or USB serial}
+      blueprints:
+        coordinator-makermods-metal:
+          title: Metal coordinator
+          description: A Metal arm behind a ControlCoordinator.
+        makermods-metal-learning-collection:
+          title: Metal demonstration recording
+          description: Record one Metal arm and an overhead camera with Quest episode controls.
+        dreamlabs-makermods-metal-eef:
+          title: Metal Dreamlabs EEF preview
+          description: One-camera policy preview; requires explicit TCP calibration before preflight.
+        makermods-metal-planner-coordinator:
+          title: Metal motion planning
+          description: Motion planning, execution, and Viser for a Metal arm.
+    dual_makermods_metal:
+      name: Dual MakerMods Metal
+      description: Two Metal arms in one planning and collision world.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/dual_makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: left_can_port, label: Left CAN port or USB serial}
+        - {module: ControlCoordinator, field: right_can_port, label: Right CAN port or USB serial}
+      blueprints:
+        dual-makermods-metal-learning-collection-2cam:
+          title: Dual Metal recording with wrist cameras
+          description: Record both arms and two wrist cameras.
+        dual-makermods-metal-learning-collection-3cam:
+          title: Dual Metal recording with three cameras
+          description: Record both arms, two wrist cameras, and an overhead camera.
+        dreamlabs-dual-makermods-metal-eef-2cam:
+          title: Dual Metal EEF preview with wrist cameras
+          description: Two-camera policy preview; requires measured mount geometry and TCP calibration.
+        dreamlabs-dual-makermods-metal-eef-3cam:
+          title: Dual Metal EEF preview with three cameras
+          description: Three-camera policy preview; requires measured mount geometry and TCP calibration.
+        dual-makermods-metal-planner-coordinator:
+          title: Dual Metal motion planning
+          description: Coordinated motion planning, execution, and Viser for two Metal arms.
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.

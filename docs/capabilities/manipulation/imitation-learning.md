@@ -39,3 +39,5 @@ training, and deployment as an end-to-end workflow.
 
 For local spoken recording feedback, attach with `dimos imitation control --tts`.
 Speech follows confirmed episode status; detach stops local playback and leaves the stack running.
+
+For the integration setups, see [MakerMods Metal collection and Dreamlabs](/docs/capabilities/manipulation/learning/guides/metal-dreamlabs-setups.md).

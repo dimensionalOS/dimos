@@ -29,21 +29,32 @@ from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 
 
 class DreamlabsArmConfig(BaseModel):
-    """Model target to SDK TCP transform, measured in metres and xyzw.
+    """Map an execution target to a model TCP frame or explicit tool transform.
 
     The SDK pose is arm-base-local, x forward, y left, z up. Configure the
-    actual tool geometry explicitly for another robot; no tool is estimated.
+    ``sdk_tcp_frame`` must be rigidly connected to ``target_frame``. Existing
+    explicit metre/xyzw transforms remain supported as an alternative.
     """
 
     joint_names: list[str] = Field(min_length=1)
     base_frame: str = Field(min_length=1)
     target_frame: str = Field(min_length=1)
     gripper_joint: str = Field(min_length=1)
-    target_to_sdk_xyz: tuple[float, float, float]
-    target_to_sdk_xyzw: tuple[float, float, float, float]
+    sdk_tcp_frame: str | None = Field(default=None, min_length=1)
+    target_to_sdk_xyz: tuple[float, float, float] | None = None
+    target_to_sdk_xyzw: tuple[float, float, float, float] | None = None
+
+    @model_validator(mode="after")
+    def validate_tcp_source(self) -> Self:
+        if self.sdk_tcp_frame is not None and (
+            self.target_to_sdk_xyz is not None or self.target_to_sdk_xyzw is not None
+        ):
+            raise ValueError("Specify an SDK TCP frame or an explicit transform, not both")
+        return self
 
 
 ArmSide = Literal["left", "right"]
+CameraRole = Literal["overhead", "wrist_l", "wrist_r"]
 
 
 def yam_arms() -> dict[ArmSide, DreamlabsArmConfig]:
@@ -68,6 +79,7 @@ class DreamlabsBackendConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     mode: Literal["joint", "eef"] = "joint"
+    camera_roles: tuple[CameraRole, ...] = ("overhead", "wrist_l", "wrist_r")
     timeout_ms: int = Field(default=1500, gt=0, le=5000)
     deadman_timeout_s: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     model: RobotModel = DUAL_OPENYAM_MODEL
@@ -75,6 +87,10 @@ class DreamlabsBackendConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_robot_mapping(self) -> Self:
+        if not self.camera_roles or len(set(self.camera_roles)) != len(self.camera_roles):
+            raise ValueError("Dreamlabs requires unique non-empty camera roles")
+        if self.mode == "joint" and set(self.camera_roles) != {"overhead", "wrist_l", "wrist_r"}:
+            raise ValueError("Dreamlabs YAM joint mode requires all three camera roles")
         if not self.arms:
             raise ValueError("Dreamlabs requires at least one configured arm")
         names = [
