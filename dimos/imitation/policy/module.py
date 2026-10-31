@@ -46,7 +46,9 @@ from dimos.utils.generic import classproperty
 class PolicyControlSpec(Spec, Protocol):
     """Coordinator operations used by policy rollout."""
 
-    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any]) -> Any: ...
+    def task_invoke(
+        self, task_name: str, method: str, kwargs: dict[str, Any] | None = None
+    ) -> Any: ...
 
     def list_tasks(self) -> list[str]: ...
 

@@ -27,12 +27,13 @@ from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecut
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.imitation.policy.dreamlabs.backend import DreamlabsBackend
 from dimos.imitation.policy.dreamlabs.kinematics import DreamlabsKinematics
-from dimos.imitation.policy.module import PolicyModule
+from dimos.imitation.policy.module import PolicyControlSpec, PolicyModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.makermods_metal.learning import build_metal_learning
+from dimos.spec.utils import spec_annotation_compliance
 
 SETUPS = [
     (False, ("overhead",)),
@@ -67,6 +68,7 @@ def test_collection_and_rollout_share_observation_and_joint_contract(dual, roles
 def test_rollout_routes_manual_takeover_and_uses_one_rig_model(dual, roles):
     blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
     coordinator = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
+    assert spec_annotation_compliance(coordinator.module, PolicyControlSpec)
     planner = next(a for a in blueprint.blueprints if a.module is ManipulationModule)
     policy = next(a.kwargs for a in blueprint.blueprints if issubclass(a.module, PolicyModule))
     tasks = {task.name: task for task in coordinator.kwargs["tasks"]}
