@@ -36,3 +36,6 @@ dual-arm collection does not imply dual-arm rollout support.
 The automated profile-to-dataset check uses Python-generated recordings and
 real LeRobot conversion. It does not validate native Rust recording, hardware,
 training, and deployment as an end-to-end workflow.
+
+For local spoken recording feedback, attach with `dimos imitation control --tts`.
+Speech follows confirmed episode status; detach stops local playback and leaves the stack running.

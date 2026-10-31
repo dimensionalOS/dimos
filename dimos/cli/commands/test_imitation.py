@@ -318,3 +318,16 @@ def test_visualize_help_does_not_launch_viewer(visualization, force_color):
     assert result.exit_code == 0
     assert "--episode" in unstyle(result.output)
     run.assert_not_called()
+
+
+def test_control_tts_prepares_speech_and_cleans_up(mocker):
+    mocker.patch("dimos.cli.commands.imitation.Dimos.connect")
+    session = mocker.patch("dimos.cli.commands.imitation.ControlSession").return_value
+    speech = mocker.patch("dimos.cli.commands.imitation.CollectionSpeech").return_value
+    app = mocker.patch("dimos.cli.commands.imitation.ControlApp").return_value
+    result = CliRunner().invoke(imitation_app, ["control", "--tts"])
+    assert result.exit_code == 0, result.output
+    speech.prepare.assert_called_once_with()
+    app.run.assert_called_once_with()
+    app.stop_audio.assert_called_once_with()
+    session.close.assert_called_once_with()

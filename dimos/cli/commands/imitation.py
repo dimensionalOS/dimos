@@ -28,11 +28,13 @@ from dimos.experimental.isolated_python.module import (
     isolated_python_environment,
     isolated_python_run_command,
 )
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 from dimos.imitation.dataprep.formats.lerobot.adapter import lerobot_project, run_lerobot_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
 from dimos.imitation.tui import ControlApp, ControlSession
 from dimos.porcelain.dimos import Dimos
+from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 from dimos.utils.cache import cache_usage_guard
 
 imitation_app = typer.Typer(help="Operate running collection/policy modules and prepare datasets")
@@ -50,18 +52,30 @@ def _require_new_path(path: Path) -> Path:
 
 
 @imitation_app.command()
-def control() -> None:
+def control(
+    tts: bool = typer.Option(False, "--tts", help="Speak recording feedback on this computer"),
+) -> None:
     """Attach episode and policy controls to the running learning stack."""
     driver = None
     session = None
+    app = None
     try:
         driver = Dimos.connect()
         session = ControlSession(driver)
-        ControlApp(session).run()
+        speech = None
+        if tts:
+            if session.episodes is None:
+                raise RuntimeError("Recording speech requires episode controls")
+            speech = CollectionSpeech(KokoroTTSConfig(enabled=True))
+            speech.prepare()
+        app = ControlApp(session, speech=speech)
+        app.run()
     except Exception as exc:
         typer.echo(f"Learning controls failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     finally:
+        if app is not None:
+            app.stop_audio()
         if session is not None:
             session.close()
         elif driver is not None:
