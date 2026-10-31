@@ -120,8 +120,6 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
-    /// `scan_noise_from_keyframes`: the lidar's measured per-point error (m) and its standard error.
-    scan_noise: Option<(f64, f64)>,
     /// `--live` replay (else lockstep), the scans it dropped from a full queue, and each processed scan's ms from arriving
     /// to done (queue wait + processing).
     live: bool,
@@ -841,7 +839,6 @@ fn run() -> Result<(), String> {
         data_duration_s,
         runtime_s,
         realtime_factor,
-        scan_noise: pgo.scan_noise(),
         live: args.live,
         scans_dropped,
         scan_latency_ms,

@@ -329,18 +329,15 @@ pub struct Config {
     /// Closure ICP steps minimise distances along the target's surface normals (point-to-plane); false is the old
     /// point-to-point.
     pub closure_icp_point_to_plane: bool,
-    /// Measure the lidar's per-point error from the recording (`GscPgo::scan_noise`): each keyframe's new points against
-    /// the keyframes just before it, placed by the odometry and re-aligned by a small point-to-plane ICP; each keyframe
-    /// is one witness (its points share errors), the estimate the rms of their gap widths, tightening as keyframes come.
-    pub scan_noise_from_keyframes: bool,
-
-    /// In that measurement, drop points a scan re-sends from earlier scans (the Go2 L1 republishes its last seconds of
-    /// points): placed by the scan's odometry pose, such a point lands exactly on its copy in the scan before.
-    pub scan_noise_drop_reseen_points: bool,
     /// Drop the points a scan re-sends from the scan before (placed by the odometry they land exactly on their copies;
     /// the Go2 L1 republishes its last seconds of points) from every keyframe cloud, so scan context, ICP and the maps
     /// see each surface once.
     pub drop_reseen_points: bool,
+    /// A keyframe's cloud needs at least this many points (voxelized at the submap resolution): scans are gathered,
+    /// placed by the odometry, and a due keyframe waits until they reach it, so a sparse lidar gives fewer, fuller
+    /// keyframes and everything downstream (scan context, ICP, submaps) sees the gathered cloud (0 = the keyframe's scan).
+    /// 5000 is about the 90th percentile of a Mid-360 scan voxelized at 0.1 m.
+    pub auto_aggregate_cloud_size: usize,
     pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
@@ -536,10 +533,9 @@ impl Default for Config {
             closure_icp_inlier_distance_m: 0.3872983346207417,
             closure_icp_max_fitness_m: 0.3872983346207417,
             closure_icp_point_to_plane: true,
-            scan_noise_from_keyframes: false,
 
-            scan_noise_drop_reseen_points: true,
             drop_reseen_points: false,
+            auto_aggregate_cloud_size: 5000,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,
@@ -651,14 +647,10 @@ pub struct GscPgo {
     pub(crate) keyframe_reach: (f64, usize),
     /// Each measured keyframe's right-alignment width against the keyframes before it (`closure_inlier_distance_from_odometry`).
     pub(crate) odometry_alignment_widths: Vec<f64>,
-    /// `scan_noise_from_keyframes`: the previous scan's points (odometry frame, 0.1 mm grid), the new points since the
-    /// last keyframe, the last keyframes' new points, and each measured keyframe's gap width.
-    pub(crate) scan_noise_previous: std::collections::HashSet<[i64; 3]>,
     /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
     pub(crate) reseen_previous: std::collections::HashSet<[i64; 3]>,
-    pub(crate) scan_noise_fresh: PointCloud,
-    pub(crate) scan_noise_recent: std::collections::VecDeque<PointCloud>,
-    pub(crate) scan_noise_widths: Vec<f64>,
+    /// `auto_aggregate_cloud_size`: the scans since the last keyframe, in the odometry frame, voxelized.
+    pub(crate) gathered: PointCloud,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
     /// Shared, so a closure search can count look-alike places without copying them.
@@ -1463,17 +1455,16 @@ impl GscPgo {
     /// Add `cloud_with_pose` as a keyframe if it moved far enough from the last one (returns whether it did); every
     /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
-        let keyframe = self.is_key_pose(&cloud_with_pose.pose);
-        if self.config.scan_noise_from_keyframes {
-            self.collect_scan_noise_points(cloud_with_pose);
-            if keyframe {
-                self.measure_scan_noise();
-            }
-        }
+        let due = self.is_key_pose(&cloud_with_pose.pose);
         let cloud = if self.config.drop_reseen_points {
             self.drop_reseen(cloud_with_pose)
         } else {
             cloud_with_pose.cloud.clone()
+        };
+        let (keyframe, cloud) = if self.config.auto_aggregate_cloud_size > 0 {
+            self.gather(&cloud_with_pose.pose, cloud, due)
+        } else {
+            (due, cloud)
         };
         if keyframe {
             self.insert_keyframe(&cloud_with_pose.pose, cloud);
@@ -1486,6 +1477,30 @@ impl GscPgo {
             }
         }
         keyframe
+    }
+    /// `auto_aggregate_cloud_size`: add the scan to the gathered points; a due keyframe is made once they reach the minimum,
+    /// its cloud the gathered points in its body frame (and the gathering starts over), else it waits.
+    fn gather(
+        &mut self,
+        pose: &PoseWithTime,
+        cloud: Option<Arc<PointCloud>>,
+        due: bool,
+    ) -> (bool, Option<Arc<PointCloud>>) {
+        if let Some(cloud) = &cloud {
+            self.gathered
+                .extend(transform_cloud(cloud, &pose.rotation, &pose.translation));
+            if self.config.submap_resolution > 0.0 {
+                self.gathered = voxel_downsample(&self.gathered, self.config.submap_resolution);
+            }
+        }
+        if !due || self.gathered.len() < self.config.auto_aggregate_cloud_size {
+            return (false, None);
+        }
+        // odometry frame -> body: p_body = R^T (p - t)
+        let to_body = mat3::transpose(&pose.rotation);
+        let offset = mat3::mat_vec(&to_body, &pose.translation).map(|v| -v);
+        let body = transform_cloud(&std::mem::take(&mut self.gathered), &to_body, &offset);
+        (true, Some(Arc::new(body)))
     }
     /// The scan's cloud without the points the scan before already sent (`drop_reseen_points`).
     fn drop_reseen(&mut self, cloud_with_pose: &CloudWithPose) -> Option<Arc<PointCloud>> {
@@ -1504,92 +1519,6 @@ impl GscPgo {
             .collect();
         self.reseen_previous = placed.into_iter().collect();
         Some(Arc::new(fresh))
-    }
-    /// The scan's points in the odometry frame, the re-sent ones dropped (`scan_noise_drop_reseen_points`), added to the
-    /// new points since the last keyframe.
-    fn collect_scan_noise_points(&mut self, cloud_with_pose: &CloudWithPose) {
-        let Some(cloud) = &cloud_with_pose.cloud else {
-            return;
-        };
-        let pose = &cloud_with_pose.pose;
-        let placed: PointCloud = transform_cloud(cloud, &pose.rotation, &pose.translation);
-        let key = |p: &[f32; 3]| p.map(|v| (v as f64 * 1e4).round() as i64);
-        let keys: std::collections::HashSet<[i64; 3]> = placed.iter().map(key).collect();
-        let drop = self.config.scan_noise_drop_reseen_points;
-        let previous = &self.scan_noise_previous;
-        self.scan_noise_fresh.extend(
-            placed
-                .iter()
-                .filter(|p| !drop || !previous.contains(&key(p))),
-        );
-        self.scan_noise_previous = keys;
-    }
-    /// One witness of the lidar's error: the new points since the last keyframe against the last keyframes' new points
-    /// (`closure_submap_half_range` x 2 of them), re-aligned by point-to-plane ICP (pairs within the closure inlier
-    /// distance, so only drift between them is removed), then the width of their point-to-plane gaps.
-    fn measure_scan_noise(&mut self) {
-        let source = voxel_downsample(
-            &std::mem::take(&mut self.scan_noise_fresh),
-            self.config.submap_resolution / 4.0,
-        );
-        let before = 2 * self.config.closure_submap_half_range.max(1) as usize;
-        if self.scan_noise_recent.len() >= before && source.len() >= 20 {
-            let target: PointCloud = self.scan_noise_recent.iter().flatten().copied().collect();
-            let tree = KdTree::build(&target);
-            let reach = self.config.closure_inlier_squared_distance();
-            let step = (source.len() / 3000).max(1);
-            let sample: PointCloud = source.iter().step_by(step).copied().collect();
-            let fit = icp(
-                &sample,
-                &target,
-                &tree,
-                &mat3::identity(),
-                &[0.0; 3],
-                &IcpParams {
-                    max_iterations: 15,
-                    max_correspondence_distance: reach.sqrt(),
-                    inlier_squared_distance: reach,
-                    point_to_plane: true,
-                },
-            );
-            let gaps = crate::connection_fit::plane_gaps(
-                &transform_cloud(&sample, &fit.rotation, &fit.translation),
-                &target,
-                &tree,
-                reach,
-            );
-            if let Some(width) = crate::connection_fit::half_normal_width(&gaps, reach.sqrt()) {
-                self.scan_noise_widths.push(width);
-                let measured = self.scan_noise_widths.len();
-                if measured.is_power_of_two() {
-                    let (sd, uncertainty) = self.scan_noise().unwrap_or((f64::NAN, f64::NAN));
-                    eprintln!(
-                        "scan error: {:.2} cm +- {:.2} from {measured} keyframes (newest {:.2} cm)",
-                        sd * 100.0,
-                        uncertainty * 100.0,
-                        width * 100.0
-                    );
-                }
-            }
-        }
-        self.scan_noise_recent.push_back(source);
-        while self.scan_noise_recent.len() > before {
-            self.scan_noise_recent.pop_front();
-        }
-    }
-    /// The lidar's per-point error (m) measured so far (`scan_noise_from_keyframes`) and its standard error: the rms of
-    /// the keyframes' gap widths; None before any keyframe was measured.
-    pub fn scan_noise(&self) -> Option<(f64, f64)> {
-        let n = self.scan_noise_widths.len();
-        if n == 0 {
-            return None;
-        }
-        let squares: Vec<f64> = self.scan_noise_widths.iter().map(|w| w * w).collect();
-        let mean = squares.iter().sum::<f64>() / n as f64;
-        let spread = (squares.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64).sqrt();
-        let sd = mean.sqrt();
-        // standard error of the mean square, carried to its square root
-        Some((sd, spread / (n as f64).sqrt() / (2.0 * sd)))
     }
     /// The newest loop-overlap pressure and the scan count it was computed at (see `pressure_check_frequency`).
     pub fn pressure(&self) -> Option<(usize, crate::loop_overlap::LoopOverlap)> {
