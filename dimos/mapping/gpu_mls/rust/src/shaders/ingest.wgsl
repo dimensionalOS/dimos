@@ -195,7 +195,7 @@ fn mark_hits(
     }
     push(L_HITS, C_HITS, v);
     if (!voxel_exists(v)) {
-        atomicStore(&voxel_state[v], S_EXISTS | S_STALE | S_CREATED);
+        atomicStore(&voxel_state[v], S_EXISTS | S_STALE | S_SURFACE_STALE | S_CREATED);
         set_health(v, select(params.min_health, SEED_HEALTH, params.mode == MODE_SEED));
         set_next_fit(v, NORMAL_MIN_POINTS);
         set_normal(v, 0u);
@@ -346,7 +346,7 @@ fn mark_stale(
             for (var dz = -1; dz <= 1; dz++) {
                 let n = find_voxel(key + vec3<i32>(dx, dy, dz));
                 if (n != NO_SLOT && voxel_exists(n)) {
-                    atomicOr(&voxel_state[n], S_STALE);
+                    atomicOr(&voxel_state[n], S_STALE | S_SURFACE_STALE);
                 }
             }
         }

@@ -60,6 +60,11 @@ const S_STALE: u32 = 2u;
 const S_CREATED: u32 = 4u;
 // The cached normal is a plane; clear when the fit found none.
 const S_PLANAR: u32 = 8u;
+// The surface fit cached in voxel_data is out of date: the voxel or one of
+// its 26 neighbors changed materially since it was made (or it never was).
+const S_SURFACE_STALE: u32 = 16u;
+// The cached surface fit found a plane.
+const S_SURFACE_PLANAR: u32 = 32u;
 
 const STAMP_HIT: u32 = 0u;
 const STAMP_FIT: u32 = 1u;
@@ -75,8 +80,10 @@ const MOMENT_HALVING_COUNT: u32 = 16384u;
 
 const NORMAL_MIN_POINTS: u32 = 3u;
 
-// voxel_data words: health, next refit count, packed normal, brick site.
-const VOXEL_DATA_WORDS: u32 = 4u;
+// voxel_data words: health, next refit count, packed normal, brick site, then
+// the cached surface fit: its height above the voxel's bottom face
+// (NO_FIT_HEIGHT when the plane gives none) and its packed upward normal.
+const VOXEL_DATA_WORDS: u32 = 6u;
 
 @group(0) @binding(0) var<uniform> params: MapParams;
 @group(0) @binding(1) var<storage, read_write> table_keys: array<atomic<u32>>;
@@ -193,6 +200,19 @@ fn normal_of(v: u32) -> u32 {
 
 fn set_normal(v: u32, packed: u32) {
     voxel_data[v * VOXEL_DATA_WORDS + 2u] = packed;
+}
+
+fn surface_fit_height(v: u32) -> f32 {
+    return bitcast<f32>(voxel_data[v * VOXEL_DATA_WORDS + 4u]);
+}
+
+fn surface_fit_normal(v: u32) -> u32 {
+    return voxel_data[v * VOXEL_DATA_WORDS + 5u];
+}
+
+fn set_surface_fit(v: u32, height: f32, normal: u32) {
+    voxel_data[v * VOXEL_DATA_WORDS + 4u] = bitcast<u32>(height);
+    voxel_data[v * VOXEL_DATA_WORDS + 5u] = normal;
 }
 
 fn site_of(v: u32) -> u32 {

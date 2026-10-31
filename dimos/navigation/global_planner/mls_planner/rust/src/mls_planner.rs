@@ -357,6 +357,12 @@ impl Planner {
         config: &Config,
     ) -> Option<ColumnWindow> {
         let pool = Arc::clone(&self.pool);
+        // GPU wall distances move up to the wall reach from a change, so the
+        // repair spans the wall buffer as a seeded region's does.
+        let window_steps = match config.gpu_wall_distance {
+            true => config.buffer_window_cells(),
+            false => config.node_window_cells(),
+        };
         pool.install(|| {
             let voxel_size = config.voxel_size;
             let stage = Instant::now();
@@ -375,19 +381,17 @@ impl Planner {
             }
             let Some(bbox) = bbox else {
                 if !edits.is_empty() {
-                    self.rebuild_region_graph(
-                        Vec::new(),
-                        Vec::new(),
-                        &edits,
-                        config.node_window_cells(),
-                        config,
-                    );
+                    self.rebuild_region_graph(Vec::new(), Vec::new(), &edits, window_steps, config);
                 }
                 return None;
             };
             // Only the region's heights are rewritten; a column keeps its
             // cells above and below them, as a floor out of sight stays.
-            let in_range = |z: f32| z >= bounds.z_min && z <= bounds.z_max;
+            let z_cells = (
+                (bounds.z_min / voxel_size).floor() as i32,
+                (bounds.z_max / voxel_size).floor() as i32,
+            );
+            let in_range = |iz: i32| (z_cells.0..=z_cells.1).contains(&iz);
             let mut write = ColumnMask::new(bbox, 0);
             let mut columns: AHashSet<(i32, i32)> = AHashSet::new();
             let mut surface: Vec<(VoxelKey, f32, f32)> = Vec::with_capacity(cells.len());
@@ -395,17 +399,19 @@ impl Planner {
                 let col = column(x, y);
                 write.set(col);
                 columns.insert(col);
-                if z.is_finite() && in_range(z) {
-                    surface.push((voxelize((x, y, z), voxel_size), h, w));
+                if z.is_finite() {
+                    let key = voxelize((x, y, z), voxel_size);
+                    if in_range(key.2) {
+                        surface.push((key, h, w));
+                    }
                 }
             }
             let mut keys: Vec<VoxelKey> = surface.iter().map(|&(k, _, _)| k).collect();
-            let half = 0.5 * voxel_size;
             for &(ix, iy) in &columns {
                 if let Some(zs) = self.graph.surface_lookup.get(&(ix, iy)) {
                     keys.extend(
                         zs.iter()
-                            .filter(|&&iz| !in_range(iz as f32 * voxel_size + half))
+                            .filter(|&&iz| !in_range(iz))
                             .map(|&iz| (ix, iy, iz)),
                     );
                 }
@@ -456,14 +462,7 @@ impl Planner {
             }
             let stage = Instant::now();
             let retuned_count = retuned.len();
-            self.rebuild_region_graph_with(
-                added,
-                removed,
-                retuned,
-                &edits,
-                config.node_window_cells(),
-                config,
-            );
+            self.rebuild_region_graph_with(added, removed, retuned, &edits, window_steps, config);
             debug_throttled!(
                 DEBUG_LOG_PERIOD,
                 diff_ms,
@@ -579,6 +578,10 @@ impl Planner {
             None => config.step_cells(),
         };
         let patch = self.patch_cells(&added, &removed);
+        // A kept cell can open up (its wall distance grows as the space
+        // around it is seen), so it may spawn a node like a fresh one.
+        let mut spawn = patch.added.clone();
+        spawn.extend(retuned.iter().filter_map(|&k| self.graph.cells.id(k)));
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
         seeds.extend_from_slice(&retuned);
@@ -621,7 +624,7 @@ impl Planner {
         gone_nodes.extend(place_nodes_region(
             &graph.cells,
             &params,
-            &patch.added,
+            &spawn,
             &window,
             &graph.wall_state.dist,
             &graph.cell_state,

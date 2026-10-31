@@ -647,7 +647,13 @@ mod gpu {
             let Some((cx0, cx1, cy0, cy1)) = changed else {
                 return Some(Vec::new());
             };
-            let (wx0, wx1, wy0, wy1) = (cx0 - pad, cx1 + pad, cy0 - pad, cy1 + pad);
+            // The planner knows voxels only inside the region, so writes stay there.
+            let (wx0, wx1, wy0, wy1) = (
+                (cx0 - pad).max(x0),
+                (cx1 + pad).min(x1),
+                (cy0 - pad).max(y0),
+                (cy1 + pad).min(y1),
+            );
             let window = Window {
                 min: (wx0 - pad, wy0 - pad, window_z.0),
                 size: (

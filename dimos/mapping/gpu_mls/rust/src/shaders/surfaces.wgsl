@@ -399,8 +399,15 @@ fn fit_cells(
         let i = cell_index(local.x, local.y, local.z);
         heights[i] = bottom_face(local.z) + sp.voxel_size;
         cell_normals[i] = 0u;
-        if (!(occupied_at(local.x, local.y, local.z - 1) && occupied_at(local.x, local.y, local.z + 1))) {
+        if (occupied_at(local.x, local.y, local.z - 1) && occupied_at(local.x, local.y, local.z + 1)) {
+            continue;
+        }
+        // Refit only where the moments moved since the cached fit was made.
+        let state = atomicLoad(&voxel_state[v]);
+        if ((state & S_SURFACE_STALE) != 0u) {
             tile_list[atomicAdd(&tile_len, 1u)] = r * 64u + li;
+        } else if ((state & S_SURFACE_PLANAR) != 0u) {
+            apply_surface_fit(v, local, i);
         }
     }
     workgroupBarrier();
@@ -446,19 +453,37 @@ fn fit_cells(
         let cell_bottom = bottom_face(cell.z);
         let l = offset % 64u;
         let fit = tile_fit(vec3<i32>(i32(offset / 64u), i32((l >> 3u) & 7u), i32(l & 7u)));
+        let v = voxel_at(first + offset);
         if (fit.normal.w <= 0.0) {
+            atomicAnd(&voxel_state[v], ~(S_SURFACE_STALE | S_SURFACE_PLANAR));
             continue;
         }
         let n = select(fit.normal.xyz, -fit.normal.xyz, fit.normal.z < 0.0);
+        var above = NO_FIT_HEIGHT;
         if (n.z > 1e-3) {
             // The plane through the pooled mean, at the column center; kept within
             // half a voxel of this one so a sparse voxel cannot drift off.
             let h = voxel_center(key).z + fit.mean.z + dot(n.xy, fit.mean.xy) / n.z;
-            heights[ci] = clamp(h, cell_bottom - 0.5 * sp.voxel_size, cell_bottom + 1.5 * sp.voxel_size);
+            above = clamp(h - cell_bottom, -0.5 * sp.voxel_size, 1.5 * sp.voxel_size);
         }
-        cell_normals[ci] = pack_normal(n);
-        atomicOr(&planar[column_word(cell.x, cell.y, cell.z)], 1u << (u32(cell.z) & 31u));
+        set_surface_fit(v, above, pack_normal(n));
+        atomicAnd(&voxel_state[v], ~S_SURFACE_STALE);
+        atomicOr(&voxel_state[v], S_SURFACE_PLANAR);
+        apply_surface_fit(v, cell, ci);
     }
+}
+
+// A cached fit's height when its plane is too steep to give one.
+const NO_FIT_HEIGHT: f32 = 3.0e38;
+
+// Write a voxel's cached surface fit into its window cell.
+fn apply_surface_fit(v: u32, cell: vec3<i32>, ci: u32) {
+    let above = surface_fit_height(v);
+    if (above != NO_FIT_HEIGHT) {
+        heights[ci] = bottom_face(cell.z) + above;
+    }
+    cell_normals[ci] = surface_fit_normal(v);
+    atomicOr(&planar[column_word(cell.x, cell.y, cell.z)], 1u << (u32(cell.z) & 31u));
 }
 
 // A voxel and the one above it holding the same plane (a floor on a grid
