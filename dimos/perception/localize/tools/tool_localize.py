@@ -15,8 +15,9 @@
 """Query a recording for objects, localize them in 3D, render in rerun.
 
 Run: uv run python -m dimos.perception.localize.tools.tool_localize
-         [query ...] [out.rrd] [--dataset <db>] [--from <s>] [--duration <s>] [--multi]
-         [--params <name|json>] [--embedder <m>] [--detector <m>] [--segmenter <m>]
+         [query ...] [out.rrd] [--dataset <db>] [--from <s>] [--duration <s>]
+         [--detection-chunk <s>] [--multi] [--params <name|json>]
+         [--embedder <m>] [--detector <m>] [--segmenter <m>]
 
 The offline bench for a stage combination: try it on a recording and find
 its params before deploying. Each stage takes a dandetect registry name or
@@ -39,6 +40,7 @@ from dataclasses import asdict, replace
 import heapq
 from itertools import combinations
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Any
@@ -52,6 +54,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import LocalizeTrace, embed_index
+from dimos.perception.localize.memento import Memento
 from dimos.perception.localize.rig import TF_TOLERANCE, Rig, window_tf
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.utils.data import get_data
@@ -67,6 +70,7 @@ GO2_PARAMS = LocalizeParams(
     candidate_floor=0.18,
     accept_score=0.32,
     cluster_radius_m=0.30,
+    embed_hz=3.0,
     verify_radius_m=5.0,
     max_object_extent_m=2.0,
     surface_patch_max_rise_m=0.08,
@@ -115,7 +119,7 @@ WALK_DEPTH_TRUNC = 4.0  # m, the depth each of those frames keeps
 BASE_FRAME = "base_link"  # a mobile robot's body frame
 ROBOT_HALF_SIZES = (0.35, 0.155, 0.2)  # m, the Go2 body box the go2 blueprints draw
 ROBOT_COLOR = (0, 255, 127)
-MAP_SATURATION = 0.5  # of the height colours kept, so the textured answers stand out
+MAP_SATURATION = 0.25  # of the height colours kept, so the textured answers stand out
 MASK_ALPHA = 0.45  # mask tint over the camera image
 LABEL_COLORS = (  # RGB per query, in query order
     (31, 119, 180),
@@ -138,6 +142,8 @@ def render(
     backdrop_ts: float,
     t0: float,
     t1: float,
+    *,
+    chunked: bool = False,
 ) -> None:
     """Write the .rrd - rerun stays an inline import.
 
@@ -147,7 +153,10 @@ def render(
     answer's cells and desaturated. Each
     ``detections/<query>/answer/<k>`` is one verified instance, its sightings
     split per camera under ``<k>/<camera>`` and textured with each sighting's
-    own image, wrapped in a labeled wireframe box; answers are static. Every
+    own image, wrapped in a labeled wireframe box, on the timeline from its
+    first sighting to one index period past its last, so scrubbing shows each
+    object where it was at that time; on a mobile rig it stays from its first
+    sighting on. Every
     camera has its live feed and frustum under ``cameras/<camera>``; each
     detection frame shows in that feed once with every query's masks, and as a
     frozen frustum per query under ``detections/<query>/frames``. A robot, a
@@ -220,7 +229,7 @@ def render(
         rows = np.round(pixels[:, 1]).astype(int)
         rgb = det.image.to_rgb().data
         height, width = rgb.shape[:2]
-        return rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
+        return np.asarray(rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)])
 
     # backdrop: each depth camera's RGBD cloud at the answer frame, on a mobile
     # rig its frames over the window merged, and the lidar's scans over the
@@ -341,23 +350,27 @@ def render(
 
         # the answers: per verified instance, every sighting's cloud colored
         # by its own image and grouped by camera, wrapped in a labeled
-        # wireframe box, all static
-        for i, members in enumerate(trace.answers):
+        # wireframe box, shown from its first sighting to one index period
+        # past its last, or on to the end on a mobile rig
+        for i, (members, (first, last)) in enumerate(zip(trace.answers, trace.spans, strict=True)):
+            if not members:
+                continue
+            entity = f"{root}/answer/{i}"
+            at(first)
             for camera, sightings in by_camera(rig, members).items():
                 rr.log(
-                    f"{root}/answer/{i}/{names[camera]}",
+                    f"{entity}/{names[camera]}",
                     rr.Points3D(
                         positions=np.vstack([det.pointcloud.points_f32() for det in sightings]),
                         colors=np.vstack([image_colors(det) for det in sightings]),
                         radii=size[camera] / 2,
                     ),
-                    static=True,
                 )
             positions = np.vstack([det.pointcloud.points_f32() for det in members])
             aabb_min, aabb_max = positions.min(axis=0), positions.max(axis=0)
             score = max(det.confidence for det in members)
             rr.log(
-                f"{root}/answer/{i}/box",
+                f"{entity}/box",
                 rr.Boxes3D(
                     centers=[(aabb_min + aabb_max) / 2],
                     half_sizes=[(aabb_max - aabb_min) / 2],
@@ -365,8 +378,13 @@ def render(
                     labels=[f"{query} {score:.2f}"],
                     fill_mode=rr.components.FillMode.MajorWireframe,
                 ),
-                static=True,
             )
+            if chunked:
+                at(last)
+                rr.log(entity, rr.Clear(recursive=True))
+            elif not rig.mobile:
+                at(last + 1.0 / rig.embed_hz)
+                rr.log(entity, rr.Clear(recursive=True))
             box_index += 1
 
 
@@ -456,6 +474,7 @@ def report(query: str, hits: list[Localization], trace: LocalizeTrace, rig: Rig,
         print(
             f"hit {query!r} [{hit.instance_id}]: position=({x:.3f}, {y:.3f}, {z:.3f}) "
             f"frame={hit.frame_id} ts_offset={hit.last_seen_timestamp - lo:.1f}s "
+            f"first_offset={hit.first_seen_timestamp - lo:.1f}s "
             f"points={len(hit.point_cloud)} views={hit.n_views} "
             f"score={hit.semantic_score:.2f} margin={hit.ambiguity_margin:.2f}"
         )
@@ -483,6 +502,14 @@ def main() -> int:
     )
     parser.add_argument("--duration", type=float, default=None, help="how much to parse (s)")
     parser.add_argument(
+        "--detection-chunk",
+        "--detection_chunk",
+        dest="detection_chunk",
+        type=float,
+        default=None,
+        help="run localize() in consecutive chunks of this many seconds",
+    )
+    parser.add_argument(
         "--multi",
         action="store_true",
         help="pass all queries to localize() as one list sharing one detection pass",
@@ -502,6 +529,8 @@ def main() -> int:
     out = queries.pop() if queries[-1].endswith(".rrd") else None
     if not queries:
         parser.error("no queries given")
+    if args.detection_chunk is not None and args.detection_chunk <= 0:
+        parser.error("--detection-chunk must be positive")
 
     store = SqliteStore(path=args.dataset or get_data(XARM_DATASET))
     rig = Rig.from_store(store)
@@ -514,29 +543,63 @@ def main() -> int:
     detector = DanDetector(args.embedder, args.detector, args.segmenter)
     base, fields = parse_params(args.params, XARM_PARAMS)
     params = detector.shifted(base, fields)
+    params = replace(params, embed_hz=rig.cap_embed_hz(params.embed_hz))
     name = next(n for n, p in PRESETS.items() if p == base)
     changed = {k: v for k, v in asdict(params).items() if v != getattr(base, k)}
     print(f"stages: {' + '.join(detector.names)}; params: {name} {changed or ''}".rstrip())
 
-    traces: list[tuple[str, LocalizeTrace]] = []
+    chunked = args.detection_chunk is not None
+    if chunked:
+        step = args.detection_chunk
+        n_chunks = max(1, math.ceil((before - after - 1e-9) / step))
+        windows = [(after + k * step, min(after + (k + 1) * step, before)) for k in range(n_chunks)]
+    else:
+        windows = [(after, before)]
+
+    traces_by_query = {query: LocalizeTrace() for query in queries}
     backdrop_ts: float | None = None
+    memento = Memento()
     with detector as dan:
-        index = embed_index(rig, dan.embedder, after, before)
-        for batch in [queries] if args.multi else [[query] for query in queries]:
-            batch_traces = [LocalizeTrace() for _ in batch]
-            results = dan.localize(
-                batch, index=index, rig=rig, params=base, fields=fields, traces=batch_traces
+        index = embed_index(rig, dan.embedder, after, before, embed_hz=params.embed_hz)
+        for w0, w1 in windows:
+            if chunked:
+                print(f"chunk {w0 - lo:.1f}s..{w1 - lo:.1f}s:")
+            chunk_index = index.time_range(w0, w1) if chunked else index
+            chunk_rig = (
+                replace(rig, lidar=rig.lidar.time_range(w0, w1))
+                if chunked and rig.lidar is not None
+                else rig
             )
-            for query, trace, hits in zip(batch, batch_traces, results, strict=True):
-                if report(query, hits, trace, rig, lo) and backdrop_ts is None:
-                    backdrop_ts = hits[0].last_seen_timestamp
-                traces.append((query, trace))
+            for batch in [queries] if args.multi else [[query] for query in queries]:
+                batch_traces = [LocalizeTrace() for _ in batch]
+                results = dan.localize(
+                    batch,
+                    index=chunk_index,
+                    window=(w0, w1),
+                    head=hi,
+                    rig=chunk_rig,
+                    params=base,
+                    fields=fields,
+                    memento=memento,
+                    traces=batch_traces,
+                )
+                for query, chunk_trace, hits in zip(batch, batch_traces, results, strict=True):
+                    if report(query, hits, chunk_trace, chunk_rig, lo) and backdrop_ts is None:
+                        backdrop_ts = hits[0].last_seen_timestamp
+                    trace = traces_by_query[query]
+                    trace.detection_frames.extend(chunk_trace.detection_frames)
+                    trace.answers.extend(chunk_trace.answers)
+                    if chunked:
+                        trace.spans.extend((w0, w1) for _ in chunk_trace.answers)
+                    else:
+                        trace.spans.extend(chunk_trace.spans)
 
     if backdrop_ts is None:
         return 1
 
+    traces = [(query, traces_by_query[query]) for query in queries]
     if out is not None:
-        render(out, rig, traces, backdrop_ts, after, before)
+        render(out, rig, traces, backdrop_ts, after, before, chunked=chunked)
         print(f"saved {out}")
     return 0
 

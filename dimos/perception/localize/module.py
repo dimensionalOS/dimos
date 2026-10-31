@@ -60,14 +60,15 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.localize.association import Groups
 from dimos.perception.localize.dandetect import DanDetector
+from dimos.perception.localize.memento import Memento
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
     EMBED_HZ,
     WALK_EMBED_HZ,
     Rig,
     RigCamera,
+    camera_hz,
 )
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.tf.tf import TF
@@ -125,9 +126,14 @@ class PerceptionLocalize(Module):
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
-        self._groups: dict[str, Groups] = {}
+        self._memento = Memento()
 
-        embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
+        embed_hz = (
+            WALK_EMBED_HZ
+            if self.config.mobile and self.config.params.embed_hz == EMBED_HZ
+            else self.config.params.embed_hz
+        )
+        self._embed_hz = embed_hz
         memory_frames = int(self.config.horizon_s * embed_hz)
         feed_frames = self.config.feed_frames
         geometry_type = Image if self.config.geometry == "depth" else PointCloud2
@@ -183,6 +189,7 @@ class PerceptionLocalize(Module):
         for unsubscribe in self._unsubs:
             unsubscribe()
         self._tf_buffer.dispose()
+        self._memento.close()
         super().stop()
 
     def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:
@@ -213,13 +220,21 @@ class PerceptionLocalize(Module):
         assert camera is not None
         depth = self._geometry_memory if self.config.geometry == "depth" else None
         self.rig = Rig(
-            cameras={camera.frame_id: RigCamera(info=camera, color=self.index, depth=depth)},
+            cameras={
+                camera.frame_id: RigCamera(
+                    info=camera,
+                    color=self.index,
+                    depth=depth,
+                    hz=camera_hz(self._color_feed),
+                )
+            },
             tf=self._tf_buffer,
             world_frame=self.config.world_frame,
             lidar=None if depth is not None else self._geometry_memory,
             mobile=self.config.mobile,
+            embed_hz=self._embed_hz,
         )
-        self.detector.embed_live(self.rig, self._color_feed, self.index)
+        self.detector.embed_live(self.rig, self._color_feed, self.index, embed_hz=self.rig.embed_hz)
         self.register_disposable(self.index.live().transform(self._pair_geometry).drain_thread())
 
         self._stage = "waiting for the first posed frame of the feed"
@@ -251,7 +266,9 @@ class PerceptionLocalize(Module):
         ``start`` and ``duration`` are seconds and name the window. A positive
         ``start`` counts forward from the beginning of the feed; a negative one
         counts back from the newest frame, so the default reads the last ten
-        seconds. What earlier calls proved is remembered and still answered.
+        seconds. The answer holds only what was seen inside the window. A span
+        an earlier call read for a label is answered from memory, not detected
+        again, so an overlapping window detects only its new part.
 
         ``params`` is a JSON object of LocalizeParams field overrides for this
         call only, e.g. '{"accept_score": 0.45, "verify_radius_m": 2.0}'.
@@ -265,23 +282,31 @@ class PerceptionLocalize(Module):
         queries = [q.strip() for q in objects.split(",") if q.strip()]
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
-        index = self.index.time_range(lo, lo + duration)
+        hi = lo + duration
+        # frames older than the feed's memory can no longer be asked for
+        self._memento.forget(first)
+        index = self.index.time_range(lo, hi)
+        for cam in self.rig.cameras.values():
+            if cam.hz is None:
+                cam.hz = camera_hz(self._color_feed)
         rig = self.rig
         if rig.lidar is not None:
-            rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
         overrides = json.loads(params) if params.strip() else None
         results = self.detector.localize(
             queries,
             index=index,
+            window=(lo, hi),
+            head=head,
             rig=rig,
             params=self.config.params,
             fields=overrides,
-            groups=self._groups,
+            memento=self._memento,
         )
         self.detections.publish(as_detection_array(queries, results, rig.world_frame))
 
         lines: list[str] = [
-            f"window {lo - first:.1f}s to {lo + duration - first:.1f}s of "
+            f"window {lo - first:.1f}s to {hi - first:.1f}s of "
             f"{head - first:.1f}s of feed, {index.count()} frames"
         ]
         for query, hits in zip(queries, results, strict=True):
@@ -292,7 +317,8 @@ class PerceptionLocalize(Module):
                 lines.append(
                     f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
                     f"score={hit.semantic_score:.2f} views={hit.n_views} id={hit.instance_id} "
-                    f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
+                    f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago, "
+                    f"first {max(0.0, head - hit.first_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
 

@@ -84,6 +84,18 @@ def window_tf(store: Any, t0: float, t1: float) -> MultiTBuffer:
     return tf
 
 
+def camera_hz(stream: Any) -> float | None:
+    """Publish rate of a colour stream from its frame spacing; None before two frames exist."""
+    if stream.is_live():
+        return None
+    ts = [obs.ts for obs in stream.limit(200)]
+    if len(ts) < 2:
+        return None
+    diffs = np.diff(ts)
+    positive = diffs[diffs > 0]
+    return round(1.0 / float(np.median(positive)), 1) if len(positive) else None
+
+
 def _camera_span(cameras: dict[str, RigCamera], tf: StreamTF, world: str) -> float:
     """Widest diagonal of one camera's positions' bounding box over the recording."""
     span = 0.0
@@ -106,6 +118,7 @@ class RigCamera:
     info: CameraInfo
     color: Any  # color_image stream
     depth: Any  # aligned depth stream; None lifts through the rig's lidar
+    hz: float | None = None
 
 
 @dataclass
@@ -114,7 +127,7 @@ class Rig:
 
     A camera lifts through its aligned depth, or without one through every scan
     of ``lidar`` merged, a point cloud stream in the world frame or in a frame
-    tf reaches. A ``mobile`` rig, one on a walking base, is indexed at
+    tf reaches. A ``mobile`` rig, one on a walking base, defaults to
     ``WALK_EMBED_HZ``.
     """
 
@@ -123,6 +136,7 @@ class Rig:
     world_frame: str = WORLD_FRAME
     lidar: Any = None
     mobile: bool = False
+    embed_hz: float = EMBED_HZ
     plane_cache: dict[tuple[str, int, int], SupportPlane] = field(default_factory=dict, repr=False)
     _lidar_map: tuple[int, PointCloud2 | None] | None = field(default=None, init=False, repr=False)
 
@@ -170,6 +184,7 @@ class Rig:
                 info=info,
                 color=store.stream(color[frame]),
                 depth=store.stream(depth[frame]) if frame in depth else None,
+                hz=camera_hz(store.stream(color[frame])),
             )
             for frame, info in infos.items()
             if frame in color and (frame in depth or lidar is not None)
@@ -196,11 +211,22 @@ class Rig:
             world_frame=world,
             lidar=store.stream(lidar) if lidar else None,
             mobile=mobile,
+            embed_hz=WALK_EMBED_HZ if mobile else EMBED_HZ,
         )
 
-    @property
-    def embed_hz(self) -> float:
-        return WALK_EMBED_HZ if self.mobile else EMBED_HZ
+    def cap_embed_hz(self, embed_hz: float) -> float:
+        """``embed_hz`` capped at the cameras' publish rate."""
+        if embed_hz <= 0:
+            raise ValueError(f"embed_hz must be positive, got {embed_hz}")
+        known = [cam.hz for cam in self.cameras.values() if cam.hz is not None]
+        if known and embed_hz > max(known):
+            limit = max(known)
+            logger.warning(
+                f"embed_hz={embed_hz:g} exceeds camera publish rate {limit:g} Hz - "
+                f"capping at {limit:g} Hz"
+            )
+            return limit
+        return float(embed_hz)
 
     def time_range(self) -> tuple[float, float]:
         """Earliest and latest colour stamp over every camera."""
