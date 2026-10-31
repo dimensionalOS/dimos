@@ -53,31 +53,13 @@ def serve(dimos_dir: Path) -> None:
     _served = dimos_dir
 
 
-def takes_record_dir(dimos_dir: Path) -> bool:
-    """Whether the checkout's dimos has `--record-dir` (GlobalConfig.record_dir); one without it
-    rejects the flag and always records to its own default directory."""
-    try:
-        config = (dimos_dir / "dimos" / "core" / "global_config.py").read_text()
-    except OSError:
-        return False
-    return "record_dir:" in config
-
-
 def recordings_dir(dimos_dir: Path | None = None) -> Path:
-    """Where the checkout's runs record, which `GET /history/recordings` is the one answer to.
-
-    `recordings.dir` from the shared config.yaml (relative to its folder) when the checkout takes
-    `--record-dir`, which `launches.start` then hands every launch, so the answer and the path a
-    run writes to cannot drift apart; else what dimos picks by itself: the checkout's `recordings/`,
-    or the state directory's for an installed package. Without `dimos_dir`, the served checkout's.
-    """
-    dimos_dir = dimos_dir or _served
+    """`recordings.dir` from config.yaml, else the served checkout's default, never the gateway copy's."""
     configured = setting("recordings", "dir")
-    if configured and takes_record_dir(dimos_dir):
-        return (shared_config.dimos_home() / Path(str(configured)).expanduser()).absolute()
-    if (dimos_dir / ".git").exists():
-        return dimos_dir.absolute() / "recordings"
-    return STATE_DIR / "recordings"
+    if configured:
+        return Path(configured).expanduser()
+    dimos_dir = dimos_dir or _served
+    return dimos_dir / "recordings" if (dimos_dir / ".git").exists() else STATE_DIR / "recordings"
 
 
 def shared_settings() -> dict[str, Any]:

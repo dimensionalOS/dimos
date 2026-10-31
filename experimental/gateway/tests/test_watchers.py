@@ -100,9 +100,6 @@ def test_a_shared_config_change_is_one_event_on_the_topic_of_the_setting_that_mo
     home: Path, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
 ) -> None:
     config_file = home / "dimos_home" / "config.yaml"
-    # recordings.dir counts only for a checkout whose dimos takes --record-dir
-    (state.dimos_dir / "dimos" / "core").mkdir(parents=True)
-    (state.dimos_dir / "dimos" / "core" / "global_config.py").write_text('record_dir: str = ""\n')
 
     async def scenario() -> None:
         watcher = asyncio.create_task(
