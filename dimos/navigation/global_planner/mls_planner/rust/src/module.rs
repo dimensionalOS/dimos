@@ -63,11 +63,12 @@ const REGIONS_BEFORE_CPU_WARNING: u32 = 50;
 fn surface_request(config: &Config) -> lcm_msgs::std_msgs::String {
     lcm_msgs::std_msgs::String {
         data: format!(
-            r#"{{"robot_height_m":{},"closing_radius_m":{},"step_threshold_m":{},"max_slope_deg":{}}}"#,
+            r#"{{"robot_height_m":{},"closing_radius_m":{},"step_threshold_m":{},"max_slope_deg":{},"wall_distance":{}}}"#,
             config.robot_height,
             config.surface_closing_radius,
             config.step_threshold_m,
-            config.max_slope_deg
+            config.max_slope_deg,
+            config.gpu_wall_distance
         ),
     }
 }

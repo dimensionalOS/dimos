@@ -819,7 +819,8 @@ fn tiled_surface(
             .expect("a tile fits the device");
         extractor.extract(map);
         map.finish();
-        let (surface, heights, walls) = extractor.read_heights();
+        let (surface, heights, walls) = extractor.read_heights(true);
+        let walls = walls.expect("asked for walls");
         let core = |v: i32, c: i32| v.div_euclid(tile) == c;
         for ((k, h), w) in surface.into_iter().zip(heights).zip(walls) {
             if core(k.0, t.0) && core(k.1, t.1) {

@@ -71,6 +71,7 @@ fn request(cfg: &PlannerConfig) -> SurfaceRequest {
         closing_radius_m: cfg.surface_closing_radius,
         step_threshold_m: cfg.step_threshold_m,
         max_slope_deg: cfg.max_slope_deg,
+        wall_distance: cfg.gpu_wall_distance,
     }
 }
 

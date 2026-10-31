@@ -37,6 +37,10 @@ pub struct SurfaceRequest {
     pub closing_radius_m: f32,
     pub step_threshold_m: f32,
     pub max_slope_deg: f32,
+    /// Read back wall distances too (a second full-window read); without,
+    /// they go out infinite.
+    #[serde(default)]
+    pub wall_distance: bool,
 }
 
 /// Sensor pose in the world frame: position plus (x, y, z, w) orientation.
@@ -519,9 +523,10 @@ mod gpu {
             }
             let extractor = self.extractor.as_mut().expect("set above");
             extractor.extract(&mut self.map);
-            let (cells, heights, walls) = extractor.read_heights();
+            let (cells, heights, walls) = extractor.read_heights(request.wall_distance);
             let half = 0.5 * voxel_size;
             let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * cells.len());
+            let walls = walls.unwrap_or_else(|| vec![None; cells.len()]);
             for (((x, y, z), h), w) in cells.into_iter().zip(heights).zip(walls) {
                 if (x0..=x1).contains(&x) && (y0..=y1).contains(&y) {
                     out.extend_from_slice(&[
