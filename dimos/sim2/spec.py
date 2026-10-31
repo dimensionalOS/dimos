@@ -45,7 +45,7 @@ class SimulatedRobot:
 
 @dataclass(frozen=True)
 class SimulatedSensor:
-    """Where a sensor sits; the engine decides what each kind becomes."""
+    """Where a sensor sits; the engine decides what each kind becomes. A camera's mount is its optical frame (z forward, x right, y down)."""
 
     name: str
     kind: Literal["camera", "lidar", "imu"]

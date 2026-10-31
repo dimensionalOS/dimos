@@ -350,6 +350,7 @@ all_modules = {
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
+    "sim-camera": "dimos.sim2.camera.SimCamera",
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "simulation": "dimos.sim2.module.Simulation",
