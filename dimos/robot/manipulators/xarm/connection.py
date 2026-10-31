@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
+from xarm.wrapper import XArmAPI
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import (
@@ -379,9 +380,6 @@ class XArmConnection(ConnectionModule):
 
 def _open_sdk(ip: str) -> Any:
     """Connect the SDK to the arm at ``ip``, with angles in radians."""
-    # Imported here so blueprints that use this module load without the SDK installed.
-    from xarm.wrapper import XArmAPI
-
     return XArmAPI(ip, is_radian=True)
 
 

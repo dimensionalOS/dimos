@@ -301,6 +301,14 @@ def _find_blueprints_in_file(
                 if _is_autoconnect_call(node.value) or _ends_with_blueprint_method(node.value):
                     blueprint_vars.append(var_name)
 
+        elif isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+            if any(
+                (isinstance(decorator, ast.Name) and decorator.id == "blueprint_factory")
+                or (isinstance(decorator, ast.Attribute) and decorator.attr == "blueprint_factory")
+                for decorator in node.decorator_list
+            ):
+                blueprint_vars.append(node.name)
+
         # Detect Module subclasses by checking base classes against the known set
         elif isinstance(node, ast.ClassDef) and module_classes:
             if node.name.startswith("_") or node.name in _EXCLUDED_MODULE_NAMES:
@@ -309,6 +317,26 @@ def _find_blueprints_in_file(
                 module_vars.append(node.name)
 
     return blueprint_vars, module_vars
+
+
+def test_factory_discovery_does_not_execute_source(tmp_path: Path) -> None:
+    file_path = tmp_path / "factories.py"
+    file_path.write_text(
+        "raise AssertionError('Discovery must not import this file')\n"
+        "@blueprint_factory\n"
+        "def selected():\n"
+        "    raise AssertionError('Discovery must not run a factory')\n"
+        "@blueprints.blueprint_factory\n"
+        "def qualified():\n"
+        "    pass\n"
+        "@blueprint_factory\n"
+        "def _helper():\n"
+        "    pass\n"
+        "def unrelated():\n"
+        "    pass\n"
+    )
+
+    assert _find_blueprints_in_file(file_path) == (["selected", "qualified"], [])
 
 
 def _is_autoconnect_call(node: ast.expr) -> bool:

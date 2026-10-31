@@ -18,7 +18,7 @@ from typing import NoReturn
 
 import typer
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, BlueprintFactory
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.external_blueprints import (
     ExternalBlueprintError,
@@ -29,7 +29,7 @@ from dimos.robot.external_blueprints import (
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
 
 # Optional dependencies that are allowed to be missing
-OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
+OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py", "xarm"}
 OPTIONAL_ERROR_SUBSTRINGS = {
     "Unable to locate turbojpeg library automatically",
     "ZED SDK not installed",
@@ -63,7 +63,12 @@ def get_blueprint_by_name(name: str) -> Blueprint:
         _raise_unknown(name, list(all_blueprints.keys()))
     module_path, attr = all_blueprints[name].split(":")
     module = __import__(module_path, fromlist=[attr])
-    return getattr(module, attr)  # type: ignore[no-any-return]
+    target = getattr(module, attr)
+    if isinstance(target, BlueprintFactory):
+        return target()
+    if isinstance(target, Blueprint):
+        return target
+    raise TypeError(f"Blueprint {name!r} must be a Blueprint or a decorated blueprint factory")
 
 
 def load_blueprint(name: str) -> Blueprint:

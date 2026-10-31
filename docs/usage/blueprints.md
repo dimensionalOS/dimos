@@ -530,3 +530,40 @@ module_coordinator.loop()
 ```
 
 This will wait for Ctrl+C and then automatically stop all modules and clean up resources.
+
+## Deferred blueprint factories
+
+Use a factory when a blueprint depends on optional module implementations or
+chooses its composition from the current configuration. The existing registry
+stores the factory's import path, and resolves it only when that blueprint is
+selected. No additional module registry is needed.
+
+```python skip
+from dimos.core.coordination.blueprints import Blueprint, blueprint_factory
+
+@blueprint_factory
+def xarm_connection() -> Blueprint:
+    # The selected stack needs the optional xArm implementation.
+    from dimos.robot.manipulators.xarm.connection import XArmConnection
+
+    return XArmConnection.blueprint(arm="xarm7")
+```
+
+The connection module can import its SDK at file level. Importing the factory
+module or running `dimos list` does not import that connection. Each resolution
+calls the selected factory again, so composition does not retain configuration
+from the first Python import. Factories must return a `Blueprint` and must not
+start resources. For Python composition, call the factory explicitly before
+passing its result to `autoconnect`.
+
+Run `pytest dimos/robot/test_all_blueprints_generation.py` to register a built-in
+factory. External packages can point a `dimos.blueprints` entry point at the same
+decorated function. Existing Blueprint object and Module class targets remain
+supported.
+
+Blueprint-specific `run NAME --help` and `dimos graph NAME` resolve the selected
+factory to inspect its module classes, so they require that stack's import
+dependencies. They do not construct or start its modules. Import-free dynamic
+help would require separately generated configuration metadata.
+Factories also resolve before `--disable` filtering, so disabling a module does
+not avoid its import inside a selected factory.
