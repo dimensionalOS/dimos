@@ -21,6 +21,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import mapping
 
@@ -106,7 +107,11 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]
     tf: In[TFMessage]
+    # The MLS planner's surface parameters as JSON; a GPU map then answers each local_map with surface_cells.
+    gpu_surface_config: In[String]
     global_map: Out[PointCloud2]
+    # The GPU's MLS surface over local_map's columns, stamped like it: voxel centers, plane height (m) as intensity.
+    surface_cells: Out[PointCloud2]
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]
     region_bounds: Out[PoseStamped]

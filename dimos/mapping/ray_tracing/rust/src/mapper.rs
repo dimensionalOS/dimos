@@ -26,6 +26,16 @@ use crate::voxel_ray_tracer::{
 
 pub type Point = (f32, f32, f32);
 
+/// The MLS planner's surface parameters, which it sends so the GPU extracts
+/// the surface it would.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct SurfaceRequest {
+    pub robot_height_m: f32,
+    pub closing_radius_m: f32,
+    pub step_threshold_m: f32,
+    pub max_slope_deg: f32,
+}
+
 /// Sensor pose in the world frame: position plus (x, y, z, w) orientation.
 #[derive(Clone, Copy)]
 pub struct Pose {
@@ -71,6 +81,12 @@ impl Mapper {
     /// Whether the map updates on the GPU.
     pub fn on_gpu(&self) -> bool {
         self.gpu.is_some()
+    }
+
+    /// The GPU's MLS surface over `bounds`' columns, as x, y, z voxel center
+    /// and plane height per cell. None on the CPU.
+    pub fn surfaces(&mut self, bounds: &Cylinder, request: &SurfaceRequest) -> Option<Vec<f32>> {
+        self.gpu.as_mut()?.surfaces(bounds, request)
     }
 
     pub fn config(&self) -> &Config {
@@ -271,16 +287,25 @@ mod gpu {
     use ahash::AHashSet;
     use dimos_gpu_mls::brick_map::{BrickMap, MapConfig};
     use dimos_gpu_mls::gpu::Gpu;
+    use dimos_gpu_mls::surfaces::{SurfaceExtractor, Window};
     use tracing::{info, warn};
 
-    use super::Point;
-    use crate::voxel_ray_tracer::{Config, FrameHits, VoxelMap};
+    use dimos_gpu_mls::surfaces::SurfaceConfig;
+
+    use super::{Point, SurfaceRequest};
+    use crate::voxel_ray_tracer::{Config, Cylinder, FrameHits, VoxelMap};
+
+    /// Headroom a regrown surface window gets over the one that outgrew it.
+    const SURFACE_WINDOW_GROWTH: f32 = 1.25;
 
     /// The GPU map, updated each frame; its report of the voxels each frame
     /// touched is mirrored into the CPU VoxelMap, which every emit reads.
     pub struct GpuMap {
         map: BrickMap,
         max_points: usize,
+        /// Lowest and highest voxel z the map has held.
+        z_range: Option<(i32, i32)>,
+        extractor: Option<SurfaceExtractor>,
     }
 
     impl GpuMap {
@@ -334,6 +359,8 @@ mod gpu {
             Some(Self {
                 map,
                 max_points: config.gpu_max_points as usize,
+                z_range: None,
+                extractor: None,
             })
         }
 
@@ -350,6 +377,10 @@ mod gpu {
 
         /// Seed points in uploads of at most max_points.
         pub fn seed(&mut self, points: &[Point]) {
+            let inv = 1.0 / self.map.config.voxel_size;
+            for &(_, _, z) in points {
+                self.widen_z((z * inv).floor() as i32);
+            }
             for batch in points.chunks(self.max_points) {
                 self.map.seed(batch);
             }
@@ -388,6 +419,9 @@ mod gpu {
             let mut coarse = AHashSet::with_capacity(report.hits);
             for (i, voxel) in report.voxels.iter().enumerate() {
                 mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine);
+                if voxel.health.is_some() {
+                    self.widen_z(voxel.key.2);
+                }
                 if i < report.hits {
                     coarse.insert(voxel.key);
                 }
@@ -410,6 +444,92 @@ mod gpu {
             };
             FrameHits { coarse, fine }
         }
+
+        fn widen_z(&mut self, z: i32) {
+            let (lo, hi) = self.z_range.get_or_insert((z, z));
+            *lo = (*lo).min(z);
+            *hi = (*hi).max(z);
+        }
+
+        /// The MLS surface over the columns of `bounds` and every height the
+        /// map spans, as x, y, z voxel center and plane height per cell.
+        pub fn surfaces(
+            &mut self,
+            bounds: &Cylinder,
+            request: &SurfaceRequest,
+        ) -> Option<Vec<f32>> {
+            let config = SurfaceConfig {
+                robot_height_m: request.robot_height_m,
+                closing_radius_m: request.closing_radius_m,
+                step_threshold_m: request.step_threshold_m,
+                max_slope_deg: request.max_slope_deg,
+                ..SurfaceConfig::mls_defaults()
+            };
+            let Some((z_lo, z_hi)) = self.z_range else {
+                return Some(Vec::new());
+            };
+            let voxel_size = self.map.config.voxel_size;
+            let inv = 1.0 / voxel_size;
+            let cell = |c: f32| (c * inv).floor() as i32;
+            let (x0, x1) = (
+                cell(bounds.cx - bounds.radius),
+                cell(bounds.cx + bounds.radius),
+            );
+            let (y0, y1) = (
+                cell(bounds.cy - bounds.radius),
+                cell(bounds.cy + bounds.radius),
+            );
+            let pad = config.reach_cells(voxel_size);
+            let window = Window {
+                min: (x0 - pad, y0 - pad, z_lo),
+                size: (
+                    (x1 - x0 + 1 + 2 * pad) as u32,
+                    (y1 - y0 + 1 + 2 * pad) as u32,
+                    (z_hi - z_lo + 1 + config.clearance_cells(voxel_size) + 1) as u32,
+                ),
+            };
+            let reuse = self
+                .extractor
+                .as_mut()
+                .is_some_and(|e| e.config == config && e.retarget(window));
+            if !reuse {
+                let grow = |n: u32| (n as f32 * SURFACE_WINDOW_GROWTH).ceil() as u32;
+                let room = Window {
+                    min: window.min,
+                    size: (
+                        grow(window.size.0),
+                        grow(window.size.1),
+                        grow(window.size.2),
+                    ),
+                };
+                self.extractor = None;
+                let mut extractor = match SurfaceExtractor::new(&self.map, room, config) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        warn!(error = %e, "GPU surface window does not fit, no surfaces this frame.");
+                        return None;
+                    }
+                };
+                extractor.retarget(window);
+                self.extractor = Some(extractor);
+            }
+            let extractor = self.extractor.as_mut().expect("set above");
+            extractor.extract(&mut self.map);
+            let (cells, heights) = extractor.read_heights();
+            let half = 0.5 * voxel_size;
+            let mut out = Vec::with_capacity(4 * cells.len());
+            for ((x, y, z), h) in cells.into_iter().zip(heights) {
+                if (x0..=x1).contains(&x) && (y0..=y1).contains(&y) {
+                    out.extend_from_slice(&[
+                        x as f32 * voxel_size + half,
+                        y as f32 * voxel_size + half,
+                        z as f32 * voxel_size + half,
+                        h,
+                    ]);
+                }
+            }
+            Some(out)
+        }
     }
 }
 
@@ -417,8 +537,8 @@ mod gpu {
 mod gpu {
     use tracing::warn;
 
-    use super::Point;
-    use crate::voxel_ray_tracer::{Config, FrameHits, VoxelMap};
+    use super::{Point, SurfaceRequest};
+    use crate::voxel_ray_tracer::{Config, Cylinder, FrameHits, VoxelMap};
 
     pub enum GpuMap {}
 
@@ -429,6 +549,14 @@ mod gpu {
         }
 
         pub fn seed(&mut self, _points: &[Point]) {
+            match *self {}
+        }
+
+        pub fn surfaces(
+            &mut self,
+            _bounds: &Cylinder,
+            _request: &SurfaceRequest,
+        ) -> Option<Vec<f32>> {
             match *self {}
         }
 

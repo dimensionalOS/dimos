@@ -28,6 +28,7 @@ region_bounds = "geometry_msgs.PoseStamped"
 seed_map = "sensor_msgs.PointCloud2"
 seed_bounds = "geometry_msgs.PoseStamped"
 goal = "geometry_msgs.PointStamped"
+surface_cells = "sensor_msgs.PointCloud2"
 tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.mls_planner.outputs]
@@ -35,6 +36,7 @@ surface_map = "sensor_msgs.PointCloud2"
 nodes = "sensor_msgs.PointCloud2"
 node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
+gpu_surface_config = "std_msgs.String"
 
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }

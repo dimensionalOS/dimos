@@ -780,6 +780,8 @@ fn planner_config(voxel_size: f32) -> PlannerConfig {
         viz_publish_hz: 0.0,
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
+        gpu_surfaces: false,
+        max_slope_deg: surface.max_slope_deg,
         worker_threads: 8,
     }
 }

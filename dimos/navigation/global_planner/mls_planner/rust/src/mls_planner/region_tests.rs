@@ -91,6 +91,8 @@ fn test_config() -> Config {
         viz_publish_hz: 2.0,
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
+        gpu_surfaces: false,
+        max_slope_deg: 45.0,
         worker_threads: 4,
     }
 }

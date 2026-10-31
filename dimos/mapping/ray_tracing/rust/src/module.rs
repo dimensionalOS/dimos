@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use crate::mapper::{register, Mapper, Pose};
+use crate::mapper::{register, Mapper, Pose, SurfaceRequest};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
@@ -41,6 +41,7 @@ enum Job {
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
     SeedPrepared(Option<SeedPartition>),
+    SurfaceRequest(SurfaceRequest),
 }
 
 /// Messages the handlers can queue ahead of the worker before they wait.
@@ -60,11 +61,21 @@ pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
 
+    // The MLS planner's surface parameters as JSON; once set, a GPU map
+    // answers each local map with surface_cells.
+    #[input(decode = lcm_msgs::std_msgs::String::decode, handler = on_gpu_surface_config)]
+    gpu_surface_config: Input<lcm_msgs::std_msgs::String>,
+
     #[tf]
     tf: Tf,
 
     #[output(encode = PointCloud2::encode)]
     global_map: Output<PointCloud2>,
+
+    // The GPU's MLS surface over the local map's columns, stamped like it:
+    // voxel centers, with the plane height in meters as intensity.
+    #[output(encode = PointCloud2::encode)]
+    surface_cells: Output<PointCloud2>,
 
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
@@ -118,6 +129,7 @@ impl RayTracingVoxelMap {
             tf: self.tf.clone(),
             config: self.config.clone(),
             global_map: self.global_map.clone(),
+            surface_cells: self.surface_cells.clone(),
             local_map: self.local_map.clone(),
             local_map_fine: self.local_map_fine.clone(),
             region_bounds: self.region_bounds.clone(),
@@ -142,6 +154,15 @@ impl RayTracingVoxelMap {
 
     async fn on_loaded_map(&mut self, msg: PointCloud2) {
         self.enqueue(Job::LoadedMap(msg)).await;
+    }
+
+    async fn on_gpu_surface_config(&mut self, msg: lcm_msgs::std_msgs::String) {
+        match serde_json::from_str::<SurfaceRequest>(&msg.data) {
+            Ok(request) => self.enqueue(Job::SurfaceRequest(request)).await,
+            Err(e) => {
+                warn_throttled!(Duration::from_secs(5), error = %e, "Bad gpu_surface_config, ignored.")
+            }
+        }
     }
 
     async fn enqueue(&self, job: Job) {
@@ -261,6 +282,7 @@ struct State {
     last_frame_stamp: Time,
     seed: SeedState,
     viz: RegionSweep,
+    surface_request: Option<SurfaceRequest>,
 }
 
 fn warn_if_seed_starved(seed: &SeedState) {
@@ -308,6 +330,7 @@ struct Worker {
     tf: Tf,
     config: Config,
     global_map: Output<PointCloud2>,
+    surface_cells: Output<PointCloud2>,
     local_map: Output<PointCloud2>,
     local_map_fine: Output<PointCloud2>,
     region_bounds: Output<PoseStamped>,
@@ -323,6 +346,7 @@ impl Worker {
             last_frame_stamp: Time::default(),
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
+            surface_request: None,
         };
         loop {
             let loading = matches!(state.seed, SeedState::Loading(_));
@@ -356,6 +380,14 @@ impl Worker {
                     );
                 }
                 state.seed.placed(partition);
+            }
+            Job::SurfaceRequest(request) => {
+                if state.surface_request.as_ref() != Some(&request) {
+                    if state.mapper.on_gpu() {
+                        info!(?request, "Sending the planner GPU surfaces.");
+                    }
+                    state.surface_request = Some(request);
+                }
             }
         }
     }
@@ -411,9 +443,10 @@ impl Worker {
         }
 
         let mapper = &mut state.mapper;
+        let surface_request = state.surface_request.as_ref();
         let emit_fine = self.config.emit_fine;
         let process_start = Instant::now();
-        let (region, global_points, local_points, fine_points) =
+        let (region, global_points, local_points, fine_points, surface_points) =
             tokio::task::block_in_place(|| {
                 mapper.add_frame(points, tf_to_pose(&tf_pose));
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
@@ -423,7 +456,17 @@ impl Worker {
                 let fine_points = emit_fine
                     .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
                     .flatten();
-                (region, global_points, local_points, fine_points)
+                let surface_points = region
+                    .as_ref()
+                    .zip(surface_request)
+                    .and_then(|(c, request)| mapper.surfaces(c, request));
+                (
+                    region,
+                    global_points,
+                    local_points,
+                    fine_points,
+                    surface_points,
+                )
             });
         let process_ms = process_start.elapsed().as_secs_f64() * 1e3;
         let wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3;
@@ -452,6 +495,10 @@ impl Worker {
         if let Some(points) = fine_points {
             let fine = points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map_fine, &fine).await;
+        }
+        if let Some(cells) = surface_points {
+            let surface = cells_to_cloud(&cells, out_frame_id, stamp.clone());
+            publish_cloud(&self.surface_cells, &surface).await;
         }
 
         if state.mapper.viz_due() {
@@ -717,6 +764,12 @@ fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
     data.extend_from_slice(&z.to_le_bytes());
     data.extend_from_slice(&0.0_f32.to_le_bytes());
     *n += 1;
+}
+
+/// A cloud of x, y, z, intensity quadruples.
+fn cells_to_cloud(cells: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let data: Vec<u8> = cells.iter().flat_map(|v| v.to_le_bytes()).collect();
+    make_cloud(data, (cells.len() / 4) as i32, frame_id, stamp)
 }
 
 fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {

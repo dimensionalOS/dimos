@@ -23,6 +23,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 
@@ -56,6 +57,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     # changed ones each tick, plus this many unchanged ones round robin.
     viz_cell_m: float = 4.0
     viz_sweep_cells: int = 32
+    # Plan on the GPU surface a GPU ray tracer sends as surface_cells; without one, surfaces are extracted here.
+    gpu_surfaces: bool = True
+    # The GPU surface's slope gate: planes tilted further are not standable.
+    max_slope_deg: float = 45.0
     # Worker threads for parallel planner work.
     worker_threads: int = 4
 
@@ -77,9 +82,13 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     seed_map: In[PointCloud2]
     seed_bounds: In[PoseStamped]
     goal: In[PointStamped]
+    # The ray tracer's GPU surface per local_map, stamped like it: voxel centers, plane height (m) as intensity.
+    surface_cells: In[PointCloud2]
     tf: In[TFMessage]
 
     path: Out[Path]
     surface_map: Out[PointCloud2]
     nodes: Out[PointCloud2]
     node_edges: Out[LineSegments3D]
+    # This planner's surface parameters as JSON, asking a GPU ray tracer for surface_cells.
+    gpu_surface_config: Out[String]

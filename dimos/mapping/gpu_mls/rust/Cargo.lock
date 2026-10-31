@@ -722,11 +722,13 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "arrayvec",
+ "dimos-gpu-mls",
  "dimos-module",
  "lcm-msgs",
  "nalgebra",
  "rayon",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "validator",

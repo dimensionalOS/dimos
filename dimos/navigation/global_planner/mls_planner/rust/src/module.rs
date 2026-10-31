@@ -45,10 +45,30 @@ enum MapUpdate {
         points: Vec<Xyz>,
         bounds: PoseStamped,
         received: Instant,
+        /// The region's surface from the GPU: voxel center, then plane height.
+        surface: Option<Vec<[f32; 4]>>,
     },
     Global {
         points: Vec<Xyz>,
     },
+}
+
+/// How often the planner repeats its gpu_surface_config, which nothing latches.
+const SURFACE_REQUEST_PERIOD: Duration = Duration::from_secs(1);
+/// Regions without a GPU surface before the planner says it is on the CPU.
+const REGIONS_BEFORE_CPU_WARNING: u32 = 50;
+
+/// The surface parameters a GPU ray tracer extracts this planner's surface with.
+fn surface_request(config: &Config) -> lcm_msgs::std_msgs::String {
+    lcm_msgs::std_msgs::String {
+        data: format!(
+            r#"{{"robot_height_m":{},"closing_radius_m":{},"step_threshold_m":{},"max_slope_deg":{}}}"#,
+            config.robot_height,
+            config.surface_closing_radius,
+            config.step_threshold_m,
+            config.max_slope_deg
+        ),
+    }
 }
 
 /// One region of a seeded map, as the ray tracer hands them on.
@@ -245,6 +265,11 @@ pub struct MlsPlanner {
     #[input(decode = PointStamped::decode, handler = on_goal)]
     goal: Input<PointStamped>,
 
+    // The ray tracer's GPU surface for each local_map, stamped like it: voxel
+    // centers with the plane height as intensity.
+    #[input(decode = PointCloud2::decode, handler = on_surface_cells)]
+    surface_cells: Input<PointCloud2>,
+
     #[tf]
     tf: Tf,
 
@@ -261,12 +286,22 @@ pub struct MlsPlanner {
     #[output(encode = Path::encode)]
     path: Output<Path>,
 
+    // This planner's surface parameters as JSON, asking a GPU ray tracer for
+    // surface_cells.
+    #[output(encode = lcm_msgs::std_msgs::String::encode)]
+    gpu_surface_config: Output<lcm_msgs::std_msgs::String>,
+
     #[config]
     config: Config,
 
     // Held on the handle loop until stamps match, then handed off paired.
     pending_local: Option<PointCloud2>,
     pending_bounds: Option<PoseStamped>,
+    pending_surface: Option<PointCloud2>,
+    // Whether surface_cells ever arrived; from then on regions wait for theirs.
+    surfaces_seen: bool,
+    // Regions paired without a surface while gpu_surfaces asked for one.
+    regions_without_surface: u32,
     pending_seeds: SeedPairs,
 
     // Written by the handle loop, read by the worker, so the loop never blocks
@@ -279,6 +314,7 @@ pub struct MlsPlanner {
 
     worker: Option<tokio::task::JoinHandle<()>>,
     viz_publisher: Option<tokio::task::JoinHandle<()>>,
+    surface_requester: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl MlsPlanner {
@@ -305,9 +341,25 @@ impl MlsPlanner {
             path: self.path.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
+        if self.config.gpu_surfaces {
+            let request = surface_request(&self.config);
+            let out = self.gpu_surface_config.clone();
+            self.surface_requester = Some(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(SURFACE_REQUEST_PERIOD);
+                loop {
+                    tick.tick().await;
+                    if let Err(e) = out.publish(&request).await {
+                        warn_throttled!(Duration::from_secs(30), error = %e, "Failed to publish gpu_surface_config.");
+                    }
+                }
+            }));
+        }
     }
 
     async fn stop_worker(&mut self) {
+        if let Some(handle) = self.surface_requester.take() {
+            handle.abort();
+        }
         if let Some(handle) = self.worker.take() {
             handle.abort();
         }
@@ -332,6 +384,18 @@ impl MlsPlanner {
         self.try_pair();
     }
 
+    async fn on_surface_cells(&mut self, msg: PointCloud2) {
+        if !self.config.gpu_surfaces {
+            return;
+        }
+        if !self.surfaces_seen {
+            info!("Planning on the ray tracer's GPU surfaces.");
+            self.surfaces_seen = true;
+        }
+        self.pending_surface = Some(msg);
+        self.try_pair();
+    }
+
     async fn on_seed_map(&mut self, msg: PointCloud2) {
         if let Some(region) = self.pending_seeds.pair_cloud(msg) {
             self.queue_seed(region);
@@ -349,6 +413,31 @@ impl MlsPlanner {
         if !stamps_paired(self.pending_bounds.as_ref(), self.pending_local.as_ref()) {
             return;
         }
+        let surface = if self.surfaces_seen {
+            let Some(cloud) = self.pending_surface.as_ref() else {
+                return;
+            };
+            let bounds = self.pending_bounds.as_ref().expect("checked above");
+            if !same_stamp(&cloud.header.stamp, &bounds.header.stamp) {
+                return;
+            }
+            let cloud = self.pending_surface.take().expect("checked above");
+            match extract_fields(&cloud, ["x", "y", "z", "intensity"]) {
+                Ok(cells) => Some(cells),
+                Err(e) => {
+                    warn_throttled!(Duration::from_secs(1), error = %e, "Bad surface_cells, extracting this region on the CPU.");
+                    None
+                }
+            }
+        } else {
+            if self.config.gpu_surfaces {
+                self.regions_without_surface += 1;
+                if self.regions_without_surface == REGIONS_BEFORE_CPU_WARNING {
+                    warn!("No GPU surfaces from the ray tracer (is it on the CPU?), the planner extracts surfaces on the CPU.");
+                }
+            }
+            None
+        };
         let bounds = self.pending_bounds.take().expect("checked above");
         let cloud = self.pending_local.take().expect("checked above");
         if let Some(points) = cloud_points(&cloud, "local_map") {
@@ -357,6 +446,7 @@ impl MlsPlanner {
                 points,
                 bounds,
                 received,
+                surface,
             });
         }
     }
@@ -612,6 +702,7 @@ impl Worker {
                 points,
                 bounds,
                 received,
+                surface,
             } => {
                 let Some((_, _, sensor_z)) = self.base_position() else {
                     warn!(
@@ -623,7 +714,15 @@ impl Worker {
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
                 let process_start = Instant::now();
-                if let Some(window) = planner.update_region(&points, &region, &self.config) {
+                let window = match &surface {
+                    Some(cells) => {
+                        let cells: Vec<(f32, f32, f32, f32)> =
+                            cells.iter().map(|&[x, y, z, h]| (x, y, z, h)).collect();
+                        planner.update_region_with_surface(&points, &cells, &region, &self.config)
+                    }
+                    None => planner.update_region(&points, &region, &self.config),
+                };
+                if let Some(window) = window {
                     viz.mark_window(window);
                 }
                 debug_throttled!(
@@ -992,23 +1091,30 @@ fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<Xyz>> {
 }
 
 fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> {
-    let mut x_off: Option<usize> = None;
-    let mut y_off: Option<usize> = None;
-    let mut z_off: Option<usize> = None;
+    Ok(extract_fields(msg, ["x", "y", "z"])?
+        .into_iter()
+        .map(|[x, y, z]| (x, y, z))
+        .collect())
+}
+
+/// The named float32 fields of every point whose values are all finite.
+fn extract_fields<const N: usize>(
+    msg: &PointCloud2,
+    names: [&'static str; N],
+) -> Result<Vec<[f32; N]>, ExtractError> {
+    let mut offsets: [Option<usize>; N] = [None; N];
     for f in &msg.fields {
         if f.datatype != PointField::FLOAT32 as u8 {
             continue;
         }
-        match f.name.as_str() {
-            "x" => x_off = Some(f.offset as usize),
-            "y" => y_off = Some(f.offset as usize),
-            "z" => z_off = Some(f.offset as usize),
-            _ => {}
+        if let Some(i) = names.iter().position(|&n| n == f.name) {
+            offsets[i] = Some(f.offset as usize);
         }
     }
-    let xo = x_off.ok_or(ExtractError("missing float32 x field"))?;
-    let yo = y_off.ok_or(ExtractError("missing float32 y field"))?;
-    let zo = z_off.ok_or(ExtractError("missing float32 z field"))?;
+    if offsets.iter().any(Option::is_none) {
+        return Err(ExtractError("missing a float32 field"));
+    }
+    let offsets: [usize; N] = offsets.map(|o| o.expect("checked above"));
 
     let n = (msg.width as usize) * (msg.height as usize);
     let step = msg.point_step as usize;
@@ -1020,10 +1126,8 @@ fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> 
             "data buffer shorter than width*height*point_step",
         ));
     }
-    if xo + 4 > step || yo + 4 > step || zo + 4 > step {
-        return Err(ExtractError(
-            "xyz field offsets do not fit within point_step",
-        ));
+    if offsets.iter().any(|&o| o + 4 > step) {
+        return Err(ExtractError("field offsets do not fit within point_step"));
     }
     if msg.is_bigendian {
         return Err(ExtractError("big-endian point data not supported"));
@@ -1032,11 +1136,9 @@ fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let base = i * step;
-        let x = read_f32_le(&msg.data, base + xo);
-        let y = read_f32_le(&msg.data, base + yo);
-        let z = read_f32_le(&msg.data, base + zo);
-        if x.is_finite() && y.is_finite() && z.is_finite() {
-            out.push((x, y, z));
+        let values = offsets.map(|o| read_f32_le(&msg.data, base + o));
+        if values.iter().all(|v| v.is_finite()) {
+            out.push(values);
         }
     }
     Ok(out)

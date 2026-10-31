@@ -19,7 +19,7 @@ bytemuck = { version = "1", features = ["derive"] }
 ash = "0.38"
 
 [dev-dependencies]
-dimos-voxel-ray-tracing = { path = "../../ray_tracing/rust", default-features = false }
+dimos-voxel-ray-tracing = { path = "../../ray_tracing/rust" }
 dimos-mls-planner = { path = "../../../navigation/global_planner/mls_planner/rust" }
 ahash = "0.8"
 rayon = "1"

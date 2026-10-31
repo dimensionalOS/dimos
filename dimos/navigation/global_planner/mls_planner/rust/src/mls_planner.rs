@@ -23,8 +23,8 @@ use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{
-    build_surface_cells, build_surface_cells_by_height, build_surface_lookup, rebuild_edges_around,
-    CellId, SurfaceCells, SurfaceLookup,
+    build_surface_cells, build_surface_cells_by_height, build_surface_lookup, height_reach_cells,
+    rebuild_edges_around, rebuild_edges_around_by_height, CellId, SurfaceCells, SurfaceLookup,
 };
 use crate::columns::{
     diff_column, ColumnBuckets, ColumnEdit, ColumnIz, ColumnMask, ColumnWindow, VoxelEdits,
@@ -92,6 +92,12 @@ pub struct Config {
     pub viz_cell_m: f32,
     /// Unchanged cells republished per tick, round robin. 0 turns the sweep off.
     pub viz_sweep_cells: u32,
+    /// Plan on the GPU surface a GPU ray tracer sends as surface_cells (plane
+    /// heights, slope gate); without one, surfaces are extracted here.
+    pub gpu_surfaces: bool,
+    /// The GPU surface's slope gate: planes tilted further are not standable.
+    #[validate(range(min = 0.0, max = 90.0))]
+    pub max_slope_deg: f32,
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
@@ -215,6 +221,9 @@ pub struct Planner {
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
+    // Surface heights in meters from a surface extracted elsewhere; when set,
+    // neighbors link by height instead of by voxel.
+    heights: Option<ahash::AHashMap<VoxelKey, f32>>,
     // Last successful path and its goal, for safe truncation when a later
     // replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
@@ -230,6 +239,7 @@ impl Planner {
             graph: PlannerGraph::default(),
             voxel_map: AHashSet::new(),
             by_col: ColumnIz::default(),
+            heights: None,
             last_path: None,
             last_result: None,
         }
@@ -290,9 +300,13 @@ impl Planner {
                         config.voxel_size,
                         config.step_threshold_m,
                     );
+                    self.heights = Some(heights);
                     self.rebuild_nodes(config);
                 }
-                None => self.rebuild_graph(config),
+                None => {
+                    self.heights = None;
+                    self.rebuild_graph(config)
+                }
             }
         });
     }
@@ -307,6 +321,80 @@ impl Planner {
         config: &Config,
     ) -> Option<ColumnWindow> {
         self.update_region_within(local_points, bounds, config, config.node_window_cells())
+    }
+
+    /// update_region with the region's surface extracted elsewhere (the GPU's):
+    /// `cells`, voxel center then plane height, replace the surface across the
+    /// region's whole column box, and neighbors link by height from then on.
+    pub fn update_region_with_surface(
+        &mut self,
+        local_points: &[(f32, f32, f32)],
+        cells: &[(f32, f32, f32, f32)],
+        bounds: &RegionBounds,
+        config: &Config,
+    ) -> Option<ColumnWindow> {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            let voxel_size = config.voxel_size;
+            let stage = Instant::now();
+            let edits = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let diff_ms = ms_since(stage);
+
+            let bbox = bounds.column_bbox(voxel_size);
+            let mut write = ColumnMask::new(bbox, 0);
+            for ix in bbox.0..=bbox.1 {
+                for iy in bbox.2..=bbox.3 {
+                    write.set((ix, iy));
+                }
+            }
+            let surface: Vec<(VoxelKey, f32)> = cells
+                .iter()
+                .map(|&(x, y, z, h)| (voxelize((x, y, z), voxel_size), h))
+                .filter(|(k, _)| write.contains((k.0, k.1)))
+                .collect();
+            let keys: Vec<VoxelKey> = surface.iter().map(|&(k, _)| k).collect();
+            let stage = Instant::now();
+            let (added, removed) = self.replace_surface_region(&write, &keys);
+            let replace_ms = ms_since(stage);
+
+            let heights = self.heights.get_or_insert_with(Default::default);
+            for k in &removed {
+                heights.remove(k);
+            }
+            let added_set: AHashSet<VoxelKey> = added.iter().copied().collect();
+            let mut retuned: Vec<VoxelKey> = Vec::new();
+            for &(k, h) in &surface {
+                let old = heights.insert(k, h);
+                if !added_set.contains(&k) && old != Some(h) {
+                    retuned.push(k);
+                }
+            }
+            let (cells_added, cells_removed) = (added.len(), removed.len());
+            if edits.is_empty() && added.is_empty() && removed.is_empty() && retuned.is_empty() {
+                return None;
+            }
+            let stage = Instant::now();
+            let retuned_count = retuned.len();
+            self.rebuild_region_graph_with(
+                added,
+                removed,
+                retuned,
+                &edits,
+                config.node_window_cells(),
+                config,
+            );
+            debug_throttled!(
+                DEBUG_LOG_PERIOD,
+                diff_ms,
+                replace_ms,
+                graph_ms = ms_since(stage),
+                cells_added,
+                cells_removed,
+                cells_retuned = retuned_count,
+                "gpu surface region update stages"
+            );
+            write.bounds()
+        })
     }
 
     /// update_region for a region of a seeded map. It repairs out to the full
@@ -388,23 +476,36 @@ impl Planner {
         window_steps: i32,
         config: &Config,
     ) {
-        let step = config.step_cells();
+        self.rebuild_region_graph_with(added, removed, Vec::new(), edits, window_steps, config);
+    }
+
+    /// rebuild_region_graph, plus `retuned` cells whose height moved, which
+    /// relink and repair like changed cells: a moved height changes costs the
+    /// node graph was built on even where the links stay.
+    fn rebuild_region_graph_with(
+        &mut self,
+        added: Vec<VoxelKey>,
+        removed: Vec<VoxelKey>,
+        retuned: Vec<VoxelKey>,
+        edits: &VoxelEdits,
+        window_steps: i32,
+        config: &Config,
+    ) {
+        let reach = match self.heights {
+            Some(_) => height_reach_cells(config.voxel_size, config.step_threshold_m),
+            None => config.step_cells(),
+        };
         let patch = self.patch_cells(&added, &removed);
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
+        seeds.extend_from_slice(&retuned);
         if seeds.is_empty() && edits.is_empty() {
             return;
         }
 
-        let affected = self.changed_neighborhood(&seeds, step);
+        let affected = self.changed_neighborhood(&seeds, reach);
+        self.rebuild_edges(&affected, config);
         let graph = &mut self.graph;
-        rebuild_edges_around(
-            &mut graph.cells,
-            &graph.surface_lookup,
-            &affected,
-            config.voxel_size,
-            step,
-        );
         let params = config.placement_params();
         let mut gone_nodes = relocate_dead_nodes(
             &graph.cells,
@@ -456,6 +557,28 @@ impl Planner {
             &mut graph.cell_state,
             &mut graph.node_edges,
         );
+    }
+
+    /// Relink the given cells, by height when the surface came with heights.
+    fn rebuild_edges(&mut self, affected: &[CellId], config: &Config) {
+        let graph = &mut self.graph;
+        match &self.heights {
+            Some(heights) => rebuild_edges_around_by_height(
+                &mut graph.cells,
+                &graph.surface_lookup,
+                heights,
+                affected,
+                config.voxel_size,
+                config.step_threshold_m,
+            ),
+            None => rebuild_edges_around(
+                &mut graph.cells,
+                &graph.surface_lookup,
+                affected,
+                config.voxel_size,
+                config.step_cells(),
+            ),
+        }
     }
 
     /// Apply the surface cell changes to the cell store.

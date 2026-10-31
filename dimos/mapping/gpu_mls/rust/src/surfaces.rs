@@ -41,7 +41,7 @@ const MAX_WINDOW_EDGE: u32 = 1 << 16;
 
 /// The MLS planner's surface parameters, in meters, judged against each
 /// cell's plane rather than whole voxels.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceConfig {
     /// Clear space a cell needs between its plane and the underside above.
     pub robot_height_m: f32,
@@ -86,6 +86,12 @@ impl SurfaceConfig {
 
     pub fn clearance_cells(&self, voxel_size: f32) -> i32 {
         (self.robot_height_m / voxel_size).ceil() as i32
+    }
+
+    /// Columns past a region whose surface it depends on: two closings, the
+    /// support neighborhood and a hole's span.
+    pub fn reach_cells(&self, voxel_size: f32) -> i32 {
+        2 * self.closing_cells(voxel_size) + SUPPORT_RADIUS + HOLE_SPAN_CELLS
     }
 }
 
@@ -784,6 +790,16 @@ impl SurfaceExtractor {
             }
         }
         out
+    }
+
+    /// The surface cells and their heights in meters, skipping the rest of `read`.
+    pub fn read_heights(&self) -> (Vec<VoxelKey>, Vec<f32>) {
+        let surface = self.read_bits(&self.buffers.surface);
+        let heights: Vec<f32> = self
+            .gpu
+            .read(&self.buffers.heights, self.window.cells() as usize);
+        let heights = surface.iter().map(|&k| heights[self.cell_of(k)]).collect();
+        (surface, heights)
     }
 
     pub fn read(&self) -> SurfaceResult {

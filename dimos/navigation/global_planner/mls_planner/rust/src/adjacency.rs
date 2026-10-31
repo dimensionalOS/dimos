@@ -265,8 +265,7 @@ pub fn build_surface_cells_by_height(
         }
     }
 
-    // A plane can sit anywhere in its voxel, so look one cell past the step.
-    let reach = (step_threshold_m / voxel_size).ceil() as i32 + 1;
+    let reach = height_reach_cells(voxel_size, step_threshold_m);
     let n = cells.coord.len();
     cells.edges.resize_with(n, Vec::new);
     let coord: &[VoxelKey] = &cells.coord;
@@ -304,6 +303,69 @@ pub fn build_surface_cells_by_height(
                 }
             }
         });
+}
+
+/// rebuild_edges_around linking by height in meters, as
+/// build_surface_cells_by_height does. A cell without a height stands on its
+/// voxel's top face.
+pub fn rebuild_edges_around_by_height(
+    cells: &mut SurfaceCells,
+    surface_lookup: &SurfaceLookup,
+    heights: &AHashMap<VoxelKey, f32>,
+    affected: &[CellId],
+    voxel_size: f32,
+    step_threshold_m: f32,
+) {
+    let height = |k: VoxelKey| {
+        heights
+            .get(&k)
+            .copied()
+            .unwrap_or((k.2 + 1) as f32 * voxel_size)
+    };
+    let reach = height_reach_cells(voxel_size, step_threshold_m);
+    let rebuilt: Vec<(CellId, Vec<Edge>)> = affected
+        .par_iter()
+        .map(|&id| {
+            let (ix, iy, iz) = cells.coord(id);
+            let h = height((ix, iy, iz));
+            let mut edges: Vec<Edge> = Vec::new();
+            for (dx, dy) in NEIGHBORS_4 {
+                let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
+                    continue;
+                };
+                for &nz in nzs {
+                    if (nz - iz).abs() > reach {
+                        continue;
+                    }
+                    let dh = height((ix + dx, iy + dy, nz)) - h;
+                    if dh.abs() > step_threshold_m {
+                        continue;
+                    }
+                    let dest = cells
+                        .id((ix + dx, iy + dy, nz))
+                        .expect("neighbor cell exists in lookup");
+                    let run = ((dx * dx + dy * dy) as f32).sqrt() * voxel_size;
+                    let cost = (run * run + dh * dh).sqrt();
+                    edges.push(Edge {
+                        dest,
+                        base_cost: cost,
+                        rise: dh.abs(),
+                        cost,
+                    });
+                }
+            }
+            (id, edges)
+        })
+        .collect();
+    for (id, edges) in rebuilt {
+        cells.edges[id as usize] = edges;
+    }
+}
+
+/// Voxel rows a height link can span: a plane sits anywhere in its voxel, so
+/// one past the step.
+pub fn height_reach_cells(voxel_size: f32, step_threshold_m: f32) -> i32 {
+    (step_threshold_m / voxel_size).ceil() as i32 + 1
 }
 
 /// Recompute outgoing edges for the affected cells. Call after an incremental
