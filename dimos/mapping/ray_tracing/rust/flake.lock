@@ -73,6 +73,32 @@
         "type": "github"
       }
     },
+    "dimos-gpu-mls": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": "rust-overlay"
+      },
+      "locked": {
+        "dir": "dimos/mapping/gpu_mls/rust",
+        "lastModified": 1793414311,
+        "narHash": "sha256-n0Mc73dYjs3tOakrpthMIYOiOt6KiB7RVkqt4CgLwDs=",
+        "owner": "dimensionalOS",
+        "repo": "dimos",
+        "rev": "ff6eb721867c4448e173d9d60ecd29b7bfb1043f",
+        "type": "github"
+      },
+      "original": {
+        "dir": "dimos/mapping/gpu_mls/rust",
+        "owner": "dimensionalOS",
+        "repo": "dimos",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "locked": {
         "lastModified": 1733328505,
@@ -291,9 +317,31 @@
     "root": {
       "inputs": {
         "crate2nix": "crate2nix",
+        "dimos-gpu-mls": "dimos-gpu-mls",
         "flake-utils": "flake-utils",
         "nix-filter": "nix-filter",
         "nixpkgs": "nixpkgs_2"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "dimos-gpu-mls",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793174968,
+        "narHash": "sha256-u5nUf4cewaT36iIzG1s/VECktqUMiZaGF5BsgervsvQ=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "19ecdd08213836b36c4296a3a4f4af5a3d5308db",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
       }
     },
     "systems": {
