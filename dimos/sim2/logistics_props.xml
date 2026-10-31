@@ -1,0 +1,9 @@
+<mujoco model="logistics_props">
+  <!-- The logistics scene with boxes free to push around, down the open corridor along +x. -->
+  <include file="logistics.xml"/>
+  <worldbody>
+    <body name="box_small" pos="1.5 0 .15"><freejoint/><geom type="box" size=".15 .15 .15" mass="1" rgba=".85 .55 .15 1"/></body>
+    <body name="box_tall" pos="2.4 .3 .25"><freejoint/><geom type="box" size=".2 .2 .25" mass="3" rgba=".2 .45 .8 1"/></body>
+    <body name="ball" pos="1.8 -.5 .2"><freejoint/><geom type="sphere" size=".2" mass="1" rgba=".75 .2 .25 1"/></body>
+  </worldbody>
+</mujoco>

@@ -27,7 +27,7 @@ import tempfile
 from threading import Event, Thread
 from typing import Any, Protocol
 
-from dimos_lcm.world_msgs import WorldAction, WorldChange
+from dimos_lcm.world_msgs import Change, WorldAction, WorldChange
 from pydantic import Field
 
 from dimos.core.core import rpc
@@ -35,10 +35,15 @@ from dimos.core.module import ModuleConfig
 from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.msgs.files.File import File
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.String import String
-from dimos.sim2.actions import read_actions
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.sim2.actions import Remove, Spawn, read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, validate
+from dimos.sim2.world_change import OBJECT, WorldMirror
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -50,7 +55,10 @@ class SimulationSpec(Spec, Protocol):
 
 
 class SimulationConfig(ModuleConfig):
-    scene: Path | None = Field(default_factory=lambda m: m["g"].scene_package)
+    # A default from a factory skips validation, so the global's string becomes a Path here.
+    scene: Path | None = Field(
+        default_factory=lambda m: Path(m["g"].scene_package) if m["g"].scene_package else None
+    )
     backend: str = "mujoco"
     # Sim seconds per wall second.
     speed: float = 1.0
@@ -67,6 +75,8 @@ class Simulation(SharedConfigModule):
     config: SimulationConfig
     world_change: Out[WorldChange]
     actions: In[WorldAction]
+    # world -> each movable object, named as the object (scene_data's movers follow these).
+    tf: Out[TFMessage]
     # Like UrdfManager: a request names the world file, or a file it names, and gets it on file_info.
     render_file_request: In[String]
     file_info: Out[File]
@@ -80,6 +90,8 @@ class Simulation(SharedConfigModule):
         self._backend: SimulationBackend | None = None
         self._directory: tempfile.TemporaryDirectory[str] | None = None
         self._publisher: _LatestPublisher | None = None
+        # The world as its own frames say, for tf.
+        self._mirror = WorldMirror()
         self._all_started = Event()
         # Each sender's "simulated" value, keyed by its instance name.
         self.simulated: dict[str, Simulated] = {}
@@ -111,7 +123,7 @@ class Simulation(SharedConfigModule):
         assert self._backend is not None
         # Every action is applied: one dropped while busy would be a lost motor command.
         self.actions.subscribe(self._on_actions)
-        self._publisher = _LatestPublisher(self.world_change.publish)
+        self._publisher = _LatestPublisher(self._publish)
         self._running = asyncio.create_task(self._run())
         announcing = asyncio.create_task(self._announce())
         yield
@@ -136,6 +148,39 @@ class Simulation(SharedConfigModule):
             scene = await asyncio.to_thread(self._backend.scene_data)
             self.scene_data.publish(String(scene))
 
+    def _publish(self, change: WorldChange) -> None:
+        self.world_change.publish(change)
+        self._mirror.apply(change)
+        # Only the objects this frame moved: the backend sends a resting one's pose only when it moves.
+        moved = {
+            c.entity_id
+            for c in change.changes
+            if c.type in (Change.ADD_ENTITY, Change.ENTITY_UPDATE)
+            and Change.WORLD_POSE_SET in c.update_types
+        }
+        objects = [
+            entity
+            for entity_id, entity in self._mirror.entities.items()
+            if entity_id in moved and OBJECT in entity.tags and entity.pose is not None
+        ]
+        if objects:
+            stamp = self._mirror.stamp()
+            self.tf.publish(
+                TFMessage(
+                    *(
+                        Transform(
+                            translation=Vector3(*entity.pose[:3]),
+                            rotation=Quaternion(*entity.pose[3:]),
+                            frame_id="world",
+                            child_frame_id=entity.path,
+                            ts=stamp,
+                        )
+                        for entity in objects
+                        if entity.pose is not None
+                    )
+                )
+            )
+
     def _on_actions(self, message: WorldAction) -> None:
         backend = self._backend
         if backend is None:
@@ -146,6 +191,9 @@ class Simulation(SharedConfigModule):
             logger.warning(f"sim2: an action this world cannot read: {error}")
             return
         backend.apply(actions)
+        # A viewer draws the world once, so a changed one is sent again, unasked.
+        if any(isinstance(action, Spawn | Remove) for action in actions):
+            self.scene_data.publish(String(backend.scene_data()))
 
     async def handle_render_file_request(self, request: String) -> None:
         if self._backend is None:

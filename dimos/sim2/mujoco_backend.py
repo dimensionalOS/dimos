@@ -34,12 +34,18 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.sim2.actions import (
     Action,
     ApplyWrench,
+    Attach,
+    Detach,
+    Interact,
     JointCommand,
     Pause,
+    Remove,
     Reset,
     Resume,
     SetJointPositions,
     SetPose,
+    SetVelocity,
+    Spawn,
     Step,
 )
 from dimos.sim2.backend import Publisher
@@ -80,6 +86,57 @@ _SCENE_GEOM_TYPES = {
 }
 
 
+def scene_bodies(
+    model: mujoco.MjModel, data: mujoco.MjData, skip_roots: set[int], movers: set[int]
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
+    """dimos.scene_data.v1 bodies and meshes: every body outside skip_roots with a drawable geom.
+
+    A mover (a root that moves) is "mocap", which a viewer moves by its TF frame, and carries its mass.
+    """
+    bodies, meshes = [], {}
+    for body in range(model.nbody):
+        if model.body_rootid[body] in skip_roots:
+            continue
+        geoms = []
+        for geom in range(
+            model.body_geomadr[body], model.body_geomadr[body] + model.body_geomnum[body]
+        ):
+            # Group 3 and up hold collision-only geoms, drawn by nothing.
+            kind = _SCENE_GEOM_TYPES.get(int(model.geom_type[geom]))
+            if kind is None or model.geom_group[geom] >= 3:
+                continue
+            material = model.geom_matid[geom]
+            rgba = model.mat_rgba[material] if material >= 0 else model.geom_rgba[geom]
+            entry = {
+                "name": model.geom(geom).name or f"geom{geom}",
+                "type": kind,
+                "size": model.geom_size[geom].tolist(),
+                "pos": model.geom_pos[geom].tolist(),
+                "quat": _xyzw(model.geom_quat[geom]),
+                "rgba": rgba.tolist(),
+            }
+            if kind == "mesh":
+                mesh = int(model.geom_dataid[geom])
+                entry["mesh"] = name = model.mesh(mesh).name or f"mesh{mesh}"
+                meshes.setdefault(name, _mesh_data(model, mesh))
+            geoms.append(entry)
+        if geoms:
+            mover = body in movers
+            bodies.append(
+                {
+                    "name": model.body(body).name or "world",
+                    "label": model.body(body).name or "world",
+                    "pos": data.xpos[body].tolist(),
+                    "quat": _xyzw(data.xquat[body]),
+                    "mocap": bool(model.body_mocapid[body] >= 0) or mover,
+                    "geoms": geoms,
+                    "lights": [],
+                    **({"mass": float(model.body_subtreemass[body])} if mover else {}),
+                }
+            )
+    return bodies, meshes
+
+
 def _xyzw(wxyz: np.ndarray) -> list[float]:
     w, x, y, z = wxyz
     return [float(x), float(y), float(z), float(w)]
@@ -115,6 +172,10 @@ class MujocoBackend:
         self._lock = Lock()
         self._paused = False
         self._steps_requested = 0
+        # Root body -> the base velocity SetVelocity holds it at.
+        self._velocities: dict[int, Twist] = {}
+        # Carried root body -> (carrier body, its position and orientation in the carrier's frame).
+        self._carried: dict[int, tuple[int, np.ndarray, np.ndarray]] = {}
         self._roots = self._entity_roots()
         # Each entity's single-dof joints, and their names as the entity calls them.
         self._joints = {name: self._joints_of(name, body) for name, body in self._roots.items()}
@@ -138,47 +199,9 @@ class MujocoBackend:
         return {"world.xml": self._scene.read_bytes(), **self._files}
 
     def scene_data(self) -> str:
-        model = self.model
         robot_roots = {self._roots[robot_id] for robot_id in self._robots}
-        bodies, meshes = [], {}
-        for body in range(model.nbody):
-            if model.body_rootid[body] in robot_roots:
-                continue
-            geoms = []
-            for geom in range(
-                model.body_geomadr[body], model.body_geomadr[body] + model.body_geomnum[body]
-            ):
-                # Group 3 and up hold collision-only geoms, drawn by nothing.
-                kind = _SCENE_GEOM_TYPES.get(int(model.geom_type[geom]))
-                if kind is None or model.geom_group[geom] >= 3:
-                    continue
-                material = model.geom_matid[geom]
-                rgba = model.mat_rgba[material] if material >= 0 else model.geom_rgba[geom]
-                entry = {
-                    "name": model.geom(geom).name or f"geom{geom}",
-                    "type": kind,
-                    "size": model.geom_size[geom].tolist(),
-                    "pos": model.geom_pos[geom].tolist(),
-                    "quat": _xyzw(model.geom_quat[geom]),
-                    "rgba": rgba.tolist(),
-                }
-                if kind == "mesh":
-                    mesh = int(model.geom_dataid[geom])
-                    entry["mesh"] = name = model.mesh(mesh).name or f"mesh{mesh}"
-                    meshes.setdefault(name, _mesh_data(model, mesh))
-                geoms.append(entry)
-            if geoms:
-                bodies.append(
-                    {
-                        "name": model.body(body).name or "world",
-                        "label": model.body(body).name or "world",
-                        "pos": self.data.xpos[body].tolist(),
-                        "quat": _xyzw(self.data.xquat[body]),
-                        "mocap": bool(model.body_mocapid[body] >= 0),
-                        "geoms": geoms,
-                        "lights": [],
-                    }
-                )
+        objects = {body for name, body in self._roots.items() if name not in self._robots}
+        bodies, meshes = scene_bodies(self.model, self.data, robot_roots, objects)
         return json.dumps(
             {
                 "format": "dimos.scene_data.v1",
@@ -219,6 +242,8 @@ class MujocoBackend:
             for _ in range(steps):
                 if await self._hold_for_controllers(world_change):
                     started = time.monotonic() - data.time / self._config.speed
+                self._hold_velocities()
+                self._hold_carried()
                 mujoco.mj_step(model, data)
                 self._expire_wrenches()
             if not world_change.busy:
@@ -258,6 +283,8 @@ class MujocoBackend:
 
     def _reset(self) -> None:
         self._next_ticks = [0.0] * len(self._controllers)
+        self._velocities.clear()
+        self._carried.clear()
         self._wrench_until.clear()
         mujoco.mj_resetData(self.model, self.data)
         self._hold_initial_pose()
@@ -313,6 +340,21 @@ class MujocoBackend:
                 self._paused = True
             case Resume():
                 self._paused = False
+            case SetVelocity(entity, twist):
+                self._velocities[self._roots[entity]] = twist
+            case Interact(entity, action):
+                self._interact(entity, action)
+            case Attach(entity, to, body):
+                carrier = (
+                    self._roots[to] if body is None else model.body(self._body_name(to, body)).id
+                )
+                self._carry(self._roots[entity], carrier)
+            case Detach(entity):
+                self._carried.pop(self._roots[entity], None)
+            case Spawn() | Remove():
+                raise ValueError(
+                    "the mujoco backend compiles its world once; it cannot add or remove objects"
+                )
             case Step(steps):
                 self._steps_requested += steps
             case Reset():
@@ -357,6 +399,68 @@ class MujocoBackend:
                 self.data.ctrl[actuator] = (
                     position[index] + feedforward / p if p > 0 else feedforward
                 )
+
+    def _interact(self, entity: str, action: str) -> None:
+        """Sets the entity's joints as the scene's keyframe "<entity>/<action>" has them."""
+        model, data = self.model, self.data
+        key = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, f"{entity}/{action}")
+        if key < 0:
+            raise ValueError(
+                f"{entity} has no action {action!r}: the scene has no keyframe {entity}/{action}"
+            )
+        root = self._roots[entity]
+        for joint in range(model.njnt):
+            if (
+                model.body_rootid[model.jnt_bodyid[joint]] != root
+                or model.jnt_type[joint] not in _SINGLE_DOF
+            ):
+                continue
+            value = model.key_qpos[key][model.jnt_qposadr[joint]]
+            data.qpos[model.jnt_qposadr[joint]] = value
+            data.qvel[model.jnt_dofadr[joint]] = 0.0
+            data.ctrl[model.actuator_trnid[:, 0] == joint] = value
+
+    def _carry(self, body: int, carrier: int) -> None:
+        model, data = self.model, self.data
+        joint = model.body_jntadr[body]
+        if joint < 0 or model.jnt_type[joint] != mujoco.mjtJoint.mjJNT_FREE:
+            raise ValueError(
+                f"{model.body(body).name!r} has no free joint, so it cannot be carried"
+            )
+        inverse = np.zeros(4)
+        mujoco.mju_negQuat(inverse, data.xquat[carrier])
+        offset, orientation = np.zeros(3), np.zeros(4)
+        mujoco.mju_rotVecQuat(offset, data.xpos[body] - data.xpos[carrier], inverse)
+        mujoco.mju_mulQuat(orientation, inverse, data.xquat[body])
+        self._carried[body] = (carrier, offset, orientation)
+
+    def _hold_carried(self) -> None:
+        model, data = self.model, self.data
+        for body, (carrier, offset, orientation) in self._carried.items():
+            joint = model.body_jntadr[body]
+            qpos, dof = model.jnt_qposadr[joint], model.jnt_dofadr[joint]
+            position, quat = np.zeros(3), np.zeros(4)
+            mujoco.mju_rotVecQuat(position, offset, data.xquat[carrier])
+            mujoco.mju_mulQuat(quat, data.xquat[carrier], orientation)
+            data.qpos[qpos : qpos + 7] = [*(data.xpos[carrier] + position), *quat]
+            data.qvel[dof : dof + 6] = 0.0
+
+    def _hold_velocities(self) -> None:
+        model, data = self.model, self.data
+        for body, twist in self._velocities.items():
+            joint = model.body_jntadr[body]
+            if joint < 0 or model.jnt_type[joint] != mujoco.mjtJoint.mjJNT_FREE:
+                continue
+            dof = model.jnt_dofadr[joint]
+            w, x, y, z = data.xquat[body]
+            yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+            vx, vy = twist.linear.x, twist.linear.y
+            # A free joint's linear velocity is world-frame; its angular one is the body's (z ~ yaw rate when upright).
+            data.qvel[dof : dof + 2] = [
+                vx * np.cos(yaw) - vy * np.sin(yaw),
+                vx * np.sin(yaw) + vy * np.cos(yaw),
+            ]
+            data.qvel[dof + 5] = twist.angular.z
 
     def _set_pose(self, body: int, pose: Pose, twist: Twist | None) -> None:
         model, data = self.model, self.data

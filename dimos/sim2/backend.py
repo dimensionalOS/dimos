@@ -29,7 +29,10 @@ from dimos.sim2.world_change import WorldWriter
 if TYPE_CHECKING:
     from dimos.sim2.module import SimulationConfig
 
-BACKENDS = {"mujoco": "dimos.sim2.mujoco_backend.MujocoBackend"}
+BACKENDS = {
+    "mujoco": "dimos.sim2.mujoco_backend.MujocoBackend",
+    "dimsim": "dimos.sim2.dimsim_backend.DimsimBackend",
+}
 
 
 class Publisher(Protocol):

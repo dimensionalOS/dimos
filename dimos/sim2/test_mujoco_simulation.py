@@ -28,12 +28,21 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.sim2.actions import JointCommand, SetPose
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.sim2.actions import (
+    Attach,
+    Detach,
+    Interact,
+    JointCommand,
+    SetPose,
+    SetVelocity,
+    Spawn,
+)
 from dimos.sim2.module import Simulation, SimulationConfig
 from dimos.sim2.mujoco_backend import MujocoBackend
 from dimos.sim2.spec import Mount, Servo, SimulatedRobot, SimulatedSensor
 from dimos.sim2.world import compile_world
-from dimos.sim2.world_change import OBJECT, WorldMirror
+from dimos.sim2.world_change import EVENTS, OBJECT, WorldMirror
 
 
 @pytest.fixture
@@ -203,6 +212,36 @@ def test_scene_data_describes_the_world_without_its_robots(scene, robot_model, t
     )
 
 
+def test_set_velocity_drives_a_base_and_spawning_is_refused(scene, tmp_path):
+    backend = MujocoBackend(SimulationConfig(scene=scene), {}, tmp_path)
+    backend.apply(
+        [
+            SetVelocity("crate", Twist(linear=[1.0, 0.0, 0.0])),
+            Spawn("box", "box", (0.1, 0.1, 0.1), Pose()),
+        ]
+    )
+    published = _Collect()
+
+    async def run_briefly() -> None:
+        running = asyncio.create_task(backend.run(published))
+        await asyncio.sleep(0.5)
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    asyncio.run(run_briefly())
+    crate = published.world.entity("crate")
+    # Held at 1 m/s along x from x=0 while gravity settles it onto the floor.
+    assert crate.pose[0] == pytest.approx(published.world.time, abs=0.05)
+    assert crate.pose[2] < 0.15
+    assert [e.path for e in published.world.tagged(OBJECT)] == ["crate"]
+    # The world could not spawn the box, and said so.
+    refused = [
+        cbor["reason"] for _, event, cbor in published.events if event == EVENTS["events/refused"]
+    ]
+    assert any("Spawn" in reason for reason in refused)
+
+
 def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model, tmp_path):
     robot = SimulatedRobot("dog", robot_model, "base", servos=(Servo("neck", 0.01, 0.001),))
     backend = MujocoBackend(SimulationConfig(scene=scene), {"dog": robot}, tmp_path)
@@ -252,3 +291,39 @@ def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model,
     assert len(tick_times) > 5
     assert np.diff(tick_times[1:]) == pytest.approx(0.02, abs=1e-6)
     assert backend.data.ctrl[backend.model.actuator("dog/neck").id] == 0.1
+
+
+def test_interact_runs_an_entitys_keyframed_action_and_attach_carries_an_object(
+    tmp_path, robot_model
+):
+    scene = tmp_path / "rooms.xml"
+    scene.write_text("""
+<mujoco>
+  <worldbody>
+    <geom name="floor" type="plane" size="5 5 .1"/>
+    <body name="door" pos="2 0 1"><joint name="hinge" type="hinge" axis="0 0 1"/><geom type="box" size=".05 .5 1"/></body>
+    <body name="cup" pos="0 0 1.2"><freejoint/><geom type="sphere" size=".05" mass=".1"/></body>
+  </worldbody>
+  <keyframe><key name="door/open" qpos="1.5 0 0 1.2 1 0 0 0"/></keyframe>
+</mujoco>
+""")
+    dog = SimulatedRobot("dog", robot_model, "base", xyz=(0, 0, 1))
+    backend = MujocoBackend(SimulationConfig(scene=scene), {"dog": dog}, tmp_path)
+    backend.apply(
+        [Interact("door", "open"), Attach("cup", "dog"), SetPose("dog", Pose(1.0, 1.0, 1.0))]
+    )
+    backend._apply_pending()
+    backend._hold_carried()
+    mujoco.mj_forward(backend.model, backend.data)
+    seen = _Collect()
+    seen.offer(backend.frame())
+    assert seen.world.joints("door")[1][:, 0] == pytest.approx([1.5])
+    # Carried 0.2 above the dog's root, wherever the dog goes.
+    assert seen.world.entity("cup").pose[0] == pytest.approx(1.0)
+    assert seen.world.entity("cup").pose[2] == pytest.approx(1.2)
+    backend.apply([Detach("cup"), SetPose("dog", Pose(0.0, -1.0, 1.0)), Interact("door", "slam")])
+    backend._apply_pending()
+    backend._hold_carried()
+    mujoco.mj_forward(backend.model, backend.data)
+    seen.offer(backend.frame())
+    assert seen.world.entity("cup").pose[0] == pytest.approx(1.0)

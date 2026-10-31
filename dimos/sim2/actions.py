@@ -21,7 +21,7 @@ Entities are robot ids or object names; a robot's joint is "<entity>/<joint>" on
 from collections.abc import Sequence
 from dataclasses import dataclass
 import math
-from typing import Any
+from typing import Any, Literal
 
 from dimos_lcm.world_msgs import Change, WorldAction
 import numpy as np
@@ -35,6 +35,11 @@ from dimos.sim2.world_change import (
     WORLD,
     WorldMirror,
     WorldWriter,
+    add_entity,
+    cbor_update,
+    connection_update,
+    delete_entity,
+    disconnection_update,
     entity_update,
     event_update,
     group_update,
@@ -97,6 +102,63 @@ class ApplyWrench:
 
 
 @dataclass(frozen=True)
+class SetVelocity:
+    """Drive an entity's base like a mobile base, held until replaced: linear x/y and angular z in its own heading frame.
+
+    Gravity and contacts keep acting, so it slides along walls and pushes what it walks into; zero stops it.
+    """
+
+    entity: str
+    twist: Twist
+
+
+@dataclass(frozen=True)
+class Spawn:
+    """Add a primitive object: size as MuJoCo gives it (box half extents, sphere radius, cylinder/capsule radius and half length).
+
+    Dynamic when it has mass, fixed in place otherwise.
+    """
+
+    entity: str
+    shape: Literal["box", "sphere", "cylinder", "capsule"]
+    size: tuple[float, ...]
+    pose: Pose
+    mass: float = 0.0
+    rgba: tuple[float, float, float, float] = (0.6, 0.6, 0.6, 1.0)
+
+
+@dataclass(frozen=True)
+class Remove:
+    """Take a spawned object out of the world."""
+
+    entity: str
+
+
+@dataclass(frozen=True)
+class Interact:
+    """Do one of an entity's named actions (open a door, press a button), as the world defines them."""
+
+    entity: str
+    action: str
+
+
+@dataclass(frozen=True)
+class Attach:
+    """Carry an entity with another (a robot or object, at its body or root), keeping their pose to each other, until Detach."""
+
+    entity: str
+    to: str
+    body: str | None = None
+
+
+@dataclass(frozen=True)
+class Detach:
+    """Let a carried entity go where it is."""
+
+    entity: str
+
+
+@dataclass(frozen=True)
 class Pause:
     pass
 
@@ -118,7 +180,28 @@ class Reset:
     """Back to the initial state, at sim time zero."""
 
 
-Action = JointCommand | SetJointPositions | SetPose | ApplyWrench | Pause | Resume | Step | Reset
+Action = (
+    JointCommand
+    | SetJointPositions
+    | SetPose
+    | ApplyWrench
+    | SetVelocity
+    | Spawn
+    | Remove
+    | Interact
+    | Attach
+    | Detach
+    | Pause
+    | Resume
+    | Step
+    | Reset
+)
+
+
+# A base's held drive command, as SetVelocity gives it: [vx, vy, wz] in its heading frame.
+BASE_VELOCITY = "base_velocity"
+# An entity's spawn description, as Spawn gives it.
+SPAWN = "spawn"
 
 
 def world_action(mirror: WorldMirror, *actions: Action) -> WorldAction:
@@ -153,10 +236,7 @@ def _encode(mirror: WorldMirror, action: Action) -> list[Change]:
             return [
                 entity_update(
                     ids[f"{entity}/{name}"],
-                    (
-                        Change.JOINT_POSITION_SET,
-                        joint_targets(np.array([[q, 0.0, 0.0]])),
-                    ),
+                    (Change.JOINT_POSITION_SET, joint_targets(np.array([[q, 0.0, 0.0]]))),
                 )
                 for name, q in zip(names, positions, strict=True)
             ]
@@ -173,6 +253,33 @@ def _encode(mirror: WorldMirror, action: Action) -> list[Change]:
             wrench = np.array([*force, *torque, *point, duration])
             payload = b"\0" * 8 + wrench.astype(">f8").tobytes()
             return [entity_update(ids[entity], (Change.WRENCH, payload))]
+        case SetVelocity(entity, twist):
+            drive = [twist.linear.x, twist.linear.y, twist.angular.z]
+            return [entity_update(ids[entity], cbor_update(BASE_VELOCITY, drive))]
+        case Spawn(entity, shape, size, pose, mass, rgba):
+            description = {"shape": shape, "size": list(size), "mass": mass, "rgba": list(rgba)}
+            return [
+                add_entity(
+                    0,
+                    entity,
+                    (
+                        cbor_update(SPAWN, description),
+                        pose_update([*pose.position, *pose.orientation]),
+                    ),
+                )
+            ]
+        case Remove(entity):
+            return [delete_entity(ids[entity])]
+        case Interact(entity, name):
+            return [
+                entity_update(
+                    ids[entity], event_update(EVENTS["events/interact"], {"action": name})
+                )
+            ]
+        case Attach(entity, to, body):
+            return [entity_update(ids[entity], connection_update(ids[to], {"carried_by": body}))]
+        case Detach(entity):
+            return [entity_update(ids[entity], disconnection_update(0))]
         case Pause() | Resume():
             return [entity_update(WORLD, tag_update(PAUSED, isinstance(action, Pause)))]
         case Step(steps):
@@ -233,7 +340,23 @@ def _decode(change: Change, world: WorldWriter) -> list[Action]:
         if update != Change.JOINT_TARGET_SET:
             raise ValueError(f"a group can only be sent joint targets, not update {update}")
         return [_joint_command(robot, names, rows)]
-    _, updates = read_change(change)
+    if change.type == Change.DELETE_ENTITY:
+        return [Remove(paths[change.entity_id])]
+    path, updates = read_change(change)
+    if change.type == Change.ADD_ENTITY:
+        values = dict(updates)
+        spawn = values[Change.CBOR_KEY_SET][1]
+        p = values[Change.WORLD_POSE_SET]
+        return [
+            Spawn(
+                path,
+                spawn["shape"],
+                tuple(spawn["size"]),
+                Pose(*p),
+                spawn["mass"],
+                tuple(spawn["rgba"]),
+            )
+        ]  # type: ignore[arg-type]
     target = paths[change.entity_id]
     actions: list[Action] = []
     pose: Any = None
@@ -249,22 +372,30 @@ def _decode(change: Change, world: WorldWriter) -> list[Action]:
             actions.append(SetPose(target, pose))
         elif update == Change.WORLD_VELOCITY_SET and pose is not None:
             actions[-1] = SetPose(
-                target,
-                pose,
-                Twist(linear=value[:3].tolist(), angular=value[3:].tolist()),
+                target, pose, Twist(linear=value[:3].tolist(), angular=value[3:].tolist())
             )
         elif update == Change.WRENCH:
             _, w = value
             force, torque, point = (tuple(map(float, w[i : i + 3])) for i in (0, 3, 6))
             actions.append(ApplyWrench(target, force, torque, point, float(w[9])))  # type: ignore[arg-type]
+        elif update == Change.CBOR_KEY_SET and value[0] == BASE_VELOCITY:
+            vx, vy, wz = value[1]
+            actions.append(SetVelocity(target, Twist(linear=[vx, vy, 0.0], angular=[0.0, 0.0, wz])))
         elif update in (Change.ADDED_TAG, Change.REMOVED_TAG) and value == PAUSED:
             actions.append(Pause() if update == Change.ADDED_TAG else Resume())
         elif update == Change.EVENT:
             event, cbor = value
-            if event == EVENTS["events/step"]:
+            if event == EVENTS["events/interact"]:
+                actions.append(Interact(target, cbor["action"]))
+            elif event == EVENTS["events/step"]:
                 actions.append(Step(cbor["steps"]))
             elif event == EVENTS["events/reset"]:
                 actions.append(Reset())
+        elif update == Change.ENTITY_CONNECTION_ADDED:
+            other, cbor = value
+            actions.append(Attach(target, paths[other], (cbor or {}).get("carried_by")))
+        elif update == Change.ENTITY_CONNECTION_REMOVED:
+            actions.append(Detach(target))
         else:
             raise ValueError(f"{target}: no action for update {update}")
     return actions
