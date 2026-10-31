@@ -109,20 +109,10 @@ class PlanExecutionManager:
             with self._state_lock:
                 self._cancelled_tasks = set()
 
-            try:
-                current_positions = self._coordinator.get_joint_positions()
-            except Exception as exc:
-                logger.exception("Coordinator get_joint_positions RPC failed")
-                execution_result = ExecutionResult(
-                    ExecutionStatus.UNCERTAIN, f"Coordinator get_joint_positions failed: {exc}"
-                )
-                self._store(execution_result, active=False)
-                return execution_result
-
             result: TrajectoryExecutionResult | None = None
             started: list[str] = []
             for task, part in parts:
-                outcome = self._start_part(task, part, current_positions)
+                outcome = self._start_part(task, part)
                 if not isinstance(outcome, TrajectoryExecutionResult):
                     failed = [task for task in started if not self._cancel_task(task)]
                     if failed:
@@ -337,13 +327,11 @@ class PlanExecutionManager:
             self._poll(run_id)
 
     def _start_part(
-        self, task: str, trajectory: JointTrajectory, current_positions: Mapping[str, float]
+        self, task: str, trajectory: JointTrajectory
     ) -> TrajectoryExecutionResult | ExecutionResult:
-        """Dispatch one part of a plan to the task that owns its joints."""
+        """Dispatch a part; the owning task validates its start from coordinator state."""
         try:
-            result = self._coordinator.task_invoke(
-                task, "execute", {"trajectory": trajectory, "current_positions": current_positions}
-            )
+            result = self._coordinator.task_invoke(task, "execute", {"trajectory": trajectory})
         except Exception as exc:
             logger.exception(f"{task} execute RPC failed")
             self._cancel_task(task)
