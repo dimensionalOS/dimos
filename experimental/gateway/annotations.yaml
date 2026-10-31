@@ -623,6 +623,9 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
+        openyam-teach-collection:
+          title: OpenYAM hand-guided recording
+          description: Guide an OpenYAM arm by hand and record demonstrations.
         openyam-lerobot-rollout:
           title: OpenYAM policy rollout
           description: Run a trained LeRobot policy on an OpenYAM arm.
