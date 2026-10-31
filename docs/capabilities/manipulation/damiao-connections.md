@@ -47,9 +47,10 @@ uv run dimos status
 uv run dimos shell
 ```
 
-In the RPC shell, inspect the connection and coordinator:
+The following Python snippets require the live `dimos shell` session.
+Inspect the connection and coordinator there:
 
-```python
+```python skip
 modules()
 app.MetalConnection.status()
 app.ControlCoordinator.get_joint_positions()
@@ -62,7 +63,7 @@ Mock mode echoes commanded positions. It does not simulate dynamics or contact.
 
 For the mock Metal, test its gripper:
 
-```python
+```python skip
 app.ControlCoordinator.task_invoke("arm_gripper", "set_normalized", {"values": [0.6]})
 app.ControlCoordinator.get_joint_positions()
 ```
@@ -73,7 +74,7 @@ blueprint, use `arm_left_gripper` or `arm_right_gripper` for the selected jaw.
 
 For a small arm trajectory in the mock Metal, use:
 
-```python
+```python skip
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -93,7 +94,7 @@ while the other arm coordinates and gripper retain their targets.
 
 To exercise the actual coordinator/deadman path:
 
-```python
+```python skip
 app.ControlCoordinator.set_estop(True)
 app.MetalConnection.status()
 ```

@@ -86,9 +86,7 @@ def test_mock_webxr_grip_engages_only_its_own_arm(
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     coordinator = DamiaoTeleopCoordinator(publish_joint_state=False, **kwargs)
 
-    with mock_connection_rig(
-        DualOpenYamConnection, coordinator, tmp_path=tmp_path, mocker=mocker
-    ) as rig:
+    with mock_connection_rig(DualOpenYamConnection, coordinator, tmp_path=tmp_path) as rig:
         for side, config in _dual_openyam_webxr_tasks.items():
             task = cast("TeleopIKTask", coordinator._tasks[config.name])
             assert set(task.claim().joints) == {

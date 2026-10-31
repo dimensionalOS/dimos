@@ -104,7 +104,7 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         if issubclass(atom.module, ControlCoordinator)
     )
     coordinator = atom.module(publish_joint_state=False, **atom.kwargs)
-    with mock_connection_rig(MetalConnection, coordinator, tmp_path=tmp_path, mocker=mocker) as rig:
+    with mock_connection_rig(MetalConnection, coordinator, tmp_path=tmp_path) as rig:
         assert coordinator.task_invoke("arm_gripper", "set_normalized", {"values": [0.6]})
         rig.tick()
         assert rig.positions == {**{f"arm/joint{i}": 0.0 for i in range(1, 7)}, "arm/gripper": 0.6}

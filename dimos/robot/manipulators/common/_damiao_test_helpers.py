@@ -20,10 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import threading
 from typing import Any, Generic, TypeVar
-from unittest.mock import PropertyMock
+from unittest.mock import PropertyMock, patch
 import xml.etree.ElementTree as ET
-
-from pytest_mock import MockerFixture
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tick_loop import TickLoop
@@ -133,40 +131,41 @@ def mock_connection_rig(
     coordinator: ControlCoordinator,
     *,
     tmp_path: Path,
-    mocker: MockerFixture,
 ) -> Iterator[MockConnectionRig]:
     """Exercise the real connection path; only geometry and native boundaries are fixtures."""
-    connection = None
-    try:
-        mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
-        mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
-        model = _local_test_model(connection_type, tmp_path / "control.urdf")
-        connection = connection_type(model=model, source="arm", deadman_timeout_s=10)
-        coordinator.config.model = model.with_renamed_joints(
-            {name: f"arm/{name}" for name in connection_type.robot.joint_names}
-        )
-        inputs = {name: LocalTransport[Any]() for name in coordinator.inputs}
-        for name, transport in inputs.items():
-            coordinator.set_transport(name, transport)
-        for name in coordinator.outputs:
-            coordinator.set_transport(name, LocalTransport[Any]())
-        readings = LocalTransport[JointState]()
-        commands = LocalTransport[JointState]()
-        coordinator.set_transport("arm_joint_state", readings)
-        coordinator.set_transport("arm_position_command", commands)
-        connection.set_transport("joint_state", readings)
-        connection.set_transport("position_command", commands)
-        mocker.patch.object(TickLoop, "start")
-        mocker.patch.object(TickLoop, "is_running", new_callable=PropertyMock, return_value=True)
-        coordinator.start()
-        connection.start()
-        wait_until(lambda: coordinator._connections["arm"].ready_for_control(), timeout=2)
-        rig = MockConnectionRig(coordinator, connection, inputs, readings, commands)
-        rig.tick()
-        yield rig
-    finally:
+    with (
+        patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start"),
+        patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc"),
+        patch.object(TickLoop, "start"),
+        patch.object(TickLoop, "is_running", new_callable=PropertyMock, return_value=True),
+    ):
+        connection = None
         try:
-            coordinator.stop()
+            model = _local_test_model(connection_type, tmp_path / "control.urdf")
+            connection = connection_type(model=model, source="arm", deadman_timeout_s=10)
+            coordinator.config.model = model.with_renamed_joints(
+                {name: f"arm/{name}" for name in connection_type.robot.joint_names}
+            )
+            inputs = {name: LocalTransport[Any]() for name in coordinator.inputs}
+            for name, transport in inputs.items():
+                coordinator.set_transport(name, transport)
+            for name in coordinator.outputs:
+                coordinator.set_transport(name, LocalTransport[Any]())
+            readings = LocalTransport[JointState]()
+            commands = LocalTransport[JointState]()
+            coordinator.set_transport("arm_joint_state", readings)
+            coordinator.set_transport("arm_position_command", commands)
+            connection.set_transport("joint_state", readings)
+            connection.set_transport("position_command", commands)
+            coordinator.start()
+            connection.start()
+            wait_until(lambda: coordinator._connections["arm"].ready_for_control(), timeout=2)
+            rig = MockConnectionRig(coordinator, connection, inputs, readings, commands)
+            rig.tick()
+            yield rig
         finally:
-            if connection is not None:
-                connection.stop()
+            try:
+                coordinator.stop()
+            finally:
+                if connection is not None:
+                    connection.stop()
