@@ -694,6 +694,10 @@ impl Worker {
             GoalStep::Plan { start, goal } => (start, goal),
         };
 
+        if goal_changed {
+            // a goal sent again is a new request, not the old blocked one
+            planner.reset_approach();
+        }
         let plan_start = Instant::now();
         let waypoints =
             tokio::task::block_in_place(|| planner.plan_or_truncate(start, goal, &self.config));

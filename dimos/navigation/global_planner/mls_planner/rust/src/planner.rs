@@ -17,6 +17,7 @@ use std::collections::{BinaryHeap, VecDeque};
 use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
+use crate::columns::ColumnIz;
 use crate::dijkstra::{walk_preds, Scored};
 use crate::edges::PlannerGraph;
 use crate::mls_planner::Config;
@@ -35,6 +36,27 @@ const MAX_SNAP_ATTEMPTS: usize = 64;
 
 /// On a blocked path, stop this far short of the last traversable point.
 const BEST_EFFORT_DISTANCE_M: f32 = 1.0;
+
+/// An approach must bring the robot at least this much closer to the goal
+/// than it was when the goal was first blocked.
+const MIN_APPROACH_GAIN_M: f32 = 0.5;
+
+/// An approach target the robot has come this close to without a full path
+/// appearing is a dead end.
+pub(crate) const APPROACH_REACHED_M: f32 = 0.5;
+
+/// Later approach targets keep this far from a dead end.
+const DEAD_END_RADIUS_M: f32 = 1.0;
+
+/// Dead ends one blocked goal may lead to before the robot stops.
+pub(crate) const MAX_DEAD_ENDS: usize = 3;
+
+/// A point and its distance to the goal.
+type Scored3 = (f32, (f32, f32, f32));
+
+/// How far past the wall buffer a frontier cell may stand from the unseen
+/// floor it looks onto.
+const FRONTIER_SLACK_M: f32 = 0.2;
 
 /// World-frame waypoints paired with the string-pulled cell path that produced
 /// them. The cell path is cached for later safe truncation.
@@ -216,6 +238,94 @@ pub fn plan(
     );
     let path_cells: Vec<VoxelKey> = cells.iter().map(|&id| plg.cells.coord(id)).collect();
     Some((waypoints, path_cells))
+}
+
+/// Where to head when the goal is not connected to the start. Floor the sensor
+/// has not seen yet, such as the shadow a door sill or a tall box casts,
+/// splits the surface until the robot looks at it from closer or from the
+/// side, so the target is the frontier cell nearest the goal in xy: reachable
+/// surface that looks along the floor, within the wall buffer plus
+/// `FRONTIER_SLACK_M` and with nothing in the way, onto a column that holds
+/// neither a voxel nor a surface. Standing
+/// there the robot sees into what disconnects it, where the reachable cell
+/// nearest the goal can be the face of a box it cannot see past. With no
+/// frontier any nearer it is that nearest cell, so a goal walled off in seen
+/// space is still closed in on. Within either kind a cell clear of the wall
+/// buffer beats one only clear of the hard clearance, so the robot stops where
+/// a path would keep it rather than against what blocks it. Cells within
+/// `DEAD_END_RADIUS_M` of a `dead_ends` target are left out. None when no
+/// reachable cell is at least `MIN_APPROACH_GAIN_M` closer to the goal than
+/// `from_m`, the robot's distance to it when it was first blocked, so the robot
+/// can walk back from a dead end to a frontier no nearer than where it stands.
+/// Reachable means over edges a plan can take: a passage narrower than the
+/// hard clearance joins the floor but not the search.
+pub fn approach_target(
+    plg: &PlannerGraph,
+    by_col: &ColumnIz,
+    start_pose: (f32, f32, f32),
+    goal_pose: (f32, f32, f32),
+    from_m: f32,
+    dead_ends: &[(f32, f32)],
+    config: &Config,
+) -> Option<(f32, f32, f32)> {
+    let voxel_size = config.voxel_size;
+    let dist = &plg.wall_state.dist;
+    let clear_of_walls = |id: CellId| {
+        dist.get(id as usize).copied().unwrap_or(f32::INFINITY) >= config.wall_clearance_m
+    };
+    // the nearest cell the robot can stand on, so the search leaves it the way a plan would
+    let start = snap_candidates(
+        &plg.surface_lookup,
+        start_pose,
+        voxel_size,
+        config.robot_height,
+    )
+    .into_iter()
+    .take(MAX_SNAP_ATTEMPTS)
+    .filter_map(|c| plg.cells.id(c))
+    .find(|&id| clear_of_walls(id))?;
+    let to_goal = |p: (f32, f32, f32)| (p.0 - goal_pose.0).hypot(p.1 - goal_pose.1);
+    let worth = from_m - MIN_APPROACH_GAIN_M;
+    let dead = |p: (f32, f32, f32)| {
+        dead_ends
+            .iter()
+            .any(|d| (p.0 - d.0).hypot(p.1 - d.1) < DEAD_END_RADIUS_M)
+    };
+    let buffered = config.wall_clearance_m + config.wall_buffer_m;
+    let reach = ((buffered + FRONTIER_SLACK_M) / voxel_size).ceil() as i32;
+    // across floor to a column with nothing in it, before any wall
+    let frontier = |ix: i32, iy: i32| {
+        [(-1, 0), (1, 0), (0, -1), (0, 1)].iter().any(|&(dx, dy)| {
+            (1..=reach)
+                .map(|k| (ix + dx * k, iy + dy * k))
+                .find(|&col| !plg.surface_lookup.contains_key(&col))
+                .is_some_and(|col| by_col.get(col).is_none())
+        })
+    };
+
+    // by rank: frontier and buffered, frontier, buffered, clear
+    let mut best: [Option<Scored3>; 4] = [None; 4];
+    let mut seen: AHashSet<CellId> = AHashSet::from_iter([start]);
+    let mut queue: VecDeque<CellId> = VecDeque::from([start]);
+    while let Some(id) = queue.pop_front() {
+        let clear = dist.get(id as usize).copied().unwrap_or(f32::INFINITY);
+        let (ix, iy, iz) = plg.cells.coord(id);
+        let p = surface_point_xyz(ix, iy, iz, voxel_size);
+        let d = to_goal(p);
+        if clear >= config.wall_clearance_m && d <= worth && !dead(p) {
+            let rank = 2 * usize::from(!frontier(ix, iy)) + usize::from(clear < buffered);
+            if best[rank].is_none_or(|(bd, _)| d < bd) {
+                best[rank] = Some((d, p));
+            }
+        }
+        // only edges a plan can take, so every target found is one it reaches
+        for e in plg.cells.neighbors(id) {
+            if e.cost.is_finite() && seen.insert(e.dest) {
+                queue.push_back(e.dest);
+            }
+        }
+    }
+    best.into_iter().flatten().next().map(|(_, target)| target)
 }
 
 /// Re-validate a cached path against the current surface. Returns the route
@@ -900,6 +1010,7 @@ mod tests {
             wall_buffer_weight: 4.0,
             step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
+            approach_when_blocked: true,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
             viz_cell_m: 4.0,
@@ -931,6 +1042,7 @@ mod tests {
             wall_buffer_weight: 4.0,
             step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
+            approach_when_blocked: true,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
             viz_cell_m: 4.0,

@@ -80,6 +80,10 @@ pub struct Config {
     /// Soft cost added per meter of vertical climb.
     #[validate(range(min = 0.0))]
     pub step_penalty_weight: f32,
+    /// With no full path to the goal and no cached path to follow, head for
+    /// the frontier nearest the goal instead of stopping. Unseen floor, like
+    /// the shadow behind a door sill or a tall box, then comes into view.
+    pub approach_when_blocked: bool,
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
@@ -221,6 +225,17 @@ pub struct Planner {
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
     last_result: Option<((f32, f32, f32), bool)>,
+    // The blocked goal being approached, while it has no full path.
+    approach: Option<Approach>,
+}
+
+/// A blocked goal's approach: the robot's distance to the goal when it was
+/// first blocked, the target last headed for, and the dead ends reached.
+struct Approach {
+    goal: (f32, f32, f32),
+    from_m: f32,
+    target: Option<(f32, f32, f32)>,
+    dead_ends: Vec<(f32, f32)>,
 }
 
 impl Planner {
@@ -232,6 +247,7 @@ impl Planner {
             by_col: ColumnIz::default(),
             last_path: None,
             last_result: None,
+            approach: None,
         }
     }
 
@@ -684,6 +700,7 @@ impl Planner {
                 }
                 self.last_result = Some((goal, true));
                 self.last_path = Some((goal, cells));
+                self.approach = None;
                 return waypoints;
             }
         }
@@ -694,12 +711,63 @@ impl Planner {
             );
         }
         self.last_result = Some((goal, false));
-        match &self.last_path {
+        let ahead = match &self.last_path {
             Some((cached_goal, cells)) if *cached_goal == goal => {
                 planner::truncate_to_safe(&self.graph, cells, start, config)
             }
             _ => Vec::new(),
+        };
+        if !ahead.is_empty() || !config.approach_when_blocked || self.graph.nodes.is_empty() {
+            return ahead;
         }
+        // Nothing cached to follow: head for the frontier nearest the goal, so
+        // the robot can see what disconnects it. A target reached with still no
+        // full path is a dead end, and the next keeps away from it.
+        let mut approach = match self.approach.take() {
+            Some(approach) if approach.goal == goal => approach,
+            _ => Approach {
+                goal,
+                from_m: (start.0 - goal.0).hypot(start.1 - goal.1),
+                target: None,
+                dead_ends: Vec::new(),
+            },
+        };
+        if let Some(t) = approach.target {
+            if (t.0 - start.0).hypot(t.1 - start.1) <= planner::APPROACH_REACHED_M {
+                tracing::info!(?goal, target = ?t, "approach reached a dead end");
+                approach.dead_ends.push((t.0, t.1));
+            }
+        }
+        approach.target = (approach.dead_ends.len() < planner::MAX_DEAD_ENDS)
+            .then(|| {
+                planner::approach_target(
+                    &self.graph,
+                    &self.by_col,
+                    start,
+                    goal,
+                    approach.from_m,
+                    &approach.dead_ends,
+                    config,
+                )
+            })
+            .flatten();
+        let waypoints = approach
+            .target
+            .and_then(|target| planner::plan(&self.graph, start, target, config))
+            .map(|(waypoints, _)| waypoints)
+            .unwrap_or_default();
+        if let (Some(t), true) = (approach.target, waypoints.is_empty()) {
+            // a target no plan reaches is a dead end, so the next pass tries another
+            approach.dead_ends.push((t.0, t.1));
+        }
+        self.approach = Some(approach);
+        waypoints
+    }
+
+    /// Forget the blocked goal's approach, so a goal sent again, even to the
+    /// same spot, starts with no dead ends.
+    pub fn reset_approach(&mut self) {
+        self.approach = None;
     }
 
     pub fn graph(&self) -> &PlannerGraph {
@@ -843,5 +911,7 @@ fn bfs_ball(
     ball
 }
 
+#[cfg(test)]
+mod approach_tests;
 #[cfg(test)]
 mod region_tests;

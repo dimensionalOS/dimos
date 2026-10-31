@@ -98,6 +98,8 @@ impl MLSPlanner {
             wall_buffer_weight,
             step_threshold_m,
             step_penalty_weight,
+            // Unused here. Only the binary's replan loop approaches a blocked goal.
+            approach_when_blocked: false,
             // Unused here. Only the binary's replan loop reads goal_tolerance.
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.

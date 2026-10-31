@@ -87,6 +87,7 @@ fn test_config() -> Config {
         wall_buffer_weight: 1.0,
         step_threshold_m: 0.25,
         step_penalty_weight: 0.0,
+        approach_when_blocked: true,
         goal_tolerance: 0.3,
         viz_publish_hz: 2.0,
         viz_cell_m: 4.0,
