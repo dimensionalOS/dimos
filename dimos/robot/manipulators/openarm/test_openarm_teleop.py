@@ -14,6 +14,7 @@
 
 """Construction and component tests for safe OpenArm WebXR teleoperation."""
 
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -22,32 +23,32 @@ from pytest_mock import MockerFixture
 
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTask
-from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.hardware.whole_body.spec import WholeBodyAdapter
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.robot.manipulators.common._damiao_test_helpers import mock_connection_rig
+from dimos.robot.manipulators.common.damiao_blueprint import DamiaoTeleopCoordinator
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OPENARM_WEBXR_TASK_NAME,
-    OpenArmTeleopCoordinator,
-    _OpenArmManipulationModule,
     teleop_webxr_openarm,
 )
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
-    OPENARM_GRIPPER_JOINTS,
     OPENARM_HOME_JOINTS,
-    OPENARM_JOINTS,
     openarm_bimanual_model_config,
 )
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.teleop.webxr.extensions import ArmTeleopModule
+
+_DEPLOYMENT = OpenArmConnection.models()
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -60,7 +61,7 @@ def _solver_config(
     pink_config: PinkKinematicsConfig,
 ) -> PoseTargetIKTaskConfig:
     return PoseTargetIKTaskConfig(
-        joint_names=tuple(OPENARM_ARM_JOINTS),
+        joint_names=tuple(model.joint_names),
         robot_model=model,
         target_frames=frames,
         pink=pink_config,
@@ -75,12 +76,13 @@ def test_openarm_model_uses_canonical_zero_start() -> None:
 
 
 def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
-    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, OpenArmTeleopCoordinator)
+    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, DamiaoTeleopCoordinator)
     teleop_kwargs = _module_kwargs(teleop_webxr_openarm, ArmTeleopModule)
-    manipulation_kwargs = _module_kwargs(teleop_webxr_openarm, _OpenArmManipulationModule)
+    manipulation_kwargs = _module_kwargs(teleop_webxr_openarm, ManipulationModule)
     tasks = coordinator_kwargs["tasks"]
 
-    assert "hardware" not in coordinator_kwargs
+    assert coordinator_kwargs.get("hardware", []) == []
+    assert _module_kwargs(teleop_webxr_openarm, OpenArmConnection)["source"] == "arm"
     assert "left_can_port" not in coordinator_kwargs
     assert "right_can_port" not in coordinator_kwargs
     assert len(tasks) == 4
@@ -91,21 +93,26 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
     bindings = task.params["bindings"]
     assert task.name == OPENARM_WEBXR_TASK_NAME
     assert task.type == "teleop_ik"
-    assert task.joint_names == OPENARM_ARM_JOINTS
+    assert task.joint_names == list(_DEPLOYMENT.arm_joints)
     assert {binding["hand"] for binding in bindings} == {"left", "right"}
     assert {binding["target_frame"] for binding in bindings} == {
         "openarm_left_grasp_frame",
         "openarm_right_grasp_frame",
     }
     assert {joint for gripper in grippers for joint in gripper.joint_names} == set(
-        OPENARM_GRIPPER_JOINTS
+        _DEPLOYMENT.gripper_joints
     )
     assert {gripper.stream_bind["gripper_command"] for gripper in grippers} == {
         "left_gripper_command",
         "right_gripper_command",
     }
     assert isinstance(task.params["pink"], PinkKinematicsConfig)
-    assert "robot_model" not in task.params
+    assert task.params["robot_model"].joint_names == list(_DEPLOYMENT.arm_joints)
+    assert [group.joint_names for group in task.params["robot_model"].planning_groups] == [
+        _DEPLOYMENT.arm_joints[:7],
+        _DEPLOYMENT.arm_joints[7:],
+        _DEPLOYMENT.arm_joints,
+    ]
     assert task.params["solver_type"] is OpenArmPinkPoseTargetSolver
     assert task.params["pink"].joint_limit_posture_margin == 0.3
     assert task.params["pink"].position_cost == 8.0
@@ -118,7 +125,7 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
         joint_name: limit
         for side_offset in (0, 7)
         for joint_name, limit in zip(
-            OPENARM_ARM_JOINTS[side_offset : side_offset + 7],
+            _DEPLOYMENT.arm_joints[side_offset : side_offset + 7],
             (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0),
             strict=True,
         )
@@ -126,12 +133,14 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
     assert task.params["joint_velocity_limits_rad_s"] == expected_velocity_limits
     assert task.params["joint_command_filter_cutoff_hz"] == 5.0
     assert task.priority == 20
-    assert trajectory.joint_names == OPENARM_JOINTS
+    assert trajectory.joint_names == list(_DEPLOYMENT.joints)
     assert trajectory.priority < task.priority
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
     assert teleop_kwargs == {}
     assert teleop_webxr_openarm.remapping_map == {
+        (OpenArmConnection.name, "position_command"): "arm_position_command",
+        ("ControlCoordinator", "arm_joint_state"): "joint_state",
         (ArmTeleopModule.name, "left_controller_output"): "left_cartesian_command",
         (ArmTeleopModule.name, "left_gripper_command"): "left_gripper_command",
         (ArmTeleopModule.name, "right_controller_output"): "right_cartesian_command",
@@ -146,15 +155,18 @@ def test_openarm_can_ports_are_blueprint_cli_options() -> None:
             environ={},
         )
 
-        coordinator = parsed.module_kwargs("ControlCoordinator")
-        assert coordinator["left_can_port"] == "can1"
-        assert coordinator["right_can_port"] == "can0"
+        connection = parsed.module_kwargs("openarmconnection")
+        assert connection["left_can_port"] == "can1"
+        assert connection["right_can_port"] == "can0"
 
 
+@pytest.mark.parametrize("released_hand", ["left", "right"])
 def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
     mocker: MockerFixture,
+    tmp_path: Path,
+    released_hand: str,
 ) -> None:
-    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, OpenArmTeleopCoordinator)
+    coordinator_kwargs = _module_kwargs(teleop_webxr_openarm, DamiaoTeleopCoordinator)
     mocker.patch.object(OpenArmPinkPoseTargetSolver, "_validate_frame_targets")
     frame_poses = mocker.patch.object(
         OpenArmPinkPoseTargetSolver,
@@ -168,23 +180,25 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         OpenArmPinkPoseTargetSolver,
         "step",
         return_value=JointState(
-            name=list(OPENARM_ARM_JOINTS),
+            name=list(_DEPLOYMENT.arm_joints),
             position=[0.01] * len(OPENARM_ARM_JOINTS),
         ),
     )
-    mocker.patch.object(TickLoop, "start")
-    coordinator = OpenArmTeleopCoordinator(publish_joint_state=False, **coordinator_kwargs)
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    coordinator = DamiaoTeleopCoordinator(publish_joint_state=False, **coordinator_kwargs)
 
-    try:
-        coordinator.start()
+    with mock_connection_rig(
+        OpenArmConnection, coordinator, tmp_path=tmp_path, mocker=mocker
+    ) as rig:
         task = cast("TeleopIKTask", coordinator._tasks[OPENARM_WEBXR_TASK_NAME])
-        assert task._teleop_config.robot_model.joint_names == OPENARM_ARM_JOINTS
+        assert task._teleop_config.robot_model.joint_names == list(_DEPLOYMENT.arm_joints)
         assert task._teleop_config.max_joint_velocity_rad_s == 2.0
         assert task._teleop_config.joint_velocity_limits_rad_s == {
             joint_name: limit
             for side_offset in (0, 7)
             for joint_name, limit in zip(
-                OPENARM_ARM_JOINTS[side_offset : side_offset + 7],
+                _DEPLOYMENT.arm_joints[side_offset : side_offset + 7],
                 (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0),
                 strict=True,
             )
@@ -194,45 +208,41 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         buttons.left_grip = True
         buttons.right_grip = True
         buttons.pack_analog_triggers(left=0.25, right=0.75)
-        coordinator._dispatch("teleop_buttons", buttons)
-        coordinator._dispatch("left_gripper_command", Float32(data=0.75))
-        coordinator._dispatch("right_gripper_command", Float32(data=0.25))
-        coordinator._dispatch(
-            "left_cartesian_command",
+        rig.inputs["teleop_buttons"].publish(buttons)
+        rig.inputs["left_gripper_command"].publish(Float32(data=0.75))
+        rig.inputs["right_gripper_command"].publish(Float32(data=0.25))
+        rig.inputs["left_cartesian_command"].publish(
             PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
         )
-        coordinator._dispatch(
-            "right_cartesian_command",
+        rig.inputs["right_cartesian_command"].publish(
             PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
         )
 
-        assert coordinator._tick_loop is not None
-        coordinator._tick_loop._tick()
+        rig.tick()
 
-        connected = coordinator._hardware["openarm"]
-        states = cast("WholeBodyAdapter", connected.adapter).read_motor_states()
-        assert [state.q for state in states[: len(OPENARM_ARM_JOINTS)]] == [0.01] * len(
-            OPENARM_ARM_JOINTS
-        )
-        assert [state.q for state in states[-2:]] == [
-            0.75,
-            0.25,
-        ]
+        assert list(rig.commands.name) == list(_DEPLOYMENT.joints)
+        assert list(rig.commands.position) == [0.01] * 14 + [0.75, 0.25]
+        assert rig.positions == {
+            **dict.fromkeys(_DEPLOYMENT.arm_joints, 0.01),
+            _DEPLOYMENT.gripper_joints[0]: 0.75,
+            _DEPLOYMENT.gripper_joints[1]: 0.25,
+        }
         frame_poses.assert_called_once()
         step.assert_called_once()
 
         released = Buttons()
-        released.right_primary = True
-        coordinator._dispatch("teleop_buttons", released)
-        coordinator._tick_loop._tick()
+        released.left_grip = released_hand != "left"
+        released.right_grip = released_hand != "right"
+        rig.inputs["teleop_buttons"].publish(released)
+        rig.tick()
         step.assert_called_once()
-    finally:
-        coordinator.stop()
+        assert list(rig.commands.position[:14]) == [0.01] * 14
 
 
 @pytest.mark.self_hosted
-def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
-    model = openarm_bimanual_model_config()
+@pytest.mark.parametrize("deployed", [False, True])
+def test_openarm_teleop_pink_objective_uses_robot_specific_tuning(deployed: bool) -> None:
+    model = _DEPLOYMENT.planning if deployed else openarm_bimanual_model_config()
     frames = ("openarm_left_grasp_frame", "openarm_right_grasp_frame")
     config = PinkKinematicsConfig(
         dt=0.01,
@@ -241,7 +251,7 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
         lm_damping=0.01,
         gain=0.25,
     )
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(name=model.joint_names, position=[0.0] * len(model.joint_names))
     solver = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
     targets = solver.frame_poses(seed, frames)
 
@@ -262,7 +272,7 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
     )
 
     moved_seed = JointState(
-        name=OPENARM_ARM_JOINTS,
+        name=model.joint_names,
         position=np.tile([0.1, -0.1, 0.2, 0.4, 0.1, -0.1, 0.2], 2).tolist(),
     )
     solver.reset()
@@ -274,8 +284,11 @@ def test_openarm_teleop_pink_objective_uses_robot_specific_tuning() -> None:
 
 
 @pytest.mark.self_hosted
-def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() -> None:
-    model = openarm_bimanual_model_config()
+@pytest.mark.parametrize("deployed", [False, True])
+def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates(
+    deployed: bool,
+) -> None:
+    model = _DEPLOYMENT.planning if deployed else openarm_bimanual_model_config()
     frames = ("openarm_left_grasp_frame", "openarm_right_grasp_frame")
     config = PinkKinematicsConfig(
         dt=0.01,
@@ -287,7 +300,7 @@ def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() 
         gain=0.25,
     )
     ik = OpenArmPinkPoseTargetSolver(_solver_config(model, frames, config))
-    seed = JointState(name=OPENARM_ARM_JOINTS, position=[0.0] * len(OPENARM_ARM_JOINTS))
+    seed = JointState(name=model.joint_names, position=[0.0] * len(model.joint_names))
     initial = ik.frame_poses(seed, frames)
     targets = {
         name: PoseStamped(

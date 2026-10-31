@@ -16,17 +16,16 @@ from typing import Any, get_origin, get_type_hints
 
 import pytest
 
-from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
 )
+from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection import _profile
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
@@ -34,16 +33,18 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
-    OPENYAM_DOF,
-    OPENYAM_GRIPPER_JOINT,
     OPENYAM_HARDWARE_ID,
     OPENYAM_HOME_JOINTS,
-    OPENYAM_JOINTS,
     OPENYAM_MODEL_PATH,
     make_openyam_model_config,
-    openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
+
+_DEPLOYMENT = OpenYamConnection.models()
+_JOINTS = list(_DEPLOYMENT.joints)
+_ARM_JOINTS = list(_DEPLOYMENT.arm_joints)
+_GRIPPER_JOINT = _DEPLOYMENT.gripper_joints[0]
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -83,6 +84,9 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
     )
+    assert {
+        joint.name: joint.type for joint in model.joints if joint.name in {"joint7", "joint8"}
+    } == {"joint7": "fixed", "joint8": "fixed"}
 
 
 def test_make_openyam_model_config_preserves_explicit_home() -> None:
@@ -103,43 +107,23 @@ def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
     assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
 
 
-def test_openyam_hardware_physical_mode_returns_one_whole_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "simulation", "")
-
-    hardware = openyam_hardware(bus_devices={"openyam": "can1"})
-
-    assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
-        OPENYAM_HARDWARE_ID,
-        HardwareType.WHOLE_BODY,
-        "openyam_damiao",
-    )
-    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can1"}
+def test_openyam_connection_defaults_to_mock_and_accepts_explicit_selector() -> None:
+    default = OpenYamConnection()
+    physical = OpenYamConnection(can_port="can1")
+    try:
+        assert default.config.source == "yam"
+        assert default._can_devices() is None
+        assert physical._can_devices() == {"openyam": "can1"}
+        assert default.robot.mock_positions == (0.0,) * 7
+    finally:
+        default.stop()
+        physical.stop()
 
 
-def test_openyam_hardware_without_bus_devices_uses_platform_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "simulation", "")
-
-    hardware = openyam_hardware()
-
-    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {}
-
-
-def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
-
-    hardware = openyam_hardware()
-
-    assert hardware.adapter_type == "mock_whole_body"
-    limits = hardware.limits
-    assert limits is not None
-    assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
-    assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
+@pytest.mark.parametrize("port", ["", " "])
+def test_openyam_connection_rejects_empty_selector(port: str) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        OpenYamConnection(can_port=port)
 
 
 def test_quest_teleop_module_accepts_blueprint_config() -> None:
@@ -156,19 +140,20 @@ def test_quest_teleop_module_accepts_blueprint_config() -> None:
         openyam_planner_coordinator,
     ],
 )
-def test_openyam_basic_trajectory_accepts_all_hardware_joints(blueprint: Blueprint) -> None:
+def test_openyam_basic_trajectory_accepts_all_deployed_joints(blueprint: Blueprint) -> None:
     kwargs = _coordinator_kwargs(blueprint)
 
-    assert kwargs["hardware"][0].joints == OPENYAM_JOINTS
+    assert not kwargs.get("hardware")
+    assert _module_kwargs(blueprint, OpenYamConnection)["source"] == "arm"
     trajectory = next(task for task in kwargs["tasks"] if task.type == "trajectory")
     gripper = next(task for task in kwargs["tasks"] if task.type == "gripper")
 
-    assert trajectory.joint_names == OPENYAM_JOINTS
+    assert trajectory.joint_names == _JOINTS
     assert (gripper.name, gripper.joint_names) == (
-        "openyam_gripper",
-        [OPENYAM_GRIPPER_JOINT],
+        "arm_gripper",
+        [_GRIPPER_JOINT],
     )
-    assert gripper.name == f"{make_openyam_model_config().gripper_hardware_id}_gripper"
+    assert gripper.name == f"{_DEPLOYMENT.planning.gripper_hardware_id}_gripper"
 
 
 @pytest.mark.parametrize(
@@ -184,12 +169,10 @@ def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
     kwargs = _coordinator_kwargs(blueprint)
     claimed_joints = [task.joint_names for task in kwargs["tasks"]]
 
-    assert kwargs["hardware"][0].joints == OPENYAM_JOINTS
-    assert OPENYAM_ARM_JOINTS in claimed_joints
-    assert all(
-        joints in (OPENYAM_ARM_JOINTS, [OPENYAM_GRIPPER_JOINT], OPENYAM_JOINTS)
-        for joints in claimed_joints
-    )
+    assert not kwargs.get("hardware")
+    assert _module_kwargs(blueprint, OpenYamConnection)["source"] == "arm"
+    assert _ARM_JOINTS in claimed_joints
+    assert all(joints in (_ARM_JOINTS, [_GRIPPER_JOINT], _JOINTS) for joints in claimed_joints)
 
 
 @pytest.mark.parametrize(
@@ -213,9 +196,9 @@ def test_openyam_task_bindings_have_coordinator_inputs(blueprint: Blueprint) -> 
 
 def test_keyboard_teleop_gripper_control_is_independent() -> None:
     tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
-    gripper = next(task for task in tasks if task.name == "openyam_gripper")
+    gripper = next(task for task in tasks if task.name == "arm_gripper")
 
-    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.joint_names == [_GRIPPER_JOINT]
     assert gripper.type == "gripper"
 
 
@@ -224,15 +207,15 @@ def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
     trajectory = next(task for task in tasks if task.type == "trajectory")
     eef_twist = next(task for task in tasks if task.type == "eef_twist")
 
-    assert trajectory.joint_names == OPENYAM_JOINTS
+    assert trajectory.joint_names == _JOINTS
     assert eef_twist.priority > trajectory.priority
 
 
 def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
     tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
-    gripper = next(task for task in tasks if task.name == "openyam_gripper")
+    gripper = next(task for task in tasks if task.name == "arm_gripper")
 
-    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.joint_names == [_GRIPPER_JOINT]
     assert gripper.params == {}
 
 
@@ -242,5 +225,15 @@ def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     gripper = next(task for task in tasks if task.type == "gripper")
 
     assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
-    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.joint_names == [_GRIPPER_JOINT]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
+
+
+def test_quest_collection_schema_uses_the_deployed_seven_joint_order() -> None:
+    state = _profile.observations["observation.state"]
+    action = _profile.actions["action"]
+    assert state.names == _JOINTS
+    assert state.shape == (7,)
+    assert action.names == _JOINTS
+    assert action.stream == "coordinator_joint_command"
+    assert action.source_kind == "joint_position_updates"

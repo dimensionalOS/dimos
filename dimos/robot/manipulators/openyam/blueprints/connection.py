@@ -12,22 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYam trajectories and normalized grippers through a connection module.
 
-No CAN selector runs the in-memory adapter. Supply the connection module's
-CAN selector(s) explicitly for hardware; --simulation always uses the mock.
-"""
+"""OpenYAM trajectory and normalized-gripper connection control."""
 
 from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
-from dimos.robot.manipulators.openyam.config import OPENYAM_ARM_JOINTS
-from dimos.robot.manipulators.openyam.connection import (
-    OpenYamConnection,
-    yam_connection_model,
-)
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
-openyam_connection_control = damiao_connection_control(
-    OpenYamConnection,
-    yam_connection_model(robot="arm"),
-    list(OPENYAM_ARM_JOINTS),
-    ("gripper",),
-).remappings([])
+openyam_connection_control = damiao_connection_control(OpenYamConnection).remappings([])
