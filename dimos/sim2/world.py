@@ -15,6 +15,7 @@
 """Compile a scene, its robots and their sensor mounts into one MuJoCo model."""
 
 from collections.abc import Iterable
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,8 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
 
     world = mujoco.MjSpec.from_file(str(scene))
     for robot in robots:
-        spec = mujoco.MjSpec.from_file(str(robot.model))
+        spec = mujoco.MjSpec.from_file(str(robot.model), assets=_assets(robot))
+        robot_geoms = {geom.name for geom in spec.geoms}
         root = spec.body(robot.root_body)
         if root is None:
             raise ValueError(f"{robot.robot_id}: no body {robot.root_body!r} in {robot.model}")
@@ -71,12 +73,42 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
         for sensor in sensors:
             if sensor.robot_id == robot.robot_id:
                 _mount(spec, sensor, robot.robot_id)
-        frame = world.worldbody.add_frame(pos=robot.xyz, quat=_quaternion(robot.rpy))
+        height, _ = keyframe(robot)
+        x, y, z = robot.xyz
+        frame = world.worldbody.add_frame(pos=(x, y, z + height), quat=_quaternion(robot.rpy))
         world.attach(spec, prefix=f"{robot.robot_id}/", frame=frame)
+        # Contact pairs naming a geom the robot lacks (its floor) mean the scene's geom of that name.
+        for pair in world.pairs:
+            for side in ("geomname1", "geomname2"):
+                name = getattr(pair, side).removeprefix(f"{robot.robot_id}/")
+                if getattr(pair, side) != name and name not in robot_geoms:
+                    setattr(pair, side, name)
     for sensor in sensors:
         if sensor.robot_id is None:
             _mount(world, sensor, "world", prefix="world/")
     return world.compile()
+
+
+@cache
+def keyframe(robot: SimulatedRobot) -> tuple[float, dict[str, float]]:
+    """The base height and the hinge and slide joint values of the robot's keyframe; (0, {}) without one."""
+    if robot.keyframe is None:
+        return 0.0, {}
+    spec = mujoco.MjSpec.from_file(str(robot.model), assets=_assets(robot))
+    qpos = np.asarray(spec.key(robot.keyframe).qpos)
+    sizes = {mujoco.mjtJoint.mjJNT_FREE: 7, mujoco.mjtJoint.mjJNT_BALL: 4}
+    joints, address, height = {}, 0, 0.0
+    for joint in spec.joints:
+        if joint.type == mujoco.mjtJoint.mjJNT_FREE:
+            height = float(qpos[address + 2])
+        elif joint.type not in sizes:
+            joints[joint.name] = float(qpos[address])
+        address += sizes.get(joint.type, 1)
+    return height, joints
+
+
+def _assets(robot: SimulatedRobot) -> dict[str, bytes] | None:
+    return {f.name: f.read_bytes() for f in robot.assets.iterdir()} if robot.assets else None
 
 
 def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str = "") -> None:

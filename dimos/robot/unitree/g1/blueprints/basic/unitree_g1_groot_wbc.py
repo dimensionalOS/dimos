@@ -155,8 +155,8 @@ def _mujoco_lidar_kwargs(camera_name: str, camera_names: tuple[str, ...]) -> dic
     }
 
 
-if global_config.simulation and global_config.simulation != "mujoco":
-    raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
+if global_config.simulation not in ("", "mujoco", "sim2"):
+    raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco or sim2")
 
 if global_config.simulation == "mujoco":
     from dimos.mapping.voxels.module import VoxelGridMapper
@@ -302,30 +302,52 @@ if global_config.simulation == "mujoco":
     )
     _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
-    # Real-hw backend: DDS connection module + transport_lcm adapter.
-    _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
+    if global_config.simulation == "sim2":
+        from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
+        from dimos.robot.unitree.g1.sim2 import G1Sim
+        from dimos.sim2.livox import LivoxSim
+        from dimos.sim2.module import Simulation
+        from dimos.sim2.spec import Mount
+
+        # The real stack with each device swapped for its sim twin: G1Sim for the
+        # connection, LivoxSim (upside down on the torso, as torso_to_mid360 has it) for the Mid360.
+        _backend = autoconnect(Simulation.blueprint(), G1Sim.blueprint())
+        _mid360 = LivoxSim.blueprint(
+            robot_id="g1",
+            mount=Mount("torso_link", _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0)),
+            frame_id=PointLioConfig.model_fields["sensor_frame_id"].default,
+        ).remappings([(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")])
+        # Nobody to click Activate in sim.
+        _auto_arm = True
+        _auto_dry_run = False
+        _default_ramp_seconds = 0.0
+    else:
+        from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+
+        # Real-hw backend: DDS connection module + transport_lcm adapter.
+        _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
+        _mid360 = mid360_for_pointlio()
+        # Real hardware: come up unarmed + dry-run; operator must click
+        # Activate (10 s ramp) after verifying commands.
+        _auto_arm = False
+        _auto_dry_run = True
+        _default_ramp_seconds = 10.0
     _adapter_type = "transport_lcm"
     _adapter_address = ""
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
     _tick_rate = 100.0
-    # Real hardware: come up unarmed + dry-run; operator must click
-    # Activate (10 s ramp) after verifying commands.
-    _auto_arm = False
-    _auto_dry_run = True
-    _default_ramp_seconds = 10.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
     _n_workers = 11
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
-        mid360_for_pointlio(),
+        _mid360,
         PointLio.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
