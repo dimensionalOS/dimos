@@ -87,12 +87,12 @@ Blueprint declarations, not functions that start cameras:
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 
 usb = autoconnect(*(
-    CameraModule.blueprint(
+    WebcamModule.blueprint(
         instance_name=name,
         hardware=WebcamConfig(camera_index=index, width=640, height=480, fps=30),
     )

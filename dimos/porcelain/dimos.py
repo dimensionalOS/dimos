@@ -73,7 +73,7 @@ class Dimos:
         Args:
             target: One of:
                 - A string name from the blueprint/module registry
-                  (e.g. `"unitree-go2-basic"` or `"camera-module"`).
+                  (e.g. `"unitree-go2-basic"` or `"webcam-module"`).
                 - A `Blueprint` object.
                 - A `Module` class (calls `.blueprint()` automatically).
 

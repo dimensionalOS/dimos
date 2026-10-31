@@ -18,7 +18,7 @@ import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
@@ -77,7 +77,7 @@ def test_collect_only_declares_recorder_and_preserves_joint_semantics(profile, t
     assert schema.action["action"].stream == "command"
 
 
-@pytest.mark.parametrize("camera_module", [CameraModule, RealSenseCamera])
+@pytest.mark.parametrize("camera_module", [WebcamModule, RealSenseCamera])
 def test_three_cameras_can_be_replaced_without_changing_profile(profile, camera_module):
     names = ("left_wrist", "right_wrist", "overhead")
     graph = autoconnect(

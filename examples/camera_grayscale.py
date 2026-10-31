@@ -17,7 +17,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -37,7 +37,7 @@ class Grayscale(Module):
 if __name__ == "__main__":
     ModuleCoordinator.build(
         autoconnect(
-            CameraModule.blueprint(),
+            WebcamModule.blueprint(),
             Grayscale.blueprint(),
             RerunBridgeModule.blueprint(),
         )

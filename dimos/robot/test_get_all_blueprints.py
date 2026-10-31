@@ -25,7 +25,7 @@ def test_resolve_string_blueprint():
 
 
 def test_resolve_string_module():
-    bp = get_by_name("camera-module")
+    bp = get_by_name("webcam-module")
     assert bp is not None
 
 
@@ -35,7 +35,7 @@ def test_resolve_string_blueprint_or_exit():
 
 
 def test_resolve_string_module_or_exit():
-    bp = get_by_name_or_exit("camera-module")
+    bp = get_by_name_or_exit("webcam-module")
     assert bp is not None
 
 

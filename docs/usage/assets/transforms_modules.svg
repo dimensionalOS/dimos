@@ -16,5 +16,5 @@
 <path d="M17.16,136.584L321.148,136.584A15 15 0 0 0 336.148 121.584L336.148,50.784A15 15 0 0 0 321.148 35.784L17.16,35.784A15 15 0 0 0 2.16 50.784L2.16,121.584A15 15 0 0 0 17.16 136.584Z"  style="fill:none;stroke-width:2.16;stroke:rgb(102,153,204);" />
 <text x="155.984" y="17.28" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">RobotBaseModule</text>
 <path d="M333.148,122.184L863.204,122.184A15 15 0 0 0 878.204 107.184L878.204,36.384A15 15 0 0 0 863.204 21.384L333.148,21.384A15 15 0 0 0 318.148 36.384L318.148,107.184A15 15 0 0 0 333.148 122.184Z"  style="fill:none;stroke-width:2.16;stroke:rgb(204,153,102);" />
-<text x="616.107" y="140.688" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">CameraModule</text>
+<text x="616.107" y="140.688" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">WebcamModule</text>
 </svg>

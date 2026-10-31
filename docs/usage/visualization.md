@@ -66,11 +66,11 @@ To enable visualization in your own blueprint, use `vis_module`:
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.visualization.vis_module import vis_module
 
 camera_demo = autoconnect(
-    CameraModule.blueprint(),
+    WebcamModule.blueprint(),
     vis_module(viewer_backend=global_config.viewer),
 )
 
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     ModuleCoordinator.build(camera_demo).loop()
 ```
 
-Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
+Every LCM stream, such as `color_image` (output by WebcamModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
 
 ## Performance Tuning
 

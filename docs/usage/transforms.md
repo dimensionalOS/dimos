@@ -210,7 +210,7 @@ For lookups, use `self.tfbuffer`, a lazy [`TF`](/dimos/protocol/tf/tf.py) buffer
 This example demonstrates how multiple modules publish and receive transforms. Three modules work together:
 
 1. **RobotBaseModule** - Publishes `world -> base_link` (robot's position in the world)
-2. **CameraModule** - Publishes `base_link -> camera_link` (camera mounting position) and `camera_link -> camera_optical` (optical frame convention)
+2. **WebcamModule** - Publishes `base_link -> camera_link` (camera mounting position) and `camera_link -> camera_optical` (optical frame convention)
 3. **PerceptionModule** - Looks up transforms between any frames
 
 ```python skip ansi=false
@@ -249,7 +249,7 @@ class RobotBaseModule(Module):
             rx.interval(0.1).subscribe(publish_pose)
         )
 
-class CameraModule(Module):
+class WebcamModule(Module):
     """Publishes camera transforms at 10Hz."""
 
     tf: Out[TFMessage]
@@ -307,7 +307,7 @@ class PerceptionModule(Module):
 if __name__ == "__main__":
     dimos = ModuleCoordinator.build(autoconnect(
         RobotBaseModule.blueprint(),
-        CameraModule.blueprint(),
+        WebcamModule.blueprint(),
         PerceptionModule.blueprint(),
     ))
 
@@ -323,17 +323,17 @@ if __name__ == "__main__":
 ```results
 16:21:45.203 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
 16:21:45.445 [inf][/coordination/python_worker.py] Deployed module. module=RobotBaseModule module_id=0 worker_id=0
-16:21:45.451 [inf][/coordination/python_worker.py] Deployed module. module=CameraModule module_id=1 worker_id=1
+16:21:45.451 [inf][/coordination/python_worker.py] Deployed module. module=WebcamModule module_id=1 worker_id=1
 16:21:45.452 [inf][/coordination/python_worker.py] Deployed module. module=PerceptionModule module_id=2 worker_id=0
 16:21:47.968 [inf][dination/module_coordinator.py] Stopping module... module=PerceptionModule
 16:21:48.022 [inf][dination/module_coordinator.py] Module stopped. module=PerceptionModule
-16:21:48.022 [inf][dination/module_coordinator.py] Stopping module... module=CameraModule
-16:21:48.041 [inf][dination/module_coordinator.py] Module stopped. module=CameraModule
+16:21:48.022 [inf][dination/module_coordinator.py] Stopping module... module=WebcamModule
+16:21:48.041 [inf][dination/module_coordinator.py] Module stopped. module=WebcamModule
 16:21:48.041 [inf][dination/module_coordinator.py] Stopping module... module=RobotBaseModule
 16:21:48.062 [inf][dination/module_coordinator.py] Module stopped. module=RobotBaseModule
 16:21:48.062 [inf][ation/worker_manager_python.py] Shutting down all workers...
-16:21:48.062 [inf][/coordination/python_worker.py] Worker stopping module... module=CameraModule module_id=1 worker_id=1
-16:21:48.063 [inf][/coordination/python_worker.py] Worker module stopped. module=CameraModule module_id=1 worker_id=1
+16:21:48.062 [inf][/coordination/python_worker.py] Worker stopping module... module=WebcamModule module_id=1 worker_id=1
+16:21:48.063 [inf][/coordination/python_worker.py] Worker module stopped. module=WebcamModule module_id=1 worker_id=1
 TF(3 buffers):
   TBuffer(base_link -> camera_link, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
   TBuffer(camera_link -> camera_optical, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
@@ -399,11 +399,11 @@ box width (BL.e.x - W.w.x + 0.15in) height 0.7in \
     rad 10px color 0x6699cc fill none
 text "RobotBaseModule" italic at ((W.x + BL.x)/2, W.n.y + 0.25in)
 
-# CameraModule box - encompasses camera_link->camera_optical (starts after base_link)
+# WebcamModule box - encompasses camera_link->camera_optical (starts after base_link)
 box width (CO.e.x - BL.e.x + 0.1in) height 0.7in \
     at ((BL.e.x + CO.e.x)/2, CL.y + 0.05in) \
     rad 10px color 0xcc9966 fill none
-text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
+text "WebcamModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 ```
 
 </details>
