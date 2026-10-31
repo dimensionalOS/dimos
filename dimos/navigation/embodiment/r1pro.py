@@ -32,17 +32,18 @@ R1PRO = Embodiment(
     center_off=0,  # body center relative to the pose point
     comfort=0.4,  # obstacles-we-care-about radius (m)
     precision=0.05,  # local control tracking accuracy, the clearance floor (m)
-    # DanHolonomicTC's "walk" profile the R1 ran before: 0.55 m/s, 1 rad/s, 1 m/s^2; the 10-28 drive reached 0.56 m/s and 1.05 rad/s on it.
-    max_speed=0.55,  # cruise (m/s)
+    # Ground speed, so the walk inverse below asks 0.97 m/s of the 1.0 m/s R1PRO_PLANAR_BASE limit; the 10-28 drive only measured up to 0.55.
+    max_speed=0.8,  # cruise (m/s)
     min_speed=0.2,  # creep at the precision floor (m/s)
     speed_clearance=0.35,  # room at which full speed is granted (m)
-    max_yaw_rate=1.0,  # prices a rotation in place (rad/s)
-    # Fit on the 10-28 R1 drive (~90 s per axis, chassis/cmd_vel vs Point-LIO): p95 accel, then the base lags ~0.3 s (vx, vy) / 0.4 s (wz) plus tau 0.2 / 0.46 s.
+    # Under the planar base's 2.0 rad/s; the vendor gatekeeper caps angular accel at 1.0 rad/s^2, so 1.5 is reached in 1.5 s.
+    max_yaw_rate=1.5,  # prices a rotation in place (rad/s)
+    # Fit on the 10-28 R1 drive (~90 s per axis, chassis/cmd_vel vs Point-LIO): p95 accel; the base lags 0.27 s + tau 0.2 s (vx, vy), 0.4 s + 0.46 s (wz).
     command_slew=(1.1, 1.0, 1.3),  # d(vx, vy, wz)/dt
-    gait_band=(0.0, 0.55),  # wheels hold any commanded speed up to cruise (m/s)
-    # Measured ground/cmd ~0.8 (vx), ~0.87 (vy), ~0.95 (wz), but kept at identity: the inverse would command above 0.55.
-    walk_gain=1.0,
-    walk_slip=0.0,
+    gait_band=(0.1, 1.0),  # below ~0.1 commanded the base delivers about a third (m/s)
+    # Measured ground ~= 0.845 * cmd - 0.023 (vx, 0.15-0.55 m/s). The follower's walk_command is cmd = gain * want + slip, so these are its inverse.
+    walk_gain=1.18,
+    walk_slip=0.027,
     walk_slip_ramp=0.08,
     strafe=1.5,  # holonomic, but priced above forward so it turns to face long legs
     reverse=1.8,  # backwards drives into what the torso hides from the head camera
@@ -52,8 +53,8 @@ R1PRO = Embodiment(
     base_height=0.0,  # base_link sits at the wheel contact (m)
     control=ControllerConfig(
         lookahead=0.35,  # carrot distance along the path (m)
-        k_pos=2.0,  # body-frame position error gain (1/s)
-        k_yaw=0.8,  # yaw error gain (1/s); the swerve wheels turn before the body does
+        k_pos=1.7,  # body-frame position error gain (1/s); 45 deg phase margin over the measured 0.27 s + 0.2 s lag
+        k_yaw=0.9,  # yaw error gain (1/s); 45 deg phase margin over the measured 0.4 s + 0.46 s lag
         fan_yaw_per_m=3.0,  # yaw-per-meter above this is a rotation in place, not a curve
         fan_yaw_done=0.25,  # a fan holds position until the yaw error is under this (rad)
         speed_lookahead=2.0,  # the governor reads room over this much path ahead (m)
