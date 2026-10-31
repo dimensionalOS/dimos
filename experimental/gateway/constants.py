@@ -64,3 +64,12 @@ SERVER_STOP_DELAY_S = 0.2
 DEFAULT_HOST = "127.0.0.1"
 # server: longest unix socket path the kernel takes (sun_path is 104 bytes on macOS/BSD, 108 on Linux)
 UNIX_SOCKET_PATH_LIMIT = 104 if sys.platform == "darwin" else 108
+
+# cloud uploads: the shown upload speed is a moving average over about this long, so it doesn't jump per chunk
+UPLOAD_RATE_SMOOTHING_S = 6.0
+# cloud uploads: no ETA until this long after an upload starts, while the measured rate is still noise
+UPLOAD_ETA_WARMUP_S = 1.0
+# cloud uploads: progress events go out at most this often within a phase, so a fast upload doesn't flood the bus
+UPLOAD_PROGRESS_EMIT_S = 0.4
+# cloud account: account checks are cached this long; ?fresh= forces one
+ACCOUNT_CACHE_S = 20.0

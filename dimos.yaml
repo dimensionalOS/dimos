@@ -14,7 +14,7 @@ provides:
     version: 8.0.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
-      stop, its module instances, RPCs and streams); and past runs (logs, recordings). It saves no config: each launch
+      stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
       carries all of its own. Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   paths:
     /info:
@@ -267,6 +267,27 @@ provides:
             required: true
             schema:
               type: string
+    /cloud/account:
+      get:
+        description: >-
+          The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks
+    /cloud/login:
+      post:
+        summary: 'Start a device login: open the answer''s url and enter its code (cloud-login events follow it)'
+      delete:
+        summary: Cancel the device login in progress; with none in progress, log out (a cloud-account event follows)
+    /cloud/uploads:
+      get:
+        description: >-
+          The cloud upload queue: each upload's state, progress, speed, time left and error, waitingForLogin, and every file
+          already in the cloud, by path, with a console link
+      post:
+        description: >-
+          Queue a recording ({path}, robotId, kind) for upload to the Dimensional cloud, or a finished upload again ({retry:
+          id})
+      delete:
+        description: >-
+          Cancel a queued or running upload, or remove a finished one (?id=); with no id, clear the finished uploads
     /extras:
       get:
         summary: 'dimos''s optional extras: installed, applicable, missing, download size'

@@ -33,6 +33,7 @@ from experimental.gateway.errors import ApiError as ApiError
 from experimental.gateway.launches import RunSource
 from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats
+from experimental.gateway.uploads import Uploads
 
 logger = setup_logger()
 
@@ -43,6 +44,7 @@ API_VERSION = "8.0.0"
 class State:
     dimos_dir: Path
     bus: events.Bus
+    uploads: Uploads
     scanner: Scanner
     jobs: Jobs = field(default_factory=Jobs)
     live: Live = field(default_factory=Live)
@@ -94,8 +96,11 @@ def site_dirs(dimos_dir: Path) -> list[Path]:
 
 def new_state(dimos_dir: Path, bus: events.Bus | None = None) -> State:
     bus = bus or events.Bus()
+    uploads = Uploads(bus, store.gateway_dir() / "uploads.json")
     jobs = Jobs()
-    return State(dimos_dir=dimos_dir, bus=bus, scanner=Scanner(dimos_dir, jobs), jobs=jobs)
+    return State(
+        dimos_dir=dimos_dir, bus=bus, uploads=uploads, scanner=Scanner(dimos_dir, jobs), jobs=jobs
+    )
 
 
 def gateway_state(request: Request) -> State:
