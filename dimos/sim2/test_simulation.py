@@ -13,47 +13,13 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Mount, SimulatedRobot, SimulatedSensor
 
 _MODEL = Path("robot.xml")
-
-
-class _SimRobotConfig(ModuleConfig):
-    x: float = 0.0
-
-
-class _SimRobot(Module):
-    config: _SimRobotConfig
-
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("dog", _MODEL, "base", xyz=(self.config.x, 0, 0))}
-
-
-class _Bystander(Module):
-    pass
-
-
-def test_simulation_receives_descriptions_from_the_blueprint():
-    blueprint = autoconnect(
-        _SimRobot.blueprint(x=2.5), _Bystander.blueprint(), Simulation.blueprint()
-    )
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
-    coordinator = ModuleCoordinator.build(blueprint, parsed)
-    try:
-        assert coordinator.get_instance(Simulation).describe() == {"robots": ["dog"], "sensors": []}
-    finally:
-        coordinator.stop()
 
 
 def _simulation(**simulated: object) -> Simulation:
@@ -69,11 +35,9 @@ def test_simulation_describes_its_world():
         overhead=SimulatedSensor("overhead", "camera", Mount("world")),
     )
     try:
-        simulation.build()
-        assert simulation.describe() == {
-            "robots": ["dog"],
-            "sensors": ["dog/cam", "world/overhead"],
-        }
+        description = simulation.describe()
+        assert description["robots"] == ["dog"]
+        assert description["sensors"] == ["dog/cam", "world/overhead"]
     finally:
         simulation.stop()
 

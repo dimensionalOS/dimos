@@ -39,6 +39,8 @@ class SimulatedRobot:
     xyz: Vector = (0.0, 0.0, 0.0)
     rpy: Vector = (0.0, 0.0, 0.0)
     floating: bool = True
+    # Its controller acts every this many sim seconds: the world sends it an "events/act" then, and waits for its actions.
+    control_period: float | None = None
 
 
 @dataclass(frozen=True)
