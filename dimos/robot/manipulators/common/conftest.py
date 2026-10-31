@@ -105,8 +105,9 @@ def connection_class(robot_spec):
     return Connection
 
 
-@pytest.fixture
-def boundary(mocker):
+@pytest.fixture(params=["linux", "darwin"])
+def boundary(mocker, request):
+    mocker.patch.object(common, "sys", SimpleNamespace(platform=request.param))
     native = FakeRobot()
     mocker.patch.object(common, "_native", return_value=can_motor_control)
     mocker.patch.object(common, "_codec", return_value=damiao)
@@ -115,9 +116,20 @@ def boundary(mocker):
     )
     mocker.patch.object(can_motor_control, "Arm", FakeArm)
     mocker.patch.object(can_motor_control, "Gripper", FakeGripper)
-    bus = mocker.patch.object(
-        can_motor_control, "SocketCanBus", side_effect=lambda name: ("socket", name)
-    )
+    if common.sys.platform == "darwin":
+        bus = mocker.patch.object(
+            can_motor_control,
+            "GsUsbBus",
+            side_effect=lambda **kwargs: ("socket", kwargs["serial_number"]),
+            create=True,
+        )
+    else:
+        bus = mocker.patch.object(
+            can_motor_control,
+            "SocketCanBus",
+            side_effect=lambda name: ("socket", name),
+            create=True,
+        )
     return native, bus
 
 

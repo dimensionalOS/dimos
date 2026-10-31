@@ -23,6 +23,7 @@ import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common import damiao_connection as common
+from dimos.robot.manipulators.common._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -67,6 +68,33 @@ def test_stop_disables_releases_views_and_is_idempotent(make_rig, boundary):
     assert not module.status().connected
 
 
+def test_calibration_finishes_before_connected_and_command_acceptance(
+    connection_class, boundary, mocker
+):
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    module = connection_class()
+    module.set_transport("position_command", LocalTransport())
+    module.set_transport("joint_state", LocalTransport())
+    native = boundary[0]
+    observed = []
+    enable = native.enable
+
+    def calibrate():
+        observed.append(module.status().connected)
+        enable()
+
+    mocker.patch.object(native, "enable", side_effect=calibrate)
+    try:
+        module.start()
+        module.command({"arm/joint1/position": 0.7})
+        assert observed == [False]
+        assert module.status().connected
+        np.testing.assert_equal(native.groups["left_arm"].commands[-1][:, 2], [0.7, 0.2])
+    finally:
+        module.stop()
+
+
 def test_failed_enable_rolls_back_and_preserves_error(connection_class, boundary, mocker):
     native = boundary[0]
     native.enable_error = RuntimeError("calibration failed")
@@ -76,6 +104,8 @@ def test_failed_enable_rolls_back_and_preserves_error(connection_class, boundary
         module.start()
     assert module._session is None
     assert module._reader is None
+    module.command({"arm/joint1/position": 0.7})
+    assert native.groups["left_arm"].commands == []
     assert not module.status().connected
     assert "startup cleanup failed: RuntimeError: disable failed" in module.status().last_error
     assert "disable" in native.events
