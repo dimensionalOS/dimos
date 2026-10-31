@@ -1101,7 +1101,8 @@ fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> 
         .collect())
 }
 
-/// The named float32 fields of every point whose values are all finite.
+/// The named float32 fields, x, y, z first, of every point with a finite
+/// position; the other fields may carry infinities (no wall in reach).
 fn extract_fields<const N: usize>(
     msg: &PointCloud2,
     names: [&'static str; N],
@@ -1141,7 +1142,7 @@ fn extract_fields<const N: usize>(
     for i in 0..n {
         let base = i * step;
         let values = offsets.map(|o| read_f32_le(&msg.data, base + o));
-        if values.iter().all(|v| v.is_finite()) {
+        if values[..3].iter().all(|v| v.is_finite()) {
             out.push(values);
         }
     }
@@ -1159,6 +1160,42 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surface_cells_keep_an_infinite_wall_distance_and_drop_a_bad_position() {
+        let names = ["x", "y", "z", "intensity", "wall_distance"];
+        let rows = [
+            [1.0, 2.0, 3.0, 3.1, f32::INFINITY],
+            [f32::NAN, 2.0, 3.0, 3.1, 0.5],
+        ];
+        let msg = PointCloud2 {
+            width: rows.len() as i32,
+            height: 1,
+            fields: names
+                .iter()
+                .zip((0..).step_by(4))
+                .map(|(name, offset)| PointField {
+                    name: name.to_string(),
+                    offset,
+                    datatype: PointField::FLOAT32 as u8,
+                    count: 1,
+                })
+                .collect(),
+            point_step: 20,
+            row_step: 40,
+            data: rows
+                .iter()
+                .flatten()
+                .flat_map(|v| v.to_le_bytes())
+                .collect(),
+            ..Default::default()
+        };
+        let Ok(cells) = extract_fields(&msg, names) else {
+            panic!("a well formed cloud")
+        };
+        assert_eq!(cells.len(), 1);
+        assert!(cells[0][4].is_infinite());
+    }
 
     #[test]
     fn is_at_goal_respects_tolerance_and_ignores_z() {
