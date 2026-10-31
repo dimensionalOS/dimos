@@ -222,6 +222,49 @@ impl Gpu {
         staging.unmap();
         out
     }
+
+    /// The first `bytes` of each buffer, as `read` does but in one copy and
+    /// one wait.
+    pub fn read_many(&self, parts: &[(&wgpu::Buffer, u64)]) -> Vec<Vec<u8>> {
+        let sizes: Vec<u64> = parts.iter().map(|&(_, b)| b.next_multiple_of(4)).collect();
+        let total: u64 = sizes.iter().sum();
+        if total == 0 {
+            return parts.iter().map(|_| Vec::new()).collect();
+        }
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: total,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut at = 0;
+        for (&(buffer, _), &size) in parts.iter().zip(&sizes) {
+            if size > 0 {
+                encoder.copy_buffer_to_buffer(buffer, 0, &staging, at, size);
+            }
+            at += size;
+        }
+        self.queue.submit([encoder.finish()]);
+        self.host_read_barrier();
+        let slice = staging.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |r| r.expect("readback map failed"));
+        self.wait();
+        let data = slice.get_mapped_range().expect("readback range");
+        let mut at = 0usize;
+        let out = parts
+            .iter()
+            .zip(&sizes)
+            .map(|(&(_, bytes), &size)| {
+                let part = data[at..at + bytes as usize].to_vec();
+                at += size as usize;
+                part
+            })
+            .collect();
+        drop(data);
+        staging.unmap();
+        out
+    }
 }
 
 impl Gpu {

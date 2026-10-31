@@ -1083,14 +1083,21 @@ impl SurfaceExtractor {
                 self.run(&mut pass, None, &self.pipelines.export_cells, groups, 1);
             }
             self.gpu.queue.submit([encoder.finish()]);
-            let rows = self.gpu.read::<u32>(&self.buffers.export_count, 1)[0] as u64;
-            let capacity = self.plane_cells.as_ref().map_or(0, |p| p.export_capacity);
+            // The count and every row the buffer holds in one wait; reading
+            // the spare rows costs less than a second wait.
+            let plane_cells = self.plane_cells.as_ref().expect("made in new");
+            let capacity = plane_cells.export_capacity;
+            let parts = self.gpu.read_many(&[
+                (&self.buffers.export_count, 4),
+                (&plane_cells.export_rows, 4 * EXPORT_WORDS as u64 * capacity),
+            ]);
+            let rows = bytemuck::pod_read_unaligned::<u32>(&parts[0][..4]) as u64;
             if rows > capacity {
                 self.ensure_export_rows(rows);
                 continue;
             }
-            let buffer = &self.plane_cells.as_ref().expect("made in new").export_rows;
-            let words: Vec<u32> = self.gpu.read(buffer, rows as usize * EXPORT_WORDS);
+            let words: Vec<u32> =
+                bytemuck::pod_collect_to_vec(&parts[1][..4 * EXPORT_WORDS * rows as usize]);
             return words
                 .chunks_exact(EXPORT_WORDS)
                 .map(|w| {
