@@ -161,7 +161,7 @@ impl ClosureSearch {
             },
         )
     }
-    /// Evidence (-ln(1 - confidence)) a candidate must reach before look-alike places: z^2 / 2k^2 for its yank, plus,
+    /// Evidence (-ln(1 - confidence)) a candidate must reach before look-alike places: its yank's (`yank_evidence`), plus,
     /// when the solve has been rejecting more closures than it keeps, the log-odds against a passed closure being kept,
     /// ln((1 - keep_rate) / keep_rate) (never below 0, so a good record never lowers the bar).
     pub(crate) fn required_evidence(&self, diag: &ClosureCandidateDiag) -> f64 {
@@ -171,7 +171,10 @@ impl ClosureSearch {
         } else {
             0.0
         };
-        diag.yank_stdevs * diag.yank_stdevs / (2.0 * width * width) + record
+        yank_evidence(
+            diag.yank_stdevs / width,
+            self.config.closure_yank_drift_range,
+        ) + record
     }
     /// Global-frame cloud of keyframes `ids` (body clouds moved by their global poses, in order), voxel-downsampled at the
     /// submap resolution.
@@ -390,5 +393,46 @@ impl ClosureSearch {
             *diag = kept;
             icp
         })
+    }
+}
+
+/// The evidence a yank of `z` standard deviations (at the stated odometry drift) costs when the drift's true scale is
+/// unknown: -ln of the jump's likelihood averaged over a drift standard deviation from 1 to `drift_range` times the stated
+/// (log-uniform), against a jump of 0. A 3-dof jump at scale s is N(z / s) with density s^-3; at `drift_range` 1 this is
+/// z^2 / 2, the stated drift alone. Larger ranges let a big jump cost about 3 ln z instead of z^2 / 2, so the match
+/// evidence and GNC decide it rather than the stated drift.
+pub(crate) fn yank_evidence(z: f64, drift_range: f64) -> f64 {
+    let range = drift_range.max(1.0);
+    if range <= 1.0 || !z.is_finite() {
+        return z * z / 2.0;
+    }
+    const STEPS: usize = 64;
+    let top = range.ln();
+    let likelihood = |z: f64| {
+        (0..=STEPS)
+            .map(|i| {
+                let ln_s = top * i as f64 / STEPS as f64;
+                let weight = if i == 0 || i == STEPS { 0.5 } else { 1.0 };
+                weight * (-3.0 * ln_s - z * z / (2.0 * (2.0 * ln_s).exp())).exp()
+            })
+            .sum::<f64>()
+    };
+    (likelihood(0.0) / likelihood(z).max(f64::MIN_POSITIVE)).ln()
+}
+
+#[cfg(test)]
+mod yank_evidence_tests {
+    use super::yank_evidence;
+
+    /// Trusting the stated drift exactly prices a yank as z^2 / 2; an unknown drift up to 100x prices a 79-sigma jump
+    /// (huge's missed return to the start) at a dozen nats, and leaves no yank more expensive than z^2 / 2.
+    #[test]
+    fn a_wide_drift_range_caps_large_yanks() {
+        assert!((yank_evidence(3.0, 1.0) - 4.5).abs() < 1e-12);
+        let big = yank_evidence(79.0, 100.0);
+        assert!(big > 10.0 && big < 14.0, "{big}");
+        for z in [0.5, 1.0, 3.0, 10.0, 100.0] {
+            assert!(yank_evidence(z, 100.0) <= z * z / 2.0 + 1e-9);
+        }
     }
 }

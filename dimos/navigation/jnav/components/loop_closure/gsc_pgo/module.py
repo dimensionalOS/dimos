@@ -89,6 +89,8 @@ class PGOConfig(NativeModuleConfig):
     # A closure's match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) must clear
     # 1 - exp(-z^2/2k^2), z = how hard it yanks the graph (per sqrt keyframe gap) in robust std devs of the yanks scored so far; this is k
     closure_yank_gate_width: float = 1.0
+    # How many times the stated odometry drift (sd) the true drift may be; the yank gate averages over it (1 = trust it)
+    closure_yank_drift_range: float = 100.0
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off

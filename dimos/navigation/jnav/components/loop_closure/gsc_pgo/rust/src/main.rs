@@ -84,6 +84,7 @@ config! {
     closure_min_occupancy: i32,
     closure_min_degeneracy: f64,
     closure_yank_gate_width: f64,
+    closure_yank_drift_range: f64,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
