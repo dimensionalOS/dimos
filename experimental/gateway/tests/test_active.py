@@ -258,15 +258,46 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     assert client.get("/history").json()["runs"][0]["running"]
 
 
-def test_recordings_is_the_standard_directory(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_recordings_is_the_served_checkouts_standard_directory(
+    client: TestClient, checkout: Path, tmp_path: Path
 ) -> None:
-    assert client.get("/history/recordings").json() == {"path": str(launches.store.RECORDINGS_DIR)}
+    """Where the checkout's own dimos records, not the gateway copy's; config.yaml's recordings.dir wins."""
+    assert client.get("/history/recordings").json() == {
+        "path": str(tmp_path / "state" / "recordings")
+    }
+    (checkout / ".git").mkdir()
+    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         f"recordings:\n  dir: {tmp_path / 'recs'}\n"
     )
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
+
+
+def test_dimos_app_wins_and_config_yaml_in_its_home_is_the_fallback(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from experimental.gateway import store
+
+    home = tmp_path / "dimos_home"
+    home.mkdir(exist_ok=True)
+    (home / "config.yaml").write_text(
+        f"dimos-gateway: {{socket: /tmp/yaml.sock}}\nrecordings: {{dir: {tmp_path / 'yaml_recs'}}}\n"
+    )
+    # DIMOS_HOME's config.yaml is never read
+    (tmp_path / "not_this_home").mkdir()
+    (tmp_path / "not_this_home" / "config.yaml").write_text("zenoh: {namespace: wrong}\n")
+    assert store.setting("zenoh", "namespace") is None
+    assert store.setting("dimos-gateway", "socket") == "/tmp/yaml.sock"
+    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "yaml_recs")}
+    app = {
+        "home": str(home),
+        "socket": "/tmp/app.sock",
+        "recordingsDir": str(tmp_path / "app_recs"),
+    }
+    monkeypatch.setenv("DIMOS_APP", json.dumps(app))
+    assert store.setting("dimos-gateway", "socket") == "/tmp/app.sock"
+    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "app_recs")}
 
 
 def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:

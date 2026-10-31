@@ -55,7 +55,8 @@ Live launch phases (and added or removed blueprints) also arrive on zenoh at `<n
 .venv/bin/python -m experimental.gateway --port 8123   # in the foreground, also on --host (default 127.0.0.1):8123
 ```
 
-- Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
+- Settings come from `DIMOS_APP` (`socket`, `recordingsDir`, `zenohNamespace`, `zenohConnect`), else `<home>/config.yaml`
+  (`home` from `DIMOS_APP`, else `~/.dimos`; `DIMOS_HOME` is not read): `dimos-gateway.socket`, `zenoh.namespace`,
   `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
