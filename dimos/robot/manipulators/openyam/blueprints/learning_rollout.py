@@ -16,9 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
@@ -35,6 +33,10 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_JOINTS,
     openyam_hardware,
+)
+from dimos.robot.manipulators.openyam.coordinator import (
+    OpenYamCoordinator,
+    OpenYamTeleopCoordinator,
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -79,7 +81,7 @@ def build_openyam_rollout(
         blueprint = autoconnect(
             policy,
             ArmTeleopModule.blueprint(),
-            TeleopControlCoordinator.blueprint(
+            OpenYamTeleopCoordinator.blueprint(
                 instance_name="ControlCoordinator",
                 hardware=[OPENYAM_QUEST_HARDWARE],
                 tasks=openyam_quest_tasks(),
@@ -99,7 +101,7 @@ def build_openyam_rollout(
     else:
         blueprint = autoconnect(
             policy,
-            ControlCoordinator.blueprint(
+            OpenYamCoordinator.blueprint(
                 instance_name="ControlCoordinator",
                 hardware=[openyam_hardware()],
                 tasks=[joint_trajectory_task(OPENYAM_JOINTS)],

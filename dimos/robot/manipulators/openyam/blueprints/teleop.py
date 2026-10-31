@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -39,6 +38,7 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.coordinator import OpenYamTeleopCoordinator
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
@@ -141,7 +141,7 @@ def openyam_quest_tasks() -> list[TaskConfig]:
 # Single-arm Quest teleop: right controller -> OpenYAM arm
 teleop_webxr_openyam = autoconnect(
     ArmTeleopModule.blueprint(zero_button="B"),
-    TeleopControlCoordinator.blueprint(
+    OpenYamTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[OPENYAM_QUEST_HARDWARE],
         tasks=openyam_quest_tasks(),
