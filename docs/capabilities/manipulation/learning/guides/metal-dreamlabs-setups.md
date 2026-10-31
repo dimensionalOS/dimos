@@ -59,10 +59,24 @@ requires measured base positions and orientations. Pass one `RobotModelConfig` t
 teleop, manual planning, EEF execution, and policy FK. Do not override only the
 planning module's model.
 
-`gripper_base` and its side-prefixed variants are mount frames, not calibrated
-fingertip TCPs. Rollout preflight rejects missing target-to-SDK tool transforms.
-Translations are metres; rotations are unit quaternions in xyzw order. No YAM tool
-offset is substituted for Metal.
+The standard gripper's `grasp_frame` is defined in Python with
+`RobotModel.with_fixed_frame`, 80 mm along `gripper_base` +Z. This is the rounded
+midpoint of the two planar finger-pad contact regions in the pinned vendor meshes,
+not a manufacturer-specified or physically calibrated TCP. X spans pad width, Y is
+the jaw opening axis, and +Z points out of the gripper. The dual model prefixes it
+as `left_grasp_frame` and `right_grasp_frame`.
+
+Planning, teleop, EEF tracking, and policy FK share these model frames. The standard
+Metal Dreamlabs configuration explicitly names the same grasp frame as its
+`sdk_tcp_frame`; no separate TCP JSON file or numeric calibration override is
+required. Inference reports and consumes this chosen tool frame in arm-base-local
+coordinates. No YAM tool offset or axis rotation is substituted for Metal.
+
+For a different tool, define its TCP with a fixed model link and configure
+`DreamlabsArmConfig.sdk_tcp_frame`. It must be rigidly connected to `target_frame`;
+preflight rejects unknown frames or a path containing movable joints. Existing
+numeric target-to-SDK transforms remain supported as an alternative, in metres
+and unit xyzw quaternions. Tool geometry still needs verification on the real rig.
 
 Define a station blueprint using `build_metal_learning` from
 `dimos.robot.manipulators.makermods_metal.learning`. For a dual rollout, pass:
@@ -70,13 +84,15 @@ Define a station blueprint using `build_metal_learning` from
 - `dual=True` and `collection=False`.
 - The selected `camera_roles`.
 - `model=dual_metal_model_config(...)` with measured mounts.
-- `tcp_transforms={"left": (xyz, xyzw), "right": (xyz, xyzw)}` with measured tool transforms.
+- `tcp_transforms={"left": (xyz, xyzw), "right": (xyz, xyzw)}` only for custom tools.
 - `checkpoint` naming the model to evaluate.
 
-Single-arm stations supply only the `"right"` transform. Registered rollout
-blueprints can also receive the complete calibrated arm mapping through
-`policy.dreamlabs.arms` configuration. Use a station blueprint for dual mount
-changes so all model consumers receive identical geometry.
+The optional legacy `tcp_transforms` argument remains relative to each
+`gripper_base`; the builder materializes fixed SDK TCP links in the shared model.
+Single-arm overrides supply only `"right"`. `policy.dreamlabs.arms` remains an
+optional mapping override rather than a standard startup requirement. Use a
+station blueprint for dual mount changes so all model consumers receive identical
+geometry.
 
 ## Preview before execution
 
@@ -97,7 +113,7 @@ policy before manual planning. Preview counters do not confirm trajectory execut
 ## Validate each station
 
 Offline tests cover station schemas, camera selection, CLI parsing, missing
-calibration, rejection of YAM joint output on Metal, SDK request layouts, and
+TCP frames, rejection of YAM joint output on Metal, SDK request layouts, and
 policy/trajectory lifecycle regressions. Self-hosted mock tests use the actual
 cached Metal URDF and Pink with mock adapters to instantiate all tasks and compute
 joint and EEF commands. They do not operate physical hardware.

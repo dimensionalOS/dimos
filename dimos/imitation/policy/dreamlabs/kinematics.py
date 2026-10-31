@@ -29,9 +29,11 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 class DreamlabsKinematics:
     def __init__(self, config: DreamlabsBackendConfig) -> None:
         for side, arm in config.arms.items():
-            if arm.target_to_sdk_xyz is None or arm.target_to_sdk_xyzw is None:
+            if arm.sdk_tcp_frame is None and (
+                arm.target_to_sdk_xyz is None or arm.target_to_sdk_xyzw is None
+            ):
                 raise ValueError(
-                    f"Dreamlabs {side} arm requires a calibrated target-to-SDK TCP transform"
+                    f"Dreamlabs {side} arm requires a model TCP frame or calibrated tool transform"
                 )
         self.config = config
         self.model = config.model.load()
@@ -48,16 +50,21 @@ class DreamlabsKinematics:
                 if joint.type != "fixed":
                     raise ValueError("Dreamlabs requires each arm base fixed to the model root")
                 current = joint.parent_link
-            tool = np.eye(4)
-            xyz, quat = np.asarray(arm.target_to_sdk_xyz), np.asarray(arm.target_to_sdk_xyzw)
-            if (
-                not np.isfinite(xyz).all()
-                or not np.isfinite(quat).all()
-                or not np.isclose(np.linalg.norm(quat), 1.0)
-            ):
-                raise ValueError("Tool transform must have finite metres and a unit quaternion")
-            tool[:3, :3] = Rotation.from_quat(quat).as_matrix()
-            tool[:3, 3] = xyz
+            if arm.sdk_tcp_frame is not None:
+                tool = self._fixed_transform(arm.target_frame, arm.sdk_tcp_frame)
+            else:
+                tool = np.eye(4)
+                xyz, quat = np.asarray(arm.target_to_sdk_xyz), np.asarray(arm.target_to_sdk_xyzw)
+                if (
+                    not np.isfinite(xyz).all()
+                    or not np.isfinite(quat).all()
+                    or not np.isclose(np.linalg.norm(quat), 1.0)
+                ):
+                    raise ValueError("Tool transform must have finite metres and a unit quaternion")
+                tool[:3, :3] = Rotation.from_quat(quat).as_matrix()
+                tool[:3, 3] = xyz
+            if not np.isfinite(tool).all():
+                raise ValueError("SDK TCP transform must be finite")
             self._tools[side] = tool
             for name in arm.joint_names:
                 description = self.model.get_joint(name)
@@ -69,6 +76,29 @@ class DreamlabsKinematics:
                     raise ValueError(f"Unknown movable arm joint {name}")
                 if description.lower is not None and description.upper is not None:
                     self.joint_bounds[name] = (description.lower, description.upper)
+
+    def _fixed_transform(self, target: str, tcp: str) -> NDArray[np.float64]:
+        """Resolve a rigid tool transform, including sibling frames, without joint state."""
+        if tcp not in self._links:
+            raise ValueError(f"Unknown Dreamlabs SDK TCP frame {tcp}")
+
+        def ancestors(frame: str) -> dict[str, NDArray[np.float64]]:
+            transforms = {frame: np.eye(4)}
+            transform = np.eye(4)
+            while frame in self._parents:
+                joint = self._parents[frame]
+                if joint.type != "fixed":
+                    break
+                transform = joint.origin() @ transform
+                frame = joint.parent_link
+                transforms[frame] = transform
+            return transforms
+
+        target_ancestors = ancestors(target)
+        for frame, transform in ancestors(tcp).items():
+            if frame in target_ancestors:
+                return np.linalg.inv(target_ancestors[frame]) @ transform
+        raise ValueError("Dreamlabs SDK TCP frame must be rigidly connected to the target frame")
 
     def root_pose(self, frame: str, positions: Mapping[str, float]) -> NDArray[np.float64]:
         if frame == self.model.root_link:

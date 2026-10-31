@@ -122,9 +122,15 @@ task, and the UI controls the independent normalized `metal_gripper` task.
 Use the panel to set joint/pose targets, plan, preview, then execute. Initial
 planning speed scale is 0.2; the panel can change it.
 
-The pose target is the official `gripper_base` mount frame, not a calibrated
-fingertip TCP. The planner fixes the finger joints and does not visualize their
-opening. A renamed fixed mount joint avoids a joint/link frame-name collision
+The pose target is `grasp_frame`, a fixed link added in Python 80 mm along the
+official `gripper_base` +Z axis. It defines the rounded midpoint of the standard
+finger-pad contact regions in the pinned vendor meshes; it is a dimOS model TCP,
+not a vendor-specified or physically calibrated point. Its axes match
+`gripper_base`: X spans pad width, Y is the jaw opening axis, and +Z points out
+of the gripper. Planning, teleop, EEF execution, and Dreamlabs use this same frame.
+No separate TCP JSON is required for the standard tool. The planner fixes the
+finger joints and does not visualize their opening.
+A renamed fixed mount joint avoids a joint/link frame-name collision
 in the official URDF. Model checkout and mesh loading occur at startup.
 
 For commissioned physical Metal hardware, the same blueprint accepts

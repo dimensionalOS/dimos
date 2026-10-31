@@ -64,8 +64,13 @@ EEF tracking. Stop and drain policy before manual planning execution.
 
 Provide `DreamlabsBackendConfig(mode="eef", model=..., arms=...)` to the shared
 `policy_module`. Each `DreamlabsArmConfig` names its controlled joints, fixed arm
-base, target frame, normalized gripper joint, and measured target-to-SDK-TCP
-transform. The arm base must be fixed relative to the model root.
+base, target frame, normalized gripper joint, and `sdk_tcp_frame` in the same
+model. The SDK TCP must be rigidly connected to the execution target; it may be
+the target itself. Define tool geometry with `RobotModel.with_fixed_frame`, as
+the standard Metal model does for `grasp_frame`. No separate TCP JSON is needed
+for that standard model. Existing explicit `target_to_sdk_xyz` and
+`target_to_sdk_xyzw` transforms remain supported instead of a named SDK frame;
+specifying both forms is rejected. The arm base must be fixed relative to the model root.
 The model and target frames must match the coordinator's EEF task configuration.
 
 The adapter uses metres, radians, and normalized `[0,1]` gripper openings. SDK

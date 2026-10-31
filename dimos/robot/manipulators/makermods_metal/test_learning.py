@@ -16,7 +16,9 @@
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import CoordinatorState, JointStateSnapshot
@@ -29,6 +31,7 @@ from dimos.imitation.policy.module import PolicyModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.makermods_metal.learning import build_metal_learning
 
 SETUPS = [
@@ -121,26 +124,74 @@ def test_station_camera_and_can_selectors_parse_without_loading_assets(
 
 
 @pytest.mark.parametrize("dual, roles", SETUPS)
-def test_uncalibrated_station_cannot_load_policy_or_contact_service(dual, roles, mocker):
+def test_standard_station_declares_model_tcp_without_loading_assets(dual, roles, mocker):
+    load = mocker.patch("dimos.robot.assets.model.RobotModel.load")
     blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
     policy = next(a.kwargs for a in blueprint.blueprints if issubclass(a.module, PolicyModule))
-    config = SimpleNamespace(**policy, fps=None, execution_steps=None, policy_joint_names=None)
-    client = mocker.patch("dimos.imitation.policy.dreamlabs.backend.create_client")
-    with pytest.raises(ValueError, match="calibrated"):
-        DreamlabsBackend(config)
-    client.assert_not_called()
+    planner = next(
+        a.kwargs["model"] for a in blueprint.blueprints if a.module is ManipulationModule
+    )
+    for side, arm in policy["dreamlabs"].arms.items():
+        assert arm.sdk_tcp_frame == arm.target_frame
+        assert arm.target_frame == (f"{side}_grasp_frame" if dual else "grasp_frame")
+        assert arm.target_frame in {group.tip_link for group in planner.planning_groups}
+        assert arm.target_to_sdk_xyz is None
+        assert arm.target_to_sdk_xyzw is None
+    load.assert_not_called()
+
+
+@pytest.mark.parametrize("dual, roles", SETUPS)
+def test_model_tcp_mapping_survives_worker_cbor_round_trip(dual, roles):
+    blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
+    config = next(
+        a.kwargs["dreamlabs"] for a in blueprint.blueprints if issubclass(a.module, PolicyModule)
+    )
+    restored = decode(encode(config))
+    assert restored.arms == config.arms
+    assert encode(restored.model) == encode(config.model)
+    assert all(arm.sdk_tcp_frame == arm.target_frame for arm in restored.arms.values())
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("dual, roles", SETUPS)
+def test_legacy_tool_override_becomes_a_link_shared_with_every_model_consumer(dual, roles):
+    sides = ("left", "right") if dual else ("right",)
+    transform = ((0.01, -0.02, 0.12), (0.0, 0.0, 2**-0.5, 2**-0.5))
+    blueprint = build_metal_learning(
+        dual=dual,
+        collection=False,
+        camera_roles=roles,
+        tcp_transforms=dict.fromkeys(sides, transform),
+    )
+    config = next(
+        a.kwargs["dreamlabs"] for a in blueprint.blueprints if issubclass(a.module, PolicyModule)
+    )
+    planner = next(
+        a.kwargs["model"] for a in blueprint.blueprints if a.module is ManipulationModule
+    )
+    coordinator = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
+    eef = next(task for task in coordinator.kwargs["tasks"] if task.type == "eef_trajectory")
+    assert eef.params["robot_model"] is planner
+    assert planner.model is config.model
+    fk = DreamlabsKinematics(config)
+    positions = {name: 0.0 for arm in config.arms.values() for name in arm.joint_names}
+    mount_from_sdk = np.eye(4)
+    mount_from_sdk[:3, :3] = Rotation.from_quat(transform[1]).as_matrix()
+    mount_from_sdk[:3, 3] = transform[0]
+    for side, arm in config.arms.items():
+        prefix = f"{side}_" if dual else ""
+        expected = (
+            np.linalg.inv(fk.root_pose(arm.base_frame, positions))
+            @ fk.root_pose(f"{prefix}gripper_base", positions)
+            @ mount_from_sdk
+        )
+        np.testing.assert_allclose(fk.sdk_pose(side, positions), expected, atol=1e-12)
 
 
 @pytest.mark.self_hosted
 @pytest.mark.parametrize("dual, roles", SETUPS)
 def test_mock_station_instantiates_real_tasks_and_executes_both_output_paths(dual, roles, mocker):
-    transforms = {
-        side: ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
-        for side in (("left", "right") if dual else ("right",))
-    }
-    blueprint = build_metal_learning(
-        dual=dual, collection=False, camera_roles=roles, tcp_transforms=transforms
-    )
+    blueprint = build_metal_learning(dual=dual, collection=False, camera_roles=roles)
     atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
     policy = next(a.kwargs for a in blueprint.blueprints if issubclass(a.module, PolicyModule))
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
@@ -166,6 +217,14 @@ def test_mock_station_instantiates_real_tasks_and_executes_both_output_paths(dua
         assert joint_output.positions == [0.0] * len(positions)
         assert coordinator.task_invoke("joint_trajectory", "cancel").safe
         fk = DreamlabsKinematics(policy["dreamlabs"])
+        for side, arm in policy["dreamlabs"].arms.items():
+            grasp = fk.model.get_joint(f"{side}_grasp_frame_joint" if dual else "grasp_frame_joint")
+            assert grasp.origin_xyz == (0.0, 0.0, 0.08)
+            sdk_pose = fk.sdk_pose(side, positions)
+            target = fk.canonical_pose(side, sdk_pose)
+            np.testing.assert_allclose(
+                target.position.to_numpy(), fk.root_pose(arm.target_frame, positions)[:3, 3]
+            )
         poses = {
             arm.target_frame: fk.to_pose(fk.root_pose(arm.target_frame, positions))
             for arm in policy["dreamlabs"].arms.values()

@@ -29,18 +29,28 @@ from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 
 
 class DreamlabsArmConfig(BaseModel):
-    """Model target to SDK TCP transform, measured in metres and xyzw.
+    """Map an execution target to a model TCP frame or explicit tool transform.
 
     The SDK pose is arm-base-local, x forward, y left, z up. Configure the
-    actual tool geometry explicitly for another robot; no tool is estimated.
+    ``sdk_tcp_frame`` must be rigidly connected to ``target_frame``. Existing
+    explicit metre/xyzw transforms remain supported as an alternative.
     """
 
     joint_names: list[str] = Field(min_length=1)
     base_frame: str = Field(min_length=1)
     target_frame: str = Field(min_length=1)
     gripper_joint: str = Field(min_length=1)
+    sdk_tcp_frame: str | None = Field(default=None, min_length=1)
     target_to_sdk_xyz: tuple[float, float, float] | None = None
     target_to_sdk_xyzw: tuple[float, float, float, float] | None = None
+
+    @model_validator(mode="after")
+    def validate_tcp_source(self) -> Self:
+        if self.sdk_tcp_frame is not None and (
+            self.target_to_sdk_xyz is not None or self.target_to_sdk_xyzw is not None
+        ):
+            raise ValueError("Specify an SDK TCP frame or an explicit transform, not both")
+        return self
 
 
 ArmSide = Literal["left", "right"]

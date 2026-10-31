@@ -39,7 +39,7 @@ def test_planner_and_coordinator_share_arm_joints_and_state_topic() -> None:
     assert isinstance(config.visualization, ViserVisualizationConfig)
     assert config.model.joint_names == list(METAL_ARM_JOINTS)
     assert config.model.planning_groups[0].joint_names == METAL_ARM_JOINTS
-    assert config.model.planning_groups[0].tip_link == "gripper_base"
+    assert config.model.planning_groups[0].tip_link == "grasp_frame"
     assert config.model.gripper_hardware_id == "metal"
     tasks = MetalCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name)).tasks
     trajectory = next(task for task in tasks if task.type == "trajectory")
