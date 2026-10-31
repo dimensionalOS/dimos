@@ -16,7 +16,7 @@
 
 from dataclasses import replace
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
@@ -29,6 +29,7 @@ from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS, openyam_hardware
+from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 
 OPENYAM_TEACH_DAMPING = (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
 
@@ -43,23 +44,25 @@ def _teach_robot() -> Blueprint:
             hardware,
             adapter_kwargs={
                 **hardware.adapter_kwargs,
-                "runtime_config": replace(runtime_config, passive_grippers=("gripper",)),
+                "runtime_config": replace(
+                    runtime_config, gravity_comp=True, passive_grippers=("gripper",)
+                ),
             },
         )
     hardware = replace(
         hardware,
         wb_config=WholeBodyConfig(kp=(0.0,) * len(OPENYAM_JOINTS), kd=OPENYAM_TEACH_DAMPING),
     )
-    return ControlCoordinator.blueprint(
+    return OpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[hardware],
         tasks=[
             TaskConfig(
                 name="teach_openyam",
-                type="trajectory",
+                type="hand_guiding",
                 joint_names=list(OPENYAM_JOINTS),
                 priority=10,
-                params={"hold_position_when_idle": True},
+                auto_start=True,
             )
         ],
     )
