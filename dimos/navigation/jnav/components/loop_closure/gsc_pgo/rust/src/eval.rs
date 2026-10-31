@@ -363,7 +363,8 @@ const BODY_FRAME: &str = "base_link";
 /// tilt. Mid-360 (FAST-LIO / Point-LIO) is the Config default; Go2 L1 leg odometry is its calibrated drift.
 fn stated_drift(odom_child_frame: &str) -> Option<[[f64; 2]; 4]> {
     match odom_child_frame {
-        "mid360_link" => {
+        // livox_frame: the Mid-360 frame name Point-LIO recordings like office555 use
+        "mid360_link" | "livox_frame" => {
             let c = PgoConfig::default();
             Some([
                 [c.odom_xy_drift_per_sqrt_m, c.odom_xy_drift_per_sqrt_rad],
