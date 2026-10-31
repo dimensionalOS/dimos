@@ -34,18 +34,14 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
-from dimos.types.timestamped import Timestamped
 
-# The text of a PREEMPTED report, which says why the goal was preempted.
-# Matches rust/src/goal_status.rs.
-PREEMPT_REPLACED = "replaced"
-PREEMPT_CANCELED = "canceled"
+# Seconds a go_to waits for the robot pose to show up on tf.
+POSE_WAIT_S = 0.5
 
 
-def goal_id(goal: Timestamped) -> str:
-    """The id nav_status reports carry for a goal, which is its stamp."""
-    sec, nsec = goal.ros_timestamp()
-    return f"{sec}.{nsec:09d}"
+def reports_goal(msg: GoalStatus, goal: PointStamped) -> bool:
+    """Whether a nav_status report is about this goal, which its stamp says."""
+    return [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] == goal.ros_timestamp()
 
 
 def holds_goal(status: int) -> bool:
@@ -119,8 +115,8 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     nodes: Out[PointCloud2]
     node_edges: Out[LineSegments3D]
 
-    _goal: PoseStamped | None = None
-    """The goal of the go_to under way. None when there is none."""
+    _goal: PointStamped | None = None
+    """The goal of the go_to under way."""
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -129,8 +125,6 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     @rpc
     def start(self) -> None:
         super().start()
-        # Subscribe to tf now so the first go_to already has a pose.
-        self.tfbuffer  # noqa: B018
         # The binary publishes nav_status. The wrapper reads it back to end go_to.
         self.register_disposable(
             Disposable(self.nav_status.transport.subscribe(self._on_nav_status, self.nav_status))
@@ -144,19 +138,20 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     def _on_nav_status(self, msg: GoalStatus) -> None:
         with self._goal_lock:
             goal = self._goal
-        if goal is None or msg.goal_id.id != goal_id(goal) or holds_goal(msg.status):
+        if goal is None or not reports_goal(msg, goal) or holds_goal(msg.status):
             return
         if msg.status == GoalStatus.SUCCEEDED:
             outcome = "Reached the target"
         elif msg.status == GoalStatus.PREEMPTED:
-            replaced = msg.text == PREEMPT_REPLACED
-            outcome = "Replaced by another goal" if replaced else "Canceled"
+            outcome = msg.text.capitalize()
         else:
             outcome = f"Failed: {msg.text}"
         self._finish(outcome, cancel=False, ended=goal)
 
-    def _pose(self) -> PoseStamped | None:
-        return self.tfbuffer.get_pose(self.config.world_frame, self.config.base_frame)
+    def _pose(self, wait_s: float = 0.0) -> PoseStamped | None:
+        return self.tfbuffer.get_pose(
+            self.config.world_frame, self.config.base_frame, forward_tolerance=wait_s
+        )
 
     @skill(uses=[CAP_MOVEMENT], lifecycle="background")
     async def go_to(self, x: float, y: float) -> str:
@@ -169,7 +164,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             x: target x in meters, world frame.
             y: target y in meters, world frame.
         """
-        pose = self._pose()
+        pose = self._pose(wait_s=POSE_WAIT_S)
         # Close the old go_to's stream first so start_tool opens a new one for this call.
         self._finish("Replaced by another goal", cancel=pose is None)
         # Opened before any return so the movement claim always has a stream to release it.
@@ -178,20 +173,16 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             self.stop_tool("go_to")
             return f"No goal sent: no {self.config.world_frame} -> {self.config.base_frame} on tf."
 
-        # One x, y can have walkable surfaces at several heights, e.g. downstairs and upstairs.
-        # The planner picks the one nearest the goal's z, so send the height of the floor under
-        # the robot.
+        # The planner picks the surface nearest the goal's z, so send the floor height under the robot.
         floor_z = pose.z - self.config.start_z_offset_m
-        goal = PoseStamped(position=(x, y, floor_z), frame_id=self.config.world_frame)
+        goal = PointStamped(x, y, floor_z, frame_id=self.config.world_frame)
         with self._goal_lock:
             self._goal = goal
-        self.goal.transport.publish(
-            PointStamped(goal.x, goal.y, goal.z, ts=goal.ts, frame_id=goal.frame_id)
-        )
+        self.goal.transport.publish(goal)
         return "Navigating. A tool update reports the robot's position when it stops."
 
     def _finish(
-        self, outcome: str, *, cancel: bool = True, ended: PoseStamped | None = None
+        self, outcome: str, *, cancel: bool = True, ended: PointStamped | None = None
     ) -> None:
         with self._goal_lock:
             if ended is not None and self._goal is not ended:
@@ -208,10 +199,15 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         self.tool_update("go_to", f"{outcome}; {where}.")
         self.stop_tool("go_to")
         if cancel:
-            self.goal.transport.publish(PointStamped(math.nan, math.nan, math.nan))
+            self._cancel()
+
+    def _cancel(self) -> None:
+        self.goal.transport.publish(PointStamped(math.nan, math.nan, math.nan))
 
     @skill
     async def stop_navigation(self) -> str:
         """Cancel the current goal and stop moving."""
-        self._finish("Canceled")
+        # The goal may have come from a click, so cancel whether or not a go_to is under way.
+        self._finish("Canceled", cancel=False)
+        self._cancel()
         return "Stopped."

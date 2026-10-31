@@ -55,7 +55,7 @@ Expected result: the first prompt shows two live tool boxes that stream at the s
 Needs the Habitat setup from the [Habitat check](08_navigation.md#87-habitat-simulation).
 
 ```bash
-uv run dimos run habitat-nav mcp-server point-nav-skill-container
+uv run dimos run habitat-nav mcp-server
 # In another terminal:
 uv run dimos mcp call go_to --arg x=<x> --arg y=<y>
 uv run dimos mcp call go_to --arg x=<x2> --arg y=<y2>

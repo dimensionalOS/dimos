@@ -502,7 +502,7 @@ impl GoalProgress {
     }
 
     /// Time left before a blocked or stalled goal is aborted.
-    fn wait(&self) -> Option<Duration> {
+    fn time_left(&self) -> Option<Duration> {
         let now = Instant::now();
         [
             self.blocked.map(|b| b.remaining(self.blocked_timeout, now)),
@@ -691,7 +691,7 @@ impl Worker {
             // Wait for a wake, unless a seed load may settle or a goal may
             // time out first.
             let seeding = seed_progress.in_flight();
-            let wait = [seeding.then_some(SEED_SETTLE), progress.wait()]
+            let wait = [seeding.then_some(SEED_SETTLE), progress.time_left()]
                 .into_iter()
                 .flatten()
                 .min();
@@ -860,7 +860,7 @@ impl Worker {
         }
     }
 
-    /// Abort a goal whose path the robot has not advanced on for the whole
+    /// Abort a followed goal once the robot has not moved for the whole
     /// timeout, and stop the follower.
     async fn abort_if_stalled(&self, progress: &mut GoalProgress) {
         if let (Some(stall), Some(position)) = (progress.stall, self.base_position()) {
@@ -883,7 +883,7 @@ impl Worker {
             .await;
     }
 
-    /// Gate and publish a replan. The planning itself lives in Planner::plan.
+    /// Gate a replan pass. Worker::plan plans and publishes.
     async fn maybe_replan(
         &self,
         planner: &mut Planner,
@@ -980,7 +980,7 @@ enum GoalStep {
     },
 }
 
-/// Decide a replan pass.
+/// Pick this pass's step from the goal, the pose, and whether a path is out.
 fn goal_step(
     goal: Option<Goal>,
     goal_changed: bool,
@@ -1381,6 +1381,23 @@ mod tests {
     }
 
     #[test]
+    fn a_goal_that_ran_out_a_timeout_is_taken_once() {
+        let config = Config {
+            blocked_timeout_s: 0.0,
+            progress_timeout_s: 0.0,
+            ..test_config()
+        };
+        let mut progress = GoalProgress::new(&config);
+        let goal = goal_at(1, (5.0, 0.0, 0.0));
+        progress.block(goal, NO_SAFE_PATH);
+        assert_eq!(progress.take_timed_out().map(|b| b.goal), Some(goal));
+        assert!(progress.take_timed_out().is_none());
+        progress.track(goal, (0.0, 0.0, 0.0));
+        assert_eq!(progress.take_stalled().map(|s| s.goal), Some(goal));
+        assert!(progress.take_stalled().is_none());
+    }
+
+    #[test]
     fn a_goal_directly_above_the_start_is_not_reached() {
         let mut planner = Planner::new(1);
         let outcome = replan(
@@ -1642,14 +1659,14 @@ mod tests {
             GoalStep::NoPose(goal)
         );
 
-        let cancelled = goal_position(&point(f64::NAN, f64::NAN, f64::NAN))
+        let canceled = goal_position(&point(f64::NAN, f64::NAN, f64::NAN))
             .map(|position| goal_at(2, position));
         // Even with no pose on tf.
-        assert_eq!(goal_step(cancelled, true, true, None), GoalStep::Clear);
+        assert_eq!(goal_step(canceled, true, true, None), GoalStep::Clear);
         // Teleop repeats the cancel every command, and nothing is out to clear.
-        assert_eq!(goal_step(cancelled, true, false, start), GoalStep::Idle);
+        assert_eq!(goal_step(canceled, true, false, start), GoalStep::Idle);
         // A live update with no goal publishes nothing.
-        assert_eq!(goal_step(cancelled, false, false, start), GoalStep::Idle);
+        assert_eq!(goal_step(canceled, false, false, start), GoalStep::Idle);
     }
 
     #[test]

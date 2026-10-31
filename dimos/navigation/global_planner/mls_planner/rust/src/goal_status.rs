@@ -27,11 +27,10 @@ use lcm_msgs::std_msgs::Time;
 pub(crate) type LatestStatus = Arc<tokio::sync::Mutex<Option<Report>>>;
 
 /// The text of a PREEMPTED report, which says why the goal was preempted.
-/// Matches mls_planner_native.py.
-pub(crate) const PREEMPT_REPLACED: &str = "replaced";
+pub(crate) const PREEMPT_REPLACED: &str = "replaced by another goal";
 pub(crate) const PREEMPT_CANCELED: &str = "canceled";
 
-/// Why a goal that ran out its blocked timeout was aborted.
+/// Why a goal was aborted.
 pub(crate) const NO_SAFE_PATH: &str = "no safe path";
 pub(crate) const NO_POSE: &str = "no robot pose";
 pub(crate) const NO_PROGRESS: &str = "no progress";
@@ -71,7 +70,7 @@ impl Blocked {
     }
 }
 
-/// A followed goal, where the robot last gained ground on it, and when.
+/// A followed goal, where the robot last moved, and when.
 #[derive(Clone, Copy)]
 pub(crate) struct Stall {
     pub(crate) goal: Goal,
@@ -252,4 +251,34 @@ pub(crate) fn clear_if_held(slot: &Mutex<Option<Goal>>, goal: Goal) -> bool {
         *guard = None;
     }
     held
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(arrival: u64, status: i8, reason: &'static str) -> Report {
+        let id = GoalId {
+            sec: 0,
+            nsec: 0,
+            arrival,
+        };
+        Report::new(id, status, reason)
+    }
+
+    #[test]
+    fn a_report_publishes_on_a_transition_of_the_latest_live_goal_only() {
+        let first = report(1, GoalStatus::ACTIVE, "following");
+        let second = report(2, GoalStatus::PENDING, "planning");
+        let mut latest = None;
+        assert!(record(&mut latest, &first));
+        assert!(!record(&mut latest, &first.clone().with_remaining(1.0)));
+        assert!(record(&mut latest, &second));
+        // The displaced goal's preemption lands after the goal that displaced it.
+        let late = report(1, GoalStatus::PREEMPTED, PREEMPT_REPLACED);
+        assert!(!record(&mut latest, &late));
+        let reached = report(2, GoalStatus::SUCCEEDED, "reached");
+        assert!(record(&mut latest, &reached));
+        assert!(!record(&mut latest, &second));
+    }
 }
