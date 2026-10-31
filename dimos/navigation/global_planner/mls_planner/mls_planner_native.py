@@ -58,9 +58,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_cell_m: float = 4.0
     viz_sweep_cells: int = 32
     # Plan on the GPU surface a GPU ray tracer sends as surface_cells; without one, surfaces are extracted here.
-    gpu_surfaces: bool = True
+    # Off: on the Orin the CPU's per-column extraction beats the GPU's window, still or moving.
+    gpu_surfaces: bool = False
     # Place nodes on the GPU surface's wall distances instead of measuring them here.
-    gpu_wall_distance: bool = True
+    gpu_wall_distance: bool = False
     # The GPU surface's slope gate: planes tilted further are not standable.
     max_slope_deg: float = 45.0
     # A GPU surface cell whose plane height or wall distance moved less than this keeps the graph it was built on.
