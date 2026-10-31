@@ -401,6 +401,9 @@ mod gpu {
         /// Columns the last surfaces sent a cell in, which a later rewrite
         /// that leaves them none must clear.
         sent_columns: AHashSet<(i32, i32)>,
+        /// Whether a planner asked for surfaces, so changes are tracked;
+        /// until then nothing would drain `dirty`.
+        tracking: bool,
         surface_update: SurfaceUpdate,
         pub frame: GpuFrame,
     }
@@ -460,6 +463,7 @@ mod gpu {
                 extractor: None,
                 dirty: AHashSet::new(),
                 sent_columns: AHashSet::new(),
+                tracking: false,
                 surface_update: SurfaceUpdate::default(),
                 frame: GpuFrame::default(),
             })
@@ -525,7 +529,7 @@ mod gpu {
             // already at full health, so the map holds it anyway.
             let mut coarse = AHashSet::with_capacity(report.hits);
             for (i, voxel) in report.voxels.iter().enumerate() {
-                if mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine) {
+                if mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine, self.tracking) {
                     self.dirty.insert((voxel.key.0, voxel.key.1));
                 }
                 if voxel.health.is_some() {
@@ -537,13 +541,15 @@ mod gpu {
             }
             // Isolated noise is not emitted, as the CPU path's local map drops
             // it; a removed emitted voxel flipped above.
-            self.dirty.extend(
-                report
-                    .changed
-                    .iter()
-                    .filter(|&&k| mirror.is_emitted(k))
-                    .map(|&(x, y, _)| (x, y)),
-            );
+            if self.tracking {
+                self.dirty.extend(
+                    report
+                        .changed
+                        .iter()
+                        .filter(|&&k| mirror.is_emitted(k))
+                        .map(|&(x, y, _)| (x, y)),
+                );
+            }
             let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1e3;
             self.frame = GpuFrame {
                 integrate_ms: ms(started, integrated),
@@ -622,6 +628,11 @@ mod gpu {
                 ..SurfaceConfig::mls_defaults()
             };
             self.surface_update = SurfaceUpdate::default();
+            // Changes before the first request were not tracked: start whole.
+            if !self.tracking {
+                self.tracking = true;
+                self.mark_dirty(bounds);
+            }
             let Some((z_lo, z_hi)) = self.z_range else {
                 return Some(Vec::new());
             };

@@ -397,7 +397,14 @@ impl VoxelMap {
     /// support counts and changed chunks in sync. Returns whether it started
     /// or stopped being emitted (healthy with support_min healthy neighbors),
     /// which is what the local map shows; its neighbors' flips are not counted.
-    pub fn mirror_voxel(&mut self, key: VoxelKey, health: Option<VoxelHealth>, fine: u64) -> bool {
+    /// With `track_emitted` false the flip is not worked out and false returned.
+    pub fn mirror_voxel(
+        &mut self,
+        key: VoxelKey,
+        health: Option<VoxelHealth>,
+        fine: u64,
+        track_emitted: bool,
+    ) -> bool {
         // Most hits on a settled map change nothing (health at its cap, fine
         // cells already seen).
         if let (Some(health), Some(v)) = (health, self.voxels.get(&key)) {
@@ -405,7 +412,7 @@ impl VoxelMap {
                 return false;
             }
         }
-        let was_emitted = self.is_emitted(key);
+        let was_emitted = track_emitted && self.is_emitted(key);
         let Some(health) = health else {
             if let Some(gone) = self.voxels.remove(&key) {
                 if gone.health > 0 {
@@ -431,7 +438,7 @@ impl VoxelMap {
         if was_healthy != (health > 0) {
             self.health_crossed(key, health > 0);
         }
-        was_emitted != self.is_emitted(key)
+        track_emitted && was_emitted != self.is_emitted(key)
     }
 
     /// Whether the voxel is healthy with support_min healthy neighbors, as
