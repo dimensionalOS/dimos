@@ -25,8 +25,10 @@ from dimos.cli import theme
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeControlSpec
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.policy.lerobot.module import RolloutControlSpec, RolloutStatus
 from dimos.porcelain.dimos import Dimos, NoMatchingModuleError
+from dimos.stream.audio.wav_player import WavPlayer
 
 
 class ControlSession:
@@ -118,11 +120,16 @@ class ControlApp(App[None]):
         Binding("ctrl+c", "quit", "Detach", show=False),
     ]
 
-    def __init__(self, session: ControlSession) -> None:
+    def __init__(self, session: ControlSession, *, speech: CollectionSpeech | None = None) -> None:
         super().__init__()
         self._session = session
         self._episode = session.episode_status()
         self._policy = session.policy_status()
+        self._speech = speech
+        self._player = WavPlayer() if speech is not None else None
+        self._audio_error: str | None = None
+        if speech is not None and self._episode is not None:
+            speech.update(self._episode, snapshot=True)
         self._disconnected = False
         self._message = "Attached. Detaching leaves the stack running."
         self._confirming_stop = False
@@ -158,7 +165,23 @@ class ControlApp(App[None]):
         self.set_interval(0.25, self._poll)
 
     def on_unmount(self) -> None:
+        self.stop_audio()
         self._session.close()
+
+    def stop_audio(self) -> None:
+        if self._player is not None:
+            self._player.stop()
+
+    def _set_episode_status(self, status: EpisodeStatus | None) -> None:
+        self._episode = status
+        if self._speech is not None and self._player is not None and status is not None:
+            audio = self._speech.update(status)
+            if audio is not None:
+                try:
+                    self._player.play(audio)
+                    self._audio_error = None
+                except Exception as exc:
+                    self._audio_error = f"Audio unavailable: {exc}"
 
     def _refresh(self) -> None:
         blocked = self._disconnected or self._confirming_stop
@@ -180,7 +203,7 @@ class ControlApp(App[None]):
             )
             self.query_one("#start-policy", Button).disabled = blocked or active
             self.query_one("#stop-policy", Button).disabled = blocked or not active
-        self.query_one("#message", Static).update(self._message)
+        self.query_one("#message", Static).update(self._audio_error or self._message)
         self.query_one("#confirmation").display = self._confirming_stop
         self.query_one("#stop-stack", Button).disabled = self._disconnected
 
@@ -188,12 +211,13 @@ class ControlApp(App[None]):
         if self._disconnected:
             return
         try:
-            self._episode = self._session.episode_status()
+            self._set_episode_status(self._session.episode_status())
             self._policy = self._session.policy_status()
         except Exception as exc:
             self._disconnected = True
             self._confirming_stop = False
             self._message = f"Connection lost; robot and recording may still be running: {exc}"
+            self.stop_audio()
             self._session.close()
         self._refresh()
 
@@ -227,15 +251,16 @@ class ControlApp(App[None]):
                     "save-episode": "save",
                     "discard-episode": "discard",
                 }
-                self._episode = self._session.episode_command(commands[action])
-                self._message = f"Episode: {self._episode.last_event}."
+                status = self._session.episode_command(commands[action])
+                self._set_episode_status(status)
+                self._message = f"Episode: {status.last_event}."
                 self._quit_armed = False
             elif action == "start-policy":
                 self._policy = self._session.start_policy()
             elif action == "stop-policy":
                 self._policy = self._session.stop_policy()
             elif action == "stop-stack":
-                self._episode = self._session.episode_status()
+                self._set_episode_status(self._session.episode_status())
                 if self._episode is not None and self._episode.state == "recording":
                     self._message = "Save or discard the active episode before stopping the stack."
                 else:

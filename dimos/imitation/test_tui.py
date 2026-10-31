@@ -22,9 +22,11 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.policy.lerobot.module import RolloutControlSpec
 from dimos.imitation.tui import ControlApp, ControlSession
 from dimos.porcelain.dimos import NoMatchingModuleError
+from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 
 
 @pytest.fixture
@@ -228,3 +230,57 @@ def test_confirmed_shutdown_unblocks_loop_and_stops_modules(mocker):
     finally:
         coordinator.shutdown()
         loop.join(timeout=1)
+
+
+async def test_unified_control_speech_follows_confirmed_status_and_stops_on_detach(
+    controls, mocker
+):
+    _driver, episode, _policy, _coordinator = controls
+    engine = mocker.patch(
+        "dimos.imitation.collection.prompts.KokoroTTS", autospec=True
+    ).return_value
+    engine.synthesize.side_effect = lambda phrase: phrase.encode()
+    speech = CollectionSpeech(KokoroTTSConfig(enabled=True))
+    speech.prepare()
+    player = mocker.patch("dimos.imitation.tui.WavPlayer", autospec=True).return_value
+    episode.get_status.return_value = EpisodeStatus(
+        ts=1,
+        state="recording",
+        last_event="start",
+        episodes_saved=0,
+        episodes_discarded=0,
+    )
+    app = ControlApp(session_for(controls), speech=speech)
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(100, 40)) as pilot:
+        player.play.assert_not_called()
+        episode.command.return_value = EpisodeStatus(
+            ts=2,
+            state="idle",
+            last_event="save",
+            episodes_saved=1,
+            episodes_discarded=0,
+        )
+        await pilot.click("#save-episode")
+        player.play.assert_called_once_with(b"Episode saved")
+        episode.get_status.return_value = episode.command.return_value
+        app._poll()
+        player.play.assert_called_once_with(b"Episode saved")
+        player.play.side_effect = RuntimeError("No output device")
+        episode.get_status.return_value = EpisodeStatus(
+            ts=3,
+            state="recording",
+            last_event="start",
+            episodes_saved=1,
+            episodes_discarded=0,
+        )
+        app._poll()
+        assert not app._disconnected
+        assert "Audio unavailable" in str(app.query_one("#message", Static).render())
+    player.stop.assert_called_once_with()
+
+
+def test_unified_control_without_speech_does_not_open_audio(controls, mocker):
+    player = mocker.patch("dimos.imitation.tui.WavPlayer", autospec=True)
+    ControlApp(session_for(controls))
+    player.assert_not_called()
