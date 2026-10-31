@@ -1093,11 +1093,9 @@ impl ClosureSearch {
         let mut noise_sums: Option<Vec<crate::loop_overlap::Sums>> = None;
         let same_place_cutoff =
             crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability);
-        // pressure 2 is the prior that this is a revisit no kept loop closes: past even odds its log odds lower the bar
-        let revisit_odds = (diag.pressure2 / (1.0 - diag.pressure2)).ln().max(0.0);
         let mut required = |evidence: f64, diag: &mut ClosureCandidateDiag| -> f64 {
             if !diag.from_scan_context {
-                return base - revisit_odds;
+                return base;
             }
             let sums = noise_sums.get_or_insert_with(|| {
                 crate::loop_overlap::odometry_noise_sums(
@@ -1123,7 +1121,7 @@ impl ClosureSearch {
                 },
             );
             diag.look_alike_places = places;
-            base + (places as f64).ln() - revisit_odds
+            base + (places as f64).ln()
         };
         let evidence = -(1.0 - diag.confidence).ln();
         let single_required = required(evidence, &mut diag);
@@ -1156,6 +1154,9 @@ impl ClosureSearch {
                         measured(&extended.rotation, &extended.translation);
                     score = extended.inlier_mean_square();
                 }
+                // back on a spot no kept loop closes: the yank gate trusts the stated odometry noise, so GNC and
+                // the loosened-odometry map judge the single fit instead
+                None if diag.pressure2 > 0.5 => {}
                 None => return rejected(diag, "yank_confidence_reject", timing),
             }
         }
