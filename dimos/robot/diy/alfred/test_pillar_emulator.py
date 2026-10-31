@@ -27,6 +27,7 @@ import pytest
 
 from dimos.core.module import Module
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_FIRMWARE_JOINT,
     PILLAR_HOME_POSITION_M,
@@ -307,3 +308,77 @@ def test_the_connection_homes_jogs_and_stops_the_emulated_rail(pillar: PillarCon
     assert published and all(isinstance(msg, JointState) for msg in published)
     assert published[-1].name == [PILLAR_LIFT_JOINT]
     assert published[-1].position[0] == pytest.approx(stopped["position_m"], abs=0.01)
+
+
+def _home(pillar: PillarConnection) -> None:
+    _wait(lambda: pillar.get_status()["ready"])
+    assert pillar.home()
+    _wait(lambda: pillar.get_status()["homed"] and not pillar.get_status()["motion_active"])
+
+
+def _command(height_m: float) -> MotorCommandArray:
+    return MotorCommandArray(q=[height_m], dq=[0.0], kp=[0.0], kd=[0.0], tau=[0.0])
+
+
+def test_a_move_done_torn_into_telemetry_still_ends_the_move(pillar: PillarConnection) -> None:
+    """Seen on Alfred: <0000615328,pillar_platform_joint,-0.<STATUS,615332,move_done>"""
+    _home(pillar)
+    with pillar._state_lock:
+        pillar._motion_active = True
+        pillar._active_target_m = -0.1
+
+    pillar._process_line(f"<0000615328,{PILLAR_FIRMWARE_JOINT},-0.<STATUS,615332,move_done>")
+
+    assert pillar.get_status()["motion_active"] is False
+
+
+def test_a_lost_move_done_at_the_target_is_not_a_fault(pillar: PillarConnection) -> None:
+    _home(pillar)
+    with pillar._state_lock:
+        here = pillar._position_m
+        pillar._motion_active = True
+        pillar._active_target_m = here
+        pillar._motion_deadline = 0.0
+        pillar._last_feedback_at = time.monotonic()
+
+    pillar._check_deadlines(time.monotonic())
+
+    status = pillar.get_status()
+    assert (status["fault"], status["motion_active"]) == (None, False)
+
+
+def test_a_lost_move_done_away_from_the_target_still_faults(pillar: PillarConnection) -> None:
+    _home(pillar)
+    with pillar._state_lock:
+        pillar._motion_active = True
+        pillar._active_target_m = -0.3
+        pillar._motion_deadline = 0.0
+        pillar._last_feedback_at = time.monotonic()
+
+    pillar._check_deadlines(time.monotonic())
+
+    assert pillar.get_status()["fault"] == "pillar move did not report move_done in time"
+
+
+@pytest.mark.asyncio
+async def test_holding_the_idle_lift_where_it_stands_sends_no_move(
+    pillar: PillarConnection,
+) -> None:
+    _home(pillar)
+    here = pillar.get_status()["position_m"]
+
+    await pillar.handle_motor_command(_command(here + 0.0001))
+
+    status = pillar.get_status()
+    assert (status["active_target_m"], status["pending_target_m"]) == (None, None)
+    assert status["motion_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_command_away_from_the_idle_lift_moves_it(pillar: PillarConnection) -> None:
+    _home(pillar)
+    target = pillar.get_status()["position_m"] - 0.01
+
+    await pillar.handle_motor_command(_command(target))
+
+    _wait(lambda: abs(pillar.get_status()["position_m"] - target) < 0.001)

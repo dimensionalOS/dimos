@@ -84,17 +84,28 @@ class OperatorHoldStatus:
     estopped: bool = False
 
 
-def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:
+def operator_hold_task(
+    priority: int = OPERATOR_HOLD_PRIORITY, hold_through_estop: bool = False
+) -> TaskConfig:
     """Blueprint entry for the coordinator's one operator-hold task.
 
     Args:
         priority: Arbitration priority. Keep it above every other task
             (teleop is 50, autonomy 10-20) or the hold cannot take the joints.
+        hold_through_estop: Keep commanding the frozen joints while the e-stop
+            is latched. For a robot driven through hardware adapters with tasks
+            that ignore the e-stop (a base's velocity task): with the hold quiet,
+            those tasks still command their joints.
     """
     # The coordinator imports task modules, so import it lazily here.
     from dimos.control.coordinator import TaskConfig
 
-    return TaskConfig(name=OPERATOR_HOLD_TASK_NAME, type="operator_hold", priority=priority)
+    return TaskConfig(
+        name=OPERATOR_HOLD_TASK_NAME,
+        type="operator_hold",
+        priority=priority,
+        params={"hold_through_estop": hold_through_estop},
+    )
 
 
 def _hold_value(joint_name: str, measured_position: float) -> float:
@@ -128,18 +139,22 @@ class OperatorHoldTask(BaseControlTask):
         name: str = OPERATOR_HOLD_TASK_NAME,
         priority: int = OPERATOR_HOLD_PRIORITY,
         status_interval: float = 1.0,
+        hold_through_estop: bool = False,
     ) -> None:
         """
         Args:
             name: Task name; callers address request/acknowledge to it.
             priority: Arbitration priority. Must exceed every other task's.
             status_interval: Seconds between repeated status messages while on.
+            hold_through_estop: Keep commanding the frozen joints while the
+                e-stop is latched; see ``operator_hold_task``.
         """
         if not math.isfinite(status_interval) or status_interval <= 0.0:
             raise ValueError(f"status_interval must be positive seconds, got {status_interval}")
         self._name = name
         self._priority = priority
         self._status_interval = status_interval
+        self._hold_through_estop = hold_through_estop
         self._publish: Callable[[OperatorHoldStatus], None] | None = None
 
         self._lock = threading.Lock()
@@ -175,10 +190,12 @@ class OperatorHoldTask(BaseControlTask):
         with self._lock:
             if not self._on:
                 return None
-            # Freeze nothing while e-stopped, so after the clear the hold
-            # takes each joint where it is then. _held is empty until then.
+            # Unless it holds through the e-stop, freeze nothing while e-stopped, so
+            # after the clear the hold takes each joint where it is then. _held is
+            # empty until then.
+            frozen_out = self._estopped and not self._hold_through_estop
             for name, position in state.joints.joint_positions.items():
-                if self._estopped or name in self._held:
+                if frozen_out or name in self._held:
                     continue
                 if math.isfinite(position):
                     self._held[name] = _hold_value(name, position)
@@ -282,7 +299,7 @@ class OperatorHoldTask(BaseControlTask):
         try:
             with self._lock:
                 self._estopped = estopped
-                if estopped:
+                if estopped and not self._hold_through_estop:
                     self._held = {}
                     self._unheld = set()
             if estopped:
@@ -320,6 +337,7 @@ class OperatorHoldTaskParams(BaseConfig):
     """Task-owned parameters from ``TaskConfig.params``."""
 
     status_interval: float = Field(default=1.0, gt=0.0, allow_inf_nan=False)
+    hold_through_estop: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
@@ -332,4 +350,8 @@ def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
             "operator hold claims every joint the coordinator reads; leave joint_names empty"
         )
     params = OperatorHoldTaskParams.model_validate(cfg.params)
-    return OperatorHoldTask(priority=cfg.priority, status_interval=params.status_interval)
+    return OperatorHoldTask(
+        priority=cfg.priority,
+        status_interval=params.status_interval,
+        hold_through_estop=params.hold_through_estop,
+    )

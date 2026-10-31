@@ -185,6 +185,41 @@ def test_after_the_clear_it_holds_where_the_arm_is_then_until_acknowledged():
     assert not task.is_active()
 
 
+def test_holding_through_the_estop_keeps_every_joint_frozen():
+    task = OperatorHoldTask(hold_through_estop=True)
+    task.request("manual", "stuck")
+    task.compute(_state({"arm/joint1": 0.5, "base/vx": 1.2}))
+
+    task.set_estop(True)
+    output = task.compute(_state({"arm/joint1": 0.9, "base/vx": 1.4}))
+
+    assert output is not None
+    assert dict(zip(output.joint_names, output.positions, strict=True)) == {
+        "arm/joint1": 0.5,
+        "base/vx": 0.0,
+    }
+
+
+def test_holding_through_an_estop_that_found_the_hold_off_freezes_at_once():
+    task = OperatorHoldTask(hold_through_estop=True)
+
+    task.set_estop(True)
+    output = task.compute(_state({"arm/joint1": 0.5, "base/vx": 1.2}))
+
+    assert output is not None
+    assert dict(zip(output.joint_names, output.positions, strict=True)) == {
+        "arm/joint1": 0.5,
+        "base/vx": 0.0,
+    }
+    assert task.get_status().route == "failsafe"
+
+
+def test_hold_through_estop_reaches_the_task_from_its_card():
+    config = operator_hold_task(hold_through_estop=True)
+    assert create_task(config, {})._hold_through_estop is True
+    assert create_task(operator_hold_task(), {})._hold_through_estop is False
+
+
 def test_acknowledge_is_refused_while_estopped():
     task = OperatorHoldTask()
     task.set_estop(True)

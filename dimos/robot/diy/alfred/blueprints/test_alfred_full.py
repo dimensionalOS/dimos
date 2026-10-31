@@ -677,6 +677,7 @@ def test_an_operator_can_hold_the_bench_stacks(blueprint: Blueprint) -> None:
     tasks = _tasks(blueprint)
     hold = tasks[OPERATOR_HOLD_TASK_NAME]
     assert hold.type == "operator_hold" and not hold.joint_names, "it claims every joint"
+    assert hold.params["hold_through_estop"], "teleop's velocity task ignores the e-stop"
     assert all(task.priority < hold.priority for task in tasks.values() if task is not hold)
     modules = {atom.module for atom in blueprint.blueprints}
     assert {AlfredOperatorCoordinator, OperatorHandoff, McpServer} <= modules

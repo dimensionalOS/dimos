@@ -268,7 +268,9 @@ def alfred_coordinator_tasks(
             )
         )
     if operator_hold:
-        tasks.append(operator_hold_task())
+        # Held through an e-stop too: teleop's velocity task ignores the e-stop, and the lift
+        # would finish its last move with nothing commanding it.
+        tasks.append(operator_hold_task(hold_through_estop=True))
     return tasks
 
 

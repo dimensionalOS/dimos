@@ -91,6 +91,11 @@ PILLAR_HOME_POSITION_M = -0.050
 PILLAR_BAUD_RATE = 115_200
 PILLAR_STEPS_PER_MM = 320.0  # 1600 steps/rev over a 5 mm ball screw lead
 PILLAR_STEP_RESOLUTION_M = 1.0 / (PILLAR_STEPS_PER_MM * 1000.0)
+# A coordinator command this close to where the idle lift stands is no move at all.
+PILLAR_HOLD_DEADBAND_M = 0.0005
+# Fresh telemetry this close to the target means the move ended, whatever became of its move_done.
+PILLAR_ARRIVED_TOLERANCE_M = 0.001
+PILLAR_ARRIVED_FEEDBACK_AGE_S = 1.0
 # A longer line is discarded whole by the firmware, not truncated.
 PILLAR_MAX_LINE_LENGTH = 63
 
@@ -313,7 +318,18 @@ class PillarConnection(Module):
         if msg.num_joints != 1 or len(msg.q) != 1:
             logger.warning(f"Expected one pillar motor command, got {msg.num_joints}")
             return
-        self.set_position(msg.q[0])
+        target = msg.q[0]
+        # An operator hold repeats the height it froze every tick. Sent to an idle rail
+        # each is a move with nothing to do and a move_done to lose.
+        with self._state_lock:
+            position = self._position_m
+            if (
+                not self._motion_active
+                and position is not None
+                and abs(target - position) < PILLAR_HOLD_DEADBAND_M
+            ):
+                return
+        self._set_target(target)
 
     @skill(uses=[CAP_MOVEMENT])
     def home(self) -> bool:
@@ -374,6 +390,9 @@ class PillarConnection(Module):
     @skill(uses=[CAP_MOVEMENT])
     def set_position(self, position_m: float) -> bool:
         """Accept an absolute target in metres. Latest target wins."""
+        return self._set_target(position_m)
+
+    def _set_target(self, position_m: float) -> bool:
         if not math.isfinite(position_m):
             logger.warning(f"Rejected non-finite pillar target: {position_m}")
             return False
@@ -467,6 +486,12 @@ class PillarConnection(Module):
             return
         with self._state_lock:
             self._last_line = line
+
+        # The firmware can print an event in the middle of a telemetry line. The torn
+        # position is no loss; a lost move_done faults the rail when the move times out.
+        torn_at = line.find(_STATUS_PREFIX, 1)
+        if torn_at > 0:
+            line = line[torn_at:]
 
         if line.startswith(_STATUS_PREFIX) and line.endswith(">"):
             self._on_event(line)
@@ -758,19 +783,37 @@ class PillarConnection(Module):
                 faults.append(message)
 
             if self._motion_active and not self._homing and now >= self._motion_deadline:
-                message = "pillar move did not report move_done in time"
                 self._motion_deadline = math.inf
                 self._pending_target_m = None
+                if self._arrived_locked(now):
+                    logger.warning("Pillar reached its target without a move_done")
+                    self._motion_active = False
+                    self._stop_requested = False
+                    self._phase = PillarPhase.FAULT if self._fault is not None else PillarPhase.IDLE
+                else:
+                    message = "pillar move did not report move_done in time"
+                    self._phase = PillarPhase.FAULT
+                    self._fault = message
+                    faults.append(message)
                 self._active_target_m = None
-                self._phase = PillarPhase.FAULT
-                self._fault = message
-                faults.append(message)
 
             if faults:
                 self._state_changed.notify_all()
 
         for message in faults:
             logger.error(f"Alfred pillar fault: {message}")
+
+    def _arrived_locked(self, now: float) -> bool:
+        """Whether fresh telemetry puts the rail at its active target."""
+        if (
+            self._active_target_m is None
+            or self._position_m is None
+            or self._last_feedback_at is None
+        ):
+            return False
+        fresh = now - self._last_feedback_at <= PILLAR_ARRIVED_FEEDBACK_AGE_S
+        distance = abs(self._position_m - self._active_target_m)
+        return fresh and distance <= PILLAR_ARRIVED_TOLERANCE_M
 
     # ------------------------------------------------------------------ transport
 
