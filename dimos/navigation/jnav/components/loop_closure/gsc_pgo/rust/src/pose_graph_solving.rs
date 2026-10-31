@@ -374,10 +374,10 @@ impl GscPgo {
                             })
                             .collect();
                         let loose = run_with(&loose_odometry, &solve_config);
-                        let profile = |m: &Solution| {
-                            profiled_cost(m, &odometry, &closures, &solve_config, threshold)
+                        let profile = |m: &Solution, scale: f64| {
+                            profiled_cost(m, scale, &odometry, &closures, &solve_config, threshold)
                         };
-                        let (loose_cost, held_cost) = (profile(&loose), profile(&solution));
+                        let (loose_cost, held_cost) = (profile(&loose, s), profile(&solution, 1.0));
                         eprintln!(
                             "gsc_pgo: odometry loosened x{s:.1} at keyframe {}: -2 ln L {loose_cost:.1} vs {held_cost:.1}",
                             rotations.len()
@@ -545,11 +545,13 @@ impl GscPgo {
 }
 
 /// A map's -2 ln restricted likelihood with the odometry noise at its best fitting scale s (at least 1): the odometry's
-/// misfit m at the stated noise over s, plus redundancy x ln s, the redundancy being 6 per kept closure (closures much
-/// tighter than the odometry leave it nearly all of a loop's); each kept closure's misfit truncated at GNC's cutoff,
-/// and the cutoff for each rejected one.
+/// misfit m at the stated noise over s, plus its redundancy r x ln s, both from the solve's variance-component evidence
+/// (`Solution::odometry_noise_evidence`, read at `scale` x the stated noise; r is the odometry's share of the loops'
+/// checks, so closures that agree on one loop add one loop's worth); each kept closure's misfit truncated at GNC's cutoff,
+/// and the cutoff for each rejected one. Without the evidence, m from the residuals and r as 6 per kept closure.
 fn profiled_cost(
     map: &Solution,
+    scale: f64,
     odometry: &[Edge],
     closures: &[Edge],
     config: &SolveConfig,
@@ -562,9 +564,17 @@ fn profiled_cost(
             .map(|i| r[i] * r[i] / (e.variances[i] * scale))
             .sum::<f64>()
     };
-    let m: f64 = odometry.iter().map(|e| misfit(e, 1.0)).sum();
-    let kept = map.closure_weights.iter().filter(|&&w| w > 0.5).count();
-    let redundancy = 6.0 * kept as f64;
+    let (m, redundancy) = match map.odometry_noise_evidence {
+        Some(evidence) => evidence[..4]
+            .iter()
+            .fold((0.0, 0.0), |(m, r), &(sum, redundancy)| {
+                (m + sum * scale, r + redundancy)
+            }),
+        None => (
+            odometry.iter().map(|e| misfit(e, 1.0)).sum(),
+            6.0 * map.closure_weights.iter().filter(|&&w| w > 0.5).count() as f64,
+        ),
+    };
     let s = if redundancy > 0.0 {
         (m / redundancy).max(1.0)
     } else {
