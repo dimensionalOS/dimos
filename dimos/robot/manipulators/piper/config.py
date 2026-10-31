@@ -55,6 +55,40 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
 
 PIPER_FK_MODEL = _PIPER_REPO / "piper" / "urdf" / "piper_description.urdf"
 
+PIPER_DOF = 6
+#: How far the standard Piper gripper opens, in metres. The URDF lets its
+#: gripper joint go to 0.1 m, the large gripper's stroke.
+PIPER_GRIPPER_STROKE_M = 0.07
+# The gripper joints that move: the one driven, then the two fingers that copy it.
+_GRIPPER_JOINTS = ("gripper", "gripper_joint1", "gripper_joint2")
+
+
+def piper_model(gripper: bool = False, *, robot: str | None = None) -> RobotModel:
+    """The Piper's URDF, from AgileX's agx_arm_urdf description.
+
+    Args:
+        gripper: With its gripper: the joint ``gripper``, the gap between the
+            fingers, from 0 m (closed) to 0.07 m (open).
+        robot: Name the moving joints under this robot, as the coordinator
+            wants them, e.g. "arm" gives "arm/joint1". Links keep their names.
+    """
+    if gripper:
+        model = RobotModel.from_file(
+            PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS
+        ).with_joint_position_limits("gripper", lower=0.0, upper=PIPER_GRIPPER_STROKE_M)
+    else:
+        model = RobotModel.from_file(PIPER_FK_MODEL, package_paths=PIPER_PACKAGE_PATHS)
+    # The Desktop viewer turns COLLADA (.dae) meshes that say Z is up by 90°; the
+    # same shapes as .stl, one folder up, draw right.
+    model = model.with_mesh_paths_replaced("/meshes/dae/", "/meshes/").with_mesh_paths_replaced(
+        ".dae", ".stl"
+    )
+    if not robot:
+        return model
+    moving = [*joint_names(PIPER_DOF), *(_GRIPPER_JOINTS if gripper else ())]
+    return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 PIPER_HOME_JOINTS = [
     0.793,

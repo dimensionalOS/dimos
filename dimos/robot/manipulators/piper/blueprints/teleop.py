@@ -18,8 +18,14 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.module import ModuleBase
+from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.robot.manipulators._modeling import joint_names
 from dimos.robot.manipulators.common.blueprints import (
     cartesian_ik_task,
     eef_twist_task,
@@ -31,12 +37,17 @@ from dimos.robot.manipulators.common.coordinators import (
     ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.piper.config import (
+    PIPER_DOF,
     PIPER_SIM_PATH,
     make_piper_hardware,
     make_piper_model_config,
     piper_hardware,
+    piper_model,
 )
+from dimos.robot.manipulators.piper.connection import PiperConnection
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _piper_keyboard_hw = make_piper_hardware(
@@ -147,3 +158,70 @@ coordinator_cartesian_ik_piper = ArmPoseCoordinator.blueprint(
         )
     ],
 )
+
+
+class PiperTwistCoordinator(ArmTwistCoordinator):
+    """End-effector twists and gripper openings in, from the Desktop Manipulation app;
+    one Piper named "arm" out, driven through ``PiperConnection`` by joint targets."""
+
+    right_gripper_command: In[Float32]
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+# The connection module's ports, onto the coordinator's ports for the robot named "arm".
+_ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
+    (PiperConnection, "position_command", "arm_position_command"),
+    (PiperTwistCoordinator, "arm_joint_state", "joint_state"),
+]
+
+
+def _teleop() -> Blueprint:
+    """Jog a Piper's end and open and close its gripper from the Desktop
+    Manipulation app, through ``PiperConnection``. ``UrdfManager`` serves the
+    Piper's URDF and puts its joints on tf, so the app can draw it.
+
+    Wire it up with ``.remappings(_ARM_REMAPS)``. The CAN port is given at run
+    time, after the blueprint name (``--piperconnection.can-port can0``) or as
+    ``PIPERCONNECTION__CAN_PORT``.
+    """
+    ik_model = RobotModelConfig(
+        model=piper_model(robot="arm").with_default_joint_acceleration_limit(2.0),
+        joint_names=joint_names(PIPER_DOF, prefix="arm/joint"),
+    )
+    model = piper_model(gripper=True, robot="arm")
+    return autoconnect(
+        PiperTwistCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=model,
+            tasks=[
+                TaskConfig(
+                    name=EEF_TWIST_TASK_NAME,
+                    type="eef_twist",
+                    joint_names=list(ik_model.joint_names),
+                    priority=10,
+                    params={
+                        "robot_model": ik_model,
+                        "target_frame": "link6",
+                        # The app sends twists only while a jog is held: the
+                        # end stops 0.3 s after the last one.
+                        "timeout": 0.3,
+                    },
+                ),
+                # arm/gripper is open at its upper end, the task's default.
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+            ],
+        ),
+        PiperConnection.blueprint(gripper=True),
+        UrdfManager.blueprint(model=model),
+    )
+
+
+# The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
+piper_teleop = _teleop().remappings(_ARM_REMAPS)

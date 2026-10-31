@@ -620,6 +620,11 @@ robots:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+        piper-teleop:
+          title: Piper teleop
+          description: Move a real Piper's end and its gripper from the Desktop Manipulation app, through PiperConnection.
+          recommended_config:
+          - {module: piperconnection, field: can_port, label: CAN port, placeholder: can0, required: true}
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
