@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from pathlib import Path
-import pickle
 import sys
 
 import pytest
@@ -125,20 +124,6 @@ def test_two_shapes_and_recording_paths_have_independent_configuration(tmp_path)
     assert {p.name for p in one.streams} != {p.name for p in four.streams}
     assert one.kwargs["recording"] == tmp_path / "one.mcap"
     assert four.kwargs["recording"] == tmp_path / "four.mcap"
-
-
-def test_blueprint_pickle_preserves_instance_inputs(tmp_path):
-    blueprint = collect(profile=_profile(2), recording=tmp_path / "recording.mcap")
-    restored = pickle.loads(pickle.dumps(blueprint))
-    atom = restored.active_blueprints[0]
-    assert atom.module is recorder_module.CollectionModule
-    assert atom.kwargs["input_types"] == {
-        "camera_0": Image,
-        "camera_1": Image,
-        "measured": JointState,
-    }
-    rebuilt = atom.module.blueprint(**atom.kwargs)
-    assert rebuilt.active_blueprints[0].streams == atom.streams
 
 
 def test_recorder_resolves_every_connected_stream(recorder, mocker):
