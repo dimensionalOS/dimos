@@ -693,6 +693,20 @@ impl SurfaceExtractor {
         steps
     }
 
+    /// Standable test and hole fill only, in one submit and no readback; the
+    /// wall distances `export` then reads are left from before.
+    pub fn extract_surface(&mut self, map: &mut BrickMap) {
+        let gpu = Arc::clone(&self.gpu);
+        let mut timer = map.timer.take();
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        self.encode_surface(&mut encoder, map, timer.as_mut());
+        if let Some(timer) = &timer {
+            timer.resolve(&mut encoder);
+        }
+        map.timer = timer;
+        gpu.queue.submit([encoder.finish()]);
+    }
+
     /// Standable test, hole fill and wall distance. The plane split is read
     /// back between the two submits to size the wall-distance flood.
     pub fn extract(&mut self, map: &mut BrickMap) {

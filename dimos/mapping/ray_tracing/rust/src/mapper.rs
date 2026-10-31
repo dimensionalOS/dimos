@@ -744,7 +744,10 @@ mod gpu {
             self.point_extractor(window, config)?;
             let extractor = self.extractor.as_mut().expect("pointed above");
             extractor.mask_columns(&bits(&read), &bits(&write));
-            extractor.extract(&mut self.map);
+            match request.wall_distance {
+                true => extractor.extract(&mut self.map),
+                false => extractor.extract_surface(&mut self.map),
+            }
             let extracted = std::time::Instant::now();
             let write_box = (
                 x0.max(wx0),
