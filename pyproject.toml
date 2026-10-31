@@ -116,7 +116,7 @@ dependencies = [
     # Transport Protocols
     "dimos-lcm>=0.1.6",
     "lcm>=1.5.3", # the `lcm` module itself (protocol/service/lcmservice.py)
-    "eclipse-zenoh>=1.10.1,<2.0",
+    "eclipse-zenoh>=1.10.2,<2.0",
     "PyTurboJPEG==1.8.2",
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
     "jsonlines>=4,<5",
