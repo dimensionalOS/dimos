@@ -188,9 +188,7 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     coordinator = DamiaoTeleopCoordinator(publish_joint_state=False, **coordinator_kwargs)
 
-    with mock_connection_rig(
-        OpenArmConnection, coordinator, tmp_path=tmp_path, mocker=mocker
-    ) as rig:
+    with mock_connection_rig(OpenArmConnection, coordinator, tmp_path=tmp_path) as rig:
         task = cast("TeleopIKTask", coordinator._tasks[OPENARM_WEBXR_TASK_NAME])
         assert task._teleop_config.robot_model.joint_names == list(_DEPLOYMENT.arm_joints)
         assert task._teleop_config.max_joint_velocity_rad_s == 2.0
