@@ -321,7 +321,7 @@ pub struct Config {
     pub closure_icp_point_to_plane: bool,
     /// Drop the points a scan re-sends from the scan before (placed by the odometry they land exactly on their copies;
     /// the Go2 L1 republishes its last seconds of points) from every keyframe cloud, so scan context, ICP and the maps
-    /// see each surface once.
+    /// see each surface once. On by default.
     pub drop_reseen_points: bool,
     /// A keyframe's cloud needs at least this many points (voxelized at the submap resolution): scans are gathered,
     /// placed by the odometry, and a due keyframe waits until they reach it, so a sparse lidar gives fewer, fuller
@@ -476,8 +476,7 @@ impl Default for Config {
             closure_icp_inlier_distance_m: 0.3872983346207417,
             closure_icp_max_fitness_m: 0.3872983346207417,
             closure_icp_point_to_plane: true,
-
-            drop_reseen_points: false,
+            drop_reseen_points: true,
             auto_aggregate_cloud_size: 2000,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,

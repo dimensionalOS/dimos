@@ -54,8 +54,8 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_max_fitness_m: float = 0.3872983346207417
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
     closure_icp_point_to_plane: bool = True
-    # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud
-    drop_reseen_points: bool = False
+    # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud (on by default)
+    drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
     auto_aggregate_cloud_size: int = 2000
     closure_submap_half_range: int = 5
