@@ -39,8 +39,15 @@ R1PRO_CHASSIS_LIDAR_HOST_IP = "192.168.2.150"
 # First-pass chassis clearances for navigation; tune on the robot.
 R1PRO_CHASSIS_WIDTH_M = 0.65
 R1PRO_ROTATION_DIAMETER_M = 0.9
+# The chassis' collision box in base_link from the URDF (base_link, steer and wheel meshes): x from rear to front, y half width.
+R1PRO_CHASSIS_REAR_X_M = -0.397
+R1PRO_CHASSIS_FRONT_X_M = 0.239
+R1PRO_CHASSIS_HALF_WIDTH_M = 0.337
 R1PRO_OVERHEAD_CLEARANCE_M = 1.9
 R1PRO_MAX_STEP_HEIGHT_M = 0.03
+# The nav map's voxel; the fused floor spans two of its layers, so a step the map can tell from floor is two layers.
+R1PRO_NAV_VOXEL_SIZE_M = 0.07
+R1PRO_NAV_STEPPABLE_M = max(R1PRO_MAX_STEP_HEIGHT_M, 2 * R1PRO_NAV_VOXEL_SIZE_M)
 
 
 R1PRO_DESCRIPTION_SOURCE = RobotDescriptionSource(

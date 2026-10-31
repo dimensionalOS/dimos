@@ -253,6 +253,16 @@ pub fn decide(
     }
 }
 
+/// True when `(x, y)` lies in the body's box at `pose`, grown by its `precision` floor per side.
+pub fn in_body(emb: &Emb, pose: (f64, f64, f64), x: f64, y: f64) -> bool {
+    let (dx, dy) = (x - pose.0, y - pose.1);
+    let (c, s) = (pose.2.cos(), pose.2.sin());
+    let along = dx * c + dy * s - emb.center_off;
+    let across = -dx * s + dy * c;
+    along.abs() <= emb.length / 2.0 + emb.precision
+        && across.abs() <= emb.width / 2.0 + emb.precision
+}
+
 /// The planner's refusal: one pose at the robot, which every law reads as hold.
 pub fn hold_stub(pose: (f64, f64, f64), frame_id: &str, ts: f64, ground_z: f64) -> Path {
     msg::build_path(&[[pose.0, pose.1, pose.2]], &[ts], ts, frame_id, ground_z)
@@ -291,7 +301,10 @@ pub fn plan_once(
     let started = Instant::now();
     let t0 = msg::now_secs();
     // The model decides which returns are obstacles; the search only sees xy.
-    let FieldPoints { hard, soft } = obstacles::field_points(model, points, ground);
+    let FieldPoints { mut hard, mut soft } = obstacles::field_points(model, points, ground);
+    // The body stands in its box, so returns there are its own or stale ones the map can't ray-clear under it.
+    hard.retain(|p| !in_body(emb, pose, p[0] as f64, p[1] as f64));
+    soft.retain(|s| !in_body(emb, pose, s.xy[0], s.xy[1]));
     let seen = obstacles::ground_points(points, ground, emb.steppable);
     let points: &[[f32; 3]] = &hard;
     let cloud: Vec<[f64; 2]> = points.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
@@ -661,6 +674,38 @@ mod tests {
     #[test]
     fn the_age_boundary_is_exclusive() {
         assert_eq!(decide(true, Some(5.0), true, false, 5.0), Tick::Plan);
+    }
+
+    #[test]
+    fn the_body_box_grown_by_precision_is_its_own() {
+        let e = Emb::fixture();
+        let (hl, hw) = (e.length / 2.0, e.width / 2.0);
+        let yaw = std::f64::consts::FRAC_PI_2;
+        // rotated a quarter turn, "along" is +y and "across" is -x
+        assert!(in_body(
+            &e,
+            (1.0, 2.0, yaw),
+            1.0,
+            2.0 + hl + e.precision * 0.5
+        ));
+        assert!(in_body(
+            &e,
+            (1.0, 2.0, yaw),
+            1.0 - hw - e.precision * 0.5,
+            2.0
+        ));
+        assert!(!in_body(
+            &e,
+            (1.0, 2.0, yaw),
+            1.0,
+            2.0 + hl + e.precision * 1.5
+        ));
+        assert!(!in_body(
+            &e,
+            (1.0, 2.0, yaw),
+            1.0 - hw - e.precision * 1.5,
+            2.0
+        ));
     }
 
     #[test]

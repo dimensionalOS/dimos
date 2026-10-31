@@ -20,7 +20,9 @@ from typing import Any
 
 import numpy as np
 
+from dimos.navigation.embodiment.r1pro import R1PRO
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
+from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.robot.galaxea.r1pro.head_cameras import HeadLeftCameraConfig
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
@@ -73,7 +75,8 @@ def r1pro_nav_rerun_config(
             "world/imu_torso": None,
             "world/r1pro/imu": None,
             "world/region_bounds": None,
-            "world/path": None,
             **planner_visual_override(planner_viz_hz, voxel_size_m, wall_clearance_m),
+            # The local planner's route as the body boxes it plans, and the floor it read.
+            **motion_visual_override(embodiment=R1PRO),
         },
     }

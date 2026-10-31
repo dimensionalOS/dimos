@@ -105,6 +105,10 @@ impl MLSPlanner {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             worker_threads,
+            // Unused here. plan() is stateless, only the binary's replan loop commits to a route.
+            path_switch_margin: 0.0,
+            obstacle_confirm_updates: 1,
+            min_neighbor_voxels: 0,
         };
         config
             .validate()

@@ -20,16 +20,18 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
+from dimos.navigation.embodiment.r1pro import R1PRO
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_lidar_odometry,
 )
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_WIDTH_M,
-    R1PRO_MAX_STEP_HEIGHT_M,
+    R1PRO_NAV_VOXEL_SIZE_M,
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
     R1PRO_URDF_MANAGER_CONFIG,
@@ -40,7 +42,7 @@ from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
 
-VOXEL_SIZE_M = 0.07
+VOXEL_SIZE_M = R1PRO_NAV_VOXEL_SIZE_M
 # Turn-in-place radius plus half a voxel, since voxel centres sit up to half a voxel inside the surface they stand for.
 WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2 + VOXEL_SIZE_M / 2
 PLANNER_VIZ_HZ = 0.0
@@ -93,21 +95,30 @@ r1pro_nav = autoconnect(
         robot_height=R1PRO_OVERHEAD_CLEARANCE_M,
         start_z_offset_m=0.0,
         wall_clearance_m=WALL_CLEARANCE_M,
-        wall_buffer_m=R1PRO_CHASSIS_WIDTH_M,
-        wall_buffer_weight=100.0,
-        # MLS rounds steps down to whole voxels and the fused floor spans up to three layers, so floor two layers apart must connect.
-        step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, 2 * VOXEL_SIZE_M),
+        # A light, narrow wall buffer: at chassis width x100 it sent routes metres around desks (10-28 replay: 7.2 m vs 3.9 m).
+        wall_buffer_m=0.3,
+        wall_buffer_weight=5.0,
+        # Denser nodes reach the gaps between office furniture.
+        node_spacing_m=0.6,
+        # The same step the local planner takes as floor, so MLS never routes over what it calls an obstacle.
+        step_threshold_m=R1PRO.steppable,
         step_penalty_weight=4.0,
+        # Head depth floor speckle (single voxels, often for one map update) walls off whole corridors, so take neither.
+        min_neighbor_voxels=1,
+        obstacle_confirm_updates=2,
+        # Hold the route being driven unless a replan is clearly cheaper, so near-equal routes don't swing the R1 around.
+        path_switch_margin=0.3,
         viz_publish_hz=PLANNER_VIZ_HZ,
         worker_threads=2,
     ).remappings(
         [
             (MLSPlannerNative, "global_map", "global_map_unused"),
+            (MLSPlannerNative, "path", "planner_path"),
         ]
     ),
-    DanHolonomicTC.blueprint(control_frequency=10.0).remappings(
-        [(DanHolonomicTC, "odom", "chassis_odom")]
-    ),
+    # MLS's route through the global map; Ivan's planner replans the next few meters of it on the live local map.
+    LocalPlannerNative.blueprint(embodiment=R1PRO),
+    TrajectoryFollowerNative.blueprint(embodiment=R1PRO),
     MovementManager.blueprint(),
 ).global_config(
     # One per module, so no two share a Python process (and its GIL).
