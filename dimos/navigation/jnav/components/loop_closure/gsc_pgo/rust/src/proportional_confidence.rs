@@ -19,9 +19,7 @@
 //! 1 - exp(-required evidence) (yank, the solve's keep record, look-alike places), and one that falls short gets a second
 //! look with extended ICP on more keyframes, as many as the loop-overlap pressure allows.
 
-use crate::connection_fit::{
-    self, dump_icp, icp, IcpParams, IcpResult, OverlapScore, OverlapScoreParams,
-};
+use crate::connection_fit::{self, dump_icp, icp, IcpParams, IcpResult};
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
@@ -84,8 +82,6 @@ impl ClosureSearch {
         diag.confidence = if self.config.closure_likelihood_confidence {
             // the ratio is the evidence: confidence = 1 - e^-evidence, none for a ratio that favours a misfit
             1.0 - (-diag.likelihood_ratio.max(0.0)).exp()
-        } else if self.config.closure_overlap_score {
-            unit(diag.overlap_score)
         } else {
             diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor
         };
@@ -138,27 +134,7 @@ impl ClosureSearch {
             self.config.closure_icp_max_correspondence_m,
             self.config.closure_inlier_squared_distance(),
             &views,
-            self.config.closure_likelihood_beam,
-        )
-    }
-    /// `connection_fit::overlap_score` of `source` moved by `icp` against `target`, by the `closure_overlap_*` knobs.
-    pub(crate) fn overlap_score(
-        &self,
-        source: &PointCloud,
-        target: &PointCloud,
-        icp: &IcpResult,
-    ) -> OverlapScore {
-        connection_fit::overlap_score(
-            &transform_cloud(source, &icp.rotation, &icp.translation),
-            target,
-            &OverlapScoreParams {
-                sigma: self.config.closure_overlap_sigma_m,
-                reach: self.config.closure_overlap_reach_m,
-                overlap_noise: self.config.closure_overlap_noise_sigmas,
-                per_doubling: self.config.closure_overlap_per_doubling,
-                coin_flip: self.config.closure_overlap_coin_flip,
-                local: self.config.closure_overlap_local,
-            },
+            false,
         )
     }
     /// Evidence (-ln(1 - confidence)) a candidate must reach before look-alike places: its yank's (`yank_evidence`), plus,
@@ -263,11 +239,10 @@ impl ClosureSearch {
                     })
             };
             // the round's clouds and every score of them, through the ICP cache: the stack's and the target's sizes,
-            // the ICP, then its sharpness, likelihood ratio and overlap score where configured (NaN otherwise)
+            // the ICP, then its sharpness and likelihood ratio where configured (NaN otherwise)
             let target_ids: Vec<usize> = target_ids.filter(|&j| near(j)).collect();
             let sharp = self.config.closure_sharpness_half > 0.0;
             let likelihood = self.config.closure_likelihood_confidence;
-            let overlap = self.config.closure_overlap_score && !likelihood;
             let round = memo(&format!("xr{keyframes}"), 2, &mut || {
                 // the stacked source is thinned to about the single scan's size, so a round costs about what the first
                 // ICP did; the target keeps full resolution so the inlier test below means the same thing in every round
@@ -315,9 +290,6 @@ impl ClosureSearch {
                     self.likelihood_ratio(&source, &target, &tree, &icp, &target_ids)
                         .0
                 }));
-                v.push(score(overlap, &|| {
-                    self.overlap_score(&source, &target, &icp).score
-                }));
                 v
             });
             let (stacked_len, target_len) = (round[0] as usize, round[1] as usize);
@@ -338,9 +310,6 @@ impl ClosureSearch {
             if likelihood && icp.converged {
                 diag.extended_likelihood_ratio = round[18];
             }
-            if overlap && icp.converged {
-                diag.extended_overlap_score = round[19];
-            }
             // evidence = -ln(1 - confidence); compared with the required evidence without rounding to 1. Scored by
             // sharpness, the stack earns its own confidence (more scans count only as far as they line up better);
             // otherwise its evidence grows with its inlier count
@@ -350,8 +319,6 @@ impl ClosureSearch {
             let evidence = if likelihood {
                 diag.extended_likelihood_ratio.max(0.0) * stacked_len as f64
                     / source_points.max(1) as f64
-            } else if overlap {
-                -(1.0 - diag.extended_overlap_score.clamp(0.0, 1.0)).ln()
             } else if sharp {
                 let half = self.config.closure_sharpness_half;
                 -(1.0

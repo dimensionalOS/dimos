@@ -340,39 +340,6 @@ pub fn overlap_score(a: &[[f32; 3]], b: &[[f32; 3]], params: &OverlapScoreParams
     }
 }
 
-/// The width w of the half-normal part of nearest-neighbour `distances` modelled as a mixture of half-normal(w) (points
-/// on a surface the other cloud saw) and uniform on [0, `reach`] (the rest), by EM from the median distance at an even
-/// mixture. None for fewer than 20 distances or no half-normal part.
-pub fn half_normal_width(distances: &[f64], reach: f64) -> Option<f64> {
-    if distances.len() < 20 || !(reach > 0.0) {
-        return None;
-    }
-    let mut sorted = distances.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let (mut width, mut share) = (sorted[sorted.len() / 2].max(f64::EPSILON), 0.5);
-    let norm = (2.0 / std::f64::consts::PI).sqrt();
-    for _ in 0..100 {
-        let (mut weight, mut squared) = (0.0, 0.0);
-        for &d in distances {
-            let good = share * norm / width * (-d * d / (2.0 * width * width)).exp();
-            let r = good / (good + (1.0 - share) / reach);
-            weight += r;
-            squared += r * d * d;
-        }
-        if !(weight > 0.0) {
-            return None;
-        }
-        let next = (squared / weight).sqrt().max(f64::EPSILON);
-        share = weight / distances.len() as f64;
-        let settled = (next - width).abs() < 1e-6 * width;
-        width = next;
-        if settled {
-            break;
-        }
-    }
-    Some(width)
-}
-
 /// A cloud's sensor noise and sample spacing, measured from the cloud on about 500 of its points: the noise is the median
 /// thickness (sqrt of the smallest covariance eigenvalue) of each point's 10 nearest neighbours, the spacing the median
 /// distance to its nearest neighbour.
@@ -414,92 +381,6 @@ fn least_spread(cloud: &[[f32; 3]], neighbours: &[(usize, f32)]) -> f64 {
         }
     }
     mat3::jacobi_eigen(covariance).0[0]
-}
-
-/// How well an alignment pins the four degrees of freedom a ground robot's closure needs (x, y, z, yaw), from the
-/// point-to-plane ICP Hessian over the matched pairs (source points within `inlier_squared_distance` of `target`): each
-/// pair's row is its target neighbour's surface normal and the yaw lever ((point - centre) x normal)_z over the matched
-/// points' rms horizontal radius (so all four columns are unitless), and the result is the Hessian's smallest
-/// eigenvalue over its trace (0 = some direction unconstrained, 1/4 = all equally). -1 with fewer than 20 matches.
-pub fn observability(
-    source: &[[f32; 3]],
-    target: &[[f32; 3]],
-    target_tree: &KdTree,
-    inlier_squared_distance: f64,
-) -> f64 {
-    let matched: Vec<([f64; 3], [f64; 3])> = source
-        .par_iter()
-        .filter_map(|p| {
-            let (j, d) = target_tree.nearest(p)?;
-            if d as f64 > inlier_squared_distance {
-                return None;
-            }
-            let neighbours = target_tree.knn(&target[j], 10);
-            if neighbours.len() < 3 {
-                return None;
-            }
-            Some((
-                p.map(|v| v as f64),
-                least_spread_direction(target, &neighbours),
-            ))
-        })
-        .collect();
-    if matched.len() < 20 {
-        return -1.0;
-    }
-    let n = matched.len() as f64;
-    let centre = matched.iter().fold([0.0; 3], |c, (p, _)| {
-        [c[0] + p[0] / n, c[1] + p[1] / n, c[2] + p[2] / n]
-    });
-    let radius = (matched
-        .iter()
-        .map(|(p, _)| (p[0] - centre[0]).powi(2) + (p[1] - centre[1]).powi(2))
-        .sum::<f64>()
-        / n)
-        .sqrt()
-        .max(f64::EPSILON);
-    let mut hessian = [[0.0; 4]; 4];
-    for (p, normal) in &matched {
-        let lever = ((p[0] - centre[0]) * normal[1] - (p[1] - centre[1]) * normal[0]) / radius;
-        let row = [normal[0], normal[1], normal[2], lever];
-        for a in 0..4 {
-            for b in 0..4 {
-                hessian[a][b] += row[a] * row[b] / n;
-            }
-        }
-    }
-    let trace = (0..4).map(|k| hessian[k][k]).sum::<f64>().max(f64::EPSILON);
-    mat3::jacobi_eigen(hessian).0[0] / trace
-}
-
-/// Each `moved` point's gap to the target's surface along its normal (point-to-plane), as an absolute distance, for the
-/// points whose nearest target point is within `inlier_squared_distance`.
-pub fn plane_gaps(
-    moved: &[[f32; 3]],
-    target: &[[f32; 3]],
-    tree: &KdTree,
-    inlier_squared_distance: f64,
-) -> Vec<f64> {
-    moved
-        .par_iter()
-        .filter_map(|p| {
-            let (j, d) = tree.nearest(p)?;
-            if d as f64 > inlier_squared_distance {
-                return None;
-            }
-            let neighbours = tree.knn(&target[j], 10);
-            if neighbours.len() < 3 {
-                return None;
-            }
-            let n = least_spread_direction(target, &neighbours);
-            Some(
-                (0..3)
-                    .map(|k| (p[k] as f64 - target[j][k] as f64) * n[k])
-                    .sum::<f64>()
-                    .abs(),
-            )
-        })
-        .collect()
 }
 
 /// The least-spread direction (unit surface normal) of `neighbours`.

@@ -13,10 +13,9 @@
 // limitations under the License.
 
 //! Re-solve a finished pgo-eval run's pose graph offline: its raw keyframe poses (`a.kf`) and committed closures
-//! (`a.json`) through `big_picture_fit::solve` at a chosen odometry noise, with or without PCM, so a solve-side change
+//! (`a.json`) through `big_picture_fit::solve` at a chosen odometry noise, so a solve-side change
 //! can be judged in seconds instead of a replay. Writes the solved keyframes in a.kf's format and prints the kept count.
-//! usage: resolve <run dir> <out.bin> [odometry noise factor, 1] [pcm 0|1, 0] [config overlay json, e.g.
-//! '{"closure_gnc_overtrust_check":true}']
+//! usage: resolve <run dir> <out.bin> [odometry noise factor, 1] [config overlay json, e.g. '{"closure_commitments":false}']
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3};
@@ -25,14 +24,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let run = std::path::Path::new(&args[1]);
     let noise: f64 = args.get(3).map_or(1.0, |s| s.parse().unwrap());
-    let pcm = args.get(4).is_some_and(|s| s == "1");
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run.join("a.json")).unwrap()).unwrap();
     let mut config_json = json["config"]["pgo"].clone();
     if config_json.is_null() {
         config_json = json["config"].clone();
     }
-    if let Some(overlay) = args.get(5) {
+    if let Some(overlay) = args.get(4) {
         let overlay: serde_json::Value = serde_json::from_str(overlay).unwrap();
         for (k, v) in overlay.as_object().unwrap() {
             config_json[k] = v.clone();
@@ -96,10 +94,6 @@ fn main() {
         gnc_variance_scale: config.closure_gnc_var_scale,
         gnc_inlier_probability: config.closure_gnc_inlier_probability,
         huber_k: config.closure_robust_huber_k,
-        pcm,
-        gnc_overtrust_check: config.closure_gnc_overtrust_check,
-        overtrust_noise_headroom: [1.0; 4],
-        gravity: Vec::new(),
         committed: Vec::new(),
         evidence_core: false,
     };

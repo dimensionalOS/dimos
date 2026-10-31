@@ -82,10 +82,6 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
-            pcm: false,
-            gnc_overtrust_check: false,
-            overtrust_noise_headroom: [1.0; 4],
-            gravity: Vec::new(),
             committed: Vec::new(),
             evidence_core: false,
         },
@@ -144,10 +140,6 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         gnc_variance_scale: 10.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
-        pcm: false,
-        gnc_overtrust_check: false,
-        overtrust_noise_headroom: [1.0; 4],
-        gravity: Vec::new(),
         committed: Vec::new(),
         evidence_core: false,
     };
@@ -227,120 +219,6 @@ fn revisited_square(yaw_sd: f64, revisit: usize) -> (Poses, Poses) {
     (truth, odometry)
 }
 
-/// The revisited square with overtrusted odometry: its stated yaw variance is 100x smaller than the random walk it
-/// really takes, so the five true closures (the revisit seeing the first side again, all agreeing) are tens of sigmas
-/// from where the dead-reckoned graph puts them, and a false closure sits among them. GNC-TLS starts near mu = 0, where
-/// it weighs every closure at about cutoff x sqrt(mu) / residual against the always-in odometry, so the odometry wins
-/// and every closure is voted out. With the overtrust check, GNC-GM (started at least squares, where the agreeing
-/// closures together outweigh the odometry) keeps them and not the false one, its odometry residuals show the stated
-/// noise far too small, so its verdict is taken and the revisit lands on the first side.
-fn overtrusted_square(gnc_overtrust_check: bool) -> (Vec<f64>, f64, f64) {
-    // 3 mrad of yaw per keyframe, five revisited keyframes, closures good to 1 cm, the yaw variance stated 100x too small
-    let (yaw_sd, revisit, closure_var, overtrust) = (0.003, 5, 1e-4, 100.0);
-    let (truth, odometry) = revisited_square(yaw_sd, revisit);
-    let last = truth.len() - 1;
-    let overtrusted = [1e-8, 1e-8, yaw_sd * yaw_sd / overtrust, 1e-6, 1e-6, 1e-6];
-    let odometry_edges: Vec<Edge> = (1..=last)
-        .map(|k| between(&odometry, k - 1, k, overtrusted))
-        .collect();
-    let mut closures: Vec<Edge> = (0..revisit)
-        .map(|j| between(&truth, j, 4 * SIDE + j, [closure_var; 6]))
-        .collect();
-    let mut false_closure = between(&truth, SIDE, 3 * SIDE, [closure_var; 6]);
-    false_closure.translation = [0.0, 0.5, 0.0];
-    closures.push(false_closure);
-    let solution = solve(
-        &odometry.iter().map(|p| p.0).collect::<Vec<_>>(),
-        &odometry.iter().map(|p| p.1).collect::<Vec<_>>(),
-        &(0..odometry.len()).map(|k| k > 0).collect::<Vec<_>>(),
-        &odometry_edges,
-        &closures,
-        &SolveConfig {
-            gnc_variance_scale: 10.0,
-            gnc_inlier_probability: 0.95,
-            huber_k: 1.345,
-            pcm: false,
-            gnc_overtrust_check,
-            overtrust_noise_headroom: [1.0; 4],
-            gravity: Vec::new(),
-            committed: Vec::new(),
-            evidence_core: false,
-        },
-    );
-    let gap = |positions: &[Vec3]| mat3::norm(&mat3::sub(&positions[4 * SIDE], &positions[0]));
-    (
-        solution.closure_weights,
-        gap(&odometry.iter().map(|p| p.1).collect::<Vec<_>>()),
-        gap(&solution.positions),
-    )
-}
-
-#[test]
-fn overtrusted_odometry_votes_out_every_true_closure_under_gnc_tls_alone() {
-    let (weights, drifted, solved) = overtrusted_square(false);
-    assert!(
-        drifted > 0.2,
-        "the odometry should drift well past the closures' 1 cm: {drifted}"
-    );
-    assert_eq!(
-        weights,
-        vec![0.0; 6],
-        "TLS should lose the true closures to the overtrusted odometry"
-    );
-    assert!(
-        solved > 0.9 * drifted,
-        "the revisit should stay off: {solved} of {drifted}"
-    );
-}
-
-#[test]
-fn overtrusted_odometry_keeps_agreeing_true_closures_under_gnc_overtrust_check() {
-    let (weights, drifted, solved) = overtrusted_square(true);
-    assert_eq!(weights, [vec![1.0; 5], vec![0.0]].concat());
-    assert!(
-        solved < 0.25 * drifted,
-        "the revisit should land on the first side: {solved} of {drifted}"
-    );
-}
-
-/// The overtrust check leaves an honest odometry's verdict to TLS: the drifted square's true closure is kept and the
-/// false one is not, with the check on as without it.
-#[test]
-fn the_overtrust_check_keeps_tls_verdict_on_an_honest_odometry() {
-    let (truth, odometry) = square(0.0005);
-    let last = truth.len() - 1;
-    let odometry_edges: Vec<Edge> = (1..=last)
-        .map(|k| between(&odometry, k - 1, k, [1e-8, 1e-8, 1e-5, 1e-4, 1e-4, 1e-6]))
-        .collect();
-    let true_closure = between(&truth, 0, last, [1e-3; 6]);
-    let mut false_closure = between(&truth, 0, 2 * SIDE, [1e-3; 6]);
-    false_closure.translation = [0.0, 0.5, 0.0];
-    let solve_with = |gnc_overtrust_check: bool| {
-        solve(
-            &odometry.iter().map(|p| p.0).collect::<Vec<_>>(),
-            &odometry.iter().map(|p| p.1).collect::<Vec<_>>(),
-            &(0..odometry.len()).map(|k| k > 0).collect::<Vec<_>>(),
-            &odometry_edges,
-            &[true_closure, false_closure],
-            &SolveConfig {
-                gnc_variance_scale: 10.0,
-                gnc_inlier_probability: 0.95,
-                huber_k: 1.345,
-                pcm: false,
-                gnc_overtrust_check,
-                overtrust_noise_headroom: [1.0; 4],
-                gravity: Vec::new(),
-                committed: Vec::new(),
-                evidence_core: false,
-            },
-        )
-    };
-    let (without, with) = (solve_with(false), solve_with(true));
-    assert_eq!(with.closure_weights, vec![1.0, 0.0]);
-    assert_eq!(with.closure_weights, without.closure_weights);
-    assert!(mat3::norm(&with.positions[last]) < 0.05);
-}
-
 /// The revisited square with its five true closures committed (the previous solve kept them), then nine look-alikes
 /// arrive that agree with each other and with the dead-reckoned graph (they claim the revisit is where the drifted
 /// odometry puts it, as a burst of wrong matches dragged along by the drift does). A cold solve, starting from the
@@ -369,10 +247,6 @@ fn committed_square(committed: bool) -> (Vec<f64>, f64, f64) {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
-            pcm: false,
-            gnc_overtrust_check: true,
-            overtrust_noise_headroom: [1.0; 4],
-            gravity: Vec::new(),
             committed: if committed {
                 [vec![true; revisit], vec![false; 9]].concat()
             } else {
@@ -475,10 +349,6 @@ fn closures_agree_around_a_drifting_cycle() {
         gnc_variance_scale: 1.0,
         gnc_inlier_probability: 0.99,
         huber_k: 0.0,
-        pcm: true,
-        gnc_overtrust_check: false,
-        overtrust_noise_headroom: [1.0; 4],
-        gravity: Vec::new(),
         committed: Vec::new(),
         evidence_core: false,
     };
