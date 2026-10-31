@@ -26,9 +26,8 @@ from fastapi.testclient import TestClient
 import psutil
 import pytest
 
-from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.run_registry import RunEntry
-from experimental.gateway import launches, store
+from experimental.gateway import launches
 from experimental.gateway.state import State
 
 
@@ -311,13 +310,37 @@ def test_recordings_is_the_standard_directory(
     }
     (checkout / ".git").mkdir()
     assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
-    store.serve(DIMOS_PROJECT_ROOT)
-    assert client.get("/history/recordings").json() == {"path": str(RECORDINGS_DIR)}
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         f"recordings:\n  dir: {tmp_path / 'recs'}\n"
     )
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
+
+
+def test_dimos_app_wins_and_config_yaml_in_its_home_is_the_fallback(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from experimental.gateway import store
+
+    home = tmp_path / "dimos_home"
+    home.mkdir(exist_ok=True)
+    (home / "config.yaml").write_text(
+        f"dimos-gateway: {{socket: /tmp/yaml.sock}}\nrecordings: {{dir: {tmp_path / 'yaml_recs'}}}\n"
+    )
+    # DIMOS_HOME's config.yaml is never read
+    (tmp_path / "not_this_home").mkdir()
+    (tmp_path / "not_this_home" / "config.yaml").write_text("zenoh: {namespace: wrong}\n")
+    assert store.setting("zenoh", "namespace") is None
+    assert store.setting("dimos-gateway", "socket") == "/tmp/yaml.sock"
+    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "yaml_recs")}
+    app = {
+        "home": str(home),
+        "socket": "/tmp/app.sock",
+        "recordingsDir": str(tmp_path / "app_recs"),
+    }
+    monkeypatch.setenv("DIMOS_APP", json.dumps(app))
+    assert store.setting("dimos-gateway", "socket") == "/tmp/app.sock"
+    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "app_recs")}
 
 
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:

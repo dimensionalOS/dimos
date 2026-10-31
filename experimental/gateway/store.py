@@ -40,7 +40,6 @@ def logs_dir() -> Path:
 
 
 def setting(section: str, key: str) -> Any:
-    """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset."""
     return shared_config.setting(section, key)
 
 
@@ -54,10 +53,10 @@ def serve(dimos_dir: Path) -> None:
 
 
 def recordings_dir(dimos_dir: Path | None = None) -> Path:
-    """`recordings.dir` from config.yaml, else the served checkout's default, never the gateway copy's."""
+    """The configured one, else where the served checkout's dimos records by default (not the gateway copy's)."""
     configured = setting("recordings", "dir")
     if configured:
-        return Path(configured).expanduser()
+        return Path(str(configured)).expanduser()
     dimos_dir = dimos_dir or _served
     return dimos_dir / "recordings" if (dimos_dir / ".git").exists() else STATE_DIR / "recordings"
 
