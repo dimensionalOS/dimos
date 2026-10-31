@@ -56,8 +56,8 @@ Live launch phases (and added or removed blueprints) also arrive on zenoh at `<n
 ```
 
 - Settings come from `DIMOS_APP` (`socket`, `recordingsDir`, `zenohNamespace`, `zenohConnect`), else `<home>/config.yaml`
-  (`home` from `DIMOS_APP`, else `~/.dimos`; `DIMOS_HOME` is not read): `dimos-gateway.socket`, `zenoh.namespace`,
-  `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
+  (`home` from `DIMOS_APP`, else `~/.dimos`): `dimos-gateway.socket`, `zenoh.namespace`, `zenoh.connect`,
+  `zenoh.gossip`, `recordings.dir`.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

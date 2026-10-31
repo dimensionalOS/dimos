@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def resolve_namespace(given: str | None) -> str | None:
-    namespace = given or store.setting("zenoh", "namespace")
+def resolve_namespace() -> str | None:
+    namespace: str | None = store.setting("zenoh", "namespace")
     if not namespace:
         return None
     if any(chunk == "" for chunk in namespace.split("/")) or re.search(r"[*?#$]", namespace):
@@ -43,11 +43,10 @@ def resolve_namespace(given: str | None) -> str | None:
     return namespace
 
 
-def resolve_connect(given: str | None) -> list[str]:
+def resolve_connect() -> list[str]:
     from dimos.core.global_config import global_config
 
-    configured = store.setting("zenoh", "connect")
-    value = given if given is not None else configured or global_config.zenoh_connect
+    value = store.setting("zenoh", "connect") or global_config.zenoh_connect
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
