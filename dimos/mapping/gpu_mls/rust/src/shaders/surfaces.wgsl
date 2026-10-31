@@ -35,7 +35,9 @@ struct SurfaceParams {
     min_up: f32,
     merge_m: f32,
     merge_cos: f32,
-    _pad: i32,
+    // 1 when `columns` limits the passes to its read columns and the export
+    // to its write columns; 0 runs and writes the whole window.
+    masked: u32,
     // Window-local columns export_cells writes out: x0, y0, x1, y1 inclusive.
     write_box: vec4<i32>,
     // Window-local z range export_cells writes out: lo, hi inclusive.
@@ -65,7 +67,36 @@ const NO_SEED: u32 = 0xffffffffu;
 // Octahedral-packed upward normals, meaningful where the planar bit is set.
 @group(1) @binding(11) var<storage, read_write> cell_normals: array<u32>;
 @group(1) @binding(12) var<storage, read_write> planar: array<atomic<u32>>;
+// Bit per window column (y * W + x): the columns the passes read, then the
+// columns the export writes, then a bit per window brick column holding any
+// read column.
+@group(1) @binding(13) var<storage, read_write> columns: array<u32>;
 @group(2) @binding(0) var<uniform> flood: FloodStep;
+
+fn mask_words() -> u32 {
+    return (sp.size.x * sp.size.y + 31u) / 32u;
+}
+
+fn mask_bit(section: u32, i: u32) -> bool {
+    return ((columns[section * mask_words() + i / 32u] >> (i & 31u)) & 1u) != 0u;
+}
+
+// A column the passes compute; the others read as empty.
+fn column_active(x: i32, y: i32) -> bool {
+    return sp.masked == 0u || mask_bit(0u, u32(y) * sp.size.x + u32(x));
+}
+
+fn column_writes(x: i32, y: i32) -> bool {
+    return sp.masked == 0u || mask_bit(1u, u32(y) * sp.size.x + u32(x));
+}
+
+// Whether window brick column (bx, by) holds any active column.
+fn brick_column_active(bx: u32, by: u32) -> bool {
+    let lo = sp.window_min.xy >> vec2<u32>(3u);
+    let hi = (sp.window_min.xy + vec2<i32>(sp.size.xy) - 1) >> vec2<u32>(3u);
+    let across = u32(hi.x - lo.x + 1);
+    return sp.masked == 0u || mask_bit(2u, by * across + bx);
+}
 
 fn column_word(x: i32, y: i32, z: i32) -> u32 {
     return (u32(y) * sp.size.x + u32(x)) * sp.size.w + u32(z) / 32u;
@@ -150,6 +181,9 @@ fn build_occupancy(
     @builtin(workgroup_id) wg: vec3<u32>,
     @builtin(local_invocation_index) li: u32,
 ) {
+    if (!brick_column_active(wg.x, wg.y)) {
+        return;
+    }
     let slot = find_brick(window_brick_lo() + vec3<i32>(wg));
     if (slot == NO_SLOT) {
         return;
@@ -161,7 +195,7 @@ fn build_occupancy(
             continue;
         }
         let local = key_of_site(site) - sp.window_min.xyz;
-        if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz)) {
+        if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz) || !column_active(local.x, local.y)) {
             continue;
         }
         atomicOr(&occupied[column_word(local.x, local.y, local.z)], 1u << (u32(local.z) & 31u));
@@ -381,7 +415,7 @@ fn fit_cells(
     // Workgroup memory starts uninitialized (see Gpu::pipeline).
     if (li == 0u) {
         atomicStore(&tile_len, 0u);
-        tile_any = select(0u, 1u, slot != NO_SLOT);
+        tile_any = select(0u, 1u, slot != NO_SLOT && brick_column_active(wg.x / 2u, wg.y));
     }
     if (workgroupUniformLoad(&tile_any) == 0u) {
         return;
@@ -496,6 +530,9 @@ fn merge_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let x = i32(gid.x);
     let y = i32(gid.y);
+    if (!column_active(x, y)) {
+        return;
+    }
     for (var z = 0; z + 1 < i32(sp.size.z); z++) {
         if (!occupied_at(x, y, z) || !occupied_at(x, y, z + 1) || !is_planar(x, y, z) || !is_planar(x, y, z + 1)) {
             continue;
@@ -522,6 +559,9 @@ fn standable_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
     let base = column_word(x, y, 0);
     for (var w = 0u; w < sp.size.w; w++) {
         standable[base + w] = 0u;
+    }
+    if (!column_active(x, y)) {
+        return;
     }
     var ceiling = 3.0e38;
     for (var z = i32(sp.size.z) - 1; z >= 0; z--) {
@@ -595,6 +635,12 @@ fn grow_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
     let y = i32(gid.y);
     let n = sp.closing_cells;
     let base = column_word(x, y, 0);
+    if (!column_active(x, y)) {
+        for (var w = 0u; w < sp.size.w; w++) {
+            grown[base + w] = 0u;
+        }
+        return;
+    }
     for (var w = 0u; w < sp.size.w; w++) {
         var bits = 0u;
         for (var dy = -n; dy <= n; dy++) {
@@ -620,6 +666,12 @@ fn compose_surface(@builtin(global_invocation_id) gid: vec3<u32>) {
     let y = i32(gid.y);
     let n = sp.closing_cells;
     let base = column_word(x, y, 0);
+    if (!column_active(x, y)) {
+        for (var w = 0u; w < sp.size.w; w++) {
+            surface[base + w] = 0u;
+        }
+        return;
+    }
     for (var w = 0u; w < sp.size.w; w++) {
         let original = standable[base + w];
         var closed = 0u;
@@ -709,6 +761,9 @@ fn find_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
     let base = column_word(x, y, 0);
     for (var w = 0u; w < sp.size.w; w++) {
         wall[base + w] = 0u;
+    }
+    if (!column_active(x, y)) {
+        return;
     }
     let dirs = array<vec2<i32>, 4>(vec2<i32>(-1, 0), vec2<i32>(1, 0), vec2<i32>(0, -1), vec2<i32>(0, 1));
     for (var z = 0; z < i32(sp.size.z); z++) {
@@ -1225,7 +1280,7 @@ fn export_row(x: i32, y: i32, z: u32, height: f32, wall_dist: f32) {
 fn export_cells(@builtin(global_invocation_id) gid: vec3<u32>) {
     let x = sp.write_box.x + i32(gid.x);
     let y = sp.write_box.y + i32(gid.y);
-    if (x > sp.write_box.z || y > sp.write_box.w) {
+    if (x > sp.write_box.z || y > sp.write_box.w || !column_writes(x, y)) {
         return;
     }
     let base = column_word(x, y, 0);

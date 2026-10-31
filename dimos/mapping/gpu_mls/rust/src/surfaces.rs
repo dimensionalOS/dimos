@@ -29,7 +29,7 @@ const SUPPORT_RADIUS: i32 = 3;
 const SUPPORT_Z_TOL: i32 = 3;
 /// The CPU HOLE_SPAN_CELLS: empty columns a gap may span and still be a hole.
 const HOLE_SPAN_CELLS: i32 = 4;
-const SURFACE_BINDINGS: u32 = 13;
+const SURFACE_BINDINGS: u32 = 14;
 const PLANE_BINDINGS: u32 = 10;
 const EXPORT_WORDS: usize = 5;
 /// Uniform offsets must be 256-byte aligned for dynamic binding.
@@ -162,7 +162,7 @@ struct SurfaceParams {
     min_up: f32,
     merge_m: f32,
     merge_cos: f32,
-    pad: i32,
+    masked: u32,
     write_box: [i32; 4],
     write_z: [i32; 4],
 }
@@ -199,6 +199,8 @@ struct Buffers {
     cell_normals: wgpu::Buffer,
     planar: wgpu::Buffer,
     export_count: wgpu::Buffer,
+    /// The read, write and brick column bits of `mask_columns`.
+    columns: wgpu::Buffer,
 }
 
 /// Per-plane-cell buffers, regrown when a frame's planes need more room,
@@ -292,6 +294,8 @@ pub struct SurfaceExtractor {
     /// Window-local columns and z range `export` writes out.
     write_box: [i32; 4],
     write_z: [i32; 4],
+    /// Whether `mask_columns` limits the window to some of its columns.
+    masked: bool,
 }
 
 impl SurfaceExtractor {
@@ -336,6 +340,7 @@ impl SurfaceExtractor {
             cell_normals: gpu.storage("cell normals", cells),
             planar: gpu.storage("planar", bit_words),
             export_count: gpu.storage("export count", 4),
+            columns: gpu.storage("columns", 4 * mask_words(&window)),
         };
         let params = gpu.uniform(
             "surface params",
@@ -354,7 +359,9 @@ impl SurfaceExtractor {
             flood_bytes[at..at + 8].copy_from_slice(bytemuck::bytes_of(&step));
         }
         gpu.queue.write_buffer(&flood_buffer, 0, &flood_bytes);
-        write_params(&gpu, &params, window, &config, voxel_size, [0; 4], [0; 4]);
+        write_params(
+            &gpu, &params, window, &config, voxel_size, [0; 4], [0; 4], false,
+        );
 
         let empty_layout = gpu.layout("empty", 0, &[], false);
         let surface_layout = gpu.layout("surface", SURFACE_BINDINGS, &[0], false);
@@ -392,6 +399,7 @@ impl SurfaceExtractor {
                 &b.heights,
                 &b.cell_normals,
                 &b.planar,
+                &b.columns,
             ],
         );
         let flood_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -463,6 +471,7 @@ impl SurfaceExtractor {
             capacity: window,
             write_box: [0, 0, window.size.0 as i32 - 1, window.size.1 as i32 - 1],
             write_z: [0, window.size.2 as i32 - 1, 0, 0],
+            masked: false,
         };
         extractor.ensure_plane_cells(1);
         extractor.write_plane_info(0, 0);
@@ -483,9 +492,48 @@ impl SurfaceExtractor {
             self.window = window;
             self.write_box = [0, 0, window.size.0 as i32 - 1, window.size.1 as i32 - 1];
             self.write_z = [0, window.size.2 as i32 - 1, 0, 0];
+            self.masked = false;
             self.write_params();
         }
         fits
+    }
+
+    /// Limit the next `extract` to the window columns `read` sets, each a
+    /// bit at y * W + x, and its `export` to those `write` sets. A column
+    /// left out reads as empty, so a write column needs every column within
+    /// the reach (and boundary reach) of it read. Until the next `retarget`.
+    pub fn mask_columns(&mut self, read: &[u32], write: &[u32]) {
+        let words = mask_words(&self.window) as usize;
+        let section = (self.window.columns() as usize).div_ceil(32);
+        assert!(
+            read.len() == section && write.len() == section,
+            "masks are a bit per window column"
+        );
+        let (bricks_across, _, _) = self.window_bricks();
+        let first_brick = (self.window.min.0 >> 3, self.window.min.1 >> 3);
+        let mut bits = vec![0u32; words];
+        bits[..section].copy_from_slice(read);
+        bits[section..2 * section].copy_from_slice(write);
+        let width = self.window.size.0 as usize;
+        for (w, &word) in read.iter().enumerate() {
+            let mut rest = word;
+            while rest != 0 {
+                let i = 32 * w + rest.trailing_zeros() as usize;
+                rest &= rest - 1;
+                let (x, y) = ((i % width) as i32, (i / width) as i32);
+                let brick = (
+                    ((self.window.min.0 + x) >> 3) - first_brick.0,
+                    ((self.window.min.1 + y) >> 3) - first_brick.1,
+                );
+                let b = brick.1 as usize * bricks_across as usize + brick.0 as usize;
+                bits[2 * section + b / 32] |= 1 << (b % 32);
+            }
+        }
+        self.gpu
+            .queue
+            .write_buffer(&self.buffers.columns, 0, bytemuck::cast_slice(&bits));
+        self.masked = true;
+        self.write_params();
     }
 
     fn write_params(&self) {
@@ -497,6 +545,7 @@ impl SurfaceExtractor {
             self.voxel_size,
             self.write_box,
             self.write_z,
+            self.masked,
         );
     }
 
@@ -823,6 +872,14 @@ impl SurfaceExtractor {
     }
 }
 
+/// Words of a window's column mask: read and write bits per column, then a
+/// bit per brick column, which a window at least two columns wide each way
+/// has no more of than columns.
+fn mask_words(window: &Window) -> u64 {
+    3 * window.columns().div_ceil(32) + 1
+}
+
+#[allow(clippy::too_many_arguments)]
 fn write_params(
     gpu: &Gpu,
     params: &wgpu::Buffer,
@@ -831,6 +888,7 @@ fn write_params(
     voxel_size: f32,
     write_box: [i32; 4],
     write_z: [i32; 4],
+    masked: bool,
 ) {
     gpu.queue.write_buffer(
         params,
@@ -858,7 +916,7 @@ fn write_params(
             },
             merge_m: config.plane_merge_m,
             merge_cos: config.plane_merge_deg.to_radians().cos(),
-            pad: 0,
+            masked: masked as u32,
             write_box,
             write_z,
         }),

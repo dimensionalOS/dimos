@@ -378,7 +378,7 @@ impl Mapper {
 
 #[cfg(feature = "gpu")]
 mod gpu {
-    use ahash::AHashSet;
+    use ahash::{AHashMap, AHashSet};
     use dimos_gpu_mls::brick_map::{BrickMap, MapConfig};
     use dimos_gpu_mls::gpu::Gpu;
     use dimos_gpu_mls::surfaces::{SurfaceExtractor, Window};
@@ -400,10 +400,12 @@ mod gpu {
         /// Lowest and highest voxel z the map has held.
         z_range: Option<(i32, i32)>,
         extractor: Option<SurfaceExtractor>,
-        /// Columns whose surface may have moved since it was last extracted:
-        /// a voxel there started or stopped being emitted, or the GPU changed
-        /// an emitted one materially (created, removed, past a refit milestone).
-        dirty: AHashSet<(i32, i32)>,
+        /// Columns whose surface may have moved since it was last extracted,
+        /// with the lowest and highest voxel z that changed there: a voxel
+        /// started or stopped being emitted. A refit of an emitted voxel's
+        /// plane is left out, as the CPU path keeps no plane heights; its
+        /// height is fresh the next time its column changes.
+        dirty: AHashMap<(i32, i32), (i32, i32)>,
         /// Columns the last surfaces sent a cell in, which a later rewrite
         /// that leaves them none must clear.
         sent_columns: AHashSet<(i32, i32)>,
@@ -467,7 +469,7 @@ mod gpu {
                 max_points: config.gpu_max_points as usize,
                 z_range: None,
                 extractor: None,
-                dirty: AHashSet::new(),
+                dirty: AHashMap::new(),
                 sent_columns: AHashSet::new(),
                 tracking: false,
                 surface_update: SurfaceUpdate::default(),
@@ -535,7 +537,9 @@ mod gpu {
             let mut coarse = AHashSet::with_capacity(report.hits);
             for (i, voxel) in report.voxels.iter().enumerate() {
                 if mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine, self.tracking) {
-                    self.dirty.insert((voxel.key.0, voxel.key.1));
+                    let (x, y, z) = voxel.key;
+                    let span = self.dirty.entry((x, y)).or_insert((z, z));
+                    *span = (span.0.min(z), span.1.max(z));
                 }
                 if voxel.health.is_some() {
                     self.widen_z(voxel.key.2);
@@ -543,17 +547,6 @@ mod gpu {
                 if i < report.hits {
                     coarse.insert(voxel.key);
                 }
-            }
-            // Isolated noise is not emitted, as the CPU path's local map drops
-            // it; a removed emitted voxel flipped above.
-            if self.tracking {
-                self.dirty.extend(
-                    report
-                        .changed
-                        .iter()
-                        .filter(|&&k| mirror.is_emitted(k))
-                        .map(|&(x, y, _)| (x, y)),
-                );
             }
             let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1e3;
             self.frame = GpuFrame {
@@ -596,7 +589,7 @@ mod gpu {
             let cell = |c: f32| (c * inv).floor() as i32;
             for x in cell(bounds.cx - bounds.radius)..=cell(bounds.cx + bounds.radius) {
                 for y in cell(bounds.cy - bounds.radius)..=cell(bounds.cy + bounds.radius) {
-                    self.dirty.insert((x, y));
+                    self.dirty.insert((x, y), (i32::MIN, i32::MAX));
                 }
             }
         }
@@ -686,80 +679,108 @@ mod gpu {
             if export_z.0 > export_z.1 || window_z.0 > window_z.1 {
                 return Some(Vec::new());
             }
+            // A change above or below everything the window reads cannot reach
+            // the planner's heights, as the CPU planner never sees it; it waits
+            // until the region's heights come near it.
+            let reads = (export_z.0 - pad, export_z.1 + pad + headroom);
             let mut changed: Vec<(i32, i32)> = Vec::new();
-            self.dirty.retain(|&(x, y)| {
-                let inside = (x0..=x1).contains(&x) && (y0..=y1).contains(&y);
+            self.dirty.retain(|&(x, y), &mut (lo, hi)| {
+                let inside = (x0..=x1).contains(&x)
+                    && (y0..=y1).contains(&y)
+                    && lo <= reads.1
+                    && hi >= reads.0;
                 if inside {
                     changed.push((x, y));
                 }
                 !inside
             });
             self.surface_update.dirty_columns = changed.len();
+            let Some(&(fx, fy)) = changed.first() else {
+                return Some(Vec::new());
+            };
+            // As the CPU planner's region update: the changed columns grown by
+            // the pad are rewritten, and those grown by it again are read.
+            let (mut cx0, mut cx1, mut cy0, mut cy1) = (fx, fx, fy, fy);
+            for &(x, y) in &changed {
+                (cx0, cx1, cy0, cy1) = (cx0.min(x), cx1.max(x), cy0.min(y), cy1.max(y));
+            }
+            let (wx0, wy0) = (cx0 - 2 * pad, cy0 - 2 * pad);
+            let (w, h) = (
+                (cx1 - cx0 + 1 + 4 * pad) as usize,
+                (cy1 - cy0 + 1 + 4 * pad) as usize,
+            );
+            let mut seeds = vec![false; w * h];
+            for &(x, y) in &changed {
+                seeds[(y - wy0) as usize * w + (x - wx0) as usize] = true;
+            }
             // The planner knows voxels only inside the region, so writes stay there.
-            let writes: Vec<(i32, i32, i32, i32)> = cover(&changed, pad)
-                .into_iter()
-                .map(|(cx0, cx1, cy0, cy1)| {
-                    (
-                        (cx0 - pad).max(x0),
-                        (cx1 + pad).min(x1),
-                        (cy0 - pad).max(y0),
-                        (cy1 + pad).min(y1),
-                    )
-                })
-                .collect();
+            let mut write = dilate(&seeds, w, h, pad);
+            for (i, cell) in write.iter_mut().enumerate() {
+                let (x, y) = (wx0 + (i % w) as i32, wy0 + (i / w) as i32);
+                *cell &= (x0..=x1).contains(&x) && (y0..=y1).contains(&y);
+            }
+            let read = dilate(&write, w, h, pad);
+            let window = Window {
+                min: (wx0, wy0, window_z.0),
+                size: (w as u32, h as u32, (window_z.1 - window_z.0 + 1) as u32),
+            };
+            let bits = |mask: &[bool]| {
+                let mut words = vec![0u32; mask.len().div_ceil(32)];
+                for (i, _) in mask.iter().enumerate().filter(|(_, &set)| set) {
+                    words[i / 32] |= 1 << (i % 32);
+                }
+                words
+            };
+            let mut read_bricks: AHashSet<(i32, i32)> = AHashSet::new();
+            for (i, _) in read.iter().enumerate().filter(|(_, &set)| set) {
+                read_bricks.insert(((wx0 + (i % w) as i32) >> 3, (wy0 + (i / w) as i32) >> 3));
+            }
+            let z_bricks = (window_z.1 >> 3) - (window_z.0 >> 3) + 1;
+            self.surface_update.windows = 1;
+            self.surface_update.bricks = read_bricks.len() as u64 * z_bricks as u64;
+            self.surface_update.read_columns = read.iter().filter(|&&set| set).count() as u64;
+            self.surface_update.columns = write.iter().filter(|&&set| set).count() as u64;
+            let started = std::time::Instant::now();
+            self.point_extractor(window, config)?;
+            let extractor = self.extractor.as_mut().expect("pointed above");
+            extractor.mask_columns(&bits(&read), &bits(&write));
+            extractor.extract(&mut self.map);
+            let extracted = std::time::Instant::now();
+            let write_box = (
+                x0.max(wx0),
+                x1.min(wx0 + w as i32 - 1),
+                y0.max(wy0),
+                y1.min(wy0 + h as i32 - 1),
+            );
+            let rows = extractor.export(write_box, export_z);
+            self.surface_update.extract_ms = (extracted - started).as_secs_f64() * 1e3;
+            self.surface_update.export_ms = extracted.elapsed().as_secs_f64() * 1e3;
             let half = 0.5 * voxel_size;
             let center = |c: i32| c as f32 * voxel_size + half;
-            let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * changed.len());
-            let mut with_cells: AHashSet<(i32, i32)> = AHashSet::new();
-            let in_box = |&(x, y): &(i32, i32), b: &(i32, i32, i32, i32)| {
-                (b.0..=b.1).contains(&x) && (b.2..=b.3).contains(&y)
-            };
-            for (i, write) in writes.iter().enumerate() {
-                let (wx0, wx1, wy0, wy1) = *write;
-                let window = Window {
-                    min: (wx0 - pad, wy0 - pad, window_z.0),
-                    size: (
-                        (wx1 - wx0 + 1 + 2 * pad) as u32,
-                        (wy1 - wy0 + 1 + 2 * pad) as u32,
-                        (window_z.1 - window_z.0 + 1) as u32,
-                    ),
+            let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * rows.len());
+            let mut with_cells: AHashSet<(i32, i32)> = AHashSet::with_capacity(rows.len());
+            for cell in &rows {
+                let (x, y, z) = cell.key;
+                let w = match request.wall_distance {
+                    true if request.wall_reach_m > 0.0 => cell
+                        .wall_m
+                        .unwrap_or(f32::INFINITY)
+                        .min(request.wall_reach_m),
+                    true => cell.wall_m.unwrap_or(f32::INFINITY),
+                    false => f32::INFINITY,
                 };
-                self.surface_update.windows += 1;
-                self.surface_update.bricks +=
-                    bricks(window.size.0, window.size.1, window.size.2 as i32);
-                self.surface_update.read_columns += window.size.0 as u64 * window.size.1 as u64;
-                self.surface_update.columns += ((wx1 - wx0 + 1) * (wy1 - wy0 + 1)) as u64;
-                let started = std::time::Instant::now();
-                self.point_extractor(window, config)?;
-                let extractor = self.extractor.as_mut().expect("pointed above");
-                extractor.extract(&mut self.map);
-                let extracted = std::time::Instant::now();
-                let rows = extractor.export(*write, export_z);
-                self.surface_update.extract_ms += (extracted - started).as_secs_f64() * 1e3;
-                self.surface_update.export_ms += extracted.elapsed().as_secs_f64() * 1e3;
-                // An earlier window already sent the columns its write box shares.
-                let earlier = &writes[..i];
-                for cell in rows {
-                    let (x, y, z) = cell.key;
-                    if earlier.iter().any(|b| in_box(&(x, y), b)) {
-                        continue;
-                    }
-                    let w = match request.wall_distance {
-                        true if request.wall_reach_m > 0.0 => cell
-                            .wall_m
-                            .unwrap_or(f32::INFINITY)
-                            .min(request.wall_reach_m),
-                        true => cell.wall_m.unwrap_or(f32::INFINITY),
-                        false => f32::INFINITY,
-                    };
-                    out.extend_from_slice(&[center(x), center(y), center(z), cell.height_m, w]);
-                    with_cells.insert((x, y));
-                    self.surface_update.cells += 1;
-                }
+                out.extend_from_slice(&[center(x), center(y), center(z), cell.height_m, w]);
+                with_cells.insert((x, y));
             }
+            self.surface_update.cells = rows.len();
             // A column that held cells and now has none in range is cleared by a
             // NaN-z row; one that never held any needs none.
-            let in_write = |c: &(i32, i32)| writes.iter().any(|b| in_box(c, b));
+            let in_write = |&(x, y): &(i32, i32)| {
+                let (lx, ly) = (x - wx0, y - wy0);
+                (0..w as i32).contains(&lx)
+                    && (0..h as i32).contains(&ly)
+                    && write[ly as usize * w + lx as usize]
+            };
             for &(x, y) in self
                 .sent_columns
                 .iter()
@@ -804,48 +825,27 @@ mod gpu {
         }
     }
 
-    /// Boxes (x0, x1, y0, y1) covering `columns`, each to be recomputed in a
-    /// window `pad` past its writes, which reach `pad` past the box: a
-    /// box per tile of columns, then any two merged while one window over
-    /// both reads no more columns than the two apart.
-    fn cover(columns: &[(i32, i32)], pad: i32) -> Vec<(i32, i32, i32, i32)> {
-        let tile = (2 * pad).max(8);
-        let mut tiles: ahash::AHashMap<(i32, i32), (i32, i32, i32, i32)> = Default::default();
-        for &(x, y) in columns {
-            let b = tiles
-                .entry((x.div_euclid(tile), y.div_euclid(tile)))
-                .or_insert((x, x, y, y));
-            *b = (b.0.min(x), b.1.max(x), b.2.min(y), b.3.max(y));
-        }
-        let mut boxes: Vec<(i32, i32, i32, i32)> = tiles.into_values().collect();
-        boxes.sort_unstable();
-        let read = |b: &(i32, i32, i32, i32)| {
-            (b.1 - b.0 + 1 + 4 * pad) as i64 * (b.3 - b.2 + 1 + 4 * pad) as i64
-        };
-        let union = |a: &(i32, i32, i32, i32), b: &(i32, i32, i32, i32)| {
-            (a.0.min(b.0), a.1.max(b.1), a.2.min(b.2), a.3.max(b.3))
-        };
-        let mut merged = true;
-        while merged {
-            merged = false;
-            let mut i = 0;
-            while i < boxes.len() {
-                let mut j = i + 1;
-                while j < boxes.len() {
-                    let both = union(&boxes[i], &boxes[j]);
-                    if read(&both) <= read(&boxes[i]) + read(&boxes[j]) {
-                        boxes[i] = both;
-                        boxes.swap_remove(j);
-                        merged = true;
-                        j = i + 1;
-                    } else {
-                        j += 1;
-                    }
+    /// `mask` (w by h, row-major) grown by `r` columns each way, a square
+    /// as the CPU planner's ColumnMask::dilated.
+    fn dilate(mask: &[bool], w: usize, h: usize, r: i32) -> Vec<bool> {
+        let r = r.max(0) as usize;
+        // Set columns within r along one axis, from running counts.
+        let along = |src: &[bool], len: usize, lines: usize, at: &dyn Fn(usize, usize) -> usize| {
+            let mut out = vec![false; src.len()];
+            let mut prefix = vec![0u32; len + 1];
+            for line in 0..lines {
+                for k in 0..len {
+                    prefix[k + 1] = prefix[k] + src[at(line, k)] as u32;
                 }
-                i += 1;
+                for k in 0..len {
+                    let (a, b) = (k.saturating_sub(r), (k + r + 1).min(len));
+                    out[at(line, k)] = prefix[b] > prefix[a];
+                }
             }
-        }
-        boxes
+            out
+        };
+        let rows = along(mask, w, h, &|y, x| y * w + x);
+        along(&rows, h, w, &|x, y| y * w + x)
     }
 }
 
