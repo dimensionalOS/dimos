@@ -78,6 +78,11 @@ def piper_model(gripper: bool = False, *, robot: str | None = None) -> RobotMode
         ).with_joint_position_limits("gripper", lower=0.0, upper=PIPER_GRIPPER_STROKE_M)
     else:
         model = RobotModel.from_file(PIPER_FK_MODEL, package_paths=PIPER_PACKAGE_PATHS)
+    # The Desktop viewer turns COLLADA (.dae) meshes that say Z is up by 90°; the
+    # same shapes as .stl, one folder up, draw right.
+    model = model.with_mesh_paths_replaced("/meshes/dae/", "/meshes/").with_mesh_paths_replaced(
+        ".dae", ".stl"
+    )
     if not robot:
         return model
     moving = [*joint_names(PIPER_DOF), *(_GRIPPER_JOINTS if gripper else ())]
