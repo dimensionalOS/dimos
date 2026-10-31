@@ -575,32 +575,23 @@ class ControlCoordinator(Module):
 
     @rpc
     def get_joint_positions(self) -> dict[str, float]:
-        """Get current joint positions for all joints."""
-        with self._hardware_lock:
-            positions: dict[str, float] = {}
-            for hw in self._hardware.values():
-                state = hw.read_state()  # {joint_name: JointState}
-                for joint_name, joint_state in state.items():
-                    positions[joint_name] = joint_state.position
-            for connection in self._connections.values():
-                positions.update(connection.read_joints().joint_positions)
-            return positions
+        """Return the latest tick's joint positions without polling hardware."""
+        return self._tick_loop.joint_positions if self._tick_loop is not None else {}
 
     @rpc
     def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
         """Execute a trajectory through the coordinator's sole trajectory task."""
-        current_positions = self.get_joint_positions()
         with self._task_lock:
             if self._trajectory_task is None:
                 return TrajectoryExecutionResult(
                     TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
                     "Control coordinator has no trajectory task",
                 )
-            return self._trajectory_task.execute(trajectory, current_positions)
+            return self._trajectory_task.execute(trajectory, self.get_joint_positions())
 
     @rpc
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the coordinator's sole trajectory task."""
+        """Cancel the trajectory under the same lock used to accept submissions."""
         with self._task_lock:
             if self._trajectory_task is None:
                 return TrajectoryCancellationResult(

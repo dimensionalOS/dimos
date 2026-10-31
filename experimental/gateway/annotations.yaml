@@ -623,6 +623,12 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
+        openyam-lerobot-rollout:
+          title: OpenYAM policy rollout
+          description: Run a trained LeRobot policy on an OpenYAM arm.
+        openyam-lerobot-quest-rollout:
+          title: OpenYAM VR policy rollout
+          description: Run a trained policy with VR control for an OpenYAM arm.
         keyboard-teleop-openyam:
           title: OpenYAM keyboard driving
           description: Move an OpenYAM arm with this computer's keyboard.
