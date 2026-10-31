@@ -393,10 +393,6 @@ pub struct Config {
     /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
     /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
     pub odometry_noise_solve_lower_bound: bool,
-    /// The most the odometry's stated drift can understate it, as a factor on its standard deviation: a loosened
-    /// odometry map (`dispatch_solve`) loosens its variance by at most this squared, so a group of look-alike loops that
-    /// agree with each other cannot stretch the odometry over a jump no plausible drift explains.
-    pub odometry_overtrust_max: f64,
     /// The odometry's drift as a random walk in the motion itself, so it does not depend on how far apart keyframes
     /// are: per noise source (xy translation, z translation, yaw, roll/pitch tilt), the standard deviation it adds per
     /// square root of metres travelled (m/√m for translation, rad/√m for rotation) and per square root of radians
@@ -561,7 +557,6 @@ impl Default for Config {
             closure_uninformative_gate: true,
             closure_uninformative_noise_upper_bound: true,
             odometry_noise_solve_lower_bound: true,
-            odometry_overtrust_max: 100.0,
             odom_xy_drift_per_sqrt_m: 3.91e-4,
             odom_xy_drift_per_sqrt_rad: 6.35e-3,
             odom_z_drift_per_sqrt_m: 6.42e-4,
@@ -1152,37 +1147,13 @@ impl ClosureSearch {
                 &memo_alignment,
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
-            match extended {
-                // the closure measurement comes from the extended alignment, which saw more of both places
-                Some(extended) => {
-                    (rotation_offset, translation_offset) =
-                        measured(&extended.rotation, &extended.translation);
-                    score = extended.inlier_mean_square();
-                }
-                // back on a spot no kept loop closes, with a fit the whole gate would pass were the odometry as
-                // overtrusted as allowed (`odometry_overtrust_max`; only the yank's term changes, the look-alike count and
-                // the fit's confidence still count): the gate trusts the noise in use, so GNC and the loosened-odometry
-                // map judge the single fit instead
-                None if diag.pressure2 > 0.5 && {
-                    let in_use = diag.odometry_noise.iter().cloned().fold(f64::MIN, f64::max);
-                    let widen = (self.config.odometry_overtrust_max.powi(2) / in_use).max(1.0);
-                    let c = (diag.icp_fitness * diag.icp_overlap).max(1e-6);
-                    let p = &diag.innovation_covariance;
-                    let covariance: Mat3 = std::array::from_fn(|i| {
-                        std::array::from_fn(|j| widen * p[i][j] + if i == j { c } else { 0.0 })
-                    });
-                    let v = diag.innovation;
-                    let width = 2.0 * self.config.closure_yank_gate_width.powi(2);
-                    mat3::inverse(&covariance).is_some_and(|inverse| {
-                        let iv = mat3::mat_vec(&inverse, &v);
-                        let yank_at_cap = v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2];
-                        evidence
-                            >= single_required - diag.yank_stdevs.powi(2) / width
-                                + yank_at_cap / width
-                    })
-                } => {}
-                None => return rejected(diag, "yank_confidence_reject", timing),
-            }
+            let Some(extended) = extended else {
+                return rejected(diag, "yank_confidence_reject", timing);
+            };
+            // the closure measurement comes from the extended alignment, which saw more of both places
+            (rotation_offset, translation_offset) =
+                measured(&extended.rotation, &extended.translation);
+            score = extended.inlier_mean_square();
         }
 
         diag.outcome = "accepted";

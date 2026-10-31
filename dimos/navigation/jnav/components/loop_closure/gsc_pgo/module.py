@@ -161,8 +161,6 @@ class PGOConfig(NativeModuleConfig):
     closure_uninformative_noise_upper_bound: bool = True
     # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
     odometry_noise_solve_lower_bound: bool = True
-    # The most the odometry's stated drift can understate it (factor on its sd): caps how far a loosened-odometry map loosens
-    odometry_overtrust_max: float = 100.0
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
     # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. Defaults: Mid-360 +
     # FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning). After each solve

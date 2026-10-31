@@ -18,8 +18,8 @@
 use std::thread::JoinHandle;
 
 use crate::big_picture_fit::{
-    closure_edges, edge_residual, odometry_edges, solve, solve_with_priors, Edge, GravityPrior,
-    LandmarkSighting, PositionPrior, Solution, SolveConfig,
+    closure_edges, odometry_edges, solve, solve_with_priors, GravityPrior, LandmarkSighting,
+    PositionPrior, Solution, SolveConfig,
 };
 use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
@@ -30,7 +30,7 @@ use crate::mat3::{self, Mat3, Vec3};
 /// first `closures_dispatched` committed closures, adopted once it finishes (`GscPgo::update`) or when waited for
 /// (`GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
-    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>, Option<f64>)>,
+    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
     pub(crate) keyframes: usize,
 }
 
@@ -296,36 +296,18 @@ impl GscPgo {
                 Vec::new()
             },
         };
-        // back on an earlier spot no kept loop closes (pressure 2 above even odds) while the newest such closure was
-        // rejected: the odometry may be overtrusted, so a map with it loosened until that closure's yank is its
-        // expected 3 dof also runs, and the likelier of the two maps wins
-        let loosen = self
-            .pressure
-            .as_ref()
-            .filter(|(_, overlap)| overlap.unclosed_overlap_probability > 0.5)
-            .and_then(|_| {
-                self.committed_closures
-                    .iter()
-                    .zip(&self.closure_yank_stdevs)
-                    .rev()
-                    .find(|(c, y)| c.gnc_weight < 0.5 && y.is_finite())
-            })
-            .map(|(_, y)| (y * y / 3.0).min(config.odometry_overtrust_max.powi(2)))
-            .filter(|&s| s > 1.0);
-        let threshold = crate::landmarks::chi2_inverse(config.closure_gnc_inlier_probability, 6);
-        let max_scale = config.odometry_overtrust_max.powi(2);
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let run_with = |odometry: &[Edge], solve_config: &SolveConfig| {
+                let run = |solve_config: &SolveConfig| {
                     if priors.is_empty() && sightings.is_empty() {
                         solve(
                             &rotations,
                             &positions,
                             &free,
-                            odometry,
+                            &odometry,
                             &closures,
                             solve_config,
                         )
@@ -334,7 +316,7 @@ impl GscPgo {
                             &rotations,
                             &positions,
                             &free,
-                            odometry,
+                            &odometry,
                             &closures,
                             &priors,
                             &sightings,
@@ -342,7 +324,6 @@ impl GscPgo {
                         )
                     }
                 };
-                let run = |solve_config: &SolveConfig| run_with(&odometry, solve_config);
                 let held = run(&solve_config);
                 // the committed closures stand unless a cold solve finds a larger group that rejects one of them
                 let solution = if solve_config.committed.iter().any(|&c| c) {
@@ -365,46 +346,11 @@ impl GscPgo {
                 } else {
                     held
                 };
-                let (solution, loosened) = match loosen {
-                    Some(s) => {
-                        let loose_odometry: Vec<Edge> = odometry
-                            .iter()
-                            .map(|e| Edge {
-                                variances: e.variances.map(|v| v * s),
-                                ..*e
-                            })
-                            .collect();
-                        let loose = run_with(&loose_odometry, &solve_config);
-                        let profile = |m: &Solution, scale: f64| {
-                            profiled_cost(m, scale, &odometry, &closures, &solve_config, threshold, max_scale)
-                        };
-                        let ((loose_cost, best_scale), (held_cost, _)) =
-                            (profile(&loose, s), profile(&solution, 1.0));
-                        eprintln!(
-                            "gsc_pgo: odometry loosened x{s:.1} at keyframe {}: -2 ln L {loose_cost:.1} vs {held_cost:.1}",
-                            rotations.len()
-                        );
-                        if loose_cost < held_cost {
-                            // the loose map is adopted and its best fitting scale becomes the noise estimate (its
-                            // evidence was read at the loose noise, not the one the learner's update assumes)
-                            (
-                                Solution {
-                                    odometry_noise_evidence: None,
-                                    ..loose
-                                },
-                                Some(best_scale),
-                            )
-                        } else {
-                            (solution, None)
-                        }
-                    }
-                    None => (solution, None),
-                };
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(solved) = solved {
                     solved();
                 }
-                (solution, seconds, landmark_ids, loosened)
+                (solution, seconds, landmark_ids)
             })
             .expect("spawn pose graph thread");
         // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
@@ -429,15 +375,8 @@ impl GscPgo {
         let Some(solving) = self.solving.take() else {
             return false;
         };
-        let (solution, seconds, landmark_ids, loosened) =
+        let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
-        // the likelier map said the odometry is noisier than the solve's noise by this scale
-        if let Some(scale) = loosened {
-            for c in 0..4 {
-                self.odometry_noise_ln[c] = self.odometry_noise_ln[c]
-                    .max(self.odometry_noise_ln_dispatched[c] + scale.ln());
-            }
-        }
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
                 .into_iter()
@@ -554,55 +493,4 @@ impl GscPgo {
         }
         true
     }
-}
-
-/// A map's -2 ln restricted likelihood with the odometry noise at its best fitting scale s (at least 1): the odometry's
-/// misfit m at the stated noise over s (at most `odometry_overtrust_max` squared), plus its redundancy r x ln s, both from the solve's variance-component evidence
-/// (`Solution::odometry_noise_evidence`, read at `scale` x the stated noise; r is the odometry's share of the loops'
-/// checks, so closures that agree on one loop add one loop's worth); each kept closure's misfit truncated at GNC's cutoff,
-/// and the cutoff for each rejected one; with that best fitting scale. Without the evidence, m from the residuals and r as 6 per kept closure.
-fn profiled_cost(
-    map: &Solution,
-    scale: f64,
-    odometry: &[Edge],
-    closures: &[Edge],
-    config: &SolveConfig,
-    threshold: f64,
-    max_scale: f64,
-) -> (f64, f64) {
-    let misfit = |e: &Edge, scale: f64| {
-        let pose = |k: usize| (&map.rotations[k], &map.positions[k]);
-        let r = edge_residual(e, pose(e.from), pose(e.to));
-        (0..6)
-            .map(|i| r[i] * r[i] / (e.variances[i] * scale))
-            .sum::<f64>()
-    };
-    let (m, redundancy) = match map.odometry_noise_evidence {
-        Some(evidence) => evidence[..4]
-            .iter()
-            .fold((0.0, 0.0), |(m, r), &(sum, redundancy)| {
-                (m + sum * scale, r + redundancy)
-            }),
-        None => (
-            odometry.iter().map(|e| misfit(e, 1.0)).sum(),
-            6.0 * map.closure_weights.iter().filter(|&&w| w > 0.5).count() as f64,
-        ),
-    };
-    let s = if redundancy > 0.0 {
-        (m / redundancy).clamp(1.0, max_scale)
-    } else {
-        1.0
-    };
-    let closure_cost: f64 = closures
-        .iter()
-        .zip(&map.closure_weights)
-        .map(|(e, &w)| {
-            if w > 0.5 {
-                misfit(e, config.gnc_variance_scale).min(threshold)
-            } else {
-                threshold
-            }
-        })
-        .sum();
-    (m / s + redundancy * s.ln() + closure_cost, s)
 }
