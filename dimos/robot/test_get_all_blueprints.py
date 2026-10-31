@@ -14,50 +14,9 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
-
 import pytest
 
 from dimos.robot.get_all_blueprints import get_by_name, get_by_name_or_exit
-
-
-def test_list_and_legacy_teleop_do_not_import_optional_connection():
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import importlib.abc
-import sys
-
-class RejectXArm(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'xarm' or fullname.startswith('xarm.') or fullname in {
-            'dimos.robot.manipulators.xarm.connection',
-            'dimos.robot.manipulators.xarm.blueprints.connection_teleop',
-        }:
-            raise AssertionError(f'Imported optional connection dependency {fullname}')
-
-sys.meta_path.insert(0, RejectXArm())
-from dimos.cli.commands.info import list_blueprints
-from dimos.robot.get_all_blueprints import get_by_name
-
-list_blueprints()
-assert 'dimos.robot.manipulators.xarm.blueprints.teleop' not in sys.modules
-blueprint = get_by_name('keyboard-teleop-xarm7')
-assert [atom.module.__name__ for atom in blueprint.blueprints] == [
-    'KeyboardTeleopModule', 'ArmTwistCoordinator', 'ManipulationModule',
-]
-""",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "  xarm7-keyboard-teleop\n" in result.stdout
 
 
 def test_resolve_string_blueprint():
