@@ -32,14 +32,16 @@ R1PRO = Embodiment(
     center_off=0,  # body center relative to the pose point
     comfort=0.4,  # obstacles-we-care-about radius (m)
     precision=0.05,  # local control tracking accuracy, the clearance floor (m)
-    # DanHolonomicTC's "walk" profile the R1 ran before: 0.55 m/s, 1 rad/s, 1 m/s^2.
+    # DanHolonomicTC's "walk" profile the R1 ran before: 0.55 m/s, 1 rad/s, 1 m/s^2; the 10-28 drive reached 0.56 m/s and 1.05 rad/s on it.
     max_speed=0.55,  # cruise (m/s)
     min_speed=0.2,  # creep at the precision floor (m/s)
     speed_clearance=0.35,  # room at which full speed is granted (m)
     max_yaw_rate=1.0,  # prices a rotation in place (rad/s)
-    command_slew=(1.0, 1.0, 2.0),  # d(vx, vy, wz)/dt
+    # Fit on the 10-28 R1 drive (~90 s per axis, chassis/cmd_vel vs Point-LIO): p95 accel, then the base lags ~0.3 s (vx, vy) / 0.4 s (wz) plus tau 0.2 / 0.46 s.
+    command_slew=(1.1, 1.0, 1.3),  # d(vx, vy, wz)/dt
     gait_band=(0.0, 0.55),  # wheels hold any commanded speed up to cruise (m/s)
-    walk_gain=1.0,  # wheels deliver the command
+    # Measured ground/cmd ~0.8 (vx), ~0.87 (vy), ~0.95 (wz), but kept at identity: the inverse would command above 0.55.
+    walk_gain=1.0,
     walk_slip=0.0,
     walk_slip_ramp=0.08,
     strafe=1.5,  # holonomic, but priced above forward so it turns to face long legs
