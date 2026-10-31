@@ -26,6 +26,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 
 @pytest.mark.parametrize("single_point", [False, True])
@@ -134,3 +135,140 @@ def test_completed_trajectory_does_not_bypass_start_validation(positions, expect
         ],
     )
     assert execute_with_state(task, trajectory, positions).status is expected
+
+
+def test_each_joint_run_starts_on_its_first_tick_and_status_queries_do_not_start_it():
+    task = JointTrajectoryTask(
+        JointTrajectoryTaskConfig(joint_names=["a", "b"], velocity_limits={"a": 10.0, "b": 10.0})
+    )
+    first = JointTrajectory(
+        joint_names=["a", "b"],
+        points=[
+            TrajectoryPoint(positions=[0.0, 0.0], time_from_start=0.0),
+            TrajectoryPoint(positions=[1.0, 1.0], time_from_start=2.0),
+        ],
+    )
+    assert (
+        execute_with_state(task, first, {"a": 0.0, "b": 0.0}).status
+        == TrajectoryExecutionStatus.ACCEPTED
+    )
+    pending = task.get_status(1000.0)
+    assert (pending.progress, pending.time_elapsed, pending.time_remaining) == (0.0, 0.0, 2.0)
+    feedback = JointStateSnapshot(joint_positions={"a": 0.0, "b": 0.0})
+    assert task.compute(CoordinatorState(joints=feedback, t_now=10.0, dt=0.5)) is not None
+    output = task.compute(CoordinatorState(joints=feedback, t_now=10.5, dt=0.5))
+    assert output is not None and output.positions == [0.25, 0.25]
+    replacement = JointTrajectory(
+        joint_names=["a"],
+        points=[
+            TrajectoryPoint(positions=[0.25], time_from_start=0.0),
+            TrajectoryPoint(positions=[0.5], time_from_start=1.0),
+        ],
+    )
+    assert execute_with_state(task, replacement, {}).status == TrajectoryExecutionStatus.ACCEPTED
+    assert task.get_status(1000.0).progress == 0.0
+    output = task.compute(CoordinatorState(joints=feedback, t_now=11.0, dt=0.5))
+    assert output is not None and output.positions == [0.25, 0.5]
+    status = task.get_status(11.5)
+    assert (status.progress, status.time_elapsed, status.time_remaining) == (0.5, 1.5, 0.5)
+
+
+def _ramp():
+    return JointTrajectory(
+        joint_names=["joint"],
+        points=[
+            TrajectoryPoint(positions=[0.0]),
+            TrajectoryPoint(positions=[1.0], time_from_start=2.0),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "keepalive, expected",
+    [
+        (False, TrajectoryState.ABORTED),
+        (True, TrajectoryState.EXECUTING),
+    ],
+)
+def test_deadman_aborts_trajectory_when_keepalive_stops(keepalive, expected, mocker):
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+    joints = JointStateSnapshot(joint_positions={"joint": 0.0})
+    assert (
+        execute_with_state(task, _ramp(), joints.joint_positions, deadman_timeout=0.5).status
+        == TrajectoryExecutionStatus.ACCEPTED
+    )
+    receipt_clock = mocker.patch("dimos.control.tasks.trajectory_clock.time.perf_counter")
+    for tick in range(1, 101):
+        t_now = tick * 0.01
+        if keepalive:
+            receipt_clock.return_value = t_now
+            task.keepalive()
+        task.compute(CoordinatorState(joints=joints, t_now=t_now, dt=0.01))
+    assert task.get_state() == expected
+
+
+def test_joint_deadman_boundary_and_next_unsupervised_run():
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+    joints = JointStateSnapshot(joint_positions={"joint": 0.0})
+    assert (
+        execute_with_state(task, _ramp(), joints.joint_positions, deadman_timeout=0.5).status
+        == TrajectoryExecutionStatus.ACCEPTED
+    )
+    assert task.compute(CoordinatorState(joints=joints, t_now=10.0, dt=0.01)) is not None
+    assert task.compute(CoordinatorState(joints=joints, t_now=10.5, dt=0.01)) is not None
+    assert task.compute(CoordinatorState(joints=joints, t_now=10.5001, dt=0.01)) is None
+    assert task.get_state() == TrajectoryState.ABORTED
+    assert (
+        execute_with_state(task, _ramp(), joints.joint_positions).status
+        == TrajectoryExecutionStatus.ACCEPTED
+    )
+    task.compute(CoordinatorState(joints=joints, t_now=20.0, dt=0.01))
+    assert task.compute(CoordinatorState(joints=joints, t_now=21.0, dt=0.01)) is not None
+    assert task.get_state() == TrajectoryState.EXECUTING
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf")])
+def test_invalid_deadman_timeout_is_rejected(timeout):
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+    assert (
+        execute_with_state(task, _ramp(), {"joint": 0.0}, deadman_timeout=timeout).status
+        == TrajectoryExecutionStatus.INVALID_TRAJECTORY
+    )
+    assert not task.is_active()
+
+
+@pytest.mark.parametrize(
+    "supervised, expected",
+    [
+        ("arm", TrajectoryState.ABORTED),
+        ("grip", TrajectoryState.EXECUTING),
+    ],
+)
+def test_deadman_covers_only_the_joints_it_was_sent_with(supervised, expected):
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm", "grip"]))
+    joints = JointStateSnapshot(joint_positions={"arm": 0.0, "grip": 0.0})
+    arm = JointTrajectory(
+        joint_names=["arm"],
+        points=[
+            TrajectoryPoint(positions=[0.0]),
+            TrajectoryPoint(positions=[1.0], time_from_start=2.0),
+        ],
+    )
+    grip = JointTrajectory(
+        joint_names=["grip"],
+        points=[
+            TrajectoryPoint(positions=[0.0]),
+            TrajectoryPoint(positions=[0.05], time_from_start=0.05),
+        ],
+    )
+    for name, trajectory in (("arm", arm), ("grip", grip)):
+        timeout = 0.5 if name == supervised else None
+        assert (
+            execute_with_state(
+                task, trajectory, joints.joint_positions, deadman_timeout=timeout
+            ).status
+            == TrajectoryExecutionStatus.ACCEPTED
+        )
+    for tick in range(1, 101):
+        task.compute(CoordinatorState(joints=joints, t_now=tick * 0.01, dt=0.01))
+    assert task.get_state() == expected
