@@ -1159,10 +1159,23 @@ impl ClosureSearch {
                         measured(&extended.rotation, &extended.translation);
                     score = extended.inlier_mean_square();
                 }
-                // back on a spot no kept loop closes while the odometry is still trusted as stated: the yank gate
-                // trusts that noise, so GNC and the loosened-odometry map judge the single fit instead; once a
-                // loosened map has raised the noise, the gate judges at it (look-alikes stand out there again)
-                None if diag.pressure2 > 0.5 && diag.odometry_noise.iter().all(|&n| n <= 1.0) => {}
+                // back on a spot no kept loop closes, with a fit the most overtrusted odometry allowed
+                // (`odometry_overtrust_max`) would explain: the yank gate trusts the noise in use, so GNC and the
+                // loosened-odometry map judge the single fit instead (a look-alike no plausible drift reaches stays out)
+                None if diag.pressure2 > 0.5 && {
+                    let in_use = diag.odometry_noise.iter().cloned().fold(f64::MIN, f64::max);
+                    let widen = (self.config.odometry_overtrust_max.powi(2) / in_use).max(1.0);
+                    let c = (diag.icp_fitness * diag.icp_overlap).max(1e-6);
+                    let p = &diag.innovation_covariance;
+                    let covariance: Mat3 = std::array::from_fn(|i| {
+                        std::array::from_fn(|j| widen * p[i][j] + if i == j { c } else { 0.0 })
+                    });
+                    let v = diag.innovation;
+                    mat3::inverse(&covariance).is_some_and(|inverse| {
+                        let iv = mat3::mat_vec(&inverse, &v);
+                        v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2] <= same_place_cutoff
+                    })
+                } => {}
                 None => return rejected(diag, "yank_confidence_reject", timing),
             }
         }
