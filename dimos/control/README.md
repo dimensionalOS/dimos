@@ -150,7 +150,8 @@ my_robot = ControlCoordinator.blueprint(
 Trajectory commands belong to their tasks. Both joint and EEF tasks accept
 `execute(trajectory, deadman_timeout=None)`, read their start observation from
 `self.context.get_state()`, and expose `cancel` and `keepalive` through the
-registry. The coordinator serializes submission, cancellation and ticks with
+registry. `keepalive()` takes no client timestamp: heartbeat receipt uses the
+coordinator process's monotonic clock. The coordinator serializes submission, cancellation and ticks with
 its existing task lock.
 
 ```python

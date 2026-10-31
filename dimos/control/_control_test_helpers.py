@@ -63,6 +63,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 
 if TYPE_CHECKING:
+    from dimos.control.tasks.eef_trajectory_task.eef_trajectory_task import EefTrajectoryTask
     from dimos.control.tasks.trajectory_task.trajectory_task import (
         JointTrajectoryTask,
         TrajectoryExecutionResult,
@@ -250,11 +251,12 @@ def task_state_context(task: BaseControlTask, state: CoordinatorState | None) ->
 
 
 def execute_with_state(
-    task: JointTrajectoryTask,
+    task: JointTrajectoryTask | EefTrajectoryTask,
     trajectory: Any,
     positions: Mapping[str, float],
+    deadman_timeout: float | None = None,
 ) -> TrajectoryExecutionResult:
     """Invoke a standalone task command through the same context contract as deployment."""
     state = CoordinatorState(joints=JointStateSnapshot(joint_positions=dict(positions)))
     with task_state_context(task, state):
-        return task.execute(trajectory)
+        return task.execute(trajectory, deadman_timeout=deadman_timeout)
