@@ -22,8 +22,9 @@ import sys
 import tempfile
 from typing import Any
 
-from dimos.constants import STATE_DIR
-from experimental.gateway import shared_config
+import yaml
+
+from dimos.constants import RECORDINGS_DIR, STATE_DIR
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -41,33 +42,18 @@ def logs_dir() -> Path:
 
 def setting(section: str, key: str) -> Any:
     """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset."""
-    return shared_config.setting(section, key)
-
-
-def takes_record_dir(dimos_dir: Path) -> bool:
-    """Whether the checkout's dimos has `--record-dir` (GlobalConfig.record_dir); one without it
-    rejects the flag and always records to its own default directory."""
+    home = Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
     try:
-        config = (dimos_dir / "dimos" / "core" / "global_config.py").read_text()
-    except OSError:
-        return False
-    return "record_dir:" in config
+        loaded = yaml.safe_load((home / "config.yaml").read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None
+    return None if value == "" else value
 
 
-def recordings_dir(dimos_dir: Path) -> Path:
-    """Where the checkout's runs record, which `GET /history/recordings` is the one answer to.
-
-    `recordings.dir` from the shared config.yaml (relative to its folder) when the checkout takes
-    `--record-dir`, which `launches.start` then hands every launch, so the answer and the path a
-    run writes to cannot drift apart; else what dimos picks by itself: the checkout's `recordings/`,
-    or the state directory's for an installed package.
-    """
+def recordings_dir() -> Path:
     configured = setting("recordings", "dir")
-    if configured and takes_record_dir(dimos_dir):
-        return (shared_config.dimos_home() / Path(str(configured)).expanduser()).absolute()
-    if (dimos_dir / ".git").exists():
-        return dimos_dir.absolute() / "recordings"
-    return STATE_DIR / "recordings"
+    return Path(configured).expanduser() if configured else RECORDINGS_DIR
 
 
 def write_atomic(path: Path, text: str) -> None:

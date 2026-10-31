@@ -48,12 +48,7 @@ class CallRequest(BaseModel):
 
 
 def known_names(state: State) -> set[str] | None:
-    """Every name `dimos run` would accept, or None until the gateway has listed its checkout and finished a full scan of it as it is now.
-
-    Blueprints come from the listing, modules (registry name and class) from the scan; a module whose scan
-    failed is still a name, so it is kept. A single blueprint's scan is not enough: the modules it did not
-    visit would look unknown, and so would a module added since a scan of an older checkout. Nothing is
-    introspected here: a launch must stay fast (the fingerprint is a cached git status)."""
+    """Names `dimos run` would accept; None (dimos decides) until a full scan of the checkout as it is now."""
     if state.listed is None:
         return None
     cache = state.scanner.cache()

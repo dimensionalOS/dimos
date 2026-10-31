@@ -58,8 +58,6 @@ Live launch phases (and added or removed blueprints, and upload progress) also a
 
 - Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
   `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
-- `GET /history/recordings` is the one answer to where recordings live: the checkout's own default, or
-  `recordings.dir` when the checkout's dimos has `--record-dir`, which every launch is then started with.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.
