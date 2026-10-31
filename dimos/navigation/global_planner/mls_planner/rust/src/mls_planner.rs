@@ -240,6 +240,16 @@ pub struct Planner {
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
     last_result: Option<((f32, f32, f32), bool)>,
+    last_redo: RegionRedo,
+}
+
+/// What the last CPU region update re-extracted, for comparing with the GPU's.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RegionRedo {
+    pub changed_columns: usize,
+    /// Columns the extraction read, and the region's column box.
+    pub read_columns: usize,
+    pub region_columns: usize,
 }
 
 impl Planner {
@@ -253,7 +263,12 @@ impl Planner {
             walls: None,
             last_path: None,
             last_result: None,
+            last_redo: RegionRedo::default(),
         }
+    }
+
+    pub fn last_redo(&self) -> RegionRedo {
+        self.last_redo
     }
 
     pub fn update_global_map(&mut self, points: &[(f32, f32, f32)], config: &Config) {
@@ -357,12 +372,11 @@ impl Planner {
         config: &Config,
     ) -> Option<ColumnWindow> {
         let pool = Arc::clone(&self.pool);
-        // GPU wall distances move up to the wall reach from a change, so the
-        // repair spans the wall buffer as a seeded region's does.
-        let window_steps = match config.gpu_wall_distance {
-            true => config.buffer_window_cells(),
-            false => config.node_window_cells(),
-        };
+        // A GPU surface rewrites whole boxes of columns, and wall distances
+        // (GPU or CPU) move up to the wall reach from any cell it changed, so
+        // the repair spans the wall buffer as a seeded region's does; a
+        // narrower one left stale costs that cut the streamed graph apart.
+        let window_steps = config.buffer_window_cells();
         pool.install(|| {
             let voxel_size = config.voxel_size;
             let stage = Instant::now();
@@ -508,18 +522,29 @@ impl Planner {
             let edits = self.replace_region_voxels(local_points, bounds, voxel_size);
             let diff_ms = ms_since(stage);
             // No voxel changed, so surfaces and the graph are untouched.
+            let bbox = bounds.column_bbox(voxel_size);
+            let region_columns = (bbox.1 - bbox.0 + 1) as usize * (bbox.3 - bbox.2 + 1) as usize;
             if edits.is_empty() {
+                self.last_redo = RegionRedo {
+                    region_columns,
+                    ..Default::default()
+                };
                 return None;
             }
 
             // A changed column shifts surfaces only within pad of it, and
             // the extraction reads one more pad around that.
-            let bbox = bounds.column_bbox(voxel_size);
             let mut footprint = ColumnMask::new(bbox, 2 * pad);
             for col in edits.columns() {
                 footprint.set(col);
             }
             let write = footprint.dilated(pad);
+            let read = write.dilated(pad);
+            self.last_redo = RegionRedo {
+                changed_columns: edits.columns().count(),
+                read_columns: read.rows().map(|r| read.row_columns(r).count()).sum(),
+                region_columns,
+            };
             let stage = Instant::now();
             let new_cells =
                 extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), &write);
@@ -537,8 +562,9 @@ impl Planner {
                 extract_ms,
                 replace_ms,
                 graph_ms = ms_since(stage),
-                bbox_columns = (bbox.1 - bbox.0 + 1) as i64 * (bbox.3 - bbox.2 + 1) as i64,
-                changed_columns = edits.columns().count(),
+                region_columns = self.last_redo.region_columns,
+                changed_columns = self.last_redo.changed_columns,
+                read_columns = self.last_redo.read_columns,
                 cells_added,
                 cells_removed,
                 "region update stages"

@@ -39,7 +39,7 @@ const WALL_DELTA_P95: f32 = 0.4;
 /// Fraction of shared cells whose side of the wall clearance may flip.
 const WALL_CLEARANCE_FLIPS: f64 = 0.02;
 
-fn planner_config() -> PlannerConfig {
+fn planner_config(gpu_wall_distance: bool) -> PlannerConfig {
     PlannerConfig {
         world_frame: String::new(),
         base_frame: String::new(),
@@ -59,7 +59,7 @@ fn planner_config() -> PlannerConfig {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: true,
-        gpu_wall_distance: true,
+        gpu_wall_distance,
         max_slope_deg: 45.0,
         surface_change_m: 0.01,
         worker_threads: 8,
@@ -93,7 +93,16 @@ fn percentile(sorted: &[f32], q: f64) -> f32 {
 
 #[test]
 fn streamed_gpu_surfaces_match_a_whole_map_build_and_plan() {
-    let planner_cfg = planner_config();
+    streamed_matches_whole_map(true);
+}
+
+#[test]
+fn streamed_gpu_surfaces_with_cpu_wall_distance_match_a_whole_map_build_and_plan() {
+    streamed_matches_whole_map(false);
+}
+
+fn streamed_matches_whole_map(gpu_wall_distance: bool) {
+    let planner_cfg = planner_config(gpu_wall_distance);
     let request = request(&planner_cfg);
     let mut mapper = Mapper::new(Config {
         gpu: true,

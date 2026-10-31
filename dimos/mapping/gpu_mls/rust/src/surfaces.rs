@@ -89,10 +89,17 @@ impl SurfaceConfig {
         (self.robot_height_m / voxel_size).ceil() as i32
     }
 
-    /// Columns past a region whose surface it depends on: two closings, the
-    /// support neighborhood and a hole's span.
+    /// Columns past a change whose surface it can move, and so columns past
+    /// a region whose surface it reads: two closings and a plane fit's ring
+    /// of neighbors, or the support neighborhood if wider. A filled cell's
+    /// borrowed height sits inside that.
     pub fn reach_cells(&self, voxel_size: f32) -> i32 {
-        2 * self.closing_cells(voxel_size) + SUPPORT_RADIUS + HOLE_SPAN_CELLS
+        (2 * self.closing_cells(voxel_size) + 1).max(SUPPORT_RADIUS)
+    }
+
+    /// The same for the surface boundary flags: a hole's span further.
+    pub fn boundary_reach_cells(&self, voxel_size: f32) -> i32 {
+        self.reach_cells(voxel_size) + HOLE_SPAN_CELLS
     }
 }
 
@@ -683,9 +690,15 @@ impl SurfaceExtractor {
         map: &BrickMap,
         mut timer: Option<&mut PassTimer>,
     ) {
-        encoder.clear_buffer(&self.buffers.occupied, 0, None);
-        encoder.clear_buffer(&self.buffers.grown, 0, None);
-        encoder.clear_buffer(&self.buffers.planar, 0, None);
+        // Only the window's part; a retargeted window can be far smaller than the buffers.
+        let used = 4 * self.window.columns() * self.window.words_per_column() as u64;
+        for buffer in [
+            &self.buffers.occupied,
+            &self.buffers.grown,
+            &self.buffers.planar,
+        ] {
+            encoder.clear_buffer(buffer, 0, Some(used));
+        }
         {
             let mut pass = begin(encoder, "plane fit", &mut timer);
             let (bx, by, bz) = self.window_bricks();

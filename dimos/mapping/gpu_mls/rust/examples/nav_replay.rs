@@ -117,7 +117,8 @@ fn planner_config(gpu: bool) -> PlannerConfig {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: gpu,
-        gpu_wall_distance: gpu,
+        // NAV_REPLAY_CPU_WALLS leaves wall distance to the planner on the CPU.
+        gpu_wall_distance: gpu && std::env::var("NAV_REPLAY_CPU_WALLS").is_err(),
         max_slope_deg: 45.0,
         surface_change_m: 0.01,
         worker_threads: 4,
@@ -157,6 +158,9 @@ struct Pipeline {
     dirty: Vec<f64>,
     bricks: Vec<f64>,
     region_bricks: Vec<f64>,
+    windows: Vec<f64>,
+    /// Percent of the region's columns each update re-extracted from.
+    redo_pct: Vec<f64>,
     extract_ms: Vec<f64>,
     export_ms: Vec<f64>,
     passes: std::collections::BTreeMap<&'static str, Vec<f64>>,
@@ -193,6 +197,8 @@ impl Pipeline {
             dirty: Vec::new(),
             bricks: Vec::new(),
             region_bricks: Vec::new(),
+            windows: Vec::new(),
+            redo_pct: Vec::new(),
             extract_ms: Vec::new(),
             export_ms: Vec::new(),
             passes: Default::default(),
@@ -238,12 +244,26 @@ impl Pipeline {
                 self.dirty.push(update.dirty_columns as f64);
                 self.bricks.push(update.bricks as f64);
                 self.region_bricks.push(update.region_bricks as f64);
+                self.windows.push(update.windows as f64);
+                if update.region_columns > 0 {
+                    self.redo_pct
+                        .push(100.0 * update.read_columns as f64 / update.region_columns as f64);
+                }
                 self.extract_ms.push(update.extract_ms);
                 self.export_ms.push(update.export_ms);
                 self.planner
                     .update_region_with_surface(&local, cells, &region, &self.config)
             }
-            None => self.planner.update_region(&local, &region, &self.config),
+            None => {
+                let window = self.planner.update_region(&local, &region, &self.config);
+                let redo = self.planner.last_redo();
+                self.dirty.push(redo.changed_columns as f64);
+                if redo.region_columns > 0 {
+                    self.redo_pct
+                        .push(100.0 * redo.read_columns as f64 / redo.region_columns as f64);
+                }
+                window
+            }
         };
         let done = Instant::now();
         let mut per_pass: std::collections::BTreeMap<&'static str, f64> = Default::default();
@@ -260,6 +280,26 @@ impl Pipeline {
         self.total_ms.push(ms(start, done));
     }
 
+    fn clear_timings(&mut self) {
+        for v in [
+            &mut self.frame_ms,
+            &mut self.surface_ms,
+            &mut self.planner_ms,
+            &mut self.total_ms,
+            &mut self.rows,
+            &mut self.dirty,
+            &mut self.bricks,
+            &mut self.region_bricks,
+            &mut self.windows,
+            &mut self.redo_pct,
+            &mut self.extract_ms,
+            &mut self.export_ms,
+        ] {
+            v.clear();
+        }
+        self.passes.clear();
+    }
+
     fn report(&self) {
         println!(
             "{} {} regions, {} voxels and {} surface cells in the planner",
@@ -272,11 +312,13 @@ impl Pipeline {
         summarize("surface", self.surface_ms.clone());
         summarize("planner", self.planner_ms.clone());
         summarize("total", self.total_ms.clone());
+        summarize("redo %", self.redo_pct.clone());
+        summarize("dirty cols", self.dirty.clone());
         if self.gpu {
             summarize("rows/upd", self.rows.clone());
-            summarize("dirty cols", self.dirty.clone());
             summarize("bricks", self.bricks.clone());
             summarize("region brk", self.region_bricks.clone());
+            summarize("windows", self.windows.clone());
             summarize("extract", self.extract_ms.clone());
             summarize("export", self.export_ms.clone());
             for (label, ms) in &self.passes {
@@ -374,6 +416,29 @@ fn main() {
         }
         if (i + 1) % 100 == 0 {
             eprintln!("frame {}", i + 1);
+        }
+    }
+    // NAV_REPLAY_STILL=<first>:<count>:<repeats> then loops frames
+    // first..first+count of the file, a robot standing still, timing only those.
+    if let Ok(still) = std::env::var("NAV_REPLAY_STILL") {
+        let spec: Vec<usize> = still.split(':').map(|s| s.parse().expect(usage)).collect();
+        let [first, count, repeats] = spec[..] else {
+            panic!("NAV_REPLAY_STILL=<first>:<count>:<repeats>");
+        };
+        let segment: Vec<(Point, Vec<Point>)> =
+            Frames(BufReader::new(File::open(path).expect("a frames file")))
+                .skip(first)
+                .take(count)
+                .collect();
+        for p in &mut pipelines {
+            p.clear_timings();
+        }
+        for _ in 0..repeats {
+            for (origin, points) in &segment {
+                for p in &mut pipelines {
+                    p.step(*origin, points.clone());
+                }
+            }
         }
     }
     for p in &pipelines {
