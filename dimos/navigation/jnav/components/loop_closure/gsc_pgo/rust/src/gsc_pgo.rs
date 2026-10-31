@@ -1147,13 +1147,18 @@ impl ClosureSearch {
                 &memo_alignment,
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
-            let Some(extended) = extended else {
-                return rejected(diag, "yank_confidence_reject", timing);
-            };
-            // the closure measurement comes from the extended alignment, which saw more of both places
-            (rotation_offset, translation_offset) =
-                measured(&extended.rotation, &extended.translation);
-            score = extended.inlier_mean_square();
+            match extended {
+                // the closure measurement comes from the extended alignment, which saw more of both places
+                Some(extended) => {
+                    (rotation_offset, translation_offset) =
+                        measured(&extended.rotation, &extended.translation);
+                    score = extended.inlier_mean_square();
+                }
+                // back on a spot no kept loop closes: the yank gate trusts the stated odometry noise, so GNC and
+                // the loosened-odometry map judge the single fit instead
+                None if diag.pressure2 > 0.5 => {}
+                None => return rejected(diag, "yank_confidence_reject", timing),
+            }
         }
 
         diag.outcome = "accepted";
