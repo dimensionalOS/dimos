@@ -18,7 +18,7 @@ from typing import NoReturn
 
 import typer
 
-from dimos.core.coordination.blueprints import Blueprint, BlueprintFactory
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.external_blueprints import (
     ExternalBlueprintError,
@@ -63,12 +63,7 @@ def get_blueprint_by_name(name: str) -> Blueprint:
         _raise_unknown(name, list(all_blueprints.keys()))
     module_path, attr = all_blueprints[name].split(":")
     module = __import__(module_path, fromlist=[attr])
-    target = getattr(module, attr)
-    if isinstance(target, BlueprintFactory):
-        return target()
-    if isinstance(target, Blueprint):
-        return target
-    raise TypeError(f"Blueprint {name!r} must be a Blueprint or a decorated blueprint factory")
+    return getattr(module, attr)  # type: ignore[no-any-return]
 
 
 def load_blueprint(name: str) -> Blueprint:

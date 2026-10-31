@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect, blueprint_factory
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import Module
 from dimos.robot import external_blueprints as external
 from dimos.robot.get_all_blueprints import get_by_name
@@ -124,59 +124,6 @@ def test_resolve_external_blueprint_object(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     assert external.resolve_external_blueprint_by_name("my-test-stack.demo") is blueprint
-
-
-def test_resolve_external_factory(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = []
-
-    @blueprint_factory
-    def selected():
-        calls.append("selected")
-        return ExternalTestModule.blueprint(value=42)
-
-    @blueprint_factory
-    def unselected():
-        pytest.fail("An unselected external factory must not execute")
-
-    patch_distributions(
-        monkeypatch,
-        FakeDistribution(
-            "My-Test-Stack",
-            (
-                FakeEntryPoint("selected", "external_stack:selected", selected),
-                FakeEntryPoint("unselected", "external_stack:unselected", unselected),
-            ),
-        ),
-    )
-
-    assert external.list_external_blueprint_names() == [
-        "my-test-stack.selected",
-        "my-test-stack.unselected",
-    ]
-    assert calls == []
-    blueprint = get_by_name("my-test-stack.selected")
-    assert calls == ["selected"]
-    assert blueprint.blueprints[0].kwargs == {"value": 42}
-
-
-def test_external_factory_failure_names_entry_point(monkeypatch: pytest.MonkeyPatch) -> None:
-    @blueprint_factory
-    def unavailable():
-        raise ModuleNotFoundError("No module named 'optional_sdk'", name="optional_sdk")
-
-    patch_distributions(
-        monkeypatch,
-        FakeDistribution(
-            "My-Test-Stack",
-            (FakeEntryPoint("demo", "external_stack:unavailable", unavailable),),
-        ),
-    )
-
-    with pytest.raises(
-        external.ExternalBlueprintError,
-        match="my-test-stack.demo.*external_stack:unavailable.*optional_sdk",
-    ):
-        get_by_name("my-test-stack.demo")
 
 
 def test_resolve_external_module_class(monkeypatch: pytest.MonkeyPatch) -> None:

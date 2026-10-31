@@ -117,20 +117,6 @@ def test_custom_source_handle_needs_no_registration(tmp_path: Path) -> None:
     ]
 
 
-def test_lazy_path_repr_does_not_checkout(
-    robot_source: tuple[RobotDescriptionSource, RecordingGitAssetCache],
-) -> None:
-    source, git_cache = robot_source
-    model_path = source / "robots" / "testbot" / "model.urdf"
-
-    assert repr(model_path) == (
-        "RobotDescriptionPath(source=RobotDescriptionSource("
-        "url='https://example.invalid/testbot_description.git', ref='main'), "
-        "relative_path='robots/testbot/model.urdf')"
-    )
-    assert git_cache.resolve_calls == []
-
-
 def test_lazy_path_survives_pickle_without_checkout(
     robot_source: tuple[RobotDescriptionSource, RecordingGitAssetCache],
 ) -> None:

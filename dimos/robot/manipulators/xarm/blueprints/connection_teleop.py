@@ -12,26 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Select xArm connection modules only when composing their keyboard stack."""
+"""Keyboard teleop blueprints using the optional xArm connection."""
 
-from typing import Literal
+from dimos.control.coordinator import TaskConfig
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.module import ModuleBase
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.robot.manipulators.xarm.config import (
+    XARM_ARMS,
+    XArmType,
+    make_xarm_model_config,
+    xarm_model,
+)
+from dimos.robot.manipulators.xarm.connection import XArmConnection
+from dimos.robot.manipulators.xarm.twist_coordinator import XArmTwistCoordinator
+from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect, blueprint_factory
 
-
-def _keyboard_teleop(arm: Literal["xarm6", "xarm7"]) -> Blueprint:
-    # Optional implementations belong to the selected factory, not discovery.
-    from dimos.control.coordinator import TaskConfig
-    from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
-    from dimos.robot.manipulators.xarm.config import (
-        XARM_ARMS,
-        make_xarm_model_config,
-        xarm_model,
-    )
-    from dimos.robot.manipulators.xarm.connection import XArmConnection
-    from dimos.robot.manipulators.xarm.twist_coordinator import XArmTwistCoordinator
-    from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-
+def _keyboard_teleop(arm: XArmType) -> Blueprint:
+    """Jog an arm through XArmConnection; set --xarmconnection.ip at run time."""
     dof, robot_type = XARM_ARMS[arm]
     ik_model = make_xarm_model_config(dof, robot_type=robot_type, robot="arm", add_gripper=False)
     return autoconnect(
@@ -54,22 +53,15 @@ def _keyboard_teleop(arm: Literal["xarm6", "xarm7"]) -> Blueprint:
             ],
         ),
         XArmConnection.blueprint(arm=arm),
-    ).remappings(
-        [
-            (XArmConnection, "position_command", "arm_position_command"),
-            (XArmConnection, "velocity_command", "arm_velocity_command"),
-            (XArmTwistCoordinator, "arm_joint_state", "joint_state"),
-        ]
     )
 
 
-@blueprint_factory
-def xarm7_keyboard_teleop() -> Blueprint:
-    """Jog an xArm7 through XArmConnection; set --xarmconnection.ip at run time."""
-    return _keyboard_teleop("xarm7")
+_ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
+    (XArmConnection, "position_command", "arm_position_command"),
+    (XArmConnection, "velocity_command", "arm_velocity_command"),
+    (XArmTwistCoordinator, "arm_joint_state", "joint_state"),
+]
 
 
-@blueprint_factory
-def xarm6_keyboard_teleop() -> Blueprint:
-    """Jog an xArm6 through XArmConnection; set --xarmconnection.ip at run time."""
-    return _keyboard_teleop("xarm6")
+xarm7_keyboard_teleop = _keyboard_teleop("xarm7").remappings(_ARM_REMAPS)
+xarm6_keyboard_teleop = _keyboard_teleop("xarm6").remappings(_ARM_REMAPS)

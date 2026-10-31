@@ -32,7 +32,6 @@ import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.limits import limits
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
@@ -51,7 +50,7 @@ Call = tuple[str, tuple[Any, ...], dict[str, Any]]
 
 
 @pytest.mark.parametrize("arm", ["xarm6", "xarm7"])
-def test_keyboard_factory_composes_without_loading_assets_or_opening_sdk(arm, monkeypatch):
+def test_keyboard_blueprint_composes_without_loading_assets_or_opening_sdk(arm, monkeypatch):
     def unexpected_runtime_work(*args, **kwargs):
         pytest.fail("Composing a blueprint must not load assets or open the SDK")
 
@@ -72,7 +71,6 @@ def test_keyboard_factory_composes_without_loading_assets_or_opening_sdk(arm, mo
         ("xarmconnection", "velocity_command"): "arm_velocity_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
     }
-    assert "--xarmconnection.ip" in BlueprintConfigParser(blueprint).format_help()
 
 
 class FakeXArmAPI:

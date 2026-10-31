@@ -116,7 +116,6 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
             "_resolve",
             "__reduce__",
             "__reduce_ex__",
-            "__repr__",
         }:
             return object.__getattribute__(self, name)
 
@@ -132,14 +131,6 @@ class RobotDescriptionPath(type(Path())):  # type: ignore[misc]
             return getattr(relative_path, name)
 
         return getattr(object.__getattribute__(self, "_resolve")(), name)
-
-    def __repr__(self) -> str:
-        """Describe the source without checking it out for help or logging."""
-        source: RobotDescriptionSource = object.__getattribute__(self, "_robot_description_source")
-        relative_path: Path = object.__getattribute__(self, "_robot_description_relative_path")
-        return (
-            f"RobotDescriptionPath(source={source!r}, relative_path={relative_path.as_posix()!r})"
-        )
 
     def __str__(self) -> str:
         return str(self._resolve())

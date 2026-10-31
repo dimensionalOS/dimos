@@ -19,19 +19,10 @@ import sys
 
 import pytest
 
-from dimos.core.coordination.blueprints import blueprint_factory
-from dimos.core.global_config import global_config
-from dimos.core.module import Module
-from dimos.robot.get_all_blueprints import (
-    OptionalDependencyError,
-    get_by_name,
-    get_by_name_or_exit,
-    load_blueprint,
-)
-from dimos.robot.manipulators.xarm.blueprints import connection_teleop
+from dimos.robot.get_all_blueprints import get_by_name, get_by_name_or_exit
 
 
-def test_factory_discovery_does_not_import_connection_or_sdk():
+def test_list_and_legacy_teleop_do_not_import_optional_connection():
     result = subprocess.run(
         [
             sys.executable,
@@ -40,22 +31,24 @@ def test_factory_discovery_does_not_import_connection_or_sdk():
 import importlib.abc
 import sys
 
-class RejectConnection(importlib.abc.MetaPathFinder):
+class RejectXArm(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname == 'xarm' or fullname.startswith('xarm.') or fullname in {
             'dimos.robot.manipulators.xarm.connection',
-            'dimos.robot.manipulators.xarm.blueprints.teleop',
+            'dimos.robot.manipulators.xarm.blueprints.connection_teleop',
         }:
-            raise AssertionError(f'Discovery imported {fullname}')
+            raise AssertionError(f'Imported optional connection dependency {fullname}')
 
-sys.meta_path.insert(0, RejectConnection())
-from dimos.robot.manipulators.xarm.blueprints import connection_teleop
-from dimos.core.coordination.blueprints import BlueprintFactory
+sys.meta_path.insert(0, RejectXArm())
 from dimos.cli.commands.info import list_blueprints
+from dimos.robot.get_all_blueprints import get_by_name
 
-assert isinstance(connection_teleop.xarm7_keyboard_teleop, BlueprintFactory)
-assert isinstance(connection_teleop.xarm6_keyboard_teleop, BlueprintFactory)
 list_blueprints()
+assert 'dimos.robot.manipulators.xarm.blueprints.teleop' not in sys.modules
+blueprint = get_by_name('keyboard-teleop-xarm7')
+assert [atom.module.__name__ for atom in blueprint.blueprints] == [
+    'KeyboardTeleopModule', 'ArmTwistCoordinator', 'ManipulationModule',
+]
 """,
         ],
         capture_output=True,
@@ -90,72 +83,3 @@ def test_resolve_string_module_or_exit():
 def test_resolve_unknown_name():
     with pytest.raises(ValueError, match="Unknown blueprint or module"):
         get_by_name("nonexistent-blueprint-xyz")
-
-
-def test_factory_resolves_only_selected_arm(monkeypatch):
-    calls = []
-
-    def compose(arm):
-        calls.append(arm)
-        return Module.blueprint(arm=arm)
-
-    monkeypatch.setattr(connection_teleop, "_keyboard_teleop", compose)
-
-    blueprint = get_by_name("xarm7-keyboard-teleop")
-
-    assert calls == ["xarm7"]
-    assert blueprint.blueprints[0].kwargs == {"arm": "xarm7"}
-
-
-def test_factory_reads_current_configuration_on_each_resolution(monkeypatch):
-    @blueprint_factory
-    def selected():
-        return Module.blueprint(simulation=global_config.simulation)
-
-    monkeypatch.setattr(connection_teleop, "xarm7_keyboard_teleop", selected)
-    monkeypatch.setattr(global_config, "simulation", "")
-    first = get_by_name("xarm7-keyboard-teleop")
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
-    second = get_by_name("xarm7-keyboard-teleop")
-
-    assert first.blueprints[0].kwargs == {"simulation": ""}
-    assert second.blueprints[0].kwargs == {"simulation": "mujoco"}
-    assert first is not second
-
-
-def test_static_blueprint_target_is_preserved(monkeypatch):
-    blueprint = Module.blueprint()
-    monkeypatch.setattr(connection_teleop, "xarm7_keyboard_teleop", blueprint)
-
-    assert get_by_name("xarm7-keyboard-teleop") is blueprint
-
-
-def test_undecorated_function_is_not_executed(monkeypatch):
-    def selected():
-        pytest.fail("Undecorated functions must not execute")
-
-    monkeypatch.setattr(connection_teleop, "xarm7_keyboard_teleop", selected)
-
-    with pytest.raises(TypeError, match="decorated blueprint factory"):
-        get_by_name("xarm7-keyboard-teleop")
-
-
-def test_factory_must_return_blueprint(monkeypatch):
-    @blueprint_factory
-    def selected():
-        return "invalid"
-
-    monkeypatch.setattr(connection_teleop, "xarm7_keyboard_teleop", selected)
-
-    with pytest.raises(TypeError, match="must return a Blueprint"):
-        get_by_name("xarm7-keyboard-teleop")
-
-
-def test_factory_reports_missing_optional_sdk(monkeypatch):
-    def missing_sdk(arm):
-        raise ModuleNotFoundError("No module named 'xarm'", name="xarm")
-
-    monkeypatch.setattr(connection_teleop, "_keyboard_teleop", missing_sdk)
-
-    with pytest.raises(OptionalDependencyError, match="xarm"):
-        load_blueprint("xarm7-keyboard-teleop")

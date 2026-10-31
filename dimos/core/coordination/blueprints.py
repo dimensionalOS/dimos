@@ -450,28 +450,6 @@ class Blueprint:
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
 
-@dataclass(frozen=True)
-class BlueprintFactory:
-    """A blueprint entry point whose composition runs only when selected.
-
-    Import optional module implementations inside the factory. The returned
-    Blueprint uses the existing composition and deployment APIs.
-    """
-
-    factory: Callable[[], Blueprint]
-
-    def __call__(self) -> Blueprint:
-        blueprint = self.factory()
-        if not isinstance(blueprint, Blueprint):
-            raise TypeError(f"Blueprint factory {self.factory.__name__} must return a Blueprint")
-        return blueprint
-
-
-def blueprint_factory(factory: Callable[[], Blueprint]) -> BlueprintFactory:
-    """Mark a named function for discovery by the existing blueprint registry."""
-    return BlueprintFactory(factory)
-
-
 def transport_config_name(cls: type) -> str:
     return cls.__name__.removesuffix("Config").lower()
 

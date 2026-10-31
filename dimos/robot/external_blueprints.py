@@ -21,7 +21,7 @@ import re
 
 from packaging.utils import canonicalize_name
 
-from dimos.core.coordination.blueprints import Blueprint, BlueprintFactory
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.module import is_module_type
 
 ENTRY_POINT_GROUP = "dimos.blueprints"
@@ -83,8 +83,7 @@ def _external_blueprint_load_error(
 def _invalid_external_blueprint_target_error(name: str, target: object) -> ExternalBlueprintError:
     return ExternalBlueprintError(
         f"External blueprint {name!r} loaded unsupported target {target!r}. "
-        "Entry point targets must be a Blueprint object, a decorated blueprint factory, "
-        "or a DimOS Module class."
+        "Entry point targets must be a Blueprint object or a DimOS Module class."
     )
 
 
@@ -181,16 +180,13 @@ def resolve_external_blueprint_by_name(name: str) -> Blueprint:
     entry = matches[0]
     try:
         target = entry.entry_point.load()
-        return _target_to_blueprint(entry.qualified_name, target)
-    except ExternalBlueprintError:
-        raise
     except Exception as exc:
         raise _external_blueprint_load_error(entry.qualified_name, entry.target, exc) from exc
 
+    return _target_to_blueprint(entry.qualified_name, target)
+
 
 def _target_to_blueprint(name: str, target: object) -> Blueprint:
-    if isinstance(target, BlueprintFactory):
-        return target()
     if isinstance(target, Blueprint):
         return target
     if is_module_type(target):
