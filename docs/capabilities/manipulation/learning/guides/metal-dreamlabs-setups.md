@@ -100,6 +100,7 @@ Rollout blueprints start idle. `dimos imitation control` starts Dreamlabs in
 preview mode. For explicit control, use these RPCs in `dimos shell`:
 
 ```python
+policy = app.get_module("policy")
 policy.preflight_rollout()  # Local validation, no inference.
 policy.start_rollout()      # Remote inference and upload, preview only.
 policy.get_last_preview()

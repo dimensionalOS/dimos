@@ -34,6 +34,7 @@ Neither blueprint starts rollout automatically.
 Attach with `dimos shell` and use the policy module's RPCs:
 
 ```python
+policy = app.get_module("policy")
 policy.preflight_rollout()
 policy.start_rollout()  # Remote inference and image/state upload, preview only.
 policy.rollout_status()
