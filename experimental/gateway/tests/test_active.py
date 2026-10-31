@@ -67,7 +67,8 @@ def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(client: TestClient
     config = {"global": {"n_workers": 4, "replay": True}, "modules": {"agent": {"api_key": "k1"}}}
     started = client.post("/active/launch", json={"blueprint": "demo", "config": config})
     assert started.status_code == 200, started.text
-    assert started.json()["phase"] == "starting"
+    # the fake dimos registers at once, so on a busy machine it can be running before the gateway answers
+    assert started.json()["phase"] in ("starting", "running")
     until(output_has(client, "secret k1"))
     until(output_has(client, "dtop 1"))
     until(running(client))
@@ -127,6 +128,21 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     until(running(client))
     assert client.get("/active").json()["runId"] != old
     assert launch_of(client)["output"].splitlines()[0].endswith("run demo --n-workers=7")
+
+
+def test_a_launch_that_registers_before_the_answer_answers_running(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remember = launches._remember
+
+    def remember_late(blueprint: str, pid: int, *rest: Any) -> None:
+        until(lambda: any(int(run["pid"]) == pid for run in launches.registry_runs()))
+        remember(blueprint, pid, *rest)
+
+    monkeypatch.setattr(launches, "_remember", remember_late)
+    started = client.post("/active/launch", json={"blueprint": "demo"})
+    assert started.status_code == 200, started.text
+    assert started.json()["phase"] == "running"
 
 
 def test_relaunch_waits_for_the_stopped_run_to_be_reaped(

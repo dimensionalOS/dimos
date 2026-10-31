@@ -48,7 +48,9 @@ run_id = time.strftime("%Y%m%d-%H%M%S-") + blueprint + "-" + str(os.getpid())
 registry = pathlib.Path(os.environ["FAKE_REGISTRY_DIR"])
 registry.mkdir(parents=True, exist_ok=True)
 entry = dict(run_id=run_id, pid=os.getpid(), blueprint=blueprint, started_at="2026-01-01T12:00:00+00:00", log_dir="/tmp")
-(registry / (run_id + ".json")).write_text(json.dumps(entry))
+# atomically, like RunEntry.save: the gateway's polling deletes an entry it reads half written
+(registry / (run_id + ".tmp")).write_text(json.dumps(entry))
+(registry / (run_id + ".tmp")).replace(registry / (run_id + ".json"))
 time.sleep(60)
 """
 

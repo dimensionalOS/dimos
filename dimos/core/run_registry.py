@@ -76,9 +76,12 @@ class RunEntry:
         return REGISTRY_DIR / f"{self.run_id}.json"
 
     def save(self) -> None:
-        """Persist this entry to disk."""
+        """Persist this entry to disk, atomically: list_runs deletes an entry it can't parse, so it mustn't see one half written."""
         REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        self.registry_path.write_text(json.dumps(asdict(self), indent=2))
+        # not *.json, so list_runs never reads it
+        partial = self.registry_path.with_name(f"{self.registry_path.name}.{os.getpid()}.tmp")
+        partial.write_text(json.dumps(asdict(self), indent=2))
+        partial.replace(self.registry_path)
 
     def remove(self) -> None:
         """Delete this entry from disk."""
