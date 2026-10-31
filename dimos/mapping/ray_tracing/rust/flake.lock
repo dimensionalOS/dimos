@@ -85,11 +85,11 @@
       },
       "locked": {
         "dir": "dimos/mapping/gpu_mls/rust",
-        "lastModified": 1793421672,
-        "narHash": "sha256-n6Ji+pkRUsguyrFp8pfJvWzp3O7NiVEPASzccmaZmUM=",
+        "lastModified": 1793426124,
+        "narHash": "sha256-+1jZl2kx8zF9JCtDCt81agneG55vCYnYNkL2BIGy1ek=",
         "owner": "dimensionalOS",
         "repo": "dimos",
-        "rev": "50717d35b334b70de1c1b742a2ffbb77ec758517",
+        "rev": "c2b6b6edea363bd0891ea88cf5f95c8c2e673e00",
         "type": "github"
       },
       "original": {
