@@ -29,7 +29,9 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 | `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema |
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
-| other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
+| `/cloud` | `account`, `login` (a device login; DELETE cancels it, or logs out with none pending), `uploads` (queue a recording, retry, cancel) |
+| views | `blueprint_view?name=` (a blueprint's graph, config and logs), `msgs.js` (decoders for dimos messages), `source?file=` |
+| other | `info`, `config` (the shared config.yaml as this gateway reads it), `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
 
 ## Examples
 
@@ -45,8 +47,20 @@ await post("active/modules/unitreeskillcontainer/rpcs/execute_sport_command", { 
 const page = await (await fetch(`${gateway}/active/log?level=warning&limit=200`)).json() // then ?after=${page.offset}
 ```
 
-Live launch phases (and added or removed blueprints) also arrive on zenoh at `<namespace>/dimos/events/<type>`
-(`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`).
+Live launch phases (a run started in a terminal starting or ending too; and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`
+(`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`). The types are `launch`, `blueprints`, `config`,
+`upload`, `uploads`, `upload-removed`, `cloud-account` and `cloud-login`.
+
+`config` is a bust signal and carries nothing: it says the shared `config.yaml` changed what `GET /config` answers, so
+anything that caches those settings re-reads that one route instead of the file. It is the event to listen for if you
+need the recordings directory somewhere a blocking request won't do.
+
+Decode dimos messages in a page with `msgs.js`:
+
+```js
+const app = new DimApp({ msgDecodeEndpoint: "../../dimos-gateway/msgs.js" }) // DimApp from ./dim-app/mod.js
+app.subscribe("odom", (odom) => console.log(odom.pose.pose.position))
+```
 
 ## Running it yourself
 
@@ -56,7 +70,10 @@ Live launch phases (and added or removed blueprints) also arrive on zenoh at `<n
 ```
 
 - Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
-  `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
+  `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win. Desktop writes
+  that file and the gateway watches it: `GET /config` is what it reads from it, and a `config` event follows a change.
+- `GET /history/recordings` is the one answer to where recordings live ([recording](/docs/usage/recording.md#where-recordings-go)),
+  and every launch is started with `--record-dir` set to it, so a run writes where the answer says.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

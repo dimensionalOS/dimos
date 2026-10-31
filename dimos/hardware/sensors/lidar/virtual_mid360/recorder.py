@@ -31,10 +31,10 @@ import time
 
 from pydantic import Field
 
-from dimos.constants import RECORDINGS_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.shared_config import recordings_dir
 
 logger = setup_logger()
 
@@ -45,7 +45,7 @@ def _stamp() -> str:
 
 
 def _default_pcap_path() -> Path:
-    return RECORDINGS_DIR / f"mid360_{_stamp()}.pcap"
+    return recordings_dir() / f"mid360_{_stamp()}.pcap"
 
 
 def _stop_when_parent_dies(cmd: list[str], grace_sec: float) -> list[str]:

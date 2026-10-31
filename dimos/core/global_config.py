@@ -49,6 +49,12 @@ class GlobalConfig(BaseSettings):
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
     record_encoding_threads: int | None = Field(default=None, ge=1)
+    # The directory this run's recordings go to, holding `<run-id>/memory.db` and the run's
+    # other artifacts. Empty resolves it the way every other dimos process does: `recordings.dir`
+    # in the shared `~/.dimos/config.yaml`, else the checkout's `recordings/`. dimos-gateway
+    # passes the directory its `GET /history/recordings` answers with, so a run Desktop launched
+    # writes where Desktop and the apps look for it. See dimos.utils.shared_config.
+    record_dir: str = ""
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
     # Extra locators every session dials, alongside those derived from --robot-ip.

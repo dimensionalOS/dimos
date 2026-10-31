@@ -39,9 +39,10 @@ from dimos.cli.cloud import api_key
 from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.cloud.config import CloudConfig
-from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
+from dimos.constants import DOWNLOADS_DIR
 from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
+from dimos.utils.shared_config import recordings_dir
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
 
@@ -355,19 +356,21 @@ class CloudData:
 
 
 def recordings(newer_than_s: float | None = None) -> list[Path]:
-    """Files under RECORDINGS_DIR (recursively: runs live in per-run subdirectories) by
-    mtime, oldest first, any format; sidecars and staging dirs excluded."""
+    """Files under the recordings directory (recursively: runs live in per-run subdirectories)
+    by mtime, oldest first, any format; sidecars and staging dirs excluded.
+
+    The directory is the one runs write to, so what is offered for upload is what was recorded
+    (an older recording left in the checkout after the directory moved is not listed).
+    """
     cutoff = time.time() - newer_than_s if newer_than_s else None
+    root = recordings_dir()
     found = []
-    for p in RECORDINGS_DIR.rglob("*"):
+    for p in root.rglob("*"):
         try:
             if (
                 not p.is_file()
                 or _is_sidecar(p)
-                or any(
-                    part.startswith(".dimos-staging-")
-                    for part in p.relative_to(RECORDINGS_DIR).parts
-                )
+                or any(part.startswith(".dimos-staging-") for part in p.relative_to(root).parts)
             ):
                 continue
             mtime = p.stat().st_mtime

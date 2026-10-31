@@ -20,7 +20,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 
-from dimos.constants import RECORDINGS_DIR
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -40,6 +39,7 @@ from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
 )
+from dimos.utils.shared_config import recordings_dir
 
 
 class _CollectionRealSenseConfig(RealSenseCameraConfig):
@@ -103,7 +103,7 @@ def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple
         },
         actions={"action": state.model_copy(deep=True)},
     )
-    directory: Path = RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S_%f}"
+    directory: Path = recordings_dir() / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S_%f}"
     return (
         collect(profile=profile, recording=directory, format="sqlite"),
         EpisodeMonitorModule.blueprint(task=task),
