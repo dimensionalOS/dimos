@@ -62,10 +62,9 @@ TEST_MODULE_PATTERNS = ("test_*.py", "conftest.py")
 # dimos can run it without a checkout. Copied into build_lib below; editable
 # installs skip the copy and locate.find_web_dir() resolves the checkout.
 # MANIFEST.in grafts web/ so sdist->wheel builds can reproduce this.
-# cockpit/sdk/blueprint_view deno.json + package.json must ship even without
-# their sources: the workspace root lists them as members and Deno refuses to
-# run the relay when a member's config file is missing. The blueprint view's
-# dist is the gateway's (experimental/gateway/web_view.py).
+# cockpit/sdk deno.json + package.json must ship even without their sources:
+# the workspace root lists ./cockpit and ./sdk as members and Deno refuses to
+# run the relay when a member's config file is missing.
 RELAY_DIST_SOURCES = (
     "deno.json",
     "deno.lock",
@@ -77,10 +76,6 @@ RELAY_DIST_SOURCES = (
     "sdk/deno.json",
     "sdk/package.json",
     "sdk/dist",
-    "sdk/src/decoders",  # the gateway's msgs.js bundles its LCM decoder
-    "blueprint_view/deno.json",
-    "blueprint_view/package.json",
-    "blueprint_view/dist",
 )
 RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
 

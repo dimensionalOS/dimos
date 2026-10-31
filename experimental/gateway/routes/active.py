@@ -48,15 +48,18 @@ class CallRequest(BaseModel):
 
 
 def known_names(state: State) -> set[str] | None:
-    """Every name `dimos run` would accept, or None until the gateway has listed its checkout and finished a full scan.
+    """Every name `dimos run` would accept, or None until the gateway has listed its checkout and finished a full scan of it as it is now.
 
     Blueprints come from the listing, modules (registry name and class) from the scan; a module whose scan
     failed is still a name, so it is kept. A single blueprint's scan is not enough: the modules it did not
-    visit would look unknown. Nothing is introspected here: a launch must stay fast."""
+    visit would look unknown, and so would a module added since a scan of an older checkout. Nothing is
+    introspected here: a launch must stay fast (the fingerprint is a cached git status)."""
     if state.listed is None:
         return None
     cache = state.scanner.cache()
     if cache is None or not cache.get("finished_at"):
+        return None
+    if cache.get("fingerprint") != state.scanner.current_fingerprint():
         return None
     names = {str(entry["name"]) for entry in state.listed}
     for record in catalog.modules(cache):
@@ -78,7 +81,7 @@ def check_known(state: State, name: str) -> None:
 
 
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
-    check_known(state, name)
+    await asyncio.to_thread(check_known, state, name)
     launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
     state.bus.launch(launch)
     return launch

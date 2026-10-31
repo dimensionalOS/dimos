@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -59,6 +60,16 @@ def stamp(web_dir: Path, app: Path) -> str:
     return digest.hexdigest()
 
 
+def deno_on_path() -> str:
+    """`ensure_deno`, with its folder put on this process's PATH: the vite build calls `deno info` through
+    @deno/vite-plugin, which looks `deno` up on PATH (the Alfred Jetson has only the downloaded one)."""
+    deno = ensure_deno()
+    folder = str(Path(deno).parent)
+    if folder not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = os.pathsep.join(filter(None, [folder, os.environ.get("PATH", "")]))
+    return deno
+
+
 def ensure_built(app: Path) -> Path | None:
     """The dist, rebuilt first if a source changed; None when there's none to serve."""
     # TODO(core): relay_process should expose its build helpers
@@ -74,7 +85,7 @@ def ensure_built(app: Path) -> Path | None:
                 out = Path(tempfile.mkdtemp(prefix=".dist-new-", dir=app))
                 out.chmod(0o755)
                 try:
-                    cmd = [ensure_deno(), "run", "--frozen", "-A", "npm:vite", "build"]
+                    cmd = [deno_on_path(), "run", "--frozen", "-A", "npm:vite", "build"]
                     if relay_process._run_build(
                         [*cmd, "--outDir", str(out)], app, deadline, cancel
                     ):

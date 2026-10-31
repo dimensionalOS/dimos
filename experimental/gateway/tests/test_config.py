@@ -111,8 +111,11 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
 
 
 def test_config_answers_the_shared_settings_the_gateway_reads(
-    client: TestClient, home: Path
+    client: TestClient, home: Path, checkout: Path
 ) -> None:
+    # recordings.dir counts only for a checkout whose dimos takes --record-dir
+    (checkout / "dimos" / "core").mkdir(parents=True)
+    (checkout / "dimos" / "core" / "global_config.py").write_text('record_dir: str = ""\n')
     (home / "dimos_home").mkdir(parents=True, exist_ok=True)
     (home / "dimos_home" / "config.yaml").write_text("recordings:\n  dir: /tmp/elsewhere\n")
     assert client.get("/config").json() == {

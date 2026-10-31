@@ -72,8 +72,8 @@ app.subscribe("odom", (odom) => console.log(odom.pose.pose.position))
 - Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
   `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win. Desktop writes
   that file and the gateway watches it: `GET /config` is what it reads from it, and a `config` event follows a change.
-- `GET /history/recordings` is the one answer to where recordings live ([recording](/docs/usage/recording.md#where-recordings-go)),
-  and every launch is started with `--record-dir` set to it, so a run writes where the answer says.
+- `GET /history/recordings` is the one answer to where recordings live: the checkout's own default, or
+  `recordings.dir` when the checkout's dimos has `--record-dir`, which every launch is then started with.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

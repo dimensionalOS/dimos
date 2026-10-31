@@ -25,9 +25,8 @@ from typing import TYPE_CHECKING, Any
 import watchfiles
 
 from dimos.core import run_registry
-from dimos.utils import shared_config
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import constants, launches, store
+from experimental.gateway import constants, launches, shared_config, store
 
 if TYPE_CHECKING:
     from experimental.gateway.process_stats import ProcessStats

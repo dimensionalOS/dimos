@@ -26,9 +26,8 @@ from fastapi.testclient import TestClient
 import psutil
 import pytest
 
-from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.run_registry import RunEntry
-from experimental.gateway import launches, store
+from experimental.gateway import launches
 from experimental.gateway.state import State
 
 
@@ -301,86 +300,68 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     assert client.get("/history").json()["runs"][0]["running"]
 
 
-def test_recordings_is_the_standard_directory(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: Path
-) -> None:
-    # the served checkout isn't the gateway's own (Desktop's pinned copy serves the user's): its default, as its own
-    # dimos would pick it, never the copy's recordings/ (replaced on the next move)
-    assert client.get("/history/recordings").json() == {
-        "path": str(tmp_path / "state" / "recordings")
-    }
-    (checkout / ".git").mkdir()
-    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
-    store.serve(DIMOS_PROJECT_ROOT)
-    assert client.get("/history/recordings").json() == {"path": str(RECORDINGS_DIR)}
-    (tmp_path / "dimos_home").mkdir(exist_ok=True)
-    (tmp_path / "dimos_home" / "config.yaml").write_text(
-        f"recordings:\n  dir: {tmp_path / 'recs'}\n"
-    )
-    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
+def takes_record_dir(checkout: Path) -> None:
+    """Make the fake checkout's dimos one that has `--record-dir`, as the recordings PR adds it."""
+    config = checkout / "dimos" / "core" / "global_config.py"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text('record_dir: str = ""\n')
 
 
-# `dimos run --record`, as far as this test needs it: the real root flags, and the real path the
-# recorder picks from them. Its own checkout's dimos, not whichever one is installed.
-RECORDING_DIMOS = """#!{python}
-import sys
-
-sys.path.insert(0, {root!r})
-import typer
-
-from dimos.cli.commands.global_options import create_dynamic_callback
-
-app = typer.Typer()
-app.callback()(create_dynamic_callback())
+def write_config(home: Path, text: str) -> None:
+    (home / "dimos_home").mkdir(exist_ok=True)
+    (home / "dimos_home" / "config.yaml").write_text(text)
 
 
-@app.command()
-def run(blueprint: str) -> None:
-    from dimos.memory.tap import recording_dir
-
-    path = recording_dir() / "memory.db"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch()
-    print("recorded", path, flush=True)
-
-
-app()
-"""
-
-
-def test_a_launch_records_where_the_recordings_endpoint_says_recordings_live(
+def test_recordings_is_where_the_checkout_records(
     client: TestClient, checkout: Path, home: Path
 ) -> None:
-    """The one answer and the one place a run writes, end to end."""
-    (home / "dimos_home").mkdir(exist_ok=True)
-    (home / "dimos_home" / "config.yaml").write_text(f"recordings:\n  dir: {home / 'recs'}\n")
-    answered = Path(client.get("/history/recordings").json()["path"])
-    assert answered == home / "recs"
-    program = checkout / ".venv" / "bin" / "dimos"
-    program.write_text(RECORDING_DIMOS.format(python=sys.executable, root=str(DIMOS_PROJECT_ROOT)))
-    program.chmod(0o755)
-
-    launched = client.post(
-        "/active/launch",
-        json={"blueprint": "demo", "config": {"global": {"record": "sqlite"}}},
-    )
-    assert launched.status_code == 200, launched.text
-    until(output_has(client, "recorded "))
-    (recorded,) = answered.rglob("memory.db")
-    # <answered>/<run-id>/memory.db, and not the checkout the run resolved it from before
-    assert recorded.parent.parent == answered
-    assert RECORDINGS_DIR not in recorded.parents
-    assert f"--record-dir={answered}" in launch_of(client)["output"]
+    """dimos's own default when its dimos has no `--record-dir`, whatever config.yaml says."""
+    assert client.get("/history/recordings").json() == {"path": str(home / "state" / "recordings")}
+    (checkout / ".git").mkdir()
+    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
+    write_config(home, f"recordings:\n  dir: {home / 'recs'}\n")
+    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
 
 
-def test_a_launch_that_names_its_own_recordings_directory_keeps_it(home: Path) -> None:
+def test_recordings_is_the_configured_directory_when_the_checkout_takes_it(
+    client: TestClient, checkout: Path, home: Path
+) -> None:
+    takes_record_dir(checkout)
+    write_config(home, f"recordings:\n  dir: {home / 'recs'}\n")
+    assert client.get("/history/recordings").json() == {"path": str(home / "recs")}
+    # relative to config.yaml's folder, not to whichever directory a reader runs in
+    write_config(home, "recordings:\n  dir: recs\n")
+    assert client.get("/history/recordings").json() == {"path": str(home / "dimos_home" / "recs")}
+
+
+def test_a_launch_is_told_the_recordings_directory_only_when_its_dimos_takes_it(
+    client: TestClient, checkout: Path, home: Path
+) -> None:
+    write_config(home, f"recordings:\n  dir: {home / 'recs'}\n")
+    assert client.post("/active/launch", json={"blueprint": "demo"}).status_code == 200
+    until(running(client))
+    assert "--record-dir" not in launch_of(client)["output"]
+    client.post("/active/stop")
+    until(stopped(client))
+
+    takes_record_dir(checkout)
+    assert client.post("/active/launch", json={"blueprint": "demo"}).status_code == 200
+    until(output_has(client, f"--record-dir={home / 'recs'}"))
+
+
+def test_a_launch_that_names_its_own_recordings_directory_keeps_it(
+    checkout: Path, home: Path
+) -> None:
     """Both ways of asking for one: in the config, and among the raw args of /active/exec."""
-    assert launches.recordings_flag(launches.LaunchConfig()) == [
-        f"--record-dir={launches.store.recordings_dir()}"
+    flag = launches.recordings_flag
+    assert flag(checkout, launches.LaunchConfig()) == []
+    takes_record_dir(checkout)
+    assert flag(checkout, launches.LaunchConfig()) == [
+        f"--record-dir={launches.store.recordings_dir(checkout)}"
     ]
-    assert launches.recordings_flag(launches.LaunchConfig({"record_dir": "/tmp/mine"})) == []
-    assert launches.recordings_flag(launches.LaunchConfig(args=["--record-dir=/tmp/mine"])) == []
-    assert launches.recordings_flag(launches.LaunchConfig(args=["--record-dir", "/tmp/mine"])) == []
+    assert flag(checkout, launches.LaunchConfig({"record_dir": "/tmp/mine"})) == []
+    assert flag(checkout, launches.LaunchConfig(args=["--record-dir=/tmp/mine"])) == []
+    assert flag(checkout, launches.LaunchConfig(args=["--record-dir", "/tmp/mine"])) == []
 
 
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
@@ -413,6 +394,7 @@ def test_shared_config_yaml_sets_the_namespace_connect_and_socket_but_not_a_runs
 
 SCANNED = {
     "format": 1,
+    "fingerprint": "scanned checkout",
     "finished_at": "2026-01-01T12:00:00Z",
     "results": {},
     "modules": {
@@ -425,6 +407,7 @@ SCANNED = {
 def listed_and_scanned(state: State, monkeypatch: pytest.MonkeyPatch) -> None:
     state.listed = [{"name": "demo", "kind": "builtin"}, {"name": "acme-other", "kind": "external"}]
     monkeypatch.setattr(state.scanner, "cache", lambda: SCANNED)
+    monkeypatch.setattr(state.scanner, "current_fingerprint", lambda: SCANNED["fingerprint"])
 
 
 def never_spawns(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,6 +431,15 @@ def test_an_unknown_name_is_refused_before_anything_is_spawned(
     refused = client.post("/active/exec", json={"args": ["dmeo", "--n-workers=2"]})
     assert refused.status_code == 404, refused.text
     assert client.get("/active").json()["launch"] is None
+
+
+def test_a_scan_of_an_older_checkout_refuses_nothing(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A module added since the scan would look unknown, so dimos run decides instead."""
+    listed_and_scanned(state, monkeypatch)
+    monkeypatch.setattr(state.scanner, "current_fingerprint", lambda: "the checkout changed")
+    assert client.post("/active/launch", json={"module": "added-since"}).status_code == 200
 
 
 def test_every_listed_or_scanned_name_still_launches(

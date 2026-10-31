@@ -23,7 +23,7 @@ import tempfile
 from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
-from dimos.utils import shared_config
+from experimental.gateway import shared_config
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -44,30 +44,40 @@ def setting(section: str, key: str) -> Any:
     return shared_config.setting(section, key)
 
 
-# the checkout the gateway serves (new_state), when it isn't the gateway's own (Desktop's pinned copy)
-_served: Path | None = None
+# the checkout the gateway serves (new_state), which may not be the gateway's own (Desktop's pinned copy)
+_served: Path = DIMOS_PROJECT_ROOT
 
 
 def serve(dimos_dir: Path) -> None:
     global _served
-    _served = None if dimos_dir.resolve() == DIMOS_PROJECT_ROOT.resolve() else dimos_dir
+    _served = dimos_dir
 
 
-def recordings_dir() -> Path:
-    """Where recordings go, which `GET /history/recordings` is the one answer to.
+def takes_record_dir(dimos_dir: Path) -> bool:
+    """Whether the checkout's dimos has `--record-dir` (GlobalConfig.record_dir); one without it
+    rejects the flag and always records to its own default directory."""
+    try:
+        config = (dimos_dir / "dimos" / "core" / "global_config.py").read_text()
+    except OSError:
+        return False
+    return "record_dir:" in config
 
-    dimos resolves it the same way (`dimos.utils.shared_config`) so a run started in a terminal
-    agrees with one Desktop launched; `launches.start` hands the launch this very directory, so
-    the endpoint's answer and the path a run writes to cannot drift apart. With nothing
-    configured, the served checkout's default (its `recordings/`), never the folder of a gateway
-    copy that runs apart from it: that one is replaced on the next move.
+
+def recordings_dir(dimos_dir: Path | None = None) -> Path:
+    """Where the checkout's runs record, which `GET /history/recordings` is the one answer to.
+
+    `recordings.dir` from the shared config.yaml (relative to its folder) when the checkout takes
+    `--record-dir`, which `launches.start` then hands every launch, so the answer and the path a
+    run writes to cannot drift apart; else what dimos picks by itself: the checkout's `recordings/`,
+    or the state directory's for an installed package. Without `dimos_dir`, the served checkout's.
     """
-    from dimos.core.global_config import global_config
-
-    configured = global_config.record_dir or setting("recordings", "dir")
-    if configured or _served is None:
-        return shared_config.recordings_dir()
-    return _served / "recordings" if (_served / ".git").exists() else STATE_DIR / "recordings"
+    dimos_dir = dimos_dir or _served
+    configured = setting("recordings", "dir")
+    if configured and takes_record_dir(dimos_dir):
+        return (shared_config.dimos_home() / Path(str(configured)).expanduser()).absolute()
+    if (dimos_dir / ".git").exists():
+        return dimos_dir.absolute() / "recordings"
+    return STATE_DIR / "recordings"
 
 
 def shared_settings() -> dict[str, Any]:
