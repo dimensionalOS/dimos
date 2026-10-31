@@ -195,7 +195,7 @@ fn mark_hits(
     }
     push(L_HITS, C_HITS, v);
     if (!voxel_exists(v)) {
-        atomicStore(&voxel_state[v], S_EXISTS | S_STALE | S_SURFACE_STALE | S_CREATED);
+        atomicStore(&voxel_state[v], S_EXISTS | S_STALE | S_SURFACE_STALE | S_CREATED | S_REPORT);
         set_health(v, select(params.min_health, SEED_HEALTH, params.mode == MODE_SEED));
         set_next_fit(v, NORMAL_MIN_POINTS);
         set_normal(v, 0u);
@@ -213,7 +213,11 @@ fn apply_hits(
         return;
     }
     let v = lists[L_HITS * params.list_capacity + i];
-    set_health(v, min(health_of(v) + 1, params.max_health));
+    let health = health_of(v);
+    if (health < params.max_health) {
+        set_health(v, health + 1);
+        atomicOr(&voxel_state[v], S_REPORT);
+    }
 }
 
 fn add_fixed(word: u32, value: i32) {
@@ -262,7 +266,10 @@ fn accumulate(
         let corner = vec3<f32>(key) * params.voxel_size;
         let l = clamp(vec3<i32>(floor((p - corner) * inv_fine)), vec3<i32>(0), vec3<i32>(divisor - 1));
         let index = u32((l.x * divisor + l.y) * divisor + l.z);
-        atomicOr(&fine[v * 2u + (index >> 5u)], 1u << (index & 31u));
+        let bit = 1u << (index & 31u);
+        if ((atomicOr(&fine[v * 2u + (index >> 5u)], bit) & bit) == 0u) {
+            atomicOr(&voxel_state[v], S_REPORT);
+        }
     }
 }
 

@@ -1,5 +1,5 @@
-// Each voxel a frame hit or missed, with its key, health and fine mask after
-// the frame, so the host can mirror the map without reading it all back,
+// Each voxel a frame hit and changed, or missed, with its key, health and
+// fine mask after the frame, so the host can mirror the map without reading it all back,
 // then the keys of the voxels it changed materially (created, removed, or
 // past a refit milestone), which is what moves a surface.
 
@@ -31,7 +31,12 @@ fn report_hits(
     if (i >= list_len(C_HITS)) {
         return;
     }
-    report_voxel(i, lists[L_HITS * params.list_capacity + i]);
+    // A hit that changed nothing (health at its cap, no new fine cell) is left out.
+    let v = lists[L_HITS * params.list_capacity + i];
+    if ((atomicAnd(&voxel_state[v], ~S_REPORT) & S_REPORT) == 0u) {
+        return;
+    }
+    report_voxel(atomicAdd(&counters[C_REPORT_HITS], 1u), v);
 }
 
 // After the hits, so the report is hits then misses.
@@ -45,7 +50,7 @@ fn report_misses(
     if (i >= list_len(C_MISSES)) {
         return;
     }
-    report_voxel(list_len(C_HITS) + i, lists[L_MISSES * params.list_capacity + i]);
+    report_voxel(atomicLoad(&counters[C_REPORT_HITS]) + i, lists[L_MISSES * params.list_capacity + i]);
 }
 
 // After the misses: the changed list, key only.
@@ -60,7 +65,7 @@ fn report_changed(
         return;
     }
     let key = key_of_voxel(lists[L_CHANGED * params.list_capacity + i]);
-    let base = (list_len(C_HITS) + list_len(C_MISSES) + i) * REPORT_WORDS;
+    let base = (atomicLoad(&counters[C_REPORT_HITS]) + list_len(C_MISSES) + i) * REPORT_WORDS;
     report[base] = bitcast<u32>(key.x);
     report[base + 1u] = bitcast<u32>(key.y);
     report[base + 2u] = bitcast<u32>(key.z);

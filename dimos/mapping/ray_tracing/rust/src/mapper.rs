@@ -521,6 +521,8 @@ mod gpu {
                     "GPU lists overflowed, raise gpu_list_capacity; the map missed voxels this frame."
                 );
             }
+            // The live hits are the ones the frame changed; an unchanged hit is
+            // already at full health, so the map holds it anyway.
             let mut coarse = AHashSet::with_capacity(report.hits);
             for (i, voxel) in report.voxels.iter().enumerate() {
                 if mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine) {

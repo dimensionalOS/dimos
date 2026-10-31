@@ -31,7 +31,8 @@ const STAMPS_PER_VOXEL: u64 = 3;
 const FINE_WORDS: u64 = 2;
 const VOXEL_DATA_WORDS: u64 = 6;
 const LISTS: u64 = 6;
-const COUNTERS: u64 = 9;
+const COUNTERS: u64 = 10;
+const C_REPORT_HITS: usize = 9;
 const C_OVERFLOW: usize = 7;
 const C_VOXELS: usize = 8;
 /// Indirect argument slots: the lists, the brick pool's sites, then its voxels.
@@ -124,7 +125,8 @@ pub struct ReportedVoxel {
     pub fine: u64,
 }
 
-/// The voxels the last frame touched: its hits, then its misses.
+/// The voxels the last frame touched: the hits it changed (left out: those at
+/// full health that saw no new fine cell), then its misses.
 #[derive(Clone, Debug, Default)]
 pub struct FrameReport {
     pub voxels: Vec<ReportedVoxel>,
@@ -642,6 +644,11 @@ impl BrickMap {
             4,
             bytemuck::cast_slice(&[0u32; LISTS as usize]),
         );
+        gpu.queue.write_buffer(
+            &self.buffers.counters,
+            4 * C_REPORT_HITS as u64,
+            bytemuck::bytes_of(&0u32),
+        );
 
         let point_groups = groups_1d(packed.len() as u32);
         let rays = (packed.len() as u32).div_ceil(params.ray_step);
@@ -729,7 +736,7 @@ impl BrickMap {
         };
         let c: Vec<u32> = self.gpu.read(&self.buffers.counters, COUNTERS as usize);
         let cap = self.config.list_capacity as usize;
-        let hits = (c[2] as usize).min(cap);
+        let hits = (c[C_REPORT_HITS] as usize).min(cap);
         let misses = (c[4] as usize).min(cap);
         let changed = (c[5] as usize).min(cap);
         let words: Vec<u32> = self

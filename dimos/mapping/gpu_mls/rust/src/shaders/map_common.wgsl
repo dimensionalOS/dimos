@@ -46,6 +46,8 @@ const C_CHANGED: u32 = 5u;
 const C_NEW_VOXELS: u32 = 6u;
 const C_OVERFLOW: u32 = 7u;
 const C_VOXELS: u32 = 8u;
+// Hits the frame's report kept: those it changed.
+const C_REPORT_HITS: u32 = 9u;
 
 const L_NEW: u32 = 0u;
 const L_HITS: u32 = 1u;
@@ -65,6 +67,8 @@ const S_PLANAR: u32 = 8u;
 const S_SURFACE_STALE: u32 = 16u;
 // The cached surface fit found a plane.
 const S_SURFACE_PLANAR: u32 = 32u;
+// This frame changed the voxel's health or fine cells, so the report lists it.
+const S_REPORT: u32 = 64u;
 
 const STAMP_HIT: u32 = 0u;
 const STAMP_FIT: u32 = 1u;
