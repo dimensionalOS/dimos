@@ -524,6 +524,8 @@ impl Worker {
                 dirty_columns = update.dirty_columns,
                 surface_bricks = update.bricks,
                 region_bricks = update.region_bricks,
+                read_columns = update.read_columns,
+                region_columns = update.region_columns,
                 integrate_ms = gpu_frame.integrate_ms,
                 report_ms = gpu_frame.report_ms,
                 mirror_ms = gpu_frame.mirror_ms,
