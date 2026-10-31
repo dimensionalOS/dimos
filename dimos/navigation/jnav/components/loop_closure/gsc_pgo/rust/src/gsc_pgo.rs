@@ -336,7 +336,7 @@ pub struct Config {
     /// A keyframe's cloud needs at least this many points (voxelized at the submap resolution): scans are gathered,
     /// placed by the odometry, and a due keyframe waits until they reach it, so a sparse lidar gives fewer, fuller
     /// keyframes and everything downstream (scan context, ICP, submaps) sees the gathered cloud (0 = the keyframe's scan).
-    /// 5000 is about the 90th percentile of a Mid-360 scan voxelized at 0.1 m.
+    /// 2000 is about the 10th percentile of a Mid-360 scan voxelized at 0.1 m, so about 1 in 10 of its keyframes waits.
     pub auto_aggregate_cloud_size: usize,
     pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
@@ -535,7 +535,7 @@ impl Default for Config {
             closure_icp_point_to_plane: true,
 
             drop_reseen_points: false,
-            auto_aggregate_cloud_size: 5000,
+            auto_aggregate_cloud_size: 2000,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,

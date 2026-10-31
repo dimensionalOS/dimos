@@ -57,7 +57,7 @@ class PGOConfig(NativeModuleConfig):
     # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud
     drop_reseen_points: bool = False
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
-    auto_aggregate_cloud_size: int = 5000
+    auto_aggregate_cloud_size: int = 2000
     closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
