@@ -66,6 +66,9 @@ def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str
         raise ValueError(f"{owner}/{sensor.name}: no body {sensor.mount.body!r}")
     pose = {"pos": sensor.mount.xyz, "quat": _quaternion(sensor.mount.rpy)}
     if sensor.kind == "camera":
+        # The mount is the optical frame (z forward, y down); a MuJoCo camera looks down -z, y up.
+        rotation = Rotation.from_euler("xyz", sensor.mount.rpy) * Rotation.from_euler("x", np.pi)
+        pose["quat"] = rotation.as_quat(scalar_first=True)
         body.add_camera(name=prefix + sensor.name, fovy=sensor.fovy, **pose)
     else:
         body.add_site(name=prefix + sensor.name, size=_SITE_SIZE, rgba=(0, 0, 0, 0), **pose)
