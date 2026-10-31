@@ -10,7 +10,7 @@ name = "dimos_voxel_ray_tracing_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-dimos-voxel-ray-tracing = { path = ".." }
+dimos-voxel-ray-tracing = { path = "..", default-features = false }
 numpy = "0.25"
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
 validator = { version = "0.21", features = ["derive"] }

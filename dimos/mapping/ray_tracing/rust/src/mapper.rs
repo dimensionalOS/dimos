@@ -47,12 +47,15 @@ pub struct Mapper {
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
+    gpu: Option<gpu::GpuMap>,
 }
 
 impl Mapper {
     /// The config must already be validated at the caller's boundary.
     pub fn new(config: Config) -> Self {
+        let gpu = config.gpu.then(|| gpu::GpuMap::new(&config)).flatten();
         Self {
+            gpu,
             pool: worker_pool(config.worker_threads),
             map: VoxelMap::with_support_min(config.support_min),
             config,
@@ -63,6 +66,11 @@ impl Mapper {
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
         }
+    }
+
+    /// Whether the map updates on the GPU.
+    pub fn on_gpu(&self) -> bool {
+        self.gpu.is_some()
     }
 
     pub fn config(&self) -> &Config {
@@ -88,6 +96,9 @@ impl Mapper {
     /// Bulk-seed a world-frame map cloud with no ray tracing, creating only
     /// absent voxels. Returns how many voxels were created.
     pub fn seed_points(&mut self, points: &[Point]) -> usize {
+        if let Some(gpu) = &mut self.gpu {
+            gpu.seed(points);
+        }
         let pool = Arc::clone(&self.pool);
         pool.install(|| seed_points(&mut self.map, points, &self.config))
     }
@@ -100,6 +111,9 @@ impl Mapper {
     /// Seed one tile of a partitioned world-frame cloud. Returns how many
     /// voxels were created.
     pub fn seed_tile(&mut self, tile: &[Point]) -> usize {
+        if let Some(gpu) = &mut self.gpu {
+            gpu.seed(tile);
+        }
         let pool = Arc::clone(&self.pool);
         pool.install(|| seed_tile(&mut self.map, tile, &self.config))
             .len()
@@ -112,7 +126,10 @@ impl Mapper {
 
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
         let pool = Arc::clone(&self.pool);
-        self.live = pool.install(|| update_map(&mut self.map, origin, &points, &self.config));
+        self.live = match &mut self.gpu {
+            Some(gpu) => gpu.update(&mut self.map, origin, &points, &self.config),
+            None => pool.install(|| update_map(&mut self.map, origin, &points, &self.config)),
+        };
 
         // The batch only feeds the local region bounds, so skip it when the
         // local cadence is disabled.
@@ -236,6 +253,9 @@ impl Mapper {
 
     /// Reset to an empty map, keeping the config.
     pub fn clear(&mut self) {
+        if self.gpu.is_some() {
+            self.gpu = gpu::GpuMap::new(&self.config);
+        }
         self.map.clear();
         self.live = FrameHits::default();
         self.batch_points.clear();
@@ -243,6 +263,184 @@ impl Mapper {
         self.last_registered.clear();
         self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
+    }
+}
+
+#[cfg(feature = "gpu")]
+mod gpu {
+    use ahash::AHashSet;
+    use dimos_gpu_mls::brick_map::{BrickMap, MapConfig};
+    use dimos_gpu_mls::gpu::Gpu;
+    use tracing::{info, warn};
+
+    use super::Point;
+    use crate::voxel_ray_tracer::{Config, FrameHits, VoxelMap};
+
+    /// The GPU map, updated each frame; its report of the voxels each frame
+    /// touched is mirrored into the CPU VoxelMap, which every emit reads.
+    pub struct GpuMap {
+        map: BrickMap,
+        max_points: usize,
+    }
+
+    impl GpuMap {
+        /// None, with a warning, when there is no hardware adapter or the map
+        /// cannot be built on it.
+        pub fn new(config: &Config) -> Option<Self> {
+            let gpu = match Gpu::new() {
+                Ok(gpu) => gpu,
+                Err(e) => {
+                    warn!(error = %e, "No GPU, the ray tracer runs on the CPU.");
+                    return None;
+                }
+            };
+            let adapter = &gpu.adapter_info;
+            if adapter.device_type == dimos_gpu_mls::wgpu::DeviceType::Cpu {
+                warn!(adapter = %adapter.name, "Only a software GPU, the ray tracer runs on the CPU.");
+                return None;
+            }
+            if config.graze_recent_frames != u32::MAX {
+                warn!(
+                    graze_recent_frames = config.graze_recent_frames,
+                    "The GPU map always spares grazes; graze_recent_frames is ignored."
+                );
+            }
+            let map_config = MapConfig {
+                voxel_size: config.voxel_size,
+                fine_divisor: config.fine_divisor,
+                max_range: config.max_range,
+                ray_subsample: config.ray_subsample,
+                shadow_depth: config.shadow_depth,
+                grace_depth: config.grace_depth,
+                min_health: config.min_health,
+                max_health: config.max_health,
+                graze_cos: config.graze_cos,
+                brick_capacity: BrickMap::max_brick_capacity(&gpu),
+                voxel_capacity: BrickMap::max_voxel_capacity(&gpu),
+                max_points: config.gpu_max_points,
+                list_capacity: config.gpu_list_capacity,
+            };
+            let name = adapter.name.clone();
+            let backend = adapter.backend;
+            let mut map = match BrickMap::new(gpu, map_config) {
+                Ok(map) => map,
+                Err(e) => {
+                    warn!(error = %e, "GPU map failed, the ray tracer runs on the CPU.");
+                    return None;
+                }
+            };
+            map.enable_report();
+            info!(adapter = %name, backend = ?backend, "Ray tracer map on the GPU.");
+            Some(Self {
+                map,
+                max_points: config.gpu_max_points as usize,
+            })
+        }
+
+        /// Every voxel on the GPU with its health, read back whole.
+        #[cfg(test)]
+        pub fn voxels(&self) -> Vec<(crate::voxel_ray_tracer::VoxelKey, i32)> {
+            self.map.finish();
+            self.map
+                .snapshot()
+                .into_iter()
+                .map(|v| (v.key, v.health))
+                .collect()
+        }
+
+        /// Seed points in uploads of at most max_points.
+        pub fn seed(&mut self, points: &[Point]) {
+            for batch in points.chunks(self.max_points) {
+                self.map.seed(batch);
+            }
+        }
+
+        /// One frame on the GPU, mirrored into `mirror`. Returns the frame's
+        /// hits for the live merge.
+        pub fn update(
+            &mut self,
+            mirror: &mut VoxelMap,
+            origin: Point,
+            points: &[Point],
+            config: &Config,
+        ) -> FrameHits {
+            let strided: Vec<Point>;
+            let points = if points.len() > self.max_points {
+                let step = points.len().div_ceil(self.max_points);
+                warn!(
+                    points = points.len(),
+                    gpu_max_points = self.max_points,
+                    "Frame over gpu_max_points, kept every {step}th point."
+                );
+                strided = points.iter().step_by(step).copied().collect();
+                &strided
+            } else {
+                points
+            };
+            self.map.integrate(origin, points);
+            let report = self.map.read_report();
+            if report.overflow != 0 {
+                warn!(
+                    overflow = report.overflow,
+                    "GPU lists overflowed, raise gpu_list_capacity; the map missed voxels this frame."
+                );
+            }
+            let mut coarse = AHashSet::with_capacity(report.hits);
+            for (i, voxel) in report.voxels.iter().enumerate() {
+                mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine);
+                if i < report.hits {
+                    coarse.insert(voxel.key);
+                }
+            }
+            let fine = match config.fine_layer() {
+                Some((_, fine_size)) if config.emit_fine => {
+                    let inv = 1.0 / fine_size;
+                    points
+                        .iter()
+                        .map(|&(x, y, z)| {
+                            (
+                                (x * inv).floor() as i32,
+                                (y * inv).floor() as i32,
+                                (z * inv).floor() as i32,
+                            )
+                        })
+                        .collect()
+                }
+                _ => AHashSet::new(),
+            };
+            FrameHits { coarse, fine }
+        }
+    }
+}
+
+#[cfg(not(feature = "gpu"))]
+mod gpu {
+    use tracing::warn;
+
+    use super::Point;
+    use crate::voxel_ray_tracer::{Config, FrameHits, VoxelMap};
+
+    pub enum GpuMap {}
+
+    impl GpuMap {
+        pub fn new(_config: &Config) -> Option<Self> {
+            warn!("Built without the gpu feature, the ray tracer runs on the CPU.");
+            None
+        }
+
+        pub fn seed(&mut self, _points: &[Point]) {
+            match *self {}
+        }
+
+        pub fn update(
+            &mut self,
+            _mirror: &mut VoxelMap,
+            _origin: Point,
+            _points: &[Point],
+            _config: &Config,
+        ) -> FrameHits {
+            match *self {}
+        }
     }
 }
 
@@ -282,6 +480,9 @@ mod tests {
             max_health: 1,
             graze_cos: 0.5,
             graze_recent_frames: u32::MAX,
+            gpu: false,
+            gpu_max_points: 1 << 18,
+            gpu_list_capacity: 1 << 20,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
@@ -478,5 +679,73 @@ mod tests {
         });
         fine.add_frame(vec![(5.1, 0.1, 0.1)], pose);
         assert_eq!(fine.fine_points(&bounds).unwrap(), vec![5.25, 0.25, 0.25]);
+    }
+
+    /// Fraction of the union two point sets disagree on.
+    #[cfg(feature = "gpu")]
+    fn disagreement(a: &[f32], b: &[f32]) -> (f64, usize) {
+        let set = |p: &[f32]| -> AHashSet<(u32, u32, u32)> {
+            p.chunks_exact(3)
+                .map(|c| (c[0].to_bits(), c[1].to_bits(), c[2].to_bits()))
+                .collect()
+        };
+        let (a, b) = (set(a), set(b));
+        let differ = a.symmetric_difference(&b).count();
+        (differ as f64 / a.union(&b).count().max(1) as f64, a.len())
+    }
+
+    /// The GPU-backed mapper mirrors the GPU map exactly, and emits what the CPU
+    /// mapper does up to the GPU's boundary flips (map_parity allows 1e-3).
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn gpu_mapper_emits_what_the_cpu_mapper_does() {
+        use dimos_gpu_mls::synthetic::{Lcg, Scene};
+        const EMIT_TOLERANCE: f64 = 1e-3;
+        let cfg = Config {
+            voxel_size: 0.08,
+            fine_divisor: 3,
+            max_range: 15.0,
+            shadow_depth: 0.1,
+            grace_depth: 0.2,
+            min_health: -1,
+            max_health: 5,
+            graze_cos: 0.7,
+            support_min: 4,
+            ..config()
+        };
+        let mut cpu = Mapper::new(cfg.clone());
+        let mut gpu = Mapper::new(Config { gpu: true, ..cfg });
+        if !gpu.on_gpu() {
+            eprintln!("no hardware GPU adapter, skipped");
+            return;
+        }
+        let scene = Scene::room(12.0, 2.5);
+        let mut rng = Lcg(7);
+        for origin in scene.trajectory(24, 0.4) {
+            let points = scene.scan(origin, 20_000, &mut rng, 0.01, 20.0);
+            cpu.add_frame_world(points.clone(), origin);
+            gpu.add_frame_world(points, origin);
+            let (cpu_bounds, gpu_bounds) = (cpu.take_local_bounds(), gpu.take_local_bounds());
+            assert_eq!(cpu_bounds.radius, gpu_bounds.radius);
+            let (local, n) = disagreement(
+                &cpu.local_points(&cpu_bounds.bounds()),
+                &gpu.local_points(&gpu_bounds.bounds()),
+            );
+            assert!(
+                n > 0 && local <= EMIT_TOLERANCE,
+                "local maps differ on {local} of {n}"
+            );
+        }
+        let (global, n) = disagreement(&cpu.global_points(), &gpu.global_points());
+        eprintln!("global maps differ on {global} of {n} points");
+        assert!(
+            global <= EMIT_TOLERANCE,
+            "global maps differ on {global} of {n}"
+        );
+
+        let on_gpu: AHashSet<_> = gpu.gpu.as_ref().unwrap().voxels().into_iter().collect();
+        let mirrored: AHashSet<_> = gpu.map.voxel_healths().collect();
+        assert_eq!(on_gpu.len(), mirrored.len());
+        assert!(on_gpu == mirrored, "the mirror drifted from the GPU map");
     }
 }

@@ -93,6 +93,15 @@ pub struct Config {
     pub graze_cos: f32,
     /// Spare a grazing miss only on a voxel hit within this many frames, so a surface nothing sees any more clears; u32::MAX spares always.
     pub graze_recent_frames: u32,
+    /// Run the map update on the GPU (gpu_mls) and mirror it here for emitting, falling back to the
+    /// CPU when there is no hardware adapter. The GPU always spares grazes (graze_recent_frames is ignored).
+    pub gpu: bool,
+    /// Most points one GPU frame uploads; a larger frame is strided down to fit.
+    #[validate(range(min = 1))]
+    pub gpu_max_points: u32,
+    /// Entries in each per-frame GPU work list (hits, misses, ...); a frame past it drops voxels.
+    #[validate(range(min = 1))]
+    pub gpu_list_capacity: u32,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
     /// emits all. Higher drops isolated returns. The global map is unfiltered.
     #[validate(range(min = 0))]
@@ -212,6 +221,11 @@ impl VoxelMap {
 
     pub fn healthy_count(&self) -> usize {
         self.voxels.healthy_len()
+    }
+
+    #[cfg(test)]
+    pub fn voxel_healths(&self) -> impl Iterator<Item = (VoxelKey, VoxelHealth)> + '_ {
+        self.voxels.iter().map(|(k, v)| (k, v.health))
     }
 
     /// Add a return to its existing voxel's accumulated moments, marking its
@@ -376,6 +390,38 @@ impl VoxelMap {
             self.health_crossed(key, now_healthy);
         }
         removed
+    }
+
+    /// Copy one voxel's state from a map updated elsewhere (the GPU's): its
+    /// health and fine mask, or its removal when `health` is None. Keeps
+    /// support counts and changed chunks in sync. Returns whether it was created.
+    pub fn mirror_voxel(&mut self, key: VoxelKey, health: Option<VoxelHealth>, fine: u64) -> bool {
+        let Some(health) = health else {
+            if let Some(gone) = self.voxels.remove(&key) {
+                if gone.health > 0 {
+                    self.health_crossed(key, false);
+                }
+            }
+            return false;
+        };
+        let (created, was_healthy) = match self.voxels.update_health(key, |_| health) {
+            Some((was, _)) => (false, was > 0),
+            None => {
+                let support = self.count_healthy_neighbors(key);
+                self.voxels.insert(key, Voxel::with_health(health), support);
+                (true, false)
+            }
+        };
+        if let Some(voxel) = self.voxels.get_mut(&key) {
+            if voxel.fine != fine && health > 0 {
+                self.changed_chunks.insert(chunk_of(key));
+            }
+            voxel.fine = fine;
+        }
+        if was_healthy != (health > 0) {
+            self.health_crossed(key, health > 0);
+        }
+        created
     }
 
     /// Set a voxel's health directly, creating it if absent. Bypasses hit and

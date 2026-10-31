@@ -117,6 +117,36 @@ pub struct VoxelSnapshot {
     pub normal: Option<[f32; 3]>,
 }
 
+/// One voxel a frame hit or missed, as it stands after the frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReportedVoxel {
+    pub key: VoxelKey,
+    /// None when the frame removed the voxel.
+    pub health: Option<i32>,
+    pub fine: u64,
+}
+
+/// The voxels the last frame touched: its hits, then its misses.
+#[derive(Clone, Debug, Default)]
+pub struct FrameReport {
+    pub voxels: Vec<ReportedVoxel>,
+    pub hits: usize,
+    /// Bits as in MapStats::overflow; a nonzero value means the lists, and so
+    /// this report, missed voxels.
+    pub overflow: u32,
+}
+
+/// The report buffer and its bind group, made by `enable_report`.
+struct Report {
+    buffer: wgpu::Buffer,
+    group: wgpu::BindGroup,
+    hits: wgpu::ComputePipeline,
+    misses: wgpu::ComputePipeline,
+}
+
+const REPORT_WORDS: usize = 6;
+const REPORT_REMOVED: u32 = 0x8000_0000;
+
 /// Per-frame list overflow and pool use, read back on demand.
 #[derive(Clone, Debug)]
 pub struct MapStats {
@@ -207,6 +237,7 @@ pub struct BrickMap {
     voxel_bound: u64,
     frame: u32,
     pub timer: Option<PassTimer>,
+    report: Option<Report>,
 }
 
 pub(crate) const MAP_COMMON: &str = include_str!("shaders/map_common.wgsl");
@@ -355,6 +386,7 @@ impl BrickMap {
             voxel_bound: 0,
             frame: 0,
             timer: None,
+            report: None,
         })
     }
 
@@ -648,10 +680,69 @@ impl BrickMap {
             map.prepare(pass);
             map.dispatch_list(pass, &map.pipelines.mark_stale, 4);
         });
+        if self.report.is_some() {
+            self.pass(&mut encoder, "report", |map, pass| {
+                let report = map.report.as_ref().expect("report");
+                pass.set_bind_group(1, &report.group, &[]);
+                map.dispatch_list(pass, &report.hits, 1);
+                map.dispatch_list(pass, &report.misses, 3);
+            });
+        }
         if let Some(timer) = &self.timer {
             timer.resolve(&mut encoder);
         }
         gpu.queue.submit([encoder.finish()]);
+    }
+
+    /// From the next frame on, list every voxel each frame hits or misses for
+    /// `read_report`, so the host can mirror the map.
+    pub fn enable_report(&mut self) {
+        if self.report.is_some() {
+            return;
+        }
+        let gpu = &self.gpu;
+        let entries = 2 * self.config.list_capacity as u64;
+        let buffer = gpu.storage("report", 4 * REPORT_WORDS as u64 * entries);
+        let layout = gpu.layout("report", 1, &[], false);
+        let group = gpu.bind_group("report", &layout, &[&buffer]);
+        let module = gpu.module(
+            "report",
+            &[MAP_COMMON, include_str!("shaders/report.wgsl")].concat(),
+        );
+        let layouts = [&self.layout, &layout];
+        self.report = Some(Report {
+            hits: gpu.pipeline(&module, "report_hits", &layouts),
+            misses: gpu.pipeline(&module, "report_misses", &layouts),
+            buffer,
+            group,
+        });
+    }
+
+    /// The voxels the last frame hit or missed. Empty until `enable_report`.
+    pub fn read_report(&self) -> FrameReport {
+        let Some(report) = &self.report else {
+            return FrameReport::default();
+        };
+        let c: Vec<u32> = self.gpu.read(&self.buffers.counters, COUNTERS as usize);
+        let cap = self.config.list_capacity as usize;
+        let hits = (c[2] as usize).min(cap);
+        let misses = (c[4] as usize).min(cap);
+        let words: Vec<u32> = self
+            .gpu
+            .read(&report.buffer, (hits + misses) * REPORT_WORDS);
+        let voxels = words
+            .chunks_exact(REPORT_WORDS)
+            .map(|w| ReportedVoxel {
+                key: (w[0] as i32, w[1] as i32, w[2] as i32),
+                health: (w[3] != REPORT_REMOVED).then_some(w[3] as i32),
+                fine: (w[4] as u64) | ((w[5] as u64) << 32),
+            })
+            .collect();
+        FrameReport {
+            voxels,
+            hits,
+            overflow: c[C_OVERFLOW],
+        }
     }
 
     fn pass(

@@ -251,6 +251,10 @@ pub struct SurfaceExtractor {
     /// Which seed buffer holds the latest flood result.
     current_in_a: bool,
     pub plane_stats: PlaneStats,
+    params: wgpu::Buffer,
+    voxel_size: f32,
+    /// The window the buffers were sized for; `retarget` takes any that fits it.
+    capacity: Window,
 }
 
 impl SurfaceExtractor {
@@ -312,35 +316,7 @@ impl SurfaceExtractor {
             flood_bytes[at..at + 8].copy_from_slice(bytemuck::bytes_of(&step));
         }
         gpu.queue.write_buffer(&flood_buffer, 0, &flood_bytes);
-        gpu.queue.write_buffer(
-            &params,
-            0,
-            bytemuck::bytes_of(&SurfaceParams {
-                window_min: [window.min.0, window.min.1, window.min.2, 0],
-                size: [
-                    window.size.0,
-                    window.size.1,
-                    window.size.2,
-                    window.words_per_column(),
-                ],
-                closing_cells: config.closing_cells(voxel_size),
-                step_cells: config.step_cells(voxel_size),
-                hole_span_cells: HOLE_SPAN_CELLS,
-                support_radius: SUPPORT_RADIUS,
-                support_z_tol: SUPPORT_Z_TOL,
-                voxel_size,
-                robot_height_m: config.robot_height_m,
-                step_m: config.step_threshold_m,
-                min_up: if config.max_slope_deg >= 90.0 {
-                    -1.0
-                } else {
-                    config.max_slope_deg.to_radians().cos()
-                },
-                merge_m: config.plane_merge_m,
-                merge_cos: config.plane_merge_deg.to_radians().cos(),
-                pad: 0,
-            }),
-        );
+        write_params(&gpu, &params, window, &config, voxel_size);
 
         let empty_layout = gpu.layout("empty", 0, &[], false);
         let surface_layout = gpu.layout("surface", SURFACE_BINDINGS, &[0], false);
@@ -443,10 +419,36 @@ impl SurfaceExtractor {
             pipelines,
             current_in_a: true,
             plane_stats: PlaneStats::default(),
+            params,
+            voxel_size,
+            capacity: window,
         };
         extractor.ensure_plane_cells(1);
         extractor.write_plane_info(0, 0);
         Ok(extractor)
+    }
+
+    /// Point the next `extract` at `window`, reusing the buffers. False, and
+    /// unchanged, when the window needs more room than they were sized for.
+    pub fn retarget(&mut self, window: Window) -> bool {
+        let cap = self.capacity;
+        let fits = window.size.0 <= MAX_WINDOW_EDGE
+            && window.size.1 <= MAX_WINDOW_EDGE
+            && window.cells() <= cap.cells()
+            && window.columns() <= cap.columns()
+            && window.columns() * window.words_per_column() as u64
+                <= cap.columns() * cap.words_per_column() as u64;
+        if fits {
+            self.window = window;
+            write_params(
+                &self.gpu,
+                &self.params,
+                window,
+                &self.config,
+                self.voxel_size,
+            );
+        }
+        fits
     }
 
     /// Room for `cells` plane cells, regrowing the buffers and their group.
@@ -711,6 +713,44 @@ impl SurfaceExtractor {
             1,
         );
     }
+}
+
+fn write_params(
+    gpu: &Gpu,
+    params: &wgpu::Buffer,
+    window: Window,
+    config: &SurfaceConfig,
+    voxel_size: f32,
+) {
+    gpu.queue.write_buffer(
+        params,
+        0,
+        bytemuck::bytes_of(&SurfaceParams {
+            window_min: [window.min.0, window.min.1, window.min.2, 0],
+            size: [
+                window.size.0,
+                window.size.1,
+                window.size.2,
+                window.words_per_column(),
+            ],
+            closing_cells: config.closing_cells(voxel_size),
+            step_cells: config.step_cells(voxel_size),
+            hole_span_cells: HOLE_SPAN_CELLS,
+            support_radius: SUPPORT_RADIUS,
+            support_z_tol: SUPPORT_Z_TOL,
+            voxel_size,
+            robot_height_m: config.robot_height_m,
+            step_m: config.step_threshold_m,
+            min_up: if config.max_slope_deg >= 90.0 {
+                -1.0
+            } else {
+                config.max_slope_deg.to_radians().cos()
+            },
+            merge_m: config.plane_merge_m,
+            merge_cos: config.plane_merge_deg.to_radians().cos(),
+            pad: 0,
+        }),
+    );
 }
 
 fn begin(

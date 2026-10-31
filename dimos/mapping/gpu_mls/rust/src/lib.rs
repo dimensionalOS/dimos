@@ -36,6 +36,8 @@ pub mod gpu;
 pub mod surfaces;
 pub mod synthetic;
 
+pub use wgpu;
+
 /// The repo's `data` directory: `DIMOS_DATA_DIR` when set, which a binary
 /// built elsewhere (nix, cross) needs, else the checkout this was built from.
 pub fn data_dir() -> std::path::PathBuf {

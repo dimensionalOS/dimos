@@ -59,6 +59,12 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     graze_cos: float = 0.7
     # Spare a grazing miss only on a voxel hit within this many frames, so what nothing sees any more clears; 2**32 - 1 spares always.
     graze_recent_frames: int = 2**32 - 1
+    # Update the map on the GPU, falling back to the CPU without a hardware adapter. The GPU ignores graze_recent_frames.
+    gpu: bool = True
+    # Most points one GPU frame uploads; a larger frame is strided down to fit.
+    gpu_max_points: int = 2**18
+    # Entries in each per-frame GPU work list (hits, misses, ...).
+    gpu_list_capacity: int = 2**20
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4
