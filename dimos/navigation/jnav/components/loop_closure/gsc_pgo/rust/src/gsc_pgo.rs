@@ -1159,9 +1159,10 @@ impl ClosureSearch {
                         measured(&extended.rotation, &extended.translation);
                     score = extended.inlier_mean_square();
                 }
-                // back on a spot no kept loop closes, with a fit the most overtrusted odometry allowed
-                // (`odometry_overtrust_max`) would explain: the yank gate trusts the noise in use, so GNC and the
-                // loosened-odometry map judge the single fit instead (a look-alike no plausible drift reaches stays out)
+                // back on a spot no kept loop closes, with a fit the whole gate would pass were the odometry as
+                // overtrusted as allowed (`odometry_overtrust_max`; only the yank's term changes, the look-alike count and
+                // the fit's confidence still count): the gate trusts the noise in use, so GNC and the loosened-odometry
+                // map judge the single fit instead
                 None if diag.pressure2 > 0.5 && {
                     let in_use = diag.odometry_noise.iter().cloned().fold(f64::MIN, f64::max);
                     let widen = (self.config.odometry_overtrust_max.powi(2) / in_use).max(1.0);
@@ -1171,9 +1172,13 @@ impl ClosureSearch {
                         std::array::from_fn(|j| widen * p[i][j] + if i == j { c } else { 0.0 })
                     });
                     let v = diag.innovation;
+                    let width = 2.0 * self.config.closure_yank_gate_width.powi(2);
                     mat3::inverse(&covariance).is_some_and(|inverse| {
                         let iv = mat3::mat_vec(&inverse, &v);
-                        v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2] <= same_place_cutoff
+                        let yank_at_cap = v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2];
+                        evidence
+                            >= single_required - diag.yank_stdevs.powi(2) / width
+                                + yank_at_cap / width
                     })
                 } => {}
                 None => return rejected(diag, "yank_confidence_reject", timing),
