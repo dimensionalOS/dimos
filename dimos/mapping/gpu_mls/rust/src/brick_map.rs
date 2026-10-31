@@ -36,8 +36,6 @@ const C_OVERFLOW: usize = 7;
 const C_VOXELS: usize = 8;
 /// Indirect argument slots: the lists, the brick pool's sites, then its voxels.
 const DISPATCH_SLOTS: u64 = LISTS + 2;
-const POOL_DISPATCH_SLOT: u64 = LISTS;
-const VOXEL_DISPATCH_SLOT: u64 = LISTS + 1;
 const L_NEW_VOXELS: u64 = 5;
 /// Pool sizes before the map first grows them.
 const INITIAL_BRICKS: u32 = 1 << 12;
@@ -131,6 +129,9 @@ pub struct ReportedVoxel {
 pub struct FrameReport {
     pub voxels: Vec<ReportedVoxel>,
     pub hits: usize,
+    /// Voxels the frame created, removed, or moved past a refit milestone:
+    /// the changes that move a fitted surface.
+    pub changed: Vec<VoxelKey>,
     /// Bits as in MapStats::overflow; a nonzero value means the lists, and so
     /// this report, missed voxels.
     pub overflow: u32,
@@ -142,6 +143,7 @@ struct Report {
     group: wgpu::BindGroup,
     hits: wgpu::ComputePipeline,
     misses: wgpu::ComputePipeline,
+    changed: wgpu::ComputePipeline,
 }
 
 const REPORT_WORDS: usize = 6;
@@ -686,6 +688,7 @@ impl BrickMap {
                 pass.set_bind_group(1, &report.group, &[]);
                 map.dispatch_list(pass, &report.hits, 1);
                 map.dispatch_list(pass, &report.misses, 3);
+                map.dispatch_list(pass, &report.changed, 4);
             });
         }
         if let Some(timer) = &self.timer {
@@ -701,7 +704,7 @@ impl BrickMap {
             return;
         }
         let gpu = &self.gpu;
-        let entries = 2 * self.config.list_capacity as u64;
+        let entries = 3 * self.config.list_capacity as u64;
         let buffer = gpu.storage("report", 4 * REPORT_WORDS as u64 * entries);
         let layout = gpu.layout("report", 1, &[], false);
         let group = gpu.bind_group("report", &layout, &[&buffer]);
@@ -713,6 +716,7 @@ impl BrickMap {
         self.report = Some(Report {
             hits: gpu.pipeline(&module, "report_hits", &layouts),
             misses: gpu.pipeline(&module, "report_misses", &layouts),
+            changed: gpu.pipeline(&module, "report_changed", &layouts),
             buffer,
             group,
         });
@@ -727,10 +731,12 @@ impl BrickMap {
         let cap = self.config.list_capacity as usize;
         let hits = (c[2] as usize).min(cap);
         let misses = (c[4] as usize).min(cap);
+        let changed = (c[5] as usize).min(cap);
         let words: Vec<u32> = self
             .gpu
-            .read(&report.buffer, (hits + misses) * REPORT_WORDS);
-        let voxels = words
+            .read(&report.buffer, (hits + misses + changed) * REPORT_WORDS);
+        let (touched, changed) = words.split_at((hits + misses) * REPORT_WORDS);
+        let voxels = touched
             .chunks_exact(REPORT_WORDS)
             .map(|w| ReportedVoxel {
                 key: (w[0] as i32, w[1] as i32, w[2] as i32),
@@ -741,6 +747,10 @@ impl BrickMap {
         FrameReport {
             voxels,
             hits,
+            changed: changed
+                .chunks_exact(REPORT_WORDS)
+                .map(|w| (w[0] as i32, w[1] as i32, w[2] as i32))
+                .collect(),
             overflow: c[C_OVERFLOW],
         }
     }
@@ -788,24 +798,6 @@ impl BrickMap {
         pass.set_pipeline(&self.pipelines.prepare);
         pass.set_bind_group(1, &self.dispatch_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
-    }
-
-    /// One thread per voxel, sized on the GPU by the last `prepare`.
-    pub(crate) fn dispatch_voxels(
-        &self,
-        pass: &mut wgpu::ComputePass,
-        pipeline: &wgpu::ComputePipeline,
-    ) {
-        self.dispatch_list(pass, pipeline, VOXEL_DISPATCH_SLOT);
-    }
-
-    /// One thread per brick site, sized on the GPU by the last `prepare`.
-    pub(crate) fn dispatch_pool(
-        &self,
-        pass: &mut wgpu::ComputePass,
-        pipeline: &wgpu::ComputePipeline,
-    ) {
-        self.dispatch_list(pass, pipeline, POOL_DISPATCH_SLOT);
     }
 
     pub fn finish(&self) {

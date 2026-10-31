@@ -29,6 +29,24 @@ pub type Point = (f32, f32, f32);
 /// Floats per cell `Mapper::surfaces` returns.
 pub const SURFACE_CELL_FLOATS: usize = 5;
 
+/// What one `Mapper::surfaces` call recomputed, for logs.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SurfaceUpdate {
+    /// Changed columns inside the region that it recomputed around.
+    pub dirty_columns: usize,
+    /// Bricks of the window it recomputed, and of the window around the
+    /// whole region it would otherwise have.
+    pub bricks: u64,
+    pub region_bricks: u64,
+    /// Columns it rewrote and the cells it sent for them.
+    pub columns: u64,
+    pub cells: usize,
+    /// Wall time of the extraction (until its plane split is read back) and
+    /// of the export and its readback.
+    pub extract_ms: f64,
+    pub export_ms: f64,
+}
+
 /// The MLS planner's surface parameters, which it sends so the GPU extracts
 /// the surface it would.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
@@ -41,6 +59,18 @@ pub struct SurfaceRequest {
     /// they go out infinite.
     #[serde(default)]
     pub wall_distance: bool,
+    /// The farthest wall distance the planner uses (its clearance plus wall
+    /// buffer): wall distances go out capped there, and a change moves them
+    /// at most this far from it. 0 leaves them uncapped.
+    #[serde(default)]
+    pub wall_reach_m: f32,
+    /// Surface more than this far above the sensor is not the planner's.
+    #[serde(default = "unbounded")]
+    pub max_overhead_m: f32,
+}
+
+fn unbounded() -> f32 {
+    f32::INFINITY
 }
 
 /// Sensor pose in the world frame: position plus (x, y, z, w) orientation.
@@ -90,10 +120,45 @@ impl Mapper {
         self.gpu.is_some()
     }
 
-    /// The GPU's MLS surface over `bounds`' columns, SURFACE_CELL_FLOATS per
-    /// cell: x, y, z voxel center, plane height, wall distance. None on the CPU.
+    /// The GPU's MLS surface where it changed since the last call, around
+    /// the changed columns inside `bounds` and between its z_min and z_max,
+    /// SURFACE_CELL_FLOATS per row: x, y, z voxel center, plane height, wall
+    /// distance. Every rewritten column has a row; one with a NaN z marks a
+    /// column left with no surface cell in that z range.
+    /// Empty when nothing changed, None on the CPU.
     pub fn surfaces(&mut self, bounds: &Cylinder, request: &SurfaceRequest) -> Option<Vec<f32>> {
-        self.gpu.as_mut()?.surfaces(bounds, request)
+        let sensor_z = self.last_origin.2;
+        self.gpu.as_mut()?.surfaces(bounds, request, sensor_z)
+    }
+
+    /// Time each GPU pass from now on, for profiling; false on the CPU or
+    /// without device timestamps.
+    pub fn time_gpu_passes(&mut self) -> bool {
+        self.gpu.as_mut().is_some_and(|g| g.time_passes())
+    }
+
+    /// Each timed GPU pass since the last call, label and milliseconds.
+    pub fn take_gpu_pass_times(&mut self) -> Vec<(&'static str, f64)> {
+        self.gpu
+            .as_mut()
+            .map(|g| g.take_pass_times())
+            .unwrap_or_default()
+    }
+
+    /// Mark every column of `bounds` changed, so the next `surfaces` call
+    /// rewrites them all, as a whole-map reference does.
+    pub fn mark_surfaces_dirty(&mut self, bounds: &Cylinder) {
+        if let Some(gpu) = &mut self.gpu {
+            gpu.mark_dirty(bounds);
+        }
+    }
+
+    /// What the last `surfaces` call recomputed.
+    pub fn surface_update(&self) -> SurfaceUpdate {
+        self.gpu
+            .as_ref()
+            .map(|g| g.surface_update())
+            .unwrap_or_default()
     }
 
     pub fn config(&self) -> &Config {
@@ -299,7 +364,7 @@ mod gpu {
 
     use dimos_gpu_mls::surfaces::SurfaceConfig;
 
-    use super::{Point, SurfaceRequest, SURFACE_CELL_FLOATS};
+    use super::{Point, SurfaceRequest, SurfaceUpdate, SURFACE_CELL_FLOATS};
     use crate::voxel_ray_tracer::{Config, Cylinder, FrameHits, VoxelMap};
 
     /// Headroom a regrown surface window gets over the one that outgrew it.
@@ -313,6 +378,14 @@ mod gpu {
         /// Lowest and highest voxel z the map has held.
         z_range: Option<(i32, i32)>,
         extractor: Option<SurfaceExtractor>,
+        /// Columns whose surface may have moved since it was last extracted:
+        /// a voxel there crossed the healthy line, or the GPU changed it
+        /// materially (created, removed, past a refit milestone).
+        dirty: AHashSet<(i32, i32)>,
+        /// Columns the last surfaces sent a cell in, which a later rewrite
+        /// that leaves them none must clear.
+        sent_columns: AHashSet<(i32, i32)>,
+        surface_update: SurfaceUpdate,
     }
 
     impl GpuMap {
@@ -368,6 +441,9 @@ mod gpu {
                 max_points: config.gpu_max_points as usize,
                 z_range: None,
                 extractor: None,
+                dirty: AHashSet::new(),
+                sent_columns: AHashSet::new(),
+                surface_update: SurfaceUpdate::default(),
             })
         }
 
@@ -425,7 +501,9 @@ mod gpu {
             }
             let mut coarse = AHashSet::with_capacity(report.hits);
             for (i, voxel) in report.voxels.iter().enumerate() {
-                mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine);
+                if mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine) {
+                    self.dirty.insert((voxel.key.0, voxel.key.1));
+                }
                 if voxel.health.is_some() {
                     self.widen_z(voxel.key.2);
                 }
@@ -433,6 +511,14 @@ mod gpu {
                     coarse.insert(voxel.key);
                 }
             }
+            // Only healthy voxels hold a surface; a removed healthy one crossed above.
+            self.dirty.extend(
+                report
+                    .changed
+                    .iter()
+                    .filter(|&&k| mirror.is_healthy(k))
+                    .map(|&(x, y, _)| (x, y)),
+            );
             let fine = match config.fine_layer() {
                 Some((_, fine_size)) if config.emit_fine => {
                     let inv = 1.0 / fine_size;
@@ -458,13 +544,43 @@ mod gpu {
             *hi = (*hi).max(z);
         }
 
-        /// The MLS surface over the columns of `bounds` and every height the
-        /// map spans, as x, y, z voxel center, plane height and wall distance
-        /// (infinite on a plane with no wall) per cell.
+        pub fn surface_update(&self) -> SurfaceUpdate {
+            self.surface_update
+        }
+
+        pub fn mark_dirty(&mut self, bounds: &Cylinder) {
+            let inv = 1.0 / self.map.config.voxel_size;
+            let cell = |c: f32| (c * inv).floor() as i32;
+            for x in cell(bounds.cx - bounds.radius)..=cell(bounds.cx + bounds.radius) {
+                for y in cell(bounds.cy - bounds.radius)..=cell(bounds.cy + bounds.radius) {
+                    self.dirty.insert((x, y));
+                }
+            }
+        }
+
+        pub fn time_passes(&mut self) -> bool {
+            self.map.timer = dimos_gpu_mls::gpu::PassTimer::new(self.map.gpu(), 32);
+            self.map.timer.is_some()
+        }
+
+        pub fn take_pass_times(&mut self) -> Vec<(&'static str, f64)> {
+            let gpu = std::sync::Arc::clone(self.map.gpu());
+            self.map
+                .timer
+                .as_mut()
+                .map(|t| t.take(&gpu))
+                .unwrap_or_default()
+        }
+
+        /// The MLS surface rewritten around the dirty columns inside
+        /// `bounds`, between its z_min and z_max, as rows of x, y, z voxel
+        /// center, plane height and wall distance (capped at the request's
+        /// wall reach); a NaN z marks a rewritten column with no surface.
         pub fn surfaces(
             &mut self,
             bounds: &Cylinder,
             request: &SurfaceRequest,
+            sensor_z: f32,
         ) -> Option<Vec<f32>> {
             let config = SurfaceConfig {
                 robot_height_m: request.robot_height_m,
@@ -473,6 +589,7 @@ mod gpu {
                 max_slope_deg: request.max_slope_deg,
                 ..SurfaceConfig::mls_defaults()
             };
+            self.surface_update = SurfaceUpdate::default();
             let Some((z_lo, z_hi)) = self.z_range else {
                 return Some(Vec::new());
             };
@@ -487,15 +604,59 @@ mod gpu {
                 cell(bounds.cy - bounds.radius),
                 cell(bounds.cy + bounds.radius),
             );
-            let pad = config.reach_cells(voxel_size);
+            // A changed column moves surfaces within reach of it, and their
+            // wall distances within the wall reach of those; each of those
+            // reads as far again around it.
+            let reach = config.reach_cells(voxel_size);
+            let wall_reach = (request.wall_reach_m * inv).ceil() as i32;
+            let pad = reach + wall_reach;
+            let headroom = config.clearance_cells(voxel_size) + 1;
+            let bricks = |w: u32, h: u32, d: i32| {
+                w.div_ceil(8) as u64 * h.div_ceil(8) as u64 * (d as u32).div_ceil(8) as u64
+            };
+            self.surface_update.region_bricks = bricks(
+                (x1 - x0 + 1 + 2 * pad) as u32,
+                (y1 - y0 + 1 + 2 * pad) as u32,
+                z_hi - z_lo + 1 + headroom,
+            );
+            // The planner's heights, read as far again around as columns are,
+            // since a surface climbs at most a cell per column.
+            let export_z = (
+                cell(bounds.z_min),
+                cell(bounds.z_max.min(sensor_z + request.max_overhead_m)),
+            );
+            let window_z = (
+                (export_z.0 - pad).max(z_lo),
+                (export_z.1 + pad).min(z_hi) + headroom,
+            );
+            if export_z.0 > export_z.1 || window_z.0 > window_z.1 {
+                return Some(Vec::new());
+            }
+            let mut changed: Option<(i32, i32, i32, i32)> = None;
+            let mut dirty_columns = 0;
+            self.dirty.retain(|&(x, y)| {
+                let inside = (x0..=x1).contains(&x) && (y0..=y1).contains(&y);
+                if inside {
+                    dirty_columns += 1;
+                    let c = changed.get_or_insert((x, x, y, y));
+                    *c = (c.0.min(x), c.1.max(x), c.2.min(y), c.3.max(y));
+                }
+                !inside
+            });
+            self.surface_update.dirty_columns = dirty_columns;
+            let Some((cx0, cx1, cy0, cy1)) = changed else {
+                return Some(Vec::new());
+            };
+            let (wx0, wx1, wy0, wy1) = (cx0 - pad, cx1 + pad, cy0 - pad, cy1 + pad);
             let window = Window {
-                min: (x0 - pad, y0 - pad, z_lo),
+                min: (wx0 - pad, wy0 - pad, window_z.0),
                 size: (
-                    (x1 - x0 + 1 + 2 * pad) as u32,
-                    (y1 - y0 + 1 + 2 * pad) as u32,
-                    (z_hi - z_lo + 1 + config.clearance_cells(voxel_size) + 1) as u32,
+                    (wx1 - wx0 + 1 + 2 * pad) as u32,
+                    (wy1 - wy0 + 1 + 2 * pad) as u32,
+                    (window_z.1 - window_z.0 + 1) as u32,
                 ),
             };
+            self.surface_update.bricks = bricks(window.size.0, window.size.1, window.size.2 as i32);
             let reuse = self
                 .extractor
                 .as_mut()
@@ -522,22 +683,45 @@ mod gpu {
                 self.extractor = Some(extractor);
             }
             let extractor = self.extractor.as_mut().expect("set above");
+            let started = std::time::Instant::now();
             extractor.extract(&mut self.map);
-            let (cells, heights, walls) = extractor.read_heights(request.wall_distance);
+            let extracted = std::time::Instant::now();
+            let rows = extractor.export((wx0, wx1, wy0, wy1), export_z);
+            self.surface_update.extract_ms = (extracted - started).as_secs_f64() * 1e3;
+            self.surface_update.export_ms = extracted.elapsed().as_secs_f64() * 1e3;
             let half = 0.5 * voxel_size;
-            let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * cells.len());
-            let walls = walls.unwrap_or_else(|| vec![None; cells.len()]);
-            for (((x, y, z), h), w) in cells.into_iter().zip(heights).zip(walls) {
-                if (x0..=x1).contains(&x) && (y0..=y1).contains(&y) {
-                    out.extend_from_slice(&[
-                        x as f32 * voxel_size + half,
-                        y as f32 * voxel_size + half,
-                        z as f32 * voxel_size + half,
-                        h,
-                        w.unwrap_or(f32::INFINITY),
-                    ]);
-                }
+            let center = |c: i32| c as f32 * voxel_size + half;
+            let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * rows.len());
+            let mut with_cells: AHashSet<(i32, i32)> = AHashSet::with_capacity(rows.len());
+            for cell in &rows {
+                let (x, y, z) = cell.key;
+                let w = match request.wall_distance {
+                    true if request.wall_reach_m > 0.0 => cell
+                        .wall_m
+                        .unwrap_or(f32::INFINITY)
+                        .min(request.wall_reach_m),
+                    true => cell.wall_m.unwrap_or(f32::INFINITY),
+                    false => f32::INFINITY,
+                };
+                out.extend_from_slice(&[center(x), center(y), center(z), cell.height_m, w]);
+                with_cells.insert((x, y));
             }
+            self.surface_update.cells = rows.len();
+            // A column that held cells and now has none in range is cleared by a
+            // NaN-z row; one that never held any needs none.
+            let in_write =
+                |&(x, y): &(i32, i32)| (wx0..=wx1).contains(&x) && (wy0..=wy1).contains(&y);
+            for &(x, y) in self
+                .sent_columns
+                .iter()
+                .filter(|c| in_write(c) && !with_cells.contains(c))
+            {
+                out.extend_from_slice(&[center(x), center(y), f32::NAN, f32::NAN, f32::NAN]);
+            }
+            self.sent_columns.retain(|c| !in_write(c));
+            self.sent_columns.extend(with_cells);
+            let (ww, wh) = ((wx1 - wx0 + 1) as usize, (wy1 - wy0 + 1) as usize);
+            self.surface_update.columns = (ww * wh) as u64;
             Some(out)
         }
     }
@@ -547,7 +731,7 @@ mod gpu {
 mod gpu {
     use tracing::warn;
 
-    use super::{Point, SurfaceRequest};
+    use super::{Point, SurfaceRequest, SurfaceUpdate};
     use crate::voxel_ray_tracer::{Config, Cylinder, FrameHits, VoxelMap};
 
     pub enum GpuMap {}
@@ -562,10 +746,27 @@ mod gpu {
             match *self {}
         }
 
+        pub fn surface_update(&self) -> SurfaceUpdate {
+            match *self {}
+        }
+
+        pub fn mark_dirty(&mut self, _bounds: &Cylinder) {
+            match *self {}
+        }
+
+        pub fn time_passes(&mut self) -> bool {
+            match *self {}
+        }
+
+        pub fn take_pass_times(&mut self) -> Vec<(&'static str, f64)> {
+            match *self {}
+        }
+
         pub fn surfaces(
             &mut self,
             _bounds: &Cylinder,
             _request: &SurfaceRequest,
+            _sensor_z: f32,
         ) -> Option<Vec<f32>> {
             match *self {}
         }

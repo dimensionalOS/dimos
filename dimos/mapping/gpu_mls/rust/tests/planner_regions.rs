@@ -61,6 +61,7 @@ fn planner_config() -> PlannerConfig {
         gpu_surfaces: true,
         gpu_wall_distance: true,
         max_slope_deg: 45.0,
+        surface_change_m: 0.01,
         worker_threads: 8,
     }
 }
@@ -72,6 +73,8 @@ fn request(cfg: &PlannerConfig) -> SurfaceRequest {
         step_threshold_m: cfg.step_threshold_m,
         max_slope_deg: cfg.max_slope_deg,
         wall_distance: cfg.gpu_wall_distance,
+        wall_reach_m: cfg.wall_clearance_m + cfg.wall_buffer_m,
+        max_overhead_m: cfg.max_overhead_m,
     }
 }
 
@@ -135,7 +138,11 @@ fn streamed_gpu_surfaces_match_a_whole_map_build_and_plan() {
         z_min: -1.0,
         z_max: 4.0,
     };
-    let whole = split_cells(&mapper.surfaces(&everything, &request).expect("surfaces"));
+    mapper.mark_surfaces_dirty(&everything);
+    let whole: Vec<Cell> = split_cells(&mapper.surfaces(&everything, &request).expect("surfaces"))
+        .into_iter()
+        .filter(|c| c.2.is_finite())
+        .collect();
     let occupied: Vec<VoxelKey> = mapper
         .local_points(&everything.bounds())
         .chunks_exact(3)

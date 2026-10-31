@@ -783,6 +783,7 @@ fn planner_config(voxel_size: f32) -> PlannerConfig {
         gpu_surfaces: false,
         gpu_wall_distance: false,
         max_slope_deg: surface.max_slope_deg,
+        surface_change_m: 0.01,
         worker_threads: 8,
     }
 }

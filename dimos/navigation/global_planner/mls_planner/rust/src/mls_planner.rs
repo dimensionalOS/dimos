@@ -101,6 +101,10 @@ pub struct Config {
     /// The GPU surface's slope gate: planes tilted further are not standable.
     #[validate(range(min = 0.0, max = 90.0))]
     pub max_slope_deg: f32,
+    /// A GPU surface cell whose plane height or wall distance moved less than
+    /// this keeps the graph it was built on; lidar noise is 1 to 2 cm.
+    #[validate(range(min = 0.0))]
+    pub surface_change_m: f32,
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
@@ -339,9 +343,12 @@ impl Planner {
 
     /// update_region with the region's surface extracted elsewhere (the GPU's):
     /// `cells`, voxel center, plane height, then wall distance in meters
-    /// (infinite with no wall), replace the surface across the region's whole
-    /// column box; neighbors link by height from then on, and nodes place on
-    /// those wall distances with gpu_wall_distance.
+    /// (infinite with no wall), replace the surface between the region's
+    /// z_min and z_max in every column they touch, a NaN z marking a column
+    /// left with none there. Neighbors link by
+    /// height from then on, and nodes place on those wall distances with
+    /// gpu_wall_distance. A kept cell whose height and wall distance moved
+    /// less than surface_change_m keeps its old values and its graph.
     pub fn update_region_with_surface(
         &mut self,
         local_points: &[(f32, f32, f32)],
@@ -356,19 +363,53 @@ impl Planner {
             let edits = self.replace_region_voxels(local_points, bounds, voxel_size);
             let diff_ms = ms_since(stage);
 
-            let bbox = bounds.column_bbox(voxel_size);
+            let column = |x: f32, y: f32| {
+                let (ix, iy, _) = voxelize((x, y, 0.0), voxel_size);
+                (ix, iy)
+            };
+            let mut bbox: Option<ColumnWindow> = None;
+            for &(x, y, ..) in cells {
+                let (ix, iy) = column(x, y);
+                let b = bbox.get_or_insert((ix, ix, iy, iy));
+                *b = (b.0.min(ix), b.1.max(ix), b.2.min(iy), b.3.max(iy));
+            }
+            let Some(bbox) = bbox else {
+                if !edits.is_empty() {
+                    self.rebuild_region_graph(
+                        Vec::new(),
+                        Vec::new(),
+                        &edits,
+                        config.node_window_cells(),
+                        config,
+                    );
+                }
+                return None;
+            };
+            // Only the region's heights are rewritten; a column keeps its
+            // cells above and below them, as a floor out of sight stays.
+            let in_range = |z: f32| z >= bounds.z_min && z <= bounds.z_max;
             let mut write = ColumnMask::new(bbox, 0);
-            for ix in bbox.0..=bbox.1 {
-                for iy in bbox.2..=bbox.3 {
-                    write.set((ix, iy));
+            let mut columns: AHashSet<(i32, i32)> = AHashSet::new();
+            let mut surface: Vec<(VoxelKey, f32, f32)> = Vec::with_capacity(cells.len());
+            for &(x, y, z, h, w) in cells {
+                let col = column(x, y);
+                write.set(col);
+                columns.insert(col);
+                if z.is_finite() && in_range(z) {
+                    surface.push((voxelize((x, y, z), voxel_size), h, w));
                 }
             }
-            let surface: Vec<(VoxelKey, f32, f32)> = cells
-                .iter()
-                .map(|&(x, y, z, h, w)| (voxelize((x, y, z), voxel_size), h, w))
-                .filter(|(k, _, _)| write.contains((k.0, k.1)))
-                .collect();
-            let keys: Vec<VoxelKey> = surface.iter().map(|&(k, _, _)| k).collect();
+            let mut keys: Vec<VoxelKey> = surface.iter().map(|&(k, _, _)| k).collect();
+            let half = 0.5 * voxel_size;
+            for &(ix, iy) in &columns {
+                if let Some(zs) = self.graph.surface_lookup.get(&(ix, iy)) {
+                    keys.extend(
+                        zs.iter()
+                            .filter(|&&iz| !in_range(iz as f32 * voxel_size + half))
+                            .map(|&iz| (ix, iy, iz)),
+                    );
+                }
+            }
             let stage = Instant::now();
             let (added, removed) = self.replace_surface_region(&write, &keys);
             let replace_ms = ms_since(stage);
@@ -385,13 +426,27 @@ impl Planner {
                 }
             }
             let added_set: AHashSet<VoxelKey> = added.iter().copied().collect();
+            let moved = |old: Option<f32>, new: f32| match old {
+                Some(old) if old.is_finite() && new.is_finite() => {
+                    (old - new).abs() > config.surface_change_m
+                }
+                Some(old) => old != new,
+                None => true,
+            };
             let mut retuned: Vec<VoxelKey> = Vec::new();
             for &(k, h, w) in &surface {
+                let fresh = added_set.contains(&k);
+                let wall_moved = walls
+                    .as_ref()
+                    .is_some_and(|walls| moved(walls.get(&k).copied(), w));
+                if !fresh && !wall_moved && !moved(heights.get(&k).copied(), h) {
+                    continue;
+                }
+                heights.insert(k, h);
                 if let Some(walls) = walls.as_mut() {
                     walls.insert(k, w);
                 }
-                let old = heights.insert(k, h);
-                if !added_set.contains(&k) && old != Some(h) {
+                if !fresh {
                     retuned.push(k);
                 }
             }
@@ -414,6 +469,8 @@ impl Planner {
                 diff_ms,
                 replace_ms,
                 graph_ms = ms_since(stage),
+                rows_received = cells.len(),
+                cells_received = surface.len(),
                 cells_added,
                 cells_removed,
                 cells_retuned = retuned_count,

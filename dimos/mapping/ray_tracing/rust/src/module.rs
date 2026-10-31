@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::mapper::{register, Mapper, Pose, SurfaceRequest, SURFACE_CELL_FLOATS};
 use crate::region_viz::{pack_cell, RegionSweep};
@@ -31,7 +31,7 @@ use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Messages queued to the worker in arrival order.
 enum Job {
@@ -501,9 +501,30 @@ impl Worker {
             let fine = points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map_fine, &fine).await;
         }
+        let surface_rows = surface_points
+            .as_ref()
+            .map(|c| c.len() / SURFACE_CELL_FLOATS);
         if let Some(cells) = surface_points {
             let surface = cells_to_cloud(&cells, out_frame_id, stamp.clone());
             publish_cloud(&self.surface_cells, &surface).await;
+        }
+        if region.is_some() {
+            // Wall-clock receipt, which the planner's "region applied" line pairs with by stamp.
+            let received_unix_s = (SystemTime::now() - received.elapsed())
+                .duration_since(UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64());
+            let update = state.mapper.surface_update();
+            debug!(
+                stamp = time_secs(&stamp),
+                received_unix_s,
+                process_ms,
+                wait_ms,
+                surface_rows,
+                dirty_columns = update.dirty_columns,
+                surface_bricks = update.bricks,
+                region_bricks = update.region_bricks,
+                "region sent"
+            );
         }
 
         if state.mapper.viz_due() {

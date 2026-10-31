@@ -15,7 +15,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::mls_planner::{ms_since, Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
@@ -63,12 +63,14 @@ const REGIONS_BEFORE_CPU_WARNING: u32 = 50;
 fn surface_request(config: &Config) -> lcm_msgs::std_msgs::String {
     lcm_msgs::std_msgs::String {
         data: format!(
-            r#"{{"robot_height_m":{},"closing_radius_m":{},"step_threshold_m":{},"max_slope_deg":{},"wall_distance":{}}}"#,
+            r#"{{"robot_height_m":{},"closing_radius_m":{},"step_threshold_m":{},"max_slope_deg":{},"wall_distance":{},"wall_reach_m":{},"max_overhead_m":{}}}"#,
             config.robot_height,
             config.surface_closing_radius,
             config.step_threshold_m,
             config.max_slope_deg,
-            config.gpu_wall_distance
+            config.gpu_wall_distance,
+            config.wall_clearance_m + config.wall_buffer_m,
+            config.max_overhead_m
         ),
     }
 }
@@ -719,6 +721,7 @@ impl Worker {
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
                 let process_start = Instant::now();
+                let surface_rows = surface.as_ref().map(Vec::len);
                 let window = match &surface {
                     Some(cells) => {
                         let cells: Vec<(f32, f32, f32, f32, f32)> = cells
@@ -738,6 +741,17 @@ impl Worker {
                     wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3,
                     points = points.len(),
                     "local region processed"
+                );
+                let stamp = &bounds.header.stamp;
+                debug!(
+                    stamp = stamp.sec as f64 + stamp.nsec as f64 * 1e-9,
+                    applied_unix_s = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_or(0.0, |d| d.as_secs_f64()),
+                    process_ms = ms_since(process_start),
+                    gpu_surface = surface_rows.is_some(),
+                    surface_rows,
+                    "region applied"
                 );
                 true
             }

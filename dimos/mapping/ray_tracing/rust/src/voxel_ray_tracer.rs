@@ -219,6 +219,10 @@ impl VoxelMap {
         }
     }
 
+    pub fn is_healthy(&self, key: VoxelKey) -> bool {
+        self.voxels.get(&key).is_some_and(|v| v.health > 0)
+    }
+
     pub fn healthy_count(&self) -> usize {
         self.voxels.healthy_len()
     }
@@ -394,22 +398,22 @@ impl VoxelMap {
 
     /// Copy one voxel's state from a map updated elsewhere (the GPU's): its
     /// health and fine mask, or its removal when `health` is None. Keeps
-    /// support counts and changed chunks in sync. Returns whether it was created.
+    /// support counts and changed chunks in sync. Returns whether it crossed
+    /// the healthy line, which a removed healthy voxel does.
     pub fn mirror_voxel(&mut self, key: VoxelKey, health: Option<VoxelHealth>, fine: u64) -> bool {
         let Some(health) = health else {
-            if let Some(gone) = self.voxels.remove(&key) {
-                if gone.health > 0 {
-                    self.health_crossed(key, false);
-                }
+            let gone_healthy = self.voxels.remove(&key).is_some_and(|gone| gone.health > 0);
+            if gone_healthy {
+                self.health_crossed(key, false);
             }
-            return false;
+            return gone_healthy;
         };
-        let (created, was_healthy) = match self.voxels.update_health(key, |_| health) {
-            Some((was, _)) => (false, was > 0),
+        let was_healthy = match self.voxels.update_health(key, |_| health) {
+            Some((was, _)) => was > 0,
             None => {
                 let support = self.count_healthy_neighbors(key);
                 self.voxels.insert(key, Voxel::with_health(health), support);
-                (true, false)
+                false
             }
         };
         if let Some(voxel) = self.voxels.get_mut(&key) {
@@ -418,10 +422,11 @@ impl VoxelMap {
             }
             voxel.fine = fine;
         }
-        if was_healthy != (health > 0) {
+        let crossed = was_healthy != (health > 0);
+        if crossed {
             self.health_crossed(key, health > 0);
         }
-        created
+        crossed
     }
 
     /// Set a voxel's health directly, creating it if absent. Bypasses hit and

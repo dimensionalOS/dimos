@@ -25,6 +25,7 @@ ahash = "0.8"
 rayon = "1"
 nalgebra = "0.35.0"
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tracing-subscriber = "0.3"
 
 [workspace]
 

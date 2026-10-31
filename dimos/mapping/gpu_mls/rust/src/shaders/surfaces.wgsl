@@ -36,6 +36,10 @@ struct SurfaceParams {
     merge_m: f32,
     merge_cos: f32,
     _pad: i32,
+    // Window-local columns export_cells writes out: x0, y0, x1, y1 inclusive.
+    write_box: vec4<i32>,
+    // Window-local z range export_cells writes out: lo, hi inclusive.
+    write_z: vec4<i32>,
 }
 
 struct FloodStep {
@@ -133,25 +137,35 @@ fn seed_dist_sq_3d(x: i32, y: i32, z: i32, seed: u32) -> f32 {
     return flat + rise * rise;
 }
 
-// Healthy voxels inside the window set their column bit.
+// The brick coordinate of the window's low corner; dispatches over the
+// window's bricks count from it.
+fn window_brick_lo() -> vec3<i32> {
+    return sp.window_min.xyz >> vec3<u32>(3u);
+}
+
+// Healthy voxels inside the window set their column bit. One group per
+// window brick, which leaves at once when the map has no such brick.
 @compute @workgroup_size(64)
 fn build_occupancy(
     @builtin(workgroup_id) wg: vec3<u32>,
-    @builtin(num_workgroups) nwg: vec3<u32>,
     @builtin(local_invocation_index) li: u32,
 ) {
-    let v = thread_index(wg, nwg, li);
-    if (v >= voxel_count()) {
+    let slot = find_brick(window_brick_lo() + vec3<i32>(wg));
+    if (slot == NO_SLOT) {
         return;
     }
-    if (!voxel_exists(v) || health_of(v) <= 0) {
-        return;
+    for (var r = 0u; r < BRICK_VOXELS / 64u; r++) {
+        let site = slot * BRICK_VOXELS + r * 64u + li;
+        let v = voxel_at(site);
+        if (v == NO_SLOT || !voxel_exists(v) || health_of(v) <= 0) {
+            continue;
+        }
+        let local = key_of_site(site) - sp.window_min.xyz;
+        if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz)) {
+            continue;
+        }
+        atomicOr(&occupied[column_word(local.x, local.y, local.z)], 1u << (u32(local.z) & 31u));
     }
-    let local = key_of_voxel(v) - sp.window_min.xyz;
-    if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz)) {
-        return;
-    }
-    atomicOr(&occupied[column_word(local.x, local.y, local.z)], 1u << (u32(local.z) & 31u));
 }
 
 fn bottom_face(z: i32) -> f32 {
@@ -357,33 +371,22 @@ fn tile_fit(at: vec3<i32>) -> PooledFit {
 @compute @workgroup_size(64)
 fn fit_cells(
     @builtin(workgroup_id) wg: vec3<u32>,
-    @builtin(num_workgroups) nwg: vec3<u32>,
     @builtin(local_invocation_index) li: u32,
 ) {
-    // Dispatched one group per 64 pool voxels; the first 2 per brick each
-    // take a half brick and the rest stand idle.
-    let group = wg.y * nwg.x + wg.x;
-    let slot = group / 2u;
-    let first = slot * BRICK_VOXELS + (group % 2u) * TILE_SLABS * 64u;
-    let bricks = min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity);
-    // Workgroup memory starts uninitialized (see Gpu::pipeline). Bricks
-    // outside the window, most of a large map's, leave before any work.
+    // Dispatched two groups per window brick along x, each taking a half
+    // brick; a brick the map lacks leaves at once.
+    let half = wg.x % 2u;
+    let slot = find_brick(window_brick_lo() + vec3<i32>(i32(wg.x / 2u), i32(wg.y), i32(wg.z)));
+    let first = slot * BRICK_VOXELS + half * TILE_SLABS * 64u;
+    // Workgroup memory starts uninitialized (see Gpu::pipeline).
     if (li == 0u) {
         atomicStore(&tile_len, 0u);
-        var inside = false;
-        if (slot < bricks) {
-            let lo = (brick_coords[slot].xyz << vec3<u32>(3u)) - sp.window_min.xyz;
-            inside = all(lo + vec3<i32>(7) >= vec3<i32>(0)) && all(lo < vec3<i32>(sp.size.xyz));
-        }
-        tile_any = select(0u, 1u, inside);
+        tile_any = select(0u, 1u, slot != NO_SLOT);
     }
     if (workgroupUniformLoad(&tile_any) == 0u) {
         return;
     }
     for (var r = 0u; r < TILE_SLABS; r++) {
-        if (slot >= bricks) {
-            continue;
-        }
         let site = first + r * 64u + li;
         let v = voxel_at(site);
         if (v == NO_SLOT || !voxel_exists(v) || health_of(v) <= 0) {
@@ -410,7 +413,7 @@ fn fit_cells(
     }
 
     let home = brick_coords[slot].xyz;
-    let block_x = i32((group % 2u) * TILE_SLABS);
+    let block_x = i32(half * TILE_SLABS);
     if (li < 27u) {
         let offset = neighbor_offset(li);
         tile_bricks[li] = select(find_brick(home + offset), slot, all(offset == vec3<i32>(0)));
@@ -895,6 +898,9 @@ struct PlaneInfo {
 @group(3) @binding(6) var<storage, read_write> plane_owner: array<u32>;
 // Per plane cell: the z of the plane's cell in that column, -1 where it has none.
 @group(3) @binding(7) var<storage, read_write> plane_z: array<i32>;
+// export_cells rows of EXPORT_WORDS: x, y, z, height bits, wall distance bits.
+@group(3) @binding(8) var<storage, read_write> export_rows: array<u32>;
+@group(3) @binding(9) var<storage, read_write> export_count: array<atomic<u32>>;
 
 fn plane_of_cell(c: u32) -> u32 {
     return seeds_a[atomicLoad(&labels[planes_base() + c])];
@@ -1171,4 +1177,47 @@ fn export_planes(@builtin(global_invocation_id) gid: vec3<u32>) {
         id = plane_of_cell(c);
     }
     seeds_b[c] = id;
+}
+
+const EXPORT_WORDS: u32 = 5u;
+
+fn export_row(x: i32, y: i32, z: u32, height: f32, wall_dist: f32) {
+    let i = atomicAdd(&export_count[0], 1u);
+    if (i >= arrayLength(&export_rows) / EXPORT_WORDS) {
+        return;
+    }
+    let base = i * EXPORT_WORDS;
+    export_rows[base] = bitcast<u32>(x + sp.window_min.x);
+    export_rows[base + 1u] = bitcast<u32>(y + sp.window_min.y);
+    export_rows[base + 2u] = z;
+    export_rows[base + 3u] = bitcast<u32>(height);
+    export_rows[base + 4u] = bitcast<u32>(wall_dist);
+}
+
+// Every surface cell of the write box and z range with its height and wall
+// distance, packed for readback.
+@compute @workgroup_size(8, 8, 1)
+fn export_cells(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let x = sp.write_box.x + i32(gid.x);
+    let y = sp.write_box.y + i32(gid.y);
+    if (x > sp.write_box.z || y > sp.write_box.w) {
+        return;
+    }
+    let base = column_word(x, y, 0);
+    for (var w = 0u; w < sp.size.w; w++) {
+        var bits = surface[base + w];
+        while (bits != 0u) {
+            let b = countTrailingZeros(bits);
+            bits &= bits - 1u;
+            let z = w * 32u + b;
+            if (z >= sp.size.z || i32(z) > sp.write_z.y) {
+                break;
+            }
+            if (i32(z) < sp.write_z.x) {
+                continue;
+            }
+            let c = cell_index(x, y, i32(z));
+            export_row(x, y, bitcast<u32>(i32(z) + sp.window_min.z), heights[c], wall_distance[c]);
+        }
+    }
 }

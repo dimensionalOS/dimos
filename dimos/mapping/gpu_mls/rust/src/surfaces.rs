@@ -30,7 +30,8 @@ const SUPPORT_Z_TOL: i32 = 3;
 /// The CPU HOLE_SPAN_CELLS: empty columns a gap may span and still be a hole.
 const HOLE_SPAN_CELLS: i32 = 4;
 const SURFACE_BINDINGS: u32 = 13;
-const PLANE_BINDINGS: u32 = 8;
+const PLANE_BINDINGS: u32 = 10;
+const EXPORT_WORDS: usize = 5;
 /// Uniform offsets must be 256-byte aligned for dynamic binding.
 const FLOOD_STRIDE: u64 = 256;
 /// Flood steps a uniform slot is kept for: both directions of every power of two.
@@ -155,6 +156,8 @@ struct SurfaceParams {
     merge_m: f32,
     merge_cos: f32,
     pad: i32,
+    write_box: [i32; 4],
+    write_z: [i32; 4],
 }
 
 #[repr(C)]
@@ -188,12 +191,29 @@ struct Buffers {
     heights: wgpu::Buffer,
     cell_normals: wgpu::Buffer,
     planar: wgpu::Buffer,
+    export_count: wgpu::Buffer,
 }
 
-/// Per-plane-cell buffers, regrown when a frame's planes need more room.
+/// Per-plane-cell buffers, regrown when a frame's planes need more room,
+/// and the export rows, regrown when a write box holds more cells.
 struct PlaneCells {
     cells: u64,
+    a: wgpu::Buffer,
+    b: wgpu::Buffer,
+    owner: wgpu::Buffer,
+    z: wgpu::Buffer,
+    export_rows: wgpu::Buffer,
+    export_capacity: u64,
     group: wgpu::BindGroup,
+}
+
+/// One surface cell `export` read back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExportedCell {
+    pub key: VoxelKey,
+    pub height_m: f32,
+    /// None on a plane with no wall.
+    pub wall_m: Option<f32>,
 }
 
 struct Pipelines {
@@ -216,6 +236,7 @@ struct Pipelines {
     plane_flood_pass: wgpu::ComputePipeline,
     measure_walls: wgpu::ComputePipeline,
     export_planes: wgpu::ComputePipeline,
+    export_cells: wgpu::ComputePipeline,
 }
 
 /// Surface cells read back from the GPU.
@@ -261,6 +282,9 @@ pub struct SurfaceExtractor {
     voxel_size: f32,
     /// The window the buffers were sized for; `retarget` takes any that fits it.
     capacity: Window,
+    /// Window-local columns and z range `export` writes out.
+    write_box: [i32; 4],
+    write_z: [i32; 4],
 }
 
 impl SurfaceExtractor {
@@ -304,6 +328,7 @@ impl SurfaceExtractor {
             heights: gpu.storage("heights", cells),
             cell_normals: gpu.storage("cell normals", cells),
             planar: gpu.storage("planar", bit_words),
+            export_count: gpu.storage("export count", 4),
         };
         let params = gpu.uniform(
             "surface params",
@@ -322,7 +347,7 @@ impl SurfaceExtractor {
             flood_bytes[at..at + 8].copy_from_slice(bytemuck::bytes_of(&step));
         }
         gpu.queue.write_buffer(&flood_buffer, 0, &flood_bytes);
-        write_params(&gpu, &params, window, &config, voxel_size);
+        write_params(&gpu, &params, window, &config, voxel_size, [0; 4], [0; 4]);
 
         let empty_layout = gpu.layout("empty", 0, &[], false);
         let surface_layout = gpu.layout("surface", SURFACE_BINDINGS, &[0], false);
@@ -409,6 +434,7 @@ impl SurfaceExtractor {
             plane_flood_pass: plane("plane_flood_pass"),
             measure_walls: plane("measure_walls"),
             export_planes: plane("export_planes"),
+            export_cells: plane("export_cells"),
         };
         let mut extractor = Self {
             gpu,
@@ -428,6 +454,8 @@ impl SurfaceExtractor {
             params,
             voxel_size,
             capacity: window,
+            write_box: [0, 0, window.size.0 as i32 - 1, window.size.1 as i32 - 1],
+            write_z: [0, window.size.2 as i32 - 1, 0, 0],
         };
         extractor.ensure_plane_cells(1);
         extractor.write_plane_info(0, 0);
@@ -446,15 +474,23 @@ impl SurfaceExtractor {
                 <= cap.columns() * cap.words_per_column() as u64;
         if fits {
             self.window = window;
-            write_params(
-                &self.gpu,
-                &self.params,
-                window,
-                &self.config,
-                self.voxel_size,
-            );
+            self.write_box = [0, 0, window.size.0 as i32 - 1, window.size.1 as i32 - 1];
+            self.write_z = [0, window.size.2 as i32 - 1, 0, 0];
+            self.write_params();
         }
         fits
+    }
+
+    fn write_params(&self) {
+        write_params(
+            &self.gpu,
+            &self.params,
+            self.window,
+            &self.config,
+            self.voxel_size,
+            self.write_box,
+            self.write_z,
+        );
     }
 
     /// Room for `cells` plane cells, regrowing the buffers and their group.
@@ -464,12 +500,40 @@ impl SurfaceExtractor {
         }
         let cells = cells.max(1).next_power_of_two();
         let gpu = &self.gpu;
-        let a = gpu.storage("plane cells a", 4 * cells);
-        let b = gpu.storage("plane cells b", 4 * cells);
-        let owner = gpu.storage("plane owner", 4 * cells);
-        let z = gpu.storage("plane z", 4 * cells);
+        let export_capacity = self
+            .plane_cells
+            .as_ref()
+            .map_or(1024, |p| p.export_capacity);
+        let plane_cells = PlaneCells {
+            cells,
+            a: gpu.storage("plane cells a", 4 * cells),
+            b: gpu.storage("plane cells b", 4 * cells),
+            owner: gpu.storage("plane owner", 4 * cells),
+            z: gpu.storage("plane z", 4 * cells),
+            export_rows: gpu.storage("export rows", 4 * EXPORT_WORDS as u64 * export_capacity),
+            export_capacity,
+            group: self.empty_group.clone(),
+        };
+        self.plane_cells = Some(self.with_plane_group(plane_cells));
+    }
+
+    /// Room for `rows` export rows, regrowing the buffer and the plane group.
+    fn ensure_export_rows(&mut self, rows: u64) {
+        let mut plane_cells = self.plane_cells.take().expect("made in new");
+        if plane_cells.export_capacity < rows {
+            plane_cells.export_capacity = rows.next_power_of_two();
+            plane_cells.export_rows = self.gpu.storage(
+                "export rows",
+                4 * EXPORT_WORDS as u64 * plane_cells.export_capacity,
+            );
+            plane_cells = self.with_plane_group(plane_cells);
+        }
+        self.plane_cells = Some(plane_cells);
+    }
+
+    fn with_plane_group(&self, mut p: PlaneCells) -> PlaneCells {
         let bufs = &self.buffers;
-        let group = gpu.bind_group(
+        p.group = self.gpu.bind_group(
             "planes",
             &self.plane_layout,
             &[
@@ -477,13 +541,15 @@ impl SurfaceExtractor {
                 &bufs.plane_count,
                 &bufs.plane_bounds,
                 &bufs.plane_table,
-                &a,
-                &b,
-                &owner,
-                &z,
+                &p.a,
+                &p.b,
+                &p.owner,
+                &p.z,
+                &p.export_rows,
+                &bufs.export_count,
             ],
         );
-        self.plane_cells = Some(PlaneCells { cells, group });
+        p
     }
 
     fn write_plane_info(&self, planes: u32, cells: u32) {
@@ -510,6 +576,17 @@ impl SurfaceExtractor {
             self.window.size.0.div_ceil(TILE),
             self.window.size.1.div_ceil(TILE),
             1,
+        )
+    }
+
+    /// Bricks the window overlaps along each axis.
+    fn window_bricks(&self) -> (u32, u32, u32) {
+        let w = self.window;
+        let span = |min: i32, size: u32| ((min + size as i32 - 1) >> 3) - (min >> 3) + 1;
+        (
+            span(w.min.0, w.size.0) as u32,
+            span(w.min.1, w.size.1) as u32,
+            span(w.min.2, w.size.2) as u32,
         )
     }
 
@@ -611,11 +688,21 @@ impl SurfaceExtractor {
         encoder.clear_buffer(&self.buffers.planar, 0, None);
         {
             let mut pass = begin(encoder, "plane fit", &mut timer);
-            pass.set_bind_group(0, &map.bind_group, &[]);
-            map.prepare(&mut pass);
-            self.bind(&mut pass, Some(map), 1);
-            map.dispatch_voxels(&mut pass, &self.pipelines.build_occupancy);
-            map.dispatch_pool(&mut pass, &self.pipelines.fit_cells);
+            let (bx, by, bz) = self.window_bricks();
+            self.run(
+                &mut pass,
+                Some(map),
+                &self.pipelines.build_occupancy,
+                (bx, by, bz),
+                1,
+            );
+            self.run(
+                &mut pass,
+                Some(map),
+                &self.pipelines.fit_cells,
+                (2 * bx, by, bz),
+                1,
+            );
         }
         {
             let mut pass = begin(encoder, "standable", &mut timer);
@@ -729,6 +816,8 @@ fn write_params(
     window: Window,
     config: &SurfaceConfig,
     voxel_size: f32,
+    write_box: [i32; 4],
+    write_z: [i32; 4],
 ) {
     gpu.queue.write_buffer(
         params,
@@ -757,6 +846,8 @@ fn write_params(
             merge_m: config.plane_merge_m,
             merge_cos: config.plane_merge_deg.to_radians().cos(),
             pad: 0,
+            write_box,
+            write_z,
         }),
     );
 }
@@ -880,6 +971,49 @@ impl SurfaceExtractor {
             .into_iter()
             .map(|k| (k, Some(dist[self.cell_of(k)]).filter(|d| *d >= 0.0)))
             .collect()
+    }
+
+    /// The surface cells of the columns in `write` (inclusive x0, x1, y0, y1,
+    /// in voxels, inside the window) with z in `z` (inclusive), packed on the
+    /// GPU so only those are read back.
+    pub fn export(&mut self, write: (i32, i32, i32, i32), z: (i32, i32)) -> Vec<ExportedCell> {
+        let m = self.window.min;
+        self.write_box = [write.0 - m.0, write.2 - m.1, write.1 - m.0, write.3 - m.1];
+        self.write_z = [z.0 - m.2, z.1 - m.2, 0, 0];
+        self.write_params();
+        let groups = (
+            ((write.1 - write.0 + 1) as u32).div_ceil(TILE),
+            ((write.3 - write.2 + 1) as u32).div_ceil(TILE),
+            1,
+        );
+        loop {
+            let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+            encoder.clear_buffer(&self.buffers.export_count, 0, None);
+            {
+                let mut pass = begin(&mut encoder, "export cells", &mut None);
+                self.run(&mut pass, None, &self.pipelines.export_cells, groups, 1);
+            }
+            self.gpu.queue.submit([encoder.finish()]);
+            let rows = self.gpu.read::<u32>(&self.buffers.export_count, 1)[0] as u64;
+            let capacity = self.plane_cells.as_ref().map_or(0, |p| p.export_capacity);
+            if rows > capacity {
+                self.ensure_export_rows(rows);
+                continue;
+            }
+            let buffer = &self.plane_cells.as_ref().expect("made in new").export_rows;
+            let words: Vec<u32> = self.gpu.read(buffer, rows as usize * EXPORT_WORDS);
+            return words
+                .chunks_exact(EXPORT_WORDS)
+                .map(|w| {
+                    let wall = f32::from_bits(w[4]);
+                    ExportedCell {
+                        key: (w[0] as i32, w[1] as i32, w[2] as i32),
+                        height_m: f32::from_bits(w[3]),
+                        wall_m: (wall >= 0.0).then_some(wall),
+                    }
+                })
+                .collect();
+        }
     }
 
     /// The plane id of every surface cell.

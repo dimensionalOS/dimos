@@ -656,6 +656,7 @@ dependencies = [
  "nalgebra",
  "pollster",
  "rayon",
+ "tracing-subscriber",
  "wgpu",
 ]
 

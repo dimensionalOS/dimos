@@ -94,6 +94,7 @@ fn test_config() -> Config {
         gpu_surfaces: false,
         gpu_wall_distance: false,
         max_slope_deg: 45.0,
+        surface_change_m: 0.01,
         worker_threads: 4,
     }
 }

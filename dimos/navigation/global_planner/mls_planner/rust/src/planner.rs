@@ -907,6 +907,7 @@ mod tests {
             gpu_surfaces: false,
             gpu_wall_distance: false,
             max_slope_deg: 45.0,
+            surface_change_m: 0.01,
             worker_threads: 4,
         };
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
@@ -941,6 +942,7 @@ mod tests {
             gpu_surfaces: false,
             gpu_wall_distance: false,
             max_slope_deg: 45.0,
+            surface_change_m: 0.01,
             worker_threads: 4,
         }
     }

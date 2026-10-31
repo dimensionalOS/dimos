@@ -63,6 +63,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     gpu_wall_distance: bool = True
     # The GPU surface's slope gate: planes tilted further are not standable.
     max_slope_deg: float = 45.0
+    # A GPU surface cell whose plane height or wall distance moved less than this keeps the graph it was built on.
+    surface_change_m: float = 0.01
     # Worker threads for parallel planner work.
     worker_threads: int = 4
 
