@@ -393,6 +393,10 @@ pub struct Config {
     /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
     /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
     pub odometry_noise_solve_lower_bound: bool,
+    /// The most the odometry's stated drift can understate it, as a factor on its standard deviation: a loosened
+    /// odometry map (`dispatch_solve`) loosens its variance by at most this squared, so a group of look-alike loops that
+    /// agree with each other cannot stretch the odometry over a jump no plausible drift explains.
+    pub odometry_overtrust_max: f64,
     /// The odometry's drift as a random walk in the motion itself, so it does not depend on how far apart keyframes
     /// are: per noise source (xy translation, z translation, yaw, roll/pitch tilt), the standard deviation it adds per
     /// square root of metres travelled (m/√m for translation, rad/√m for rotation) and per square root of radians
@@ -557,6 +561,7 @@ impl Default for Config {
             closure_uninformative_gate: true,
             closure_uninformative_noise_upper_bound: true,
             odometry_noise_solve_lower_bound: true,
+            odometry_overtrust_max: 100.0,
             odom_xy_drift_per_sqrt_m: 3.91e-4,
             odom_xy_drift_per_sqrt_rad: 6.35e-3,
             odom_z_drift_per_sqrt_m: 6.42e-4,

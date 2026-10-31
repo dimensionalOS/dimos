@@ -310,9 +310,10 @@ impl GscPgo {
                     .rev()
                     .find(|(c, y)| c.gnc_weight < 0.5 && y.is_finite())
             })
-            .map(|(_, y)| y * y / 3.0)
+            .map(|(_, y)| (y * y / 3.0).min(config.odometry_overtrust_max.powi(2)))
             .filter(|&s| s > 1.0);
         let threshold = crate::landmarks::chi2_inverse(config.closure_gnc_inlier_probability, 6);
+        let max_scale = config.odometry_overtrust_max.powi(2);
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
@@ -375,7 +376,7 @@ impl GscPgo {
                             .collect();
                         let loose = run_with(&loose_odometry, &solve_config);
                         let profile = |m: &Solution, scale: f64| {
-                            profiled_cost(m, scale, &odometry, &closures, &solve_config, threshold)
+                            profiled_cost(m, scale, &odometry, &closures, &solve_config, threshold, max_scale)
                         };
                         let ((loose_cost, best_scale), (held_cost, _)) =
                             (profile(&loose, s), profile(&solution, 1.0));
@@ -556,7 +557,7 @@ impl GscPgo {
 }
 
 /// A map's -2 ln restricted likelihood with the odometry noise at its best fitting scale s (at least 1): the odometry's
-/// misfit m at the stated noise over s, plus its redundancy r x ln s, both from the solve's variance-component evidence
+/// misfit m at the stated noise over s (at most `odometry_overtrust_max` squared), plus its redundancy r x ln s, both from the solve's variance-component evidence
 /// (`Solution::odometry_noise_evidence`, read at `scale` x the stated noise; r is the odometry's share of the loops'
 /// checks, so closures that agree on one loop add one loop's worth); each kept closure's misfit truncated at GNC's cutoff,
 /// and the cutoff for each rejected one; with that best fitting scale. Without the evidence, m from the residuals and r as 6 per kept closure.
@@ -567,6 +568,7 @@ fn profiled_cost(
     closures: &[Edge],
     config: &SolveConfig,
     threshold: f64,
+    max_scale: f64,
 ) -> (f64, f64) {
     let misfit = |e: &Edge, scale: f64| {
         let pose = |k: usize| (&map.rotations[k], &map.positions[k]);
@@ -587,7 +589,7 @@ fn profiled_cost(
         ),
     };
     let s = if redundancy > 0.0 {
-        (m / redundancy).max(1.0)
+        (m / redundancy).clamp(1.0, max_scale)
     } else {
         1.0
     };
