@@ -28,6 +28,7 @@ from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.tasks.eef_trajectory_task.trajectory import EefTrajectory
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.core import rpc
 from dimos.imitation.policy.backend import Images, PolicyBackend
@@ -56,20 +57,26 @@ class _PolicyRuntime(PolicyModule):
         self._latest_joint_state: JointState | None = None
         self._stop_event = Event()
         self._thread: Thread | None = None
+        self._observer: Thread | None = None
         self._chunks_accepted = 0
         self._chunks_received = 0
         self._chunks_completed = 0
+        self._observation_count = 0
         self._last_error: str | None = None
         self._active = False
         self._stopping = False
         self._manual_control = False
         self._dispatch = False
         self._submitted_task: str | None = None
-        self._last_preview: JointTrajectory | None = None
+        self._last_preview: JointTrajectory | EefTrajectory | None = None
 
     @property
     def _task_name(self) -> str:
-        return "joint_trajectory"
+        return (
+            "eef_trajectory"
+            if self.config.backend == "dreamlabs" and self.config.dreamlabs.mode == "eef"
+            else "joint_trajectory"
+        )
 
     @rpc
     def start(self) -> None:
@@ -94,7 +101,9 @@ class _PolicyRuntime(PolicyModule):
         super().stop()
 
     def _busy(self) -> bool:
-        return any(thread is not None and thread.is_alive() for thread in (self._thread,))
+        return any(
+            thread is not None and thread.is_alive() for thread in (self._thread, self._observer)
+        )
 
     @rpc
     def preflight_rollout(self) -> RolloutStatus:
@@ -139,9 +148,12 @@ class _PolicyRuntime(PolicyModule):
                 return self._status_locked()
             self._stop_event.clear()
             self._chunks_accepted = self._chunks_received = self._chunks_completed = 0
+            self._observation_count = 0
             self._last_preview = None
             self._last_error = None
-            self._dispatch = True if dispatch_actions is None else dispatch_actions
+            self._dispatch = (
+                self.config.backend != "dreamlabs" if dispatch_actions is None else dispatch_actions
+            )
             self._active = True
             self._thread = Thread(target=self._run_rollout, name="policy-rollout", daemon=True)
             self._thread.start()
@@ -157,7 +169,7 @@ class _PolicyRuntime(PolicyModule):
             self._observation_changed.notify_all()
         with self._submission_lock, self._lock:
             self._cancel_locked()
-        for thread in (self._thread,):
+        for thread in (self._thread, self._observer):
             if thread is not None and thread is not current_thread():
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         with self._lock:
@@ -190,7 +202,7 @@ class _PolicyRuntime(PolicyModule):
         return policy.get_last_action_response() if policy is not None else None
 
     @rpc
-    def get_last_preview(self) -> JointTrajectory | None:
+    def get_last_preview(self) -> JointTrajectory | EefTrajectory | None:
         with self._lock:
             return self._last_preview
 
@@ -289,8 +301,34 @@ class _PolicyRuntime(PolicyModule):
         return images, vector, min(stamps)
 
     def _load_policy(self) -> PolicyBackend:
+        if self.config.backend == "dreamlabs":
+            module = import_module("dimos.imitation.policy.dreamlabs.backend")
+            return cast("PolicyBackend", module.DreamlabsBackend(self.config))
         module = import_module("dimos_lerobot.backend")
         return cast("PolicyBackend", module.Backend(self.config))
+
+    def _observe(self, policy: PolicyBackend) -> None:
+        assert policy.observation_period is not None
+        last_stamp = float("-inf")
+        try:
+            while not self._stop_event.is_set():
+                with self._lock:
+                    images, state, stamp = self._snapshot_observation(time.time())
+                    task = self.config.task
+                if stamp > last_stamp:
+                    policy.observe(images, state, task=task, timestamp=stamp)
+                    last_stamp = stamp
+                    with self._observation_changed:
+                        self._observation_count += 1
+                        self._observation_changed.notify_all()
+                self._stop_event.wait(policy.observation_period)
+        except Exception as exc:
+            with self._submission_lock, self._observation_changed:
+                self._record_error(str(exc))
+                self._stop_event.set()
+                self._active = False
+                self._cancel_locked()
+                self._observation_changed.notify_all()
 
     def _run_rollout(self) -> None:
         policy = self._loaded_policy
@@ -298,6 +336,22 @@ class _PolicyRuntime(PolicyModule):
             if policy is None:
                 raise RuntimeError("policy preflight has not passed")
             policy.reset()
+            if policy.observation_period is not None:
+                with self._lock:
+                    if self._stop_event.is_set():
+                        return
+                    self._observer = Thread(
+                        target=self._observe,
+                        args=(policy,),
+                        name="policy-observations",
+                        daemon=True,
+                    )
+                    self._observer.start()
+                with self._observation_changed:
+                    self._observation_changed.wait_for(
+                        lambda: self._stop_event.is_set()
+                        or self._observation_count >= policy.observations_required
+                    )
             while not self._stop_event.is_set():
                 with self._lock:
                     images, state, state_ts = self._snapshot_observation(time.time())
@@ -321,9 +375,10 @@ class _PolicyRuntime(PolicyModule):
                         self._chunks_received += 1
                         dispatch = self._dispatch
                     if dispatch:
-                        result = self._control.task_invoke(
-                            self._task_name, "execute", {"trajectory": trajectory}
-                        )
+                        kwargs: dict[str, Any] = {"trajectory": trajectory}
+                        if self.config.backend == "dreamlabs":
+                            kwargs["deadman_timeout"] = self.config.dreamlabs.deadman_timeout_s
+                        result = self._control.task_invoke(self._task_name, "execute", kwargs)
                         retry_state = (
                             result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
                             and self.config.backend == "lerobot"
@@ -355,7 +410,10 @@ class _PolicyRuntime(PolicyModule):
                 self._cancel_locked()
                 self._dispatch = False
                 self._observation_changed.notify_all()
-            if policy is not None:
+            observer = self._observer
+            if observer is not None:
+                observer.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if policy is not None and (observer is None or not observer.is_alive()):
                 try:
                     policy.reset()
                 except Exception as exc:
@@ -375,8 +433,9 @@ class _PolicyRuntime(PolicyModule):
                 task = self._submitted_task
             if task is None:
                 return
-            method = "get_status"
-            status = self._control.task_invoke(task, method, {"t_now": None})
+            method = "keepalive" if self.config.backend == "dreamlabs" else "get_status"
+            kwargs = {} if method == "keepalive" else {"t_now": None}
+            status = self._control.task_invoke(task, method, kwargs)
             if not isinstance(status, TrajectoryStatus):
                 raise RuntimeError("coordinator returned no trajectory status")
             if status.state == TrajectoryState.COMPLETED:
@@ -401,10 +460,16 @@ class _PolicyRuntime(PolicyModule):
 
     def _prepare_trajectory(
         self,
-        chunk: NDArray[np.float32],
+        chunk: NDArray[np.float32] | EefTrajectory,
         state: NDArray[np.float32],
         policy: PolicyBackend,
-    ) -> JointTrajectory:
+    ) -> JointTrajectory | EefTrajectory:
+        if isinstance(chunk, EefTrajectory):
+            if self._task_name != "eef_trajectory":
+                raise ValueError("joint backend returned an EEF trajectory")
+            return chunk
+        if self._task_name != "joint_trajectory":
+            raise ValueError("EEF backend returned joint actions")
         width = len(self.config.joint_names)
         if chunk.ndim != 2 or chunk.shape[1] != width or chunk.shape[0] < policy.n_action_steps:
             raise ValueError(f"policy returned invalid action chunk shape {chunk.shape}")

@@ -657,6 +657,15 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/dual_openyam]
       blueprints:
+        dual-openyam-dreamlabs-collection:
+          title: Dual YAM three-camera demonstration recording
+          description: Record overhead and both wrist views for the learning flow.
+        dreamlabs-dual-openyam-joint:
+          title: Dual YAM Dreamlabs joint preview
+          description: Three-camera policy rollout, idle at startup and preview by default.
+        dreamlabs-dual-openyam-eef:
+          title: Dual YAM Dreamlabs EEF preview
+          description: Three-camera EEF rollout using bounded Pink control, preview by default.
         dual-openyam-quest-collection:
           title: Dual OpenYAM demonstration recording
           description: Teleoperate two OpenYAM arms in VR and record demonstrations.

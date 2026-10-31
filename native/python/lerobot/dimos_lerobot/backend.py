@@ -37,6 +37,9 @@ _ACTION_FEATURE = "action"
 
 
 class Backend:
+    observation_period: float | None = None
+    observations_required: int = 0
+
     def __init__(self, config: PolicyModuleConfig) -> None:
         self.config = config
         self.to_policy, self.to_hardware = joint_permutations(
@@ -154,6 +157,11 @@ class Backend:
         if result.shape[2] != len(self.config.joint_names):
             raise ValueError(f"Policy returned invalid action width {result.shape[2]}")
         return np.asarray(result[0][:, self.to_hardware], dtype=np.float32)
+
+    def observe(
+        self, images: Images, state: NDArray[np.float32], *, task: str, timestamp: float
+    ) -> None:
+        """LeRobot consumes the current snapshot directly in predict()."""
 
     def get_last_action_response(self) -> dict[str, Any] | None:
         return None
