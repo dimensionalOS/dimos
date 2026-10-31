@@ -688,6 +688,12 @@ class PoseTargetIKTask(BaseControlTask):
         snapshot = self._frame_target_snapshot(state)
         if snapshot is None:
             return None
+        return self._compute_snapshot(state, snapshot)
+
+    def _compute_snapshot(
+        self, state: CoordinatorState, snapshot: FrameTargetSnapshot
+    ) -> JointCommandOutput | None:
+        """Run bounded IK against an already sampled target for this tick."""
         if self._config.timeout > 0.0:
             age = state.t_now - snapshot.last_update_time
             if age > self._config.timeout:
