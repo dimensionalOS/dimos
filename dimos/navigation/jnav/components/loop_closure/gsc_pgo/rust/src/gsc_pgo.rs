@@ -572,7 +572,7 @@ impl Default for Config {
             closure_alternative_places: true,
             closure_pcm: false,
             closure_gnc_overtrust_check: false,
-            odometry_gravity_bound: true,
+            odometry_gravity_bound: false,
             closure_commitments: true,
             closure_inlier_distance_from_odometry: false,
             closure_hessian_observability: false,

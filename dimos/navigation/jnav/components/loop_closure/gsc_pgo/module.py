@@ -113,7 +113,7 @@ class PGOConfig(NativeModuleConfig):
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
     closure_gnc_overtrust_check: bool = False
     # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
-    odometry_gravity_bound: bool = True
+    odometry_gravity_bound: bool = False
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
     closure_commitments: bool = True
     # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_icp_inlier_distance_m
