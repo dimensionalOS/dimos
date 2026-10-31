@@ -31,7 +31,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.sim2.actions import JointCommand, SetPose
 from dimos.sim2.module import Simulation, SimulationConfig
 from dimos.sim2.mujoco_backend import MujocoBackend
-from dimos.sim2.spec import Mount, SimulatedRobot, SimulatedSensor
+from dimos.sim2.spec import Mount, Servo, SimulatedRobot, SimulatedSensor
 from dimos.sim2.world import compile_world
 from dimos.sim2.world_change import OBJECT, WorldMirror
 
@@ -201,6 +201,27 @@ def test_scene_data_describes_the_world_without_its_robots(scene, robot_model, t
     assert crate["geoms"][0]["type"] == "box" and crate["geoms"][0]["size"] == pytest.approx(
         [0.1] * 3
     )
+
+
+def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model, tmp_path):
+    robot = SimulatedRobot("dog", robot_model, "base", servos=(Servo("neck", 0.01, 0.001),))
+    backend = MujocoBackend(SimulationConfig(scene=scene), {"dog": robot}, tmp_path)
+    published = _Collect()
+
+    async def run_briefly() -> None:
+        running = asyncio.create_task(backend.run(published))
+        await asyncio.sleep(0.05)
+        backend.apply([JointCommand("dog", ("neck",), position=(0.5,), kp=(0.05,), kd=(0.005,))])
+        await asyncio.sleep(1.0)
+        running.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await running
+
+    asyncio.run(run_briefly())
+    actuator = backend.model.actuator("dog/neck").id
+    assert backend.model.actuator_gainprm[actuator, 0] == 0.05
+    assert tuple(backend.model.actuator_biasprm[actuator, 1:3]) == (-0.05, -0.005)
+    assert published.world.joints("dog")[1][0, 0] == pytest.approx(0.5, abs=0.02)
 
 
 def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model, tmp_path):

@@ -54,6 +54,20 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
             root.mocap = True
         for key in list(spec.keys):
             spec.delete(key)
+        actuators = {actuator.target: actuator for actuator in spec.actuators}
+        for servo in robot.servos:
+            actuator = actuators[servo.joint]
+            # A motor's control range, if it has one, is its torque limit; a position actuator keeps its own (or its joint's).
+            motor = (
+                actuator.biastype == mujoco.mjtBias.mjBIAS_NONE
+                and actuator.ctrlrange[0] < actuator.ctrlrange[1]
+            )
+            torque_limit = actuator.ctrlrange.copy()
+            actuator.set_to_position(kp=servo.kp, kv=servo.kd)
+            actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
+            if motor:
+                actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+                actuator.forcerange = torque_limit
         for sensor in sensors:
             if sensor.robot_id == robot.robot_id:
                 _mount(spec, sensor, robot.robot_id)

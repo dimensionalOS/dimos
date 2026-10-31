@@ -1,0 +1,24 @@
+<mujoco model="logistics">
+  <option timestep="0.005" cone="elliptic" impratio="10"/>
+  <visual>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.65 0.65 0.65"/>
+    <global azimuth="135" elevation="-25"/>
+  </visual>
+  <statistic center="1 0 0.7" extent="6"/>
+  <asset>
+    <texture name="tiles" type="2d" builtin="checker" width="512" height="512" rgb1="0.55 0.6 0.61" rgb2="0.72 0.74 0.73"/>
+    <material name="floor" texture="tiles" texrepeat="12 12" texuniform="true"/>
+  </asset>
+  <worldbody>
+    <light pos="0 0 5" directional="true" dir="0 0 -1"/>
+    <geom name="floor" type="plane" size="10 10 .1" material="floor"/>
+    <geom name="north_wall" type="box" pos="0 5 1.5" size="6 .1 1.5" rgba=".78 .8 .8 1"/>
+    <geom name="west_wall" type="box" pos="-5 0 1.5" size=".1 5 1.5" rgba=".78 .8 .8 1"/>
+    <geom name="shelf_left" type="box" pos="3 2 .8" size=".45 1.2 .8" rgba=".16 .36 .35 1"/>
+    <geom name="shelf_right" type="box" pos="3 -2 .8" size=".45 1.2 .8" rgba=".16 .36 .35 1"/>
+    <geom name="crate" type="box" pos="-2 2 .3" size=".4 .4 .3" rgba=".74 .28 .18 1"/>
+    <geom name="table" type="box" pos="0 -3 .7" size="1 .5 .06" rgba=".5 .52 .55 1"/>
+    <geom type="box" pos="-.8 -3 .33" size=".06 .4 .33" rgba=".22 .25 .25 1"/>
+    <geom type="box" pos=".8 -3 .33" size=".06 .4 .33" rgba=".22 .25 .25 1"/>
+  </worldbody>
+</mujoco>

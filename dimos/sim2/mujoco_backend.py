@@ -102,11 +102,10 @@ class MujocoBackend:
     def __init__(
         self, config: "SimulationConfig", simulated: Mapping[str, Simulated], directory: Path
     ) -> None:
-        if config.scene is None:
-            raise ValueError("the mujoco backend needs a scene; pass scene= or --scene-package")
         self._config = config
+        self._scene = config.scene or Path(__file__).with_name("logistics.xml")
         self._robots = {d.robot_id: d for d in simulated.values() if isinstance(d, SimulatedRobot)}
-        self.model = compile_world(config.scene, simulated.values())
+        self.model = compile_world(self._scene, simulated.values())
         # Robots whose controllers the world steps in lockstep with, and the actions each sent since its last tick.
         self._controllers = [r for r in self._robots.values() if r.control_period is not None]
         self._next_ticks = [0.0] * len(self._controllers)
@@ -127,16 +126,16 @@ class MujocoBackend:
         self._sent_paused = False
         self._refusals: list[tuple[str, str]] = []
         self._wrench_until: dict[int, float] = {}
-        self._files = _files_named_by(config.scene, None)
+        self._files = _files_named_by(self._scene, None)
         for robot in self._robots.values():
             self._files.update(_files_named_by(robot.model, None))
         self._reset()
 
     def describe(self) -> dict[str, Any]:
-        return {"scene": str(self._config.scene)}
+        return {"scene": str(self._scene)}
 
     def assets(self) -> Mapping[str, Path | bytes]:
-        return {"world.xml": (self._config.scene or Path()).read_bytes(), **self._files}
+        return {"world.xml": self._scene.read_bytes(), **self._files}
 
     def scene_data(self) -> str:
         model = self.model
@@ -183,7 +182,7 @@ class MujocoBackend:
         return json.dumps(
             {
                 "format": "dimos.scene_data.v1",
-                "id": f"{self._config.scene.stem}-{id(self)}",
+                "id": f"{self._scene.stem}-{id(self)}",
                 "frame": "world",
                 "bodies": bodies,
                 "meshes": meshes,
@@ -261,7 +260,15 @@ class MujocoBackend:
         self._next_ticks = [0.0] * len(self._controllers)
         self._wrench_until.clear()
         mujoco.mj_resetData(self.model, self.data)
+        self._hold_initial_pose()
         mujoco.mj_forward(self.model, self.data)
+
+    def _hold_initial_pose(self) -> None:
+        for robot in self._robots.values():
+            for servo in robot.servos:
+                joint = self.model.joint(f"{robot.robot_id}/{servo.joint}")
+                self.data.qpos[joint.qposadr[0]] = servo.initial
+                self.data.ctrl[self.model.actuator_trnid[:, 0] == joint.id] = servo.initial
 
     def _apply_pending(self) -> None:
         with self._lock:
