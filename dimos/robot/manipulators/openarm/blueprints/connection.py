@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "dual_openyam_damiao": (
-        "dimos.hardware.whole_body.dual_openyam_damiao.adapter:DualOpenYamDamiaoAdapter"
-    ),
-}
+"""OpenArm trajectories and normalized grippers through a connection module."""
+
+from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
+
+openarm_connection_control = damiao_connection_control(OpenArmConnection).remappings([])

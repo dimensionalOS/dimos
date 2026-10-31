@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "openyam_damiao": ("dimos.hardware.whole_body.openyam_damiao.adapter:OpenYamDamiaoAdapter"),
-}
+
+"""OpenYAM trajectory and normalized-gripper connection control."""
+
+from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+
+openyam_connection_control = damiao_connection_control(OpenYamConnection).remappings([])

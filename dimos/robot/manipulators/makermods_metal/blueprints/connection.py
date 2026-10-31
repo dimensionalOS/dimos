@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "openarm_damiao": ("dimos.hardware.whole_body.openarm_damiao.adapter:OpenArmDamiaoAdapter"),
-}
+"""Metal trajectory and normalized gripper control over connection streams."""
+
+from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
+from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
+
+makermods_metal_connection_control = damiao_connection_control(MetalConnection).remappings([])

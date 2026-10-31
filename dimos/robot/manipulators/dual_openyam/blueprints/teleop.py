@@ -20,20 +20,18 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.robot.manipulators.common.blueprints import teleop_ik_task
+from dimos.robot.manipulators.common.damiao_blueprint import (
+    DamiaoTeleopCoordinator,
+    connect_damiao,
+)
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
-    DualOpenYamCoordinator,
     dual_openyam_trajectory_task,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
-    dual_openyam_hardware,
-    dual_openyam_model_config,
 )
-from dimos.robot.manipulators.dual_openyam.joints import (
-    DUAL_OPENYAM_GRIPPER_JOINTS,
-)
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
@@ -50,18 +48,18 @@ _dual_openyam_webxr_pink = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=1.0,
 )
-_dual_openyam_webxr_hardware = dual_openyam_hardware()
-_dual_openyam_webxr_model = dual_openyam_model_config()
+_dual_openyam = DualOpenYamConnection.models()
+_dual_openyam_webxr_model = _dual_openyam.planning
 _dual_openyam_webxr_tasks = {
-    side: teleop_ik_task(
-        _dual_openyam_webxr_hardware,
-        robot_model=_dual_openyam_webxr_model,
+    side: TaskConfig(
+        type="teleop_ik",
         name=f"{DUAL_OPENYAM_WEBXR_TASK_NAME}_{side}",
-        joint_names=dual_openyam_arm_joints(side),
+        joint_names=[f"arm/{name}" for name in dual_openyam_arm_joints(side)],
         priority=20,
-        solver_type=DualOpenYamPinkPoseTargetSolver,
-        bindings=[{"hand": side, "target_frame": f"{side}_grasp_frame"}],
         params={
+            "robot_model": _dual_openyam_webxr_model,
+            "solver_type": DualOpenYamPinkPoseTargetSolver,
+            "bindings": [{"hand": side, "target_frame": f"{side}_grasp_frame"}],
             "pink": _dual_openyam_webxr_pink,
             "timeout": 0.5,
             "max_command_tracking_error_deg": 10.0,
@@ -79,21 +77,22 @@ def build_dual_openyam_webxr(
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
         ArmTeleopModule.blueprint(zero_button="B"),
-        DualOpenYamCoordinator.blueprint(
-            instance_name="ControlCoordinator",
+        connect_damiao(
+            DualOpenYamConnection,
+            coordinator=DamiaoTeleopCoordinator,
             tasks=[
                 *_dual_openyam_webxr_tasks.values(),
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",
-                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+                    joint_names=[_dual_openyam.gripper_joints[0]],
                     priority=20,
                     stream_bind={"gripper_command": "left_gripper_command"},
                 ),
                 TaskConfig(
                     name="right_arm_gripper",
                     type="gripper",
-                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+                    joint_names=[_dual_openyam.gripper_joints[1]],
                     priority=20,
                     stream_bind={"gripper_command": "right_gripper_command"},
                 ),

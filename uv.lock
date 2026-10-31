@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
@@ -714,17 +714,17 @@ wheels = [
 
 [[package]]
 name = "can-motor-control"
-version = "0.0.8"
+version = "0.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/42/74653f686df6738ba0eb622f8f0813bf594aabf833bc9e821db6dca5c103/can_motor_control-0.0.8.tar.gz", hash = "sha256:75e27ed43ecd9b63d39aefe3bc56f147651b47b861a6808b39bf5a610ae8c13e", size = 146135, upload-time = "2026-09-03T22:11:41.371Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/81/23f38cd00f531e1edb1285ccfc02eac13b56370a6727d9ac9d459766f679/can_motor_control-0.0.11.tar.gz", hash = "sha256:3e4c5e5be54de238bf99710125b10b34bcc032cd4d293ecd7ae17330f26ad9e5", size = 150722, upload-time = "2026-10-28T20:59:09.347Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/80/9ab2d4014807437b3caab66ded800a59461ddd2e217462191e374ff653e4/can_motor_control-0.0.8-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:2173c65f374d285ab07548b30c185f0f059edea67787d14541948bdfe22afeca", size = 588545, upload-time = "2026-09-03T22:11:37.197Z" },
-    { url = "https://files.pythonhosted.org/packages/64/57/4be1a13d198eea248b78a447fc7d333d286db6c8c3d13f2cebac149993e2/can_motor_control-0.0.8-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:d9bf09fa818e8c8d2ce28d7b3e4ae11fe55eacd026f866f12411f2f26cb717b5", size = 514656, upload-time = "2026-09-03T22:11:38.807Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/dc/2b676cb39e2239ee40eac9b14138336247f6109b3e67d4bbe355b84903d6/can_motor_control-0.0.8-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:8438f3461720d19324c1befd3dd4e37ed10e22a9abaa61a8afb76c6f48bd6607", size = 539934, upload-time = "2026-09-03T22:11:40.046Z" },
+    { url = "https://files.pythonhosted.org/packages/05/cc/8e3a908b93bb06fe56f4f1d5367014321325a35fab40327a5a4091248155/can_motor_control-0.0.11-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:d4f5aad224300de860534dd664aa79eb7b3e9a79b1122764042c18e287838c55", size = 598405, upload-time = "2026-10-28T20:59:05.375Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/9a/a26a08fbbe416a5424ba50a8e276da283a891a9407549c57268c99dacb07/can_motor_control-0.0.11-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:5699f1c24b61cf81757863829de3c02e5d63f8be6d2a7c8c74f484cd33c36043", size = 521805, upload-time = "2026-10-28T20:59:06.799Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/30/6cae42ab59f16912348814677858f2b183f4c18d26e489356bc63fa83b84/can_motor_control-0.0.11-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:fd50896db1c0da5526b7fe7ec7c046722569b6c49c237431cc249179b816b7bf", size = 544636, upload-time = "2026-10-28T20:59:08.05Z" },
 ]
 
 [[package]]
@@ -1870,7 +1870,6 @@ wheels = [
 name = "dimos"
 version = "0.0.15"
 source = { editable = "." }
-default-groups = ["tests"]
 dependencies = [
     { name = "annotation-protocol" },
     { name = "attrs" },
@@ -1967,7 +1966,7 @@ all = [
     { name = "faster-whisper" },
     { name = "gdown" },
     { name = "googlemaps" },
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2168,7 +2167,7 @@ manipulation = [
     { name = "yourdfpy" },
 ]
 mapping = [
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
 ]
 misc = [
     { name = "gdown" },
@@ -2235,7 +2234,7 @@ unitree = [
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2281,7 +2280,7 @@ unitree-dds = [
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2555,9 +2554,6 @@ tests-self-hosted = [
     { name = "xacro" },
 ]
 
-[package.group-requires-python]
-docs = ">=3.11"
-
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
@@ -2571,7 +2567,7 @@ requires-dist = [
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
-    { name = "can-motor-control", marker = "extra == 'control'", specifier = ">=0.0.8" },
+    { name = "can-motor-control", marker = "extra == 'control'", specifier = ">=0.0.11" },
     { name = "cbor2", specifier = ">=6.1.5,<7" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
@@ -2600,7 +2596,7 @@ requires-dist = [
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "gitpython", specifier = ">=3.1.45" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
-    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64' and extra == 'mapping') or (python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
     { name = "httpx", marker = "extra == 'agents'", specifier = ">=0.28" },
     { name = "huggingface-hub", marker = "extra == 'perception'", specifier = ">=0.36" },
@@ -2729,7 +2725,7 @@ docs = [
 ]
 lint = [
     { name = "aiortc", specifier = ">=1.14.0" },
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = ">=0.0.11" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "deptry", specifier = "==0.25.1" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
@@ -2774,7 +2770,7 @@ lint = [
     { name = "xacro" },
 ]
 project-deps = [
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = ">=0.0.11" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
@@ -2802,7 +2798,7 @@ project-deps = [
 ]
 tests = [
     { name = "build", specifier = ">=1.2.2" },
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = ">=0.0.11" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
@@ -2861,7 +2857,7 @@ tests = [
 ]
 tests-self-hosted = [
     { name = "build", specifier = ">=1.2.2" },
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = ">=0.0.11" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },

@@ -17,9 +17,7 @@ from typing import cast
 import pinocchio
 import pytest
 
-from dimos.control.components import HardwareType
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.config import (
@@ -29,13 +27,12 @@ from dimos.robot.manipulators.openarm.config import (
     OPENARM_DESCRIPTION_REF,
     OPENARM_DESCRIPTION_SOURCE,
     OPENARM_DESCRIPTION_URL,
-    OPENARM_HARDWARE_ID,
     OPENARM_JOINTS,
     OPENARM_SIDES,
     openarm_bimanual_model_config,
-    openarm_hardware,
     openarm_urdf_joints,
 )
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection, OpenArmConnectionConfig
 
 
 def test_openarm_model_uses_pinned_official_bimanual_xacro() -> None:
@@ -98,43 +95,63 @@ def test_openarm_model_fixes_fingers_without_removing_grasp_frames() -> None:
     assert {f"openarm_{side}_grasp_frame" for side in OPENARM_SIDES} <= frame_names
 
 
-def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
-    hardware = openarm_hardware()
-
-    assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
-        OPENARM_HARDWARE_ID,
-        HardwareType.WHOLE_BODY,
-        "mock_whole_body",
-    )
-    limits = hardware.limits
-    assert limits is not None
-    assert limits.position_lower == [*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0]
-    assert limits.position_upper == [*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0]
-    assert limits.velocity_max == [None] * len(OPENARM_JOINTS)
-
-
-def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> None:
-    hardware = openarm_hardware(left_can_port="can1", right_can_port="can0")
-
-    assert hardware.adapter_type == "openarm_damiao"
-    runtime_config = hardware.adapter_kwargs["runtime_config"]
-    assert isinstance(runtime_config, DamiaoRuntimeConfig)
-    assert runtime_config.bus_devices == {"left": "can1", "right": "can0"}
-
-
 @pytest.mark.parametrize(
-    ("left_can_port", "right_can_port"),
-    [("can1", None), (None, "can0")],
+    ("left_can_port", "right_can_port", "message"),
+    [
+        ("can1", None, "requires both CAN selectors"),
+        (None, "can0", "requires both CAN selectors"),
+        ("can0", "can0", "requires distinct CAN selectors"),
+        ("", "can0", "CAN selector must not be empty"),
+        ("can1", "  ", "CAN selector must not be empty"),
+    ],
 )
-def test_openarm_hardware_rejects_partial_can_configuration(
+def test_openarm_connection_rejects_incomplete_or_ambiguous_bus_selection(
     left_can_port: str | None,
     right_can_port: str | None,
+    message: str,
 ) -> None:
-    with pytest.raises(ValueError, match="requires both left and right CAN ports"):
-        openarm_hardware(
-            left_can_port=left_can_port,
-            right_can_port=right_can_port,
+    with pytest.raises(ValueError, match=message):
+        OpenArmConnectionConfig(left_can_port=left_can_port, right_can_port=right_can_port)
+
+
+def test_openarm_topology_preserves_motor_addresses_gains_and_buses() -> None:
+    robot = OpenArmConnection.robot
+
+    assert robot.buses == ("left", "right")
+    assert [(arm.name, arm.bus) for arm in robot.arms] == [
+        ("left_arm", "left"),
+        ("right_arm", "right"),
+    ]
+    for side, arm in zip(("left", "right"), robot.arms, strict=True):
+        assert [
+            (joint.name, joint.motor, joint.send_id, joint.recv_id, joint.kp, joint.kd)
+            for joint in arm.joints
+        ] == [
+            (f"openarm_{side}_joint1", "DM8009", 1, 17, 100.0, 1.5),
+            (f"openarm_{side}_joint2", "DM8009", 2, 18, 100.0, 1.5),
+            (f"openarm_{side}_joint3", "DM4340", 3, 19, 80.0, 1.0),
+            (f"openarm_{side}_joint4", "DM4340", 4, 20, 80.0, 1.0),
+            (f"openarm_{side}_joint5", "DM4310", 5, 21, 60.0, 0.8),
+            (f"openarm_{side}_joint6", "DM4310", 6, 22, 60.0, 0.8),
+            (f"openarm_{side}_joint7", "DM4310", 7, 23, 60.0, 0.8),
+        ]
+    assert [
+        (
+            gripper.name,
+            gripper.bus,
+            gripper.motor,
+            gripper.send_id,
+            gripper.recv_id,
+            gripper.direction,
+            gripper.current,
         )
+        for gripper in robot.grippers
+    ] == [
+        ("left_gripper", "left", "DM4310", 8, 24, "decreasing_position", 0.15),
+        ("right_gripper", "right", "DM4310", 8, 24, "decreasing_position", 0.15),
+    ]
+    assert robot.joint_names == tuple(OPENARM_JOINTS)
+    assert robot.mock_positions == (0.0,) * 16
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
@@ -143,6 +160,6 @@ def test_openarm_can_ports_are_blueprint_cli_options() -> None:
         environ={},
     )
 
-    coordinator = parsed.module_kwargs("ControlCoordinator")
-    assert coordinator["left_can_port"] == "can1"
-    assert coordinator["right_can_port"] == "can0"
+    connection = parsed.module_kwargs("openarmconnection")
+    assert connection["left_can_port"] == "can1"
+    assert connection["right_can_port"] == "can0"

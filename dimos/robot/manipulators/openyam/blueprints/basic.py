@@ -12,49 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic OpenYAM coordinator blueprints."""
 
-from __future__ import annotations
+"""OpenYAM coordinator and planning through its connection module."""
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.common.blueprints import coordinator, planner
-from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_GRIPPER_JOINT,
-    OPENYAM_HARDWARE_ID,
-    OPENYAM_JOINTS,
-    make_openyam_model_config,
-    openyam_hardware,
-)
+from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.manipulators.common.damiao_blueprint import connect_damiao
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+
+_openyam = OpenYamConnection.models()
 
 
-def _trajectory_task() -> TaskConfig:
-    return joint_trajectory_task(OPENYAM_JOINTS)
+def _trajectory_task(*, priority: int = 10) -> TaskConfig:
+    return joint_trajectory_task(list(_openyam.joints), priority=priority)
 
 
 def _gripper_task() -> TaskConfig:
     return TaskConfig(
-        name=f"{OPENYAM_HARDWARE_ID}_gripper",
+        name="arm_gripper",
         type="gripper",
-        joint_names=[OPENYAM_GRIPPER_JOINT],
+        joint_names=list(_openyam.gripper_joints),
         priority=20,
     )
 
 
-_openyam_planner_hw = openyam_hardware()
-
+coordinator_openyam = connect_damiao(
+    OpenYamConnection, tasks=[_trajectory_task(), _gripper_task()]
+).remappings([])
 openyam_planner_coordinator = autoconnect(
-    planner(model=make_openyam_model_config()),
-    coordinator(
-        hardware=[_openyam_planner_hw],
-        tasks=[_trajectory_task(), _gripper_task()],
-    ),
-)
-
-_openyam_hw = openyam_hardware()
-
-coordinator_openyam = ControlCoordinator.blueprint(
-    hardware=[_openyam_hw],
-    tasks=[_trajectory_task(), _gripper_task()],
+    planner(model=_openyam.planning),
+    connect_damiao(OpenYamConnection, tasks=[_trajectory_task(), _gripper_task()]),
 )

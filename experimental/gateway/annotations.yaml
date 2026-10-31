@@ -623,6 +623,9 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
+        openyam-connection-control:
+          title: OpenYAM connection control
+          description: Direct CAN connection and joint trajectory control for an OpenYAM arm; mock unless a CAN selector is set.
         keyboard-teleop-openyam:
           title: OpenYAM keyboard driving
           description: Move an OpenYAM arm with this computer's keyboard.
@@ -664,6 +667,9 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/openarm]
       blueprints:
+        openarm-connection-control:
+          title: OpenArm connection control
+          description: Direct CAN connections and joint trajectory control for OpenArm; mock unless both CAN selectors are set.
         openarm-planner-coordinator:
           title: OpenArm motion planning
           description: Motion planning and execution for the bimanual OpenArm.
@@ -673,6 +679,16 @@ robots:
         teleop-webxr-openarm:
           title: OpenArm VR teleop
           description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+    makermods-metal:
+      name: MakerMods Metal
+      description: The MakerMods Metal arm, over CAN.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/makermods_metal]
+      blueprints:
+        makermods-metal-connection-control:
+          title: Metal connection control
+          description: Direct CAN connection and joint trajectory control for a Metal arm; mock unless a CAN selector is set.
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.

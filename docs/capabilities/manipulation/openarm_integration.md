@@ -1,48 +1,57 @@
-# OpenArm Integration
+# OpenArm integration
 
-dimOS drives the [OpenArm](https://openarm.dev) bimanual platform (two 7-DOF
-arms + grippers, Damiao motors, one CAN bus per arm) as a single whole-body
-device through the generic Damiao adapter stack introduced for OpenYAM.
+dimOS drives the [OpenArm](https://openarm.dev) bimanual platform as one
+`OpenArmConnection`. It owns both seven-joint arms and two normalized grippers,
+with one CAN bus per arm.
 
 Related:
-- Upstream hardware + C++ reference: [enactic/openarm_can](https://github.com/enactic/openarm_can)
+
+- Hardware and C++ reference: [enactic/openarm_can](https://github.com/enactic/openarm_can)
 - Robot model: [enactic/openarm_description](https://github.com/enactic/openarm_description)
-- How to integrate any new arm: [adding_a_custom_arm.md](/docs/capabilities/manipulation/adding_a_custom_arm.md)
+- General arm integration: [adding_a_custom_arm.md](/docs/capabilities/manipulation/adding_a_custom_arm.md)
 
 ## Architecture
 
-```
+```text
 ControlCoordinator (100 Hz)
-  └── HardwareComponent "openarm" (WHOLE_BODY, 16 joints)
-        └── OpenArmDamiaoAdapter          # dimos/hardware/whole_body/openarm_damiao/
-              └── DamiaoWholeBodyAdapter  # generic Damiao lifecycle + gravity comp
-                    └── can-motor-control # Rust CAN transport + Damiao codec (PyPI)
+  arm_position_command -> OpenArmConnection.position_command
+  arm_joint_state      <- OpenArmConnection.joint_state
+                            └── can-motor-control Robot
+                                  ├── left CAN bus: left_arm + left_gripper
+                                  └── right CAN bus: right_arm + right_gripper
 ```
 
-One adapter owns both arms: bus `left` (default `can1`) and bus `right`
-(default `can0`) are commanded together in one synchronized tick per control
-cycle. The command vector order is `openarm_left_joint1..7`, `openarm_right_joint1..7`,
-`left_arm/gripper`, `right_arm/gripper`; gripper joints are normalized
-(`0.0` closed, `1.0` open).
+The connection owns native activation, feedback, position targets, gravity
+compensation, command timeout holds, and shutdown. The coordinator uses standard
+streams and has no hardware adapters. The `openarm_hardware` factory and
+`OpenArmDamiaoAdapter` have been removed.
 
-Per arm, shoulder to wrist (send ids `0x01..0x07`, feedback `send | 0x10`):
-2x DM8009, 2x DM4340, 3x DM4310, plus a DM4310 gripper at `0x08`.
+Deployed blueprints use source `arm`. Their command and feedback vectors contain
+`arm/openarm_left_joint1..7`, `arm/openarm_right_joint1..7`,
+`arm/left_gripper`, and `arm/right_gripper`, in that order. Gripper opening is
+normalized from `0.0` closed to `1.0` open. A standalone connection defaults to
+source `openarm`; its messages use that prefix instead.
 
-Gravity compensation and planning use the official bimanual OpenArm v2.0
-Xacro. dimOS pins the description repository to an immutable commit and checks
-it out lazily through the robot asset cache. Gravity compensation locks the
-finger joints and preflights the remaining 14 joints against the declared arm
-order before enabling the motors.
+Per arm, shoulder to wrist, send IDs `0x01..0x07` select two DM8009, two DM4340,
+and three DM4310 motors. Feedback IDs are `send | 0x10`. Each gripper is a DM4310
+at send ID `0x08`, feedback ID `0x18`.
 
-Planning treats the two arms as one robot with `left_arm`, `right_arm`, and
-`both_arms` planning groups. The single model supports cross-arm collision
-checking and synchronized bimanual planning.
+Gravity compensation and planning use the official bimanual OpenArm v2.0 Xacro,
+pinned to commit `1fba2cbc05001f05b4514120b70130b4ac06f409` and loaded lazily
+through the robot asset cache. The physical model fixes the fingers and
+preflights all fourteen arm coordinates before enabling the motors. Logical
+gripper coordinates appear only in the control model.
+
+Planning treats both arms as one robot with `left_arm`, `right_arm`, and
+`both_arms` groups. Planning models, groups, tasks, and streams use the same
+source-prefixed joint names. Link and grasp-frame names retain their upstream
+names, allowing cross-arm collision checks.
 
 ## Bring-up
 
 ```bash
-dimos run openarm-planner-coordinator # mock hardware
-dimos run teleop-webxr-openarm         # mock WebXR teleoperation
+dimos run openarm-planner-coordinator # in-memory connection
+dimos run teleop-webxr-openarm
 
 dimos hardware can setup can0
 dimos hardware can setup can1
@@ -50,49 +59,62 @@ dimos run openarm-planner-coordinator --left-can-port can1 --right-can-port can0
 dimos run teleop-webxr-openarm --left-can-port can1 --right-can-port can0
 ```
 
-Linux assigns `can0`/`can1` in USB enumeration order. If the arms come up
-swapped, exchange the two explicit CLI values. Supplying only one interface is
-rejected so physical operation can never depend on USB/CAN enumeration defaults.
+All OpenArm blueprints use in-memory positions unless both CAN selectors are
+explicit. `--simulation` also selects in-memory operation. Empty, repeated, or
+partial selectors are rejected. Linux assigns interface names by enumeration;
+select the interfaces that correspond to the rig's left and right arms.
+
+Starting a physical connection enables the motors and runs the native gripper
+calibration. Calibration moves the grippers. The connection accepts commands
+only after activation completes. Each arm receives its command sequentially;
+there is no atomic transaction across both buses.
 
 ## Blueprints
 
 | Blueprint | Contents |
 |---|---|
-| `coordinator-openarm` | coordinator + trajectory task over both arms |
-| `openarm-planner-coordinator` | planner (bimanual model) + coordinator |
-| `teleop-webxr-openarm` | bimanual WebXR teleoperation + planner + Viser |
-
-All OpenArm blueprints use the in-memory whole-body adapter by default. Passing
-both `--left-can-port` and `--right-can-port` selects the physical adapter.
+| `coordinator-openarm` | connection and coordinator with a fourteen-joint trajectory task |
+| `openarm-planner-coordinator` | bimanual planner, connection, and coordinator |
+| `teleop-webxr-openarm` | bimanual WebXR task, independent grippers, planner, and Viser |
+| `openarm-connection-control` | connection and coordinator with trajectory and gripper tasks |
 
 ## WebXR controls and safety
 
-The WebXR blueprint drives both arms through one bimanual IK task. Hold both
-controllers' middle-finger grips to engage it. Releasing either grip stops arm
-output and clears both controller references. Each index-finger trigger controls
-gripper opening on the same side while that hand's grip is held. Face buttons
-remain available for other controls. Manual arm and gripper control
-have higher priority than planned or policy trajectories; taking control aborts
-the active trajectory.
+Both controllers feed one fourteen-joint IK task. Hold both middle-finger grips
+to engage it. Releasing either grip stops arm output and clears both controller
+references. Each index-finger trigger controls the same side's gripper while
+that hand's grip is held. Manual arm and gripper tasks have priority 20 over
+priority-10 trajectories. Taking control aborts the active trajectory.
 
-The Damiao adapter derives angular joint limits from the official robot model.
-It clamps encoder feedback up to `0.05 rad` beyond a limit; larger excursions
-latch a fault, disable the motors, and prevent reactivation until the adapter is
-reconnected.
+The arm velocity profile is `(1, 1, 1, 1, 2, 2, 2)` rad/s per side, with a
+5 Hz joint-command filter. OpenArm retains its Pink position, orientation, and
+posture objectives.
+
+The connection derives angular limits from the physical model. It clamps
+feedback up to `0.05 rad` beyond a limit. Larger excursions latch a fault,
+disable the motors, and require a new connection. Missing commands trigger a
+hold at measured positions. These software checks do not establish physical
+firmware behavior or confirm that every motor supplied fresh feedback.
 
 ## Files
 
 | Path | Role |
 |---|---|
-| `dimos/hardware/whole_body/openarm_damiao/adapter.py` | physical topology, motors, buses, and gravity model |
-| `dimos/robot/manipulators/openarm/config.py` | pinned model, joints, gains, hardware, and planning config |
-| `dimos/robot/manipulators/openarm/blueprints/` | coordinator and planner blueprints |
+| `dimos/robot/manipulators/openarm/connection.py` | immutable topology, gains, CAN selection, and direct connection |
+| `dimos/robot/manipulators/openarm/config.py` | pinned model, canonical joints and planning configuration |
+| `dimos/robot/manipulators/openarm/blueprints/` | connection, coordinator, planner, and WebXR compositions |
+| `dimos/robot/manipulators/common/damiao_connection.py` | shared native lifecycle and in-memory operation |
 
 ## Validation
 
 ```bash
-uv run pytest dimos/hardware/whole_body/openarm_damiao \
-    dimos/hardware/whole_body/damiao \
-    dimos/robot/manipulators/openarm \
-    dimos/hardware/test_adapter_registries.py
+uv run pytest dimos/robot/manipulators/openarm \
+    dimos/robot/manipulators/common/test_damiao_connection.py \
+    dimos/control/test_coordinator_connections.py
 ```
+
+Focused tests exercise source-prefixed commands through an in-memory connection,
+both-grip activation, independent grippers, and preserved tuning. Tests marked
+`self_hosted` also check official model geometry and Pink solver behavior.
+Physical activation, gripper calibration, bus mapping, and fault recovery still
+need validation on a supported rig.

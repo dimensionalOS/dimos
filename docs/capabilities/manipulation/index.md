@@ -28,18 +28,12 @@ dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
 
-OpenYAM is exposed as one whole-body device with six angular arm joints and a
-normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
-for fully open; it does not use meters. Hardware activation calibrates both
-mechanical endpoints, so clear the gripper jaws and workspace before startup.
-The gripper has no default startup target and moves only after joint control has
-an explicit target.
-
-OpenArm follows the same whole-body model with both arms and both grippers in
-one device: fourteen angular joints (`left_arm/joint1..7`,
-`right_arm/joint1..7`) plus two normalized gripper joints (`left_arm/gripper`,
-`right_arm/gripper`). The keyboard jogs the left arm while the right arm holds
-its pose; keyboard gripper bindings are a follow-up.
+YAM and OpenArm now use direct connection modules. The coordinator sends joint
+commands over streams; the connection owns the complete native robot and CAN
+lifecycle. Deployed joints use the `arm/` namespace. Gripper openings use 0 closed
+to 1 open and remain separate from angular arm coordinates. Physical startup
+calibrates the grippers. See [connection testing and CAN selection](/docs/capabilities/manipulation/damiao-connections.md)
+for mock checks, explicit selectors, planner/teleop entries, and hardware acceptance.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
