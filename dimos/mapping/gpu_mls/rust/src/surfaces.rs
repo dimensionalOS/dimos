@@ -792,14 +792,19 @@ impl SurfaceExtractor {
         out
     }
 
-    /// The surface cells and their heights in meters, skipping the rest of `read`.
-    pub fn read_heights(&self) -> (Vec<VoxelKey>, Vec<f32>) {
+    /// The surface cells with their heights and wall distances in meters
+    /// (None on a plane with no wall), skipping the rest of `read`.
+    pub fn read_heights(&self) -> (Vec<VoxelKey>, Vec<f32>, Vec<Option<f32>>) {
         let surface = self.read_bits(&self.buffers.surface);
-        let heights: Vec<f32> = self
-            .gpu
-            .read(&self.buffers.heights, self.window.cells() as usize);
+        let cells = self.window.cells() as usize;
+        let heights: Vec<f32> = self.gpu.read(&self.buffers.heights, cells);
+        let dist: Vec<f32> = self.gpu.read(&self.buffers.wall_distance, cells);
         let heights = surface.iter().map(|&k| heights[self.cell_of(k)]).collect();
-        (surface, heights)
+        let walls = surface
+            .iter()
+            .map(|&k| Some(dist[self.cell_of(k)]).filter(|d| *d >= 0.0))
+            .collect();
+        (surface, heights, walls)
     }
 
     pub fn read(&self) -> SurfaceResult {

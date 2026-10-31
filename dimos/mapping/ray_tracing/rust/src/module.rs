@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use crate::mapper::{register, Mapper, Pose, SurfaceRequest};
+use crate::mapper::{register, Mapper, Pose, SurfaceRequest, SURFACE_CELL_FLOATS};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
@@ -774,10 +774,12 @@ fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
 /// A cloud of x, y, z, intensity quadruples.
 fn cells_to_cloud(cells: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     let data: Vec<u8> = cells.iter().flat_map(|v| v.to_le_bytes()).collect();
-    make_cloud(data, (cells.len() / 4) as i32, frame_id, stamp)
+    let n = (cells.len() / SURFACE_CELL_FLOATS) as i32;
+    let names = ["x", "y", "z", "intensity", "wall_distance"];
+    make_cloud(data, n, &names, frame_id, stamp)
 }
 
-fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {
+fn make_cloud(data: Vec<u8>, n: i32, names: &[&str], frame_id: &str, stamp: Time) -> PointCloud2 {
     let make_field = |name: &str, off: i32| PointField {
         name: name.into(),
         offset: off,
@@ -792,15 +794,14 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
         },
         height: 1,
         width: n,
-        fields: vec![
-            make_field("x", 0),
-            make_field("y", 4),
-            make_field("z", 8),
-            make_field("intensity", 12),
-        ],
+        fields: names
+            .iter()
+            .zip((0..).step_by(4))
+            .map(|(name, off)| make_field(name, off))
+            .collect(),
         is_bigendian: false,
-        point_step: 16,
-        row_step: 16 * n,
+        point_step: 4 * names.len() as i32,
+        row_step: 4 * names.len() as i32 * n,
         data,
         is_dense: true,
     }
@@ -813,7 +814,7 @@ fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     for p in points.as_chunks::<3>().0 {
         write_point(&mut data, &mut n, p[0], p[1], p[2]);
     }
-    make_cloud(data, n, frame_id, stamp)
+    make_cloud(data, n, &["x", "y", "z", "intensity"], frame_id, stamp)
 }
 
 async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {

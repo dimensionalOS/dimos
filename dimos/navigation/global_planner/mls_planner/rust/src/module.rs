@@ -45,8 +45,9 @@ enum MapUpdate {
         points: Vec<Xyz>,
         bounds: PoseStamped,
         received: Instant,
-        /// The region's surface from the GPU: voxel center, then plane height.
-        surface: Option<Vec<[f32; 4]>>,
+        /// The region's surface from the GPU: voxel center, plane height, then
+        /// wall distance.
+        surface: Option<Vec<[f32; 5]>>,
     },
     Global {
         points: Vec<Xyz>,
@@ -422,7 +423,7 @@ impl MlsPlanner {
                 return;
             }
             let cloud = self.pending_surface.take().expect("checked above");
-            match extract_fields(&cloud, ["x", "y", "z", "intensity"]) {
+            match extract_fields(&cloud, ["x", "y", "z", "intensity", "wall_distance"]) {
                 Ok(cells) => Some(cells),
                 Err(e) => {
                     warn_throttled!(Duration::from_secs(1), error = %e, "Bad surface_cells, extracting this region on the CPU.");
@@ -716,8 +717,10 @@ impl Worker {
                 let process_start = Instant::now();
                 let window = match &surface {
                     Some(cells) => {
-                        let cells: Vec<(f32, f32, f32, f32)> =
-                            cells.iter().map(|&[x, y, z, h]| (x, y, z, h)).collect();
+                        let cells: Vec<(f32, f32, f32, f32, f32)> = cells
+                            .iter()
+                            .map(|&[x, y, z, h, w]| (x, y, z, h, w))
+                            .collect();
                         planner.update_region_with_surface(&points, &cells, &region, &self.config)
                     }
                     None => planner.update_region(&points, &region, &self.config),

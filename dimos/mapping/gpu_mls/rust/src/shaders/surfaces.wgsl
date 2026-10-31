@@ -991,10 +991,23 @@ fn scatter_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         let id = plane_of_cell(cell_index(x, y, z));
-        if (id != NO_SEED) {
+        if (id != NO_SEED && !plane_open_in_column(x, y, id)) {
             plane_cells_a[plane_cell(id, x, y)] = pack_seed(x, y);
         }
     }
+}
+
+// The plane has a non-wall cell in this column: on a smeared floor its sheet
+// stacks, and a wall on one layer must not seed the layer walked above it.
+fn plane_open_in_column(x: i32, y: i32, id: u32) -> bool {
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        if (!bit_at(x, y, z, 3u) && plane_of_cell(cell_index(x, y, z)) == id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn plane_read(t: u32) -> u32 {
@@ -1068,8 +1081,7 @@ fn measure_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
             let id = plane_of_cell(c);
             if (id != NO_SEED) {
                 let seed = plane_read(plane_cell(id, x, y));
-                // A cell stacked over a wall cell of its sheet reads its own
-                // column; any non-wall cell is at least one cell from a wall.
+                // Any non-wall cell is at least one cell from a wall.
                 if (seed != NO_SEED) {
                     d = max(sqrt(f32(seed_dist_sq(x, y, seed))), 1.0) * sp.voxel_size;
                 }

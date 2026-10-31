@@ -29,11 +29,11 @@ use crate::adjacency::{
 use crate::columns::{
     diff_column, ColumnBuckets, ColumnEdit, ColumnIz, ColumnMask, ColumnWindow, VoxelEdits,
 };
-use crate::dijkstra::RepairWindow;
+use crate::dijkstra::{DijkstraState, RepairWindow};
 use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
 use crate::nodes::{
-    apply_wall_safe_penalty_region, place_nodes, place_nodes_region, relocate_dead_nodes,
-    wall_distances_region, PlacementParams, HOLE_SPAN_CELLS,
+    apply_wall_safe_penalty_region, place_nodes, place_nodes_on_walls, place_nodes_region,
+    relocate_dead_nodes, wall_distances_region, PlacementParams, HOLE_SPAN_CELLS,
 };
 use crate::planner;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
@@ -95,6 +95,10 @@ pub struct Config {
     /// Plan on the GPU surface a GPU ray tracer sends as surface_cells (plane
     /// heights, slope gate); without one, surfaces are extracted here.
     pub gpu_surfaces: bool,
+    /// Place nodes on the GPU surface's wall distances instead of measuring
+    /// them here. Off: they run straight within a plane, shorter than the walk
+    /// here on stairs, and cut staircases at the wall clearance.
+    pub gpu_wall_distance: bool,
     /// The GPU surface's slope gate: planes tilted further are not standable.
     #[validate(range(min = 0.0, max = 90.0))]
     pub max_slope_deg: f32,
@@ -224,6 +228,9 @@ pub struct Planner {
     // Surface heights in meters from a surface extracted elsewhere; when set,
     // neighbors link by height instead of by voxel.
     heights: Option<ahash::AHashMap<VoxelKey, f32>>,
+    // Wall distances in meters from that surface's extractor; when set, they
+    // stand in for the wall-distance search.
+    walls: Option<ahash::AHashMap<VoxelKey, f32>>,
     // Last successful path and its goal, for safe truncation when a later
     // replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
@@ -240,6 +247,7 @@ impl Planner {
             voxel_map: AHashSet::new(),
             by_col: ColumnIz::default(),
             heights: None,
+            walls: None,
             last_path: None,
             last_result: None,
         }
@@ -265,6 +273,8 @@ impl Planner {
                 &mut surface,
             );
             build_surface_lookup(&surface, &mut self.graph.surface_lookup);
+            self.heights = None;
+            self.walls = None;
 
             self.rebuild_graph(config);
         });
@@ -273,12 +283,14 @@ impl Planner {
     /// update_global_map from a surface extracted elsewhere, such as on the
     /// GPU: `occupied` is the map the surface came from (walls scan it), and
     /// `heights`, one per surface cell, links neighbors by height in meters
-    /// instead of by whole voxels.
+    /// instead of by whole voxels. `walls`, one per surface cell, are its wall
+    /// distances in meters; without them the planner measures its own.
     pub fn update_from_surface(
         &mut self,
         occupied: &[VoxelKey],
         surface: &[VoxelKey],
         heights: Option<&[f32]>,
+        walls: Option<&[f32]>,
         config: &Config,
     ) {
         let pool = Arc::clone(&self.pool);
@@ -301,10 +313,13 @@ impl Planner {
                         config.step_threshold_m,
                     );
                     self.heights = Some(heights);
+                    self.walls = walls
+                        .map(|walls| surface.iter().copied().zip(walls.iter().copied()).collect());
                     self.rebuild_nodes(config);
                 }
                 None => {
                     self.heights = None;
+                    self.walls = None;
                     self.rebuild_graph(config)
                 }
             }
@@ -324,12 +339,14 @@ impl Planner {
     }
 
     /// update_region with the region's surface extracted elsewhere (the GPU's):
-    /// `cells`, voxel center then plane height, replace the surface across the
-    /// region's whole column box, and neighbors link by height from then on.
+    /// `cells`, voxel center, plane height, then wall distance in meters
+    /// (infinite with no wall), replace the surface across the region's whole
+    /// column box; neighbors link by height from then on, and nodes place on
+    /// those wall distances with gpu_wall_distance.
     pub fn update_region_with_surface(
         &mut self,
         local_points: &[(f32, f32, f32)],
-        cells: &[(f32, f32, f32, f32)],
+        cells: &[(f32, f32, f32, f32, f32)],
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
@@ -347,23 +364,33 @@ impl Planner {
                     write.set((ix, iy));
                 }
             }
-            let surface: Vec<(VoxelKey, f32)> = cells
+            let surface: Vec<(VoxelKey, f32, f32)> = cells
                 .iter()
-                .map(|&(x, y, z, h)| (voxelize((x, y, z), voxel_size), h))
-                .filter(|(k, _)| write.contains((k.0, k.1)))
+                .map(|&(x, y, z, h, w)| (voxelize((x, y, z), voxel_size), h, w))
+                .filter(|(k, _, _)| write.contains((k.0, k.1)))
                 .collect();
-            let keys: Vec<VoxelKey> = surface.iter().map(|&(k, _)| k).collect();
+            let keys: Vec<VoxelKey> = surface.iter().map(|&(k, _, _)| k).collect();
             let stage = Instant::now();
             let (added, removed) = self.replace_surface_region(&write, &keys);
             let replace_ms = ms_since(stage);
 
             let heights = self.heights.get_or_insert_with(Default::default);
+            let mut walls = match config.gpu_wall_distance {
+                true => Some(self.walls.get_or_insert_with(Default::default)),
+                false => None,
+            };
             for k in &removed {
                 heights.remove(k);
+                if let Some(walls) = walls.as_mut() {
+                    walls.remove(k);
+                }
             }
             let added_set: AHashSet<VoxelKey> = added.iter().copied().collect();
             let mut retuned: Vec<VoxelKey> = Vec::new();
-            for &(k, h) in &surface {
+            for &(k, h, w) in &surface {
+                if let Some(walls) = walls.as_mut() {
+                    walls.insert(k, w);
+                }
                 let old = heights.insert(k, h);
                 if !added_set.contains(&k) && old != Some(h) {
                     retuned.push(k);
@@ -525,13 +552,16 @@ impl Planner {
             &mut graph.cluster_index,
             &mut graph.node_scratch.seen,
         );
-        wall_distances_region(
-            &graph.cells,
-            &self.by_col,
-            &params,
-            &window,
-            &mut graph.wall_state,
-        );
+        match &self.walls {
+            Some(walls) => copy_wall_distances(&graph.cells, walls, &window, &mut graph.wall_state),
+            None => wall_distances_region(
+                &graph.cells,
+                &self.by_col,
+                &params,
+                &window,
+                &mut graph.wall_state,
+            ),
+        }
         gone_nodes.extend(place_nodes_region(
             &graph.cells,
             &params,
@@ -557,6 +587,12 @@ impl Planner {
             &mut graph.cell_state,
             &mut graph.node_edges,
         );
+    }
+
+    /// A surface cell's wall distance in meters, as the node graph uses it.
+    pub fn wall_distance(&self, key: VoxelKey) -> Option<f32> {
+        let id = self.graph.cells.id(key)?;
+        self.graph.wall_state.dist.get(id as usize).copied()
     }
 
     /// Relink the given cells, by height when the surface came with heights.
@@ -800,14 +836,32 @@ impl Planner {
 
     /// Full rebuild of nodes and node edges from the current cells.
     fn rebuild_nodes(&mut self, config: &Config) {
-        place_nodes(
-            &mut self.graph.cells,
-            &self.by_col,
-            &config.placement_params(),
-            &mut self.graph.wall_state,
-            &mut self.graph.node_scratch,
-            &mut self.graph.nodes,
-        );
+        let graph = &mut self.graph;
+        match &self.walls {
+            Some(walls) => {
+                let cells = &graph.cells;
+                graph.wall_state.reset(cells.slot_capacity());
+                for id in cells.ids() {
+                    let dist = walls.get(&cells.coord(id)).copied();
+                    graph.wall_state.dist[id as usize] = dist.unwrap_or(f32::INFINITY);
+                }
+                place_nodes_on_walls(
+                    &mut graph.cells,
+                    &config.placement_params(),
+                    &graph.wall_state.dist,
+                    &mut graph.node_scratch,
+                    &mut graph.nodes,
+                );
+            }
+            None => place_nodes(
+                &mut graph.cells,
+                &self.by_col,
+                &config.placement_params(),
+                &mut graph.wall_state,
+                &mut graph.node_scratch,
+                &mut graph.nodes,
+            ),
+        }
 
         build_node_edges(
             &self.graph.cells,
@@ -1001,6 +1055,23 @@ fn bfs_ball(
         seen[id as usize] = false;
     }
     ball
+}
+
+/// Window cells take their distance from `walls`, infinite where it has none.
+fn copy_wall_distances(
+    cells: &SurfaceCells,
+    walls: &ahash::AHashMap<VoxelKey, f32>,
+    window: &RepairWindow,
+    wall_state: &mut DijkstraState,
+) {
+    let slots = cells.slot_capacity();
+    if wall_state.dist.len() < slots {
+        wall_state.dist.resize(slots, f32::INFINITY);
+    }
+    for &id in window.cells() {
+        let dist = walls.get(&cells.coord(id)).copied();
+        wall_state.dist[id as usize] = dist.unwrap_or(f32::INFINITY);
+    }
 }
 
 #[cfg(test)]

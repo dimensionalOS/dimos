@@ -22,7 +22,7 @@ use ahash::AHashSet;
 use dimos_gpu_mls::synthetic::{Lcg, Scene};
 use dimos_mls_planner::mls_planner::{Config as PlannerConfig, Planner, RegionBounds};
 use dimos_mls_planner::voxel::{voxelize, VoxelKey};
-use dimos_voxel_ray_tracing::mapper::{Mapper, SurfaceRequest};
+use dimos_voxel_ray_tracing::mapper::{Mapper, SurfaceRequest, SURFACE_CELL_FLOATS};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{Config, Cylinder};
 
 const VOXEL_SIZE: f32 = 0.08;
@@ -31,6 +31,13 @@ const POINTS_PER_FRAME: usize = 20_000;
 /// Cells the streamed surface may differ on from the whole-map build, as a
 /// fraction: each region's window sees only the map up to its frame.
 const SURFACE_TOLERANCE: f64 = 0.02;
+/// Meters the GPU's straight-line wall distance (streamed) may sit from the
+/// CPU's walk along the surface (whole-map) at the median and 95th percentile:
+/// the GPU measures within a plane, the CPU around corners.
+const WALL_DELTA_MEDIAN: f32 = 0.1;
+const WALL_DELTA_P95: f32 = 0.4;
+/// Fraction of shared cells whose side of the wall clearance may flip.
+const WALL_CLEARANCE_FLIPS: f64 = 0.02;
 
 fn planner_config() -> PlannerConfig {
     PlannerConfig {
@@ -52,6 +59,7 @@ fn planner_config() -> PlannerConfig {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: true,
+        gpu_wall_distance: true,
         max_slope_deg: 45.0,
         worker_threads: 8,
     }
@@ -66,11 +74,17 @@ fn request(cfg: &PlannerConfig) -> SurfaceRequest {
     }
 }
 
-fn quads(cells: &[f32]) -> Vec<(f32, f32, f32, f32)> {
+type Cell = (f32, f32, f32, f32, f32);
+
+fn split_cells(cells: &[f32]) -> Vec<Cell> {
     cells
-        .chunks_exact(4)
-        .map(|c| (c[0], c[1], c[2], c[3]))
+        .chunks_exact(SURFACE_CELL_FLOATS)
+        .map(|c| (c[0], c[1], c[2], c[3], c[4]))
         .collect()
+}
+
+fn percentile(sorted: &[f32], q: f64) -> f32 {
+    sorted[((sorted.len() - 1) as f64 * q).round() as usize]
 }
 
 #[test]
@@ -110,7 +124,7 @@ fn streamed_gpu_surfaces_match_a_whole_map_build_and_plan() {
             z_min: c.z_min,
             z_max: c.z_max,
         };
-        streamed.update_region_with_surface(&local, &quads(&cells), &region, &planner_cfg);
+        streamed.update_region_with_surface(&local, &split_cells(&cells), &region, &planner_cfg);
     }
 
     let everything = Cylinder {
@@ -120,7 +134,7 @@ fn streamed_gpu_surfaces_match_a_whole_map_build_and_plan() {
         z_min: -1.0,
         z_max: 4.0,
     };
-    let whole = quads(&mapper.surfaces(&everything, &request).expect("surfaces"));
+    let whole = split_cells(&mapper.surfaces(&everything, &request).expect("surfaces"));
     let occupied: Vec<VoxelKey> = mapper
         .local_points(&everything.bounds())
         .chunks_exact(3)
@@ -128,11 +142,11 @@ fn streamed_gpu_surfaces_match_a_whole_map_build_and_plan() {
         .collect();
     let surface: Vec<VoxelKey> = whole
         .iter()
-        .map(|&(x, y, z, _)| voxelize((x, y, z), VOXEL_SIZE))
+        .map(|&(x, y, z, _, _)| voxelize((x, y, z), VOXEL_SIZE))
         .collect();
     let heights: Vec<f32> = whole.iter().map(|q| q.3).collect();
     let mut built = Planner::new(planner_cfg.worker_threads);
-    built.update_from_surface(&occupied, &surface, Some(&heights), &planner_cfg);
+    built.update_from_surface(&occupied, &surface, Some(&heights), None, &planner_cfg);
 
     let a: AHashSet<VoxelKey> = streamed.surface().collect();
     let b: AHashSet<VoxelKey> = built.surface().collect();
@@ -145,6 +159,42 @@ fn streamed_gpu_surfaces_match_a_whole_map_build_and_plan() {
     assert!(
         !a.is_empty() && differ <= SURFACE_TOLERANCE,
         "surfaces differ on {differ}"
+    );
+
+    let clearance = planner_cfg.wall_clearance_m;
+    let mut deltas: Vec<f32> = Vec::new();
+    let (mut flips, mut only_one_finite) = (0usize, 0usize);
+    for k in a.intersection(&b) {
+        let (Some(gpu), Some(cpu)) = (streamed.wall_distance(*k), built.wall_distance(*k)) else {
+            continue;
+        };
+        match (gpu.is_finite(), cpu.is_finite()) {
+            (true, true) => {
+                deltas.push((gpu - cpu).abs());
+                flips += ((gpu < clearance) != (cpu < clearance)) as usize;
+            }
+            (false, false) => {}
+            _ => only_one_finite += 1,
+        }
+    }
+    deltas.sort_by(f32::total_cmp);
+    let shared = a.intersection(&b).count();
+    let flip_rate = flips as f64 / shared.max(1) as f64;
+    let (median, p95) = (percentile(&deltas, 0.5), percentile(&deltas, 0.95));
+    eprintln!(
+        "wall distance gpu vs cpu over {} of {shared} shared cells: |delta| median {median:.3} p95 {p95:.3} max {:.3} m; \
+         {flips} flipped sides of the {clearance} m clearance, {only_one_finite} finite on one side only",
+        deltas.len(),
+        percentile(&deltas, 1.0),
+    );
+    assert!(!deltas.is_empty(), "no shared wall distances");
+    assert!(
+        median <= WALL_DELTA_MEDIAN && p95 <= WALL_DELTA_P95,
+        "wall distance median {median} p95 {p95}"
+    );
+    assert!(
+        flip_rate <= WALL_CLEARANCE_FLIPS,
+        "clearance flips {flip_rate}"
     );
 
     let ground = |(x, y, _): (f32, f32, f32)| (x, y, 0.0);

@@ -105,6 +105,7 @@ impl MLSPlanner {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             gpu_surfaces: false,
+            gpu_wall_distance: false,
             max_slope_deg: 45.0,
             worker_threads,
         };

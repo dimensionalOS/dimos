@@ -291,9 +291,18 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
         planes_per_component.len(),
         split
     );
+    // A wall seeds its plane only in columns where the plane has no walked cell.
+    let open_columns: AHashSet<(u32, i32, i32)> = gpu
+        .surface
+        .iter()
+        .filter(|k| !gpu_walls.contains(k))
+        .map(|k| (planes[k], k.0, k.1))
+        .collect();
     let mut walls_by_plane: AHashMap<u32, Vec<VoxelKey>> = AHashMap::new();
     for &w in &gpu.walls {
-        walls_by_plane.entry(planes[&w]).or_default().push(w);
+        if !open_columns.contains(&(planes[&w], w.0, w.1)) {
+            walls_by_plane.entry(planes[&w]).or_default().push(w);
+        }
     }
     let mut jfa_errors = 0;
     let sample: Vec<&(VoxelKey, Option<f32>)> = gpu_dist

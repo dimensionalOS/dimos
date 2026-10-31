@@ -26,6 +26,9 @@ use crate::voxel_ray_tracer::{
 
 pub type Point = (f32, f32, f32);
 
+/// Floats per cell `Mapper::surfaces` returns.
+pub const SURFACE_CELL_FLOATS: usize = 5;
+
 /// The MLS planner's surface parameters, which it sends so the GPU extracts
 /// the surface it would.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
@@ -83,8 +86,8 @@ impl Mapper {
         self.gpu.is_some()
     }
 
-    /// The GPU's MLS surface over `bounds`' columns, as x, y, z voxel center
-    /// and plane height per cell. None on the CPU.
+    /// The GPU's MLS surface over `bounds`' columns, SURFACE_CELL_FLOATS per
+    /// cell: x, y, z voxel center, plane height, wall distance. None on the CPU.
     pub fn surfaces(&mut self, bounds: &Cylinder, request: &SurfaceRequest) -> Option<Vec<f32>> {
         self.gpu.as_mut()?.surfaces(bounds, request)
     }
@@ -292,7 +295,7 @@ mod gpu {
 
     use dimos_gpu_mls::surfaces::SurfaceConfig;
 
-    use super::{Point, SurfaceRequest};
+    use super::{Point, SurfaceRequest, SURFACE_CELL_FLOATS};
     use crate::voxel_ray_tracer::{Config, Cylinder, FrameHits, VoxelMap};
 
     /// Headroom a regrown surface window gets over the one that outgrew it.
@@ -452,7 +455,8 @@ mod gpu {
         }
 
         /// The MLS surface over the columns of `bounds` and every height the
-        /// map spans, as x, y, z voxel center and plane height per cell.
+        /// map spans, as x, y, z voxel center, plane height and wall distance
+        /// (infinite on a plane with no wall) per cell.
         pub fn surfaces(
             &mut self,
             bounds: &Cylinder,
@@ -515,16 +519,17 @@ mod gpu {
             }
             let extractor = self.extractor.as_mut().expect("set above");
             extractor.extract(&mut self.map);
-            let (cells, heights) = extractor.read_heights();
+            let (cells, heights, walls) = extractor.read_heights();
             let half = 0.5 * voxel_size;
-            let mut out = Vec::with_capacity(4 * cells.len());
-            for ((x, y, z), h) in cells.into_iter().zip(heights) {
+            let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * cells.len());
+            for (((x, y, z), h), w) in cells.into_iter().zip(heights).zip(walls) {
                 if (x0..=x1).contains(&x) && (y0..=y1).contains(&y) {
                     out.extend_from_slice(&[
                         x as f32 * voxel_size + half,
                         y as f32 * voxel_size + half,
                         z as f32 * voxel_size + half,
                         h,
+                        w.unwrap_or(f32::INFINITY),
                     ]);
                 }
             }

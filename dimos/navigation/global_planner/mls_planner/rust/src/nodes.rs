@@ -303,20 +303,34 @@ pub fn place_nodes(
         &mut wall_seeds,
     );
     dijkstra(cells, &wall_seeds, state, Weight::Base);
+    place_nodes_on_walls(cells, params, &state.dist, scratch, nodes);
+}
 
+/// place_nodes on a wall distance field already measured, one per cell slot.
+pub fn place_nodes_on_walls(
+    cells: &mut SurfaceCells,
+    params: &PlacementParams,
+    wall_dist: &[f32],
+    scratch: &mut NodeScratch,
+    nodes: &mut Nodes,
+) {
+    nodes.clear();
+    if cells.is_empty() {
+        return;
+    }
     // Floor is the hard clearance. NMS already prefers the clearest cells.
     let node_floor = params.wall_clearance_m;
     let candidates: Vec<CellId> = cells
         .ids()
-        .filter(|&id| state.dist[id as usize] >= node_floor)
+        .filter(|&id| wall_dist[id as usize] >= node_floor)
         .collect();
-    place_from_candidates(cells, candidates, &state.dist, params, nodes);
+    place_from_candidates(cells, candidates, wall_dist, params, nodes);
 
     let live: Vec<CellId> = cells.ids().collect();
     let clusters = window_clusters(cells, &live, &mut scratch.seen);
-    ensure_node_per_component(cells, &state.dist, params, &clusters, None, nodes);
+    ensure_node_per_component(cells, wall_dist, params, &clusters, None, nodes);
 
-    apply_wall_safe_penalty(cells, &state.dist, params);
+    apply_wall_safe_penalty(cells, wall_dist, params);
 }
 
 /// Each surface cell's walked distance over surface links to the nearest

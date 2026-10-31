@@ -781,18 +781,19 @@ fn planner_config(voxel_size: f32) -> PlannerConfig {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         gpu_surfaces: false,
+        gpu_wall_distance: false,
         max_slope_deg: surface.max_slope_deg,
         worker_threads: 8,
     }
 }
 
 /// The GPU surface of the whole map, extracted tile by tile: each cell with
-/// its plane height in meters.
+/// its plane height and wall distance in meters (infinite with no wall).
 fn tiled_surface(
     map: &mut BrickMap,
     healthy: &[VoxelKey],
     voxel_size: f32,
-) -> Vec<(VoxelKey, f32)> {
+) -> Vec<(VoxelKey, f32, f32)> {
     let tile = (TILE_M / voxel_size) as i32;
     let margin = (TILE_MARGIN_M / voxel_size).ceil() as i32;
     let mut tiles: ahash::AHashMap<(i32, i32), Vec<VoxelKey>> = ahash::AHashMap::new();
@@ -818,11 +819,11 @@ fn tiled_surface(
             .expect("a tile fits the device");
         extractor.extract(map);
         map.finish();
-        let result = extractor.read();
+        let (surface, heights, walls) = extractor.read_heights();
         let core = |v: i32, c: i32| v.div_euclid(tile) == c;
-        for (k, h) in result.surface.iter().zip(&result.heights) {
+        for ((k, h), w) in surface.into_iter().zip(heights).zip(walls) {
             if core(k.0, t.0) && core(k.1, t.1) {
-                out.push((*k, *h));
+                out.push((k, h, w.unwrap_or(f32::INFINITY)));
             }
         }
     }
@@ -865,9 +866,9 @@ fn sensor_height(origins: &[Point], occupied: &AHashSet<VoxelKey>, voxel_size: f
 
 /// The whole recording on the GPU map, then the MLS planner on its healthy
 /// voxels twice: with the CPU's whole-voxel surface, and with the GPU's
-/// sub-voxel surface and plane heights. Goals sit along the walked
+/// sub-voxel surface and plane heights, and its wall distances with `gpu-walls`. Goals sit along the walked
 /// trajectory, so every one should be reachable from the start.
-fn run_reach(path: &str, voxel_size: f32, out: &str) {
+fn run_reach(path: &str, voxel_size: f32, out: &str, gpu_wall_distance: bool) {
     let gpu = Gpu::new().expect("a GPU");
     let mut map = gpu_map(&gpu, voxel_size);
     let mut origins = Vec::new();
@@ -917,8 +918,13 @@ fn run_reach(path: &str, voxel_size: f32, out: &str) {
     let mut gpu_planner = Planner::new(config.worker_threads);
     let cells: Vec<VoxelKey> = surface.iter().map(|s| s.0).collect();
     let heights: Vec<f32> = surface.iter().map(|s| s.1).collect();
-    let gpu_config = planner_config(voxel_size);
-    gpu_planner.update_from_surface(&healthy, &cells, Some(&heights), &gpu_config);
+    let walls: Vec<f32> = surface.iter().map(|s| s.2).collect();
+    let gpu_config = PlannerConfig {
+        gpu_wall_distance,
+        ..planner_config(voxel_size)
+    };
+    let gpu_walls = Some(walls.as_slice()).filter(|_| gpu_wall_distance);
+    gpu_planner.update_from_surface(&healthy, &cells, Some(&heights), gpu_walls, &gpu_config);
     let gpu_graph_time = started.elapsed();
     println!(
         "cpu planner build {:.0} ms ({} surface cells, {} nodes); gpu surface {:.0} ms + graph {:.0} ms ({} surface cells, {} nodes)",
@@ -1027,7 +1033,7 @@ fn run_reach(path: &str, voxel_size: f32, out: &str) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames], or reach <voxel_size> <out.json>, or export <voxel_size> <first> <count> <x> <y> <z> <half_m> <out.json>";
+    let usage = "usage: whole_run <frames> cpu|gpu|parity|control [voxel_size] [max_frames], or reach <voxel_size> <out.json> [gpu-walls], or export <voxel_size> <first> <count> <x> <y> <z> <half_m> <out.json>";
     let path = args.get(1).expect(usage);
     let voxel_size = args
         .get(3)
@@ -1047,7 +1053,12 @@ fn main() {
                 args.get(10).expect(usage),
             )
         }
-        Some("reach") => run_reach(path, voxel_size, args.get(4).expect(usage)),
+        Some("reach") => run_reach(
+            path,
+            voxel_size,
+            args.get(4).expect(usage),
+            args.get(5).is_some_and(|a| a == "gpu-walls"),
+        ),
         Some("control") => run_control(
             path,
             voxel_size,
