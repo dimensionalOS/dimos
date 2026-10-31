@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+import uuid
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,8 +35,9 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
 from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
-from dimos.control.contract.limits import movable_joints
+from dimos.control.contract.limits import limits as limits_of, movable_joints
 from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -277,21 +279,24 @@ class DamiaoConnection(ConnectionModule):
             session.grippers[gripper.name] = group
         self._read_state()
 
-    def _activate(self) -> None:
-        session = self._session
-        if isinstance(session, _NativeSession):
-            assert self._physical is not None
-            self._physical.gravity(self._arm_positions(session))
-            for arm in session.arms.values():
-                arm.set_mode("mit")
-            session.robot.enable()
-            session.active = True
-        self._read_state()
-
     @rpc
     def start(self) -> None:
         try:
-            super().start()
+            Module.start(self)
+            self._session_id = uuid.uuid4().hex
+            self._limits = limits_of(self.config)
+            self.connect()
+            with self._hardware_lock:
+                session = self._session
+                if isinstance(session, _NativeSession):
+                    assert self._physical is not None
+                    self._physical.gravity(self._arm_positions(session))
+                    for arm in session.arms.values():
+                        arm.set_mode("mit")
+                    session.robot.enable()
+                    session.active = True
+                self._read_state()
+                self._connected = True
             self.register_disposable(Disposable(self.position_command.subscribe(self._on_position)))
             self._reader = threading.Thread(
                 target=self._read_loop, daemon=True, name=f"{self.config.source}-read"

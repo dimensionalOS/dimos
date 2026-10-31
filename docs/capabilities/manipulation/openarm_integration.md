@@ -1,6 +1,6 @@
 # OpenArm integration
 
-DimOS drives the [OpenArm](https://openarm.dev) bimanual platform as one
+dimOS drives the [OpenArm](https://openarm.dev) bimanual platform as one
 `OpenArmConnection`. It owns both seven-joint arms and two normalized grippers,
 with one CAN bus per arm.
 
