@@ -379,8 +379,8 @@ mod gpu {
         z_range: Option<(i32, i32)>,
         extractor: Option<SurfaceExtractor>,
         /// Columns whose surface may have moved since it was last extracted:
-        /// a voxel there crossed the healthy line, or the GPU changed it
-        /// materially (created, removed, past a refit milestone).
+        /// a voxel there started or stopped being emitted, or the GPU changed
+        /// an emitted one materially (created, removed, past a refit milestone).
         dirty: AHashSet<(i32, i32)>,
         /// Columns the last surfaces sent a cell in, which a later rewrite
         /// that leaves them none must clear.
@@ -511,12 +511,13 @@ mod gpu {
                     coarse.insert(voxel.key);
                 }
             }
-            // Only healthy voxels hold a surface; a removed healthy one crossed above.
+            // Isolated noise is not emitted, as the CPU path's local map drops
+            // it; a removed emitted voxel flipped above.
             self.dirty.extend(
                 report
                     .changed
                     .iter()
-                    .filter(|&&k| mirror.is_healthy(k))
+                    .filter(|&&k| mirror.is_emitted(k))
                     .map(|&(x, y, _)| (x, y)),
             );
             let fine = match config.fine_layer() {

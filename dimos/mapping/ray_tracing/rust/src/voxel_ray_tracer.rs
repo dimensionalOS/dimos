@@ -219,10 +219,6 @@ impl VoxelMap {
         }
     }
 
-    pub fn is_healthy(&self, key: VoxelKey) -> bool {
-        self.voxels.get(&key).is_some_and(|v| v.health > 0)
-    }
-
     pub fn healthy_count(&self) -> usize {
         self.voxels.healthy_len()
     }
@@ -398,15 +394,18 @@ impl VoxelMap {
 
     /// Copy one voxel's state from a map updated elsewhere (the GPU's): its
     /// health and fine mask, or its removal when `health` is None. Keeps
-    /// support counts and changed chunks in sync. Returns whether it crossed
-    /// the healthy line, which a removed healthy voxel does.
+    /// support counts and changed chunks in sync. Returns whether it started
+    /// or stopped being emitted (healthy with support_min healthy neighbors),
+    /// which is what the local map shows; its neighbors' flips are not counted.
     pub fn mirror_voxel(&mut self, key: VoxelKey, health: Option<VoxelHealth>, fine: u64) -> bool {
+        let was_emitted = self.is_emitted(key);
         let Some(health) = health else {
-            let gone_healthy = self.voxels.remove(&key).is_some_and(|gone| gone.health > 0);
-            if gone_healthy {
-                self.health_crossed(key, false);
+            if let Some(gone) = self.voxels.remove(&key) {
+                if gone.health > 0 {
+                    self.health_crossed(key, false);
+                }
             }
-            return gone_healthy;
+            return was_emitted;
         };
         let was_healthy = match self.voxels.update_health(key, |_| health) {
             Some((was, _)) => was > 0,
@@ -422,11 +421,20 @@ impl VoxelMap {
             }
             voxel.fine = fine;
         }
-        let crossed = was_healthy != (health > 0);
-        if crossed {
+        if was_healthy != (health > 0) {
             self.health_crossed(key, health > 0);
         }
-        crossed
+        was_emitted != self.is_emitted(key)
+    }
+
+    /// Whether the voxel is healthy with support_min healthy neighbors, as
+    /// the local map emits it.
+    pub fn is_emitted(&self, key: VoxelKey) -> bool {
+        self.voxels.get(&key).is_some_and(|v| v.health > 0)
+            && self
+                .voxels
+                .support(&key)
+                .is_some_and(|s| voxel_supported(s, self.support_min))
     }
 
     /// Set a voxel's health directly, creating it if absent. Bypasses hit and
