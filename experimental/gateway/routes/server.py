@@ -45,7 +45,7 @@ async def info(state: GatewayState) -> dict[str, Any]:
         "dimosDir": str(state.dimos_dir),
         "runsDir": str(REGISTRY_DIR),
         "logsDirs": [str(logs_dir) for logs_dir in logs.logs_dirs(state.dimos_dir)],
-        "recordingsDir": str(store.recordings_dir()),
+        "recordingsDir": str(store.recordings_dir(state.dimos_dir)),
     }
     server = {
         "exe": sys.executable,

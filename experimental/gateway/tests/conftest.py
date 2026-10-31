@@ -61,7 +61,9 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(logs, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(launches, "LOG_DIR", tmp_path / "logs")
     # no ~/.dimos/config.yaml of the machine running the tests
-    monkeypatch.setenv("DIMOS_HOME", str(tmp_path / "dimos_home"))
+    monkeypatch.setenv("DIMOS_APP", json.dumps({"home": str(tmp_path / "dimos_home")}))
+    # read by nothing: DIMOS_APP's home is the only one
+    monkeypatch.setenv("DIMOS_HOME", str(tmp_path / "not_this_home"))
     # nor its DTOP, which a launch passes on
     monkeypatch.delenv(launches.DTOP_ENV, raising=False)
     # nor a git repo the temp dir happens to be inside
