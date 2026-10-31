@@ -43,8 +43,6 @@ STRUCTURED = ("global", "modules", "secrets")
 
 # GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
 DTOP_ENV = "DTOP"
-# GlobalConfig.record_dir's flag: where this launch's recordings go
-RECORD_DIR_FLAG = "--record-dir"
 _lock = threading.RLock()
 # called from a thread when a launched child exits (the launch watcher wakes on it)
 exit_listeners: list[Callable[[], None]] = []
@@ -446,27 +444,6 @@ def gossip_env() -> dict[str, str]:
     return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
 
 
-def recordings_flag(dimos_dir: Path, launch: LaunchConfig) -> list[str]:
-    """`--record-dir`: the directory `GET /history/recordings` answers with.
-
-    That endpoint is the one answer to where recordings live, so the run is told the directory
-    outright instead of resolving it again for itself and landing in the checkout. It is a root
-    flag, in front of `run`, like the other GlobalConfig flags a launch passes; it is not folded
-    into the launch's config, which is the user's own overrides and nothing else.
-
-    A caller that names the directory itself is left alone, in its config or among the raw args
-    of `POST /active/exec`: a root flag is merged after the args `run` is given, so without this
-    check the gateway's directory would silently beat what the user typed. A checkout whose dimos
-    has no `--record-dir` gets nothing: it would refuse the flag.
-    """
-    typed = any(
-        arg == RECORD_DIR_FLAG or arg.startswith(RECORD_DIR_FLAG + "=") for arg in launch.args
-    )
-    if "record_dir" in launch.global_ or typed or not store.takes_record_dir(dimos_dir):
-        return []
-    return [f"{RECORD_DIR_FLAG}={store.recordings_dir(dimos_dir)}"]
-
-
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
     global_, modules = without_secrets(launch.global_, launch.modules, launch.secret_paths())
     if launch.args:
@@ -553,10 +530,9 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             **gossip_env(),
             **secret_vars,
         }
-        recordings = recordings_flag(dimos_dir, launch)
         pid = _spawn(
-            [str(program), *recordings, *run_args(blueprint, launch)],
-            [*shown_env, "dimos", *recordings, *shown_run],
+            [str(program), *run_args(blueprint, launch)],
+            [*shown_env, "dimos", *shown_run],
             str(dimos_dir),
             env,
         )

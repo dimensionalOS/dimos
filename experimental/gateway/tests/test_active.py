@@ -258,68 +258,15 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     assert client.get("/history").json()["runs"][0]["running"]
 
 
-def takes_record_dir(checkout: Path) -> None:
-    """Make the fake checkout's dimos one that has `--record-dir`, as the recordings PR adds it."""
-    config = checkout / "dimos" / "core" / "global_config.py"
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text('record_dir: str = ""\n')
-
-
-def write_config(home: Path, text: str) -> None:
-    (home / "dimos_home").mkdir(exist_ok=True)
-    (home / "dimos_home" / "config.yaml").write_text(text)
-
-
-def test_recordings_is_where_the_checkout_records(
-    client: TestClient, checkout: Path, home: Path
+def test_recordings_is_the_standard_directory(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """dimos's own default when its dimos has no `--record-dir`, whatever config.yaml says."""
-    assert client.get("/history/recordings").json() == {"path": str(home / "state" / "recordings")}
-    (checkout / ".git").mkdir()
-    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
-    write_config(home, f"recordings:\n  dir: {home / 'recs'}\n")
-    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
-
-
-def test_recordings_is_the_configured_directory_when_the_checkout_takes_it(
-    client: TestClient, checkout: Path, home: Path
-) -> None:
-    takes_record_dir(checkout)
-    write_config(home, f"recordings:\n  dir: {home / 'recs'}\n")
-    assert client.get("/history/recordings").json() == {"path": str(home / "recs")}
-    # relative to config.yaml's folder, not to whichever directory a reader runs in
-    write_config(home, "recordings:\n  dir: recs\n")
-    assert client.get("/history/recordings").json() == {"path": str(home / "dimos_home" / "recs")}
-
-
-def test_a_launch_is_told_the_recordings_directory_only_when_its_dimos_takes_it(
-    client: TestClient, checkout: Path, home: Path
-) -> None:
-    write_config(home, f"recordings:\n  dir: {home / 'recs'}\n")
-    assert client.post("/active/launch", json={"blueprint": "demo"}).status_code == 200
-    until(running(client))
-    assert "--record-dir" not in launch_of(client)["output"]
-    client.post("/active/stop")
-    until(stopped(client))
-
-    takes_record_dir(checkout)
-    assert client.post("/active/launch", json={"blueprint": "demo"}).status_code == 200
-    until(output_has(client, f"--record-dir={home / 'recs'}"))
-
-
-def test_a_launch_that_names_its_own_recordings_directory_keeps_it(
-    checkout: Path, home: Path
-) -> None:
-    """Both ways of asking for one: in the config, and among the raw args of /active/exec."""
-    flag = launches.recordings_flag
-    assert flag(checkout, launches.LaunchConfig()) == []
-    takes_record_dir(checkout)
-    assert flag(checkout, launches.LaunchConfig()) == [
-        f"--record-dir={launches.store.recordings_dir(checkout)}"
-    ]
-    assert flag(checkout, launches.LaunchConfig({"record_dir": "/tmp/mine"})) == []
-    assert flag(checkout, launches.LaunchConfig(args=["--record-dir=/tmp/mine"])) == []
-    assert flag(checkout, launches.LaunchConfig(args=["--record-dir", "/tmp/mine"])) == []
+    assert client.get("/history/recordings").json() == {"path": str(launches.store.RECORDINGS_DIR)}
+    (tmp_path / "dimos_home").mkdir(exist_ok=True)
+    (tmp_path / "dimos_home" / "config.yaml").write_text(
+        f"recordings:\n  dir: {tmp_path / 'recs'}\n"
+    )
+    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
 
 
 def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:
