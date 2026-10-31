@@ -391,7 +391,10 @@ impl MlsPlanner {
             return;
         }
         if !self.surfaces_seen {
-            info!("Planning on the ray tracer's GPU surfaces.");
+            info!(
+                wall_distance = self.config.gpu_wall_distance,
+                "Planning on the ray tracer's GPU surfaces."
+            );
             self.surfaces_seen = true;
         }
         self.pending_surface = Some(msg);

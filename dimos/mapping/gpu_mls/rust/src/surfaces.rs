@@ -30,7 +30,7 @@ const SUPPORT_Z_TOL: i32 = 3;
 /// The CPU HOLE_SPAN_CELLS: empty columns a gap may span and still be a hole.
 const HOLE_SPAN_CELLS: i32 = 4;
 const SURFACE_BINDINGS: u32 = 13;
-const PLANE_BINDINGS: u32 = 7;
+const PLANE_BINDINGS: u32 = 8;
 /// Uniform offsets must be 256-byte aligned for dynamic binding.
 const FLOOD_STRIDE: u64 = 256;
 /// Flood steps a uniform slot is kept for: both directions of every power of two.
@@ -467,6 +467,7 @@ impl SurfaceExtractor {
         let a = gpu.storage("plane cells a", 4 * cells);
         let b = gpu.storage("plane cells b", 4 * cells);
         let owner = gpu.storage("plane owner", 4 * cells);
+        let z = gpu.storage("plane z", 4 * cells);
         let bufs = &self.buffers;
         let group = gpu.bind_group(
             "planes",
@@ -479,6 +480,7 @@ impl SurfaceExtractor {
                 &a,
                 &b,
                 &owner,
+                &z,
             ],
         );
         self.plane_cells = Some(PlaneCells { cells, group });

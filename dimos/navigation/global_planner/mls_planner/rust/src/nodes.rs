@@ -22,7 +22,8 @@ use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
 use crate::adjacency::{
-    build_surface_cells, build_surface_lookup, CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL,
+    build_surface_cells, build_surface_cells_by_height, build_surface_lookup, CellId, Edge,
+    SurfaceCells, SurfaceLookup, NO_CELL,
 };
 use crate::columns::ColumnIz;
 use crate::dijkstra::{
@@ -348,6 +349,32 @@ pub fn wall_distances(
     build_surface_lookup(surface, &mut lookup);
     let mut cells = SurfaceCells::default();
     build_surface_cells(&mut cells, &lookup, voxel_size, step_cells);
+    let mut seeds = Vec::new();
+    collect_wall_adjacent_cells(&cells, &by_col, clearance_cells, step_cells, &mut seeds);
+    let mut state = DijkstraState::default();
+    dijkstra(&cells, &seeds, &mut state, Weight::Base);
+    cells
+        .ids()
+        .map(|id| (cells.coord(id), state.dist[id as usize]))
+        .collect()
+}
+
+/// wall_distances walked over cells linked by surface height, as the
+/// planner links a GPU surface.
+pub fn wall_distances_by_height(
+    voxel_map: &AHashSet<VoxelKey>,
+    surface: &[VoxelKey],
+    heights: &AHashMap<VoxelKey, f32>,
+    clearance_cells: i32,
+    step_cells: i32,
+    voxel_size: f32,
+    step_threshold_m: f32,
+) -> Vec<(VoxelKey, f32)> {
+    let by_col = ColumnIz::from_voxels(voxel_map.iter());
+    let mut lookup = SurfaceLookup::default();
+    build_surface_lookup(surface, &mut lookup);
+    let mut cells = SurfaceCells::default();
+    build_surface_cells_by_height(&mut cells, &lookup, heights, voxel_size, step_threshold_m);
     let mut seeds = Vec::new();
     collect_wall_adjacent_cells(&cells, &by_col, clearance_cells, step_cells, &mut seeds);
     let mut state = DijkstraState::default();

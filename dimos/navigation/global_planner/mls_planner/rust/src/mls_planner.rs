@@ -96,8 +96,7 @@ pub struct Config {
     /// heights, slope gate); without one, surfaces are extracted here.
     pub gpu_surfaces: bool,
     /// Place nodes on the GPU surface's wall distances instead of measuring
-    /// them here. Off: they run straight within a plane, shorter than the walk
-    /// here on stairs, and cut staircases at the wall clearance.
+    /// them here.
     pub gpu_wall_distance: bool,
     /// The GPU surface's slope gate: planes tilted further are not standable.
     #[validate(range(min = 0.0, max = 90.0))]

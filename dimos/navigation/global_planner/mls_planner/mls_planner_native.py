@@ -59,8 +59,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Plan on the GPU surface a GPU ray tracer sends as surface_cells; without one, surfaces are extracted here.
     gpu_surfaces: bool = True
-    # Place nodes on the GPU surface's wall distances; off since they cut staircases at the wall clearance.
-    gpu_wall_distance: bool = False
+    # Place nodes on the GPU surface's wall distances instead of measuring them here.
+    gpu_wall_distance: bool = True
     # The GPU surface's slope gate: planes tilted further are not standable.
     max_slope_deg: float = 45.0
     # Worker threads for parallel planner work.

@@ -25,7 +25,7 @@ use common::{cpu_config, gpu, gpu_config, lfs_cloud};
 use dimos_gpu_mls::brick_map::{BrickMap, VoxelKey};
 use dimos_gpu_mls::surfaces::{SurfaceConfig, SurfaceExtractor, Window};
 use dimos_gpu_mls::synthetic::{Lcg, Scene};
-use dimos_mls_planner::{surface_cells, wall_distances};
+use dimos_mls_planner::{surface_cells, wall_distances_by_height};
 
 const WALL_CLEARANCE: f32 = 0.1;
 /// Largest share of the CPU's standable cells the sub-voxel stages may
@@ -36,6 +36,10 @@ const STANDABLE_DIVERGENCE: f64 = 0.15;
 const WALL_DIVERGENCE: f64 = 0.30;
 /// Meters two float distances may differ by and still agree.
 const DISTANCE_TOLERANCE: f32 = 1e-3;
+/// Sampled cells the flood may read more than a voxel past the exact nearest wall.
+const JUMP_FLOOD_MISSES: f64 = 0.02;
+/// Cells whose GPU wall distance may exceed the CPU's walk by more than a voxel.
+const LONGER_THAN_WALKED: f64 = 0.02;
 /// Real map named in the report; pulled with get_data.
 const REAL_MAP: &str = "go2_hongkong_office_twopass_map.pc2.lcm";
 
@@ -216,14 +220,22 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
     let filled_gpu = gpu_surface.len() - gpu_standable.len();
     eprintln!("  filled cells: cpu {filled_cpu} gpu {filled_gpu}");
 
-    // Wall distance on the GPU's surface, so only the distance itself differs.
+    // Wall distance on the GPU's surface and heights, so only the distance itself differs.
     let surface_list: Vec<VoxelKey> = gpu.surface.clone();
-    let cpu_dist: AHashMap<VoxelKey, f32> = wall_distances(
+    let height_of: AHashMap<VoxelKey, f32> = gpu
+        .surface
+        .iter()
+        .copied()
+        .zip(gpu.heights.iter().copied())
+        .collect();
+    let cpu_dist: AHashMap<VoxelKey, f32> = wall_distances_by_height(
         &occupied,
         &surface_list,
+        &height_of,
         cells.clearance,
         cells.step,
         voxel_size,
+        config.step_threshold_m,
     )
     .into_iter()
     .collect();
@@ -272,7 +284,7 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
         percentile(&excess, 0.95),
         percentile(&excess, 1.0),
     );
-    // Jump flooding against an exact nearest-wall search per plane, on a sample.
+    // Jump flooding against an exact nearest-wall search per plane, rise included, on a sample.
     let planes: AHashMap<VoxelKey, u32> = surfaces.plane_ids().into_iter().collect();
     let components = host_components(&gpu.surface, cells.step);
     let mut planes_per_component: AHashMap<u32, AHashSet<u32>> = AHashMap::new();
@@ -291,7 +303,7 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
         planes_per_component.len(),
         split
     );
-    // A wall seeds its plane only in columns where the plane has no walked cell.
+    // A wall seeds its plane's flood only in columns where the plane has no walked cell.
     let open_columns: AHashSet<(u32, i32, i32)> = gpu
         .surface
         .iter()
@@ -304,7 +316,15 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
             walls_by_plane.entry(planes[&w]).or_default().push(w);
         }
     }
-    let mut jfa_errors = 0;
+    let mut walls_by_column: AHashMap<(u32, i32, i32), Vec<VoxelKey>> = AHashMap::new();
+    for &w in &gpu.walls {
+        walls_by_column
+            .entry((planes[&w], w.0, w.1))
+            .or_default()
+            .push(w);
+    }
+    // With the rise in the metric, the flood keeps a seed that is near-best, never a nearer one than exists.
+    let (mut shorter, mut longer_by_a_voxel) = (0, 0);
     let sample: Vec<&(VoxelKey, Option<f32>)> = gpu_dist
         .iter()
         .step_by((gpu_dist.len() / 2000).max(1))
@@ -312,9 +332,28 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
     for &&(k, g) in &sample {
         let exact = walls_by_plane.get(&planes[&k]).map(|ws| {
             ws.iter()
-                .map(|w| (((w.0 - k.0).pow(2) + (w.1 - k.1).pow(2)) as f32).sqrt() * voxel_size)
+                .map(|w| {
+                    let flat =
+                        (((w.0 - k.0).pow(2) + (w.1 - k.1).pow(2)) as f32).sqrt() * voxel_size;
+                    flat.hypot(height_of[w] - height_of[&k])
+                })
                 .fold(f32::INFINITY, f32::min)
         });
+        // ...and any wall of the plane one link away.
+        let linked = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .iter()
+            .flat_map(|(dx, dy)| {
+                walls_by_column
+                    .get(&(planes[&k], k.0 + dx, k.1 + dy))
+                    .into_iter()
+                    .flatten()
+            })
+            .map(|w| voxel_size.hypot(height_of[w] - height_of[&k]))
+            .fold(f32::INFINITY, f32::min);
+        let exact = match exact {
+            Some(e) => Some(e.min(linked)),
+            None => linked.is_finite().then_some(linked),
+        };
         let exact = exact.map(|e| {
             if gpu_walls.contains(&k) {
                 0.0
@@ -322,26 +361,27 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
                 e.max(voxel_size)
             }
         });
-        let differs = match (exact, g) {
-            (Some(e), Some(g)) => (e - g).abs() > DISTANCE_TOLERANCE,
-            (e, g) => e.is_some() != g.is_some(),
-        };
-        if differs {
-            jfa_errors += 1;
+        match (exact, g) {
+            (Some(e), Some(g)) => {
+                shorter += (g < e - DISTANCE_TOLERANCE) as usize;
+                longer_by_a_voxel += (g > e + voxel_size) as usize;
+            }
+            (e, g) => longer_by_a_voxel += (e.is_some() != g.is_some()) as usize,
         }
     }
     eprintln!(
-        "  jump flood vs exact per-plane nearest wall: {jfa_errors} of {} sampled cells differ",
+        "  jump flood vs exact per-plane nearest wall over {} sampled cells: {shorter} shorter, {longer_by_a_voxel} longer by more than a voxel",
         sample.len()
     );
-    assert!(jfa_errors as f64 <= 0.01 * sample.len() as f64);
-    // Straight lines never exceed walked paths, except across the seam of a split plane.
+    assert_eq!(shorter, 0);
+    assert!(longer_by_a_voxel as f64 <= JUMP_FLOOD_MISSES * sample.len() as f64);
+    // Straight lines never exceed walked paths, except across the seam of a split plane and where the flood keeps a near-best seed.
     let longer = excess
         .iter()
         .filter(|e| **e < -voxel_size - DISTANCE_TOLERANCE)
         .count();
     eprintln!("  gpu longer than cpu by more than a voxel: {longer} cells");
-    assert!(longer as f64 <= 0.01 * excess.len() as f64);
+    assert!(longer as f64 <= LONGER_THAN_WALKED * excess.len() as f64);
 }
 
 /// Connected surfaces by breadth-first search over the CPU link rule.

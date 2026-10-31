@@ -111,17 +111,26 @@ fn cell_index(x: i32, y: i32, z: i32) -> u32 {
     return (u32(z) * sp.size.y + u32(y)) * sp.size.x + u32(x);
 }
 
-fn pack_seed(x: i32, y: i32) -> u32 {
-    return u32(x) | (u32(y) << 16u);
-}
-
+// A wall seed is its cell index, so it carries the wall's z.
 fn seed_dist_sq(x: i32, y: i32, seed: u32) -> i32 {
     if (seed == NO_SEED) {
         return 0x7fffffff;
     }
-    let dx = i32(seed & 0xffffu) - x;
-    let dy = i32(seed >> 16u) - y;
+    let dx = i32(seed % sp.size.x) - x;
+    let dy = i32((seed / sp.size.x) % sp.size.y) - y;
     return dx * dx + dy * dy;
+}
+
+const NO_DISTANCE: f32 = 3.0e38;
+
+// Squared meters to a seed counting the surface's rise, as the CPU's walked edges do.
+fn seed_dist_sq_3d(x: i32, y: i32, z: i32, seed: u32) -> f32 {
+    if (seed == NO_SEED) {
+        return NO_DISTANCE;
+    }
+    let flat = f32(seed_dist_sq(x, y, seed)) * sp.voxel_size * sp.voxel_size;
+    let rise = heights[seed] - heights[cell_index(x, y, z)];
+    return flat + rise * rise;
 }
 
 // Healthy voxels inside the window set their column bit.
@@ -884,6 +893,8 @@ struct PlaneInfo {
 @group(3) @binding(4) var<storage, read_write> plane_cells_a: array<u32>;
 @group(3) @binding(5) var<storage, read_write> plane_cells_b: array<u32>;
 @group(3) @binding(6) var<storage, read_write> plane_owner: array<u32>;
+// Per plane cell: the z of the plane's cell in that column, -1 where it has none.
+@group(3) @binding(7) var<storage, read_write> plane_z: array<i32>;
 
 fn plane_of_cell(c: u32) -> u32 {
     return seeds_a[atomicLoad(&labels[planes_base() + c])];
@@ -970,6 +981,7 @@ fn init_plane_cells(
     }
     plane_owner[t] = owner_of(t);
     plane_cells_a[t] = NO_SEED;
+    plane_z[t] = -1;
 }
 
 fn plane_cell(id: u32, x: i32, y: i32) -> u32 {
@@ -987,12 +999,15 @@ fn scatter_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
     var word = 0u;
     var bits = 0u;
     for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        let id = plane_of_cell(cell_index(x, y, z));
+        if (id != NO_SEED && plane_z[plane_cell(id, x, y)] < 0) {
+            plane_z[plane_cell(id, x, y)] = z;
+        }
         if (!bit_at(x, y, z, 3u)) {
             continue;
         }
-        let id = plane_of_cell(cell_index(x, y, z));
         if (id != NO_SEED && !plane_open_in_column(x, y, id)) {
-            plane_cells_a[plane_cell(id, x, y)] = pack_seed(x, y);
+            plane_cells_a[plane_cell(id, x, y)] = cell_index(x, y, z);
         }
     }
 }
@@ -1008,6 +1023,17 @@ fn plane_open_in_column(x: i32, y: i32, id: u32) -> bool {
         }
     }
     return false;
+}
+
+// The flood weighs the rise where the plane has a cell to rise from.
+fn flood_dist_sq(x: i32, y: i32, z: i32, seed: u32) -> f32 {
+    if (seed == NO_SEED) {
+        return NO_DISTANCE;
+    }
+    if (z < 0) {
+        return f32(seed_dist_sq(x, y, seed)) * sp.voxel_size * sp.voxel_size;
+    }
+    return seed_dist_sq_3d(x, y, z, seed);
 }
 
 fn plane_read(t: u32) -> u32 {
@@ -1037,7 +1063,8 @@ fn plane_flood_pass(
     let x = lx + i32(e.y);
     let y = ly + i32(e.z);
     var best = plane_read(t);
-    var best_d = seed_dist_sq(x, y, best);
+    let z = plane_z[t];
+    var best_d = flood_dist_sq(x, y, z, best);
     for (var oy = -1; oy <= 1; oy++) {
         for (var ox = -1; ox <= 1; ox++) {
             let qx = lx + ox * flood.step;
@@ -1046,7 +1073,7 @@ fn plane_flood_pass(
                 continue;
             }
             let seed = plane_read(e.x + u32(qy * width + qx));
-            let d = seed_dist_sq(x, y, seed);
+            let d = flood_dist_sq(x, y, z, seed);
             if (d < best_d) {
                 best = seed;
                 best_d = d;
@@ -1060,8 +1087,46 @@ fn plane_flood_pass(
     }
 }
 
-// Straight-line distance in meters from each surface cell to the nearest
-// wall cell of its plane, 0 on wall cells, -1 on a plane with no wall. Cells
+// The flood weighs the rise from one z per column; the seeds around the cell
+// are weighed again from the cell's own z.
+fn nearest_seed_3d(id: u32, x: i32, y: i32, z: i32) -> f32 {
+    let e = plane_table[id];
+    let x0 = i32(e.y);
+    let y0 = i32(e.z);
+    let x1 = x0 + i32(e.w);
+    let y1 = y0 + i32(plane_height(id));
+    var best = NO_DISTANCE;
+    for (var oy = -1; oy <= 1; oy++) {
+        for (var ox = -1; ox <= 1; ox++) {
+            let qx = x + ox;
+            let qy = y + oy;
+            if (qx < x0 || qy < y0 || qx >= x1 || qy >= y1) {
+                continue;
+            }
+            best = min(best, seed_dist_sq_3d(x, y, z, plane_read(plane_cell(id, qx, qy))));
+        }
+    }
+    // A wall of the plane one link away, which an open column keeps out of the flood.
+    let dirs = array<vec2<i32>, 4>(vec2<i32>(-1, 0), vec2<i32>(1, 0), vec2<i32>(0, -1), vec2<i32>(0, 1));
+    for (var k = 0; k < 4; k++) {
+        let nx = x + dirs[k].x;
+        let ny = y + dirs[k].y;
+        if (!in_window_xy(nx, ny)) {
+            continue;
+        }
+        var word = 0u;
+        var bits = 0u;
+        for (var nz = next_surface(nx, ny, &word, &bits); nz >= 0; nz = next_surface(nx, ny, &word, &bits)) {
+            if (bit_at(nx, ny, nz, 3u) && plane_of_cell(cell_index(nx, ny, nz)) == id) {
+                best = min(best, seed_dist_sq_3d(x, y, z, cell_index(nx, ny, nz)));
+            }
+        }
+    }
+    return best;
+}
+
+// Distance in meters from each surface cell to the nearest wall cell of its
+// plane, rise included, 0 on wall cells, -1 on a plane with no wall. Cells
 // off the surface are left as they were.
 @compute @workgroup_size(8, 8, 1)
 fn measure_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -1080,10 +1145,10 @@ fn measure_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
         } else {
             let id = plane_of_cell(c);
             if (id != NO_SEED) {
-                let seed = plane_read(plane_cell(id, x, y));
+                let best = nearest_seed_3d(id, x, y, z);
                 // Any non-wall cell is at least one cell from a wall.
-                if (seed != NO_SEED) {
-                    d = max(sqrt(f32(seed_dist_sq(x, y, seed))), 1.0) * sp.voxel_size;
+                if (best < NO_DISTANCE) {
+                    d = max(sqrt(best), sp.voxel_size);
                 }
             }
         }
