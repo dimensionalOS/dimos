@@ -44,7 +44,7 @@ from dimos.sim2.actions import (
 )
 from dimos.sim2.backend import Publisher
 from dimos.sim2.spec import Simulated, SimulatedRobot
-from dimos.sim2.world import compile_world
+from dimos.sim2.world import compile_world, keyframe
 from dimos.sim2.world_change import (
     EPOCH,
     OBJECT,
@@ -263,12 +263,19 @@ class MujocoBackend:
         self._hold_initial_pose()
         mujoco.mj_forward(self.model, self.data)
 
-    def _hold_initial_pose(self) -> None:
+    def _initial_joints(self) -> dict[str, float]:
+        """Every joint the world starts somewhere other than zero, and holds there until commanded."""
+        initial = {}
         for robot in self._robots.values():
-            for servo in robot.servos:
-                joint = self.model.joint(f"{robot.robot_id}/{servo.joint}")
-                self.data.qpos[joint.qposadr[0]] = servo.initial
-                self.data.ctrl[self.model.actuator_trnid[:, 0] == joint.id] = servo.initial
+            held = keyframe(robot)[1] | {servo.joint: servo.initial for servo in robot.servos}
+            initial |= {f"{robot.robot_id}/{name}": value for name, value in held.items()}
+        return initial
+
+    def _hold_initial_pose(self) -> None:
+        for name, value in self._initial_joints().items():
+            joint = self.model.joint(name)
+            self.data.qpos[joint.qposadr[0]] = value
+            self.data.ctrl[self.model.actuator_trnid[:, 0] == joint.id] = value
 
     def _apply_pending(self) -> None:
         with self._lock:

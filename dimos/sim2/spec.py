@@ -53,6 +53,10 @@ class SimulatedRobot:
     control_period: float | None = None
 
     servos: tuple[Servo, ...] = ()
+    # A directory whose files the model may name by file name, like its meshes.
+    assets: Path | None = None
+    # A pose the model names: the robot starts in it and holds it, its base that high above xyz.
+    keyframe: str | None = None
 
 
 @dataclass(frozen=True)
