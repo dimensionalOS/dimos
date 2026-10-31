@@ -215,6 +215,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
     """Build a ``PiperConnection`` with its gripper on a fake SDK, start it,
     and stop every one at the end of the test."""
     monkeypatch.setattr(connection, "_RESET_SETTLE_S", 0.0)
+    monkeypatch.setattr(connection, "_MOTORS_SETTLE_S", 0.0)
     made: list[Rig] = []
 
     def build(sdk: FakePiper | None = None) -> Rig:

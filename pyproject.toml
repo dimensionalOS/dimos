@@ -53,6 +53,7 @@ exclude = [
     "**/*.tcss",
     "**/*.pyi",
     "robot/galaxea/r1pro/vendor_setup.sh",
+    "robot/manipulators/piper/can_setup.sh",
 ]
 
 "experimental.gateway" = ["annotations.yaml"]

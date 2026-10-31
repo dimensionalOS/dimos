@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import math
+from pathlib import Path
+import subprocess
 import threading
 import time
 from typing import Any
@@ -79,6 +81,10 @@ _ANSWER_TIMEOUT_S = 2.0
 _POLL_S = 0.005
 # How long the arm takes to reset before its motors can be turned on, in seconds.
 _RESET_SETTLE_S = 0.5
+# Bringing the arm up: how long every motor must stay on, and how long it may
+# all take, in seconds. Just after a reset a motor can turn off again by itself.
+_MOTORS_SETTLE_S = 1.0
+_BRING_UP_TIMEOUT_S = 5.0
 # Going home at start: how fast, in percent of the arm's top speed (as AgileX's
 # demo does), how close every joint must come, in rad, and within how many seconds.
 _HOME_SPEED_PERCENT = 30
@@ -97,8 +103,10 @@ class PiperConfig(ConnectionConfig):
     """Where the Piper is, and whether its gripper is on.
 
     Attributes:
-        can_port: The CAN interface the arm is on, e.g. "can0", already up at
-            1 Mbit/s.
+        can_port: The CAN interface the arm is on, e.g. "can0".
+        setup_can: Bring ``can_port`` up at 1 Mbit/s with ``can_setup.sh``
+            before any module starts, unless it is up already. The script
+            asks for sudo in the terminal.
         gripper: The gripper is on its flange. It is driven as its URDF joint
             ``gripper``, the gap between the fingers in metres.
         speed_percent: How fast the arm moves to each joint target, in percent
@@ -111,6 +119,7 @@ class PiperConfig(ConnectionConfig):
     """
 
     can_port: str
+    setup_can: bool = True
     gripper: bool = False
     source: str = "arm"
     joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
@@ -167,6 +176,14 @@ class PiperConnection(ConnectionModule):
         self._reach: list[float] = []
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
+
+    @rpc
+    def build(self) -> None:
+        super().build()
+        # In build, so the CAN port is up before any module starts.
+        if self.config.setup_can:
+            setup = Path(__file__).with_name("can_setup.sh")
+            subprocess.run(["bash", str(setup), self.config.can_port], check=True)
 
     @rpc
     def start(self) -> None:
@@ -294,19 +311,26 @@ class PiperConnection(ConnectionModule):
             time.sleep(_RESET_SETTLE_S)
         self._enable()
         heard = sdk.GetArmStatus().time_stamp
+        settled_from: float | None = None
 
-        def taking() -> bool:
+        def settled() -> bool:
+            nonlocal settled_from
             if sdk.GetArmStatus().time_stamp != heard and self._taking_commands():
-                return True
-            # Just after a reset the arm can drop the mode command and stay in standby.
+                settled_from = settled_from or time.monotonic()
+                return time.monotonic() - settled_from >= _MOTORS_SETTLE_S
+            settled_from = None
+            # Just after a reset the arm can drop the mode command and stay in
+            # standby, or turn a motor off again: ask again.
+            sdk.EnablePiper()
             sdk.MotionCtrl_2(_CAN_CONTROL, _MOVE_J, self.config.speed_percent, _MIT_OFF)
             return False
 
-        if not _wait_for(taking):
+        if not _wait_for(settled, _BRING_UP_TIMEOUT_S):
             state = sdk.GetArmStatus().arm_status
             raise PiperError(
-                f"the arm takes no commands {_ANSWER_TIMEOUT_S} s on: it reports "
-                f"{state.arm_status!s} in control mode {state.ctrl_mode!s}"
+                f"the arm takes no commands {_BRING_UP_TIMEOUT_S} s on: it reports "
+                f"{state.arm_status!s} in control mode {state.ctrl_mode!s}, motors on "
+                f"{sdk.GetArmEnableStatus()}"
             )
         self._send_joints(self._read_joints()[1])
 
