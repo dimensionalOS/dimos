@@ -26,6 +26,7 @@ import threading
 import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
+import uuid
 
 from dimos.constants import RUNTIME_MODULES_DIR
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
@@ -102,6 +103,7 @@ class ModuleCoordinator(Resource):
         self._rpc_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
         self._shutdown_event = threading.Event()
+        self._instance_id = uuid.uuid4().hex
 
     def start(self) -> None:
         # A worker gets the coordinator's sys.path when it starts, so add this first.
@@ -172,14 +174,21 @@ class ModuleCoordinator(Resource):
             "restart_module_by_name": self.restart_module_by_name,
             "unload_module_by_class_name": self.unload_module_by_class_name,
             "shutdown": self.shutdown,
+            "instance_id": self.instance_id,
         }
 
     def ping(self) -> str:
         """Used by clients to check if the coordinator is alive and responsive."""
         return "pong"
 
-    def shutdown(self) -> None:
-        """Unblock loop(), which then stops every module and returns."""
+    def instance_id(self) -> str:
+        """Identify this coordinator instance across client reconnects."""
+        return self._instance_id
+
+    def shutdown(self, expected_instance_id: str | None = None) -> None:
+        """Unblock loop(), refusing a request addressed to another instance."""
+        if expected_instance_id is not None and expected_instance_id != self._instance_id:
+            raise ValueError("Coordinator changed; detach and reconnect before stopping the stack")
         self._shutdown_event.set()
 
     def list_modules(self) -> list[ModuleDescriptor]:
