@@ -246,6 +246,8 @@ class DamiaoWholeBodyAdapter(ABC):
                 )
             return False
         try:
+            # Reject invalid arm feedback before enabling or moving the gripper.
+            self.read_motor_states()
             self._preflight_gravity()
             for arm in self._arms.values():
                 arm.set_mode("mit")
@@ -260,10 +262,11 @@ class DamiaoWholeBodyAdapter(ABC):
             self._active = True
             self.read_motor_states()
             return True
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Damiao whole-body adapter failed to activate",
                 hardware_id=self._hardware_id,
+                error=str(exc),
             )
             try:
                 self._robot.disable()

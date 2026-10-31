@@ -803,3 +803,8 @@ Verification:
 - [ ] `adapter_registry.available()` includes `"yourarm"`
 - [ ] `pytest dimos/robot/test_all_blueprints_generation.py` passes (regenerates `all_blueprints.py`)
 - [ ] `dimos run coordinator-yourarm` starts successfully
+
+For firmware-configured protocol ranges, see the
+[MakerMods Metal integration](/docs/capabilities/manipulation/makermods_metal_integration.md).
+Its firmware ranges are declared through the shared codec's custom profile API
+rather than being aliased to stock Damiao SKUs or added as library enum entries. The same guide compares macOS SLCAN and native gs_usb.

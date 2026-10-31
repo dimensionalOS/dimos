@@ -308,7 +308,7 @@ unitree-dds = [
 control = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
-    "can-motor-control>=0.0.8",
+    "can-motor-control>=0.0.11",
     "python-can>=4",
     "pygame>=2.6.1",
     "xacro",
@@ -442,7 +442,7 @@ project-deps = [
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
     # The generic Damiao whole-body adapter imports upstream types directly.
-    "can-motor-control>=0.0.8",
+    "can-motor-control>=0.0.11",
 ]
 
 tests = [

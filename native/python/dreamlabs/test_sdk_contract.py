@@ -51,10 +51,18 @@ def client(mocker, tmp_path):
         instance.close()
 
 
-@pytest.mark.parametrize("mode", ["joint", "eef"])
-def test_pinned_sdk_preserves_capture_history_and_raw_eef_parts_without_ik(client, mode):
+@pytest.mark.parametrize(
+    "mode, roles",
+    [
+        ("joint", ("overhead", "wrist_l", "wrist_r")),
+        ("eef", ("overhead", "wrist_l", "wrist_r")),
+        ("eef", ("wrist_l", "wrist_r")),
+        ("eef", ("overhead",)),
+    ],
+)
+def test_pinned_sdk_preserves_capture_history_and_raw_eef_parts_without_ik(client, mode, roles):
     instance, request = client
-    instance.policy(policy_config("dreamlabs/dream-1-beta", 1500, mode))
+    instance.policy(policy_config("dreamlabs/dream-1-beta", 1500, mode, roles))
     raw_parts = {}
     for side in ("left", "right"):
         raw_parts.update(
@@ -76,7 +84,7 @@ def test_pinned_sdk_preserves_capture_history_and_raw_eef_parts_without_ik(clien
                 format=ImageFormat.RGB,
             )
         )
-        frames = {f"video.{role}": frame for role in ("overhead", "wrist_l", "wrist_r")}
+        frames = {f"video.{role}": frame for role in roles}
         state = {"prompt": "move"}
         for side in ("left", "right"):
             state.update(
@@ -94,12 +102,14 @@ def test_pinned_sdk_preserves_capture_history_and_raw_eef_parts_without_ik(clien
     assert response["per_key"] == raw_parts
     sent = request.call_args.args[0]["observation"]
     assert sent["embodiment"] == ("yam" if mode == "joint" else "other_embodiment")
-    assert len(sent["video.overhead"]) == 9
+    assert {key for key in sent if key.startswith("video.")} == {f"video.{role}" for role in roles}
+    assert len(sent[f"video.{roles[0]}"]) == 9
     first = cv2.imdecode(
-        np.frombuffer(base64.b64decode(sent["video.overhead"][0]), dtype=np.uint8), cv2.IMREAD_COLOR
+        np.frombuffer(base64.b64decode(sent[f"video.{roles[0]}"][0]), dtype=np.uint8),
+        cv2.IMREAD_COLOR,
     )
     last = cv2.imdecode(
-        np.frombuffer(base64.b64decode(sent["video.overhead"][-1]), dtype=np.uint8),
+        np.frombuffer(base64.b64decode(sent[f"video.{roles[0]}"][-1]), dtype=np.uint8),
         cv2.IMREAD_COLOR,
     )
     np.testing.assert_allclose(first[80, 80], [0, 0, 0], atol=2)
