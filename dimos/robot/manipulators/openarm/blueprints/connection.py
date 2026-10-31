@@ -12,22 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm trajectories and normalized grippers through a connection module.
-
-No CAN selector runs the in-memory adapter. Supply the connection module's
-CAN selector(s) explicitly for hardware; --simulation always uses the mock.
-"""
+"""OpenArm trajectories and normalized grippers through a connection module."""
 
 from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
-from dimos.robot.manipulators.openarm.config import OPENARM_ARM_JOINTS
-from dimos.robot.manipulators.openarm.connection import (
-    OpenArmConnection,
-    openarm_connection_model,
-)
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
-openarm_connection_control = damiao_connection_control(
-    OpenArmConnection,
-    openarm_connection_model(robot="arm"),
-    list(OPENARM_ARM_JOINTS),
-    ("left_gripper", "right_gripper"),
-).remappings([])
+openarm_connection_control = damiao_connection_control(OpenArmConnection).remappings([])

@@ -12,21 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Coordinator composition for Damiao connection modules."""
+"""Compose direct Damiao connections with stream-only control coordinators."""
+
+from collections.abc import Sequence
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.common.damiao_connection import DamiaoConnection
 from dimos.robot.urdf_manager import UrdfManager
 
 
 class DamiaoCoordinator(ControlCoordinator):
-    """One connection named arm, including a bimanual robot on two CAN buses."""
+    """One connection named arm, including a robot with two synchronized arms."""
 
     arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
@@ -34,41 +37,62 @@ class DamiaoCoordinator(ControlCoordinator):
     right_gripper_command: In[Float32]
 
 
-def damiao_connection_control(
+class DamiaoTwistCoordinator(ArmTwistCoordinator):
+    """End-effector twists and gripper inputs, with joint commands over streams."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+    left_gripper_command: In[Float32]
+    right_gripper_command: In[Float32]
+
+
+class DamiaoTeleopCoordinator(TeleopControlCoordinator):
+    """WebXR inputs with a direct connection owning the robot."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
+def connect_damiao(
     connection: type[DamiaoConnection],
-    model: RobotModel,
-    joints: list[str],
-    grippers: tuple[str, ...],
+    *,
+    coordinator: type[ControlCoordinator] = DamiaoCoordinator,
+    tasks: Sequence[TaskConfig],
 ) -> Blueprint:
-    """Route trajectories and normalized grippers through a standard connection."""
-    names = [f"arm/{name}" for name in (*joints, *grippers)]
+    """Wire one connection and coordinator using the same deployed model."""
     return autoconnect(
-        DamiaoCoordinator.blueprint(
+        coordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=model,
-            tasks=[
-                joint_trajectory_task(names),
-                *[
-                    TaskConfig(
-                        name=f"arm_{name}",
-                        type="gripper",
-                        joint_names=[f"arm/{name}"],
-                        priority=20,
-                        stream_bind={"gripper_command": f"{side}_gripper_command"},
-                    )
-                    for name, side in zip(
-                        grippers,
-                        ("left", "right") if len(grippers) == 2 else ("right",),
-                        strict=True,
-                    )
-                ],
-            ],
+            model=connection.models().control,
+            tasks=list(tasks),
         ),
         connection.blueprint(source="arm"),
-        UrdfManager.blueprint(model=model),
     ).remappings(
         [
             (connection, "position_command", "arm_position_command"),
-            (DamiaoCoordinator, "arm_joint_state", "joint_state"),
+            (coordinator, "arm_joint_state", "joint_state"),
         ]
+    )
+
+
+def damiao_connection_control(connection: type[DamiaoConnection]) -> Blueprint:
+    """Trajectories and normalized grippers with the robot model served to clients."""
+    deployed = connection.models()
+    sides = ("left", "right") if len(deployed.gripper_joints) == 2 else ("right",)
+    tasks = [
+        joint_trajectory_task(deployed.joints),
+        *[
+            TaskConfig(
+                name=f"arm_{joint.rsplit('/', 1)[1]}",
+                type="gripper",
+                joint_names=[joint],
+                priority=20,
+                stream_bind={"gripper_command": f"{side}_gripper_command"},
+            )
+            for joint, side in zip(deployed.gripper_joints, sides, strict=True)
+        ],
+    ]
+    return autoconnect(
+        connect_damiao(connection, tasks=tasks),
+        UrdfManager.blueprint(model=deployed.control),
     )

@@ -12,22 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Metal trajectories and normalized grippers through a connection module.
-
-No CAN selector runs the in-memory adapter. Supply the connection module's
-CAN selector(s) explicitly for hardware; --simulation always uses the mock.
-"""
+"""Metal trajectory and normalized gripper control over connection streams."""
 
 from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
-from dimos.robot.manipulators.makermods_metal.config import METAL_ARM_JOINTS
-from dimos.robot.manipulators.makermods_metal.connection import (
-    MetalConnection,
-    metal_connection_model,
-)
+from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 
-makermods_metal_connection_control = damiao_connection_control(
-    MetalConnection,
-    metal_connection_model(robot="arm"),
-    list(METAL_ARM_JOINTS),
-    ("gripper",),
-).remappings([])
+makermods_metal_connection_control = damiao_connection_control(MetalConnection).remappings([])

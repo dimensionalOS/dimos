@@ -17,18 +17,16 @@ from pathlib import Path
 
 import pytest
 
-from dimos.control.coordinator import ControlCoordinator
-from dimos.control.hardware_interface import ConnectedWholeBody
-from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
+from dimos.control.connection_source import ConnectionSource
+from dimos.hardware.manipulators.spec import ControlMode
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 
-@pytest.mark.parametrize("ports", [{}, {"left_can_port": "left", "right_can_port": "right"}])
-def test_setup_supplies_model_limits_to_hardware(mocker, ports):
-    names = DUAL_OPENYAM_ARM_JOINTS
-    # Different bounds and reverse document order catch accidental positional mapping.
+def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
+    deployed = DualOpenYamConnection.models()
+    names = deployed.arm_joints
     bounds = {name: (-float(i + 1), float(i + 2)) for i, name in enumerate(names)}
     xml = (
         '<robot name="test"><link name="base"/>'
@@ -38,21 +36,24 @@ def test_setup_supplies_model_limits_to_hardware(mocker, ports):
             f'<limit lower="{bounds[name][0]}" upper="{bounds[name][1]}"/></joint>'
             for name in reversed(names)
         )
+        + "".join(
+            f'<link name="{name}_link"/><joint name="{name}" type="revolute">'
+            f'<parent link="base"/><child link="{name}_link"/>'
+            '<limit lower="0" upper="1"/></joint>'
+            for name in deployed.gripper_joints
+        )
         + "</robot>"
     )
     mocker.patch.object(
         RobotModel, "load", return_value=LoadedRobotModel(xml, Path("model.urdf"), {})
     )
-    mocker.patch.object(ControlCoordinator, "_setup_from_config")
-    coordinator = DualOpenYamCoordinator(**ports)
-    try:
-        coordinator._setup_from_config()
-        component = coordinator.config.hardware[0]
-        adapter = MockWholeBodyAdapter(dof=len(component.joints))
-        hardware = ConnectedWholeBody(adapter, component)
-        limits = hardware.get_limits()
-        assert limits is not None
-        assert limits.position_lower == [*[bounds[name][0] for name in names], 0.0, 0.0]
-        assert limits.position_upper == [*[bounds[name][1] for name in names], 1.0, 1.0]
-    finally:
-        coordinator.stop()
+    source = ConnectionSource("arm", ["position_command"], ["joint_state"], deployed.control, 1)
+    source.on_message(
+        "joint_state",
+        JointState(name=list(deployed.joints), position=[0.0] * len(deployed.joints)),
+    )
+    # Every name is tested against its own distinct range, independent of XML order.
+    for name in names:
+        source.command({name: bounds[name][1]}, ControlMode.POSITION)
+        with pytest.raises(ValueError, match="outside"):
+            source.command({name: bounds[name][1] + 0.1}, ControlMode.POSITION)

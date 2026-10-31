@@ -14,16 +14,13 @@
 
 import pytest
 
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_ADAPTER_TYPE,
     DUAL_OPENYAM_HOME_JOINTS,
-    dual_openyam_hardware,
     dual_openyam_model_config,
 )
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
-    DUAL_OPENYAM_JOINTS,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
@@ -43,41 +40,54 @@ def test_dual_openyam_reuses_the_single_arm_home_posture() -> None:
     assert DUAL_OPENYAM_HOME_JOINTS == [*OPENYAM_HOME_JOINTS, *OPENYAM_HOME_JOINTS]
 
 
-def test_dual_openyam_hardware_defaults_to_complete_mock() -> None:
-    hardware = dual_openyam_hardware()
+def test_dual_openyam_connection_defaults_to_complete_mock() -> None:
+    connection = DualOpenYamConnection()
+    try:
+        assert connection.config.source == "dual_openyam"
+        assert connection._can_devices() is None
+        assert connection.robot.joint_names == (
+            *DUAL_OPENYAM_ARM_JOINTS,
+            "left_gripper",
+            "right_gripper",
+        )
+        assert connection.robot.mock_positions == (*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0)
+    finally:
+        connection.stop()
 
-    assert hardware.hardware_id == "dual_openyam"
-    assert hardware.adapter_type == "mock_whole_body"
-    assert hardware.joints == DUAL_OPENYAM_JOINTS
-    assert hardware.adapter_kwargs["initial_positions"] == [
-        *DUAL_OPENYAM_HOME_JOINTS,
-        0.0,
-        0.0,
-    ]
 
-
-def test_dual_openyam_hardware_uses_both_explicit_can_ports() -> None:
-    hardware = dual_openyam_hardware(left_can_port="can8", right_can_port="can9")
-
-    assert hardware.adapter_type == DUAL_OPENYAM_ADAPTER_TYPE
-    runtime = hardware.adapter_kwargs["runtime_config"]
-    assert isinstance(runtime, DamiaoRuntimeConfig)
-    assert runtime.bus_devices == {"left": "can8", "right": "can9"}
-    assert runtime.gravity_comp is True
+def test_dual_openyam_connection_uses_both_explicit_can_ports() -> None:
+    connection = DualOpenYamConnection(left_can_port="can8", right_can_port="can9")
+    try:
+        assert connection._can_devices() == {"left": "can8", "right": "can9"}
+        assert connection.robot.gravity_comp is True
+    finally:
+        connection.stop()
 
 
 @pytest.mark.parametrize(
-    ("left", "right"),
-    [("can8", None), (None, "can9")],
+    "ports",
+    [
+        {"left_can_port": "can8"},
+        {"right_can_port": "can9"},
+    ],
 )
-def test_dual_openyam_hardware_rejects_partial_can_configuration(
-    left: str | None,
-    right: str | None,
-) -> None:
+def test_dual_openyam_connection_rejects_partial_can_configuration(ports) -> None:
     with pytest.raises(ValueError, match="requires both"):
-        dual_openyam_hardware(left_can_port=left, right_can_port=right)
+        DualOpenYamConnection(**ports)
 
 
-def test_dual_openyam_hardware_rejects_duplicate_can_configuration() -> None:
+def test_dual_openyam_connection_rejects_duplicate_can_configuration() -> None:
     with pytest.raises(ValueError, match="requires distinct"):
-        dual_openyam_hardware(left_can_port="same", right_can_port="same")
+        DualOpenYamConnection(left_can_port="same", right_can_port="same")
+
+
+@pytest.mark.parametrize(
+    "ports",
+    [
+        {"left_can_port": " ", "right_can_port": "right"},
+        {"left_can_port": "left", "right_can_port": ""},
+    ],
+)
+def test_dual_openyam_connection_rejects_empty_can_configuration(ports) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        DualOpenYamConnection(**ports)

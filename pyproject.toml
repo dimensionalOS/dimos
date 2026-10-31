@@ -435,7 +435,7 @@ project-deps = [
     "lap>=0.5.12",
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
-    # The generic Damiao whole-body adapter imports upstream types directly.
+    # Direct Damiao connections use the upstream motor profiles and native robot API.
     "can-motor-control>=0.0.11",
 ]
 

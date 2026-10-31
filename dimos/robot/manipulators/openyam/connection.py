@@ -12,39 +12,66 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYam on the shared Damiao connection lifecycle."""
+
+"""OpenYAM topology and direct Damiao connection."""
 
 from __future__ import annotations
 
-from dataclasses import replace
+from typing import ClassVar
 
 from pydantic import model_validator
 from typing_extensions import Self
 
-from dimos.control.components import HardwareComponent
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.damiao_connection import (
+    ArmSpec,
     DamiaoConnection,
     DamiaoConnectionConfig,
-    damiao_control_model,
+    DamiaoRobot,
+    GripperSpec,
+    JointDrive,
 )
-from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_ARM_JOINTS,
-    make_openyam_model_config,
-    openyam_hardware,
+from dimos.robot.manipulators.common.damiao_model import local_control_model
+from dimos.robot.manipulators.openyam.config import make_openyam_model_config
+from dimos.utils.data import LfsPath
+
+OPENYAM_ROBOT = DamiaoRobot(
+    buses=("openyam",),
+    arms=(
+        ArmSpec(
+            name="arm",
+            bus="openyam",
+            joints=tuple(
+                JointDrive(
+                    name=f"yam_joint{index}",
+                    motor="DM4340" if index <= 3 else "DM4310",
+                    send_id=index,
+                    recv_id=index + 0x10,
+                    kp=80.0 if index <= 3 else 10.0,
+                    kd=5.0 if index <= 3 else 1.5,
+                )
+                for index in range(1, 7)
+            ),
+        ),
+    ),
+    grippers=(
+        GripperSpec(
+            name="gripper",
+            bus="openyam",
+            motor="DM4310",
+            send_id=0x08,
+            recv_id=0x18,
+            direction="decreasing_position",
+            current=0.15,
+        ),
+    ),
+    physical_model=RobotModel.from_file(
+        LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
+    ),
+    planning=make_openyam_model_config(),
+    mock_positions=(0.0,) * 7,
+    gravity_comp=True,
 )
-
-
-def yam_connection_model(*, robot: str | None = None) -> RobotModel:
-    """The existing arm model and normalized grippers, optionally namespaced."""
-    model = damiao_control_model(
-        make_openyam_model_config().model.with_fixed_joints("joint7", "joint8"), ("gripper",)
-    )
-    if robot is not None:
-        names = (*OPENYAM_ARM_JOINTS, "gripper")
-        model = model.with_renamed_joints({name: f"{robot}/{name}" for name in names})
-    return model
 
 
 class OpenYamConnectionConfig(DamiaoConnectionConfig):
@@ -56,26 +83,13 @@ class OpenYamConnectionConfig(DamiaoConnectionConfig):
         if self.can_port is not None and not self.can_port.strip():
             raise ValueError("CAN selector must not be empty")
         if self.model is None:
-            self.model = yam_connection_model()
+            self.model = local_control_model(OPENYAM_ROBOT)
         return self
 
 
 class OpenYamConnection(DamiaoConnection):
     config: OpenYamConnectionConfig
+    robot: ClassVar[DamiaoRobot] = OPENYAM_ROBOT
 
-    def hardware_component(self) -> HardwareComponent:
-        component = openyam_hardware(
-            bus_devices={"openyam": self.config.can_port} if self.config.can_port else None
-        )
-        component = replace(
-            component,
-            adapter_type="mock_whole_body" if self.config.can_port is None else "openyam_damiao",
-            adapter_kwargs={}
-            if self.config.can_port is None
-            else {
-                "runtime_config": DamiaoRuntimeConfig(
-                    bus_devices={"openyam": self.config.can_port}, gravity_comp=True
-                )
-            },
-        )
-        return replace(component, joints=[*OPENYAM_ARM_JOINTS, "gripper"])
+    def _can_devices(self) -> dict[str, str] | None:
+        return None if self.config.can_port is None else {"openyam": self.config.can_port}
