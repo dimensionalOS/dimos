@@ -118,6 +118,7 @@ class TickLoop:
         publish_command_callback: Callable[[JointState], None] | None = None,
         connections: dict[str, ConnectionSource] | None = None,
         connection_command_callback: Callable[[str, dict[str, float]], None] | None = None,
+        observation_callback: Callable[[CoordinatorState], None] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
@@ -125,6 +126,7 @@ class TickLoop:
             connections if connections is not None else {}
         )
         self._connection_command_callback = connection_command_callback
+        self._observation_callback = observation_callback
         # Robots already told off for never reporting, so each is told off once.
         self._silence_logged: set[str] = set()
         self._started_at = time.monotonic()
@@ -146,12 +148,6 @@ class TickLoop:
         self._tick_thread: threading.Thread | None = None
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
-        self._joint_positions: dict[str, float] = {}
-
-    @property
-    def joint_positions(self) -> dict[str, float]:
-        """Copy the latest tick snapshot; the stored dictionary is only replaced."""
-        return self._joint_positions.copy()
 
     @property
     def tick_count(self) -> int:
@@ -339,7 +335,8 @@ class TickLoop:
         results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []
 
         with self._task_lock:
-            self._joint_positions = state.joints.joint_positions.copy()
+            if self._observation_callback is not None:
+                self._observation_callback(state)
             for task in self._tasks.values():
                 if not task.is_active():
                     continue

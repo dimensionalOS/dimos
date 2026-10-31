@@ -48,7 +48,9 @@ Single deterministic loop at 100Hz:
 Tasks are passive controllers called by the coordinator:
 
 ```python
-class MyController:
+from dimos.control.task import BaseControlTask
+
+class MyController(BaseControlTask):
     def claim(self) -> ResourceClaim:
         return ResourceClaim(joints={"joint1", "joint2"}, priority=10)
 
@@ -60,6 +62,14 @@ class MyController:
             mode=ControlMode.POSITION,
         )
 ```
+
+Registering a `BaseControlTask` grants `self.context.get_state()` access to the
+latest complete tick observation, including joint position/velocity/effort,
+IMU, sensor readings and coordinator timing. The result is a detached copy:
+changing it cannot change the coordinator's cache or another reader's result.
+The callback does not read hardware or acquire another state lock. It returns
+`None` before the first tick and after stop or runtime reset. Removing the
+task revokes its context; stop/restart preserves the registration.
 
 ### Priority & Arbitration
 Higher priority always wins. Arbitration happens every tick:
@@ -135,8 +145,23 @@ my_robot = ControlCoordinator.blueprint(
 | `list_joints()` | List all joint names |
 | `list_tasks()` | List task names |
 | `get_joint_positions()` | Get current positions |
-| `execute_trajectory(traj)` | Execute through the sole trajectory task |
-| `cancel_trajectory()` | Cancel the sole trajectory task |
+| `task_invoke(task, command, kwargs)` | Invoke a task command |
+
+Trajectory commands belong to their tasks. Both joint and EEF tasks accept
+`execute(trajectory, deadman_timeout=None)`, read their start observation from
+`self.context.get_state()`, and expose `cancel` and `keepalive` through the
+registry. The coordinator serializes submission, cancellation and ticks with
+its existing task lock.
+
+```python
+result = coordinator.task_invoke(
+    "joint_trajectory", "execute", {"trajectory": trajectory}
+)
+coordinator.task_invoke("joint_trajectory", "cancel")
+```
+
+EEF values live in `dimos.control.tasks.eef_trajectory_task.trajectory`.
+They are ordinary Python RPC values, not LCM messages.
 
 ## Operator Hold
 

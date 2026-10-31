@@ -17,14 +17,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, TypedDict
+from typing import Any, Protocol, TypedDict
 
 from pydantic import Field, field_validator
 
-from dimos.control.tasks.trajectory_task.trajectory_task import (
-    TrajectoryCancellationResult,
-    TrajectoryExecutionResult,
-)
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.experimental.isolated_python.module import (
@@ -33,7 +29,6 @@ from dimos.experimental.isolated_python.module import (
 )
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 
@@ -41,9 +36,7 @@ from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 class PolicyControlSpec(Spec, Protocol):
     """Coordinator operations used by policy rollout."""
 
-    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult: ...
-
-    def cancel_trajectory(self) -> TrajectoryCancellationResult: ...
+    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any]) -> Any: ...
 
     def list_tasks(self) -> list[str]: ...
 
