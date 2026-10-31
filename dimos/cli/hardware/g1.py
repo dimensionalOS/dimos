@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import time
 from typing import Any, NoReturn, Protocol, TypeGuard
 
@@ -41,7 +42,6 @@ class _G1CoordinatorHandle(Protocol):
     def set_dry_run(self, dry_run: bool) -> Any: ...
     def set_activated(self, activated: bool) -> Any: ...
     def get_active_tasks(self) -> list[str]: ...
-    def cancel_trajectory(self) -> Any: ...
 
 
 class _G1ManipulationHandle(Protocol):
@@ -69,7 +69,7 @@ def _has_methods(handle: ModuleHandle, names: tuple[str, ...]) -> bool:
 def _is_coordinator(handle: ModuleHandle) -> TypeGuard[_G1CoordinatorHandle]:
     return _has_methods(
         handle,
-        ("task_invoke", "set_dry_run", "set_activated", "get_active_tasks", "cancel_trajectory"),
+        ("task_invoke", "set_dry_run", "set_activated", "get_active_tasks"),
     )
 
 
@@ -301,11 +301,15 @@ def disable() -> None:
     failures: list[str] = []
     try:
         coordinator = _coordinator(client)
-        for description, operation in (
-            ("cancel trajectory", coordinator.cancel_trajectory),
+        operations: tuple[tuple[str, Callable[[], Any]], ...] = (
+            (
+                "cancel trajectory",
+                lambda: coordinator.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "cancel", {}),
+            ),
             ("enter dry-run", lambda: coordinator.set_dry_run(True)),
             ("disarm", lambda: coordinator.set_activated(False)),
-        ):
+        )
+        for description, operation in operations:
             try:
                 operation()
             except Exception as exc:

@@ -25,12 +25,14 @@ from here rather than reaching into each other's test modules.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 import functools
 from pathlib import Path
 import tempfile
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -46,9 +48,12 @@ from dimos.control.contract.convert import (
 from dimos.control.contract.keys import Interface
 from dimos.control.task import (
     BaseControlTask,
+    ControlTaskContext,
     CoordinatorState,
     JointCommandOutput,
+    JointStateSnapshot,
     ResourceClaim,
+    _TaskRegistration,
 )
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -56,6 +61,12 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+
+if TYPE_CHECKING:
+    from dimos.control.tasks.trajectory_task.trajectory_task import (
+        JointTrajectoryTask,
+        TrajectoryExecutionResult,
+    )
 
 
 class RecordingTask(BaseControlTask):
@@ -225,3 +236,25 @@ class FakeArm(ConnectionModule):
             self.joint_state.publish(
                 joint_state_from_values(self._readings, self._joints, ts=time.time())
             )
+
+
+@contextmanager
+def task_state_context(task: BaseControlTask, state: CoordinatorState | None) -> Iterator[None]:
+    """Give a standalone task a registration-scoped deterministic observation."""
+    registration = _TaskRegistration.acquire(task, ControlTaskContext(get_state=lambda: state))
+    try:
+        yield
+    finally:
+        task._registration = None
+        del registration
+
+
+def execute_with_state(
+    task: JointTrajectoryTask,
+    trajectory: Any,
+    positions: Mapping[str, float],
+) -> TrajectoryExecutionResult:
+    """Invoke a standalone task command through the same context contract as deployment."""
+    state = CoordinatorState(joints=JointStateSnapshot(joint_positions=dict(positions)))
+    with task_state_context(task, state):
+        return task.execute(trajectory)

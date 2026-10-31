@@ -26,6 +26,7 @@ Features:
 """
 
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 import functools
 import inspect
@@ -51,13 +52,12 @@ from dimos.control.hardware_interface import (
     ConnectedWholeBody,
 )
 from dimos.control.routing import Routing
-from dimos.control.task import ControlTask
-from dimos.control.tasks.trajectory_task.trajectory_task import (
-    JointTrajectoryTask,
-    TrajectoryCancellationResult,
-    TrajectoryCancellationStatus,
-    TrajectoryExecutionResult,
-    TrajectoryExecutionStatus,
+from dimos.control.task import (
+    BaseControlTask,
+    ControlTask,
+    ControlTaskContext,
+    CoordinatorState,
+    _TaskRegistration,
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
@@ -72,7 +72,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.robot.assets.model import RobotModel
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
@@ -225,7 +224,9 @@ class ControlCoordinator(Module):
         # Registered tasks
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
-        self._trajectory_task: JointTrajectoryTask | None = None
+        self._task_registrations: dict[TaskName, _TaskRegistration] = {}
+        self._latest_state: CoordinatorState | None = None
+        self._task_context = ControlTaskContext(get_state=lambda: self._get_latest_state())
 
         # Card-declared stream routes, keyed by the port stream_bind resolved to:
         # port -> (task, bound handler, routing). Guarded by _task_lock; entries
@@ -263,6 +264,22 @@ class ControlCoordinator(Module):
         }
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
+
+    def _get_latest_state(self) -> CoordinatorState | None:
+        """Copy the atomically published full tick without taking the task lock.
+
+        Each caller receives a detached copy so consumers cannot mutate the
+        shared cache or another reader's observation.
+        """
+        state = self._latest_state
+        return deepcopy(state) if state is not None else None
+
+    def _set_latest_state(self, state: CoordinatorState) -> None:
+        """Publish a detached complete observation while the tick holds task_lock."""
+        self._latest_state = deepcopy(state)
+
+    def _clear_latest_state(self) -> None:
+        self._latest_state = None
 
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
@@ -576,29 +593,8 @@ class ControlCoordinator(Module):
     @rpc
     def get_joint_positions(self) -> dict[str, float]:
         """Return the latest tick's joint positions without polling hardware."""
-        return self._tick_loop.joint_positions if self._tick_loop is not None else {}
-
-    @rpc
-    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
-        """Execute a trajectory through the coordinator's sole trajectory task."""
-        with self._task_lock:
-            if self._trajectory_task is None:
-                return TrajectoryExecutionResult(
-                    TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
-                    "Control coordinator has no trajectory task",
-                )
-            return self._trajectory_task.execute(trajectory, self.get_joint_positions())
-
-    @rpc
-    def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the trajectory under the same lock used to accept submissions."""
-        with self._task_lock:
-            if self._trajectory_task is None:
-                return TrajectoryCancellationResult(
-                    TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
-                    "Control coordinator has no trajectory task",
-                )
-            return self._trajectory_task.cancel()
+        state = self._get_latest_state()
+        return dict(state.joints.joint_positions) if state is not None else {}
 
     @rpc
     def add_task(
@@ -625,20 +621,25 @@ class ControlCoordinator(Module):
                 return False
             if self._tasks_estopped:
                 task.set_estop(True)
-            if isinstance(task, JointTrajectoryTask):
-                if self._trajectory_task is not None:
-                    raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
-                self._trajectory_task = task
+            registration = (
+                _TaskRegistration.acquire(task, self._task_context)
+                if isinstance(task, BaseControlTask)
+                else None
+            )
             if task_type is not None:
                 try:
                     self._register_routes(task, task_type, stream_bind)
                     self._task_commands[task.name] = self._commands_for(task_type)
                 except Exception:
-                    if task is self._trajectory_task:
-                        self._trajectory_task = None
+                    for entries in self._routes.values():
+                        entries[:] = [entry for entry in entries if entry[0] is not task]
+                    if isinstance(task, BaseControlTask):
+                        task._registration = None
                     raise
             else:
                 self._task_commands[task.name] = frozenset()
+            if registration is not None:
+                self._task_registrations[task.name] = registration
             self._tasks[task.name] = task
             logger.info(f"Added task {task.name}")
         self._sync_stream_subscriptions()
@@ -654,8 +655,7 @@ class ControlCoordinator(Module):
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             self._task_commands.pop(task_name, None)
-            if task is self._trajectory_task:
-                self._trajectory_task = None
+            self._task_registrations.pop(task_name, None)
             logger.info(f"Removed task {task_name}")
         self._sync_stream_subscriptions()
         return True
@@ -919,6 +919,7 @@ class ControlCoordinator(Module):
         """
         results: dict[str, bool] = {}
         with self._task_lock:
+            self._clear_latest_state()
             for name, task in self._tasks.items():
                 if "reset_runtime_state" not in self._task_commands.get(name, frozenset()):
                     continue
@@ -947,8 +948,7 @@ class ControlCoordinator(Module):
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
-                logger.warning(f"Task {task_name} not found")
-                return None
+                raise KeyError(f"Task {task_name!r} not found")
 
             kwargs = dict(kwargs or {})
 
@@ -1049,6 +1049,7 @@ class ControlCoordinator(Module):
             for component in self.config.hardware:
                 self._robot_joint_port(component.hardware_id)
 
+        self._clear_latest_state()
         super().start()
 
         self._connect_robots()
@@ -1082,6 +1083,7 @@ class ControlCoordinator(Module):
             log_ticks=self.config.log_ticks,
             connections=self._connections,
             connection_command_callback=self._publish_command,
+            observation_callback=self._set_latest_state,
         )
         self._tick_loop.start()
 
@@ -1107,6 +1109,7 @@ class ControlCoordinator(Module):
 
         if self._tick_loop:
             self._tick_loop.stop()
+        self._clear_latest_state()
 
         with self._hardware_lock:
             for hw_id, interface in self._hardware.items():
