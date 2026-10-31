@@ -23,7 +23,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
 from dimos.imitation.collection.prompts import CollectionSpeech
-from dimos.imitation.policy.lerobot.module import RolloutControlSpec
+from dimos.imitation.policy.module import RolloutControlSpec
 from dimos.imitation.tui import ControlApp, ControlSession
 from dimos.porcelain.dimos import NoMatchingModuleError
 from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
