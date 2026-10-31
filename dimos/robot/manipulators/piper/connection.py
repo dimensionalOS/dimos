@@ -39,6 +39,9 @@ from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.piper.config import PIPER_DOF, piper_model
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # The SDK's units: joint angles in 0.001 degrees, the gripper's gap in 0.001 mm,
 # and motor speeds and torques in 0.001 rad/s and 0.001 N·m.
@@ -54,11 +57,11 @@ _NORMAL = 0x00
 # MotionCtrl_2's move mode for joint targets (MOVE J), and its MIT mode left off.
 _MOVE_J = 0x01
 _MIT_OFF = 0x00
-# MotionCtrl_1's reset: clears the arm's errors and turns its motors off.
+# MotionCtrl_1's emergency stop, where the motors brake the arm as it sinks
+# slowly, and its reset, which clears that and the arm's errors and turns its
+# motors off.
+_EMERGENCY_STOP = 0x01
 _RESET = 0x02
-# JointConfig: every joint motor, and the flag that clears their errors.
-_ALL_MOTORS = 7
-_CLEAR_ERRORS = 0xAE
 # GripperCtrl's codes: on, and off with its errors cleared.
 _GRIPPER_ON = 0x01
 _GRIPPER_OFF_CLEARED = 0x02
@@ -76,6 +79,14 @@ _ANSWER_TIMEOUT_S = 2.0
 _POLL_S = 0.005
 # How long the arm takes to reset before its motors can be turned on, in seconds.
 _RESET_SETTLE_S = 0.5
+# Going home at start: how fast, in percent of the arm's top speed (as AgileX's
+# demo does), how close every joint must come, in rad, and within how many seconds.
+_HOME_SPEED_PERCENT = 30
+_HOME_TOLERANCE_RAD = 0.02
+_HOME_TIMEOUT_S = 15.0
+# How long the arm may take to go home when it stops, in seconds: DimOS gives a
+# module about 5 s to stop.
+_PARK_TIMEOUT_S = 4.0
 
 
 class PiperError(RuntimeError):
@@ -92,6 +103,8 @@ class PiperConfig(ConnectionConfig):
             ``gripper``, the gap between the fingers in metres.
         speed_percent: How fast the arm moves to each joint target, in percent
             of its top speed.
+        home: The joint angles the arm moves to when it starts and when it
+            stops, in rad, one per joint; ``None`` to leave it where it is.
         jump_limit_s: How far a joint target may be from where the joint is,
             in seconds at the joint's top speed (its URDF velocity limit). A
             target further away is refused.
@@ -102,10 +115,13 @@ class PiperConfig(ConnectionConfig):
     source: str = "arm"
     joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
     speed_percent: int = Field(default=50, ge=1, le=100)
+    home: tuple[float, ...] | None = (0.0,) * PIPER_DOF
     jump_limit_s: float = 0.1
 
     @model_validator(mode="after")
     def _model_from_gripper(self) -> Self:
+        if self.home is not None and len(self.home) != PIPER_DOF:
+            raise ValueError(f"home gives {len(self.home)} joint angles; the Piper has {PIPER_DOF}")
         if self.model is None:
             self.model = piper_model(self.gripper)
         return self
@@ -116,11 +132,13 @@ class PiperConnection(ConnectionModule):
 
     Joint targets come in on ``position_command`` in rad; the gripper is its
     URDF joint ``gripper`` (0 m closed, 0.07 m open). ``joint_state`` goes out
-    about 100 times a second, the gripper in a message of its own. Once the
-    arm reports a problem, or stops taking commands without DimOS asking
-    (teach mode, a power cut, another program), it takes no command until
-    ``clear_errors()``. Joint targets are refused while the latest joint
-    reading is over 0.1 s old. Stopping leaves the arm holding where it is.
+    about 100 times a second, the gripper in a message of its own. At start
+    the arm is reset unless it already takes commands, its motors turned on,
+    and it moves to ``config.home``. Once the arm reports a problem, or stops
+    taking commands without DimOS asking (teach mode, a power cut, another
+    program), it takes no command until ``clear_errors()``. Joint targets are refused while the latest joint
+    reading is over 0.1 s old. Stopping moves the arm home, then puts it in
+    its emergency stop, where it sinks slowly to rest.
     """
 
     config: PiperConfig
@@ -140,7 +158,6 @@ class PiperConnection(ConnectionModule):
         # The arm was last seen taking CAN commands with its motors on. Only
         # the reading thread touches it.
         self._ready = False
-        self._gripper_sent: float | None = None
         # The joints' latest measured positions (rad), replaced whole by the
         # reading thread.
         self._measured: list[float] = []
@@ -172,48 +189,31 @@ class PiperConnection(ConnectionModule):
         if self._reader is not None:
             self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
-        sdk, self._sdk = self._sdk, None
+        sdk = self._sdk
         if sdk is not None:
-            # The motors stay on, so the arm holds where it is instead of falling.
+            try:
+                self._park()
+            except Exception as error:
+                logger.warning(f"PiperConnection: the arm did not go home before stopping: {error}")
+            sdk.MotionCtrl_1(_EMERGENCY_STOP, 0, 0)
+            self._sdk = None
             sdk.DisconnectPort()
 
     @rpc
     def clear_errors(self) -> None:
         """Clear the arm's errors, turn its motors on, and let it take commands again.
 
-        Call it once whatever stopped the arm is dealt with. An arm in an
-        emergency stop, an error or teach mode is reset first, which turns its
-        motors off for half a second: rest the arm or hold it.
+        Call it once whatever stopped the arm is dealt with. An arm not taking
+        commands is reset first, which turns its motors off for half a second:
+        rest the arm or hold it.
 
         Raises:
-            PiperError: If the arm still reports a problem afterwards.
+            PiperError: If the arm still takes no commands afterwards.
         """
         with self._hardware_lock:
-            sdk = self._sdk
-            if sdk is None:
+            if self._sdk is None:
                 raise PiperError("not connected")
-            if _problem(sdk.GetArmStatus().arm_status) is not None:
-                sdk.MotionCtrl_1(_RESET, 0, 0)
-                time.sleep(_RESET_SETTLE_S)
-            sdk.JointConfig(joint_num=_ALL_MOTORS, clear_err=_CLEAR_ERRORS)
-            self._enable()
-            heard = sdk.GetArmStatus().time_stamp
-
-            def taking_commands() -> bool:
-                report = sdk.GetArmStatus()
-                state = report.arm_status
-                return (
-                    report.time_stamp != heard
-                    and _problem(state) is None
-                    and state.ctrl_mode == _CAN_CONTROL
-                )
-
-            if not _wait_for(taking_commands):
-                state = sdk.GetArmStatus().arm_status
-                raise PiperError(
-                    f"the arm takes no commands {_ANSWER_TIMEOUT_S} s on: it reports "
-                    f"{state.arm_status!s} in control mode {state.ctrl_mode!s}"
-                )
+            self._bring_up()
             self._fault = None
 
     def connect(self) -> None:
@@ -242,14 +242,11 @@ class PiperConnection(ConnectionModule):
                 )
             ):
                 raise ConnectionError(f"no Piper answers on CAN port {port}")
+            self._bring_up()
+            if self.config.home is not None:
+                self._go_home(list(self.config.home))
             self._measured = self._read_joints()[1]
             self._measured_at = time.monotonic()
-            problem = _problem(sdk.GetArmStatus().arm_status)
-            if problem is not None:
-                self._fault = problem
-                self._report(problem)
-            else:
-                self._enable()
         except Exception:
             self._sdk = None
             sdk.DisconnectPort()
@@ -274,25 +271,98 @@ class PiperConnection(ConnectionModule):
             measured = self._measured
             angles = [m if t is None else t for t, m in zip(targets, measured, strict=True)]
             self._check_jump(angles, measured)
-            self._sdk.JointCtrl(*(round(angle * _SDK_PER_RAD) for angle in angles))
-        if gripper is not None and gripper != self._gripper_sent:
+            self._send_joints(angles)
+        if gripper is not None:
+            # Sent with every command, as AgileX's gripper demo does.
             self._sdk.GripperCtrl(round(gripper * _SDK_PER_M), _GRIPPER_EFFORT, _GRIPPER_ON, 0)
-            self._gripper_sent = gripper
 
     def halt(self) -> None:
         """Nothing to send: the arm finishes its last joint target, which the
         jump guard keeps close, and holds there."""
 
+    def _bring_up(self) -> None:
+        """Make the arm take joint targets, as AgileX's demos do: reset it unless
+        it already takes them, turn its motors on and set its mode.
+
+        Raises:
+            PiperError: If the arm still takes no commands afterwards.
+        """
+        sdk = self._sdk
+        if not self._taking_commands():
+            # Turns the motors off for half a second.
+            sdk.MotionCtrl_1(_RESET, 0, 0)
+            time.sleep(_RESET_SETTLE_S)
+        self._enable()
+        heard = sdk.GetArmStatus().time_stamp
+
+        def taking() -> bool:
+            if sdk.GetArmStatus().time_stamp != heard and self._taking_commands():
+                return True
+            # Just after a reset the arm can drop the mode command and stay in standby.
+            sdk.MotionCtrl_2(_CAN_CONTROL, _MOVE_J, self.config.speed_percent, _MIT_OFF)
+            return False
+
+        if not _wait_for(taking):
+            state = sdk.GetArmStatus().arm_status
+            raise PiperError(
+                f"the arm takes no commands {_ANSWER_TIMEOUT_S} s on: it reports "
+                f"{state.arm_status!s} in control mode {state.ctrl_mode!s}"
+            )
+        self._send_joints(self._read_joints()[1])
+
+    def _taking_commands(self) -> bool:
+        """The arm takes CAN commands, with its motors on and no problem reported."""
+        state = self._sdk.GetArmStatus().arm_status
+        return (
+            _problem(state) is None
+            and state.ctrl_mode == _CAN_CONTROL
+            and all(self._sdk.GetArmEnableStatus())
+        )
+
     def _enable(self) -> None:
-        """Turn the motors on and make the arm take joint targets, leaving the gripper where it is."""
+        """Turn the motors on, make the arm take joint targets and hold where it
+        is, leaving the gripper where it is."""
         if not _wait_for(self._sdk.EnablePiper):
             raise PiperError(f"the arm's motors did not turn on within {_ANSWER_TIMEOUT_S} s")
         self._sdk.MotionCtrl_2(_CAN_CONTROL, _MOVE_J, self.config.speed_percent, _MIT_OFF)
+        self._send_joints(self._read_joints()[1])
         if self._gripper is not None:
             gap = max(0, round(self._read_gripper()[1] * _SDK_PER_M))
             self._sdk.GripperCtrl(gap, _GRIPPER_EFFORT, _GRIPPER_OFF_CLEARED, 0)
             self._sdk.GripperCtrl(gap, _GRIPPER_EFFORT, _GRIPPER_ON, 0)
-            self._gripper_sent = None
+
+    def _park(self) -> None:
+        """Move the arm home before it stops, unless it has a fault, takes no
+        commands or has no home."""
+        if self.config.home is None or self._fault is not None or not self._taking_commands():
+            return
+        self._go_home(list(self.config.home), _PARK_TIMEOUT_S)
+
+    def _go_home(self, home: list[float], timeout_s: float = _HOME_TIMEOUT_S) -> None:
+        """Move the arm to ``home`` (rad) slowly, and wait until it is there.
+
+        Raises:
+            PiperError: If the arm is not there within ``timeout_s`` seconds.
+        """
+        sdk = self._sdk
+        sdk.MotionCtrl_2(_CAN_CONTROL, _MOVE_J, _HOME_SPEED_PERCENT, _MIT_OFF)
+        self._send_joints(home)
+
+        def there() -> bool:
+            positions = self._read_joints()[1]
+            return all(
+                abs(now - goal) <= _HOME_TOLERANCE_RAD
+                for now, goal in zip(positions, home, strict=True)
+            )
+
+        if not _wait_for(there, timeout_s):
+            at = ", ".join(f"{angle:.3f}" for angle in self._read_joints()[1])
+            raise PiperError(f"the arm did not reach home within {timeout_s} s; it is at {at} rad")
+        sdk.MotionCtrl_2(_CAN_CONTROL, _MOVE_J, self.config.speed_percent, _MIT_OFF)
+
+    def _send_joints(self, angles: list[float]) -> None:
+        """Send one joint target, in rad per joint."""
+        self._sdk.JointCtrl(*(round(angle * _SDK_PER_RAD) for angle in angles))
 
     def _check_jump(self, angles: list[float], measured: list[float]) -> None:
         """Refuse joint targets (rad) too far from where the joints are now (rad)."""
@@ -309,10 +379,14 @@ class PiperConnection(ConnectionModule):
         """Latch a fault once the arm reports a problem, or stops taking
         commands (out of CAN control, or its motors off) without DimOS asking."""
         state = self._sdk.GetArmStatus().arm_status
-        ready = state.ctrl_mode == _CAN_CONTROL and all(self._sdk.GetArmEnableStatus())
+        motors = self._sdk.GetArmEnableStatus()
+        ready = state.ctrl_mode == _CAN_CONTROL and all(motors)
         problem = _problem(state)
         if problem is None and self._ready and not ready:
-            problem = "the arm was stopped outside DimOS; call clear_errors() once it is safe"
+            problem = (
+                f"the arm was stopped outside DimOS (control mode {state.ctrl_mode!s}, "
+                f"motors on {motors}); call clear_errors() once it is safe"
+            )
         self._ready = ready
         if problem is not None and self._fault is None:
             self._fault = problem
@@ -392,7 +466,9 @@ def _open_sdk(port: str) -> Any:
     # Imported here so blueprints that use this module load without the SDK installed.
     from piper_sdk import C_PiperInterface_V2
 
-    sdk = C_PiperInterface_V2(can_name=port)
+    # The SDK's bitrate check fails on serial adapters (slcan), which report 0 bps;
+    # connect() checks instead that the arm answers.
+    sdk = C_PiperInterface_V2(can_name=port, judge_flag=False)
     sdk.ConnectPort()
     return sdk
 
@@ -409,9 +485,9 @@ def _problem(state: Any) -> str | None:
     return None
 
 
-def _wait_for(done: Callable[[], bool]) -> bool:
-    """Ask ``done`` until it says yes, for at most ``_ANSWER_TIMEOUT_S``; whether it did."""
-    deadline = time.monotonic() + _ANSWER_TIMEOUT_S
+def _wait_for(done: Callable[[], bool], timeout_s: float = _ANSWER_TIMEOUT_S) -> bool:
+    """Ask ``done`` until it says yes, for at most ``timeout_s`` seconds; whether it did."""
+    deadline = time.monotonic() + timeout_s
     while not done():
         if time.monotonic() > deadline:
             return False

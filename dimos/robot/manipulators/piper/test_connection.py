@@ -55,8 +55,8 @@ class FakePiper:
     ``gap`` (the gripper's, 0.001 mm), ``ctrl_mode``, ``arm_status`` and
     ``motors_on``, each read a new CAN frame unless ``silent``; ``status_reads``
     counts the status reads. Commands act as on the arm: MotionCtrl_2 sets the
-    control mode, EnablePiper turns the motors on, a reset clears the status
-    and turns them off.
+    control mode, EnablePiper turns the motors on, a joint target is reached at
+    once, a reset clears the status and turns them off.
     """
 
     def __init__(self, arm_status: int = 0) -> None:
@@ -89,12 +89,10 @@ class FakePiper:
 
     def JointCtrl(self, *args: int) -> None:
         self._record("JointCtrl", *args)
+        self.positions = list(args)
 
     def GripperCtrl(self, *args: int) -> None:
         self._record("GripperCtrl", *args)
-
-    def JointConfig(self, **kwargs: int) -> None:
-        self._record("JointConfig", **kwargs)
 
     def DisconnectPort(self) -> None:
         self._record("DisconnectPort")
@@ -237,58 +235,76 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
         each.module.stop()
 
 
-def test_start_turns_the_motors_on_for_joint_targets_and_leaves_the_gripper_where_it_is(
+def test_start_resets_the_arm_turns_its_motors_on_and_sends_it_home(
     rig: Callable[..., Rig],
 ) -> None:
-    r = rig()
+    sdk = FakePiper(arm_status=COLLISION)
+    sdk.positions = [10_000, 0, 0, 0, 0, 0]
+    r = rig(sdk)
     assert [name for name, _, _ in r.sdk.calls] == [
+        "MotionCtrl_1",
         "EnablePiper",
         "EnablePiper",
         "MotionCtrl_2",
+        "JointCtrl",
         "GripperCtrl",
         "GripperCtrl",
+        "JointCtrl",
+        "MotionCtrl_2",
+        "JointCtrl",
+        "MotionCtrl_2",
     ]
-    # CAN control, joint targets (MOVE J), at half speed, MIT mode off.
-    assert r.sdk.sent("MotionCtrl_2") == [(0x01, 0x01, 50, 0x00)]
+    assert r.sdk.sent("MotionCtrl_1") == [(0x02, 0, 0)]
+    # Held where it is (again once it takes commands), then sent home (all joints at 0) at
+    # 30 %, then back to half speed.
+    assert r.sdk.sent("JointCtrl") == [(10_000, 0, 0, 0, 0, 0)] * 2 + [(0, 0, 0, 0, 0, 0)]
+    assert [args[2] for args in r.sdk.sent("MotionCtrl_2")] == [50, 30, 50]
     # Off with its errors cleared, then on, at the 30 mm it is at.
     assert [args[0::2] for args in r.sdk.sent("GripperCtrl")] == [(30_000, 0x02), (30_000, 0x01)]
+    assert r.module.status().last_error is None
 
 
 def test_joint_targets_go_out_in_thousandths_of_a_degree(rig: Callable[..., Rig]) -> None:
     r = rig()
     r.move(joint1=0.2, joint6=-0.1)
     # A joint left out stays where it is.
-    assert r.sdk.sent("JointCtrl") == [(11_459, 0, 0, 0, 0, -5_730)]
+    assert r.sdk.sent("JointCtrl")[-1] == (11_459, 0, 0, 0, 0, -5_730)
 
 
 def test_joint_state_names_each_joint_with_its_position_speed_and_torque(
     rig: Callable[..., Rig],
 ) -> None:
-    sdk = FakePiper()
-    sdk.positions = [90_000, -45_000, 0, 0, 0, 0]
-    sdk.speeds = [1_500, 0, 0, 0, 0, -250]
-    sdk.efforts = [2_000, 0, 0, 0, 0, 0]
-    r = rig(sdk)
-    wait_until(lambda: any(len(m.name) == 6 for m in r.readings()), timeout=2.0)
-    msg = next(m for m in r.readings() if len(m.name) == 6)
+    r = rig()
+    r.sdk.positions = [90_000, -45_000, 0, 0, 0, 0]
+    r.sdk.speeds = [1_500, 0, 0, 0, 0, -250]
+    r.sdk.efforts = [2_000, 0, 0, 0, 0, 0]
+
+    def moved() -> list[JointState]:
+        return [m for m in r.readings() if len(m.name) == 6 and m.position[0] > 1.0]
+
+    wait_until(lambda: bool(moved()), timeout=2.0)
+    msg = moved()[0]
     assert msg.name == [f"arm/joint{i}" for i in range(1, 7)]
     assert msg.position == pytest.approx([1.5708, -0.7854, 0, 0, 0, 0], abs=1e-4)
     assert msg.velocity == pytest.approx([1.5, 0, 0, 0, 0, -0.25])
     assert msg.effort == pytest.approx([2.0, 0, 0, 0, 0, 0])
 
 
-def test_the_gripper_goes_out_as_its_gap_only_when_its_target_changes(
-    rig: Callable[..., Rig],
-) -> None:
+def test_the_gripper_goes_out_as_its_gap_with_every_command(rig: Callable[..., Rig]) -> None:
     r = rig()
     before = len(r.sdk.sent("GripperCtrl"))
+    sent = len(r.sdk.sent("JointCtrl"))
     r.move(gripper=0.07)
     r.move(gripper=0.07)
     r.move(gripper=0.0)
     # The gap in 0.001 mm, 1 N·m of squeeze, on.
-    assert r.sdk.sent("GripperCtrl")[before:] == [(70_000, 1000, 0x01, 0), (0, 1000, 0x01, 0)]
+    assert r.sdk.sent("GripperCtrl")[before:] == [
+        (70_000, 1000, 0x01, 0),
+        (70_000, 1000, 0x01, 0),
+        (0, 1000, 0x01, 0),
+    ]
     # The gripper alone moves no arm joint.
-    assert r.sdk.sent("JointCtrl") == []
+    assert len(r.sdk.sent("JointCtrl")) == sent
 
 
 def test_the_gripper_is_read_in_metres_in_a_message_of_its_own(rig: Callable[..., Rig]) -> None:
@@ -309,27 +325,7 @@ def test_a_target_past_the_jump_guard_is_refused_and_nothing_reaches_the_sdk(
     assert r.sdk.calls == before
     assert "arm/joint3 told 0.400 rad" in r.last_error()
     r.move(joint3=0.3)
-    assert len(r.sdk.sent("JointCtrl")) == 1
-
-
-def test_an_arm_in_error_at_start_takes_no_command_until_clear_errors_resets_it(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig(FakePiper(arm_status=COLLISION))
-    assert "the arm reports 7" in r.last_error()
-    assert r.sdk.calls == []
-
-    r.move(joint1=0.1)
-    assert r.sdk.calls == []
-
-    r.module.clear_errors()
-    names = [name for name, _, _ in r.sdk.calls]
-    assert names[:2] == ["MotionCtrl_1", "JointConfig"]
-    assert r.sdk.sent("MotionCtrl_1") == [(0x02, 0, 0)]
-    assert r.sdk.calls[1][2] == {"joint_num": 7, "clear_err": 0xAE}
-    assert "MotionCtrl_2" in names
-    r.move(joint1=0.1)
-    assert len(r.sdk.sent("JointCtrl")) == 1
+    assert r.sdk.sent("JointCtrl")[-1] == (0, 0, 17_189, 0, 0, 0)
 
 
 def test_an_arm_stopped_outside_dimos_takes_no_command_until_its_errors_are_cleared(
@@ -341,22 +337,26 @@ def test_an_arm_stopped_outside_dimos_takes_no_command_until_its_errors_are_clea
     # What the arm reports once its power is cut and back: standby, motors off.
     r.sdk.ctrl_mode, r.sdk.motors_on = STANDBY, False
     wait_until(lambda: "stopped outside DimOS" in r.last_error(), timeout=2.0)
+    sent = len(r.sdk.sent("JointCtrl"))
     r.move(joint1=0.1)
-    assert r.sdk.sent("JointCtrl") == []
+    assert len(r.sdk.sent("JointCtrl")) == sent
 
     r.module.clear_errors()
-    # Nothing to reset: the motors are turned back on.
-    assert r.sdk.sent("MotionCtrl_1") == []
+    resets = len(r.sdk.sent("MotionCtrl_1"))
     r.move(joint1=0.1)
-    assert len(r.sdk.sent("JointCtrl")) == 1
+    assert r.sdk.sent("JointCtrl")[-1][0] == 5_730
+    # Already taking commands: a second clear does not reset the arm again.
+    r.module.clear_errors()
+    assert len(r.sdk.sent("MotionCtrl_1")) == resets
 
 
 def test_teach_mode_stops_every_command(rig: Callable[..., Rig]) -> None:
     r = rig()
     r.sdk.ctrl_mode = TEACHING
     wait_until(lambda: "control mode 2" in r.last_error(), timeout=2.0)
+    sent = len(r.sdk.sent("JointCtrl"))
     r.move(joint1=0.1)
-    assert r.sdk.sent("JointCtrl") == []
+    assert len(r.sdk.sent("JointCtrl")) == sent
 
 
 def test_a_silent_arm_is_not_reported_and_takes_no_joint_target(
@@ -374,19 +374,32 @@ def test_a_silent_arm_is_not_reported_and_takes_no_joint_target(
     reads = r.sdk.status_reads
     wait_until(lambda: r.sdk.status_reads >= reads + 2, timeout=2.0)
     assert len(r.readings()) == count
+    sent = len(r.sdk.sent("JointCtrl"))
     with pytest.raises(PiperError, match="the joints were last read .* s ago"):
         r.module.write({"arm/joint1/position": 0.1})
-    assert r.sdk.sent("JointCtrl") == []
+    assert len(r.sdk.sent("JointCtrl")) == sent
 
 
-def test_stopping_lets_go_of_the_can_port_and_leaves_the_motors_on(
+def test_stopping_sends_the_arm_home_then_puts_it_in_its_emergency_stop(
     rig: Callable[..., Rig],
 ) -> None:
     r = rig()
+    r.move(joint1=0.1)
     before = len(r.sdk.calls)
     r.module.stop()
-    assert r.sdk.calls[before:] == [("DisconnectPort", (), {})]
+    assert r.sdk.sent("JointCtrl")[-1] == (0, 0, 0, 0, 0, 0)
+    assert r.sdk.calls[-2:] == [("MotionCtrl_1", (0x01, 0, 0), {}), ("DisconnectPort", (), {})]
+    assert len(r.sdk.calls) > before + 2
     assert not r.module.status().connected
+
+
+def test_an_arm_with_a_fault_is_not_sent_home_when_stopping(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    r.sdk.ctrl_mode = TEACHING
+    wait_until(lambda: "control mode 2" in r.last_error(), timeout=2.0)
+    before = len(r.sdk.calls)
+    r.module.stop()
+    assert r.sdk.calls[before:] == [("MotionCtrl_1", (0x01, 0, 0), {}), ("DisconnectPort", (), {})]
 
 
 @pytest.mark.self_hosted
