@@ -32,9 +32,10 @@ pub const SURFACE_CELL_FLOATS: usize = 5;
 /// Where the last GPU frame's time went, for logs.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GpuFrame {
-    /// The GPU passes, from submit until the report's counters read back.
+    /// Encoding and submitting the GPU passes.
     pub integrate_ms: f64,
-    /// Reading the report back and mirroring its voxels into the CPU map.
+    /// Waiting for them and reading the report back, then mirroring its
+    /// voxels into the CPU map.
     pub report_ms: f64,
     pub mirror_ms: f64,
     pub reported: usize,
@@ -515,7 +516,6 @@ mod gpu {
             };
             let started = std::time::Instant::now();
             self.map.integrate(origin, points);
-            self.map.finish();
             let integrated = std::time::Instant::now();
             let report = self.map.read_report();
             let read = std::time::Instant::now();
