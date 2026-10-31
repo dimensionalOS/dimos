@@ -57,8 +57,8 @@ async def history(state: GatewayState) -> dict[str, Any]:
 
 
 @router.get("/recordings", response_model=responses.Recordings)
-async def recordings() -> dict[str, Any]:
-    return {"path": str(store.recordings_dir())}
+async def recordings(state: GatewayState) -> dict[str, Any]:
+    return {"path": str(store.recordings_dir(state.dimos_dir))}
 
 
 @router.get("/{runId}", response_model=responses.PastRunDetail)
