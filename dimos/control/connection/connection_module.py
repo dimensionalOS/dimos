@@ -192,7 +192,11 @@ class ConnectionModule(Module, ABC):
         self._limits = limits_of(self.config)
         self.connect()
         with self._hardware_lock:
+            self._activate()
             self._connected = True
+
+    def _activate(self) -> None:
+        """Finish activation under the hardware lock before accepting commands."""
 
     @rpc
     def stop(self) -> None:

@@ -12,22 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTask
-from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
-    DualOpenYamCoordinator,
-)
+from dimos.robot.manipulators.common._damiao_test_helpers import mock_connection_rig
+from dimos.robot.manipulators.common.damiao_blueprint import DamiaoTeleopCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     _dual_openyam_webxr_tasks,
     teleop_webxr_dual_openyam,
@@ -36,12 +34,11 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_HOME_PER_ARM,
     dual_openyam_arm_joints,
 )
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
 from dimos.teleop.webxr.controller_types import Buttons
-
-pytestmark = pytest.mark.self_hosted
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -60,14 +57,17 @@ def test_webxr_blueprint_selects_physical_hardware_from_both_can_ports() -> None
         environ={},
     )
 
-    coordinator = parsed.module_kwargs("ControlCoordinator")
-    assert coordinator["left_can_port"] == "follower_l"
-    assert coordinator["right_can_port"] == "follower_r"
+    connection = parsed.module_kwargs("dualopenyamconnection")
+    assert connection["left_can_port"] == "follower_l"
+    assert connection["right_can_port"] == "follower_r"
     assert parsed.module_kwargs("manipulationmodule")["visualization"]["host"] == "0.0.0.0"
 
 
-def test_mock_webxr_grip_engages_only_its_own_arm(mocker: MockerFixture) -> None:
-    kwargs = _module_kwargs(teleop_webxr_dual_openyam, DualOpenYamCoordinator)
+@pytest.mark.parametrize("engaged", ["left", "right"])
+def test_mock_webxr_grip_engages_only_its_own_arm(
+    mocker: MockerFixture, tmp_path: Path, engaged: str
+) -> None:
+    kwargs = _module_kwargs(teleop_webxr_dual_openyam, DamiaoTeleopCoordinator)
     mocker.patch.object(DualOpenYamPinkPoseTargetSolver, "_validate_frame_targets")
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,
@@ -82,34 +82,39 @@ def test_mock_webxr_grip_engages_only_its_own_arm(mocker: MockerFixture) -> None
         "step",
         side_effect=lambda targets, seed, dt: JointState(name=seed.name, position=[0.01] * 6),
     )
-    mocker.patch.object(TickLoop, "start")
-    coordinator = DualOpenYamCoordinator(publish_joint_state=False, **kwargs)
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    coordinator = DamiaoTeleopCoordinator(publish_joint_state=False, **kwargs)
 
-    coordinator.start()
-    try:
+    with mock_connection_rig(
+        DualOpenYamConnection, coordinator, tmp_path=tmp_path, mocker=mocker
+    ) as rig:
         for side, config in _dual_openyam_webxr_tasks.items():
             task = cast("TeleopIKTask", coordinator._tasks[config.name])
-            assert set(task.claim().joints) == set(dual_openyam_arm_joints(side))
+            assert set(task.claim().joints) == {
+                f"arm/{name}" for name in dual_openyam_arm_joints(side)
+            }
         buttons = Buttons()
-        buttons.left_grip = True
-        coordinator._dispatch("teleop_buttons", buttons)
-        coordinator._dispatch("left_gripper_command", Float32(data=0.75))
-        coordinator._dispatch("right_gripper_command", Float32(data=0.25))
-        coordinator._dispatch(
-            "left_cartesian_command",
+        setattr(buttons, f"{engaged}_grip", True)
+        rig.inputs["teleop_buttons"].broadcast(None, buttons)
+        rig.inputs["left_gripper_command"].broadcast(None, Float32(data=0.75))
+        rig.inputs["right_gripper_command"].broadcast(None, Float32(data=0.25))
+        rig.inputs["left_cartesian_command"].broadcast(
+            None,
             PoseStamped(position=[1.0, 0.0, 0.0]),
         )
-        coordinator._dispatch(
-            "right_cartesian_command",
+        rig.inputs["right_cartesian_command"].broadcast(
+            None,
             PoseStamped(position=[-1.0, 0.0, 0.0]),
         )
-        assert coordinator._tick_loop is not None
-        coordinator._tick_loop._tick()
+        rig.tick()
 
-        adapter = cast("WholeBodyAdapter", coordinator._hardware["dual_openyam"].adapter)
-        states = adapter.read_motor_states()
-        assert [state.q for state in states[:6]] == [0.01] * 6
-        assert [state.q for state in states[6:12]] == pytest.approx(DUAL_OPENYAM_HOME_PER_ARM)
-        assert [state.q for state in states[12:]] == pytest.approx([0.75, 0.25], abs=0.01)
-    finally:
-        coordinator.stop()
+        positions = rig.positions
+        idle = "right" if engaged == "left" else "left"
+        assert [positions[f"arm/{engaged}_joint{i}"] for i in range(1, 7)] == [0.01] * 6
+        assert [positions[f"arm/{idle}_joint{i}"] for i in range(1, 7)] == pytest.approx(
+            DUAL_OPENYAM_HOME_PER_ARM
+        )
+        assert [positions["arm/left_gripper"], positions["arm/right_gripper"]] == pytest.approx(
+            [0.75, 0.25], abs=0.01
+        )

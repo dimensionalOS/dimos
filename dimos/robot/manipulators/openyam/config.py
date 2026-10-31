@@ -12,17 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM hardware and planning model configuration."""
+"""OpenYAM canonical planning model configuration."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
-from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
@@ -44,47 +39,20 @@ OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
-def openyam_hardware(*, bus_devices: dict[str, str] | None = None) -> HardwareComponent:
-    """Select the physical or in-memory whole-body adapter for OpenYAM."""
-    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
-    adapter_kwargs: dict[str, object] = {}
-    limits: JointLimits | None = None
-    if global_config.simulation:
-        limits = JointLimits(
-            position_lower=[*([None] * OPENYAM_DOF), 0.0],
-            position_upper=[*([None] * OPENYAM_DOF), 1.0],
-            velocity_max=[None] * len(OPENYAM_JOINTS),
-        )
-    else:
-        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_devices=bus_devices or {},
-            gravity_comp=True,
-        )
-    return HardwareComponent(
-        hardware_id=OPENYAM_HARDWARE_ID,
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=list(OPENYAM_JOINTS),
-        adapter_type=adapter_type,
-        auto_enable=True,
-        limits=limits,
-        adapter_kwargs=adapter_kwargs,
-        wb_config=WholeBodyConfig(
-            kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0),
-            kd=(5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0),
-        ),
-    )
-
-
 def make_openyam_model_config(
     *,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     """Build the canonical visualization and planning config for OpenYAM."""
     model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
-    model = RobotModel.from_file(
-        OPENYAM_MODEL_PATH,
-        package_paths=OPENYAM_PACKAGE_PATHS,
-    ).with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
+    model = (
+        RobotModel.from_file(
+            OPENYAM_MODEL_PATH,
+            package_paths=OPENYAM_PACKAGE_PATHS,
+        )
+        .with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
+        .with_fixed_joints("joint7", "joint8")
+    )
     return RobotModelConfig(
         model=model.with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
