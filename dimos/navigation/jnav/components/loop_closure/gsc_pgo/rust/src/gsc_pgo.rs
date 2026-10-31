@@ -1159,9 +1159,10 @@ impl ClosureSearch {
                         measured(&extended.rotation, &extended.translation);
                     score = extended.inlier_mean_square();
                 }
-                // back on a spot no kept loop closes: the yank gate trusts the stated odometry noise, so GNC and
-                // the loosened-odometry map judge the single fit instead
-                None if diag.pressure2 > 0.5 => {}
+                // back on a spot no kept loop closes while the odometry is still trusted as stated: the yank gate
+                // trusts that noise, so GNC and the loosened-odometry map judge the single fit instead; once a
+                // loosened map has raised the noise, the gate judges at it (look-alikes stand out there again)
+                None if diag.pressure2 > 0.5 && diag.odometry_noise.iter().all(|&n| n <= 1.0) => {}
                 None => return rejected(diag, "yank_confidence_reject", timing),
             }
         }
