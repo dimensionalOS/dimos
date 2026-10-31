@@ -16,6 +16,9 @@
 
 import math
 
+from pydantic import Field
+
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
@@ -44,6 +47,7 @@ def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
 class DualOpenYamCoordinatorConfig(ControlCoordinatorConfig):
     """Dual OpenYAM deployment configuration."""
 
+    hardware: list[HardwareComponent] = Field(default_factory=lambda: [dual_openyam_hardware()])
     left_can_port: str | None = None
     right_can_port: str | None = None
 
