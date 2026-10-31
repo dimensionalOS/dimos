@@ -248,7 +248,7 @@ impl GscPgo {
             ));
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
-        let solve_noise = self.odometry_noise_for_solve();
+        let solve_noise = self.odometry_noise();
         let odometry = odometry_edges(&self.key_poses, config, solve_noise);
         let priors = self.position_priors();
         let (sightings, landmark_ids) = self.sightings();
@@ -259,12 +259,7 @@ impl GscPgo {
             pcm: config.closure_pcm,
             gnc_overtrust_check: config.closure_gnc_overtrust_check,
             // overtrusted only beyond the learner's upper bound: its solve noise is the lower bound, low on purpose
-            overtrust_noise_headroom: if config.odometry_noise_from_closures {
-                let (upper, used) = (self.odometry_noise_bound(1.0), solve_noise);
-                std::array::from_fn(|c| upper[c] / used[c])
-            } else {
-                [1.0; 4]
-            },
+            overtrust_noise_headroom: [1.0; 4],
             gravity: match self
                 .odometry_gravity_variance()
                 .filter(|_| config.odometry_gravity_bound)
@@ -362,7 +357,7 @@ impl GscPgo {
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
         // the ln the residuals are whitened at (the solve's noise, its lower bound or the estimate)
-        self.odometry_noise_ln_dispatched = self.odometry_noise_for_solve().map(f64::ln);
+        self.odometry_noise_ln_dispatched = self.odometry_noise().map(f64::ln);
         self.odometry_noise_rescale = false;
         self.solving = Some(Solving {
             handle,
@@ -476,7 +471,7 @@ impl GscPgo {
                 n,
                 self.committed_closures.len(),
                 kept,
-                self.odometry_noise(),
+                self.odometry_noise_estimate(),
                 self.odometry_gravity_variance().map_or(-1.0, f64::sqrt),
                 solution
                     .odometry_noise_evidence

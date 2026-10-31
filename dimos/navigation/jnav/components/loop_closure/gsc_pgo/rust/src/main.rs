@@ -93,8 +93,6 @@ config! {
     closure_gnc_inlier_probability: f64,
     closure_informative_by_graph_covariance: bool,
     closure_uninformative_gate: bool,
-    closure_uninformative_noise_upper_bound: bool,
-    odometry_noise_solve_lower_bound: bool,
     odom_xy_drift_per_sqrt_m: f64,
     odom_xy_drift_per_sqrt_rad: f64,
     odom_z_drift_per_sqrt_m: f64,
