@@ -15,6 +15,9 @@
 """Metal learning composition shared by single- and dual-arm deployments."""
 
 from collections.abc import Mapping
+import math
+
+from scipy.spatial.transform import Rotation
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.eef_trajectory_task.eef_trajectory_task import eef_trajectory_task
@@ -76,10 +79,12 @@ def build_metal_learning(
     tcp_transforms: Mapping[ArmSide, ToolTransform] | None = None,
     checkpoint: str = "dreamlabs/dream-1-beta",
 ) -> Blueprint:
-    """Compose one station; real deployment supplies measured model mounts and TCPs.
+    """Compose one station with model-defined TCPs and configurable rig geometry.
 
     Single Metal uses the right-hand protocol slot and right Quest controller.
-    Missing TCP calibration is allowed for collection, but rollout preflight fails.
+    The standard gripper TCP comes from the shared model's grasp frame.
+    Optional legacy ``tcp_transforms`` remain relative to each gripper_base;
+    they add fixed SDK TCP frames to the same model used by every consumer.
     The dual model's default mount positions describe only a mock example station.
     """
     model = model or (dual_metal_model_config() if dual else make_metal_model_config())
@@ -87,18 +92,37 @@ def build_metal_learning(
     hardware = dual_metal_hardware() if dual else [metal_hardware()]
     arm_names = {side: list(ARM_JOINTS[side] if dual else METAL_ARM_JOINTS) for side in sides}
     grippers = {side: f"{side}_arm/gripper" if dual else METAL_GRIPPER_JOINT for side in sides}
-    targets = {side: f"{side}_gripper_base" if dual else "gripper_base" for side in sides}
+    targets = {side: f"{side}_grasp_frame" if dual else "grasp_frame" for side in sides}
     joint_names = [name for side in sides for name in arm_names[side]] + list(grippers.values())
     arms = {}
     for side in sides:
         transform = (tcp_transforms or {}).get(side)
+        sdk_tcp_frame = targets[side]
+        if transform is not None:
+            xyz, quat = transform
+            if not all(math.isfinite(v) for v in (*xyz, *quat)) or not math.isclose(
+                sum(v * v for v in quat), 1.0, rel_tol=1e-5
+            ):
+                raise ValueError("Tool transform must have finite metres and a unit quaternion")
+            prefix = f"{side}_" if dual else ""
+            sdk_tcp_frame = f"{prefix}sdk_tcp"
+            rpy = Rotation.from_quat(quat).as_euler("xyz")
+            model = model.model_copy(
+                update={
+                    "model": model.model.with_fixed_frame(
+                        sdk_tcp_frame,
+                        f"{prefix}gripper_base",
+                        xyz=xyz,
+                        rpy=(float(rpy[0]), float(rpy[1]), float(rpy[2])),
+                    )
+                }
+            )
         arms[side] = DreamlabsArmConfig(
             joint_names=arm_names[side],
             base_frame=f"{side}_base_link" if dual else "base_link",
             target_frame=targets[side],
             gripper_joint=grippers[side],
-            target_to_sdk_xyz=transform[0] if transform else None,
-            target_to_sdk_xyzw=transform[1] if transform else None,
+            sdk_tcp_frame=sdk_tcp_frame,
         )
     backend = DreamlabsBackendConfig(
         mode="eef", model=model.model, arms=arms, camera_roles=camera_roles

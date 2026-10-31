@@ -25,8 +25,12 @@ normalized gripper; finger geometry remains fixed in the planning model.
 The model lazily composes two copies of the same pinned official Metal URDF used
 by the [single-arm integration](/docs/capabilities/manipulation/makermods_metal_integration.md).
 Links, joints, material names, and references are prefixed `left_` / `right_`.
-The root is `dual_metal_base`, with tips `left_gripper_base` and
-`right_gripper_base`. Meshes and kinematics come from the official model.
+The root is `dual_metal_base`, with tips `left_grasp_frame` and
+`right_grasp_frame`. Each standard grasp frame is added in Python 80 mm along
+its gripper mount's +Z axis, using the rounded midpoint of the vendor mesh's
+finger-pad contact regions. It is a model convention, not physical calibration.
+Planning, teleop, EEF tracking, and policy FK share these frames. Meshes and arm
+kinematics come from the official model.
 
 MakerMods publishes a **90 x 90 mm, four M5 screw** base mounting pattern and
 612.5 mm working radius on its [Metal product page](https://www.makermods.ai/metal-arm).
