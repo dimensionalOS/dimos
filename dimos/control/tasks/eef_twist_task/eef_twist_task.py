@@ -47,7 +47,15 @@ logger = setup_logger()
 
 @attrs.frozen(slots=False)
 class EEFTwistTaskConfig(PoseTargetIKTaskConfig):
-    """Configuration for command-relative end-effector twist control."""
+    """Settings for the end-effector jog task.
+
+    Attributes:
+        target_frames: The one robot frame (link name) the twists move.
+        command_timeout: Seconds after the last non-zero twist before the
+            task stops the arm and releases its joints to other tasks.
+            0 means it never releases them: with no twist coming in it keeps
+            holding the arm where it is, and lower-priority tasks cannot move it.
+    """
 
     target_frames: tuple[str, ...] = attrs.field(
         default=(),
@@ -58,7 +66,20 @@ class EEFTwistTaskConfig(PoseTargetIKTaskConfig):
 
 
 class EEFTwistTask(PoseTargetIKTask):
-    """Integrate twists into a Cartesian target solved by the shared IK core."""
+    """Jog the arm's end effector with velocity commands (twists).
+
+    Each tick the target pose moves by twist x tick time and the IK solver
+    drives the joints after it. A zero twist stops the target where it is.
+
+    With ``command_timeout`` > 0 the task is idle until the first non-zero
+    twist and goes idle again once ``command_timeout`` seconds pass with no
+    non-zero twist: on that tick it commands the stopped target one last
+    time, then claims no joints, so a lower-priority task (e.g. a planned
+    trajectory) can move the arm. The next non-zero twist starts again from
+    where the arm is then. With ``command_timeout`` 0 it never goes idle.
+
+    While the e-stop is latched it ignores twists and commands nothing.
+    """
 
     _config: EEFTwistTaskConfig
 
@@ -74,11 +95,14 @@ class EEFTwistTask(PoseTargetIKTask):
         self._last_twist_time = 0.0
         self._target_pose: PoseStamped | None = None
         self._estopped = False
+        # True while nobody is jogging; only ever True with command_timeout > 0.
+        self._idle = config.command_timeout > 0.0
         super().__init__(name, config, solver=solver)
 
     def is_active(self) -> bool:
+        """False while e-stopped or idle; the coordinator then skips the task."""
         with self._input_lock:
-            return not self._estopped
+            return not self._estopped and not self._idle
 
     def is_tracking(self) -> bool:
         return self.is_active()
@@ -89,6 +113,16 @@ class EEFTwistTask(PoseTargetIKTask):
         return False
 
     def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
+        """Set the end-effector velocity to follow until the next twist.
+
+        Args:
+            twist: Linear velocity in m/s and angular velocity in rad/s.
+                All zeros stops the arm.
+            t_now: Coordinator time in seconds (``time.perf_counter()``).
+
+        Returns:
+            False if the twist was refused (not finite, or e-stop latched).
+        """
         values = twist_to_numpy(twist)
         if values.shape != (6,) or not np.all(np.isfinite(values)):
             logger.warning("EEFTwistTask rejecting invalid twist", task=self._name)
@@ -96,7 +130,15 @@ class EEFTwistTask(PoseTargetIKTask):
         with self._input_lock:
             if self._estopped:
                 return False
-            self._latest_twist = None if np.allclose(values, 0.0) else twist
+            if np.allclose(values, 0.0):
+                self._latest_twist = None
+                return True
+            if self._idle:
+                # Start from where the arm is now; another task may have moved it.
+                self._idle = False
+                self._target_pose = None
+                self._reset_command_state()
+            self._latest_twist = twist
             self._last_twist_time = t_now
         return True
 
@@ -122,14 +164,16 @@ class EEFTwistTask(PoseTargetIKTask):
 
     def _frame_target_snapshot(self, state: CoordinatorState) -> FrameTargetSnapshot | None:
         with self._input_lock:
-            if self._estopped:
+            if self._estopped or self._idle:
                 return None
-            if (
-                self._latest_twist is not None
-                and self._config.command_timeout > 0.0
+            going_idle = (
+                self._config.command_timeout > 0.0
                 and state.t_now - self._last_twist_time > self._config.command_timeout
-            ):
+            )
+            if going_idle:
+                # Command the stopped target this tick, release the joints from the next.
                 self._latest_twist = None
+                self._idle = True
             twist = self._latest_twist
             target = self._target_pose
 
@@ -145,7 +189,8 @@ class EEFTwistTask(PoseTargetIKTask):
         with self._input_lock:
             if self._estopped:
                 return None
-            self._target_pose = target
+            if not going_idle:
+                self._target_pose = target
 
         return FrameTargetSnapshot(
             targets={self._config.target_frames[0]: target},
@@ -162,6 +207,8 @@ class EEFTwistTask(PoseTargetIKTask):
 
 
 class EEFTwistTaskParams(PoseTargetIKTaskParams):
+    """Blueprint params; ``timeout`` becomes ``EEFTwistTaskConfig.command_timeout``."""
+
     target_frame: str
     timeout: float = 0.3
 
