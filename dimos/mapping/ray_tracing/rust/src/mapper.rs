@@ -406,9 +406,10 @@ mod gpu {
         /// plane is left out, as the CPU path keeps no plane heights; its
         /// height is fresh the next time its column changes.
         dirty: AHashMap<(i32, i32), (i32, i32)>,
-        /// Columns the last surfaces sent a cell in, which a later rewrite
-        /// that leaves them none must clear.
-        sent_columns: AHashSet<(i32, i32)>,
+        /// Columns the planner holds cells of, with a hash of the rows last
+        /// sent for them: a rewrite that leaves one none must clear it, and
+        /// one whose rows hash the same needs no resend.
+        sent_columns: AHashMap<(i32, i32), u64>,
         /// Whether a planner asked for surfaces, so changes are tracked;
         /// until then nothing would drain `dirty`.
         tracking: bool,
@@ -470,7 +471,7 @@ mod gpu {
                 z_range: None,
                 extractor: None,
                 dirty: AHashMap::new(),
-                sent_columns: AHashSet::new(),
+                sent_columns: AHashMap::new(),
                 tracking: false,
                 surface_update: SurfaceUpdate::default(),
                 frame: GpuFrame::default(),
@@ -760,8 +761,8 @@ mod gpu {
             self.surface_update.export_ms = extracted.elapsed().as_secs_f64() * 1e3;
             let half = 0.5 * voxel_size;
             let center = |c: i32| c as f32 * voxel_size + half;
-            let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * rows.len());
-            let mut with_cells: AHashSet<(i32, i32)> = AHashSet::with_capacity(rows.len());
+            let mut columns: AHashMap<(i32, i32), Vec<[f32; SURFACE_CELL_FLOATS]>> =
+                AHashMap::with_capacity(rows.len());
             for cell in &rows {
                 let (x, y, z) = cell.key;
                 let w = match request.boundary_distance {
@@ -772,10 +773,32 @@ mod gpu {
                     true => cell.boundary_m.unwrap_or(f32::INFINITY),
                     false => f32::INFINITY,
                 };
-                out.extend_from_slice(&[center(x), center(y), center(z), cell.height_m, w]);
-                with_cells.insert((x, y));
+                columns.entry((x, y)).or_default().push([
+                    center(x),
+                    center(y),
+                    center(z),
+                    cell.height_m,
+                    w,
+                ]);
             }
-            self.surface_update.cells = rows.len();
+            // A column whose rows match what the planner already holds is not
+            // resent, as the CPU planner leaves a column whose cells it
+            // recomputes the same.
+            let mut out = Vec::with_capacity(SURFACE_CELL_FLOATS * rows.len());
+            for (column, mut cells) in columns.drain() {
+                cells.sort_unstable_by(|a, b| a[2].total_cmp(&b[2]));
+                let mut hasher = ahash::AHasher::default();
+                std::hash::Hash::hash(&export_z, &mut hasher);
+                for value in cells.iter().flatten() {
+                    std::hash::Hash::hash(&value.to_bits(), &mut hasher);
+                }
+                let hash = std::hash::Hasher::finish(&hasher);
+                if self.sent_columns.insert(column, hash) == Some(hash) {
+                    continue;
+                }
+                self.surface_update.cells += cells.len();
+                out.extend(cells.iter().flatten());
+            }
             // A column that held cells and now has none in range is cleared by a
             // NaN-z row; one that never held any needs none.
             let in_write = |&(x, y): &(i32, i32)| {
@@ -784,15 +807,15 @@ mod gpu {
                     && (0..h as i32).contains(&ly)
                     && write[ly as usize * w + lx as usize]
             };
-            for &(x, y) in self
-                .sent_columns
-                .iter()
-                .filter(|c| in_write(c) && !with_cells.contains(c))
-            {
-                out.extend_from_slice(&[center(x), center(y), f32::NAN, f32::NAN, f32::NAN]);
-            }
-            self.sent_columns.retain(|c| !in_write(c));
-            self.sent_columns.extend(with_cells);
+            let with_cells: AHashSet<(i32, i32)> =
+                rows.iter().map(|c| (c.key.0, c.key.1)).collect();
+            self.sent_columns.retain(|&(x, y), _| {
+                let cleared = in_write(&(x, y)) && !with_cells.contains(&(x, y));
+                if cleared {
+                    out.extend_from_slice(&[center(x), center(y), f32::NAN, f32::NAN, f32::NAN]);
+                }
+                !cleared
+            });
             Some(out)
         }
 
