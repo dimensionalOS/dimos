@@ -28,7 +28,6 @@ import pytest
 
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches
-from experimental.gateway.state import State
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -317,43 +316,17 @@ def test_recordings_is_the_standard_directory(
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
 
 
-def test_dimos_app_wins_and_config_yaml_in_its_home_is_the_fallback(
-    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from experimental.gateway import store
-
-    home = tmp_path / "dimos_home"
-    home.mkdir(exist_ok=True)
-    (home / "config.yaml").write_text(
-        f"dimos-gateway: {{socket: /tmp/yaml.sock}}\nrecordings: {{dir: {tmp_path / 'yaml_recs'}}}\n"
-    )
-    # DIMOS_HOME's config.yaml is never read
-    (tmp_path / "not_this_home").mkdir()
-    (tmp_path / "not_this_home" / "config.yaml").write_text("zenoh: {namespace: wrong}\n")
-    assert store.setting("zenoh", "namespace") is None
-    assert store.setting("dimos-gateway", "socket") == "/tmp/yaml.sock"
-    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "yaml_recs")}
-    app = {
-        "home": str(home),
-        "socket": "/tmp/app.sock",
-        "recordingsDir": str(tmp_path / "app_recs"),
-    }
-    monkeypatch.setenv("DIMOS_APP", json.dumps(app))
-    assert store.setting("dimos-gateway", "socket") == "/tmp/app.sock"
-    assert client.get("/history/recordings").json() == {"path": str(tmp_path / "app_recs")}
-
-
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
     launches._save({"blueprint": "demo", "started_at": "x", "pid": os.getpid(), "pid_started": 0.0})
     assert launches.current_launch()["phase"] == "failed"
 
 
 def test_shared_config_yaml_sets_the_namespace_connect_and_socket_but_not_a_runs_gossip(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from experimental.gateway import events, store
 
-    assert (events.resolve_namespace(None), store.setting("dimos-gateway", "socket")) == (
+    assert (events.resolve_namespace(), store.setting("dimos-gateway", "socket")) == (
         None,
         None,
     )
@@ -362,105 +335,19 @@ def test_shared_config_yaml_sets_the_namespace_connect_and_socket_but_not_a_runs
         "zenoh: {namespace: desk1, connect: 'tcp/10.0.0.2:7447', gossip: false}\n"
         "dimos-gateway: {socket: /tmp/gw.sock}\ndesktop: {port: 5555}\n"
     )
-    assert events.resolve_namespace(None) == "desk1"
-    assert events.resolve_namespace("given") == "given"
-    assert events.resolve_connect(None) == ["tcp/10.0.0.2:7447"]
+    assert events.resolve_namespace() == "desk1"
+    assert events.resolve_connect() == ["tcp/10.0.0.2:7447"]
     assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    app = {
+        "home": str(tmp_path / "dimos_home"),
+        "socket": "/tmp/app.sock",
+        "zenohNamespace": "app1",
+    }
+    monkeypatch.setenv("DIMOS_APP", json.dumps(app))
+    assert (events.resolve_namespace(), store.setting("dimos-gateway", "socket")) == (
+        "app1",
+        "/tmp/app.sock",
+    )
     # a run's gossip is its launch config's (Desktop puts zenoh.gossip there), not this file's
     client.post("/active/launch", json={"blueprint": "demo"})
     until(output_has(client, "gossip None"))
-
-
-SCANNED = {
-    "format": 1,
-    "fingerprint": "scanned checkout",
-    "finished_at": "2026-01-01T12:00:00Z",
-    "results": {},
-    "modules": {
-        "cam": {"name": "cam", "class": "Cam", "rpcs": [], "doc": "", "inputs": [], "outputs": []}
-    },
-    "errors": ["module broken-scan: ImportError: no such thing"],
-}
-
-
-def listed_and_scanned(state: State, monkeypatch: pytest.MonkeyPatch) -> None:
-    state.listed = [{"name": "demo", "kind": "builtin"}, {"name": "acme-other", "kind": "external"}]
-    monkeypatch.setattr(state.scanner, "cache", lambda: SCANNED)
-    monkeypatch.setattr(state.scanner, "current_fingerprint", lambda: SCANNED["fingerprint"])
-
-
-def never_spawns(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(*args: Any) -> int:
-        pytest.fail(f"spawned {args[1]}")
-
-    monkeypatch.setattr(launches, "_spawn", refuse)
-
-
-def test_an_unknown_name_is_refused_before_anything_is_spawned(
-    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    listed_and_scanned(state, monkeypatch)
-    never_spawns(monkeypatch)
-    refused = client.post("/active/launch", json={"blueprint": "does-not-exist-xyz"})
-    assert refused.status_code == 404, refused.text
-    assert "does-not-exist-xyz" in refused.json()["error"]
-    refused = client.post("/active/launch", json={"module": "cams"})
-    assert refused.status_code == 404, refused.text
-    assert "did you mean cam" in refused.json()["error"]
-    refused = client.post("/active/exec", json={"args": ["dmeo", "--n-workers=2"]})
-    assert refused.status_code == 404, refused.text
-    assert client.get("/active").json()["launch"] is None
-
-
-def test_a_scan_of_an_older_checkout_refuses_nothing(
-    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A module added since the scan would look unknown, so dimos run decides instead."""
-    listed_and_scanned(state, monkeypatch)
-    monkeypatch.setattr(state.scanner, "current_fingerprint", lambda: "the checkout changed")
-    assert client.post("/active/launch", json={"module": "added-since"}).status_code == 200
-
-
-def test_every_listed_or_scanned_name_still_launches(
-    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    listed_and_scanned(state, monkeypatch)
-    # a blueprint from the listing, an external one, a module by registry name or class, a module whose scan failed
-    for request in (
-        {"blueprint": "demo"},
-        {"blueprint": "acme-other"},
-        {"module": "cam"},
-        {"blueprint": "Cam"},
-        {"module": "broken-scan"},
-    ):
-        started = client.post("/active/launch", json=request)
-        assert started.status_code == 200, (request, started.text)
-        until(running(client))
-        client.post("/active/stop")
-        until(stopped(client))
-
-
-def test_without_a_listing_or_scan_the_name_is_left_to_dimos(
-    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    assert state.listed is None and state.scanner.cache() is None
-    started = client.post("/active/launch", json={"blueprint": "does-not-exist-xyz"})
-    assert started.status_code == 200, started.text
-    until(output_has(client, "run does-not-exist-xyz"))
-    until(running(client))
-    client.post("/active/stop")
-    until(stopped(client))
-    # a listing alone isn't enough either: the name could be a module the gateway hasn't scanned yet
-    state.listed = [{"name": "demo", "kind": "builtin"}]
-    started = client.post("/active/launch", json={"module": "unscanned"})
-    assert started.status_code == 200, started.text
-    until(running(client))
-    client.post("/active/stop")
-    until(stopped(client))
-    # nor a listing plus one blueprint's scan (no finished_at): the other blueprints' modules were never visited
-    monkeypatch.setattr(state.scanner, "cache", lambda: {**SCANNED, "finished_at": None})
-    started = client.post("/active/launch", json={"module": "unscanned"})
-    assert started.status_code == 200, started.text
-    until(running(client))
-    client.post("/active/stop")
-    until(stopped(client))

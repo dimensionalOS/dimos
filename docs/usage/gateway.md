@@ -70,8 +70,8 @@ app.subscribe("odom", (odom) => console.log(odom.pose.pose.position))
 ```
 
 - Settings come from `DIMOS_APP` (`socket`, `recordingsDir`, `zenohNamespace`, `zenohConnect`), else `<home>/config.yaml`
-  (`home` from `DIMOS_APP`, else `~/.dimos`; `DIMOS_HOME` is not read): `dimos-gateway.socket`, `zenoh.namespace`,
-  `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win. Desktop writes
+  (`home` from `DIMOS_APP`, else `~/.dimos`): `dimos-gateway.socket`, `zenoh.namespace`, `zenoh.connect`,
+  `zenoh.gossip`, `recordings.dir`. Desktop writes
   that file and the gateway watches it: `GET /config` is what it reads from it, and a `config` event follows a change.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
