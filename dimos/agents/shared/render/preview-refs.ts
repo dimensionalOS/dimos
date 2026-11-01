@@ -1,11 +1,18 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ImageContent, Message } from "@earendil-works/pi-ai";
 import type { FileRef, RenderDetails, RenderedView } from "#dimos/agents/shared/protocol/media.ts";
 import { RenderDetailsSchema } from "#dimos/agents/shared/protocol/media.ts";
+import { clipRenderer } from "#dimos/agents/shared/render/clip.ts";
 import { readVerified } from "#dimos/agents/shared/render/files.ts";
+import { RenderCache, readSource } from "#dimos/agents/shared/render/lib/artifacts.ts";
 import { modelImage } from "#dimos/agents/shared/render/lib/model-image.ts";
 import { fitCamera, paintCloud, parseCloud } from "#dimos/agents/shared/render/points.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+
+const REBUILD_MAX_BYTES = 64 * 2 ** 20;
 
 /** Caption marker for humans / TUI; never used as authority to read files. */
 export const PREVIEW_PREFIX = "Preview: ";
@@ -27,10 +34,29 @@ export function renderDetailsOf(details: unknown): RenderDetails | null {
   return null;
 }
 
+/** Re-render a clip contact sheet from the verified frame index when the cache entry was pruned. */
+async function rebuildClipSheet(view: Extract<RenderedView, { kind: "clip" }>): Promise<ImageContent> {
+  const dir = await mkdtemp(join(tmpdir(), "clip-hydrate-"));
+  try {
+    const cache = new RenderCache(dir, REBUILD_MAX_BYTES);
+    const source = await readSource(view.source.path, REBUILD_MAX_BYTES, view.source.sha256);
+    const part = await cache.pinning((previewCache) =>
+      clipRenderer.render(source, view.label, {
+        cache: previewCache,
+        maxSourceBytes: REBUILD_MAX_BYTES,
+        onProgress: null,
+      }),
+    );
+    return part.image.content;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Rebuild the model image from verified FileRefs in render details.
  * Images come from the source (correct JPEG/PNG policy); points/clips use the cached raster when present,
- * and points fall back to re-painting the verified source JSON when the cache was pruned.
+ * and fall back to re-rendering the verified source when the cache was pruned.
  */
 export async function imageContentFromView(view: RenderedView): Promise<ImageContent> {
   if (view.kind === "image") {
@@ -46,7 +72,11 @@ export async function imageContentFromView(view: RenderedView): Promise<ImageCon
       return (await modelImage(png, "graphic")).content;
     }
   }
-  return (await modelImage(await readVerified(view.sheet))).content;
+  try {
+    return (await modelImage(await readVerified(view.sheet))).content;
+  } catch {
+    return rebuildClipSheet(view);
+  }
 }
 
 /**

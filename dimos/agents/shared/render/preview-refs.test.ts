@@ -124,3 +124,31 @@ test("a user message with Preview: text alone is not hydrated", async (t) => {
   const hydrated = await hydrateToolResultPreviews([message]);
   assert.strictEqual(hydrated[0], message);
 });
+
+test("a pruned clip sheet is rebuilt from the verified frame index", async (t) => {
+  const { FileRenderer } = await import("#dimos/agents/shared/render/render.ts");
+  const { imageContentFromView } = await import("#dimos/agents/shared/render/preview-refs.ts");
+  const dir = await mkdtemp(join(tmpdir(), "clip-rebuild-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const frame = join(dir, "frame-0.svg");
+  await writeFile(
+    frame,
+    '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="448"><rect width="900" height="448" fill="#ff0000"/></svg>',
+  );
+  const index = join(dir, "clip.json");
+  await writeFile(index, JSON.stringify({ type: "image", frames: [{ path: "frame-0.svg", timestamp: 1 }] }));
+  const renderer = new FileRenderer({
+    cacheDir: join(dir, "cache"),
+    maxCacheBytes: 128 * 1024 * 1024,
+    maxSourceBytes: 64 * 1024 * 1024,
+  });
+  const rendering = await renderer.render([{ path: index, sha256: null }], "clip");
+  assert(rendering !== null);
+  const [view] = rendering.details.views;
+  assert(view?.kind === "clip");
+  const { unlink } = await import("node:fs/promises");
+  await unlink(view.sheet.path);
+  const rebuilt = await imageContentFromView(view);
+  assert.equal(rebuilt.type, "image");
+  assert.ok(rebuilt.data.length > 100);
+});
