@@ -50,6 +50,9 @@ ALFRED_BENCH_PARAMS = LocalizeParams(min_views=1, accept_score=0.3, fuse_voxel_m
 # would hold 600 MB of frames.
 LOCALIZE_FEED_FRAMES = 45
 LOCALIZE_HORIZON_S = 120.0
+# What the Manipulation app lists without being asked, one pass over the newest frame after another.
+# OWLv2 takes words, not "whatever is there": a pass costs the same for one label or eight.
+ALFRED_WATCH_LABELS = ["cup", "bottle", "box", "can", "tool", "ball"]
 
 PerceptionDevice = Literal["cuda", "mps", "cpu"]
 """Where this machine runs the perception models."""
@@ -92,6 +95,7 @@ def alfred_localize(
         segmenter=segmenter,
         feed_frames=LOCALIZE_FEED_FRAMES,
         horizon_s=LOCALIZE_HORIZON_S,
+        watch=ALFRED_WATCH_LABELS,
     )
 
 

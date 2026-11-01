@@ -22,6 +22,21 @@ lifted through aligned depth or, for a camera without it, a lidar.
 `localize.localize` runs retrieve and support plane once per call, then detect, segment and
 associate frame by frame, so one frame's masks are in memory at a time, then verify.
 
+## Watching
+
+`localize` answers when asked. Give the module `watch` labels and it also asks by itself: one pass over the newest
+frame after another, about 2 s each on an Orin NX whatever the label count, and it publishes everything seen lately.
+
+- It takes words because the detector does: the feed is embedded all the time, but nothing is detected until a label
+  names it. A list of common words is how a stack lists "what is there".
+- `detections` carries one `Detection3D` per object in `world_frame`; `detections_2d` the same objects as boxes in
+  colour pixels, each one's cloud projected through the camera as it stands now.
+- A pass starts from nothing, so each cloud is that frame's. Objects found by earlier `localize` calls stay in
+  their own memory, and a cloud folded over many frames would keep a nudged object where it stood.
+- An object is listed once, under its best label, and keeps its id for as long as it stays within
+  `cluster_radius_m`. `pick_object` takes that id. An object not seen for `WATCH_FORGET_S` leaves the list.
+- `watch_labels` (`std_msgs.String`, comma-separated) replaces the labels; empty goes back to the config's.
+
 ## Swapping a model
 
 `localize` sees three interfaces only, all in `dandetect.py`:

@@ -25,24 +25,41 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.manipulation_spec import PickSceneSpec
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.perception.localize.module import SCAN_WINDOW_S, PerceptionLocalize
-from dimos.perception.localize.types import Localization
+from dimos.perception.localize.module import (
+    SCAN_WINDOW_S,
+    WATCH_FORGET_S,
+    WATCH_WINDOW_S,
+    PerceptionLocalize,
+    _image_box,
+    as_detection_2d_array,
+)
+from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.spec.utils import spec_annotation_compliance
 
 WORLD = "odom"
 
 
-def _hit(instance_id: str) -> Localization:
+def _hit(
+    instance_id: str,
+    score: float = 0.5,
+    at: tuple[float, float, float] = (0.5, 0.0, 1.0),
+    seen: float = 10.0,
+) -> Localization:
     return Localization(
         instance_id=instance_id,
-        semantic_score=0.5,
+        semantic_score=score,
         ambiguity_margin=0.1,
-        position_world_xyz=(0.5, 0.0, 1.0),
+        position_world_xyz=at,
         frame_id=WORLD,
-        last_seen_timestamp=10.0,
+        last_seen_timestamp=seen,
         point_cloud=PointCloud2.from_numpy(
             np.array([[0.5, 0.0, 1.0], [0.6, 0.1, 1.1]], dtype=np.float32),
             frame_id=WORLD,
@@ -66,7 +83,7 @@ def _localize(answers: list[list[Localization]]) -> Any:
         )
     )
     return SimpleNamespace(
-        _ready=ready, _stage="ready", _groups={}, _scanned={}, _localize_window=window
+        _ready=ready, _stage="ready", _groups={}, _scanned={}, _watched={}, _localize_window=window
     )
 
 
@@ -161,3 +178,163 @@ def test_a_scan_survives_the_trip_to_the_pick_module() -> None:
     assert [(d.id, d.results[0].hypothesis.class_id) for d in scan.detections] == [("can-1", "can")]
     cloud = decode(encode(PerceptionLocalize.get_object_pointcloud_by_object_id(module, "can-1")))
     assert cloud.frame_id == WORLD and len(cloud) == 2
+
+
+CAMERA = CameraInfo(
+    height=480,
+    width=640,
+    K=[100.0, 0.0, 320.0, 0.0, 100.0, 240.0, 0.0, 0.0, 1.0],
+    frame_id="camera_optical",
+)
+
+
+def _watcher() -> Any:
+    """What a watch pass reads off the module; ``_watch_once`` hands it the detector's answer."""
+    return SimpleNamespace(
+        config=SimpleNamespace(params=LocalizeParams(), watch=["can", "box"]),
+        index=SimpleNamespace(get_time_range=lambda: (0.0, 10.0)),
+        _detect=MagicMock(),
+        _watch=["can", "box"],
+        _watched={},
+        _scanned={},
+        _camera=CAMERA,
+        detections=MagicMock(),
+        detections_2d=MagicMock(),
+    )
+
+
+def _watch_once(
+    module: Any, results: list[list[Localization]], head: float = 10.0
+) -> list[tuple[str, str]]:
+    """One pass with this detector answer: the ``(id, label)`` it published, in order."""
+    rig = SimpleNamespace(world_frame=WORLD, world_to_optical=lambda *_: Transform())
+    module.index.get_time_range = lambda: (0.0, head)
+    module._detect.return_value = (results, None, rig)
+    PerceptionLocalize._watch_pass(module, ["can", "box"])
+    published = module.detections.publish.call_args.args[0]
+    return [(d.id, d.results[0].hypothesis.class_id) for d in published.detections]
+
+
+def test_a_watch_pass_reads_the_newest_frame_from_nothing() -> None:
+    """A cloud folded over many frames would keep a nudged object where it stood."""
+    module = _watcher()
+    _watch_once(module, [[], []])
+    module._detect.assert_called_once_with(
+        ["can", "box"], 10.0 - WATCH_WINDOW_S, WATCH_WINDOW_S, {"min_views": 1}, {}
+    )
+
+
+def test_one_object_under_two_labels_is_one_row_under_the_better_one() -> None:
+    can = _hit("as-can", score=0.3, at=(0.5, 0.0, 1.0))
+    box = _hit("as-box", score=0.6, at=(0.52, 0.0, 1.0))
+    assert _watch_once(_watcher(), [[can], [box]]) == [("as-box", "box")]
+
+
+def test_two_objects_apart_are_two_rows_best_first() -> None:
+    can = _hit("can-1", score=0.3, at=(0.5, 0.0, 1.0))
+    box = _hit("box-1", score=0.6, at=(0.5, 0.3, 1.0))
+    assert _watch_once(_watcher(), [[can], [box]]) == [("box-1", "box"), ("can-1", "can")]
+
+
+def test_an_object_keeps_its_id_from_pass_to_pass_but_takes_the_new_frame() -> None:
+    module = _watcher()
+    _watch_once(module, [[_hit("first")], []])
+    newer = _hit("second", at=(0.51, 0.0, 1.0), seen=12.0)
+    assert _watch_once(module, [[newer], []], head=12.0) == [("first", "can")]
+    (_, kept) = module._watched["first"]
+    assert kept.point_cloud is newer.point_cloud and kept.last_seen_timestamp == 12.0
+
+
+def test_an_object_moved_past_the_radius_is_a_new_object() -> None:
+    module = _watcher()
+    _watch_once(module, [[_hit("here")], []])
+    moved = _hit("there", at=(0.8, 0.0, 1.0), seen=12.0)
+    assert {i for i, _ in _watch_once(module, [[moved], []], head=12.0)} == {"here", "there"}
+
+
+def test_a_frame_that_misses_an_object_keeps_it_until_it_is_forgotten() -> None:
+    module = _watcher()
+    _watch_once(module, [[_hit("can-1", seen=10.0)], []], head=10.0)
+    assert _watch_once(module, [[], []], head=10.0 + WATCH_FORGET_S) == [("can-1", "can")]
+    assert _watch_once(module, [[], []], head=10.1 + WATCH_FORGET_S) == []
+    assert module._watched == {}
+
+
+def test_nothing_seen_still_goes_out_so_the_boxes_clear() -> None:
+    module = _watcher()
+    assert _watch_once(module, [[], []]) == []
+    assert module.detections_2d.publish.call_args.args[0].detections_length == 0
+
+
+def test_a_pick_reads_a_watched_object_by_its_id() -> None:
+    module = _watcher()
+    can = _hit("can-1")
+    _watch_once(module, [[can], []])
+    assert PerceptionLocalize.get_object_pointcloud_by_object_id(module, "can-1") is can.point_cloud
+
+
+def test_new_labels_replace_the_watch_and_none_go_back_to_the_config() -> None:
+    module = _watcher()
+    PerceptionLocalize._on_watch_labels(module, String(" cucumber, ,tape "))
+    assert module._watch == ["cucumber", "tape"]
+    PerceptionLocalize._on_watch_labels(module, String(""))
+    assert module._watch == ["can", "box"]
+
+
+def test_a_box_is_the_cloud_as_the_camera_sees_it() -> None:
+    points = np.array([[0.0, 0.0, 1.0], [0.1, 0.2, 1.0]])
+    corners = _image_box(points, Transform().to_matrix(), CAMERA)
+    assert corners is not None
+    assert corners[0] == pytest.approx([320.0, 240.0])
+    assert corners[1] == pytest.approx([330.0, 260.0])
+
+
+def test_a_box_follows_the_camera() -> None:
+    """Two metres further from the camera, the same 1 m offset lands a third as far from centre."""
+    points = np.array([[1.0, 0.0, 1.0], [1.3, 0.3, 1.0]])
+    back = Transform(translation=Vector3(0.0, 0.0, 2.0)).to_matrix()
+    corners = _image_box(points, back, CAMERA)
+    assert corners is not None
+    assert corners[0] == pytest.approx([320.0 + 100.0 / 3.0, 240.0])
+    assert corners[1] == pytest.approx([320.0 + 130.0 / 3.0, 250.0])
+
+
+@pytest.mark.parametrize(
+    "points",
+    [
+        pytest.param([[0.0, 0.0, -1.0]], id="behind the camera"),
+        pytest.param([[50.0, 0.0, 1.0], [51.0, 0.1, 1.0]], id="past the image's edge"),
+    ],
+)
+def test_nothing_in_the_image_is_no_box(points: list[list[float]]) -> None:
+    assert _image_box(np.array(points), Transform().to_matrix(), CAMERA) is None
+
+
+def test_a_box_cut_by_the_edge_stops_at_the_edge() -> None:
+    corners = _image_box(np.array([[3.0, 0.0, 1.0], [4.0, 0.1, 1.0]]), np.eye(4), CAMERA)
+    assert corners is not None
+    assert corners[1][0] == 640.0
+
+
+def test_the_boxes_in_view_survive_the_bus() -> None:
+    can = _hit("can-1", at=(0.0, 0.0, 1.0))
+    boxes = as_detection_2d_array([("can", can)], 10.0, np.eye(4), CAMERA)
+    (box,) = Detection2DArray.lcm_decode(boxes.lcm_encode()).detections
+    assert box.id == "can-1" and box.results[0].hypothesis.class_id == "can"
+    assert box.bbox.center.position.x == pytest.approx(372.5, abs=1.0)
+    assert box.bbox.size_x > 0 and box.bbox.size_y > 0
+
+
+def test_the_detector_runs_one_call_at_a_time() -> None:
+    """The watch runs beside the RPCs, and ``groups`` is not safe to share."""
+    module: Any = SimpleNamespace(
+        config=SimpleNamespace(params=LocalizeParams()),
+        index=MagicMock(),
+        rig=SimpleNamespace(lidar=None),
+        detector=MagicMock(),
+        _detecting=threading.Lock(),
+    )
+    held: list[bool] = []
+    module.detector.localize.side_effect = lambda *_, **__: held.append(module._detecting.locked())
+    PerceptionLocalize._detect(module, ["can"], 0.0, 1.0, None, {})
+    assert held == [True] and not module._detecting.locked()

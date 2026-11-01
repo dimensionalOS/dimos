@@ -37,12 +37,22 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import replace
 import json
+import math
 import threading
 import time
 from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_lcm.vision_msgs import (
+    BoundingBox2D,
+    BoundingBox3D,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+    Point2D,
+    Pose2D,
+)
+import numpy as np
+from numpy.typing import NDArray
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -57,7 +67,10 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs.Detection2D import Detection2D
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.localize.association import Groups
@@ -81,6 +94,11 @@ COLOR_CODEC = "jpeg"
 GEOMETRY_CODEC = "lz4+lcm"
 LIDAR_TOLERANCE = 0.2  # s - an embedded frame to its lidar scan
 SCAN_WINDOW_S = 3.0  # s - what scan_scene reads: what the camera sees now, three frames at EMBED_HZ
+WATCH_WINDOW_S = (
+    1.0  # s - a watch pass reads the newest frame: 1.7 s on an Orin NX, any label count
+)
+WATCH_PAUSE_S = 0.5  # s - between passes, so the GPU is not held all the time
+WATCH_FORGET_S = 15.0  # s - an object not seen this long leaves the watched list
 
 
 class PerceptionLocalizeConfig(ModuleConfig):
@@ -98,6 +116,8 @@ class PerceptionLocalizeConfig(ModuleConfig):
     segmenter: str = "edgetam"
     # the rig's params, set on the blueprint; localize() can override fields per call
     params: LocalizeParams = LocalizeParams()
+    # labels looked for all the time, until watch_labels replaces them; empty = only when asked
+    watch: list[str] = []
 
 
 class PerceptionLocalize(Module):
@@ -119,8 +139,12 @@ class PerceptionLocalize(Module):
     lidar: In[PointCloud2]
     camera_info: In[CameraInfo]
     tf: In[TFMessage]
+    # comma-separated labels to watch for; empty goes back to the config's
+    watch_labels: In[String]
 
     detections: Out[Detection3DArray]
+    # what the watch has in view, as boxes in colour pixels
+    detections_2d: Out[Detection2DArray]
 
     @rpc
     def start(self) -> None:
@@ -132,6 +156,9 @@ class PerceptionLocalize(Module):
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
         self._scanned: dict[str, tuple[str, Localization]] = {}
+        self._detecting = threading.Lock()
+        self._watch = list(self.config.watch)
+        self._watched: dict[str, tuple[str, Localization]] = {}
 
         embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
         memory_frames = int(self.config.horizon_s * embed_hz)
@@ -177,15 +204,21 @@ class PerceptionLocalize(Module):
             self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts)),
             geometry.subscribe(on_geometry),
             self.camera_info.subscribe(on_camera_info),
+            self.watch_labels.subscribe(self._on_watch_labels),
         ]
         self._thread = threading.Thread(target=self._warm, name="localize-warmup", daemon=True)
         self._thread.start()
+        self._watch_thread = threading.Thread(
+            target=self._watch_loop, name="localize-watch", daemon=True
+        )
+        self._watch_thread.start()
 
     @rpc
     def stop(self) -> None:
         self._stop.set()
         self._ready.clear()
         self._thread.join(timeout=5.0)
+        self._watch_thread.join(timeout=5.0)
         for unsubscribe in self._unsubs:
             unsubscribe()
         self._tf_buffer.dispose()
@@ -255,21 +288,91 @@ class PerceptionLocalize(Module):
         queries = [q.strip() for q in objects.split(",") if q.strip()]
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
+        overrides = json.loads(params) if params.strip() else None
+        results, index, rig = self._detect(queries, lo, duration, overrides, self._groups)
+        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        return queries, results, index, rig, (first, head, lo)
+
+    def _detect(
+        self,
+        queries: list[str],
+        lo: float,
+        duration: float,
+        overrides: dict[str, Any] | None,
+        groups: dict[str, Groups],
+    ) -> tuple[list[list[Localization]], Any, Rig]:
+        """The detector over a window of the index, one call at a time: ``groups`` is not
+        safe to share and the watch runs beside the RPCs."""
         index = self.index.time_range(lo, lo + duration)
         rig = self.rig
         if rig.lidar is not None:
             rig = replace(rig, lidar=rig.lidar.time_range(lo, lo + duration))
-        overrides = json.loads(params) if params.strip() else None
-        results = self.detector.localize(
-            queries,
-            index=index,
-            rig=rig,
-            params=self.config.params,
-            fields=overrides,
-            groups=self._groups,
+        with self._detecting:
+            results = self.detector.localize(
+                queries,
+                index=index,
+                rig=rig,
+                params=self.config.params,
+                fields=overrides,
+                groups=groups,
+            )
+        return results, index, rig
+
+    def _on_watch_labels(self, message: String) -> None:
+        labels = [label.strip() for label in message.data.split(",") if label.strip()]
+        self._watch = labels or list(self.config.watch)
+        logger.info(f"localize: watching {self._watch}")
+
+    def _watch_loop(self) -> None:
+        while not self._stop.wait(WATCH_PAUSE_S):
+            labels = self._watch
+            if not labels or not self._ready.is_set():
+                continue
+            try:
+                self._watch_pass(labels)
+            except Exception:
+                logger.exception("localize: a watch pass failed")
+
+    def _watch_pass(self, labels: list[str]) -> None:
+        """Look at the newest frame for ``labels`` and publish everything seen lately.
+
+        A pass starts from nothing, so each instance's cloud is this frame's: one folded over
+        many frames would keep an object a missed grasp nudged where it stood. One frame is one
+        view, so ``min_views`` cannot apply. An object keeps its id from pass to pass by where
+        it is, and stays listed through a frame that missed it.
+        """
+        first, head = self.index.get_time_range()
+        results, _index, rig = self._detect(
+            labels, max(first, head - WATCH_WINDOW_S), WATCH_WINDOW_S, {"min_views": 1}, {}
         )
-        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
-        return queries, results, index, rig, (first, head, lo)
+        radius = self.config.params.cluster_radius_m
+        kept = {
+            known: entry
+            for known, entry in self._watched.items()
+            if head - entry[1].last_seen_timestamp <= WATCH_FORGET_S
+        }
+        seen: dict[str, tuple[str, Localization]] = {}
+        for label, hit in _one_per_place(labels, results, radius):
+            same = next((k for k, (_, old) in kept.items() if _apart(old, hit) <= radius), None)
+            if same is not None:
+                del kept[same]
+                hit = replace(hit, instance_id=same)
+            seen[hit.instance_id] = (label, hit)
+        self._watched = {**kept, **seen}
+
+        listed = sorted(self._watched.values(), key=lambda entry: -entry[1].semantic_score)
+        self.detections.publish(
+            as_detection_array(
+                [label for label, _ in listed], [[hit] for _, hit in listed], rig.world_frame
+            )
+        )
+        camera = self._camera
+        assert camera is not None
+        world_to_optical = rig.world_to_optical(head, camera.frame_id)
+        if world_to_optical is not None:
+            self.detections_2d.publish(
+                as_detection_2d_array(listed, head, world_to_optical.to_matrix(), camera)
+            )
 
     @skill
     def localize(
@@ -394,8 +497,8 @@ class PerceptionLocalize(Module):
 
     @rpc
     def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None:
-        """An instance's cloud from the latest ``scan_scene``, in the world frame."""
-        scanned = self._scanned.get(object_id)
+        """An instance's cloud from the latest ``scan_scene`` or the watch, in the world frame."""
+        scanned = self._scanned.get(object_id) or self._watched.get(object_id)
         return None if scanned is None else scanned[1].point_cloud
 
     @rpc
@@ -414,6 +517,79 @@ def _extents(hit: Localization) -> tuple[list[float], list[float]]:
     points = hit.point_cloud.as_numpy()[0]
     low, high = points.min(axis=0), points.max(axis=0)
     return [float(v) for v in (low + high) / 2], [max(float(v), 1e-3) for v in high - low]
+
+
+def _apart(a: Localization, b: Localization) -> float:
+    return math.dist(a.position_world_xyz, b.position_world_xyz)
+
+
+def _one_per_place(
+    queries: list[str], results: list[list[Localization]], radius: float
+) -> list[tuple[str, Localization]]:
+    """Each object once, best score first, under the label that scored it best: labels are not
+    compared, so "box" and "block" both answer for one carton."""
+    ranked = sorted(
+        ((query, hit) for query, hits in zip(queries, results, strict=True) for hit in hits),
+        key=lambda found: -found[1].semantic_score,
+    )
+    places: list[tuple[str, Localization]] = []
+    for query, hit in ranked:
+        if all(_apart(hit, other) > radius for _, other in places):
+            places.append((query, hit))
+    return places
+
+
+def _image_box(
+    points: NDArray[Any], world_to_optical: NDArray[Any], camera: CameraInfo
+) -> tuple[NDArray[Any], NDArray[Any]] | None:
+    """The (low, high) pixel corners around ``points``, or None when none land in the image."""
+    optical = points @ world_to_optical[:3, :3].T + world_to_optical[:3, 3]
+    optical = optical[optical[:, 2] > 0]
+    if not len(optical):
+        return None
+    pixels = optical @ camera.get_K_matrix().T
+    pixels = pixels[:, :2] / pixels[:, 2:]
+    low = np.maximum(pixels.min(axis=0), 0.0)
+    high = np.minimum(pixels.max(axis=0), (camera.width, camera.height))
+    return None if (high <= low).any() else (low, high)
+
+
+def as_detection_2d_array(
+    listed: list[tuple[str, Localization]],
+    ts: float,
+    world_to_optical: NDArray[Any],
+    camera: CameraInfo,
+) -> Detection2DArray:
+    """One labelled box per instance in view: its cloud as the camera sees it now, so the
+    box stays right for an instance this frame missed."""
+    header = Header(ts, camera.frame_id)
+    boxes = []
+    for label, hit in listed:
+        box = _image_box(hit.point_cloud.as_numpy()[0], world_to_optical, camera)
+        if box is None:
+            continue
+        (left, top), (right, bottom) = box
+        boxes.append(
+            Detection2D(
+                header=header,
+                id=hit.instance_id,
+                results=[
+                    ObjectHypothesisWithPose(
+                        hypothesis=ObjectHypothesis(class_id=label, score=hit.semantic_score)
+                    )
+                ],
+                results_length=1,
+                bbox=BoundingBox2D(
+                    center=Pose2D(
+                        position=Point2D(x=float(left + right) / 2, y=float(top + bottom) / 2),
+                        theta=0.0,
+                    ),
+                    size_x=float(right - left),
+                    size_y=float(bottom - top),
+                ),
+            )
+        )
+    return Detection2DArray(detections_length=len(boxes), header=header, detections=boxes)
 
 
 def as_detection_array(
