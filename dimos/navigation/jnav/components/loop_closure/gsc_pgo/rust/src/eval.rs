@@ -182,6 +182,8 @@ struct Args {
     /// rotation vector (rad) and the 6x6 covariance row-major in `LandmarkSighting`'s order (a pose; a variance that is
     /// not a positive finite number is unknown). Lockstep replay only.
     landmark_sightings: Option<PathBuf>,
+    /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
+    until_s: f64,
 }
 
 /// The sightings of a `--landmark-sightings` file, in time order.
@@ -293,6 +295,7 @@ fn parse_args() -> Result<Args, String> {
     let mut world_positions = None;
     let mut landmark_sightings = None;
     let mut icp_cache = None;
+    let mut until_s = f64::INFINITY;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -307,6 +310,7 @@ fn parse_args() -> Result<Args, String> {
             "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
+            "--until-s" => until_s = value()?.parse().map_err(|e| format!("{e}"))?,
             "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
             "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
             "--icp-cache-record" => {
@@ -338,6 +342,7 @@ fn parse_args() -> Result<Args, String> {
         world_positions,
         landmark_sightings,
         icp_cache,
+        until_s,
     })
 }
 
@@ -491,6 +496,12 @@ fn advance_latest<'a>(odoms: &'a [OdomRow], ts: f64, cursor: &mut usize) -> Opti
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
+    // every adopted solve's record (`solve_log_path`) goes next to the output unless GSC_SOLVE_LOG names a file
+    if std::env::var_os("GSC_SOLVE_LOG").is_none() {
+        let path = args.output.with_file_name("solve.jsonl");
+        let _ = std::fs::remove_file(&path);
+        std::env::set_var("GSC_SOLVE_LOG", path);
+    }
 
     let connection =
         Connection::open_with_flags(&args.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -672,7 +683,7 @@ fn run() -> Result<(), String> {
                 };
                 let mut recording_start = None;
                 feed_error =
-                    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+                    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, args.until_s, |scan| {
                         let Some((cloud_with_pose, ts)) = prepare(scan)? else {
                             return Ok(());
                         };
@@ -752,7 +763,7 @@ fn run() -> Result<(), String> {
             None => Vec::new(),
         };
         let mut next_sighting = 0;
-        for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+        for_each_scan(&connection, &args.lidar_stream, args.scan_stride, args.until_s, |scan| {
             let Some((cloud_with_pose, ts)) = prepare(scan)? else {
                 return Ok(());
             };
@@ -906,6 +917,25 @@ fn run() -> Result<(), String> {
         output.runtime_s,
         output.realtime_factor,
         args.output,
+    );
+    // where the time went: each stage's wall seconds, and the single ICPs run (candidates that reached ICP) and their cost
+    let stages: Vec<String> = output
+        .stage_seconds
+        .iter()
+        .map(|(stage, seconds)| format!("{stage} {seconds:.1}s"))
+        .collect();
+    // a candidate that ran its single ICP has its fitness set (NaN until then)
+    let icps = output
+        .closure_diagnostics
+        .iter()
+        .filter(|d| !d.icp_fitness.is_nan())
+        .count();
+    let icp_seconds = output.stage_seconds.get("icp").copied().unwrap_or(0.0);
+    eprintln!(
+        "pgo-eval: stages {}; {} ICPs at {:.0} ms each",
+        stages.join(", "),
+        icps,
+        1000.0 * icp_seconds / icps.max(1) as f64
     );
     Ok(())
 }

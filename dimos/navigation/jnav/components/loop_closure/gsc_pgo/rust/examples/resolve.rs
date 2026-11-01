@@ -96,6 +96,7 @@ fn main() {
         huber_k: config.closure_robust_huber_k,
         committed: Vec::new(),
         evidence_core: false,
+        learned_evidence: true,
     };
     let rotations: Vec<Mat3> = poses.iter().map(|p| p.0).collect();
     let positions: Vec<[f64; 3]> = poses.iter().map(|p| p.1).collect();

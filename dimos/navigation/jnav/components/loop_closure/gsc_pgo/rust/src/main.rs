@@ -77,9 +77,13 @@ config! {
     closure_icp_inlier_distance_m: f64,
     closure_icp_max_fitness_m: f64,
     closure_icp_point_to_plane: bool,
+    closure_icp_target_resolution_m: f64,
+    closure_icp_early_stop: bool,
+    closure_alternative_places_min_pressure: f64,
     drop_reseen_points: bool,
     auto_aggregate_cloud_size: usize,
-    closure_submap_half_range: i32,
+    closure_target_extra_fraction: f64,
+    closure_target_extra_keyframes: usize,
     submap_resolution: f64,
     closure_min_occupancy: i32,
     closure_min_degeneracy: f64,
@@ -92,6 +96,7 @@ config! {
     barely_fail_uncertainty_range: f64,
     barely_pass_uncertainty_range: f64,
     decisive_pressure_rate: f64,
+    extension_cloud_spacing: f64,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
@@ -120,7 +125,6 @@ config! {
     scan_context_top_k: i32,
     scan_context_match_threshold: f64,
     scan_context_lidar_height_m: f64,
-    closure_ground_clearance_m: f64,
     closure_sharpness_half: f64,
     closure_sharpness_nudge_m: f64,
     closure_sharpness_nudge_deg: f64,
@@ -685,6 +689,10 @@ impl Worker {
                 }),
             );
         }
+        // stopping: settle the graph and report the odometry error estimate its kept loops measured, once
+        pgo.finish();
+        let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+        self.log_odometry_drift(&pgo, last_time);
     }
 
     /// One debug_log line: `fields` plus its `kind` and `ts`, as JSON.
@@ -712,6 +720,10 @@ impl Worker {
 
     /// An adopted solve on debug_log (`kind` "solve"): the closures it kept and judged, and the graph's error.
     fn log_solve(&self, pgo: &GscPgo, ts: f64) {
+        // a solve that measured the learned odometry error estimate (after a longer loop than any before) reports it
+        if pgo.learned_odometry_error_estimate_measured() {
+            self.log_odometry_drift(pgo, ts);
+        }
         let closures = pgo.committed_closures();
         let judged = closures.iter().filter(|c| !c.gnc_weight.is_nan()).count();
         let kept = closures.iter().filter(|c| c.gnc_weight > 0.5).count();
@@ -729,8 +741,17 @@ impl Worker {
                 "world_alignment": pgo.world_alignment().iter().map(|(f, yaw, t)| serde_json::json!([f, yaw, t])).collect::<Vec<_>>(),
             }),
         );
-        // once loops are kept, the odometry error estimate they measure, as the config inputs for the next run (`kind`
-        // "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift
+    }
+
+    /// The odometry error estimate the kept loops measured, as the config inputs for the next run (`kind`
+    /// "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift. Measured once,
+    /// when the module stops (`GscPgo::finish`).
+    fn log_odometry_drift(&self, pgo: &GscPgo, ts: f64) {
+        let kept = pgo
+            .committed_closures()
+            .iter()
+            .filter(|c| c.gnc_weight > 0.5)
+            .count();
         if kept > 0 {
             let (drift, measured) = pgo.odometry_error_estimate_for_next_run();
             let mut fields = serde_json::Map::new();

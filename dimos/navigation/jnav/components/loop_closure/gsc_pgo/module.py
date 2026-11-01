@@ -54,11 +54,19 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_max_fitness_m: float = 0.3872983346207417
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
     closure_icp_point_to_plane: bool = True
+    # the single-scan closure ICP aligns against its target voxelized at this (m, fitness still on the full target; 0 = full)
+    closure_icp_target_resolution_m: float = 0.15
+    # the single-scan closure ICP gives up once its fitness can no longer reach the gate's largest passing fitness
+    closure_icp_early_stop: bool = True
+    # alternative places are retried only at or above this pressure (below it, only the best match is tried)
+    closure_alternative_places_min_pressure: float = 0.8
     # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud (on by default)
     drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
     auto_aggregate_cloud_size: int = 2000
-    closure_submap_half_range: int = 5
+    # Closure target submap half range = ceil(source clouds x (1 + extra_fraction)) + extra_keyframes (5 for the single scan)
+    closure_target_extra_fraction: float = 0.3
+    closure_target_extra_keyframes: int = 3
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
     # 0 disables
@@ -101,15 +109,15 @@ class PGOConfig(NativeModuleConfig):
     # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail
     # reject, extend the match in between (barely_fail < 1 < barely_pass)
     barely_fail_uncertainty_range: float = 0.8
-    barely_pass_uncertainty_range: float = 1.05
+    barely_pass_uncertainty_range: float = 3.0
     # The uncertainty range narrows over the extension's steps, slowed by 1 / (1 - pressure)^this
     decisive_pressure_rate: float = 1.0
+    # Odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach
+    extension_cloud_spacing: float = 0.25
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
     closure_extended_icp_max_keyframes: int = 16
-    # Closure ICP and its scores leave out points this far (m) above each cloud's floor and lower; 0 keeps every point
-    closure_ground_clearance_m: float = 0.0
     # Above 0: score a closure's fit by its sharpness s (share within submap_resolution, times how much overlap falls when
     # nudged closure_sharpness_nudge_m / _deg) as s / (s + this), extended stacks by their own sharpness; 0 = fitness
     closure_sharpness_half: float = 0.0

@@ -20,9 +20,9 @@
 use std::sync::Arc;
 
 use crate::big_picture_fit::{closure_edges, Edge};
-use crate::connection_fit::{dump_icp, icp, IcpParams};
+use crate::connection_fit::{dump_icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
-use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
+use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
 use crate::pose_graph_solving::Solving;
 use crate::similarity_discovery;
 use crate::uniqueness;
@@ -139,6 +139,14 @@ pub struct ClosureCandidateDiag {
     /// computed on this path.
     pub degeneracy_min: f32,
     pub icp_converged: bool,
+    /// The single ICP's iterations and why it stopped (`IcpStop::name`; "" if ICP did not run, 0 iterations when read
+    /// from a cache written before these were logged).
+    pub icp_iterations: u32,
+    pub icp_stop: &'static str,
+    /// How far ICP moved the source from its initial guess (the scan-context seed): the distance (m) between where the
+    /// guess and the result put the source keyframe, and the rotation (deg) between them; NaN if ICP did not run.
+    pub icp_init_offset_m: f64,
+    pub icp_init_offset_deg: f64,
     /// ICP fitness (the score-threshold gate input); NaN if ICP did not run.
     pub icp_fitness: f64,
     /// Fraction of the source scan that overlaps the target after ICP (see `IcpResult`); NaN if ICP did not run.
@@ -175,6 +183,9 @@ pub struct ClosureCandidateDiag {
     pub extended_inliers: usize,
     pub extended_fitness: f64,
     pub extended_confidence: f64,
+    /// The extension's confidence ratio per cloud (evidence over the bar, yank units), the single scan's first; the
+    /// candidate's score is their median.
+    pub cloud_ratios: Vec<f64>,
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
     pub extended_sharpness: f64,
@@ -212,6 +223,10 @@ impl ClosureCandidateDiag {
             candidate_distance: f64::NAN,
             degeneracy_min: -1.0,
             icp_converged: false,
+            icp_iterations: 0,
+            icp_stop: "",
+            icp_init_offset_m: f64::NAN,
+            icp_init_offset_deg: f64::NAN,
             icp_fitness: f64::NAN,
             icp_overlap: f64::NAN,
             icp_translation_norm: f64::NAN,
@@ -230,6 +245,7 @@ impl ClosureCandidateDiag {
             extended_inliers: 0,
             extended_fitness: f64::NAN,
             extended_confidence: f64::NAN,
+            cloud_ratios: Vec::new(),
             sharpness: f64::NAN,
             extended_sharpness: f64::NAN,
             likelihood_ratio: f64::NAN,
@@ -319,6 +335,14 @@ pub struct Config {
     /// Closure ICP steps minimise distances along the target's surface normals (point-to-plane); false is the old
     /// point-to-point.
     pub closure_icp_point_to_plane: bool,
+    /// The single-scan closure ICP aligns against its target voxelized at this (m; cheaper search, fewer normals;
+    /// fitness and overlap still measured against the full target). 0 = the full target. Default 1.5 x
+    /// submap_resolution: on 200 small Mid-360 candidates it ran 18% faster and its 5 changed decisions all rejected
+    /// matches GT puts 7-55 m apart (half the inlier distance was faster but accepted one 62 m look-alike).
+    pub closure_icp_target_resolution_m: f64,
+    /// The single-scan closure ICP gives up (an ICP reject) once its fitness can no longer reach the gate's largest
+    /// passing fitness (`closure_icp_max_fitness_m`², `connection_fit::icp_with_early_stop`).
+    pub closure_icp_early_stop: bool,
     /// Drop the points a scan re-sends from the scan before (placed by the odometry they land exactly on their copies;
     /// the Go2 L1 republishes its last seconds of points) from every keyframe cloud, so scan context, ICP and the maps
     /// see each surface once. On by default.
@@ -328,7 +352,11 @@ pub struct Config {
     /// keyframes and everything downstream (scan context, ICP, submaps) sees the gathered cloud (0 = the keyframe's scan).
     /// 2000 is about the 10th percentile of a Mid-360 scan voxelized at 0.1 m, so about 1 in 10 of its keyframes waits.
     pub auto_aggregate_cloud_size: usize,
-    pub closure_submap_half_range: i32,
+    /// The closure target submap's half range (keyframes either side of the target) grows with the extension:
+    /// ceil(clouds x (1 + closure_target_extra_fraction)) + closure_target_extra_keyframes, clouds being the source clouds
+    /// fitted so far (1 for the single scan: 5 at the defaults); see `Config::target_half_range`.
+    pub closure_target_extra_fraction: f64,
+    pub closure_target_extra_keyframes: usize,
     pub submap_resolution: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
     pub closure_min_occupancy: i32,
@@ -360,6 +388,9 @@ pub struct Config {
     pub barely_pass_uncertainty_range: f64,
     /// How much the pressure keeps the uncertainty range wide: its narrowing is stretched by 1 / (1 - pressure)^this.
     pub decisive_pressure_rate: f64,
+    /// The odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach: small
+    /// enough that each still lands inside the target submap's coverage.
+    pub extension_cloud_spacing: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -444,9 +475,6 @@ pub struct Config {
     pub scan_context_top_k: i32,
     pub scan_context_match_threshold: f64,
     pub scan_context_lidar_height_m: f64,
-    /// Closure ICP and its scores leave out points this far (m) above each cloud's floor and lower (`above_floor`);
-    /// 0 keeps every point.
-    pub closure_ground_clearance_m: f64,
     /// When above 0, a closure's ICP factor is its sharpness s (`connection_fit::sharpness`) as s / (s + this), and an
     /// extended stack is scored the same way from its own sharpness, each round started from the single-scan alignment;
     /// 0 keeps the fitness factor and the inlier-count evidence of extended ICP.
@@ -465,6 +493,10 @@ pub struct Config {
     /// threshold, closest first), up to 1 + ceil(1 / (1 - pressure)) tries per keyframe (2 at no pressure), at most
     /// scan_context_top_k; a newer keyframe's better match still outranks a waiting retry.
     pub closure_alternative_places: bool,
+    /// Alternative places are tried only at or above this pressure; below it a keyframe tries only its best match.
+    /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
+    /// loops; huge: 12,012 of 16,867 for 69 right and 150 wrong).
+    pub closure_alternative_places_min_pressure: f64,
     /// When true, a closure the previous solve kept is a commitment: each solve holds the committed closures in, and
     /// drops them only when a cold solve (every closure re-decided) keeps more closures and rejects some committed one,
     /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
@@ -492,6 +524,11 @@ pub struct Config {
 }
 
 impl Config {
+    /// The closure target submap's half range with `clouds` source clouds in the extension (1: the single scan).
+    pub fn target_half_range(&self, clouds: usize) -> usize {
+        (clouds.max(1) as f64 * (1.0 + self.closure_target_extra_fraction.max(0.0))).ceil() as usize
+            + self.closure_target_extra_keyframes
+    }
     /// An error naming the first setting out of its allowed range, if any.
     pub fn validate(&self) -> Result<(), String> {
         if !(self.barely_fail_uncertainty_range < 1.0) {
@@ -523,9 +560,12 @@ impl Default for Config {
             closure_icp_inlier_distance_m: 0.3872983346207417,
             closure_icp_max_fitness_m: 0.3872983346207417,
             closure_icp_point_to_plane: true,
+            closure_icp_target_resolution_m: 0.15,
+            closure_icp_early_stop: true,
             drop_reseen_points: true,
             auto_aggregate_cloud_size: 2000,
-            closure_submap_half_range: 5,
+            closure_target_extra_fraction: 0.3,
+            closure_target_extra_keyframes: 3,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,
             closure_min_degeneracy: 0.05,
@@ -536,8 +576,9 @@ impl Default for Config {
             closure_extension_stop_when_flat: true,
             closure_extension_stop_on_swing: true,
             barely_fail_uncertainty_range: 0.8,
-            barely_pass_uncertainty_range: 1.05,
+            barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
+            extension_cloud_spacing: 0.25,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -566,12 +607,12 @@ impl Default for Config {
             scan_context_top_k: 10,
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
-            closure_ground_clearance_m: 0.0,
             closure_sharpness_half: 0.0,
             closure_sharpness_nudge_m: 1.0,
             closure_sharpness_nudge_deg: 5.0,
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
+            closure_alternative_places_min_pressure: 0.8,
             closure_commitments: true,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
@@ -599,6 +640,11 @@ pub struct GscPgo {
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
     pub(crate) learned_odometry_error_estimate_ln_dispatched: [f64; 4],
     pub(crate) odometry_error_estimate_rescale: bool,
+    /// The next solve also measures the learned odometry error estimate's evidence: requested after a solve keeps a loop
+    /// longer (in keyframes between its ends) than any kept before, `learned_evidence_gap`, and by `finish`.
+    pub(crate) learned_evidence_requested: bool,
+    pub(crate) learned_evidence_gap: usize,
+    pub(crate) learned_evidence_measured: bool,
     /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
     /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
     pub(crate) odometry_error_estimate_rescaled: bool,
@@ -622,6 +668,10 @@ pub struct GscPgo {
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
+    /// Bumped whenever a keyframe is added or a solve is adopted: what loop_overlap reads changes only then, so pressure
+    /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
+    pub(crate) graph_version: u64,
+    pub(crate) pressure_version: Option<u64>,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
     /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
@@ -702,6 +752,8 @@ pub struct ClosureSearch {
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Seconds spent writing debug dumps (`closure_icp_dump_dir`), taken out of the stage timings.
     pub(crate) debug_io_s: std::cell::Cell<f64>,
+    /// The keyframes' mean scan reach (m), which spaces an extension's separate source clouds.
+    pub(crate) mean_reach: f64,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
@@ -746,26 +798,20 @@ impl ClosureSearch {
         let (cur_idx, target_idx) = (diag.source_id, self.target_idx);
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
-        let half_range = self.config.closure_submap_half_range.max(0) as usize;
-        let clearance = self.config.closure_ground_clearance_m;
+        let half_range = self.config.target_half_range(1);
         // the source scan, the target submap and its tree, built only when a computation needs them (never when every
         // result comes from the ICP cache)
         // the source scan alone (all the degeneracy gate reads), built apart from the target and its tree
         let source_cell = std::cell::OnceCell::new();
         let source_cloud = || -> &PointCloud {
-            source_cell.get_or_init(|| {
-                above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance)
-            })
+            source_cell.get_or_init(|| self.stacked_cloud(std::iter::once(cur_idx)))
         };
         let clouds_cell = std::cell::OnceCell::new();
         let clouds = || -> &(PointCloud, PointCloud, KdTree) {
             clouds_cell.get_or_init(|| {
-                let target_cloud = above_floor(
-                    &self.stacked_cloud(
-                        target_idx.saturating_sub(half_range)
-                            ..=(target_idx + half_range).min(self.key_poses.len() - 1),
-                    ),
-                    clearance,
+                let target_cloud = self.stacked_cloud(
+                    target_idx.saturating_sub(half_range)
+                        ..=(target_idx + half_range).min(self.key_poses.len() - 1),
                 );
                 let target_tree = KdTree::build(&target_cloud);
                 (source_cloud().clone(), target_cloud, target_tree)
@@ -774,11 +820,25 @@ impl ClosureSearch {
         // a cloud computation, through the ICP cache when there is one; a point-to-plane alignment is a different
         // result from a point-to-point one, so it is part of the key
         let cache = self.icp_cache.clone();
-        let key_suffix = if self.config.closure_icp_point_to_plane {
-            ":pl"
-        } else {
-            ""
-        };
+        // the thinned target and the early stop change the single ICP's result too, so they are part of the key
+        let key_suffix = format!(
+            "{}{}{}",
+            if self.config.closure_icp_point_to_plane {
+                ":pl"
+            } else {
+                ""
+            },
+            if self.config.closure_icp_target_resolution_m > 0.0 {
+                format!(":t{}", self.config.closure_icp_target_resolution_m)
+            } else {
+                String::new()
+            },
+            if self.config.closure_icp_early_stop {
+                ":es"
+            } else {
+                ""
+            },
+        );
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
                 Some(cache) => {
@@ -849,19 +909,14 @@ impl ClosureSearch {
             .iter()
             .flatten()
             .all(|v| v.is_finite());
-        // at the upper bound: scaled by the most any component's bound exceeds its estimate
-        let widen = (0..4)
-            .map(|c| gate_error_estimate[c] / diag.learned_odometry_error_estimate[c])
-            .fold(1.0, f64::max);
         let known = if by_graph {
             // the graph's own covariance of the two ends' relative position (its heading swing and the solved
             // closures included): the closure adds something only where it is surer than the graph in some direction.
             // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            widen
-                * mat3::jacobi_eigen(diag.innovation_covariance)
-                    .0
-                    .into_iter()
-                    .fold(0.0, f64::max)
+            mat3::jacobi_eigen(diag.innovation_covariance)
+                .0
+                .into_iter()
+                .fold(0.0, f64::max)
         } else {
             self.kept_closures
                 .iter()
@@ -872,13 +927,6 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // no alignment of two voxelized scans fits tighter than the spread of a surface's voxel centroids between them
-        // (two independent offsets within a voxel of the submap resolution r: variance r^2 / 6 along the normal), so a
-        // graph surer than that makes the closure uninformative whatever ICP returns: it is not aligned at all
-        let closure_variance_floor = self.config.submap_resolution.powi(2) / 6.0;
-        if self.config.closure_uninformative_gate && closure_variance_floor >= known {
-            return rejected(diag, "uninformative", timing);
-        }
         // a candidate whose least yank ICP could leave still needs more evidence than any stack of scans could give is
         // rejected unaligned: ICP pairs points only within its match distance, so it moves the source from the seed (the
         // target's position) by about that much at most; the closure's own variance is at most the fitness limit squared;
@@ -912,7 +960,7 @@ impl ClosureSearch {
         let t0 = std::time::Instant::now();
         let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
-            crate::icp_cache::encode_icp(&icp(
+            crate::icp_cache::encode_icp_logged(&crate::connection_fit::icp_thinned(
                 source_cloud,
                 target_cloud,
                 target_tree,
@@ -924,6 +972,10 @@ impl ClosureSearch {
                     inlier_squared_distance: self.config.closure_inlier_squared_distance(),
                     point_to_plane: self.config.closure_icp_point_to_plane,
                 },
+                self.config
+                    .closure_icp_early_stop
+                    .then(|| self.config.closure_icp_max_fitness_m.powi(2)),
+                self.config.closure_icp_target_resolution_m,
             ))
         }));
         timing.icp_s += t0.elapsed().as_secs_f64();
@@ -935,11 +987,28 @@ impl ClosureSearch {
                 target_idx,
                 source_cloud,
                 target_cloud,
+                (&init_rotation, &init_translation),
                 &icp,
                 "",
             );
         }
         diag.icp_converged = icp.converged;
+        diag.icp_iterations = icp.iterations;
+        diag.icp_stop = icp.stop.name();
+        // where each puts the source keyframe
+        let source_position = &self.key_poses[cur_idx].translation_global;
+        diag.icp_init_offset_m = mat3::norm(&mat3::sub(
+            &mat3::add(
+                &mat3::mat_vec(&icp.rotation, source_position),
+                &icp.translation,
+            ),
+            &mat3::add(
+                &mat3::mat_vec(&init_rotation, source_position),
+                &init_translation,
+            ),
+        ));
+        diag.icp_init_offset_deg =
+            mat3::angular_distance(&icp.rotation, &init_rotation).to_degrees();
         diag.icp_fitness = icp.fitness;
         diag.icp_overlap = icp.overlap;
         diag.icp_translation_norm = mat3::norm(&icp.translation);
@@ -1383,7 +1452,11 @@ impl GscPgo {
         }
         self.scans_seen += 1;
         let frequency = self.config.pressure_check_frequency;
-        if frequency > 0 && self.scans_seen.is_multiple_of(frequency) {
+        if frequency > 0
+            && self.scans_seen.is_multiple_of(frequency)
+            && self.pressure_version != Some(self.graph_version)
+        {
+            self.pressure_version = Some(self.graph_version);
             if let Some(overlap) = self.loop_overlap() {
                 self.pressure = Some((self.scans_seen, overlap));
             }
@@ -1607,6 +1680,11 @@ impl GscPgo {
             icp_cache: self.icp_cache.clone(),
             keyframe_clouds: self.keyframe_clouds.clone(),
             debug_io_s: std::cell::Cell::new(0.0),
+            mean_reach: if self.keyframe_reach.1 > 0 {
+                self.keyframe_reach.0 / self.keyframe_reach.1 as f64
+            } else {
+                self.config.closure_search_radius
+            },
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
@@ -1651,6 +1729,7 @@ impl GscPgo {
         tries: usize,
     ) {
         if !self.config.closure_alternative_places
+            || rejected.pressure < self.config.closure_alternative_places_min_pressure
             || alternatives.is_empty()
             || rejected.source_id >= self.key_poses.len()
         {
@@ -1687,6 +1766,7 @@ impl GscPgo {
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {
+        self.graph_version += 1;
         // every use of a keyframe's cloud (submaps, stacked clouds) voxelizes it at submap_resolution, so it is
         // stored that way: a dense scan (the Go2 L1's ~30k-point local map) would otherwise be kept whole
         let stored = match &cloud {
@@ -1765,6 +1845,17 @@ impl GscPgo {
 #[cfg(test)]
 mod config_tests {
     use super::Config;
+
+    /// The target submap's half range is 5 for the single scan (today's fixed submap) and grows with the extension's
+    /// source clouds.
+    #[test]
+    fn the_target_range_grows_with_the_extension() {
+        let config = Config::default();
+        assert_eq!(config.target_half_range(1), 5);
+        assert_eq!(config.target_half_range(2), 6);
+        assert_eq!(config.target_half_range(4), 9);
+        assert_eq!(config.target_half_range(0), 5);
+    }
 
     /// The uncertainty range must straddle the bar: barely_fail below 1, barely_pass above it.
     #[test]
