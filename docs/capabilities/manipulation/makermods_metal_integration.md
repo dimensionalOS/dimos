@@ -47,8 +47,9 @@ See [CAN setup](/docs/capabilities/manipulation/openyam_integration.md#can-trans
 
 The model is loaded lazily from the pinned official `metal_with_gripper.urdf`,
 with the two finger joints fixed. The shared base validates six ordered arm
-joints and their angular limits. Gravity compensation is disabled for initial
-commissioning. Metal allows up to 0.06 rad of feedback overshoot at URDF
+joints and their angular limits. Physical Metal arms use the shared adapter's
+URDF-based gravity compensation, including both sides of a dual-arm setup.
+Metal allows up to 0.06 rad of feedback overshoot at URDF
 boundaries, normalizing the reported state to the boundary. This accommodates
 measured joint3 zero-stop feedback of -0.05050 rad; it is a dimOS tolerance,
 not a vendor limit. Planning limits stay unchanged. Larger deviations latch a

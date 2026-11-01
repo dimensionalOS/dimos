@@ -51,7 +51,7 @@ def metal_hardware(
             raise ValueError("Metal gripper current must be in (0, 1] per-unit")
         adapter_kwargs = {
             "runtime_config": DamiaoRuntimeConfig(
-                bus_devices={"metal": can_port}, gravity_comp=False
+                bus_devices={"metal": can_port}, gravity_comp=True
             ),
             "gripper_current": gripper_current,
         }

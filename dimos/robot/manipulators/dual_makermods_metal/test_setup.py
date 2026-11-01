@@ -65,6 +65,7 @@ def test_two_explicit_ports_preserve_single_arm_adapter_and_current_defaults() -
         {"metal": "right"},
     ]
     assert [arm.adapter_kwargs["gripper_current"] for arm in arms] == [0.1, 0.1]
+    assert all(arm.adapter_kwargs["runtime_config"].gravity_comp for arm in arms)
     assert len({name for arm in arms for name in arm.joints}) == 14
 
 

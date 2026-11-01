@@ -83,7 +83,7 @@ def test_physical_component_uses_common_runtime_config() -> None:
     runtime = component.adapter_kwargs["runtime_config"]
     assert isinstance(runtime, DamiaoRuntimeConfig)
     assert runtime.bus_devices == {"metal": "test-can"}
-    assert not runtime.gravity_comp
+    assert runtime.gravity_comp
     assert METAL_SOURCE.ref == "bccf3c82a21453a7b1784a94966456e16ff0f008"
 
 
