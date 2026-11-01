@@ -43,6 +43,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-xarm7",
         "dual-xarm6-planner-coordinator",
         "hybrid-teleop-sim",
+        "hybrid-teleop-sim-collect",
         "learning-collect-webxr-xarm7",
         "openarm-planner-coordinator",
         "teleop-hosted-go2-multicam",

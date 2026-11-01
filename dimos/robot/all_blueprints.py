@@ -87,6 +87,7 @@ all_blueprints = {
     "habitat-typesafe": "dimos.simulation.habitat.blueprints:habitat_typesafe",
     "habitat-voxel": "dimos.simulation.habitat.blueprints:habitat_voxel",
     "hybrid-teleop-sim": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim:hybrid_teleop_sim",
+    "hybrid-teleop-sim-collect": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim:hybrid_teleop_sim_collect",
     "keyboard-teleop-a1z": "dimos.robot.manipulators.a1z.blueprints.teleop:keyboard_teleop_a1z",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints.teleop:keyboard_teleop_a750",
     "keyboard-teleop-lite6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_lite6",
