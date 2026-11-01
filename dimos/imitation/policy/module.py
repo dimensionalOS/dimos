@@ -98,6 +98,7 @@ class PolicyModuleConfig(IsolatedPythonModuleConfig):
     joint_names: list[str] = Field(min_length=1)
     fps: float | None = Field(default=None, gt=0)
     robot_type: str = ""
+    check_observation_timing: bool = True
     max_observation_age_s: float = Field(default=0.5, gt=0)
     max_observation_skew_s: float = Field(default=0.1, gt=0)
     rollout_button: str = "A"

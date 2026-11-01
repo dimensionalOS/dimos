@@ -340,6 +340,43 @@ def test_stale_inputs_are_not_retried(rollout, mocker):
     control.task_invoke.assert_not_called()
 
 
+@pytest.mark.parametrize("timing", ["stale", "skew"])
+def test_station_can_disable_observation_timing_checks(rollout, timing):
+    module, backend, control = rollout
+    now = time.time()
+    provide_observation(module, ts=now - (2.0 if timing == "stale" else 0.2))
+    module._on_joint_state(JointState(ts=now, name=["joint"], position=[0.0]))
+    with pytest.raises(RuntimeError, match="stale|skew"):
+        module._snapshot_observation(now)
+    module.config.check_observation_timing = False
+    images, positions, stamp = module._snapshot_observation(now)
+    assert set(images) == {"observation.images.wrist"}
+    np.testing.assert_array_equal(positions, [0.0])
+    assert stamp < now
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid", ["missing_state", "nan_position", "nan_timestamp"])
+def test_timing_opt_out_keeps_required_input_and_finite_value_checks(rollout, invalid):
+    module, backend, control = rollout
+    module.config.check_observation_timing = False
+    if invalid == "missing_state":
+        module._latest_joint_state = None
+    else:
+        module._on_joint_state(
+            JointState(
+                ts=float("nan") if invalid == "nan_timestamp" else time.time(),
+                name=["joint"],
+                position=[float("nan") if invalid == "nan_position" else 0.0],
+            )
+        )
+    with pytest.raises(RuntimeError, match="no coordinator|non-finite|invalid timestamp"):
+        module._snapshot_observation(time.time())
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
 def test_manual_takeover_stops_an_accepted_chunk(rollout: tuple[Any, Any, Any]) -> None:
     module, backend, control = rollout
     module.preflight_rollout()

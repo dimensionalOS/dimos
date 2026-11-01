@@ -112,6 +112,10 @@ overshoot rejects the whole chunk. Shared hardware limits remain authoritative.
 
 EEF execution samples Cartesian targets on coordinator ticks, solves all target
 frames together, and bounds commands using the existing Pink control core.
+For station debugging, `policy.check_observation_timing=false` disables the local
+observation age and camera/state skew gates. This allows unsynchronized or old
+camera/state observations. Required inputs, finite-value checks, hardware limits,
+and coordinator execution supervision remain active. The default is `true`.
 Tracking error, invalid feedback, IK failure, and settling timeout fault the task.
 Completion requires measured TCP and gripper error within configured tolerances.
 For temporary time-only EEF playback, set

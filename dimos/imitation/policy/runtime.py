@@ -286,13 +286,15 @@ class _PolicyRuntime(PolicyModule):
         if state is None:
             raise RuntimeError("no coordinator joint state has been received")
         stamps.append(state.ts)
-        if any(
-            not np.isfinite(t) or not 0 <= now - t <= self.config.max_observation_age_s
-            for t in stamps
-        ):
-            raise RuntimeError("observation is stale or has an invalid timestamp")
-        if max(stamps) - min(stamps) > self.config.max_observation_skew_s:
-            raise _ObservationSkewError("camera/state timestamp skew exceeds configured tolerance")
+        if any(not np.isfinite(t) for t in stamps):
+            raise RuntimeError("observation has an invalid timestamp")
+        if self.config.check_observation_timing:
+            if any(not 0 <= now - t <= self.config.max_observation_age_s for t in stamps):
+                raise RuntimeError("observation is stale or has an invalid timestamp")
+            if max(stamps) - min(stamps) > self.config.max_observation_skew_s:
+                raise _ObservationSkewError(
+                    "camera/state timestamp skew exceeds configured tolerance"
+                )
         if len(state.name) != len(state.position) or len(set(state.name)) != len(state.name):
             raise RuntimeError("joint state names must be unique and match its position count")
         positions = dict(zip(state.name, state.position, strict=True))
