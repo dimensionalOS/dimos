@@ -46,8 +46,9 @@ fn basic_config() -> Config {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     }
 }
 
@@ -151,6 +152,40 @@ fn find_misses_along_ray_hits_correct_voxels() {
 
     assert_eq!(walk.misses, expected);
     assert!(walk.deferred.is_empty());
+}
+
+/// A ray that never moves along y or z, from an origin on a y and z voxel boundary that
+/// floor() puts one voxel low (0.4 = 5 * 0.08 floors to voxel 4 in f32), used to step those
+/// axes with a 0/0 crossing time and walk forever.
+#[test]
+fn axis_aligned_ray_from_a_voxel_boundary_ends() {
+    let voxel_size = 0.08_f32;
+    let on_boundary = 5.0 * voxel_size;
+    let origin = (0.01, on_boundary, on_boundary);
+    let end = (0.5, on_boundary, on_boundary);
+    let inv = 1.0 / voxel_size;
+    let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
+    let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
+    let crossed = (3, origin_voxel.1, origin_voxel.2);
+    let mut voxels = ChunkMap::default();
+    let mut voxel = Voxel::with_health(1);
+    voxel.normal = NormalFit::Fitted(None);
+    voxels.insert(crossed, voxel, 0);
+    let hits = AHashSet::new();
+    let frame = RayFrame {
+        voxels: &voxels,
+        hits: &hits,
+        origin,
+        origin_voxel,
+        voxel_size,
+        shadow_depth: 0.0,
+        grace_depth: 0.0,
+        graze_cos: 0.5,
+        fine_divisor: None,
+    };
+    let mut walk = RayWalk::default();
+    find_misses_along_ray(&mut walk, &frame, end, endpoint);
+    assert_eq!(walk.misses, [crossed].into_iter().collect());
 }
 
 #[test]
@@ -363,8 +398,9 @@ fn ground_clipping_single_ray() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -521,8 +557,9 @@ fn stair_clipping_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Staircase
@@ -605,8 +642,9 @@ fn landing_floor_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -677,8 +715,9 @@ fn landing_grazed_from_below() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -818,8 +857,9 @@ fn grazing_ray_spares_planar_floor() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map.voxels.keys().filter(|k| k.1 == 0 && k.2 == 0).collect();

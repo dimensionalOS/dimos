@@ -62,7 +62,7 @@ def test_an_nvidia_gpu_builds_tensorrt_and_anything_else_the_cpu_build(monkeypat
     from dimos.perception.depth2depth_cloud import module
 
     monkeypatch.setattr(module, "has_nvidia_gpu", lambda: False)
-    assert Depth2DepthCloudConfig().build_command == "nix build -L ."
+    assert Depth2DepthCloudConfig().build_command == "nix build -L path:."
     monkeypatch.setattr(module, "has_nvidia_gpu", lambda: True)
-    assert Depth2DepthCloudConfig().build_command == "nix build -L .#tensorrt"
+    assert Depth2DepthCloudConfig().build_command == "nix build -L path:.#tensorrt"
     assert Depth2DepthCloudConfig(build_command="custom").build_command == "custom"

@@ -78,7 +78,7 @@ K_RIGHTBRACKET: int
 
 # --- submodules --------------------------------------------------------
 
-from . import (
+from pygame import (
     display as display,
     draw as draw,
     event as event,

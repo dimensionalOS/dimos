@@ -22,9 +22,11 @@ mod chunk_map;
 mod normals;
 #[cfg(test)]
 mod tests;
+mod warp;
 
 use chunk_map::{chunk_of, ChunkCursor, ChunkRef, HealthyVoxel};
 pub use chunk_map::{ChunkKey, ChunkMap, CHUNK_EDGE};
+pub use warp::{voxel_centers, voxel_moves, VoxelMove};
 
 #[cfg(test)]
 use normals::fit_normal;
@@ -49,14 +51,42 @@ pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
     )
 }
 
+/// The region grid cell a world point falls in.
+pub fn region_at((x, y, _): (f32, f32, f32), voxel_size: f32, region_m: f32) -> Cell {
+    let cell_m = region_m.max(CHUNK_EDGE as f32 * voxel_size);
+    ((x / cell_m).floor() as i32, (y / cell_m).floor() as i32)
+}
+
 #[inline]
-fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
+pub(crate) fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     let half = voxel_size * 0.5;
     (
         key.0 as f32 * voxel_size + half,
         key.1 as f32 * voxel_size + half,
         key.2 as f32 * voxel_size + half,
     )
+}
+
+/// The key a voxel's points sit in. A warp moves a voxel's points without
+/// re-keying it outside the local area, so this can differ from its own key.
+#[inline]
+pub(crate) fn placed_key(key: VoxelKey, voxel: &Voxel, voxel_size: f32) -> VoxelKey {
+    if voxel.num_pts == 0 {
+        return key;
+    }
+    let mean = voxel.sum / voxel.num_pts as f32;
+    let half = 0.5 * voxel_size;
+    if mean.x.abs() <= half && mean.y.abs() <= half && mean.z.abs() <= half {
+        return key;
+    }
+    let (x, y, z) = voxel_center(key, voxel_size);
+    world_to_voxel(x + mean.x, y + mean.y, z + mean.z, 1.0 / voxel_size)
+}
+
+/// Center of the voxel where a voxel's points sit.
+#[inline]
+fn placed_center(key: VoxelKey, voxel: &Voxel, voxel_size: f32) -> (f32, f32, f32) {
+    voxel_center(placed_key(key, voxel, voxel_size), voxel_size)
 }
 
 #[native_config]
@@ -115,17 +145,19 @@ pub struct Config {
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Edge of the square regions a seed load is handed on in and the map
-    /// viz publishes by.
+    /// Edge of the square regions a seed load is handed on in.
     #[validate(range(exclusive_min = 0.0))]
     pub region_m: f32,
-    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    /// Edge of the square cells the map viz publishes by, at least a chunk edge.
+    #[validate(range(exclusive_min = 0.0))]
+    pub viz_cell_m: f32,
+    /// Publish the cells whose chunks changed every Nth frame. Zero disables it.
     pub viz_emit_every: u32,
-    /// Unchanged regions republished per viz tick, round robin. Zero turns the sweep off.
-    pub viz_sweep_regions: u32,
+    /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
+    pub viz_sweep_cells: u32,
 }
 
-fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
+pub(crate) fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
     if cfg.min_health >= cfg.max_health {
         return Err(ValidationError::new("min_health_lt_max_health"));
     }
@@ -181,7 +213,7 @@ fn join_fine_key(coarse: VoxelKey, index: usize, divisor: i32) -> VoxelKey {
     )
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct VoxelMap {
     pub voxels: ChunkMap,
     /// Chunks whose emitted points changed since the viz last took them.
@@ -425,6 +457,9 @@ pub struct Voxel {
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
     normal: NormalFit,
+    /// When the voxel first landed, seconds past the mapper's epoch; NaN when
+    /// untracked. Travels with the voxel through warps.
+    pub(crate) time: f32,
 }
 
 impl Default for Voxel {
@@ -437,6 +472,7 @@ impl Default for Voxel {
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
+            time: f32::NAN,
         }
     }
 }
@@ -789,7 +825,7 @@ pub fn chunk_points(map: &VoxelMap, voxel_size: f32, chunks: &[ChunkKey]) -> Vec
         part.reserve(3 * chunk.healthy_len());
         for hv in chunk.healthy() {
             if voxel_supported(hv.support, map.support_min) {
-                let (x, y, z) = voxel_center(hv.key, voxel_size);
+                let (x, y, z) = placed_center(hv.key, hv.voxel, voxel_size);
                 part.extend_from_slice(&[x, y, z]);
             }
         }
@@ -830,7 +866,7 @@ fn emit_points_impl(
             if gated && !voxel_supported(hv.support, map.support_min) {
                 return;
             }
-            let (x, y, z) = voxel_center(hv.key, voxel_size);
+            let (x, y, z) = placed_center(hv.key, hv.voxel, voxel_size);
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
             }
@@ -919,7 +955,7 @@ fn live_voxels(points: &[(f32, f32, f32)], voxel_size: f32) -> AHashSet<VoxelKey
 }
 
 /// One frame's hit sets from `update_map`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct FrameHits {
     /// Hit voxels at map resolution, the live merge for `emit_points`.
     pub coarse: AHashSet<VoxelKey>,
@@ -1213,7 +1249,7 @@ pub fn seed_points(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config)
 }
 
 #[inline]
-fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
+pub(crate) fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
     (
         (x * inv).floor() as i32,
         (y * inv).floor() as i32,
@@ -1358,9 +1394,21 @@ fn find_misses_along_ray(
 
     let (mut x, mut y, mut z) = origin_voxel;
 
-    let step_x = dx.signum() as i32;
-    let step_y = dy.signum() as i32;
-    let step_z = dz.signum() as i32;
+    // Not f32::signum: it gives ±1 for ±0.0, which stepped an axis the ray never moves along
+    // and, from an origin exactly on a voxel boundary, made its crossing time 0/0 = NaN, so the
+    // walk never ended.
+    let step_of = |d: f32| -> i32 {
+        if d > 0.0 {
+            1
+        } else if d < 0.0 {
+            -1
+        } else {
+            0
+        }
+    };
+    let step_x = step_of(dx);
+    let step_y = step_of(dy);
+    let step_z = step_of(dz);
 
     let t_max_init = |p: f32, d: f32, vox: i32, step: i32| -> f32 {
         if step == 0 {

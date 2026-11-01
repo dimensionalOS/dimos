@@ -37,7 +37,7 @@ from dimos.robot.unitree.go2.blueprints.navigation.go2_nav import (
     go2_nav_static,
 )
 from dimos.robot.unitree.go2.dds.module import GO2DDS
-from dimos.robot.unitree.go2.nav_3d_config import relocalization, voxel_size
+from dimos.robot.unitree.go2.nav_3d_config import NAV_VIEWER_TOPICS, relocalization, voxel_size
 from dimos.visualization.vis_module import vis_module
 
 # GO2DDS doubles as a zenoh router
@@ -160,8 +160,7 @@ def _rerun_config(
 # The router is named, not scouted: behind wifi multicast scouting finds nothing
 # (docs/usage/transports/zenoh.md). --robot-ip still adds its endpoint alongside.
 GO2_ROUTER = os.environ.get("DIMOS_GO2_ROUTER", "tcp/go22:7447")
-# The storey the viewer shows, in odom (origin: the lidar at start, ~0.5m above the floor):
-# map regions, surface map and mesh are all cut to it.
+# The storey the mesh is cut to, in odom (origin: the lidar at start, ~0.5m above the floor).
 VIEW_Z_BAND = (-0.5, 2.3)
 
 
@@ -179,37 +178,18 @@ def nav_viewer(
                         render_map_region,
                         voxel_size=voxel_size,
                         height_range=HEIGHT_RANGE,
-                        z_band=VIEW_Z_BAND,
                     ),
                     SURFACE_MAP_ENTITY: partial(
                         render_surface_region,
                         voxel_size=voxel_size,
                         wall_clearance_m=WALL_CLEARANCE_M,
                         clearance_clamp_m=1.0,
-                        z_band=VIEW_Z_BAND,
                     ),
                     **(visual_override or {}),
                 },
                 hidden,
             ),
-            "topics": [
-                "tf",
-                "odometry",
-                "path",
-                "planner_path",
-                "nodes",
-                "node_edges",
-                "surface_map",
-                "map_regions",
-                "goal",
-                "way_point",
-                "goal_reached",
-                # h264 or jpeg, whichever GO2DDS's video_encoding serves
-                "video",
-                "image",
-                "camera_info",
-                *extra_topics,
-            ],
+            "topics": [*NAV_VIEWER_TOPICS, *extra_topics],
         },
     )
 

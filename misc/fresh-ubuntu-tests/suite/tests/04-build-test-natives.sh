@@ -14,6 +14,6 @@ bin/build-test-natives
 
 # Exactly the files that skip without the native artifacts; --error-for-skips
 # proves they really ran.
-uv run pytest --error-for-skips -m 'not (mujoco or self_hosted_large)' \
+uv run pytest --error-for-skips -m 'not self_hosted_large' \
   dimos/mapping/ray_tracing \
   dimos/navigation/global_planner/mls_planner

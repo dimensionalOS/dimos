@@ -29,9 +29,8 @@ from dimos.navigation import spec
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/navigation/global_planner/mls_planner/rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = "../../../../../target/release/mls_planner"
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/mls_planner"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     world_frame: str = "odom"
@@ -55,8 +54,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_publish_hz: float = 2.0
     # The surface and edge viz publish by square cells of this edge, only the
     # changed ones each tick, plus this many unchanged ones round robin.
-    viz_region_m: float = 4.0
-    viz_sweep_regions: int = 2
+    viz_cell_m: float = 4.0
+    viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
 

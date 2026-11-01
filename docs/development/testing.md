@@ -55,7 +55,7 @@ This is the same as:
 pytest --numprocesses=auto dimos
 ```
 
-The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
+The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
 
 ### Self-hosted tests
 
@@ -63,7 +63,7 @@ The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `
 ./bin/pytest-slow
 ```
 
-(Shortcut for `pytest -m 'not (mujoco or self_hosted_large)' dimos`: runs the default suite *and* self-hosted tests, excluding only `mujoco` and `self_hosted_large`.)
+(Shortcut for `pytest -m 'not self_hosted_large' dimos`: runs the default suite *and* self-hosted tests, excluding only `self_hosted_large`.)
 
 Before running tests it calls `bin/build-test-natives`, which builds any missing native test dependencies.
 
@@ -190,12 +190,9 @@ We have a few markers in use now.
 
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
 * `web_browser`: the Playwright tests of the cockpit and the web SDK in `dimos/e2e_tests/` (see [Development](/docs/web/development.md#tests)).
-* `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
 
 If a test needs to be skipped for some reason, please use on of these markers, or add another one.
 
-* `skipif_in_ci`: tests which cannot run in GitHub Actions
-* `skipif_no_openai`: tests which require an `OPENAI_API_KEY` key in the env
 * `skipif_no_alibaba`: tests which require an `ALIBABA_API_KEY` key in the env
 
 ## Test a checkout locally

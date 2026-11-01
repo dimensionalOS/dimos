@@ -18,6 +18,7 @@ from __future__ import annotations
 
 try:
     from dimos_voxel_ray_tracing import (  # noqa: F401  (re-exported)
+        ReformWarp,
         SeededRegion,
         VoxelRayMapper,
     )

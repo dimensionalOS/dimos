@@ -23,9 +23,9 @@ use std::io::{self, BufWriter, Write};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use dimos_livox::pcap::PcapSource;
-use dimos_livox::pipeline::{imu_records, FrameAssembler, PacketSource, RawPoint, GRAVITY_MS2};
-use dimos_livox::wire::{DataPacket, DataType, LIDAR_IMU_PORT, LIDAR_POINT_PORT};
+use dimos_pointlio::pcap::PcapSource;
+use dimos_pointlio::pipeline::{imu_records, FrameAssembler, PacketSource, RawPoint, GRAVITY_MS2};
+use dimos_pointlio::wire::{DataPacket, DataType, LIDAR_IMU_PORT, LIDAR_POINT_PORT};
 use pointlio_core::{Config, LivoxPoint, PointLio};
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {

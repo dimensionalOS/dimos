@@ -55,8 +55,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
-
-from .optimized_costmap import OptimizedCostmapEncoder
+from dimos.web.websocket_vis.optimized_costmap import OptimizedCostmapEncoder
 
 if TYPE_CHECKING:
     import socketio  # type: ignore[import-untyped]

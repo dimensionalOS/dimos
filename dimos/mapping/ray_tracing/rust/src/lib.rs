@@ -12,7 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod background_warp;
 pub mod mapper;
 pub mod module;
+pub mod reform;
+pub mod reform_module;
 pub mod region_viz;
+pub mod rss;
 pub mod voxel_ray_tracer;

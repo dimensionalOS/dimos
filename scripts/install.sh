@@ -435,16 +435,30 @@ install_nix() {
         return
     fi
 
-    info "installing Nix via official installer..."
-    if [[ "$DRY_RUN" == "1" ]]; then
-        dim "[dry-run] sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon"
-        HAS_NIX=1; return
-    fi
-
-    if [[ "$NON_INTERACTIVE" == 1 ]]; then
-        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon --yes)
+    # SteamOS's read-only, update-replaced system can't hold /nix; Determinate's installer keeps the store under /home
+    if ( . /etc/os-release 2>/dev/null; [[ "${ID:-}" == steamos ]] ); then
+        info "installing Nix via Determinate's installer (SteamOS)..."
+        if [[ "$DRY_RUN" == "1" ]]; then
+            dim "[dry-run] curl -sSfL https://install.determinate.systems/nix | sh -s -- install"
+            HAS_NIX=1; return
+        fi
+        if [[ "$NON_INTERACTIVE" == 1 ]]; then
+            curl --proto '=https' --tlsv1.2 -sSfL https://install.determinate.systems/nix | sh -s -- install --no-confirm
+        else
+            (curl --proto '=https' --tlsv1.2 -sSfL https://install.determinate.systems/nix | sh -s -- install) </dev/tty
+        fi
     else
-        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon) </dev/tty
+        info "installing Nix via official installer..."
+        if [[ "$DRY_RUN" == "1" ]]; then
+            dim "[dry-run] sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon"
+            HAS_NIX=1; return
+        fi
+
+        if [[ "$NON_INTERACTIVE" == 1 ]]; then
+            (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon --yes)
+        else
+            (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon) </dev/tty
+        fi
     fi
 
     [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]] && \
@@ -519,6 +533,12 @@ verify_nix_develop() {
     [[ "$INSTALL_PYTHON" == /nix/store/* ]] || die "Nix setup must provide its own Python"
 }
 
+# A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension: update the Command Line Tools.
+update_command_line_tools() {
+    { ! has_cmd c++ || c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; } && return
+    run_cmd sudo softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+}
+
 # ─── system dependencies ─────────────────────────────────────────────────────
 install_system_deps() {
     info "checking system dependencies..."
@@ -528,7 +548,9 @@ install_system_deps() {
             local -a needed=() privilege=(/usr/bin/env)
             if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
             for pkg in $UBUNTU_PACKAGES; do
-                if [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" != "install ok installed" ]]; then
+                # one status line per installed architecture (multiarch), and Ubuntu 24.04 renamed some to <name>t64
+                # (dpkg-query fails for the name that doesn't exist; pipefail is on, so don't let that decide)
+                if ! { dpkg-query -W -f='${Status}\n' "$pkg" "${pkg}t64" 2>/dev/null || true; } | grep -qx "install ok installed"; then
                     needed+=("$pkg")
                 fi
             done
@@ -577,7 +599,8 @@ install_system_deps() {
             if ! prompt_confirm "Install these packages via brew?" "yes"; then
                 die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
-            run_cmd brew install "${needed[@]}"
+            # brew >= 7 asks before installing unless told not to; we already asked above
+            HOMEBREW_NO_ASK=1 run_cmd brew install "${needed[@]}"
             ;;
         nixos)
             info "NixOS detected — system deps managed via nix develop"
@@ -975,6 +998,7 @@ main() {
         export UV_PYTHON_PREFERENCE=only-managed
     fi
     if [[ "$SETUP_METHOD" != "nix" ]]; then install_system_deps; fi
+    if [[ "$DETECTED_OS" == "macos" && "$USE_NIX" != 1 ]]; then update_command_line_tools; fi
     install_uv
 
     if [[ -z "$DETECTED_PYTHON" ]]; then

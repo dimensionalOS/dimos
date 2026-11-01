@@ -21,7 +21,7 @@ the bytes arrive.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from functools import partial
 from typing import Any
 from unittest.mock import patch
@@ -49,15 +49,15 @@ class FakeZenoh(Zenoh):
     def __init__(self) -> None:
         self.keys: list[str] = []
         self.subscribed_all = False
-        self.unconflated: list[str] = []
+        self.keyed: list[str] = []
 
     def subscribe(self, topic: Any, callback: Any) -> Any:
         self.keys.append(topic.key_expr)
         return lambda: None
 
-    def subscribe_all(self, callback: Any, unconflated: Collection[str] = ()) -> Any:
+    def subscribe_all(self, callback: Any, keyed: Mapping[str, Any] | None = None) -> Any:
         self.subscribed_all = True
-        self.unconflated = list(unconflated)
+        self.keyed = list(keyed or {})
         return lambda: None
 
 
@@ -89,10 +89,10 @@ def test_no_topics_keeps_the_firehose(make_bridge: Callable[..., RerunBridgeModu
     make_bridge()._subscribe(pubsub)
     assert pubsub.subscribed_all
     assert pubsub.keys == []
-    assert pubsub.unconflated == []
+    assert pubsub.keyed == []
 
 
-def test_the_firehose_takes_keyed_renderers_unconflated(
+def test_the_firehose_takes_keyed_renderers_per_seq(
     make_bridge: Callable[..., RerunBridgeModule],
 ) -> None:
     @keyed_by_seq
@@ -107,13 +107,13 @@ def test_the_firehose_takes_keyed_renderers_unconflated(
             "world/local_map": lambda msg: None,
         },
     )._subscribe(pubsub)
-    assert sorted(pubsub.unconflated) == ["map_regions", "surface_map"]
+    assert sorted(pubsub.keyed) == ["map_regions", "surface_map"]
 
     pubsub = FakeZenoh()
     make_bridge(entity_prefix="hall", visual_override={"hall/surface_map": by_cell})._subscribe(
         pubsub
     )
-    assert pubsub.unconflated == ["surface_map"]
+    assert pubsub.keyed == ["surface_map"]
 
 
 def test_a_leaf_stack_does_not_claim_the_coordinator_name() -> None:

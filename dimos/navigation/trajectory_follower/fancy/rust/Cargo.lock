@@ -606,6 +606,7 @@ dependencies = [
 [[package]]
 name = "dimos-module"
 version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
@@ -625,6 +626,7 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -638,7 +640,6 @@ version = "0.1.0"
 dependencies = [
  "dimos-local-planner",
  "dimos-module",
- "dimos-trajectory-follower",
  "lcm-msgs",
  "numpy",
  "pyo3",

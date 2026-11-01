@@ -1,2 +1,6 @@
 [registry]
 global-min-publish-age = "7 days"
+
+# store cache of all non-nix rust builds at the root level (shared)
+[build]
+target-dir = "target"

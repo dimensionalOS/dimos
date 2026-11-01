@@ -23,36 +23,56 @@
 //! Trajectory-warp / map / tag scoring is left to a thin Python postprocess that
 //! reuses `trajectory_metrics`.
 
+use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use std::collections::BTreeMap;
-
 use dimos_gsc_pgo::gsc_pgo::{
     ClosureCandidateDiag, CloudWithPose, CommittedClosure, Config as PgoConfig, GscPgo,
-    PoseWithTime, CLOSURE_EDGE_RECORD_BYTES,
+    PoseWithTime,
 };
 use dimos_gsc_pgo::loop_overlap::LoopOverlap;
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud;
+use dimos_gsc_pgo::records::{
+    append_pose_changes, closure_edge_records, write_keyframes, HeardPoses,
+};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 mod memory2;
-use memory2::{for_each_scan, read_odometry, OdomRow};
+use memory2::{for_each_scan, read_odometry, OdomRow, Rigid};
 
 /// Eval config: the PGO core's config (defaults mirror `module.py`'s `PGOConfig`, so a bare run reproduces
 /// the module default) plus how the scans arrive; a `--config` JSON overlays any subset.
 // Unknown keys are ignored on purpose: the resolved config is dumped from the Python PGOConfig, which
 // carries module-lifecycle fields (executable, cwd, global_map_*, ...) this eval never uses.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct EvalConfig {
     #[serde(flatten)]
     pgo: PgoConfig,
-    /// The scans arrive in the world frame: bring them into the body frame with the odometry.
-    subtract_odom_from_cloud: bool,
+    /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue; <= 0 = unbounded).
+    max_scan_queue: i32,
+    /// Multiplies every stated odometry_error_estimate_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
+    #[serde(alias = "odom_drift_scale")]
+    odometry_error_estimate_scale: f64,
+    /// The frame the odometry's poses are really of, where its child_frame_id misnames it (office555's Point-LIO names
+    /// base_link but reports the lidar's pose: "livox_frame"); empty = the child frame.
+    odom_pose_frame: String,
+}
+
+impl Default for EvalConfig {
+    fn default() -> EvalConfig {
+        EvalConfig {
+            pgo: PgoConfig::default(),
+            max_scan_queue: 5,
+            odometry_error_estimate_scale: 1.0,
+            odom_pose_frame: String::new(),
+        }
+    }
 }
 
 /// A committed closure's ICP-refined relative pose (target frame -> source), so an
@@ -64,8 +84,7 @@ struct CommittedClosureEdge {
     rotation: [[f64; 3]; 3],
     translation: [f64; 3],
     score: f64,
-    /// Final GNC weight (~1 kept / green, ~0 rejected / red). 1.0 when the batch
-    /// GNC pass is disabled.
+    /// 1 kept, 0 rejected by the newest applied solve; NaN until a solve has judged it.
     gnc_weight: f64,
 }
 
@@ -90,7 +109,6 @@ struct EvalOutput {
     odom_frame: String,
     lidar_frame: String,
     scan_stride: usize,
-    odom_stride: usize,
     config: serde_json::Value,
     /// Raw odom trajectory: [ts, x, y, z, qx, qy, qz, qw] per row.
     odom_rows: Vec<[f64; 8]>,
@@ -103,6 +121,11 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
+    /// `--live` replay (else lockstep), the scans it dropped from a full queue, and each processed scan's ms from arriving
+    /// to done (queue wait + processing).
+    live: bool,
+    scans_dropped: usize,
+    scan_latency_ms: Vec<f32>,
     /// Per keyframe, ms the scan thread spends on it (add_key_pose + closure search), in order.
     keyframe_scan_thread_ms: Vec<f32>,
     /// Per keyframe, ms in `update` (adopting a finished solve, waiting for it when due, and starting the next).
@@ -123,6 +146,13 @@ struct EvalOutput {
     /// Every committed closure's refined relative pose (target->source), in commit
     /// order — the raw constraints an offline consistency pass needs.
     committed_closure_edges: Vec<CommittedClosureEdge>,
+    /// With an ICP cache replay: the cloud computations answered from it, and those it lacked (computed live).
+    icp_cache_hits: usize,
+    icp_cache_misses: usize,
+    /// The odometry error estimate the run measured, as next run's config inputs (`GscPgo::odometry_error_estimate_for_next_run`): per
+    /// source xy, z, yaw, tilt, [per sqrt m, per sqrt rad], and whether a kept closure measured it.
+    odometry_drift: [[f64; 2]; 4],
+    odometry_drift_measured: [bool; 4],
 }
 
 struct Args {
@@ -132,32 +162,122 @@ struct Args {
     config_path: Option<PathBuf>,
     output: PathBuf,
     scan_stride: usize,
-    odom_stride: usize,
-    /// body←lidar static as "x,y,z,qx,qy,qz,qw" — applied to every scan's
-    /// points, for lidar streams not already expressed in the odom body frame.
-    lidar_tf: Option<[f64; 7]>,
-    /// new-body pose in the odom body frame as "x,y,z,qx,qy,qz,qw": re-expresses every odom
-    /// pose and scan in that frame, e.g. a level frame for an odometry whose body is a tilted
-    /// sensor (FAST-LIO on a pitched Mid-360), since closure search assumes level clouds.
-    body_tf: Option<[f64; 7]>,
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
     event_dump: Option<PathBuf>,
-    /// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free
-    /// keyframes (at least one), waiting for it if needed, so it gives the same graph on any machine; a solve's
-    /// cost grows with the map, so the delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac
-    /// solve at 5k keyframes is ~0.5%).
-    solve_delay_fraction: f64,
+    /// `--icp-cache-record <path>`: write every closure search's cloud computations there (`icp_cache`).
+    /// `--icp-cache-replay <path>`: answer them from such a file, computing (and counting) any it lacks.
+    icp_cache: Option<(dimos_gsc_pgo::icp_cache::Mode, PathBuf)>,
+    /// Multiplies every odometry position, for an odometry that reads distance short or long (Go2 leg odometry ~0.76).
+    odom_scale: f64,
+    /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
+    /// max_scan_queue (oldest dropped when full), and the closure search and solves run in the background.
+    live: bool,
+    /// World-frame position fixes to feed as the scans reach their times (`GscPgo::add_coordinate_factor`), a CSV with one
+    /// fix per line: time, frame id, x, y, z, the 3x3 covariance row-major (m²), the sensor's offset in the body frame
+    /// (x, y, z). Lockstep replay only.
+    world_positions: Option<PathBuf>,
+    /// Landmark sightings to feed the same way (`GscPgo::add_landmark_factor`), a CSV with one per line: time,
+    /// landmark id, x, y, z in the body frame, then either the 3x3 position covariance row-major (m², a point) or a
+    /// rotation vector (rad) and the 6x6 covariance row-major in `LandmarkSighting`'s order (a pose; a variance that is
+    /// not a positive finite number is unknown). Lockstep replay only.
+    landmark_sightings: Option<PathBuf>,
 }
 
-fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
-    let values: Vec<f64> = text
-        .split(',')
-        .map(|part| part.trim().parse::<f64>().map_err(|e| format!("{e}")))
-        .collect::<Result<_, _>>()?;
-    values
-        .try_into()
-        .map_err(|_| "--lidar-tf needs 7 comma-separated values: x,y,z,qx,qy,qz,qw".to_string())
+/// The sightings of a `--landmark-sightings` file, in time order.
+#[allow(clippy::type_complexity)]
+fn read_landmark_sightings(
+    path: &PathBuf,
+) -> Result<Vec<(f64, u64, [[f64; 3]; 3], [f64; 3], [[f64; 6]; 6])>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut sightings = Vec::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    {
+        let v: Vec<f64> = line
+            .split(',')
+            .map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}")))
+            .collect::<Result<_, _>>()?;
+        let position = [v[2], v[3], v[4]];
+        let (rotation, information) = match v.len() {
+            14 => {
+                let point = dimos_gsc_pgo::landmarks::LandmarkSighting::point(
+                    0,
+                    0,
+                    position,
+                    std::array::from_fn(|i| std::array::from_fn(|j| v[5 + 3 * i + j])),
+                );
+                (point.rotation, point.information)
+            }
+            44 => (
+                rotation_vector([v[5], v[6], v[7]]),
+                dimos_gsc_pgo::landmarks::known_inverse(&std::array::from_fn(|i| {
+                    std::array::from_fn(|j| v[8 + 6 * i + j])
+                })),
+            ),
+            _ => {
+                return Err(format!(
+                    "{line}: needs 14 values (time, landmark id, xyz, 3x3 covariance) or 44 (time, landmark id, xyz, \
+                     rotation vector, 6x6 covariance)"
+                ))
+            }
+        };
+        sightings.push((v[0], v[1] as u64, rotation, position, information));
+    }
+    sightings.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(sightings)
+}
+
+/// Rotation by axis-angle `w` (Rodrigues).
+fn rotation_vector(w: [f64; 3]) -> [[f64; 3]; 3] {
+    let angle = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+    if angle < 1e-12 {
+        return dimos_gsc_pgo::mat3::identity();
+    }
+    let axis = [w[0] / angle, w[1] / angle, w[2] / angle];
+    let half = angle / 2.0;
+    dimos_gsc_pgo::mat3::mat_from_quat(&[
+        half.cos(),
+        axis[0] * half.sin(),
+        axis[1] * half.sin(),
+        axis[2] * half.sin(),
+    ])
+}
+
+/// The fixes of a `--world-positions` file, in time order.
+fn read_world_positions(
+    path: &PathBuf,
+) -> Result<Vec<(f64, u32, [f64; 3], [f64; 3], [[f64; 3]; 3])>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut fixes = Vec::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    {
+        let v: Vec<f64> = line
+            .split(',')
+            .map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}")))
+            .collect::<Result<_, _>>()?;
+        if v.len() != 17 {
+            return Err(format!(
+                "{line}: needs 17 values (time, frame, xyz, 3x3 covariance, lever xyz)"
+            ));
+        }
+        fixes.push((
+            v[0],
+            v[1] as u32,
+            [v[14], v[15], v[16]],
+            [v[2], v[3], v[4]],
+            [
+                [v[5], v[6], v[7]],
+                [v[8], v[9], v[10]],
+                [v[11], v[12], v[13]],
+            ],
+        ));
+    }
+    fixes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(fixes)
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -167,28 +287,39 @@ fn parse_args() -> Result<Args, String> {
     let mut config_path = None;
     let mut output = None;
     let mut scan_stride = 1usize;
-    let mut odom_stride = 1usize;
-    let mut lidar_tf = None;
-    let mut body_tf = None;
     let mut event_dump = None;
-    let mut solve_delay_fraction = 0.01;
+    let mut odom_scale = 1.0;
+    let mut live = false;
+    let mut world_positions = None;
+    let mut landmark_sightings = None;
+    let mut icp_cache = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
-            "--db" | "--db-path" => db = Some(PathBuf::from(value()?)),
+            "--db" => db = Some(PathBuf::from(value()?)),
             "--odom-stream" => odom_stream = Some(value()?),
             "--lidar-stream" => lidar_stream = Some(value()?),
-            "--config" | "--pgo-config-json" => config_path = Some(PathBuf::from(value()?)),
-            "--output" | "-o" => output = Some(PathBuf::from(value()?)),
+            "--config" => config_path = Some(PathBuf::from(value()?)),
+            "--output" => output = Some(PathBuf::from(value()?)),
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
-            "--odom-stride" => odom_stride = value()?.parse().map_err(|e| format!("{e}"))?,
-            "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
-            "--body-tf" => body_tf = Some(parse_lidar_tf(&value()?)?),
+            "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
-            "--solve-delay-fraction" => {
-                solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
+            "--live" => live = true,
+            "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
+            "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
+            "--icp-cache-record" => {
+                icp_cache = Some((
+                    dimos_gsc_pgo::icp_cache::Mode::Record,
+                    PathBuf::from(value()?),
+                ))
+            }
+            "--icp-cache-replay" => {
+                icp_cache = Some((
+                    dimos_gsc_pgo::icp_cache::Mode::Replay,
+                    PathBuf::from(value()?),
+                ))
             }
             other => return Err(format!("unknown flag {other}")),
         }
@@ -201,11 +332,12 @@ fn parse_args() -> Result<Args, String> {
         config_path,
         output: output.ok_or("--output is required")?,
         scan_stride: scan_stride.max(1),
-        odom_stride: odom_stride.max(1),
-        lidar_tf,
-        body_tf,
         event_dump,
-        solve_delay_fraction,
+        odom_scale,
+        live,
+        world_positions,
+        landmark_sightings,
+        icp_cache,
     })
 }
 
@@ -224,27 +356,124 @@ fn unique_frame(frames: impl Iterator<Item = String>, what: &str) -> Result<Stri
     }
 }
 
-/// GscPgo transforms each keyframe's body cloud by its (body→world) pose, so the
-/// lidar must already be in the odom's body/child frame. We apply no tf, so
-/// verify it here. `PoseStamped` odom carries no child frame — then we can only
-/// warn, since there's nothing to compare against.
-fn check_same_frame(lidar_frame: &str, odom_body_frame: &str) -> Result<(), String> {
-    if odom_body_frame.is_empty() {
-        eprintln!(
-            "pgo-eval: WARNING: odom payload has no child frame (PoseStamped); \
-             cannot verify the lidar frame {lidar_frame:?} matches the odom body frame. \
-             Assuming they match (no tf transform is applied)."
-        );
-        return Ok(());
+/// The level robot body frame GscPgo works in: odometry poses and lidar points are re-expressed in it through the
+/// recording's tf (closure search assumes level clouds, so a pitched sensor's own frame will not do).
+const BODY_FRAME: &str = "base_link";
+
+/// Per odometry (by the odom child frame it moves), its ideal stated odometry error estimate: [per sqrt m, per sqrt rad] for xy, z, yaw,
+/// tilt. Mid-360 (FAST-LIO / Point-LIO) is the Config default; Go2 L1 leg odometry is its calibrated drift.
+fn stated_odometry_error_estimate(odom_child_frame: &str) -> Option<[[f64; 2]; 4]> {
+    match odom_child_frame {
+        // livox_frame: the Mid-360 frame name Point-LIO recordings like office555 use
+        "mid360_link" | "livox_frame" => {
+            let c = PgoConfig::default();
+            Some([
+                [
+                    c.odometry_error_estimate_xy_per_sqrt_m,
+                    c.odometry_error_estimate_xy_per_sqrt_rad,
+                ],
+                [
+                    c.odometry_error_estimate_z_per_sqrt_m,
+                    c.odometry_error_estimate_z_per_sqrt_rad,
+                ],
+                [
+                    c.odometry_error_estimate_yaw_per_sqrt_m,
+                    c.odometry_error_estimate_yaw_per_sqrt_rad,
+                ],
+                [
+                    c.odometry_error_estimate_tilt_per_sqrt_m,
+                    c.odometry_error_estimate_tilt_per_sqrt_rad,
+                ],
+            ])
+        }
+        // calibrated Go2 L1 drift (Go2 leg odometry, clouds in l1_link)
+        "l1_link" => Some([
+            [2.948197514740707e-4, 4.787993406292453e-3],
+            [2.3613682139832578e-4, 1.419763443298345e-3],
+            [1.1336520957451434e-6, 9.817427149152942e-3],
+            [3.837937416144e-4, 1.8328789396925035e-3],
+        ]),
+        _ => None,
     }
-    if lidar_frame != odom_body_frame {
-        return Err(format!(
-            "lidar frame {lidar_frame:?} != odom body frame {odom_body_frame:?}; \
-             GscPgo needs both in the same frame and no tf transform is applied. \
-             Feed a lidar stream already expressed in {odom_body_frame:?}."
-        ));
+}
+
+const ODOMETRY_ERROR_ESTIMATE_KEYS: [[&str; 2]; 4] = [
+    [
+        "odometry_error_estimate_xy_per_sqrt_m",
+        "odometry_error_estimate_xy_per_sqrt_rad",
+    ],
+    [
+        "odometry_error_estimate_z_per_sqrt_m",
+        "odometry_error_estimate_z_per_sqrt_rad",
+    ],
+    [
+        "odometry_error_estimate_yaw_per_sqrt_m",
+        "odometry_error_estimate_yaw_per_sqrt_rad",
+    ],
+    [
+        "odometry_error_estimate_tilt_per_sqrt_m",
+        "odometry_error_estimate_tilt_per_sqrt_rad",
+    ],
+];
+
+/// The eval config: `--config` JSON over the odometry's stated odometry error estimate (`stated_odometry_error_estimate`) over the defaults, then every
+/// drift term times `odometry_error_estimate_scale`.
+fn load_config(
+    path: Option<&std::path::Path>,
+    odom_child_frame: &str,
+) -> Result<EvalConfig, String> {
+    let mut overlay = match path {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{path:?}: {e}"))?;
+            serde_json::from_str(&text).map_err(|e| format!("config {path:?}: {e}"))?
+        }
+        None => serde_json::Value::Object(Default::default()),
+    };
+    let fields = overlay
+        .as_object_mut()
+        .ok_or("--config must be a JSON object")?;
+    // older configs name these odom_<source>_drift_per_sqrt_<unit>: move them to the new names before filling the rest
+    for (keys, source) in ODOMETRY_ERROR_ESTIMATE_KEYS
+        .iter()
+        .zip(["xy", "z", "yaw", "tilt"])
+    {
+        for (key, unit) in keys.iter().zip(["m", "rad"]) {
+            if let Some(value) = fields.remove(&format!("odom_{source}_drift_per_sqrt_{unit}")) {
+                fields.insert(key.to_string(), value);
+            }
+        }
     }
-    Ok(())
+    match stated_odometry_error_estimate(odom_child_frame) {
+        Some(drift) => {
+            for (keys, values) in ODOMETRY_ERROR_ESTIMATE_KEYS.iter().zip(drift) {
+                for (key, value) in keys.iter().zip(values) {
+                    fields.entry(key.to_string()).or_insert(value.into());
+                }
+            }
+        }
+        None => eprintln!(
+            "pgo-eval: WARNING: no stated odometry error estimate known for odometry child frame {odom_child_frame:?}; \
+             using the Config defaults (Mid-360) unless --config gives them"
+        ),
+    }
+    let mut config: EvalConfig =
+        serde_json::from_value(overlay).map_err(|e| format!("config: {e}"))?;
+    let k = config.odometry_error_estimate_scale;
+    let c = &mut config.pgo;
+    for term in [
+        &mut c.odometry_error_estimate_xy_per_sqrt_m,
+        &mut c.odometry_error_estimate_xy_per_sqrt_rad,
+        &mut c.odometry_error_estimate_z_per_sqrt_m,
+        &mut c.odometry_error_estimate_z_per_sqrt_rad,
+        &mut c.odometry_error_estimate_yaw_per_sqrt_m,
+        &mut c.odometry_error_estimate_yaw_per_sqrt_rad,
+        &mut c.odometry_error_estimate_tilt_per_sqrt_m,
+        &mut c.odometry_error_estimate_tilt_per_sqrt_rad,
+    ] {
+        *term *= k;
+    }
+    config.pgo.validate().map_err(|e| format!("config: {e}"))?;
+    Ok(config)
 }
 
 /// Latest odom sample at or before `ts` (the module pairs each scan with the
@@ -263,42 +492,57 @@ fn advance_latest<'a>(odoms: &'a [OdomRow], ts: f64, cursor: &mut usize) -> Opti
 fn run() -> Result<(), String> {
     let args = parse_args()?;
 
-    let config: EvalConfig = match &args.config_path {
-        Some(path) => {
-            let text = std::fs::read_to_string(path).map_err(|e| format!("{path:?}: {e}"))?;
-            serde_json::from_str(&text).map_err(|e| format!("config {path:?}: {e}"))?
-        }
-        None => EvalConfig::default(),
-    };
-
     let connection =
         Connection::open_with_flags(&args.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| format!("open {:?}: {e}", args.db))?;
 
-    let mut odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
-    let body_tf = args
-        .body_tf
-        .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
-    if let Some((body_rotation, body_translation)) = &body_tf {
-        for row in &mut odoms {
+    let mut odoms = read_odometry(&connection, &args.odom_stream)?;
+    let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
+    let odom_child_frame = unique_frame(
+        odoms.iter().map(|row| row.child_frame_id.clone()),
+        "odom child",
+    )?;
+    let config = load_config(args.config_path.as_deref(), &odom_child_frame)?;
+    let tf_tree = memory2::TfTree::read(&connection)?;
+    // the body's pose in the odom child frame: each odom pose (odom -> child) becomes odom -> child * child -> body. A
+    // PoseStamped odom names no child, so it is taken as the body already (and its clouds as in the body frame).
+    let child_to_body = if odom_child_frame.is_empty() {
+        eprintln!(
+            "pgo-eval: WARNING: odom payload has no child frame (PoseStamped); \
+             taking its poses and the lidar clouds as already in the body frame (no tf applied)"
+        );
+        Rigid::identity()
+    } else {
+        let pose_frame = if config.odom_pose_frame.is_empty() {
+            &odom_child_frame
+        } else {
+            &config.odom_pose_frame
+        };
+        tf_tree
+            .lookup(pose_frame, BODY_FRAME)
+            .map_err(|e| format!("odometry pose frame {pose_frame:?} -> {BODY_FRAME}: {e}"))?
+    };
+    for row in &mut odoms {
+        row.translation = row.translation.map(|v| v * args.odom_scale);
+        if !child_to_body.is_identity() {
             row.translation = mat3::add(
                 &row.translation,
-                &mat3::mat_vec(&row.rotation, body_translation),
+                &mat3::mat_vec(&row.rotation, &child_to_body.translation),
             );
-            row.rotation = mat3::mat_mul(&row.rotation, body_rotation);
+            row.rotation = mat3::mat_mul(&row.rotation, &child_to_body.rotation);
             let [qw, qx, qy, qz] = mat3::quat_from_mat(&row.rotation);
             row.quaternion_xyzw = [qx, qy, qz, qw];
         }
     }
-
-    let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
-    let odom_body_frame = unique_frame(
-        odoms.iter().map(|row| row.child_frame_id.clone()),
-        "odom child",
-    )?;
-    let lidar_tf = args
-        .lidar_tf
-        .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
+    let [qw, qx, qy, qz] = mat3::quat_from_mat(&child_to_body.rotation);
+    eprintln!(
+        "pgo-eval: odom {odom_child_frame:?} (poses of {:?}) -> {BODY_FRAME} from tf: t={:?} q(xyzw)={:?}",
+        if config.odom_pose_frame.is_empty() { &odom_child_frame } else { &config.odom_pose_frame },
+        child_to_body.translation,
+        [qx, qy, qz, qw]
+    );
+    // points in the lidar's frame -> body, looked up once its frame is known (the first scan)
+    let mut lidar_to_body: Option<Rigid> = None;
 
     let odom_rows: Vec<[f64; 8]> = odoms
         .iter()
@@ -317,37 +561,41 @@ fn run() -> Result<(), String> {
         })
         .collect();
 
-    let mut pgo = GscPgo::new(config.pgo.clone());
+    // with an ICP cache the clouds are not dumped: the cache stands in for them (and the dumps run to gigabytes)
+    let mut pgo_config = config.pgo.clone();
+    if args.icp_cache.is_some() {
+        pgo_config.closure_icp_dump_dir.clear();
+    }
+    let mut pgo = GscPgo::new(pgo_config);
+    // the ICP cache: recorded, or loaded to answer from
+    let icp_cache = match &args.icp_cache {
+        Some((mode, path)) => {
+            let entries: std::collections::HashMap<String, Vec<f64>> =
+                if *mode == dimos_gsc_pgo::icp_cache::Mode::Replay {
+                    let bytes = std::fs::read(path).map_err(|e| format!("read {path:?}: {e}"))?;
+                    dimos_gsc_pgo::icp_cache::from_bytes(&bytes)
+                        .map_err(|e| format!("parse {path:?}: {e}"))?
+                } else {
+                    Default::default()
+                };
+            let cache =
+                std::sync::Arc::new(dimos_gsc_pgo::icp_cache::IcpCache::new(*mode, entries));
+            pgo.set_icp_cache(cache.clone());
+            Some(cache)
+        }
+        None => None,
+    };
     let mut cursor = 0usize;
-    let mut closures = 0usize;
     let mut scans_processed = 0usize;
-
-    // Each keyframe's pose as the module last published it, and the event file.
-    let mut published: Vec<(mat3::Mat3, mat3::Vec3)> = Vec::new();
-    let mut events = match &args.event_dump {
-        Some(path) => Some(
-            std::fs::File::create(format!("{}.closures", path.display()))
-                .map_err(|e| format!("create event dump: {e}"))?,
-        ),
-        None => None,
-    };
-    // Closure-edge events as packed records (`<path>.edges`), written as they happen.
-    let mut edges = match &args.event_dump {
-        Some(path) => Some(
-            std::fs::File::create(format!("{}.edges", path.display()))
-                .map_err(|e| format!("create edge dump: {e}"))?,
-        ),
-        None => None,
-    };
-    let mut edges_written = 0usize;
+    let mut recorder = Recorder::new(args.event_dump.as_deref())?;
     let started = Instant::now();
-    let mut keyframe_scan_thread_ms: Vec<f32> = Vec::new();
-    let mut keyframe_gnc_ms: Vec<f32> = Vec::new();
-    let mut loop_overlap: Vec<(f64, LoopOverlap, usize)> = Vec::new();
     let mut lidar_frame: Option<String> = None;
     let (mut first_ts, mut last_ts) = (f64::NAN, f64::NAN);
-    // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
-    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+    let live_queue = config.max_scan_queue;
+    let mut scans_dropped = 0usize;
+    let mut scan_latency_ms: Vec<f32> = Vec::new();
+    // each scan paired with the newest odometry and brought into the body frame, as the module receives it
+    let mut prepare = |scan: memory2::ScanRow| -> Result<Option<(CloudWithPose, f64)>, String> {
         match &lidar_frame {
             Some(frame) if *frame != scan.frame_id => {
                 return Err(format!(
@@ -357,9 +605,21 @@ fn run() -> Result<(), String> {
             }
             Some(_) => {}
             None => {
-                if args.lidar_tf.is_none() {
-                    check_same_frame(&scan.frame_id, &odom_body_frame)?;
-                }
+                let to_body = if odom_child_frame.is_empty() {
+                    Rigid::identity()
+                } else {
+                    tf_tree
+                        .lookup(BODY_FRAME, &scan.frame_id)
+                        .map_err(|e| format!("lidar frame -> {BODY_FRAME}: {e}"))?
+                };
+                let [qw, qx, qy, qz] = mat3::quat_from_mat(&to_body.rotation);
+                eprintln!(
+                    "pgo-eval: lidar points {:?} -> {BODY_FRAME} from tf: t={:?} q(xyzw)={:?}",
+                    scan.frame_id,
+                    to_body.translation,
+                    [qx, qy, qz, qw]
+                );
+                lidar_to_body = Some(to_body);
                 lidar_frame = Some(scan.frame_id.clone());
             }
         }
@@ -368,32 +628,14 @@ fn run() -> Result<(), String> {
         }
         last_ts = scan.ts;
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
-            return Ok(());
+            return Ok(None);
         };
         scans_processed += 1;
 
         let mut cloud = scan.points;
-        if let Some((rotation, translation)) = &lidar_tf {
-            cloud = pointcloud::transform_cloud(&cloud, rotation, translation);
-        }
-        if let Some((body_rotation, body_translation)) = &body_tf {
-            let inverse = mat3::transpose(body_rotation);
-            let offset = mat3::mat_vec(&inverse, body_translation);
-            cloud = pointcloud::transform_cloud(
-                &cloud,
-                &inverse,
-                &[-offset[0], -offset[1], -offset[2]],
-            );
-        }
-        if config.subtract_odom_from_cloud && !cloud.is_empty() {
-            let rotation_inverse = mat3::transpose(&latest.rotation);
-            let negated = [
-                -latest.translation[0],
-                -latest.translation[1],
-                -latest.translation[2],
-            ];
-            let translation_body = mat3::mat_vec(&rotation_inverse, &negated);
-            cloud = pointcloud::transform_cloud(&cloud, &rotation_inverse, &translation_body);
+        let to_body = lidar_to_body.as_ref().expect("set with the lidar frame");
+        if !to_body.is_identity() {
+            cloud = pointcloud::transform_cloud(&cloud, &to_body.rotation, &to_body.translation);
         }
 
         let mut pose = PoseWithTime::new(latest.rotation, latest.translation);
@@ -404,63 +646,155 @@ fn run() -> Result<(), String> {
         let cloud_with_pose = CloudWithPose {
             cloud: Some(Arc::new(cloud)),
             pose,
-            frame_id: latest.frame_id.clone(),
         };
-
-        let step_started = Instant::now();
-        let keyframe = pgo.add_key_pose(&cloud_with_pose);
-        if let Some((scan, overlap)) = pgo.pressure() {
-            if loop_overlap.last().is_none_or(|(_, _, sent)| *sent != scan) {
-                loop_overlap.push((latest.ts, overlap, scan));
+        Ok(Some((cloud_with_pose, latest.ts)))
+    };
+    if args.live {
+        // as the module runs: scans arrive at their recorded times into a queue of max_scan_queue (oldest dropped when
+        // full), the closure search runs on its own thread and only starts while no scans wait, solves adopt when done
+        let queue = std::sync::Mutex::new((std::collections::VecDeque::new(), false));
+        let arrived = std::sync::Condvar::new();
+        let wall_start = Instant::now();
+        let mut feed_error = Ok(());
+        std::thread::scope(|scope| -> Result<(), String> {
+            scope.spawn(|| {
+                let connection = match Connection::open_with_flags(
+                    &args.db,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
+                    Ok(connection) => connection,
+                    Err(e) => {
+                        feed_error = Err(format!("open {:?}: {e}", args.db));
+                        queue.lock().expect("queue").1 = true;
+                        arrived.notify_all();
+                        return;
+                    }
+                };
+                let mut recording_start = None;
+                feed_error =
+                    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+                        let Some((cloud_with_pose, ts)) = prepare(scan)? else {
+                            return Ok(());
+                        };
+                        let offset = ts - *recording_start.get_or_insert(ts);
+                        if let Some(wait) = std::time::Duration::from_secs_f64(offset.max(0.0))
+                            .checked_sub(wall_start.elapsed())
+                        {
+                            std::thread::sleep(wait);
+                        }
+                        let mut queued = queue.lock().expect("queue");
+                        queued.0.push_back((cloud_with_pose, ts, Instant::now()));
+                        while live_queue > 0 && queued.0.len() > live_queue as usize {
+                            queued.0.pop_front();
+                            scans_dropped += 1;
+                        }
+                        drop(queued);
+                        arrived.notify_one();
+                        Ok(())
+                    });
+                queue.lock().expect("queue").1 = true;
+                arrived.notify_all();
+            });
+            let mut closure_search: Option<std::thread::ScopedJoinHandle<'_, _>> = None;
+            loop {
+                let (cloud_with_pose, ts, arrived_at) = {
+                    let mut queued = queue.lock().expect("queue");
+                    loop {
+                        if let Some(next) = queued.0.pop_front() {
+                            break next;
+                        }
+                        if queued.1 {
+                            if let Some(search) = closure_search.take() {
+                                pgo.finish_closure_search(
+                                    search.join().expect("closure search thread panicked"),
+                                );
+                            }
+                            return Ok(());
+                        }
+                        queued = arrived.wait(queued).expect("queue");
+                    }
+                };
+                let step_started = Instant::now();
+                if recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
+                    if closure_search
+                        .as_ref()
+                        .is_some_and(|search| search.is_finished())
+                    {
+                        let search = closure_search.take().expect("checked above");
+                        pgo.finish_closure_search(
+                            search.join().expect("closure search thread panicked"),
+                        );
+                    }
+                    pgo.propose_closure();
+                    let behind = !queue.lock().expect("queue").0.is_empty();
+                    if !behind && closure_search.is_none() {
+                        if let Some(search) = pgo.begin_closure_search() {
+                            closure_search = Some(scope.spawn(move || search.run()));
+                        }
+                    }
+                    recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
+                        pgo.update();
+                    })?;
+                }
+                scan_latency_ms.push((arrived_at.elapsed().as_secs_f64() * 1e3) as f32);
             }
-        }
-        if !keyframe {
-            return Ok(());
-        }
-        published.extend(
-            pgo.key_poses()[published.len()..]
-                .iter()
-                .map(|kp| (kp.rotation_global, kp.translation_global)),
-        );
-        pgo.search_for_closure_pairs();
-        let had_closure = pgo.has_closure();
-        if had_closure {
-            closures += 1;
-        }
-        keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
-        let gnc_started = Instant::now();
-        match pgo.solve_started() {
-            Some((keyframes, free))
-                if pgo.key_poses().len()
-                    < keyframes
-                        + ((free as f64 * args.solve_delay_fraction).ceil() as usize).max(1) => {}
-            Some(_) => {
-                pgo.wait_for_solve();
+        })?;
+        feed_error?;
+    } else {
+        // scans stream from the db one at a time, so the eval holds no more of the recording than the module would
+        let fixes = match &args.world_positions {
+            Some(path) => read_world_positions(path)?,
+            None => Vec::new(),
+        };
+        let mut next_fix = 0;
+        let sightings = match &args.landmark_sightings {
+            Some(path) => read_landmark_sightings(path)?,
+            None => Vec::new(),
+        };
+        let mut next_sighting = 0;
+        for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
+            let Some((cloud_with_pose, ts)) = prepare(scan)? else {
+                return Ok(());
+            };
+            // the fixes up to this scan's time, as the module would have received them
+            while next_fix < fixes.len() && fixes[next_fix].0 <= ts {
+                let (time, frame, lever, position, covariance) = fixes[next_fix];
+                pgo.add_coordinate_factor(time, frame, lever, position, covariance);
+                next_fix += 1;
             }
-            None => {
-                pgo.update();
+            while next_sighting < sightings.len() && sightings[next_sighting].0 <= ts {
+                let (time, landmark, rotation, position, information) = sightings[next_sighting];
+                pgo.add_landmark_factor(time, landmark, rotation, position, information);
+                next_sighting += 1;
             }
-        }
-        keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
-
-        if let Some(events) = &mut events {
-            write_pose_changes(events, &pgo, &mut published, had_closure, latest.ts)?;
-        }
-        if let Some(edges) = &mut edges {
-            write_closure_edges(edges, &pgo, &mut edges_written)?;
-        }
-        Ok(())
-    })?;
+            let step_started = Instant::now();
+            if !recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
+                return Ok(());
+            }
+            pgo.search_for_closure_pairs();
+            recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
+                match pgo.solve_started() {
+                    Some((keyframes, free))
+                        if pgo.key_poses().len()
+                            < keyframes
+                                + ((free as f64 * SOLVE_DELAY_FRACTION).ceil() as usize).max(1) => {
+                    }
+                    Some(_) => {
+                        pgo.wait_for_solve();
+                    }
+                    None => {
+                        pgo.update();
+                    }
+                }
+            })?;
+            Ok(())
+        })?;
+    }
     pgo.finish();
-    if let Some(events) = &mut events {
-        let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-        write_pose_changes(events, &pgo, &mut published, false, ts)?;
-    }
-    if let Some(edges) = &mut edges {
-        write_closure_edges(edges, &pgo, &mut edges_written)?;
-    }
+    let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+    recorder.dump(&pgo, false, ts)?;
     if let Some(path) = &args.event_dump {
-        write_keyframes(path, &pgo)?;
+        write_keyframes(path, pgo.key_poses()).map_err(|e| format!("write keyframes: {e}"))?;
     }
     let runtime_s = started.elapsed().as_secs_f64();
 
@@ -507,32 +841,53 @@ fn run() -> Result<(), String> {
         .map(CommittedClosureEdge::from)
         .collect();
 
+    let (icp_cache_hits, icp_cache_misses) = match &icp_cache {
+        Some(cache) => {
+            if cache.mode == dimos_gsc_pgo::icp_cache::Mode::Record {
+                let (_, path) = args.icp_cache.as_ref().unwrap();
+                std::fs::write(path, dimos_gsc_pgo::icp_cache::to_bytes(&cache.entries()))
+                    .map_err(|e| format!("write {path:?}: {e}"))?;
+            }
+            (
+                cache.hits.load(std::sync::atomic::Ordering::Relaxed),
+                cache.misses.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        }
+        None => (0, 0),
+    };
+    let (odometry_drift, odometry_drift_measured) = pgo.odometry_error_estimate_for_next_run();
     let output = EvalOutput {
+        odometry_drift,
+        odometry_drift_measured,
+        icp_cache_hits,
+        icp_cache_misses,
         db: args.db.display().to_string(),
         odom_stream: args.odom_stream.clone(),
         lidar_stream: args.lidar_stream.clone(),
         odom_frame,
         lidar_frame,
         scan_stride: args.scan_stride,
-        odom_stride: args.odom_stride,
         config: serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
         keyframes: graph.len(),
         odom_rows,
         graph,
-        closures,
+        closures: recorder.closures,
         scans_processed,
         odoms_used: odoms.len(),
         data_duration_s,
         runtime_s,
         realtime_factor,
-        keyframe_scan_thread_ms,
-        keyframe_gnc_ms,
+        live: args.live,
+        scans_dropped,
+        scan_latency_ms,
+        keyframe_scan_thread_ms: recorder.keyframe_scan_thread_ms,
+        keyframe_gnc_ms: recorder.keyframe_gnc_ms,
         stage_seconds: pgo
             .stage_seconds()
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
-        loop_overlap,
+        loop_overlap: recorder.loop_overlap,
         gate_counts,
         closure_diagnostics,
         graph_error,
@@ -555,106 +910,103 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// A keyframe pose change smaller than this waits to add up, as in the module.
-const POSE_CHANGE_M: f64 = 1e-3;
-const POSE_CHANGE_RAD: f64 = 1e-4;
+/// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free keyframes (at least
+/// one), waiting for it if needed, so it gives the same graph on any machine; a solve's cost grows with the map, so the
+/// delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac solve at 5k keyframes is ~0.5%).
+const SOLVE_DELAY_FRACTION: f64 = 0.01;
 
-/// Append the closure-edge events since the last call as packed records.
-fn write_closure_edges(
-    file: &mut std::fs::File,
-    pgo: &GscPgo,
-    written: &mut usize,
-) -> Result<(), String> {
-    use std::io::Write;
-    let events = &pgo.closure_edge_events()[*written..];
-    if events.is_empty() {
-        return Ok(());
-    }
-    let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
-    for event in events {
-        event.put_record(&mut data, pgo.key_poses());
-    }
-    file.write_all(&data)
-        .map_err(|e| format!("write edge dump: {e}"))?;
-    *written += events.len();
-    Ok(())
+/// What both replays record per scan and keyframe: the loop-overlap pressures, per-keyframe timings and closures, and
+/// with `--event-dump` every keyframe pose change as the module publishes it (`<path>.closures`) and the closure-edge
+/// events (`<path>.edges`).
+struct Recorder {
+    heard: HeardPoses,
+    events: Option<(std::fs::File, std::fs::File)>,
+    edges_written: usize,
+    closures: usize,
+    keyframe_scan_thread_ms: Vec<f32>,
+    keyframe_gnc_ms: Vec<f32>,
+    loop_overlap: Vec<(f64, LoopOverlap, usize)>,
 }
 
-/// Append, as the module's loop_closure_records would, every keyframe's pose
-/// change since `published` when a closure closed or any keyframe moved:
-/// f64 ts, u32 count, then per keyframe pre xyz, id, ts, pre q (xyzw), dt, dq (f32).
-fn write_pose_changes(
-    out: &mut std::fs::File,
-    pgo: &GscPgo,
-    published: &mut Vec<(mat3::Mat3, mat3::Vec3)>,
-    closure_closed: bool,
-    ts: f64,
-) -> Result<(), String> {
-    use std::io::Write;
-    let poses = pgo.key_poses();
-    let moved = poses
-        .iter()
-        .zip(published.iter())
-        .any(|(kp, (rotation, translation))| {
-            let shift = mat3::sub(&kp.translation_global, translation);
-            let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
-            let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
-            mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
-        });
-    if !closure_closed && !moved {
-        return Ok(());
+impl Recorder {
+    fn new(event_dump: Option<&std::path::Path>) -> Result<Recorder, String> {
+        let create = |suffix: &str, path: &std::path::Path| {
+            std::fs::File::create(format!("{}{suffix}", path.display()))
+                .map_err(|e| format!("create {suffix} dump: {e}"))
+        };
+        let events = match event_dump {
+            Some(path) => Some((create(".closures", path)?, create(".edges", path)?)),
+            None => None,
+        };
+        Ok(Recorder {
+            heard: HeardPoses::default(),
+            events,
+            edges_written: 0,
+            closures: 0,
+            keyframe_scan_thread_ms: Vec::new(),
+            keyframe_gnc_ms: Vec::new(),
+            loop_overlap: Vec::new(),
+        })
     }
-    let count = poses.len().min(published.len());
-    let mut data: Vec<u8> = Vec::with_capacity(12 + count * 68);
-    data.extend_from_slice(&ts.to_le_bytes());
-    data.extend_from_slice(&(count as u32).to_le_bytes());
-    let f32s = |data: &mut Vec<u8>, values: &[f64]| {
-        for v in values {
-            data.extend_from_slice(&(*v as f32).to_le_bytes());
-        }
-    };
-    for (i, ((pre_rotation, pre_translation), post)) in published.iter().zip(poses).enumerate() {
-        let delta = mat3::mat_mul(&post.rotation_global, &mat3::transpose(pre_rotation));
-        let dt = mat3::sub(
-            &post.translation_global,
-            &mat3::mat_vec(&delta, pre_translation),
-        );
-        let q = mat3::quat_from_mat(pre_rotation);
-        let dq = mat3::quat_from_mat(&delta);
-        f32s(&mut data, pre_translation);
-        data.extend_from_slice(&(i as u32).to_le_bytes());
-        data.extend_from_slice(&post.time.to_le_bytes());
-        f32s(&mut data, &[q[1], q[2], q[3], q[0]]);
-        f32s(&mut data, &dt);
-        f32s(&mut data, &[dq[1], dq[2], dq[3], dq[0]]);
-    }
-    out.write_all(&data)
-        .map_err(|e| format!("write event dump: {e}"))?;
-    *published = poses
-        .iter()
-        .map(|kp| (kp.rotation_global, kp.translation_global))
-        .collect();
-    Ok(())
-}
 
-/// Each keyframe as little-endian f64s: ts, raw xyz qx qy qz qw, corrected xyz qx qy qz qw.
-fn write_keyframes(path: &std::path::Path, pgo: &GscPgo) -> Result<(), String> {
-    let mut bytes = Vec::new();
-    for kp in pgo.key_poses() {
-        let mut values = vec![kp.time];
-        for (rotation, translation) in [
-            (&kp.rotation_local, &kp.translation_local),
-            (&kp.rotation_global, &kp.translation_global),
-        ] {
-            let q = mat3::quat_from_mat(rotation);
-            values.extend_from_slice(translation);
-            values.extend_from_slice(&[q[1], q[2], q[3], q[0]]);
+    /// `add_key_pose`, keeping each new pressure; returns whether the scan became a keyframe.
+    fn add_scan(&mut self, pgo: &mut GscPgo, cloud_with_pose: &CloudWithPose, ts: f64) -> bool {
+        let keyframe = pgo.add_key_pose(cloud_with_pose);
+        if let Some((scan, overlap)) = pgo.pressure() {
+            if self
+                .loop_overlap
+                .last()
+                .is_none_or(|(_, _, sent)| *sent != scan)
+            {
+                self.loop_overlap.push((ts, overlap, scan));
+            }
         }
-        for v in values {
-            bytes.extend_from_slice(&v.to_le_bytes());
+        if keyframe {
+            self.heard.add_new(pgo.key_poses());
         }
+        keyframe
     }
-    std::fs::write(path, bytes).map_err(|e| format!("write keyframes: {e}"))
+
+    /// After a keyframe's closure search: count its closure and time the scan thread, run `solve` (timed), then dump.
+    fn keyframe_done(
+        &mut self,
+        pgo: &mut GscPgo,
+        step_started: Instant,
+        ts: f64,
+        solve: impl FnOnce(&mut GscPgo),
+    ) -> Result<(), String> {
+        let had_closure = pgo.has_closure();
+        if had_closure {
+            self.closures += 1;
+        }
+        self.keyframe_scan_thread_ms
+            .push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
+        let gnc_started = Instant::now();
+        solve(pgo);
+        self.keyframe_gnc_ms
+            .push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
+        self.dump(pgo, had_closure, ts)
+    }
+
+    /// With `--event-dump`, append the pose changes (when a closure closed or a keyframe moved) and the new closure-edge
+    /// events.
+    fn dump(&mut self, pgo: &GscPgo, closure_closed: bool, ts: f64) -> Result<(), String> {
+        let Some((events, edges)) = &mut self.events else {
+            return Ok(());
+        };
+        if let Some(changes) = self.heard.take_changes(pgo.key_poses(), closure_closed) {
+            append_pose_changes(events, ts, &changes)
+                .map_err(|e| format!("write event dump: {e}"))?;
+        }
+        let new_edges = &pgo.closure_edge_events()[self.edges_written..];
+        if !new_edges.is_empty() {
+            edges
+                .write_all(&closure_edge_records(new_edges, pgo.key_poses()))
+                .map_err(|e| format!("write edge dump: {e}"))?;
+            self.edges_written += new_edges.len();
+        }
+        Ok(())
+    }
 }
 
 fn main() {

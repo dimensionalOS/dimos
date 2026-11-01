@@ -184,35 +184,6 @@ if DDS_AVAILABLE:
     )
 
 
-try:
-    from dimos.protocol.pubsub.impl.redispubsub import Redis
-
-    @contextmanager
-    def redis_pubsub_channel() -> Generator[Redis, None, None]:
-        redis_pubsub = Redis()
-        redis_pubsub.start()
-        yield redis_pubsub
-        redis_pubsub.stop()
-
-    def redis_msggen(size: int) -> tuple[str, Any]:
-        # Redis uses JSON serialization, so use a simple dict with base64-encoded data
-        import base64
-
-        data = base64.b64encode(make_data_bytes(size)).decode("ascii")
-        return ("benchmark/redis", {"data": data, "size": size})
-
-    testcases.append(
-        Case(
-            pubsub_context=redis_pubsub_channel,
-            msg_gen=redis_msggen,
-        )
-    )
-
-except (ConnectionError, ImportError):
-    # either redis is not installed or the server is not running
-    print("Redis not available")
-
-
 @contextmanager
 def zenoh_pubsub_channel() -> Generator[Zenoh, None, None]:
     """Publisher and subscriber on one shared session (co-located modules).

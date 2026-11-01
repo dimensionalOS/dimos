@@ -32,6 +32,28 @@ pub fn transform_cloud(cloud: &[[f32; 3]], rotation: &Mat3, translation: &Vec3) 
         .collect()
 }
 
+/// The points more than `clearance` (m) above the cloud's floor, its 5th-percentile height; the whole cloud when
+/// `clearance` is 0 or nothing is left. A lidar scan seen mostly as ground (the Go2's L1) lines up with any other
+/// floor, so closure ICP and its scores look only at what stands on it.
+pub fn above_floor(cloud: &[[f32; 3]], clearance: f64) -> PointCloud {
+    if clearance <= 0.0 || cloud.is_empty() {
+        return cloud.to_vec();
+    }
+    let mut heights: Vec<f32> = cloud.iter().map(|p| p[2]).collect();
+    let k = heights.len() / 20;
+    let floor = *heights.select_nth_unstable_by(k, f32::total_cmp).1;
+    let kept: PointCloud = cloud
+        .iter()
+        .copied()
+        .filter(|p| (p[2] - floor) as f64 > clearance)
+        .collect();
+    if kept.is_empty() {
+        cloud.to_vec()
+    } else {
+        kept
+    }
+}
+
 /// Voxel-grid downsample with cubic leaf size: hash points into cells on
 /// `floor(p * (1/leaf))` (f32 math), emit the centroid of each occupied
 /// cell, ordered by (z, y, x) cell index.
@@ -98,10 +120,6 @@ impl KdTree {
         tree
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.points.is_empty()
-    }
-
     fn build_recursive(&mut self, indices: &mut [u32], depth: usize) -> i32 {
         if indices.is_empty() {
             return -1;
@@ -128,6 +146,13 @@ impl KdTree {
         self.nodes[node_index as usize].left = left;
         self.nodes[node_index as usize].right = right;
         node_index
+    }
+
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
     }
 
     /// Nearest neighbour: `(point_index, squared_distance)`.
@@ -213,6 +238,81 @@ impl KdTree {
         if far >= 0 && delta * delta <= worst {
             self.knn_recursive(far, query, k, best);
         }
+    }
+}
+
+/// A nearest-neighbour index over a point array: one `KdTree`, or a `KdForest` that grows without rebuilding.
+pub trait NearestIndex: Sync {
+    /// Nearest neighbour: `(point_index, squared_distance)`.
+    fn nearest(&self, query: &[f32; 3]) -> Option<(usize, f32)>;
+    /// k nearest neighbours, ascending by squared distance.
+    fn knn(&self, query: &[f32; 3], k: usize) -> Vec<(usize, f32)>;
+}
+
+impl NearestIndex for KdTree {
+    fn nearest(&self, query: &[f32; 3]) -> Option<(usize, f32)> {
+        KdTree::nearest(self, query)
+    }
+    fn knn(&self, query: &[f32; 3], k: usize) -> Vec<(usize, f32)> {
+        KdTree::knn(self, query, k)
+    }
+}
+
+/// A growing cloud and its index: appended points go into a new small k-d tree, and the two newest trees are merged
+/// whenever the older is at most twice the newer (logarithmic method), so adding n points costs O(n log^2 n) in all and
+/// a query searches O(log n) trees. Indices are positions in `points()`, in the order they were added.
+#[derive(Default)]
+pub struct KdForest {
+    points: Vec<[f32; 3]>,
+    /// (first point index, tree over points[first..first + size])
+    trees: Vec<(usize, KdTree)>,
+}
+
+impl KdForest {
+    pub fn points(&self) -> &[[f32; 3]] {
+        &self.points
+    }
+    pub fn push(&mut self, new: &[[f32; 3]]) {
+        if new.is_empty() {
+            return;
+        }
+        let first = self.points.len();
+        self.points.extend_from_slice(new);
+        self.trees.push((first, KdTree::build(new)));
+        while self.trees.len() >= 2 {
+            let n = self.trees.len();
+            let (older, newer) = (self.trees[n - 2].1.len(), self.trees[n - 1].1.len());
+            if older > 2 * newer {
+                break;
+            }
+            self.trees.pop();
+            let (start, _) = self.trees.pop().unwrap();
+            self.trees
+                .push((start, KdTree::build(&self.points[start..])));
+        }
+    }
+}
+
+impl NearestIndex for KdForest {
+    fn nearest(&self, query: &[f32; 3]) -> Option<(usize, f32)> {
+        self.trees
+            .iter()
+            .filter_map(|(first, tree)| tree.nearest(query).map(|(i, d)| (first + i, d)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+    fn knn(&self, query: &[f32; 3], k: usize) -> Vec<(usize, f32)> {
+        let mut all: Vec<(usize, f32)> = self
+            .trees
+            .iter()
+            .flat_map(|(first, tree)| {
+                tree.knn(query, k)
+                    .into_iter()
+                    .map(move |(i, d)| (first + i, d))
+            })
+            .collect();
+        all.sort_by(|a, b| a.1.total_cmp(&b.1));
+        all.truncate(k);
+        all
     }
 }
 

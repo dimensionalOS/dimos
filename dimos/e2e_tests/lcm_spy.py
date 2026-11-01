@@ -15,7 +15,6 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import math
-import pickle
 import re
 import threading
 from typing import Any
@@ -27,15 +26,6 @@ from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSubBase
 from dimos.utils.testing.waiting import wait_until
-
-
-def _wire_topic(channel: str) -> ZenohTopic:
-    """The active backend's topic for an LCM-style channel ('/odom#pkg.Msg').
-
-    ZenohTopic is an LCM Topic plus zenoh's key expression, so both buses take it.
-    """
-    parsed = Topic.from_channel_str(transport_topic(channel))
-    return ZenohTopic(parsed.topic, parsed.lcm_type)
 
 
 class LcmSpy:
@@ -89,9 +79,6 @@ class LcmSpy:
                 for listener in listeners:
                     listener(data)
 
-    def publish(self, topic: str, msg: Any) -> None:
-        self._bus.publish(_wire_topic(topic), msg.lcm_encode())
-
     def save_topic(self, topic: str) -> None:
         with self._saved_topics_lock:
             self._saved_topics[transport_topic(topic)] = topic
@@ -122,40 +109,6 @@ class LcmSpy:
             timeout=timeout,
             message=f"Timeout waiting for topic {topic}",
         )
-
-    def wait_for_saved_topic_content(
-        self, topic: str, content_contains: bytes, timeout: float = 30.0
-    ) -> None:
-        def condition() -> bool:
-            with self._messages_lock:
-                return any(content_contains in msg for msg in self.messages.get(topic, []))
-
-        wait_until(
-            condition,
-            timeout=timeout,
-            message=f"Timeout waiting for '{topic}' to contain '{content_contains!r}'",
-        )
-
-    def wait_for_message_pickle_result(
-        self,
-        topic: str,
-        predicate: Callable[[Any], bool],
-        fail_message: str,
-        timeout: float = 30.0,
-    ) -> None:
-        event = threading.Event()
-
-        def listener(msg: bytes) -> None:
-            data = pickle.loads(msg)
-            if predicate(data["res"]):
-                event.set()
-
-        with self.topic_listener(topic, listener):
-            wait_until(
-                event.is_set,
-                timeout=timeout,
-                message=fail_message,
-            )
 
     def wait_for_message_result(
         self,

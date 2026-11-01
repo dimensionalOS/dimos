@@ -39,9 +39,29 @@ vendor profile instead with `--r1proconnection.vendor-profile ATCStandard/R1PROV
 ## Blueprints
 
 ```bash
-dimos run r1pro-coordinator     # connection + coordinator + viewer
+dimos run r1pro-coordinator     # connection + coordinator + Point-LIO + viewer
 dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 ```
+
+## Point-LIO
+
+Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
+the chassis Mid-360 instead of wheel odometry; `chassis_odom` keeps its name.
+`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry.
+The Mid-360 driver and Point-LIO are native binaries built on first run, so
+`cargo` must be on the path.
+
+**Transport.** Run with `--g.transport lcm`. The vendor's `realsense2_camera`
+holds LCM's default port, so set
+`LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
+
+**Other vendor profiles.** With a `--r1proconnection.vendor-profile` that starts
+the vendor head camera and Livox drivers, the head cameras retry until the device
+is free and our Mid-360 driver competes with the vendor's for the sensor.
+
+The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
+`R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
+`--mid360.host_ip` override them).

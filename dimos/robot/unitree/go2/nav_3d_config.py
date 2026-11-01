@@ -28,6 +28,26 @@ ray_tracing_config = RayTracingVoxelMapConfig(
     voxel_size=voxel_size, global_emit_every=50, viz_emit_every=5
 )
 
+# What a nav_3d viewer subscribes to. map_regions carries the voxel map by changed cell, so the
+# whole-map clouds stay out.
+NAV_VIEWER_TOPICS = (
+    "tf",
+    "odometry",
+    "path",
+    "planner_path",
+    "nodes",
+    "node_edges",
+    "surface_map",
+    "map_regions",
+    "goal",
+    "way_point",
+    "goal_reached",
+    # h264 or jpeg, whichever GO2DDS's video_encoding serves
+    "video",
+    "image",
+    "camera_info",
+)
+
 # Every user remaps global_map off. viz_publish_hz is set per blueprint.
 mls_planner_config = MLSPlannerNativeConfig(
     voxel_size=voxel_size,

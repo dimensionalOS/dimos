@@ -27,7 +27,7 @@ from typing import TypeVar
 
 from reactivex.scheduler import ThreadPoolScheduler
 
-from .logging_config import setup_logger
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 

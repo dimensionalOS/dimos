@@ -76,6 +76,8 @@ class ConnectionConfig(ModuleConfig):
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
     # Rename (e.g. "go2_odom") when another odom source owns the tree root
     odom_frame_id: str = "world"
+    # Replay playback speed (with --replay): 2.0 plays a recording twice as fast as it was taken.
+    replay_speed: float = 1.0
     # Turn off where another module owns the base_link edge. The odom port
     # keeps publishing either way.
     publish_tf: bool = True
@@ -140,11 +142,14 @@ def make_connection(
     cfg: GlobalConfig,
     aes_128_key: str | None = None,
     velocity_api: bool = False,
+    replay_speed: float = 1.0,
 ) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        return ReplayConnection(dataset=cfg.replay_db, exit_on_complete=cfg.replay_exit)
+        return ReplayConnection(
+            dataset=cfg.replay_db, exit_on_complete=cfg.replay_exit, speed=replay_speed
+        )
     elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -176,8 +181,10 @@ class ReplayConnection(CompositeResource):
         duration: float | None = None,
         loop: bool = False,
         exit_on_complete: bool = False,
+        speed: float = 1.0,
     ) -> None:
         self.dataset = dataset
+        self._speed = speed
         self._seek = seek
         self._duration = duration
         self._loop = loop
@@ -196,7 +203,9 @@ class ReplayConnection(CompositeResource):
             SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
         )
         store.start()
-        return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
+        return store.replay(
+            loop=self._loop, seek=self._seek, duration=self._duration, speed=self._speed
+        )
 
     def start(self) -> None:
         pass
@@ -375,6 +384,7 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.config.g,
             aes_128_key=self.config.aes_128_key,
             velocity_api=self.config.velocity_api,
+            replay_speed=self.config.replay_speed,
         )
 
         if hasattr(self.connection, "camera_info_static"):

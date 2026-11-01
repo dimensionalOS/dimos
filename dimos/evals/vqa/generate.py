@@ -46,6 +46,7 @@ from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrame,
     PointCloudFrameLoader,
     PointCloudFrameUnavailableError,
+    select_quality_indices,
 )
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
@@ -70,17 +71,27 @@ class GenerationRequest(BaseModel):
     start: int | None = Field(default=None, ge=0)
     stop: int | None = Field(default=None, gt=0)
     stride: int | None = Field(default=None, ge=1)
+    quality_window: float | None = Field(default=None, gt=0)
+    min_brightness: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
         if self.image_index is not None:
             if self.start is not None or self.stop is not None or self.stride is not None:
                 raise ValueError("image_index cannot be combined with start, stop, or stride")
+            if self.quality_window is not None or self.min_brightness is not None:
+                raise ValueError(
+                    "quality_window/min_brightness require range mode (start/stop), not image_index"
+                )
             return self
         if self.start is None or self.stop is None:
             raise ValueError("provide image_index or both start and stop")
         if self.stop <= self.start:
             raise ValueError("stop must be greater than start")
+        if self.quality_window is not None and self.stride is not None:
+            raise ValueError("quality_window cannot be combined with stride")
+        if self.min_brightness is not None and self.quality_window is None:
+            raise ValueError("min_brightness requires quality_window")
         return self
 
     def frame_indices(self) -> range:
@@ -93,6 +104,23 @@ class GenerationRequest(BaseModel):
         if self.output is not None:
             return self.output.expanduser()
         return STATE_DIR / "datasets" / "vqa" / f"{Path(self.dataset).stem}-frames"
+
+
+def resolve_generation_frame_indices(
+    request: GenerationRequest,
+    image_count: int,
+) -> tuple[int, ...]:
+    """Resolve uniform color_image indices (no quality window)."""
+    if request.quality_window is not None:
+        raise ValueError("quality_window selection requires PointCloudFrameLoader")
+    anchors = tuple(request.frame_indices())
+    if not anchors:
+        raise ValueError("generation selected no frames")
+    if anchors[-1] >= image_count:
+        raise IndexError(
+            f"color_image index {anchors[-1]} is out of range for {image_count} images"
+        )
+    return anchors
 
 
 class VqaGenerationConfig(BaseModel):
@@ -168,16 +196,21 @@ def generate_dataset(
     from dimos.models.vl.openai import OpenAIVlModel
 
     config = config or VqaGenerationConfig()
-    indices = request.frame_indices()
     with PointCloudFrameLoader(
         request.dataset,
         tolerance_s=config.synchronization_tolerance_s,
     ) as loader:
-        image_count = loader.image_count
-        if indices[-1] >= image_count:
-            raise IndexError(
-                f"color_image index {indices[-1]} is out of range for {image_count} images"
+        if request.quality_window is not None:
+            assert request.start is not None and request.stop is not None
+            indices = select_quality_indices(
+                loader.images,
+                request.start,
+                request.stop,
+                quality_window=request.quality_window,
+                min_brightness=request.min_brightness,
             )
+        else:
+            indices = resolve_generation_frame_indices(request, loader.image_count)
 
         author_model = OpenAIVlModel()
         detector_model = MoondreamVlModel()

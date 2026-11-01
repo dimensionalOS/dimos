@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Which returns are obstacles: the rust twin of `motion/obstacles.py`, which is the specification.
+//! Which returns are obstacles: a property of the body, not of the scene.
 //! A model is z-only over a cloud referenced to the surface the feet stand on; [`hard_points`] joins it to the caller's frame.
 
 use crate::planner::Emb;
 
-/// Ground exclusion (m): three voxel layers, since the floor reads a layer high at range (see obstacles.py).
+/// Ground exclusion (m): three voxel layers, since the floor reads a layer high at range.
 pub const LOW: f64 = 0.24;
 
 /// The model names a config may carry, for the validation error message.
@@ -72,7 +72,7 @@ pub fn load(name: &str, emb: &Emb) -> Option<Box<dyn ObstacleModel>> {
     }
 }
 
-/// z off the support surface; f32 throughout, as the python does.
+/// z off the support surface, in f32.
 pub fn referenced(points: &[[f32; 3]], ground_z: f64) -> Vec<[f32; 3]> {
     let ground = ground_z as f32;
     points.iter().map(|p| [p[0], p[1], p[2] - ground]).collect()

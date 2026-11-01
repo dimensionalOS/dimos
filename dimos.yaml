@@ -1,0 +1,5 @@
+# What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
+name: dimos
+version: "0.0.14"
+install: |
+  set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$REF/scripts/install.sh" | bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}

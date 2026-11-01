@@ -35,12 +35,12 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
 if TYPE_CHECKING:
-    from .backend import GraspGenXRuntime
+    from graspgenx_runtime.backend import GraspGenXRuntime
 
 
 def _create_runtime(config: GraspGenXConfig) -> GraspGenXRuntime:
     # This import is the intentional first-use boundary for the optional GPU runtime.
-    from .backend import GraspGenXRuntime
+    from graspgenx_runtime.backend import GraspGenXRuntime
 
     return GraspGenXRuntime(config)
 

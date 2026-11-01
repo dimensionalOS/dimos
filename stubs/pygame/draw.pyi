@@ -1,4 +1,4 @@
-from . import Rect, Surface
+from pygame import Rect, Surface
 
 def circle(
     surface: Surface,

@@ -1,19 +1,50 @@
-# Perception memory demo blueprints
+# Live perception and demo blueprints
 
-Two ways to run the perception memory stack on a stream, both fed from a
-recording so they work without a robot.
+Run the localize stack live on a robot's ports, or feed it a recording for
+development without a robot.
 
 | blueprint | rig | shape |
 |---|---|---|
-| `xarm-feed` + `xarm-localize-live` | depth camera, tf | port-only module with in-memory memory, feed in a second process |
-| `go2-localize-live` | lidar, odom | one blueprint, feeder writes a SQLite store, module reads it |
+| `go2-localize` | Go2 camera, lidar, tf | `unitree-go2` navigation stack with `PerceptionLocalize` on the lidar and MCP |
+| `xarm-feed` + `xarm-localize-live` | depth camera, tf | `PerceptionLocalize` with in-memory memory, the feed in a second process |
 
-`LiveLocalizeModule` in `live_localize.py` is the module a robot blueprint
-takes. It consumes `color_image`, `depth_image`, `camera_info` and `tf`, keeps a
-bounded memory in RAM, embeds the colour feed as it arrives, and answers
-`localize` from what it has embedded. It opens no file and does not know
-whether its ports carry a robot or a replay. `go2_localize_live.py` is the
-older store-backed shape and is kept as the lidar example.
+`PerceptionLocalize` in `../module.py` is the module a robot blueprint
+takes. It consumes `color_image`, `camera_info`, `tf`, and the geometry its
+`geometry` config names: `depth_image` aligned to the colour camera, or
+`lidar`. It keeps bounded sensor history in RAM, embeds the colour feed as it
+arrives, and answers `localize` from what it has embedded. It opens no file
+and does not know whether its ports carry a robot or a replay. `go2-localize`
+lives in `dimos/robot/unitree/go2/blueprints/smart/go2_localize.py`.
+
+## go2-localize: real robot
+
+Terminal 1, start the robot stack (replace the IP with your robot's address):
+
+    uv run dimos --no-replay run go2-localize --robot-ip <robot-ip>
+
+This extends `unitree-go2`, including its mapping, navigation, teleop through
+`MovementManager` and viewer controls. Drive around using the Go2 controls while localization collects the
+camera and lidar streams. `PerceptionLocalize` takes Go2's `lidar` and lifts
+each call through that window's scans merged; Go2 supplies `camera_info` and
+the camera TF chain in `world`. The blueprint passes a room-scale `policy`.
+`uv run dimos --replay run go2-localize` runs the same stack on a recording.
+
+Terminal 2, attach to that same stack:
+
+    uv run dimos shell
+    app.PerceptionLocalize.state()
+    app.PerceptionLocalize.localize("chair", -30.0, 30.0)
+    app.PerceptionLocalize.localize("table,green plant", -60.0, 60.0)
+
+Wait for `state()` to report ready after calibration and the first posed
+embedded image arrive. Collect camera and lidar history while driving, then
+query the window you want.
+
+Terminal 3, use MCP while the same stack continues running:
+
+    uv run dimos mcp list-tools
+    uv run dimos mcp call state
+    uv run dimos mcp call localize -j '{"objects": "chair", "start": -30, "duration": 30}' --timeout 300
 
 ## xarm-localize-live
 
@@ -23,7 +54,8 @@ as a plain process publishing on the same topics a robot connection would:
     uv run python -m dimos.perception.localize.demo_blueprints.xarm_feed
 
 The recording is ten minutes. `--seek 427 --duration 76` plays only the window
-`tool_localize` uses in its reference command; `--speed`, `--dataset` exist too.
+`tools/tool_localize` uses in its reference command; `--speed`, `--dataset`
+exist too.
 
 Terminal 2, the blueprint. Start it before the feed if you want the weights
 loaded while nothing is arriving:
@@ -32,7 +64,7 @@ loaded while nothing is arriving:
 
 Its stages, in order:
 
-    localize: loading SigLIP, OWLv2 and EdgeTAM weights
+    localize: loading siglip, owlv2, edgetam weights
     localize: waiting for camera_info
     localize: waiting for the first posed frame of the feed
     localize: ready on N embedded frames
@@ -40,46 +72,49 @@ Its stages, in order:
 Terminal 3:
 
     uv run dimos shell
-    app.LiveLocalizeModule.state()
-    app.LiveLocalizeModule.localize("roll of black tape,book,pen,red marker,yellow sticky notes", 0.0, 76.0)
+    app.PerceptionLocalize.state()
+    app.PerceptionLocalize.localize("roll of black tape,book,pen,red marker,yellow sticky notes", 0.0, 76.0)
 
 With the seek above, that call names the reference window once the feed has
-played the whole 76 s, and its six answers match `tool_localize` on the same
-recording. Rerun shows the camera on the left and, on the right, the tf axes,
-the camera frustum, every verified instance as a labelled box under
-`world/detections`, and its sightings as image-textured points under
-`world/hit_points`.
+played the whole 76 s. Rerun shows the camera on the left and, on the right,
+the tf axes, the camera frustum, and every verified instance as a labelled box
+under `world/detections`.
 
-Configuration of `LiveLocalizeModule`, set on the blueprint:
+Configuration of `PerceptionLocalize`, set on the blueprint:
 
 - `world_frame`: the tf root the camera frame is resolved against.
-- `mobile`: room-scale policy and the walking embed rate, off for a parked camera.
+- `geometry`: `"depth"` (default) or `"lidar"`. Only the selected input is
+  subscribed; the other sensor is not required.
 - `horizon_s`: how far back `localize` can look. Sets the tf buffer and the
   memory windows.
-- `feed_frames`: raw frames kept for the embed tail and the depth pairing.
+- `feed_frames`: raw frames kept for the embed tail and the pairing.
+- `embedder`, `detector`, `segmenter`: each a dandetect registry name or a
+  `module:attr` path, see `../README.md`.
+- `policy`: `LocalizePolicy` overrides, tuned offline with `tools/tool_localize`.
 
 Memory: the raw feeds are kept raw for `feed_frames`. What `localize` reads is
-at index rate: the embedded frames as JPEG, and the depth frame paired with
-each of them as lz4, both rolling over `horizon_s`.
+at index rate: the embedded frames as JPEG, and the depth frame or lidar scan
+paired with each of them as lz4. Both roll over `horizon_s`. A lidar call
+lifts through its window's paired scans merged into one map.
 
-## go2-localize-live
+### Other rigs
 
-Replays `go2_short` into a fresh store forever, lap after lap, with the clock
-always moving forward. A background tail embeds the frames as they arrive.
-Answers show up in rerun as labelled boxes on top of the lidar map. Nothing is
-written back to the original recording.
+The module uses the incoming calibration and TF frame names. Select one
+colour camera, its calibration and its aligned depth. For a G1 depth rig using
+the topic names in `unitree-g1-record`, compose:
 
-    uv run dimos run go2-localize-live
+    from dimos.perception.localize.module import PerceptionLocalize
 
-Wait for `localize: ready on N embedded frames`, about 15 seconds. Then:
+    localize = PerceptionLocalize.blueprint(policy={...}).remappings([
+        (PerceptionLocalize, "depth_image", "realsense_depth_image"),
+        (PerceptionLocalize, "camera_info", "realsense_camera_info"),
+    ])
 
-    uv run dimos shell
-    app.LocalizeModule.state()
-    app.LocalizeModule.localize("chair,table,green plant")
+The default policy was fit on the xArm's desk; a walking rig takes a
+room-scale one, found on its recordings with `tools/tool_localize`. This is a
+composition example; the folder adds a runnable blueprint only for the xArm.
 
 ## The two skills
-
-Both modules expose the same two skills.
 
 `state()` says ready or not, and what the module is doing if not. Until it
 says ready, `localize` tells you which stage it is in instead of answering.
@@ -90,13 +125,13 @@ says ready, `localize` tells you which stage it is in instead of answering.
 detection pass.
 
 `start` and `duration` are seconds, and they name the window this call looks
-at. They work like `--from` and `--duration` on `tool_localize`. Positive
-`start` counts forward from the first embedded frame. Negative counts back from
-the newest frame, like a negative Python index. The default is the last ten
-seconds.
+at. They work like `--from` and `--duration` on `tools/tool_localize`.
+Positive `start` counts forward from the oldest retained embedded frame.
+Negative counts back from the newest frame, like a negative Python index. The
+default is the last ten seconds.
 
-    app.LiveLocalizeModule.localize("book", -30.0, 30.0)   # last 30 seconds
-    app.LiveLocalizeModule.localize("book", 5.0, 10.0)     # 10 seconds, from 5s in
+    app.PerceptionLocalize.localize("book", -30.0, 30.0)   # last 30 seconds
+    app.PerceptionLocalize.localize("book", 5.0, 10.0)     # 10 seconds, from 5s in
 
 The window is only what this call examines. What earlier calls proved is
 remembered and still answered, so coverage builds up while the cost per call
@@ -105,16 +140,16 @@ case: every frame in it needs a detector pass. The same window asked twice is
 nearly free.
 
 `policy` is a JSON object. It overrides any field of `LocalizePolicy` for this
-one call:
+one call, on top of the blueprint's `policy`:
 
-    app.LiveLocalizeModule.localize("book", -10.0, 10.0,
+    app.PerceptionLocalize.localize("book", -10.0, 10.0,
                                     '{"accept_score": 0.45, "verify_radius_m": 2.0}')
 
 Useful in the shell:
 
     modules()                                # what is running
-    rpcs("LiveLocalizeModule")               # what you can call
-    describe("LiveLocalizeModule.localize")  # the signature and the docs
+    rpcs("PerceptionLocalize")               # what you can call
+    describe("PerceptionLocalize.localize")  # the signature and the docs
 
 ## Terminal
 
@@ -126,8 +161,8 @@ From any terminal, while a blueprint runs:
 
 ## MCP
 
-Both blueprints include `McpServer`, so an agent can reach the two skills over
-MCP while either runs:
+`go2-localize` and `xarm-localize-live` include `McpServer`, so an agent can
+reach the two skills over MCP while either runs:
 
     uv run dimos mcp list-tools
     uv run dimos mcp call state
@@ -136,13 +171,13 @@ MCP while either runs:
 
 ### GPU limits for agents
 
-Comma-separated labels share one OWLv2 detector pass, but they do not have
-constant peak GPU cost. EdgeTAM segments every candidate box produced by the
-detector, so broad or overlapping labels can create a large mask batch and
-raise `Remote torch.OutOfMemoryError`. This is especially easy when Rerun and
-the rest of the perception stack already occupy the same GPU. The statement
-that many labels cost about the same as one applies to detector passes, not
-peak segmentation memory. There is not yet a measured safe label-count limit.
+Comma-separated labels share one detector pass, but they do not have constant
+peak GPU cost. The segmenter masks every candidate box the detector produces,
+so broad or overlapping labels can create a large mask batch and raise
+`Remote torch.OutOfMemoryError`. This is especially easy when Rerun and the
+rest of the perception stack already occupy the same GPU. The statement that
+many labels cost about the same as one applies to detector passes, not peak
+segmentation memory. There is not yet a measured safe label-count limit.
 
 On an unmeasured hardware stack:
 
@@ -154,8 +189,9 @@ On an unmeasured hardware stack:
 4. A shorter window reduces total work. Raising `candidate_floor` reduces
    detector proposals and recall. Neither establishes a safe peak-memory
    budget.
-5. If a call reports `Remote torch.OutOfMemoryError`, retry with a twice smaller batch.
-   Check stack state and leave any restart decision to the stack operator.
+5. If a call reports `Remote torch.OutOfMemoryError`, retry with a twice
+   smaller batch. Check stack state and leave any restart decision to the
+   stack operator.
 
 The client waits 30 seconds for an answer and then gives up. A wide window can
 take longer than that. The wait belongs to the caller, so raise it there. Per

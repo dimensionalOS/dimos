@@ -19,9 +19,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.trajectory_follower.fancy.controller import ControllerConfig
-
-from .base import Embodiment
 
 GO2 = Embodiment(
     # Moving-body union over a command sweep: the swinging legs set the width.

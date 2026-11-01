@@ -1,4 +1,4 @@
-from . import Surface
+from pygame import Surface
 
 class Font:
     def __init__(self, filename: str | None, size: int) -> None: ...

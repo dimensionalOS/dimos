@@ -186,7 +186,10 @@ def test_pickled_pubsub_and_rpc_rebuild_their_runtime(session_pool) -> None:
     rpc = pickle.loads(pickle.dumps(ZenohRPC(session_pool=session_pool)))
     assert rpc._pending == {}
     assert rpc._queryables == []
-    assert rpc._call_thread_pool is None
+    try:
+        assert rpc._get_call_thread_pool().submit(lambda: 42).result(timeout=2.0) == 42
+    finally:
+        rpc.stop()
 
 
 def test_start_creates_session(session_pool) -> None:

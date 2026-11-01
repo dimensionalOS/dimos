@@ -19,6 +19,11 @@ import re
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
+def is_identifier(name: str) -> bool:
+    """Whether a stream name is a safe SQL identifier."""
+    return bool(_IDENT_RE.match(name))
+
+
 def validate_identifier(name: str) -> None:
     """Reject stream names that aren't safe SQL identifiers."""
     if not _IDENT_RE.match(name):
