@@ -605,6 +605,8 @@ pub struct GscPgo {
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// The ICP cache every closure search's cloud computations go through (`set_icp_cache`), if any.
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
+    /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
+    pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -656,6 +658,10 @@ pub struct ClosureSearch {
     pub(crate) tries: usize,
     /// The ICP cache the search's cloud computations go through (`icp_cache`), if any.
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
+    /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
+    pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
+    /// Seconds spent writing debug dumps (`closure_icp_dump_dir`), taken out of the stage timings.
+    pub(crate) debug_io_s: std::cell::Cell<f64>,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
@@ -993,6 +999,15 @@ impl ClosureSearch {
                 .min(self.config.closure_extended_icp_max_keyframes);
         }
         diag.required_confidence = 1.0 - (-single_required).exp();
+        // a stack of keyframes earns about the single scan's evidence per keyframe at best: one that could not reach the
+        // required evidence even at the full stack is not extended
+        let reachable = !self.config.closure_likelihood_confidence
+            || evidence.max(std::f64::consts::LN_2)
+                * self.config.closure_extended_icp_max_keyframes as f64
+                >= single_required;
+        if evidence < single_required && !reachable {
+            return rejected(diag, "yank_confidence_reject", timing);
+        }
         if evidence < single_required {
             let t0 = std::time::Instant::now();
             let source_points = memo("srcn", &mut || vec![clouds().0.len() as f64])[0] as usize;
@@ -1005,7 +1020,7 @@ impl ClosureSearch {
                 &mut required,
                 &memo_alignment,
             );
-            timing.extended_icp_s += t0.elapsed().as_secs_f64();
+            timing.extended_icp_s += t0.elapsed().as_secs_f64() - self.debug_io_s.take();
             let Some(extended) = extended else {
                 return rejected(diag, "yank_confidence_reject", timing);
             };
@@ -1491,6 +1506,8 @@ impl GscPgo {
             alternatives,
             tries: tries + 1,
             icp_cache: self.icp_cache.clone(),
+            keyframe_clouds: self.keyframe_clouds.clone(),
+            debug_io_s: std::cell::Cell::new(0.0),
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.

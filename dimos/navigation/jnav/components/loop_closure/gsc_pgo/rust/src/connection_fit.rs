@@ -19,7 +19,7 @@
 use rayon::prelude::*;
 
 use crate::mat3::{self, Mat3, Vec3};
-use crate::pointcloud::{transform_cloud, KdTree};
+use crate::pointcloud::{transform_cloud, KdTree, NearestIndex};
 
 /// A source point moved by the current guess, its nearest target point, their squared distance, and the target point's index.
 type Correspondence = ([f32; 3], [f32; 3], f32, usize);
@@ -55,7 +55,7 @@ pub struct IcpResult {
 pub fn icp(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
-    tree: &KdTree,
+    tree: &impl NearestIndex,
     rotation: &Mat3,
     translation: &Vec3,
     params: &IcpParams,
@@ -136,7 +136,11 @@ impl IcpResult {
 
 /// (fitness, overlap) of `points` against the tree's cloud; see `IcpResult`. Points with nothing nearby
 /// are places the target never saw, not misalignment, so only the overlapping ones are scored.
-pub fn fit_quality(points: &[[f32; 3]], tree: &KdTree, inlier_squared_distance: f64) -> (f64, f64) {
+pub fn fit_quality(
+    points: &[[f32; 3]],
+    tree: &impl NearestIndex,
+    inlier_squared_distance: f64,
+) -> (f64, f64) {
     let inliers: Vec<f64> = points
         .par_iter()
         .filter_map(|p| tree.nearest(p))
@@ -159,7 +163,7 @@ pub fn fit_quality(points: &[[f32; 3]], tree: &KdTree, inlier_squared_distance: 
 /// about as well nudged; a right one does not.
 pub fn sharpness(
     points: &[[f32; 3]],
-    tree: &KdTree,
+    tree: &impl NearestIndex,
     close: f64,
     inlier_squared_distance: f64,
     nudge_m: f64,
@@ -343,7 +347,7 @@ pub fn overlap_score(a: &[[f32; 3]], b: &[[f32; 3]], params: &OverlapScoreParams
 /// A cloud's sensor noise and sample spacing, measured from the cloud on about 500 of its points: the noise is the median
 /// thickness (sqrt of the smallest covariance eigenvalue) of each point's 10 nearest neighbours, the spacing the median
 /// distance to its nearest neighbour.
-pub fn noise_and_spacing(cloud: &[[f32; 3]], tree: &KdTree) -> (f64, f64) {
+pub fn noise_and_spacing(cloud: &[[f32; 3]], tree: &impl NearestIndex) -> (f64, f64) {
     let step = (cloud.len() / 500).max(1);
     let (mut thickness, mut gaps) = (Vec::new(), Vec::new());
     for p in cloud.iter().step_by(step) {
@@ -405,26 +409,22 @@ fn least_spread_direction(cloud: &[[f32; 3]], neighbours: &[(usize, f32)]) -> [f
     [vectors[0][0], vectors[1][0], vectors[2][0]]
 }
 
-/// What one target scan saw: the nearest return in each direction from its sensor (a spherical range image), at the
-/// angular step that gives one bin per point of the scan over the full sphere.
-pub struct RangeImage {
-    world_to_sensor: Mat3,
-    origin: Vec3,
+/// What one target scan saw, in its sensor frame: the nearest return in each direction (a spherical range image), at
+/// the angular step that gives one bin per point of the scan over the full sphere. It depends on the scan alone, so a
+/// keyframe's is built once and shared (`RangeImage::at` places it at the keyframe's current pose).
+pub struct RangeBins {
     step: f64,
     azimuth_bins: usize,
     elevation_bins: usize,
     ranges: Vec<f32>,
 }
 
-impl RangeImage {
-    /// The range image of `body` (the scan in its sensor frame) taken from the pose `rotation`, `origin` (world).
-    pub fn build(body: &[[f32; 3]], rotation: &Mat3, origin: &Vec3) -> RangeImage {
+impl RangeBins {
+    pub fn build(body: &[[f32; 3]]) -> RangeBins {
         let step = (4.0 * std::f64::consts::PI / body.len().max(1) as f64).sqrt();
         let azimuth_bins = (2.0 * std::f64::consts::PI / step).ceil().max(1.0) as usize;
         let elevation_bins = (std::f64::consts::PI / step).ceil().max(1.0) as usize;
-        let mut image = RangeImage {
-            world_to_sensor: mat3::transpose(rotation),
-            origin: *origin,
+        let mut bins = RangeBins {
             step,
             azimuth_bins,
             elevation_bins,
@@ -432,14 +432,14 @@ impl RangeImage {
         };
         for q in body {
             let q = q.map(|v| v as f64);
-            if let Some((bin, range)) = image.bin(&q) {
-                let r = &mut image.ranges[bin];
+            if let Some((bin, range)) = bins.bin(&q) {
+                let r = &mut bins.ranges[bin];
                 if *r == 0.0 || (range as f32) < *r {
                     *r = range as f32;
                 }
             }
         }
-        image
+        bins
     }
     fn bin(&self, q: &[f64; 3]) -> Option<(usize, f64)> {
         let range = mat3::norm(q);
@@ -451,6 +451,34 @@ impl RangeImage {
         let a = ((azimuth / self.step) as usize).min(self.azimuth_bins - 1);
         let e = ((elevation / self.step) as usize).min(self.elevation_bins - 1);
         Some((e * self.azimuth_bins + a, range))
+    }
+}
+
+/// A scan's `RangeBins` placed at its pose (world).
+pub struct RangeImage {
+    world_to_sensor: Mat3,
+    origin: Vec3,
+    bins: std::sync::Arc<RangeBins>,
+}
+
+impl RangeImage {
+    /// The range image of `body` (the scan in its sensor frame) taken from the pose `rotation`, `origin` (world).
+    pub fn build(body: &[[f32; 3]], rotation: &Mat3, origin: &Vec3) -> RangeImage {
+        RangeImage::at(
+            std::sync::Arc::new(RangeBins::build(body)),
+            rotation,
+            origin,
+        )
+    }
+    pub fn at(bins: std::sync::Arc<RangeBins>, rotation: &Mat3, origin: &Vec3) -> RangeImage {
+        RangeImage {
+            world_to_sensor: mat3::transpose(rotation),
+            origin: *origin,
+            bins,
+        }
+    }
+    fn bin(&self, q: &[f64; 3]) -> Option<(usize, f64)> {
+        self.bins.bin(q)
     }
     /// Whether this scan looked through world point `p`: it saw a return in p's direction farther than p by more than
     /// the bin's own width there plus `width` (so a point on or behind the seen surface, or in a direction it never
@@ -465,8 +493,8 @@ impl RangeImage {
         let Some((bin, range)) = self.bin(&q) else {
             return false;
         };
-        let surface = self.ranges[bin] as f64;
-        surface > 0.0 && range <= surface + surface * self.step + width
+        let surface = self.bins.ranges[bin] as f64;
+        surface > 0.0 && range <= surface + surface * self.bins.step + width
     }
     pub fn sees_through(&self, p: &[f32; 3], width: f64) -> bool {
         let q = mat3::mat_vec(
@@ -476,8 +504,8 @@ impl RangeImage {
         let Some((bin, range)) = self.bin(&q) else {
             return false;
         };
-        let surface = self.ranges[bin] as f64;
-        surface > 0.0 && range < surface - (surface * self.step + width)
+        let surface = self.bins.ranges[bin] as f64;
+        surface > 0.0 && range < surface - (surface * self.bins.step + width)
     }
 }
 
@@ -487,7 +515,7 @@ impl RangeImage {
 pub fn likelihood_ratio_visible(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
-    target_tree: &KdTree,
+    target_tree: &impl NearestIndex,
     reach: f64,
     inlier_squared_distance: f64,
     views: &[RangeImage],
@@ -579,7 +607,7 @@ pub fn likelihood_ratio(
 fn plane_fit(
     pairs: &[Correspondence],
     target: &[[f32; 3]],
-    tree: &KdTree,
+    tree: &impl NearestIndex,
     normals: &[std::sync::OnceLock<Option<[f64; 3]>>],
 ) -> Option<(Mat3, Vec3)> {
     let mut information = [[0.0; 6]; 6];
