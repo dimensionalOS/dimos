@@ -97,6 +97,7 @@ config! {
     barely_pass_uncertainty_range: f64,
     decisive_pressure_rate: f64,
     extension_cloud_spacing: f64,
+    compounding_agreement_sensitivity: f64,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
