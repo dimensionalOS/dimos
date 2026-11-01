@@ -18,7 +18,7 @@ else
   echo "         Install Rust via https://rustup.rs" >&2
 fi
 
-# Pi and dimcode CLIs for the agent eval tests; pytest-slow puts them on PATH.
+# Pi CLI for the agent eval tests; pytest-slow puts it on PATH. DimOS agent evals use in-repo dimos agent.
 if command -v npm &>/dev/null; then
   bin/install-test-clis
 else

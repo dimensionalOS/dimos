@@ -27,7 +27,8 @@ export class EventDrafts {
     return {
       source: { kind: "event", event },
       text: lines.join("\n"),
-      images: rendering?.images ?? [],
+      // Path-only: Preview: lines + render details; GenerationTask.beforeRequest hydrates for the model.
+      images: [],
       render: rendering?.details ?? null,
       whenBusy: "followUp",
     };
