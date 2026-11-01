@@ -36,6 +36,7 @@ fn basic_config() -> Config {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -145,6 +146,8 @@ fn find_misses_along_ray_hits_correct_voxels() {
         shadow_depth,
         grace_depth: 0.0,
         graze_cos: 0.5,
+        map_frame: 0,
+        graze_recent_frames: u32::MAX,
         fine_divisor: None,
     };
     let mut walk = RayWalk::default();
@@ -354,6 +357,7 @@ fn ground_clipping_single_ray() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -513,6 +517,7 @@ fn stair_clipping_ray_fan() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -598,6 +603,7 @@ fn landing_floor_ray_fan() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -671,6 +677,7 @@ fn landing_grazed_from_below() {
         min_health: 0,
         max_health: 1,
         graze_cos,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -813,6 +820,7 @@ fn grazing_ray_spares_planar_floor() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -832,6 +840,97 @@ fn grazing_ray_spares_planar_floor() {
     update_map(&mut map, origin, &ray, &cfg);
     let clipped = row.iter().filter(|k| !map.voxels.contains_key(k)).count();
     assert_eq!(clipped, 0, "a planar floor keeps its grazing spare");
+}
+
+/// Floor points, the grazing ray's origin, the ray's endpoints, and the config.
+type GrazedFloor = (
+    Vec<(f32, f32, f32)>,
+    (f32, f32, f32),
+    Vec<(f32, f32, f32)>,
+    Config,
+);
+
+/// The floor of `grazing_ray_spares_planar_floor`, a ray grazing it, and a config sparing only voxels hit in the last 3 frames.
+fn grazed_floor_with_recency() -> GrazedFloor {
+    let voxel_size = 0.1_f32;
+    let y_half = 0.3_f32;
+    let ds = voxel_size / 3.0;
+    let nx = (20.0 / ds).ceil() as i32;
+    let ny = (2.0 * y_half / ds).ceil() as i32;
+    let floor: Vec<(f32, f32, f32)> = (0..=nx)
+        .flat_map(|column| {
+            (0..=ny).map(move |row| {
+                (
+                    column as f32 * ds,
+                    -y_half + row as f32 * ds,
+                    voxel_size * 0.5,
+                )
+            })
+        })
+        .collect();
+    let cfg = Config {
+        voxel_size,
+        shadow_depth: 0.2,
+        grace_depth: 0.2,
+        min_health: 0,
+        max_health: 1,
+        graze_cos: 0.5,
+        graze_recent_frames: 3,
+        support_min: 0,
+        ..basic_config()
+    };
+    (floor, (0.0, 0.0, 0.35), vec![(8.0, 0.0, 0.0)], cfg)
+}
+
+#[test]
+fn grazing_ray_clears_a_layer_nothing_sees_any_more() {
+    let (floor, origin, ray, cfg) = grazed_floor_with_recency();
+    let (mut map, _) = build_surface(&floor, cfg.voxel_size, cfg.max_health);
+    let row: Vec<VoxelKey> = map
+        .voxels
+        .keys()
+        .filter(|key| key.1 == 0 && key.2 == 0)
+        .collect();
+    for _ in 0..cfg.graze_recent_frames {
+        update_map(&mut map, origin, &ray, &cfg);
+    }
+    assert!(
+        row.iter().all(|key| map.voxels.contains_key(key)),
+        "spared while recently hit"
+    );
+    update_map(&mut map, origin, &ray, &cfg);
+    let cleared = row
+        .iter()
+        .filter(|key| !map.voxels.contains_key(key))
+        .count();
+    assert!(
+        cleared > 0,
+        "a layer unhit for longer than graze_recent_frames clears under a grazing ray"
+    );
+}
+
+#[test]
+fn grazing_ray_spares_a_layer_still_being_seen() {
+    let (floor, origin, ray, cfg) = grazed_floor_with_recency();
+    let (mut map, _) = build_surface(&floor, cfg.voxel_size, cfg.max_health);
+    let row: Vec<VoxelKey> = map
+        .voxels
+        .keys()
+        .filter(|key| key.1 == 0 && key.2 == 0)
+        .collect();
+    let above = (10.0_f32, 0.0_f32, 2.0_f32);
+    for _ in 0..4 * cfg.graze_recent_frames {
+        update_map(&mut map, above, &floor, &cfg);
+        update_map(&mut map, origin, &ray, &cfg);
+    }
+    let clipped = row
+        .iter()
+        .filter(|key| !map.voxels.contains_key(key))
+        .count();
+    assert_eq!(
+        clipped, 0,
+        "a floor re-hit every other frame keeps its grazing spare"
+    );
 }
 
 #[test]
@@ -1254,6 +1353,7 @@ fn milestone_gated_normals_match_full_refit() {
         shadow_depth: 0.2,
         grace_depth: 0.2,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -1379,6 +1479,7 @@ fn new_voxel_is_fit_before_grazing_ray() {
         shadow_depth: 0.2,
         grace_depth: 0.2,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;

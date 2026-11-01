@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 
 
@@ -34,3 +36,20 @@ class AliceModule(Module):
 
     def _on_greetings(self, greeting: str) -> None:
         self.response.publish(f"Hello {greeting} from Alice")
+
+
+class StopCountingConfig(ModuleConfig):
+    stop_file: str
+
+
+class StopCountingModule(Module):
+    """Record real worker cleanup calls across process boundaries."""
+
+    _config_cls = StopCountingConfig
+    config: StopCountingConfig
+
+    @rpc
+    def stop(self) -> None:
+        with Path(self.config.stop_file).open("a") as output:
+            output.write("stop\n")
+        super().stop()

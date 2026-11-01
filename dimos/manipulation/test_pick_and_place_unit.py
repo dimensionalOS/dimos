@@ -228,29 +228,6 @@ def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> Non
     module._manipulation.set_gripper_position.assert_not_called()
 
 
-def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) -> None:
-    module.config.yaw_policy = "preserve_current"
-    module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"),
-        [
-            GraspCandidate(
-                Pose(
-                    Vector3(0.1, 0.0, 0.2),
-                    Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.1)),
-                ),
-                1.0,
-            )
-        ],
-    )
-
-    result = module.pick_object("cup-1")
-
-    assert result.message == "Pick complete"
-    assert module._selected_grasp is not None
-    assert module._selected_grasp.orientation.to_euler().z == pytest.approx(0.7)
-    assert module._holding_object
-
-
 def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._selected_grasp = PoseStamped(

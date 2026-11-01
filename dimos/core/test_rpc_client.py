@@ -17,10 +17,15 @@ import atexit
 from IPython.core.completer import provisionalcompleter
 from IPython.core.interactiveshell import InteractiveShell
 import pytest
+from pytest_mock import MockerFixture
 from traitlets.config import Config
 
+from dimos.core.coordination.blueprints import DisabledModuleProxy
+from dimos.core.coordination.python_worker import Actor
 from dimos.core.demos.stress_test_module import StressTestModule
-from dimos.core.rpc_client import RPCClient
+from dimos.core.module import Module
+from dimos.core.rpc_client import AsyncSpecProxy, RPCClient
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.spec import RPCSpec
 
 
@@ -56,6 +61,16 @@ def test_dir_exposes_rpcs_and_proxy_attributes_without_transport_calls(proxy):
     assert transport.mock_calls == []
 
 
+def test_plain_method_override_is_a_clear_error(mocker: MockerFixture) -> None:
+    # Built with type() so the codebase check for plain overrides does not see this one.
+    plain_start = type("PlainStart", (Module,), {"start": lambda self: None})
+    actor = Actor(None, plain_start, worker_id=0)
+    client = RPCClient(actor, plain_start, rpc=mocker.Mock(spec=RPCSpec))
+
+    with pytest.raises(AttributeError, match="without @rpc"):
+        client.start  # noqa: B018
+
+
 def test_ipython_completes_rpc_without_transport_calls(ipython, proxy):
     _, transport = proxy
 
@@ -64,3 +79,11 @@ def test_ipython_completes_rpc_without_transport_calls(ipython, proxy):
 
     assert "echo" in {completion.text for completion in completions}
     assert transport.mock_calls == []
+
+
+def test_async_spec_proxy_roundtrip_keeps_its_async_methods() -> None:
+    proxy = AsyncSpecProxy(DisabledModuleProxy("SomeSpec"), frozenset({"foo"}))
+    restored = decode(encode(proxy))
+    assert type(restored) is AsyncSpecProxy
+    assert object.__getattribute__(restored, "_async_methods") == frozenset({"foo"})
+    assert isinstance(object.__getattribute__(restored, "_inner"), DisabledModuleProxy)

@@ -16,26 +16,22 @@ from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.module import WebcamModule
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.hardware.sensors.camera.zed import compat as zed
 
 demo_agent = autoconnect(McpServer.blueprint(), McpClient.blueprint())
-
-
-def _create_webcam() -> Webcam:
-    return Webcam(
-        camera_index=0,
-        fps=15,
-        camera_info=zed.CameraInfo.SingleWebcam,
-    )
 
 
 demo_agent_camera = autoconnect(
     McpServer.blueprint(),
     McpClient.blueprint(),
     ObserveSkill.blueprint(),
-    CameraModule.blueprint(
-        hardware=_create_webcam,
+    WebcamModule.blueprint(
+        hardware=WebcamConfig(
+            camera_index=0,
+            fps=15,
+            camera_info=zed.CameraInfo.SingleWebcam,
+        ),
     ),
 )
