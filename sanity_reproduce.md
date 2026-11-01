@@ -16,12 +16,13 @@ destination. The CAN installer downloads that pinned fork later.
 
 ## Install on the destination
 
-Set `ROOT` to the directory printed by the transfer script. The destination
-needs `uv`, a Rust/Cargo toolchain, and the system dependencies installed by
-DimOS's installer.
+Set `ROOT` to the directory printed by the transfer script. The anvil-workcell
+copy was placed in `~/rc/openyam-cprime`. The destination needs `uv`, a
+Rust/Cargo toolchain, and the system dependencies installed by DimOS's
+installer.
 
 ```bash
-ROOT="$HOME/openyam-cprime"
+ROOT="$HOME/rc/openyam-cprime"
 cd "$ROOT/dimos"
 bash scripts/install.sh --mode dev --project-dir .
 bash scripts/openyam/install_anvil_parity.sh

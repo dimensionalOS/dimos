@@ -117,13 +117,16 @@ rsync -a -e "$rsync_ssh" "$checker" \
   "$ssh_target:$remote_experiment/bounded_integral_stability/"
 rsync -a -e "$rsync_ssh" \
   "$repo_dir/scripts/openyam/demo_dimos_joint_offset.py" \
+  "$ssh_target:$remote_experiment/demo_dimos_joint_offset.py"
+rsync -a -e "$rsync_ssh" \
   "$repo_dir/scripts/openyam/demo_test_dimos_joint_offset.py" \
-  "$ssh_target:$remote_experiment/"
+  "$ssh_target:$remote_experiment/test_dimos_joint_offset.py"
 rsync -a -e "$rsync_ssh" "$model_dir/" \
   "$ssh_target:$remote_experiment/geometry/dual_openyam_abc_box/"
 
 "${ssh_cmd[@]}" "$ssh_target" "test -f '$remote_root/dimos/sanity_reproduce.md' && \
   test -f '$remote_experiment/demo_dimos_joint_offset.py' && \
+  test -f '$remote_experiment/test_dimos_joint_offset.py' && \
   test -f '$remote_experiment/geometry/dual_openyam_abc_box/assets/base.stl' && \
   test -f '$remote_calibration/results/calibration_bundle.json'" \
   || die "copy finished but a required destination file is missing"
