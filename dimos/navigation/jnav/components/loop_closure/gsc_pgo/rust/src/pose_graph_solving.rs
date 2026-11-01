@@ -150,15 +150,24 @@ impl GscPgo {
             }
         }
     }
-    /// An upper bound on a solve's cost in scans over `keyframes` keyframes at the body's recent speed
-    /// (`solve_hold_enabled`).
+    /// An upper bound on a solve's cost in scans over `keyframes` keyframes and every committed closure, from the
+    /// newest adopted solve's rejections and the body's recent speed (`solve_hold_enabled`).
     fn solve_estimate_scans(&self, keyframes: usize) -> usize {
         let config = &self.config;
+        let closures = self.committed_closures.len() as f64;
+        // a closure no solve has judged yet has a NaN weight, so it is not counted
+        let rejected = self
+            .committed_closures
+            .iter()
+            .filter(|c| c.gnc_weight <= 0.5)
+            .count() as f64;
         let speed = self
             .recent_speed()
             .max(config.solve_estimate_speed_floor_mps);
         (config.solve_estimate_scale
             * (keyframes as f64).powf(config.solve_estimate_keyframe_power)
+            * (1.0 + closures).powf(config.solve_estimate_closure_power)
+            * (1.0 + rejected).powf(config.solve_estimate_rejected_power)
             * speed.powf(config.solve_estimate_speed_power))
         .ceil() as usize
     }

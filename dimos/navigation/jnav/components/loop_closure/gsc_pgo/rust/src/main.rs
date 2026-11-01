@@ -105,6 +105,8 @@ config! {
     solve_hold_enabled: bool,
     solve_estimate_scale: f64,
     solve_estimate_keyframe_power: f64,
+    solve_estimate_closure_power: f64,
+    solve_estimate_rejected_power: f64,
     solve_estimate_speed_power: f64,
     solve_estimate_speed_floor_mps: f64,
     closure_icp_dump_dir: String,
