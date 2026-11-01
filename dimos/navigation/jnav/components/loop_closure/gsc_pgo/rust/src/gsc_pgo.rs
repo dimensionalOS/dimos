@@ -830,8 +830,11 @@ pub struct GscPgo {
     /// Solves slower than the data their estimate spanned (`solve_hold_enabled`), and the newest scan's recorded time.
     pub(crate) solve_overshoots: usize,
     pub(crate) scan_time: f64,
-    /// The newest 51 scans' recorded times, for the scan period closure-search estimates are counted in.
+    /// The newest 51 scans' recorded times, for the scan period closure-search estimates are counted in, and the scans
+    /// whose recorded time advanced past every earlier one's, the count closure-search schedules run on (a scan repeating
+    /// an earlier stamp spans no data time).
     pub(crate) recent_scan_times: std::collections::VecDeque<f64>,
+    pub(crate) advancing_scans: usize,
     /// The closure search running or held (`closure_search_hold_enabled`), the recorded times of the scans since its
     /// dispatch, the searches that overshot their estimate and the seconds a lockstep replay waited on them.
     pub(crate) closure_search: Option<crate::closure_search_schedule::RunningSearch>,
@@ -1693,12 +1696,19 @@ impl GscPgo {
         }
         self.scans_seen += 1;
         self.scan_time = pose.second;
-        if self.recent_scan_times.len() > 50 {
-            self.recent_scan_times.pop_front();
-        }
-        self.recent_scan_times.push_back(pose.second);
-        if self.closure_search.is_some() {
-            self.search_scan_times.push(pose.second);
+        if self
+            .recent_scan_times
+            .back()
+            .is_none_or(|newest| pose.second > *newest)
+        {
+            self.advancing_scans += 1;
+            if self.recent_scan_times.len() > 50 {
+                self.recent_scan_times.pop_front();
+            }
+            self.recent_scan_times.push_back(pose.second);
+            if self.closure_search.is_some() {
+                self.search_scan_times.push(pose.second);
+            }
         }
         // the running solve's estimate ends at this scan: its data time, to judge an overshoot by
         if let Some(solving) = &mut self.solving {

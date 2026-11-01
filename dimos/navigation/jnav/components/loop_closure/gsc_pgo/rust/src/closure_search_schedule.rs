@@ -50,12 +50,15 @@ impl SearchProgress {
     }
 }
 
-/// A closure search on its thread, with its schedule: the scan count and recorded time at its dispatch, its estimate at
+/// A closure search on its thread, with its schedule: the advancing-scan count (`GscPgo::advancing_scans`) and recorded
+/// time at its dispatch, its estimate at
 /// dispatch (seconds) and the scan period its seconds are counted in.
 pub struct RunningSearch {
     handle: JoinHandle<ClosureSearchResult>,
     progress: Arc<SearchProgress>,
     dispatch_scan: usize,
+    /// `scans_seen` at dispatch, for the diagnostics (whose scan indices count every scan).
+    dispatch_scans_seen: usize,
     dispatch_time: f64,
     estimate_s: f64,
     scan_period_s: f64,
@@ -140,7 +143,8 @@ impl GscPgo {
         self.closure_search = Some(RunningSearch {
             handle,
             progress,
-            dispatch_scan: self.scans_seen,
+            dispatch_scan: self.advancing_scans,
+            dispatch_scans_seen: self.scans_seen,
             dispatch_time: self.scan_time,
             estimate_s,
             scan_period_s,
@@ -156,7 +160,7 @@ impl GscPgo {
         loop {
             let seen = running.progress.snapshot();
             let (rounds, done) = seen;
-            if hold && self.scans_seen < running.dispatch_scan + running.estimate_scans(rounds, &self.config) {
+            if hold && self.advancing_scans < running.dispatch_scan + running.estimate_scans(rounds, &self.config) {
                 return false;
             }
             if done {
@@ -175,7 +179,7 @@ impl GscPgo {
         let (rounds, _) = running.progress.snapshot();
         let estimate_scans = running.estimate_scans(rounds, &self.config);
         let estimate_s = running.estimate_s(rounds, &self.config);
-        let (dispatch_scan, dispatch_time) = (running.dispatch_scan, running.dispatch_time);
+        let (dispatch_scan, dispatch_time) = (running.dispatch_scans_seen, running.dispatch_time);
         let mut result = running.handle.join().expect("closure search thread panicked");
         let diag = &mut result.diag;
         let seconds = if diag.cost_lookup_s.is_finite() {
