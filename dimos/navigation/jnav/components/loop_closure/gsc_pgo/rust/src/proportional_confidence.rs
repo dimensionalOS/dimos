@@ -23,7 +23,7 @@ use crate::connection_fit::{self, dump_icp, icp, IcpParams, IcpResult};
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{
-    above_floor, transform_cloud, voxel_downsample, KdForest, KdTree, NearestIndex, PointCloud,
+    transform_cloud, voxel_downsample, KdForest, KdTree, NearestIndex, PointCloud,
 };
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -94,13 +94,12 @@ struct Stack {
     keyframes: std::collections::BTreeSet<usize>,
     voxels: std::collections::HashMap<(i64, i64, i64), usize>,
     sums: Vec<([f64; 3], u32)>,
-    /// target only: the floor (5th-percentile height of the first step) and the indexed points above it
-    floor: Option<f32>,
+    /// target only: the indexed points
     index: KdForest,
 }
 
 impl Stack {
-    /// Add the keyframes not yet in the stack; returns the target points added (above the floor).
+    /// Add the keyframes not yet in the stack; returns the target points added.
     fn add(&mut self, search: &ClosureSearch, ids: &[usize], target: bool) -> usize {
         let resolution = search.config.submap_resolution;
         let inverse = (1.0 / resolution) as f32;
@@ -146,15 +145,6 @@ impl Stack {
         }
         if !target {
             return 0;
-        }
-        let clearance = search.config.closure_ground_clearance_m;
-        if self.floor.is_none() && clearance > 0.0 && !fresh.is_empty() {
-            let mut heights: Vec<f32> = fresh.iter().map(|p| p[2]).collect();
-            let k = heights.len() / 20;
-            self.floor = Some(*heights.select_nth_unstable_by(k, f32::total_cmp).1);
-        }
-        if let Some(floor) = self.floor {
-            fresh.retain(|p| (p[2] - floor) as f64 > clearance);
         }
         self.index.push(&fresh);
         fresh.len()
@@ -437,8 +427,7 @@ impl ClosureSearch {
                 target.add(self, &target_ids, true);
                 // the stacked source is thinned to about the single scan's size, so a step costs about what the first
                 // ICP did; the target keeps full resolution so the inlier test means the same thing in every step
-                let clearance = self.config.closure_ground_clearance_m;
-                let stacked = above_floor(&source.points(), clearance);
+                let stacked = source.points();
                 let thinning = (stacked.len() as f64 / source_points.max(1) as f64).max(1.0);
                 let thinned = if thinning > 1.0 {
                     voxel_downsample(&stacked, self.config.submap_resolution * thinning.sqrt())

@@ -114,8 +114,6 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
     closure_extended_icp_max_keyframes: int = 16
-    # Closure ICP and its scores leave out points this far (m) above each cloud's floor and lower; 0 keeps every point
-    closure_ground_clearance_m: float = 0.0
     # Above 0: score a closure's fit by its sharpness s (share within submap_resolution, times how much overlap falls when
     # nudged closure_sharpness_nudge_m / _deg) as s / (s + this), extended stacks by their own sharpness; 0 = fitness
     closure_sharpness_half: float = 0.0

@@ -123,7 +123,6 @@ config! {
     scan_context_top_k: i32,
     scan_context_match_threshold: f64,
     scan_context_lidar_height_m: f64,
-    closure_ground_clearance_m: f64,
     closure_sharpness_half: f64,
     closure_sharpness_nudge_m: f64,
     closure_sharpness_nudge_deg: f64,
@@ -742,7 +741,11 @@ impl Worker {
     /// "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift. Measured once,
     /// when the module stops (`GscPgo::finish`).
     fn log_odometry_drift(&self, pgo: &GscPgo, ts: f64) {
-        let kept = pgo.committed_closures().iter().filter(|c| c.gnc_weight > 0.5).count();
+        let kept = pgo
+            .committed_closures()
+            .iter()
+            .filter(|c| c.gnc_weight > 0.5)
+            .count();
         if kept > 0 {
             let (drift, measured) = pgo.odometry_error_estimate_for_next_run();
             let mut fields = serde_json::Map::new();
