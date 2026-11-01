@@ -139,6 +139,14 @@ pub struct ClosureCandidateDiag {
     /// computed on this path.
     pub degeneracy_min: f32,
     pub icp_converged: bool,
+    /// The single ICP's iterations and why it stopped (`IcpStop::name`; "" if ICP did not run, 0 iterations when read
+    /// from a cache written before these were logged).
+    pub icp_iterations: u32,
+    pub icp_stop: &'static str,
+    /// How far ICP moved the source from its initial guess (the scan-context seed): the distance (m) between where the
+    /// guess and the result put the source keyframe, and the rotation (deg) between them; NaN if ICP did not run.
+    pub icp_init_offset_m: f64,
+    pub icp_init_offset_deg: f64,
     /// ICP fitness (the score-threshold gate input); NaN if ICP did not run.
     pub icp_fitness: f64,
     /// Fraction of the source scan that overlaps the target after ICP (see `IcpResult`); NaN if ICP did not run.
@@ -215,6 +223,10 @@ impl ClosureCandidateDiag {
             candidate_distance: f64::NAN,
             degeneracy_min: -1.0,
             icp_converged: false,
+            icp_iterations: 0,
+            icp_stop: "",
+            icp_init_offset_m: f64::NAN,
+            icp_init_offset_deg: f64::NAN,
             icp_fitness: f64::NAN,
             icp_overlap: f64::NAN,
             icp_translation_norm: f64::NAN,
@@ -948,7 +960,7 @@ impl ClosureSearch {
         let t0 = std::time::Instant::now();
         let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
-            crate::icp_cache::encode_icp(&crate::connection_fit::icp_thinned(
+            crate::icp_cache::encode_icp_logged(&crate::connection_fit::icp_thinned(
                 source_cloud,
                 target_cloud,
                 target_tree,
@@ -975,11 +987,28 @@ impl ClosureSearch {
                 target_idx,
                 source_cloud,
                 target_cloud,
+                (&init_rotation, &init_translation),
                 &icp,
                 "",
             );
         }
         diag.icp_converged = icp.converged;
+        diag.icp_iterations = icp.iterations;
+        diag.icp_stop = icp.stop.name();
+        // where each puts the source keyframe
+        let source_position = &self.key_poses[cur_idx].translation_global;
+        diag.icp_init_offset_m = mat3::norm(&mat3::sub(
+            &mat3::add(
+                &mat3::mat_vec(&icp.rotation, source_position),
+                &icp.translation,
+            ),
+            &mat3::add(
+                &mat3::mat_vec(&init_rotation, source_position),
+                &init_translation,
+            ),
+        ));
+        diag.icp_init_offset_deg =
+            mat3::angular_distance(&icp.rotation, &init_rotation).to_degrees();
         diag.icp_fitness = icp.fitness;
         diag.icp_overlap = icp.overlap;
         diag.icp_translation_norm = mat3::norm(&icp.translation);
