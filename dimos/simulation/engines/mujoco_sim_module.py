@@ -761,6 +761,30 @@ class MujocoSimModule(
         )
         return applied
 
+    @rpc
+    def move_object(self, name: str, x: float, y: float, z: float | None = None) -> bool:
+        """Put a loose object somewhere else in the running sim, at rest.
+
+        Changes the scene under a running task, e.g. moves the object a pick is
+        reaching for. The object keeps its orientation.
+
+        Args:
+            name: MJCF name of a body with a free joint, e.g. "apple".
+            x: World-frame x of the body's origin, metres.
+            y: World-frame y of the body's origin, metres.
+            z: World-frame height of the body's origin, metres; None keeps its
+                current height. A height below the table top puts it inside the table.
+
+        Returns True once moved; False when the sim is not running or ``name``
+        is not a body with a free joint.
+        """
+        engine = self._engine
+        if engine is None:
+            return False
+        moved = engine.request_free_body_position(name, x, y, z)
+        logger.info("MujocoSimModule: move_object", name=name, x=x, y=y, z=z, moved=moved)
+        return moved
+
     def _compute_root_spawn_clearance_z(self) -> float | None:
         engine = self._engine
         qpos_adr = self._root_base_qpos_adr

@@ -309,6 +309,58 @@ def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: 
         engine.disconnect()
 
 
+def test_move_object_puts_a_free_body_at_rest_where_asked(tmp_path: Path) -> None:
+    scene_xml = tmp_path / "objects.xml"
+    scene_xml.write_text(
+        """
+<mujoco model="objects">
+  <option gravity="0 0 0" timestep="0.01"/>
+  <worldbody>
+    <body name="arm" pos="0 0 0.5">
+      <joint name="hinge" type="hinge"/>
+      <geom type="capsule" size="0.02 0.1" mass="1.0"/>
+    </body>
+    <body name="apple" pos="0.4 0.1 0.2">
+      <freejoint/>
+      <geom type="sphere" size="0.04" mass="0.15"/>
+    </body>
+  </worldbody>
+</mujoco>
+""".strip()
+    )
+    engine = MujocoEngine(config_path=scene_xml, headless=True)
+    with engine._lock:
+        engine._data.qvel[1:4] = [1.0, 0.0, 0.0]  # the apple drifts along +x
+    module = MujocoSimModule()
+    module._engine = engine
+    try:
+        engine.connect()
+
+        assert module.move_object("apple", 0.6, -0.2) is True
+        time.sleep(0.1)
+        moved = engine.get_body_pose("apple")
+        assert moved is not None
+        assert np.allclose(moved[0], [0.6, -0.2, 0.2], atol=1e-6)
+
+        assert module.move_object("apple", 2.6, -0.2, z=0.05) is True
+        assert engine.get_body_pose("apple")[0] == pytest.approx([2.6, -0.2, 0.05])  # type: ignore[index]
+
+        assert module.move_object("arm", 1.0, 1.0) is False
+        assert module.move_object("pear", 1.0, 1.0) is False
+    finally:
+        engine.disconnect()
+        module._engine = None
+        module.stop()
+
+
+def test_move_object_without_a_running_sim_does_nothing() -> None:
+    module = MujocoSimModule()
+    try:
+        assert module.move_object("apple", 0.6, -0.2) is False
+    finally:
+        module.stop()
+
+
 def _write_freejoint_xml(path: Path) -> None:
     path.write_text(
         """

@@ -155,6 +155,8 @@ class Rig:
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
         )
+        # The coordinator reads joint positions from its tick loop's last tick.
+        self.coordinator._tick_loop = self._loop
 
     def tick(self) -> None:
         self._loop._tick()
@@ -223,6 +225,7 @@ class TestRequest:
 
 class TestWhileHeld:
     def test_running_trajectory_is_preempted(self, rig):
+        rig.tick()
         assert (
             rig.coordinator.execute_trajectory(_trajectory()).status
             is TrajectoryExecutionStatus.ACCEPTED
@@ -284,6 +287,7 @@ class TestStatus:
 
 class TestEstop:
     def test_estop_cancels_the_trajectory_and_turns_the_hold_on(self, rig):
+        rig.tick()
         rig.coordinator.execute_trajectory(_trajectory())
         rig.tick()
         writes_before = len(rig.arm_writes())
@@ -334,6 +338,7 @@ class TestAcknowledge:
     def test_autonomy_does_not_resume_but_teleop_can_take_over(self, rig):
         teleop = TeleopStub([0.4, 0.5, 0.6])
         rig.coordinator.add_task(teleop)
+        rig.tick()
         assert (
             rig.coordinator.execute_trajectory(_trajectory()).status
             is TrajectoryExecutionStatus.ACCEPTED
