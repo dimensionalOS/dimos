@@ -34,7 +34,7 @@ from pydantic import ValidationError
 from dimos.constants import LOG_DIR
 from dimos.core.coordination.process_lifecycle import is_pid_alive
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
-from experimental.gateway import constants, store
+from experimental.gateway import constants, shared_config, store
 from experimental.gateway.errors import ApiError, StatusError
 
 ModuleValues = dict[str, dict[str, Any]]
@@ -447,7 +447,7 @@ def active() -> dict[str, Any]:
 
 
 def gossip_env() -> dict[str, str]:
-    gossip = store.setting("zenoh", "gossip")
+    gossip = shared_config.setting("zenoh", "gossip")
     return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
 
 

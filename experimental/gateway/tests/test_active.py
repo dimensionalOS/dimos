@@ -345,9 +345,9 @@ def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
 def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from experimental.gateway import events, store
+    from experimental.gateway import events, shared_config
 
-    assert (events.resolve_namespace(), store.setting("dimos-gateway", "socket")) == (
+    assert (events.resolve_namespace(), shared_config.setting("dimos-gateway", "socket")) == (
         None,
         None,
     )
@@ -358,14 +358,14 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     )
     assert events.resolve_namespace() == "desk1"
     assert events.resolve_connect() == ["tcp/10.0.0.2:7447"]
-    assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    assert shared_config.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
     app = {
         "home": str(tmp_path / "dimos_home"),
         "socket": "/tmp/app.sock",
         "zenohNamespace": "app1",
     }
     monkeypatch.setenv("DIMOS_APP", json.dumps(app))
-    assert (events.resolve_namespace(), store.setting("dimos-gateway", "socket")) == (
+    assert (events.resolve_namespace(), shared_config.setting("dimos-gateway", "socket")) == (
         "app1",
         "/tmp/app.sock",
     )
