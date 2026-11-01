@@ -81,7 +81,7 @@ impl GscPgo {
             && (self.committed_closures.len() > self.closures_dispatched
                 || self.world_positions.len() > self.world_positions_dispatched
                 || self.landmark_sightings.len() > self.landmark_sightings_dispatched
-                || self.odometry_noise_rescale)
+                || self.odometry_error_estimate_rescale)
     }
     /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
     /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
@@ -248,15 +248,15 @@ impl GscPgo {
             ));
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
-        let solve_noise = self.odometry_noise();
-        let odometry = odometry_edges(&self.key_poses, config, solve_noise);
+        let solve_error_estimate = self.odometry_error_estimate();
+        let odometry = odometry_edges(&self.key_poses, config, solve_error_estimate);
         let priors = self.position_priors();
         let (sightings, landmark_ids) = self.sightings();
         let solve_config = SolveConfig {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
-            evidence_core: config.odometry_noise_evidence_core,
+            evidence_core: config.odometry_error_estimate_evidence_core,
             committed: if config.closure_commitments {
                 self.committed_closures
                     .iter()
@@ -324,7 +324,7 @@ impl GscPgo {
             })
             .expect("spawn pose graph thread");
         // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
-        self.odometry_noise_rescaled = self.odometry_noise_rescale
+        self.odometry_error_estimate_rescaled = self.odometry_error_estimate_rescale
             && self.committed_closures.len() == self.closures_dispatched
             && self.world_positions.len() == self.world_positions_dispatched
             && self.landmark_sightings.len() == self.landmark_sightings_dispatched;
@@ -332,8 +332,9 @@ impl GscPgo {
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
         // the ln the residuals are whitened at (the solve's noise, its lower bound or the estimate)
-        self.odometry_noise_ln_dispatched = self.odometry_noise().map(f64::ln);
-        self.odometry_noise_rescale = false;
+        self.learned_odometry_error_estimate_ln_dispatched =
+            self.odometry_error_estimate().map(f64::ln);
+        self.odometry_error_estimate_rescale = false;
         self.solving = Some(Solving {
             handle,
             keyframes: n,
@@ -429,8 +430,8 @@ impl GscPgo {
             }
         }
         self.graph_error = solution.error;
-        self.update_odometry_noise_scale(solution.odometry_noise_evidence);
-        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned noise,
+        self.update_learned_odometry_error_estimate(solution.odometry_error_estimate_evidence);
+        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned odometry error estimate,
         // and the solve's evidence per source as [sum, redundancy]), for tracing the noise learner against ground truth offline
         if let Ok(path) = std::env::var("GSC_LEARN_LOG") {
             use std::io::Write;
@@ -446,9 +447,9 @@ impl GscPgo {
                 n,
                 self.committed_closures.len(),
                 kept,
-                self.odometry_noise_estimate(),
+                self.learned_odometry_error_estimate(),
                 solution
-                    .odometry_noise_evidence
+                    .odometry_error_estimate_evidence
                     .map(|e| e.map(|(sum, r)| [sum, r]))
                     .unwrap_or([[f64::NAN; 2]; 6])
             );

@@ -94,19 +94,19 @@ config! {
     closure_gnc_inlier_probability: f64,
     closure_informative_by_graph_covariance: bool,
     closure_uninformative_gate: bool,
-    odom_xy_drift_per_sqrt_m: f64,
-    odom_xy_drift_per_sqrt_rad: f64,
-    odom_z_drift_per_sqrt_m: f64,
-    odom_z_drift_per_sqrt_rad: f64,
-    odom_yaw_drift_per_sqrt_m: f64,
-    odom_yaw_drift_per_sqrt_rad: f64,
-    odom_tilt_drift_per_sqrt_m: f64,
-    odom_tilt_drift_per_sqrt_rad: f64,
-    odom_noise_prior_ln_sd_xy: f64,
-    odom_noise_prior_ln_sd_z: f64,
-    odom_noise_prior_ln_sd_yaw: f64,
-    odom_noise_prior_ln_sd_tilt: f64,
-    odom_error_stiffness: f64,
+    odometry_error_estimate_xy_per_sqrt_m: f64,
+    odometry_error_estimate_xy_per_sqrt_rad: f64,
+    odometry_error_estimate_z_per_sqrt_m: f64,
+    odometry_error_estimate_z_per_sqrt_rad: f64,
+    odometry_error_estimate_yaw_per_sqrt_m: f64,
+    odometry_error_estimate_yaw_per_sqrt_rad: f64,
+    odometry_error_estimate_tilt_per_sqrt_m: f64,
+    odometry_error_estimate_tilt_per_sqrt_rad: f64,
+    learned_odometry_error_estimate_prior_ln_sd_xy: f64,
+    learned_odometry_error_estimate_prior_ln_sd_z: f64,
+    learned_odometry_error_estimate_prior_ln_sd_yaw: f64,
+    learned_odometry_error_estimate_prior_ln_sd_tilt: f64,
+    learned_odometry_error_estimate_stiffness: f64,
     scan_context_num_rings: i32,
     scan_context_num_sectors: i32,
     scan_context_max_range_m: f64,
@@ -121,8 +121,8 @@ config! {
     closure_alternative_places: bool,
     closure_commitments: bool,
     closure_likelihood_visibility: bool,
-    odometry_noise_from_closures: bool,
-    odometry_noise_evidence_core: bool,
+    learned_odometry_error_estimate_from_closures: bool,
+    odometry_error_estimate_evidence_core: bool,
     pressure_check_frequency: usize,
     soft_pressure_half_log10_hazard: f64,
     soft_pressure_decades: f64,
@@ -722,18 +722,18 @@ impl Worker {
                 "world_alignment": pgo.world_alignment().iter().map(|(f, yaw, t)| serde_json::json!([f, yaw, t])).collect::<Vec<_>>(),
             }),
         );
-        // once loops are kept, the odometry drift they measure, as the config inputs for the next run (`kind`
+        // once loops are kept, the odometry error estimate they measure, as the config inputs for the next run (`kind`
         // "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift
         if kept > 0 {
-            let (drift, measured) = pgo.odometry_drift_for_next_run();
+            let (drift, measured) = pgo.odometry_error_estimate_for_next_run();
             let mut fields = serde_json::Map::new();
             for (k, source) in ["xy", "z", "yaw", "tilt"].iter().enumerate() {
                 fields.insert(
-                    format!("odom_{source}_drift_per_sqrt_m"),
+                    format!("odometry_error_estimate_{source}_per_sqrt_m"),
                     drift[k][0].into(),
                 );
                 fields.insert(
-                    format!("odom_{source}_drift_per_sqrt_rad"),
+                    format!("odometry_error_estimate_{source}_per_sqrt_rad"),
                     drift[k][1].into(),
                 );
                 fields.insert(format!("{source}_measured"), measured[k].into());

@@ -56,7 +56,7 @@ pub struct SolveConfig {
     /// of re-deciding it cold; empty for none. A committed loop is dropped only by a verdict that contradicts it
     /// (`closure_commitments`, decided by the caller).
     pub committed: Vec<bool>,
-    /// The noise evidence reads only the kept closures' PCM core (`odometry_noise_evidence_core`).
+    /// The noise evidence reads only the kept closures' PCM core (`odometry_error_estimate_evidence_core`).
     pub evidence_core: bool,
 }
 
@@ -79,10 +79,10 @@ pub struct Solution {
     /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
-    /// Variance-component evidence on the odometry noise from the solved graph (`odometry_noise_evidence`): per source
+    /// Variance-component evidence on the odometry error estimate from the solved graph (`odometry_error_estimate_evidence`): per source
     /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
     /// redundancy; None if the graph could not be factored.
-    pub odometry_noise_evidence: Option<[(f64, f64); 6]>,
+    pub odometry_error_estimate_evidence: Option<[(f64, f64); 6]>,
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -379,7 +379,7 @@ pub(crate) fn solve_core(
     )
     .unwrap_or_default();
     // only the kept closures' mutually consistent core (the largest set that agree pairwise around their cycles, PCM)
-    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
+    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry error estimate and widen it
     let evidence_weights: Vec<f64> = if config.evidence_core {
         let kept_closures: Vec<(usize, Edge)> = closures
             .iter()
@@ -418,9 +418,9 @@ pub(crate) fn solve_core(
         1000,
         true,
     );
-    let odometry_noise_evidence = converged
+    let odometry_error_estimate_evidence = converged
         .then(|| {
-            odometry_noise_evidence(
+            odometry_error_estimate_evidence(
                 &evidence_state,
                 &pattern,
                 odometry,
@@ -434,7 +434,7 @@ pub(crate) fn solve_core(
         })
         .flatten();
     Solution {
-        odometry_noise_evidence,
+        odometry_error_estimate_evidence,
         rotations: state.rotation,
         positions: state.position,
         closure_weights: kept,
@@ -452,7 +452,7 @@ pub(crate) fn solve_core(
 /// translation x, y, z].
 const RESIDUAL_SOURCE: [usize; 6] = [3, 3, 2, 0, 0, 1];
 
-/// Variance-component evidence on the odometry noise from the solved graph (Förstner's estimator): for each noise source,
+/// Variance-component evidence on the odometry error estimate from the solved graph (Förstner's estimator): for each noise source,
 /// how far the solve had to bend its parts of the odometry edges (their residuals squared, whitened by the variances
 /// the solve used) and how many independent checks the graph gave it, its redundancy r_c = n_c - tr(N^-1 N_c) (n_c its
 /// residual count; N the solve's information matrix, N_c the source's own share of it). A source's variance times
@@ -461,7 +461,7 @@ const RESIDUAL_SOURCE: [usize; 6] = [3, 3, 2, 0, 0, 1];
 /// so Hutchinson's estimator (the mean of z^T (N_odo^-1 - N^-1) N_c z over fixed random +-1 vectors z, two solves each)
 /// is accurate to a few percent of r_c, and exactly 0 with nothing kept. None if a matrix cannot be factored.
 #[allow(clippy::too_many_arguments)]
-fn odometry_noise_evidence(
+fn odometry_error_estimate_evidence(
     state: &State,
     pattern: &Pattern,
     odometry: &[Edge],
@@ -1451,10 +1451,22 @@ pub fn step_variances(config: &Config, from: &KeyPoseWithCloud, to: &KeyPoseWith
 pub fn motion_variances(config: &Config, distance: f64, turn: f64) -> [f64; 4] {
     let c = config;
     [
-        (c.odom_xy_drift_per_sqrt_m, c.odom_xy_drift_per_sqrt_rad),
-        (c.odom_z_drift_per_sqrt_m, c.odom_z_drift_per_sqrt_rad),
-        (c.odom_yaw_drift_per_sqrt_m, c.odom_yaw_drift_per_sqrt_rad),
-        (c.odom_tilt_drift_per_sqrt_m, c.odom_tilt_drift_per_sqrt_rad),
+        (
+            c.odometry_error_estimate_xy_per_sqrt_m,
+            c.odometry_error_estimate_xy_per_sqrt_rad,
+        ),
+        (
+            c.odometry_error_estimate_z_per_sqrt_m,
+            c.odometry_error_estimate_z_per_sqrt_rad,
+        ),
+        (
+            c.odometry_error_estimate_yaw_per_sqrt_m,
+            c.odometry_error_estimate_yaw_per_sqrt_rad,
+        ),
+        (
+            c.odometry_error_estimate_tilt_per_sqrt_m,
+            c.odometry_error_estimate_tilt_per_sqrt_rad,
+        ),
     ]
     .map(|(per_m, per_rad)| per_m * per_m * distance + per_rad * per_rad * turn)
 }

@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The odometry noise from closure innovations (`odometry_noise`): an odometry whose translation and heading noise are
+//! The odometry error estimate from closure innovations (`odometry_error_estimate`): an odometry whose translation and heading noise are
 //! misreported by different factors, and closures over stretches of many lengths, recover both.
 
 use dimos_gsc_pgo::gsc_pgo::{Config, KeyPoseWithCloud};
 use dimos_gsc_pgo::mat3::{self, Vec3};
-use dimos_gsc_pgo::odometry_noise::{fit, innovation};
+use dimos_gsc_pgo::odometry_error_estimate::{fit, innovation};
 
 /// Deterministic uniform on (0, 1).
 fn uniform(k: usize, salt: f64) -> f64 {

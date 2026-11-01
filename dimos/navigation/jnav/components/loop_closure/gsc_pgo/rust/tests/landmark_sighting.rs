@@ -162,7 +162,7 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
             >= sightings.len() - 2,
         "nearly every sighting kept"
     );
-    assert!(drifted > 3.0, "the odometry drifts ({drifted} m)");
+    assert!(drifted > 3.0, "the odometry error estimates ({drifted} m)");
     assert!(
         worst < drifted / 3.0,
         "every keyframe much closer to the truth than the odometry (worst {worst} m)"
@@ -255,7 +255,7 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
     );
     assert!(
         drifted_heading > 0.05 && drifted > 1.0,
-        "the odometry drifts"
+        "the odometry error estimates"
     );
     assert!(
         solved_heading < 0.03,

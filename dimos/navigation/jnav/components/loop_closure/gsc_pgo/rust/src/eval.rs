@@ -56,8 +56,9 @@ struct EvalConfig {
     pgo: PgoConfig,
     /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue; <= 0 = unbounded).
     max_scan_queue: i32,
-    /// Multiplies every stated odom_*_drift_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
-    odom_drift_scale: f64,
+    /// Multiplies every stated odometry_error_estimate_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
+    #[serde(alias = "odom_drift_scale")]
+    odometry_error_estimate_scale: f64,
     /// The frame the odometry's poses are really of, where its child_frame_id misnames it (office555's Point-LIO names
     /// base_link but reports the lidar's pose: "livox_frame"); empty = the child frame.
     odom_pose_frame: String,
@@ -68,7 +69,7 @@ impl Default for EvalConfig {
         EvalConfig {
             pgo: PgoConfig::default(),
             max_scan_queue: 5,
-            odom_drift_scale: 1.0,
+            odometry_error_estimate_scale: 1.0,
             odom_pose_frame: String::new(),
         }
     }
@@ -148,7 +149,7 @@ struct EvalOutput {
     /// With an ICP cache replay: the cloud computations answered from it, and those it lacked (computed live).
     icp_cache_hits: usize,
     icp_cache_misses: usize,
-    /// The odometry drift the run measured, as next run's config inputs (`GscPgo::odometry_drift_for_next_run`): per
+    /// The odometry error estimate the run measured, as next run's config inputs (`GscPgo::odometry_error_estimate_for_next_run`): per
     /// source xy, z, yaw, tilt, [per sqrt m, per sqrt rad], and whether a kept closure measured it.
     odometry_drift: [[f64; 2]; 4],
     odometry_drift_measured: [bool; 4],
@@ -359,18 +360,30 @@ fn unique_frame(frames: impl Iterator<Item = String>, what: &str) -> Result<Stri
 /// recording's tf (closure search assumes level clouds, so a pitched sensor's own frame will not do).
 const BODY_FRAME: &str = "base_link";
 
-/// Per odometry (by the odom child frame it moves), its ideal stated drift: [per sqrt m, per sqrt rad] for xy, z, yaw,
+/// Per odometry (by the odom child frame it moves), its ideal stated odometry error estimate: [per sqrt m, per sqrt rad] for xy, z, yaw,
 /// tilt. Mid-360 (FAST-LIO / Point-LIO) is the Config default; Go2 L1 leg odometry is its calibrated drift.
-fn stated_drift(odom_child_frame: &str) -> Option<[[f64; 2]; 4]> {
+fn stated_odometry_error_estimate(odom_child_frame: &str) -> Option<[[f64; 2]; 4]> {
     match odom_child_frame {
         // livox_frame: the Mid-360 frame name Point-LIO recordings like office555 use
         "mid360_link" | "livox_frame" => {
             let c = PgoConfig::default();
             Some([
-                [c.odom_xy_drift_per_sqrt_m, c.odom_xy_drift_per_sqrt_rad],
-                [c.odom_z_drift_per_sqrt_m, c.odom_z_drift_per_sqrt_rad],
-                [c.odom_yaw_drift_per_sqrt_m, c.odom_yaw_drift_per_sqrt_rad],
-                [c.odom_tilt_drift_per_sqrt_m, c.odom_tilt_drift_per_sqrt_rad],
+                [
+                    c.odometry_error_estimate_xy_per_sqrt_m,
+                    c.odometry_error_estimate_xy_per_sqrt_rad,
+                ],
+                [
+                    c.odometry_error_estimate_z_per_sqrt_m,
+                    c.odometry_error_estimate_z_per_sqrt_rad,
+                ],
+                [
+                    c.odometry_error_estimate_yaw_per_sqrt_m,
+                    c.odometry_error_estimate_yaw_per_sqrt_rad,
+                ],
+                [
+                    c.odometry_error_estimate_tilt_per_sqrt_m,
+                    c.odometry_error_estimate_tilt_per_sqrt_rad,
+                ],
             ])
         }
         // calibrated Go2 L1 drift (Go2 leg odometry, clouds in l1_link)
@@ -384,15 +397,27 @@ fn stated_drift(odom_child_frame: &str) -> Option<[[f64; 2]; 4]> {
     }
 }
 
-const DRIFT_KEYS: [[&str; 2]; 4] = [
-    ["odom_xy_drift_per_sqrt_m", "odom_xy_drift_per_sqrt_rad"],
-    ["odom_z_drift_per_sqrt_m", "odom_z_drift_per_sqrt_rad"],
-    ["odom_yaw_drift_per_sqrt_m", "odom_yaw_drift_per_sqrt_rad"],
-    ["odom_tilt_drift_per_sqrt_m", "odom_tilt_drift_per_sqrt_rad"],
+const ODOMETRY_ERROR_ESTIMATE_KEYS: [[&str; 2]; 4] = [
+    [
+        "odometry_error_estimate_xy_per_sqrt_m",
+        "odometry_error_estimate_xy_per_sqrt_rad",
+    ],
+    [
+        "odometry_error_estimate_z_per_sqrt_m",
+        "odometry_error_estimate_z_per_sqrt_rad",
+    ],
+    [
+        "odometry_error_estimate_yaw_per_sqrt_m",
+        "odometry_error_estimate_yaw_per_sqrt_rad",
+    ],
+    [
+        "odometry_error_estimate_tilt_per_sqrt_m",
+        "odometry_error_estimate_tilt_per_sqrt_rad",
+    ],
 ];
 
-/// The eval config: `--config` JSON over the odometry's stated drift (`stated_drift`) over the defaults, then every
-/// drift term times `odom_drift_scale`.
+/// The eval config: `--config` JSON over the odometry's stated odometry error estimate (`stated_odometry_error_estimate`) over the defaults, then every
+/// drift term times `odometry_error_estimate_scale`.
 fn load_config(
     path: Option<&std::path::Path>,
     odom_child_frame: &str,
@@ -407,32 +432,43 @@ fn load_config(
     let fields = overlay
         .as_object_mut()
         .ok_or("--config must be a JSON object")?;
-    match stated_drift(odom_child_frame) {
+    // older configs name these odom_<source>_drift_per_sqrt_<unit>: move them to the new names before filling the rest
+    for (keys, source) in ODOMETRY_ERROR_ESTIMATE_KEYS
+        .iter()
+        .zip(["xy", "z", "yaw", "tilt"])
+    {
+        for (key, unit) in keys.iter().zip(["m", "rad"]) {
+            if let Some(value) = fields.remove(&format!("odom_{source}_drift_per_sqrt_{unit}")) {
+                fields.insert(key.to_string(), value);
+            }
+        }
+    }
+    match stated_odometry_error_estimate(odom_child_frame) {
         Some(drift) => {
-            for (keys, values) in DRIFT_KEYS.iter().zip(drift) {
+            for (keys, values) in ODOMETRY_ERROR_ESTIMATE_KEYS.iter().zip(drift) {
                 for (key, value) in keys.iter().zip(values) {
                     fields.entry(key.to_string()).or_insert(value.into());
                 }
             }
         }
         None => eprintln!(
-            "pgo-eval: WARNING: no stated drift known for odometry child frame {odom_child_frame:?}; \
+            "pgo-eval: WARNING: no stated odometry error estimate known for odometry child frame {odom_child_frame:?}; \
              using the Config defaults (Mid-360) unless --config gives them"
         ),
     }
     let mut config: EvalConfig =
         serde_json::from_value(overlay).map_err(|e| format!("config: {e}"))?;
-    let k = config.odom_drift_scale;
+    let k = config.odometry_error_estimate_scale;
     let c = &mut config.pgo;
     for term in [
-        &mut c.odom_xy_drift_per_sqrt_m,
-        &mut c.odom_xy_drift_per_sqrt_rad,
-        &mut c.odom_z_drift_per_sqrt_m,
-        &mut c.odom_z_drift_per_sqrt_rad,
-        &mut c.odom_yaw_drift_per_sqrt_m,
-        &mut c.odom_yaw_drift_per_sqrt_rad,
-        &mut c.odom_tilt_drift_per_sqrt_m,
-        &mut c.odom_tilt_drift_per_sqrt_rad,
+        &mut c.odometry_error_estimate_xy_per_sqrt_m,
+        &mut c.odometry_error_estimate_xy_per_sqrt_rad,
+        &mut c.odometry_error_estimate_z_per_sqrt_m,
+        &mut c.odometry_error_estimate_z_per_sqrt_rad,
+        &mut c.odometry_error_estimate_yaw_per_sqrt_m,
+        &mut c.odometry_error_estimate_yaw_per_sqrt_rad,
+        &mut c.odometry_error_estimate_tilt_per_sqrt_m,
+        &mut c.odometry_error_estimate_tilt_per_sqrt_rad,
     ] {
         *term *= k;
     }
@@ -818,7 +854,7 @@ fn run() -> Result<(), String> {
         }
         None => (0, 0),
     };
-    let (odometry_drift, odometry_drift_measured) = pgo.odometry_drift_for_next_run();
+    let (odometry_drift, odometry_drift_measured) = pgo.odometry_error_estimate_for_next_run();
     let output = EvalOutput {
         odometry_drift,
         odometry_drift_measured,

@@ -32,9 +32,9 @@ pub mod icp_cache;
 pub mod landmarks;
 pub mod loop_overlap;
 pub mod mat3;
-pub mod odometry_noise;
+pub mod odometry_error_estimate;
 #[cfg(test)]
-mod odometry_noise_overtrust;
+mod odometry_error_estimate_overtrust;
 pub mod pointcloud;
 pub mod pose_graph_solving;
 pub mod proportional_confidence;
