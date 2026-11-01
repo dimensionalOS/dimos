@@ -50,7 +50,7 @@ def app_env() -> dict[str, Any]:
 
 
 def dimos_home() -> Path:
-    """`DIMOS_APP`'s `home`, else `~/.dimos` (`DIMOS_HOME` is not read)."""
+    """`DIMOS_APP`'s `home`, else `~/.dimos`."""
     home = app_env().get("home")
     return Path(home) if home else Path.home() / ".dimos"
 

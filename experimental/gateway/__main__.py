@@ -41,8 +41,6 @@ def serve(
     dimos_dir: Path,
     port: int | None,
     host: str,
-    zenoh_namespace: str | None,
-    zenoh_connect: str | None,
     zenoh: bool,
     ready_fd: int | None = None,
 ) -> None:
@@ -56,18 +54,18 @@ def serve(
     if path_length > constants.UNIX_SOCKET_PATH_LIMIT:
         raise SystemExit(
             f"the gateway socket path {socket_path} is {path_length} bytes, over this platform's "
-            f"{constants.UNIX_SOCKET_PATH_LIMIT}; point `dimos-gateway.socket` in ~/.dimos/config.yaml "
-            "(or --socket) somewhere shorter"
+            f"{constants.UNIX_SOCKET_PATH_LIMIT}; point DIMOS_APP's `socket` (or config.yaml's "
+            "`dimos-gateway.socket`) somewhere shorter"
         )
     if healthy(socket_path):
         raise SystemExit(f"a dimos gateway is already answering on {socket_path}")
-    namespace = events.resolve_namespace(zenoh_namespace) if zenoh else None
+    namespace = events.resolve_namespace() if zenoh else None
     bus = events.Bus()
     if namespace is not None:
         import zenoh as zenoh_library
 
         try:
-            bus = events.Bus(namespace, events.zenoh_put(events.resolve_connect(zenoh_connect)))
+            bus = events.Bus(namespace, events.zenoh_put(events.resolve_connect()))
             print(f"dimos gateway events -> zenoh {namespace}/dimos/events/<type>", flush=True)
         except zenoh_library.ZError as error:
             print(f"dimos gateway: no zenoh session, no events ({error})", flush=True)
@@ -129,27 +127,19 @@ def detach(arguments: list[str], socket_path: Path) -> None:
 
 
 def gateway(
-    socket: Path = typer.Option(None),
     dimos_dir: Path = typer.Option(DIMOS_PROJECT_ROOT),
     port: int = typer.Option(None),
     host: str = typer.Option(constants.DEFAULT_HOST),
     detach_: bool = typer.Option(False, "--detach"),
-    zenoh_namespace: str = typer.Option(None),
-    zenoh_connect: str = typer.Option(None),
     zenoh: bool = typer.Option(True),
     ready_fd: int = typer.Option(None, hidden=True),
 ) -> None:
     configured = store.setting("dimos-gateway", "socket")
-    socket_path = socket or (
-        Path(configured) if configured else store.gateway_dir() / "dimos-gateway.sock"
-    )
+    socket_path = Path(configured) if configured else store.gateway_dir() / "dimos-gateway.sock"
     if detach_:
-        detach(
-            [arg for arg in sys.argv[1:] if arg != "--detach"] + ["--socket", str(socket_path)],
-            socket_path,
-        )
+        detach([arg for arg in sys.argv[1:] if arg != "--detach"], socket_path)
     else:
-        serve(socket_path, dimos_dir, port, host, zenoh_namespace, zenoh_connect, zenoh, ready_fd)
+        serve(socket_path, dimos_dir, port, host, zenoh, ready_fd)
 
 
 if __name__ == "__main__":
