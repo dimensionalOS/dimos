@@ -16,17 +16,22 @@
 
 The same modules as xarm-perception-sim, plus the operator hold task, the
 request_operator skill an agent calls to ask for the hold, on/off streams for
-the hold and the e-stop, a point cloud of the scene on ``scene_pointcloud`` and
-the arm's URDF, so a Desktop page can show the arm and the scene and stop or
-hold it.
+the hold and the e-stop, the operator event log (OperatorLog), a point cloud of
+the scene on ``scene_pointcloud`` and the arm's URDF, so a Desktop page can
+show the arm and the scene and stop or hold it.
 """
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
+
 from dimos.agents.skills.teleop_skills import TeleopSkills
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.operator_log import OperatorLog
 from dimos.control.task import ControlTask
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
+    OperatorHoldStatus,
     OperatorHoldTask,
     operator_hold_task,
 )
@@ -38,6 +43,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.String import String
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
@@ -62,15 +68,17 @@ class OperatorHoldCoordinator(ControlCoordinator):
     ("request", "acknowledge", "get_status"); an e-stop turns it on and it
     stays on until acknowledged.
 
-    ``operator_hold_status`` is True while the hold is on, sent each time the
-    hold task sends its status. ``operator_estop_status`` is True while the
-    e-stop is latched, sent at start and on every ``set_estop``.
+    ``operator_hold_status`` is True while the hold is on, and
+    ``operator_hold`` is the hold task's whole OperatorHoldStatus as JSON; both
+    are sent each time the hold task sends its status. ``operator_estop_status``
+    is True while the e-stop is latched, sent at start and on every ``set_estop``.
 
     Combine it with another coordinator subclass by inheriting from both, e.g.
     ``class MyCoordinator(OperatorHoldCoordinator, TeleopControlCoordinator)``.
     """
 
     operator_hold_status: Out[Bool]
+    operator_hold: Out[String]
     operator_estop_status: Out[Bool]
 
     @rpc
@@ -80,13 +88,15 @@ class OperatorHoldCoordinator(ControlCoordinator):
         task_type: str | None = None,
         stream_bind: dict[str, str] | None = None,
     ) -> bool:
-        """Register a task; a hold task also sends its on/off on operator_hold_status."""
+        """Register a task; a hold task also sends its status on the two hold streams."""
         added = super().add_task(task, task_type=task_type, stream_bind=stream_bind)
         if added and isinstance(task, OperatorHoldTask):
-            task.set_status_publisher(
-                lambda status: self.operator_hold_status.publish(Bool(data=status.on))
-            )
+            task.set_status_publisher(self._publish_hold_status)
         return added
+
+    def _publish_hold_status(self, status: OperatorHoldStatus) -> None:
+        self.operator_hold_status.publish(Bool(data=status.on))
+        self.operator_hold.publish(String(json.dumps(asdict(status))))
 
     @rpc
     def start(self) -> None:
@@ -127,6 +137,7 @@ hybrid_teleop_sim = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     TeleopSkills.blueprint(),
+    OperatorLog.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
     # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give

@@ -22,11 +22,13 @@ deterministic.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import json
 from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.operator_log import OperatorLog
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
     OperatorHoldStatus,
@@ -42,6 +44,7 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import (
@@ -95,6 +98,8 @@ class Rig:
 
         self.hold_statuses: list[Bool] = []
         self.coordinator.operator_hold_status.subscribe(self.hold_statuses.append)
+        self.hold_json: list[String] = []
+        self.coordinator.operator_hold.subscribe(self.hold_json.append)
         self.estop_statuses: list[Bool] = []
         self.coordinator.operator_estop_status.subscribe(self.estop_statuses.append)
 
@@ -136,6 +141,9 @@ class TestHoldStatus:
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
         assert [type(msg) for msg in rig.hold_statuses] == [Bool]
         assert rig.hold_statuses[-1].data is True
+        assert [type(msg) for msg in rig.hold_json] == [String]
+        sent = json.loads(rig.hold_json[-1].data)
+        assert (sent["on"], sent["route"], sent["reason"]) == (True, "manual", "arm stuck")
 
     def test_acknowledge_releases_and_sends_false(self, rig):
         rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "request", {"route": "manual"})
@@ -181,3 +189,13 @@ def test_request_operator_reaches_the_coordinator() -> None:
     assert resolve_module_refs(hybrid_teleop_sim)["teleopskills", "_coordinator"] == (
         "ControlCoordinator"
     )
+
+
+def test_operator_log_hears_the_hold_and_the_estop() -> None:
+    atoms = {atom.module: atom for atom in hybrid_teleop_sim.active_blueprints}
+    sent = {
+        (s.name, s.type) for s in atoms[OperatorHoldCoordinator].streams if s.direction == "out"
+    }
+    heard = {(s.name, s.type) for s in atoms[OperatorLog].streams if s.direction == "in"}
+
+    assert {("operator_hold", String), ("operator_estop_status", Bool)} <= heard & sent
