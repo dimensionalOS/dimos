@@ -290,9 +290,10 @@ impl ClosureSearch {
     }
     /// Extension: each round fits one more separate source cloud (a newer keyframe at least `extension_cloud_spacing`
     /// of the mean scan reach of odometry distance from the previously chosen one, `extension_clouds`) on its own,
-    /// warm-started from the single-scan fit, against a target that covers it: the target's submap grown in place (one
-    /// shared `KdForest` per candidate) with the older keyframes within a scan's reach of where the single fit puts that
-    /// cloud (nearest first, a submap's worth per cloud, never within half_range of a source cloud). Each cloud scores
+    /// warm-started from the single-scan fit, against a target that covers it, grown in place (one shared `KdForest` per
+    /// candidate): the target's submap widened to `Config::target_half_range` for that many clouds, plus the older
+    /// keyframes within a scan's reach of where the single fit puts that cloud (nearest first, a submap's worth per
+    /// cloud), never within half_range of a source cloud. Each cloud scores
     /// its confidence ratio (its likelihood ratio over the candidate's bar, yank units); the candidate's score is the
     /// median ratio over its clouds so far, and the uncertainty range (`UncertaintyRange`) decides on it: at or above
     /// barely_pass accept (the single-scan fit is the closure), at or below barely_fail reject, else another cloud; with
@@ -316,7 +317,8 @@ impl ClosureSearch {
             return None;
         }
         let accept = |ratio: f64| (ratio >= 1.0).then(|| first.clone());
-        let half_range = self.config.closure_submap_half_range.max(0) as usize;
+        // the gap between the sides, and the single scan's target submap; the target's range grows with the extension
+        let half_range = self.config.target_half_range(1);
         let radius = self.config.closure_search_radius;
         let positions: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_global).collect();
         let odometry: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_local).collect();
@@ -362,6 +364,14 @@ impl ClosureSearch {
         let mut found: Option<Option<IcpResult>> = None;
         for (step, &j) in clouds.iter().enumerate() {
             let step = step + 1;
+            // the target submap's range around target_idx for this many source clouds, then the keyframes near where
+            // this cloud lands
+            let range_half = self.config.target_half_range(step + 1);
+            let widened: Vec<usize> = (target_idx.saturating_sub(range_half)..=target_idx + range_half)
+                .filter(|&k| k < target_end && !target_ids.contains(&k))
+                .collect();
+            target.add(self, &widened, true);
+            target_ids.extend(widened);
             let placed = mat3::add(&mat3::mat_vec(&first.rotation, &positions[j]), &first.translation);
             let mut near: Vec<(f64, usize)> = (0..target_end)
                 .filter(|k| !target_ids.contains(k))

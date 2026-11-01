@@ -340,7 +340,11 @@ pub struct Config {
     /// keyframes and everything downstream (scan context, ICP, submaps) sees the gathered cloud (0 = the keyframe's scan).
     /// 2000 is about the 10th percentile of a Mid-360 scan voxelized at 0.1 m, so about 1 in 10 of its keyframes waits.
     pub auto_aggregate_cloud_size: usize,
-    pub closure_submap_half_range: i32,
+    /// The closure target submap's half range (keyframes either side of the target) grows with the extension:
+    /// ceil(clouds x (1 + closure_target_extra_fraction)) + closure_target_extra_keyframes, clouds being the source clouds
+    /// fitted so far (1 for the single scan: 5 at the defaults); see `Config::target_half_range`.
+    pub closure_target_extra_fraction: f64,
+    pub closure_target_extra_keyframes: usize,
     pub submap_resolution: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
     pub closure_min_occupancy: i32,
@@ -508,6 +512,11 @@ pub struct Config {
 }
 
 impl Config {
+    /// The closure target submap's half range with `clouds` source clouds in the extension (1: the single scan).
+    pub fn target_half_range(&self, clouds: usize) -> usize {
+        (clouds.max(1) as f64 * (1.0 + self.closure_target_extra_fraction.max(0.0))).ceil() as usize
+            + self.closure_target_extra_keyframes
+    }
     /// An error naming the first setting out of its allowed range, if any.
     pub fn validate(&self) -> Result<(), String> {
         if !(self.barely_fail_uncertainty_range < 1.0) {
@@ -543,7 +552,8 @@ impl Default for Config {
             closure_icp_early_stop: true,
             drop_reseen_points: true,
             auto_aggregate_cloud_size: 2000,
-            closure_submap_half_range: 5,
+            closure_target_extra_fraction: 0.3,
+            closure_target_extra_keyframes: 3,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,
             closure_min_degeneracy: 0.05,
@@ -769,7 +779,7 @@ impl ClosureSearch {
         let (cur_idx, target_idx) = (diag.source_id, self.target_idx);
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
-        let half_range = self.config.closure_submap_half_range.max(0) as usize;
+        let half_range = self.config.target_half_range(1);
         // the source scan, the target submap and its tree, built only when a computation needs them (never when every
         // result comes from the ICP cache)
         // the source scan alone (all the degeneracy gate reads), built apart from the target and its tree
@@ -1806,6 +1816,17 @@ impl GscPgo {
 #[cfg(test)]
 mod config_tests {
     use super::Config;
+
+    /// The target submap's half range is 5 for the single scan (today's fixed submap) and grows with the extension's
+    /// source clouds.
+    #[test]
+    fn the_target_range_grows_with_the_extension() {
+        let config = Config::default();
+        assert_eq!(config.target_half_range(1), 5);
+        assert_eq!(config.target_half_range(2), 6);
+        assert_eq!(config.target_half_range(4), 9);
+        assert_eq!(config.target_half_range(0), 5);
+    }
 
     /// The uncertainty range must straddle the bar: barely_fail below 1, barely_pass above it.
     #[test]

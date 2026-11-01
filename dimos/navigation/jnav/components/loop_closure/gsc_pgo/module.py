@@ -64,7 +64,9 @@ class PGOConfig(NativeModuleConfig):
     drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
     auto_aggregate_cloud_size: int = 2000
-    closure_submap_half_range: int = 5
+    # Closure target submap half range = ceil(source clouds x (1 + extra_fraction)) + extra_keyframes (5 for the single scan)
+    closure_target_extra_fraction: float = 0.3
+    closure_target_extra_keyframes: int = 3
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
     # 0 disables
