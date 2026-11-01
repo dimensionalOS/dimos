@@ -34,8 +34,13 @@ export function renderDetailsOf(details: unknown): RenderDetails | null {
   return null;
 }
 
-/** Re-render a clip contact sheet from the verified frame index when the cache entry was pruned. */
+/**
+ * Re-render a clip contact sheet from the verified frame index when the cache entry was pruned.
+ * Frame files are checked against the hashes saved on the tool result (`view.clip.frames`), not the
+ * optional hashes in the index JSON, so a later overwrite cannot change historical model images.
+ */
 async function rebuildClipSheet(view: Extract<RenderedView, { kind: "clip" }>): Promise<ImageContent> {
+  for (const frame of view.clip.frames) await readVerified(frame.source);
   const dir = await mkdtemp(join(tmpdir(), "clip-hydrate-"));
   try {
     const cache = new RenderCache(dir, REBUILD_MAX_BYTES);

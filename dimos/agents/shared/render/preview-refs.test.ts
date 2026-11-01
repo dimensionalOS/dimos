@@ -152,3 +152,34 @@ test("a pruned clip sheet is rebuilt from the verified frame index", async (t) =
   assert.equal(rebuilt.type, "image");
   assert.ok(rebuilt.data.length > 100);
 });
+
+test("clip rebuild refuses frames that changed since the tool result was saved", async (t) => {
+  const { FileRenderer } = await import("#dimos/agents/shared/render/render.ts");
+  const { imageContentFromView } = await import("#dimos/agents/shared/render/preview-refs.ts");
+  const dir = await mkdtemp(join(tmpdir(), "clip-tamper-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const frame = join(dir, "frame-0.svg");
+  await writeFile(
+    frame,
+    '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="448"><rect width="900" height="448" fill="#ff0000"/></svg>',
+  );
+  const index = join(dir, "clip.json");
+  // Index omits frame sha256 so a naive re-read would accept a later overwrite.
+  await writeFile(index, JSON.stringify({ type: "image", frames: [{ path: "frame-0.svg", timestamp: 1 }] }));
+  const renderer = new FileRenderer({
+    cacheDir: join(dir, "cache"),
+    maxCacheBytes: 128 * 1024 * 1024,
+    maxSourceBytes: 64 * 1024 * 1024,
+  });
+  const rendering = await renderer.render([{ path: index, sha256: null }], "clip");
+  assert(rendering !== null);
+  const [view] = rendering.details.views;
+  assert(view?.kind === "clip");
+  const { unlink } = await import("node:fs/promises");
+  await unlink(view.sheet.path);
+  await writeFile(
+    frame,
+    '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="448"><rect width="900" height="448" fill="#0000ff"/></svg>',
+  );
+  await assert.rejects(() => imageContentFromView(view), /changed since it was rendered/);
+});
