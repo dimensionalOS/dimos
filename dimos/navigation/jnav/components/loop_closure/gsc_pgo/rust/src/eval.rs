@@ -186,6 +186,12 @@ struct Args {
     landmark_sightings: Option<PathBuf>,
     /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
     until_s: f64,
+    /// `--solve-delay-fraction <fraction>`: a lockstep replay adopts each solve once the map has grown by this fraction of
+    /// its free keyframes (at least one), waiting for it if needed, so it gives the same graph on any machine (a solve's
+    /// cost grows with the map, so the delay does). 0.02 (was 0.01, about a Jetson's solve time): at 0.01 the replay waited
+    /// on huge's solves and ran slower than real on an unloaded Mac. A stand-in until GSC's deterministic mode, which
+    /// schedules every non-O(scan) job by an estimate of its cost.
+    solve_delay_fraction: f64,
 }
 
 /// The sightings of a `--landmark-sightings` file, in time order.
@@ -298,6 +304,7 @@ fn parse_args() -> Result<Args, String> {
     let mut landmark_sightings = None;
     let mut icp_cache = None;
     let mut until_s = f64::INFINITY;
+    let mut solve_delay_fraction = 0.02;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -313,6 +320,9 @@ fn parse_args() -> Result<Args, String> {
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
             "--until-s" => until_s = value()?.parse().map_err(|e| format!("{e}"))?,
+            "--solve-delay-fraction" => {
+                solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
+            }
             "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
             "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
             "--icp-cache-record" => {
@@ -345,6 +355,7 @@ fn parse_args() -> Result<Args, String> {
         landmark_sightings,
         icp_cache,
         until_s,
+        solve_delay_fraction,
     })
 }
 
@@ -790,7 +801,7 @@ fn run() -> Result<(), String> {
                     Some((keyframes, free))
                         if pgo.key_poses().len()
                             < keyframes
-                                + ((free as f64 * SOLVE_DELAY_FRACTION).ceil() as usize).max(1) => {
+                                + ((free as f64 * args.solve_delay_fraction).ceil() as usize).max(1) => {
                     }
                     Some(_) => {
                         pgo.wait_for_solve();
@@ -985,10 +996,6 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free keyframes (at least
-/// one), waiting for it if needed, so it gives the same graph on any machine; a solve's cost grows with the map, so the
-/// delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac solve at 5k keyframes is ~0.5%).
-const SOLVE_DELAY_FRACTION: f64 = 0.01;
 
 /// Seconds and how many times faster than real (data seconds / seconds) one part of the work runs.
 #[derive(Serialize)]
