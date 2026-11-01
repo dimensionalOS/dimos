@@ -14,7 +14,7 @@
 
 """Timed absolute tool poses and normalized gripper openings.
 
-This RPC value is ordinary-pickle compatible. It is not an LCM wire message.
+This RPC value supports CBOR and ordinary pickle. It is not an LCM wire message.
 """
 
 from __future__ import annotations
@@ -44,6 +44,15 @@ class EefTrajectoryPoint:
         self.time_from_start = time_from_start
         self.poses = poses
         self.grippers = grippers if grippers is not None else {}
+
+    def cbor_encode(self) -> tuple[float, dict[str, PoseStamped], dict[str, float]]:
+        return self.time_from_start, self.poses, self.grippers
+
+    @classmethod
+    def cbor_decode(
+        cls, data: tuple[float, dict[str, PoseStamped], dict[str, float]]
+    ) -> EefTrajectoryPoint:
+        return cls(*data)
 
 
 class EefTrajectory:
@@ -83,6 +92,13 @@ class EefTrajectory:
     @property
     def duration(self) -> float:
         return self.points[-1].time_from_start
+
+    def cbor_encode(self) -> tuple[list[EefTrajectoryPoint], float]:
+        return self.points, self.timestamp
+
+    @classmethod
+    def cbor_decode(cls, data: tuple[list[EefTrajectoryPoint], float]) -> EefTrajectory:
+        return cls(*data)
 
     def sample(self, elapsed: float) -> EefTrajectoryPoint:
         """Linearly interpolate translation/opening and shortest-arc SLERP rotation."""

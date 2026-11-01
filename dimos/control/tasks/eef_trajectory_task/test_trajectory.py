@@ -22,9 +22,11 @@ import pytest
 
 from dimos.control.tasks.eef_trajectory_task.trajectory import EefTrajectory, EefTrajectoryPoint
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.protocol.encode.cbor import decode, encode
 
 
-def test_eef_translation_rotation_and_grippers_share_one_interpolation_clock():
+@pytest.mark.parametrize("codec", ["pickle", "cbor"])
+def test_eef_translation_rotation_and_grippers_share_one_interpolation_clock(codec):
     trajectory = EefTrajectory(
         [
             EefTrajectoryPoint(
@@ -45,9 +47,14 @@ def test_eef_translation_rotation_and_grippers_share_one_interpolation_clock():
                 },
                 {"left/gripper": 1.0},
             ),
-        ]
+        ],
+        timestamp=1234.5,
     )
-    restored = pickle.loads(pickle.dumps(trajectory))
+    restored = (
+        decode(encode(trajectory)) if codec == "cbor" else pickle.loads(pickle.dumps(trajectory))
+    )
+    assert restored.timestamp == 1234.5
+    assert restored.duration == 2.0
     sample = restored.sample(1.0)
     assert sample.poses["left"].x == 1.0
     assert sample.poses["right"].y == 2.0
