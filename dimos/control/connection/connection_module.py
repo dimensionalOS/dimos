@@ -189,7 +189,7 @@ class ConnectionModule(Module, ABC):
         super().start()
         self._session_id = uuid.uuid4().hex
         # A bad config fails here, before the hardware is touched.
-        self._limits = limits_of(self.config)
+        self.limits  # noqa: B018
         self.connect()
         with self._hardware_lock:
             self._connected = True

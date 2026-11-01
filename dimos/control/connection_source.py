@@ -32,6 +32,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.control.components import make_twist_base_joints
 from dimos.control.contract.convert import (
     IMU_INTERFACES,
     JOINT_STATE_FIELDS,
@@ -147,9 +148,12 @@ class ConnectionSource:
     Each tick the robot gets a complete command: what tasks asked for, and
     for every other joint velocity 0 if tasks drive it by velocity this
     tick, else a hold at its last commanded or reported position, kept
-    within its limit. A base is told 0 on every axis. A robot whose newest
-    reading is older than ``reading_timeout_s`` is not commanded, and is
-    held where it is once readings return. Does no I/O.
+    within its limit. A base has the three velocity joints a twist base has
+    behind an adapter (``make_twist_base_joints``): tasks claim them, they
+    read back the base's pose from ``odom`` as positions (x, y, yaw), and an
+    axis no task drives this tick is told 0. A robot whose newest reading is
+    older than ``reading_timeout_s`` is not commanded, and is held where it is
+    once readings return. Does no I/O.
 
     Args:
         robot: The robot's name, the first part of its joint names, e.g. "arm".
@@ -209,6 +213,14 @@ class ConnectionSource:
             self._joint_ports[Interface.VELOCITY] = VELOCITY_COMMAND
         self._base_port = CMD_VEL if CMD_VEL in commands else None
         self._base = f"{robot}{SEPARATOR}base"
+        # Each velocity joint, with the axis it commands and the pose axis it reads back.
+        self._base_joints = (
+            tuple(
+                zip(make_twist_base_joints(robot), TWIST_INTERFACES, POSE_INTERFACES, strict=True)
+            )
+            if self._base_port is not None
+            else ()
+        )
         self._joints = [
             _Joint(
                 name=name,
@@ -280,8 +292,16 @@ class ConnectionSource:
 
     @property
     def joint_names(self) -> list[str]:
-        """Every joint, e.g. ["arm/joint1", "arm/joint2"]."""
-        return [joint.name for joint in self._joints]
+        """Every joint a task can claim, e.g. ["arm/joint1", "go2/vx", "go2/vy", "go2/wz"]."""
+        return [
+            *(joint.name for joint in self._joints),
+            *(name for name, _axis, _pose in self._base_joints),
+        ]
+
+    @property
+    def base_joint_names(self) -> list[str]:
+        """The base's velocity joints, e.g. ["go2/vx", "go2/vy", "go2/wz"]; none without a base."""
+        return [name for name, _axis, _pose in self._base_joints]
 
     @property
     def command_ports(self) -> list[str]:
@@ -388,6 +408,13 @@ class ConnectionSource:
                 key = joint.state_keys[interface]
                 if key in latest:
                     into[joint.name] = latest[key]
+        for name, axis, pose_axis in self._base_joints:
+            for key, base_into in (
+                (f"{self._base}{SEPARATOR}{pose_axis}", snapshot.joint_positions),
+                (f"{self._base}{SEPARATOR}{axis}", snapshot.joint_velocities),
+            ):
+                if key in latest:
+                    base_into[name] = latest[key]
         return snapshot
 
     def read_sensors(self) -> dict[str, dict[str, float]]:
@@ -453,8 +480,10 @@ class ConnectionSource:
                 values[joint.command_keys[Interface.POSITION]] = hold
             elif velocity_key is not None:
                 values[velocity_key] = 0.0
-        if self._base_port is not None:
-            values.update((f"{self._base}{SEPARATOR}{i}", 0.0) for i in TWIST_INTERFACES)
+        # A base takes speeds whatever the mode says, as a twist base behind an adapter does: an
+        # operator hold freezes these joints at zero through a position-mode command.
+        for name, axis, _pose in self._base_joints:
+            values[f"{self._base}{SEPARATOR}{axis}"] = winners.get(name, 0.0)
         return values
 
     def command_messages(self, values: Mapping[str, float], ts: float) -> list[PortMessage]:

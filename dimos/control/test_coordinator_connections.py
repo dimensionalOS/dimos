@@ -52,6 +52,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
 )
+from dimos.control.tasks.velocity_task.velocity_task import (
+    JointVelocityTask,
+    JointVelocityTaskConfig,
+)
 import dimos.control.tick_loop as tick_mod
 from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -235,6 +239,18 @@ class SendsPositions(BaseControlTask):
         pass
 
 
+class SendsVelocities(SendsPositions):
+    """Always active; drives fixed velocities."""
+
+    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+        self.last_state = state
+        return JointCommandOutput(
+            joint_names=list(self._positions),
+            velocities=list(self._positions.values()),
+            mode=ControlMode.VELOCITY,
+        )
+
+
 class StopsOnEstop(SendsPositions):
     """``SendsPositions`` that is inert while emergency-stopped. ``estops``
     lists what each ``set_estop`` call was told, in order."""
@@ -338,7 +354,7 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
 ) -> None:
     r = rig()
     assert r.coordinator.list_hardware() == ["mock", "go2"]
-    assert r.coordinator.list_joints() == MOCK_JOINTS
+    assert r.coordinator.list_joints() == [*MOCK_JOINTS, "go2/vx", "go2/vy", "go2/wz"]
 
     r.tick()
     assert r.sent == []
@@ -361,7 +377,97 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
     assert r.positions_sent() == [AT_REST, AT_REST]
     twist = r.sent[-1][1]
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-    assert r.coordinator.get_joint_positions() == dict.fromkeys(MOCK_JOINTS, 0.0)
+    assert r.coordinator.get_joint_positions() == {
+        **dict.fromkeys(MOCK_JOINTS, 0.0),
+        **dict.fromkeys(("go2/vx", "go2/vy", "go2/wz"), 0.0),
+    }
+
+
+def _report_both(r: Rig) -> None:
+    r.report_arm(*AT_REST)
+    r.report_base()
+
+
+def _twists(r: Rig) -> list[tuple[float, float, float]]:
+    return [
+        (msg.linear.x, msg.linear.y, msg.angular.z) for name, msg in r.sent if name == "go2_cmd_vel"
+    ]
+
+
+def test_a_task_drives_a_base_and_reads_its_pose_back(rig: Callable[..., Rig]) -> None:
+    """A base on ports has a twist base's three joints: velocities out, odometry back as their
+    positions, which is what a pose follower or a planned base segment tracks."""
+    r = rig()
+    r.coordinator.add_task(SendsVelocities({"go2/vx": 0.3, "go2/vy": -0.1, "go2/wz": 0.2}))
+    r.report_arm(*AT_REST)
+    r.report(
+        "go2_odom",
+        pose_from_values(
+            {"go2/base/x": 1.0, "go2/base/y": 2.0, "go2/base/yaw": 0.5},
+            "go2/base",
+            frame_id="odom",
+        ),
+    )
+    r.tick()
+
+    assert _twists(r)[-1] == pytest.approx((0.3, -0.1, 0.2))
+    positions = r.coordinator.get_joint_positions()
+    assert (positions["go2/vx"], positions["go2/vy"]) == (1.0, 2.0)
+    assert positions["go2/wz"] == pytest.approx(0.5)
+
+
+def test_a_twist_reaches_a_base_on_ports(rig: Callable[..., Rig]) -> None:
+    """The teleop path: twist_command maps onto the base's joints, whatever drives them."""
+    r = rig()
+    r.coordinator.add_task(
+        JointVelocityTask(
+            name="teleop",
+            config=JointVelocityTaskConfig(joint_names=["go2/vx", "go2/vy", "go2/wz"]),
+        ),
+        task_type="velocity",
+    )
+    _report_both(r)
+    r.coordinator._map_twist_to_base_joints(
+        Twist(linear=Vector3(0.2, 0.1, 0.0), angular=Vector3(0.0, 0.0, -0.3))
+    )
+    r.tick()
+
+    assert _twists(r)[-1] == pytest.approx((0.2, 0.1, -0.3))
+
+
+def test_a_base_on_ports_keeps_the_twist_stream_subscribed(rig: Callable[..., Rig]) -> None:
+    """With no base on an adapter the coordinator never listened, and teleop went nowhere."""
+    assert rig().coordinator._drives_a_base()
+    assert not rig(ArmCoordinator).coordinator._drives_a_base()
+
+
+def test_a_base_no_task_drives_is_told_zero(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    _report_both(r)
+    r.tick()
+    assert _twists(r) == [(0.0, 0.0, 0.0)]
+
+
+def test_adapters_and_connections_run_on_one_coordinator(rig: Callable[..., Rig]) -> None:
+    """An arm on a CAN bus stays on its adapter, in this process, beside a robot on ports: both
+    are read and written each tick, and one joint name reaches the right one."""
+    r = rig(
+        hardware=[
+            HardwareComponent(
+                hardware_id="left_arm",
+                hardware_type=HardwareType.MANIPULATOR,
+                joints=make_joints("left_arm", 2),
+                adapter_type="mock",
+            )
+        ]
+    )
+    assert r.coordinator.list_hardware() == ["left_arm", "mock", "go2"]
+    r.coordinator.add_task(SendsPositions({"left_arm/joint1": 0.1, "mock/joint1": 0.5}))
+    _report_both(r)
+    r.tick()
+
+    assert r.positions_sent()[-1][0] == 0.5, "the robot on ports"
+    assert r.coordinator.get_joint_positions()["left_arm/joint1"] == pytest.approx(0.1)
 
 
 def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., Rig]) -> None:
@@ -399,18 +505,20 @@ def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
     assert r.positions_sent()[-1] == [0.6, *AT_REST[1:]]
 
 
-def test_a_coordinator_with_robot_ports_takes_no_adapters(rig: Callable[..., Rig]) -> None:
-    adapter_arm = HardwareComponent(
-        hardware_id="left_arm",
+def test_a_robot_is_driven_through_ports_or_an_adapter_never_both(
+    rig: Callable[..., Rig],
+) -> None:
+    adapter_for_a_robot = HardwareComponent(
+        hardware_id="mock",
         hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints("left_arm", 2),
+        joints=make_joints("mock", 2),
         adapter_type="mock",
     )
 
     with pytest.raises(ValueError, match="one or the other"):
-        rig(hardware=[adapter_arm])
-    with pytest.raises(ValueError, match="connection modules"):
-        rig().coordinator.add_hardware(None, adapter_arm)  # type: ignore[arg-type]
+        rig(hardware=[adapter_for_a_robot])
+    with pytest.raises(ValueError, match="connection module"):
+        rig().coordinator.add_hardware(None, adapter_for_a_robot)  # type: ignore[arg-type]
 
 
 def test_connection_robots_stay_out_of_per_robot_joint_states(

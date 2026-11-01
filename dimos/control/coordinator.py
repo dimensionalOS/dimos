@@ -157,8 +157,9 @@ class ControlCoordinator(Module):
     commanded every tick once it has reported, and not while its newest
     reading is older than ``config.reading_timeout_s``. In a fleet, each
     connection module sets ``frame_id_prefix`` to its robot's name so
-    readings are told apart. A coordinator drives adapters or connection
-    modules, never both.
+    readings are told apart. A coordinator can drive adapters and connection
+    modules together, as long as no robot is both: an arm on a CAN bus stays
+    in this process, on an adapter, beside a base behind its connection module.
 
     Key design decisions:
     - Joint-centric commands (not hardware-centric)
@@ -418,17 +419,19 @@ class ControlCoordinator(Module):
         Raises:
             ValueError: If a port named ``<robot>_<kind>`` carries the wrong
                 message, a robot cannot be driven (see ``ConnectionSource``),
-                or this coordinator also has hardware adapters.
+                or one is also a hardware adapter's id.
         """
         commands = _robot_ports(self.outputs, COMMAND_PORTS)
         readings = _robot_ports(self.inputs, READING_PORTS)
         robots = list(dict.fromkeys((*commands, *readings)))
         if not robots:
             return
-        if self.config.hardware:
+        adapters = {component.hardware_id for component in self.config.hardware}
+        both = sorted(adapters & set(robots))
+        if both:
             raise ValueError(
-                f"{type(self).__name__} has hardware adapters and ports for robots {robots}; "
-                "a coordinator drives one or the other, not both"
+                f"{type(self).__name__} has hardware adapters and ports for {both}; "
+                "a robot is driven through one or the other, not both"
             )
         with self._hardware_lock:
             for robot in robots:
@@ -485,10 +488,10 @@ class ControlCoordinator(Module):
                 f"{type(adapter).__name__}"
             )
 
-        if self._connections:
+        if component.hardware_id in self._connections:
             raise ValueError(
-                f"cannot add hardware {component.hardware_id!r}: this coordinator drives "
-                "connection modules, and a coordinator drives one or the other, not both"
+                f"cannot add hardware {component.hardware_id!r}: this coordinator drives it "
+                "through a connection module, and a robot is driven through one or the other"
             )
 
         if self.config.publish_robot_joint_states:
@@ -731,11 +734,17 @@ class ControlCoordinator(Module):
 
         return control_task_registry.bindings_for(task_type).exposes
 
+    def _drives_a_base(self) -> bool:
+        """Whether a base is driven here, on an adapter or behind a connection module."""
+        with self._hardware_lock:
+            return any(
+                hw.component.hardware_type == HardwareType.BASE for hw in self._hardware.values()
+            ) or any(source.base_joint_names for source in self._connections.values())
+
     def _sync_stream_subscriptions(self) -> None:
         """Subscribe streams that gained consumers; drop those whose last consumer left.
 
-        A consumer is a card-declared task route, or BASE hardware for
-        ``twist_command``. The whole compute+apply runs under
+        A consumer is a card-declared task route, or a base for ``twist_command``. The whole compute+apply runs under
         ``_subscribe_lock`` (with ``_task_lock`` and ``_hardware_lock`` taken
         sequentially inside it) so concurrent syncs cannot apply a stale
         ``active`` set last. The nesting is deadlock-free: no code path
@@ -746,12 +755,7 @@ class ControlCoordinator(Module):
                 return
             with self._task_lock:
                 active = {stream for stream, entries in self._routes.items() if entries}
-            with self._hardware_lock:
-                has_base = any(
-                    hw.component.hardware_type == HardwareType.BASE
-                    for hw in self._hardware.values()
-                )
-            if has_base:
+            if self._drives_a_base():
                 active.add("twist_command")
             for stream in active - self._stream_unsubs.keys():
                 try:
@@ -835,19 +839,29 @@ class ControlCoordinator(Module):
         velocities: list[float] = []
 
         with self._hardware_lock:
-            for hw in self._hardware.values():
-                if hw.component.hardware_type != HardwareType.BASE:
+            base_joints = [
+                *(
+                    joint_name
+                    for hw in self._hardware.values()
+                    if hw.component.hardware_type == HardwareType.BASE
+                    for joint_name in hw.joint_names
+                ),
+                *(
+                    joint_name
+                    for source in self._connections.values()
+                    for joint_name in source.base_joint_names
+                ),
+            ]
+            for joint_name in base_joints:
+                # Extract suffix (e.g., "base/vx" → "vx")
+                _, suffix = split_joint_name(joint_name)
+                mapping = TWIST_SUFFIX_MAP.get(suffix)
+                if mapping is None:
                     continue
-                for joint_name in hw.joint_names:
-                    # Extract suffix (e.g., "base/vx" → "vx")
-                    _, suffix = split_joint_name(joint_name)
-                    mapping = TWIST_SUFFIX_MAP.get(suffix)
-                    if mapping is None:
-                        continue
-                    group, axis = mapping
-                    value = getattr(getattr(msg, group), axis)
-                    names.append(joint_name)
-                    velocities.append(value)
+                group, axis = mapping
+                value = getattr(getattr(msg, group), axis)
+                names.append(joint_name)
+                velocities.append(value)
 
         if names:
             joint_state = JointState(name=names, velocity=velocities)

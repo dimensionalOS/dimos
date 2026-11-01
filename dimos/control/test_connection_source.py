@@ -27,6 +27,7 @@ from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
@@ -248,7 +249,32 @@ def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     assert values == {"go2/base/vx": 0.0, "go2/base/vy": 0.0, "go2/base/wz": 0.0}
     assert first.port == "cmd_vel" and rest == []
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-    assert source.joint_names == []
+
+
+def test_a_base_has_a_twist_bases_joints() -> None:
+    """Tasks claim it by its three velocity joints, and read its pose back from them."""
+    source = base()
+    source.on_message("odom", PoseStamped(frame_id="odom", position=Vector3(1.0, 2.0, 0.0)))
+    source.on_message(
+        "base_velocity",
+        TwistStamped(frame_id="base", linear=Vector3(0.1, 0.0, 0.0)),
+    )
+
+    assert source.joint_names == source.base_joint_names == ["go2/vx", "go2/vy", "go2/wz"]
+    joints = source.read_joints()
+    assert joints.joint_positions == {"go2/vx": 1.0, "go2/vy": 2.0, "go2/wz": 0.0}
+    assert joints.joint_velocities["go2/vx"] == 0.1
+
+    values = source.command({"go2/vx": 0.3, "go2/wz": -0.2}, ControlMode.VELOCITY)
+    assert values == {"go2/base/vx": 0.3, "go2/base/vy": 0.0, "go2/base/wz": -0.2}
+
+
+def test_a_hold_stops_a_base_through_a_position_command() -> None:
+    """The operator hold freezes every joint in one position-mode command, zero for a base's."""
+    source = base()
+    source.on_message("odom", PoseStamped(frame_id="odom"))
+    values = source.command(dict.fromkeys(source.joint_names, 0.0), ControlMode.SERVO_POSITION)
+    assert values == {"go2/base/vx": 0.0, "go2/base/vy": 0.0, "go2/base/wz": 0.0}
 
 
 def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> None:
