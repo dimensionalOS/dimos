@@ -179,7 +179,7 @@ fn wall_push(plg: &PlannerGraph, p: (f32, f32, f32), wc: &WallCost) -> Option<(f
 
 /// Wall-penalized length plus step penalty of the straight chord between two
 /// world points. INF when the chord is infeasible.
-fn chord_cost(
+pub(crate) fn chord_cost(
     plg: &PlannerGraph,
     a: (f32, f32, f32),
     b: (f32, f32, f32),

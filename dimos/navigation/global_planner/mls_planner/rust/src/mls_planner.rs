@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
@@ -95,6 +95,17 @@ pub struct Config {
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
+    /// A replan replaces the route being followed only when it costs this
+    /// fraction less, while that route is still clear to the goal.
+    #[validate(range(min = 0.0, max = 1.0))]
+    pub path_switch_margin: f32,
+    /// Occupied neighbors (of 26) a live-update voxel needs to count. 0 keeps
+    /// every voxel; 1 drops lone voxels, which no solid object produces.
+    pub min_neighbor_voxels: u32,
+    /// Consecutive live region updates a voxel must arrive in before it enters
+    /// the map. 1 takes every voxel at once; 2 drops one-update sensor speckle.
+    #[validate(range(min = 1))]
+    pub obstacle_confirm_updates: u32,
 }
 
 /// The soft wall penalty needs a non-zero zone to act in.
@@ -158,6 +169,28 @@ impl Config {
     }
 }
 
+/// The points whose voxel has at least min_neighbor_voxels occupied neighbors
+/// in the same cloud.
+fn drop_isolated_voxels(points: &[(f32, f32, f32)], config: &Config) -> Vec<(f32, f32, f32)> {
+    if config.min_neighbor_voxels == 0 {
+        return points.to_vec();
+    }
+    let vs = config.voxel_size;
+    let occupied: AHashSet<VoxelKey> = points.iter().map(|&p| voxelize(p, vs)).collect();
+    let neighbors = |(x, y, z): VoxelKey| {
+        let offsets = (-1..=1)
+            .flat_map(|dx| (-1..=1).flat_map(move |dy| (-1..=1).map(move |dz| (dx, dy, dz))));
+        offsets
+            .filter(|&d| d != (0, 0, 0) && occupied.contains(&(x + d.0, y + d.1, z + d.2)))
+            .count() as u32
+    };
+    points
+        .par_iter()
+        .copied()
+        .filter(|&p| neighbors(voxelize(p, vs)) >= config.min_neighbor_voxels)
+        .collect()
+}
+
 pub(crate) const DEBUG_LOG_PERIOD: Duration = Duration::from_secs(5);
 
 /// Cells a repair window reaches past the band it must keep exact.
@@ -208,6 +241,9 @@ impl RegionBounds {
     }
 }
 
+/// A goal and the waypoint route handed out for it.
+type GoalRoute = ((f32, f32, f32), Vec<(f32, f32, f32)>);
+
 pub struct Planner {
     // The planner owns its worker pool, so its thread setting cannot collide
     // with other components sharing the process.
@@ -218,6 +254,13 @@ pub struct Planner {
     // Last successful path and its goal, for safe truncation when a later
     // replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
+    // Last route handed out and its goal. Replans keep following it while it
+    // stays clear and no fresh plan is enough cheaper, so the route does not
+    // flip between near-equal or transiently blocked alternatives.
+    committed: Option<GoalRoute>,
+    // Live-update voxels not yet in the map, with how many consecutive region
+    // updates have carried them so far.
+    unconfirmed: AHashMap<VoxelKey, u32>,
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
     last_result: Option<((f32, f32, f32), bool)>,
@@ -231,6 +274,8 @@ impl Planner {
             voxel_map: AHashSet::new(),
             by_col: ColumnIz::default(),
             last_path: None,
+            committed: None,
+            unconfirmed: AHashMap::new(),
             last_result: None,
         }
     }
@@ -242,6 +287,7 @@ impl Planner {
             let clearance = config.headroom_cells();
 
             self.voxel_map.clear();
+            self.unconfirmed.clear();
             for &p in points {
                 self.voxel_map.insert(voxelize(p, voxel_size));
             }
@@ -269,7 +315,9 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
-        self.update_region_within(local_points, bounds, config, config.node_window_cells())
+        let connected = drop_isolated_voxels(local_points, config);
+        let confirmed = self.confirm_new_voxels(&connected, bounds, config);
+        self.update_region_within(&confirmed, bounds, config, config.node_window_cells())
     }
 
     /// update_region for a region of a seeded map. It repairs out to the full
@@ -282,6 +330,44 @@ impl Planner {
         config: &Config,
     ) -> Option<ColumnWindow> {
         self.update_region_within(points, bounds, config, config.buffer_window_cells())
+    }
+
+    /// The live points whose voxels are already mapped or have now arrived in
+    /// obstacle_confirm_updates consecutive region updates. A voxel seen in a
+    /// single update (sensor speckle) never reaches the surface or the graph.
+    fn confirm_new_voxels(
+        &mut self,
+        local_points: &[(f32, f32, f32)],
+        bounds: &RegionBounds,
+        config: &Config,
+    ) -> Vec<(f32, f32, f32)> {
+        if config.obstacle_confirm_updates <= 1 {
+            return local_points.to_vec();
+        }
+        let voxel_size = config.voxel_size;
+        let mut seen: AHashMap<VoxelKey, u32> = AHashMap::new();
+        let mut confirmed = Vec::with_capacity(local_points.len());
+        for &p in local_points {
+            let k = voxelize(p, voxel_size);
+            if self.voxel_map.contains(&k) {
+                confirmed.push(p);
+                continue;
+            }
+            let streak = *seen
+                .entry(k)
+                .or_insert_with(|| self.unconfirmed.get(&k).copied().unwrap_or(0) + 1);
+            if streak >= config.obstacle_confirm_updates {
+                confirmed.push(p);
+            }
+        }
+        // A streak breaks when an update covering the voxel leaves it out.
+        self.unconfirmed
+            .retain(|&k, _| !bounds.contains_voxel(k, voxel_size));
+        self.unconfirmed.extend(
+            seen.into_iter()
+                .filter(|&(_, streak)| streak < config.obstacle_confirm_updates),
+        );
+        confirmed
     }
 
     fn update_region_within(
@@ -677,15 +763,23 @@ impl Planner {
         goal: (f32, f32, f32),
         config: &Config,
     ) -> Vec<(f32, f32, f32)> {
-        if !self.graph.nodes.is_empty() {
-            if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
-                if self.last_result != Some((goal, true)) {
-                    tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
-                }
-                self.last_result = Some((goal, true));
-                self.last_path = Some((goal, cells));
-                return waypoints;
+        let fresh = if self.graph.nodes.is_empty() {
+            None
+        } else {
+            planner::plan(&self.graph, start, goal, config)
+        };
+        if let Some(kept) = self.keep_committed(start, goal, fresh.as_ref().map(|f| &f.0), config) {
+            self.last_result = Some((goal, true));
+            return kept;
+        }
+        if let Some((waypoints, cells)) = fresh {
+            if self.last_result != Some((goal, true)) {
+                tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
             }
+            self.last_result = Some((goal, true));
+            self.last_path = Some((goal, cells));
+            self.committed = Some((goal, waypoints.clone()));
+            return waypoints;
         }
         if self.last_result != Some((goal, false)) {
             tracing::warn!(
@@ -694,12 +788,37 @@ impl Planner {
             );
         }
         self.last_result = Some((goal, false));
+        self.committed = None;
         match &self.last_path {
             Some((cached_goal, cells)) if *cached_goal == goal => {
                 planner::truncate_to_safe(&self.graph, cells, start, config)
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The committed route from the robot on, while it stays clear and the
+    /// fresh plan does not beat it by path_switch_margin.
+    fn keep_committed(
+        &self,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+        fresh: Option<&Vec<(f32, f32, f32)>>,
+        config: &Config,
+    ) -> Option<Vec<(f32, f32, f32)>> {
+        let (committed_goal, route) = self.committed.as_ref()?;
+        if *committed_goal != goal {
+            return None;
+        }
+        let ahead = planner::route_ahead(route, start);
+        let kept_cost = planner::route_cost(&self.graph, &ahead, config);
+        if !kept_cost.is_finite() {
+            return None;
+        }
+        let fresh_cost = fresh.map_or(f32::INFINITY, |wp| {
+            planner::route_cost(&self.graph, wp, config)
+        });
+        (fresh_cost >= kept_cost * (1.0 - config.path_switch_margin)).then_some(ahead)
     }
 
     pub fn graph(&self) -> &PlannerGraph {

@@ -92,6 +92,9 @@ fn test_config() -> Config {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         worker_threads: 4,
+        path_switch_margin: 0.0,
+        obstacle_confirm_updates: 1,
+        min_neighbor_voxels: 0,
     }
 }
 
@@ -1437,4 +1440,171 @@ fn chains_reach_their_nodes_through_a_stream_of_changes() {
             assert_chains_reach_their_nodes(&p);
         }
     }
+}
+
+/// A 6 m by 4 m floor split by a wall at y = 2 m with two equal gaps, at
+/// x = 1-2 m and x = 4-5 m.
+fn twin_gap_world() -> Vec<(f32, f32, f32)> {
+    let vs = 0.1_f32;
+    let half = vs * 0.5;
+    let mut pts = Vec::new();
+    for ix in 0..60 {
+        for iy in 0..40 {
+            pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
+        }
+        if (10..20).contains(&ix) || (40..50).contains(&ix) {
+            continue;
+        }
+        for iz in 0..7 {
+            pts.push((
+                ix as f32 * vs + half,
+                20.0 * vs + half,
+                iz as f32 * vs + half,
+            ));
+        }
+    }
+    pts
+}
+
+/// Which gap a route crosses the wall through: true for the x = 4-5 m one.
+fn crosses_east(w: &[(f32, f32, f32)]) -> bool {
+    let crossing = w
+        .windows(2)
+        .find(|s| (s[0].1 - 2.05) * (s[1].1 - 2.05) <= 0.0)
+        .expect("the route crosses the wall");
+    crossing[0].0 > 3.0
+}
+
+#[test]
+fn replan_keeps_the_committed_route_over_a_marginally_cheaper_one() {
+    let mut cfg = test_config();
+    cfg.wall_clearance_m = 0.1;
+    cfg.path_switch_margin = 0.3;
+    let goal = (3.0, 3.5, 0.05);
+    let start = (2.1, 0.5, 0.05);
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&twin_gap_world(), &cfg);
+
+    // West of center the robot commits to the west gap.
+    let first = p.plan_or_truncate(start, goal, &cfg);
+    assert!(!crosses_east(&first));
+    // Drifted 0.4 m east, a fresh plan already takes the east gap.
+    let drifted = (2.5, 0.5, 0.05);
+    assert!(crosses_east(
+        &p.plan(drifted, goal, &cfg).expect("fresh plan exists")
+    ));
+    let kept = p.plan_or_truncate(drifted, goal, &cfg);
+    assert!(
+        !crosses_east(&kept),
+        "replan flipped to a route no cheaper than the committed one"
+    );
+    assert_eq!(kept[0], drifted, "the kept route starts at the robot");
+    // Well east, the east gap is cheaper, but not by 30%.
+    let east = (3.5, 0.5, 0.05);
+    assert!(!crosses_east(&p.plan_or_truncate(east, goal, &cfg)));
+}
+
+#[test]
+fn replan_drops_the_committed_route_once_it_is_blocked() {
+    let mut cfg = test_config();
+    cfg.wall_clearance_m = 0.1;
+    cfg.path_switch_margin = 0.9;
+    let goal = (3.0, 3.5, 0.05);
+    let mut p = Planner::new(cfg.worker_threads);
+    let mut world = twin_gap_world();
+    p.update_global_map(&world, &cfg);
+    assert!(!crosses_east(&p.plan_or_truncate(
+        (2.1, 0.5, 0.05),
+        goal,
+        &cfg
+    )));
+
+    // Wall off the west gap: the committed route is blocked, so the far
+    // costlier east route takes over despite the margin.
+    let vs = cfg.voxel_size;
+    for ix in 10..20 {
+        for iz in 0..7 {
+            world.push((
+                ix as f32 * vs + 0.05,
+                20.0 * vs + 0.05,
+                iz as f32 * vs + 0.05,
+            ));
+        }
+    }
+    p.update_global_map(&world, &cfg);
+    assert!(crosses_east(&p.plan_or_truncate(
+        (2.1, 0.5, 0.05),
+        goal,
+        &cfg
+    )));
+}
+
+/// A floor patch region update, plus one obstacle column at (1.05, 1.05).
+fn patch_with_column(column: bool) -> (RegionBounds, Vec<(f32, f32, f32)>) {
+    let vs = 0.1_f32;
+    let mut pts: Vec<(f32, f32, f32)> = (0..20)
+        .flat_map(|ix| (0..20).map(move |iy| (ix as f32 * vs + 0.05, iy as f32 * vs + 0.05, 0.05)))
+        .collect();
+    if column {
+        pts.extend((2..6).map(|iz| (1.05, 1.05, iz as f32 * vs + 0.05)));
+    }
+    let bounds = RegionBounds {
+        origin_x: 1.0,
+        origin_y: 1.0,
+        radius: 1.5,
+        z_min: -1.0,
+        z_max: 2.0,
+    };
+    (bounds, pts)
+}
+
+#[test]
+fn a_voxel_enters_the_map_only_after_the_confirming_updates() {
+    let mut cfg = test_config();
+    cfg.obstacle_confirm_updates = 2;
+    let column_voxel = (10, 10, 3);
+    let mut p = Planner::new(cfg.worker_threads);
+    let (bounds, floor) = patch_with_column(false);
+    let (_, with_column) = patch_with_column(true);
+
+    // The floor itself waits one update too.
+    p.update_region(&floor, &bounds, &cfg);
+    assert_eq!(p.voxel_count(), 0);
+    p.update_region(&floor, &bounds, &cfg);
+    assert_eq!(p.voxel_count(), 400);
+
+    // One update of the column (speckle) never reaches the map.
+    p.update_region(&with_column, &bounds, &cfg);
+    assert!(!voxel_set(&p).contains(&column_voxel));
+    p.update_region(&floor, &bounds, &cfg);
+    p.update_region(&with_column, &bounds, &cfg);
+    assert!(
+        !voxel_set(&p).contains(&column_voxel),
+        "a broken streak starts over"
+    );
+    // Two updates in a row confirm it.
+    p.update_region(&with_column, &bounds, &cfg);
+    assert!(voxel_set(&p).contains(&column_voxel));
+    // Removal is immediate.
+    p.update_region(&floor, &bounds, &cfg);
+    assert!(!voxel_set(&p).contains(&column_voxel));
+}
+
+#[test]
+fn lone_voxels_are_dropped_and_connected_ones_kept() {
+    let mut cfg = test_config();
+    cfg.min_neighbor_voxels = 1;
+    let vs = cfg.voxel_size;
+    let (bounds, mut pts) = patch_with_column(true);
+    // A lone voxel floating 0.5 m over the floor.
+    pts.push((0.55, 0.55, 5.0 * vs + 0.05));
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_region(&pts, &bounds, &cfg);
+    let voxels = voxel_set(&p);
+    assert!(!voxels.contains(&(5, 5, 5)), "the lone voxel is speckle");
+    assert!(
+        voxels.contains(&(10, 10, 5)),
+        "the column's top has a neighbor below"
+    );
+    assert_eq!(voxels.len(), 400 + 4);
 }
