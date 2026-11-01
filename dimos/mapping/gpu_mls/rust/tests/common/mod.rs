@@ -40,6 +40,7 @@ pub fn cpu_config(voxel_size: f32) -> Config {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,

@@ -19,6 +19,8 @@
 //! `both` runs the two in lockstep, then plans from the first pose to goals
 //! every 2 m along the trajectory on each and compares which it reaches.
 //! `cargo run --release --example nav_replay -- <frames> cpu|gpu|both [max_frames] [skip]`
+//! On the cpu path, NAV_REPLAY_GPU_TRACER runs the ray tracer on the GPU (the
+//! live default), and NAV_REPLAY_HEIGHTS links steps by the local map's surface_z.
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -65,7 +67,7 @@ impl Iterator for Frames {
     }
 }
 
-fn mapper_config(gpu: bool) -> Config {
+fn mapper_config(gpu: bool, surface_heights: bool) -> Config {
     Config {
         voxel_size: VOXEL_SIZE_M,
         fine_divisor: 3,
@@ -81,6 +83,7 @@ fn mapper_config(gpu: bool) -> Config {
         gpu,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights,
         support_min: 4,
         emit_every: 1,
         global_emit_every: 50,
@@ -146,6 +149,8 @@ fn summarize(name: &str, mut ms: Vec<f64>) {
 /// One map path: the ray tracer's Mapper feeding the planner, and its timings.
 struct Pipeline {
     gpu: bool,
+    /// The cpu path links steps by the local map's surface heights.
+    heights: bool,
     mapper: Mapper,
     planner: Planner,
     config: PlannerConfig,
@@ -168,8 +173,10 @@ struct Pipeline {
 
 impl Pipeline {
     fn new(gpu: bool) -> Self {
-        let mut mapper = Mapper::new(mapper_config(gpu));
-        assert_eq!(mapper.on_gpu(), gpu, "the GPU map did not come up");
+        let heights = !gpu && std::env::var("NAV_REPLAY_HEIGHTS").is_ok();
+        let gpu_tracer = gpu || std::env::var("NAV_REPLAY_GPU_TRACER").is_ok();
+        let mut mapper = Mapper::new(mapper_config(gpu_tracer, heights));
+        assert_eq!(mapper.on_gpu(), gpu_tracer, "the GPU map did not come up");
         if gpu && std::env::var("NAV_REPLAY_PASSES").is_ok() {
             assert!(mapper.time_gpu_passes(), "no GPU timestamps");
         }
@@ -185,6 +192,7 @@ impl Pipeline {
         };
         Self {
             gpu,
+            heights,
             mapper,
             planner: Planner::new(config.worker_threads),
             config,
@@ -213,12 +221,20 @@ impl Pipeline {
             return;
         }
         let cylinder = self.mapper.take_local_bounds();
-        let local: Vec<Point> = self
-            .mapper
-            .local_points(&cylinder.bounds())
-            .chunks_exact(3)
-            .map(|p| (p[0], p[1], p[2]))
-            .collect();
+        let (local, surface_z): (Vec<Point>, Vec<f32>) = match self.heights {
+            true => self
+                .mapper
+                .local_surface_points(&cylinder.bounds())
+                .chunks_exact(4)
+                .map(|p| ((p[0], p[1], p[2]), p[3]))
+                .unzip(),
+            false => self
+                .mapper
+                .local_points(&cylinder.bounds())
+                .chunks_exact(3)
+                .map(|p| ((p[0], p[1], p[2]), f32::NAN))
+                .unzip(),
+        };
         let mapped = Instant::now();
         let cells = match self.gpu {
             true => self.mapper.surfaces(&cylinder, &self.request).map(|flat| {
@@ -255,7 +271,15 @@ impl Pipeline {
                     .update_region_with_surface(&local, cells, &region, &self.config)
             }
             None => {
-                let window = self.planner.update_region(&local, &region, &self.config);
+                let window = match self.heights {
+                    true => self.planner.update_region_with_heights(
+                        &local,
+                        &surface_z,
+                        &region,
+                        &self.config,
+                    ),
+                    false => self.planner.update_region(&local, &region, &self.config),
+                };
                 let redo = self.planner.last_redo();
                 self.dirty.push(redo.changed_columns as f64);
                 if redo.region_columns > 0 {

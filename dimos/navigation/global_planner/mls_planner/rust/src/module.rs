@@ -48,6 +48,8 @@ enum MapUpdate {
         /// The region's surface from the GPU: voxel center, plane height, then
         /// boundary distance.
         surface: Option<Vec<[f32; 5]>>,
+        /// Each point's surface height (m), when the local map carries surface_z.
+        surface_z: Option<Vec<f32>>,
     },
     Global {
         points: Vec<Xyz>,
@@ -252,6 +254,7 @@ pub struct MlsPlanner {
     #[input(decode = PointCloud2::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
 
+    // With a surface_z field (the ray tracer's fitted plane height per voxel), steps link by those heights.
     #[input(decode = PointCloud2::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,
 
@@ -447,13 +450,14 @@ impl MlsPlanner {
         };
         let bounds = self.pending_bounds.take().expect("checked above");
         let cloud = self.pending_local.take().expect("checked above");
-        if let Some(points) = cloud_points(&cloud, "local_map") {
+        if let Some((points, surface_z)) = local_map_points(&cloud) {
             let received = Instant::now();
             self.hand_off(MapUpdate::Region {
                 points,
                 bounds,
                 received,
                 surface,
+                surface_z,
             });
         }
     }
@@ -710,6 +714,7 @@ impl Worker {
                 bounds,
                 received,
                 surface,
+                surface_z,
             } => {
                 let Some((_, _, sensor_z)) = self.base_position() else {
                     warn!(
@@ -730,7 +735,12 @@ impl Worker {
                             .collect();
                         planner.update_region_with_surface(&points, &cells, &region, &self.config)
                     }
-                    None => planner.update_region(&points, &region, &self.config),
+                    None => match &surface_z {
+                        Some(z) => {
+                            planner.update_region_with_heights(&points, z, &region, &self.config)
+                        }
+                        None => planner.update_region(&points, &region, &self.config),
+                    },
                 };
                 if let Some(window) = window {
                     viz.mark_window(window);
@@ -1106,6 +1116,24 @@ fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<Xyz>> {
                 topic,
                 "Failed to extract cloud points, dropped it.",
             );
+            None
+        }
+    }
+}
+
+/// A local map's points, and each one's surface height when it carries surface_z.
+fn local_map_points(msg: &PointCloud2) -> Option<(Vec<Xyz>, Option<Vec<f32>>)> {
+    if !msg.fields.iter().any(|f| f.name == "surface_z") {
+        return cloud_points(msg, "local_map").map(|points| (points, None));
+    }
+    match extract_fields(msg, ["x", "y", "z", "surface_z"]) {
+        Ok(rows) => {
+            let (points, z): (Vec<Xyz>, Vec<f32>) =
+                rows.into_iter().map(|[x, y, z, h]| ((x, y, z), h)).unzip();
+            Some((points, Some(z)))
+        }
+        Err(e) => {
+            warn_throttled!(Duration::from_secs(1), error = %e, "Bad local_map surface_z, dropped it.");
             None
         }
     }

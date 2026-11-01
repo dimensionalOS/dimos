@@ -77,6 +77,7 @@ pub struct RayTracingVoxelMap {
     #[output(encode = PointCloud2::encode)]
     surface_cells: Output<PointCloud2>,
 
+    // Voxel centers, plus each one's surface height (m) as surface_z with surface_heights on.
     #[output(encode = PointCloud2::encode)]
     local_map: Output<PointCloud2>,
 
@@ -450,6 +451,7 @@ impl Worker {
             .as_ref()
             .filter(|_| self.jobs.is_empty());
         let emit_fine = self.config.emit_fine;
+        let surface_heights = self.config.surface_heights;
         let process_start = Instant::now();
         let (region, global_points, local_points, fine_points, surface_points) =
             tokio::task::block_in_place(|| {
@@ -457,7 +459,10 @@ impl Worker {
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
                 let cylinder = region.map(|c| c.bounds());
                 let global_points = mapper.global_due().then(|| mapper.global_points());
-                let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
+                let local_points = cylinder.as_ref().map(|cyl| match surface_heights {
+                    true => mapper.local_surface_points(cyl),
+                    false => mapper.local_points(cyl),
+                });
                 let fine_points = emit_fine
                     .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
                     .flatten();
@@ -494,7 +499,10 @@ impl Worker {
             publish_cloud(&self.global_map, &global).await;
         }
         if let Some(points) = local_points {
-            let local = points_to_cloud(&points, out_frame_id, stamp.clone());
+            let local = match surface_heights {
+                true => surface_points_to_cloud(&points, out_frame_id, stamp.clone()),
+                false => points_to_cloud(&points, out_frame_id, stamp.clone()),
+            };
             publish_cloud(&self.local_map, &local).await;
         }
         if let Some(points) = fine_points {
@@ -846,6 +854,13 @@ fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     make_cloud(data, n, &["x", "y", "z", "intensity"], frame_id, stamp)
 }
 
+/// Pack flat (x, y, z, surface_z) quadruples into an LCM cloud message.
+fn surface_points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let data: Vec<u8> = points.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let n = (points.len() / 4) as i32;
+    make_cloud(data, n, &["x", "y", "z", "surface_z"], frame_id, stamp)
+}
+
 async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
     if let Err(e) = out.publish(cloud).await {
         error_throttled!(
@@ -882,6 +897,7 @@ mod tests {
             gpu: false,
             gpu_max_points: 1 << 18,
             gpu_list_capacity: 1 << 20,
+            surface_heights: false,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,

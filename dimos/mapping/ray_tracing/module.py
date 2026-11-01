@@ -66,6 +66,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     gpu_max_points: int = 2**18
     # Entries in each per-frame GPU work list (hits, misses, ...).
     gpu_list_capacity: int = 2**20
+    # Carry each local_map voxel's surface height (m, from its fitted plane) as a
+    # surface_z field in place of intensity, for the planner to link steps by.
+    surface_heights: bool = True
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4
@@ -112,6 +115,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     global_map: Out[PointCloud2]
     # The GPU's MLS surface over local_map's columns, stamped like it: voxel centers, plane height (m) as intensity.
     surface_cells: Out[PointCloud2]
+    # Voxel centers, plus each one's surface height (m) as surface_z with surface_heights on.
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]
     region_bounds: Out[PoseStamped]

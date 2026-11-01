@@ -20,8 +20,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
-    global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
-    Cylinder, FrameHits, LocalBounds, VoxelMap,
+    emit_surface_points, global_normal_fits, global_normals, seed_points, seed_tile, update_map,
+    ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -332,6 +332,15 @@ impl Mapper {
         })
     }
 
+    /// local_points with each voxel's surface height (m) after its center, flat
+    /// (x, y, z, surface_z) quadruples. Fits the planes it has not cached.
+    pub fn local_surface_points(&mut self, bounds: &LocalBounds) -> Vec<f32> {
+        let pool = Arc::clone(&self.pool);
+        let voxel_size = self.config.voxel_size;
+        let (map, live) = (&mut self.map, &self.live.coarse);
+        pool.install(|| emit_surface_points(map, voxel_size, Some(bounds), live))
+    }
+
     /// Fine cells within `bounds` under the same gates as `local_points`, or
     /// None when the fine layer is off.
     pub fn fine_points(&self, bounds: &LocalBounds) -> Option<Vec<f32>> {
@@ -536,11 +545,19 @@ mod gpu {
             // The live hits are the ones the frame changed; an unchanged hit is
             // already at full health, so the map holds it anyway.
             let mut coarse = AHashSet::with_capacity(report.hits);
+            let (mut created, mut removed) = (Vec::new(), Vec::new());
             for (i, voxel) in report.voxels.iter().enumerate() {
+                let existed = config.surface_heights && mirror.voxels.get(&voxel.key).is_some();
                 if mirror.mirror_voxel(voxel.key, voxel.health, voxel.fine, self.tracking) {
                     let (x, y, z) = voxel.key;
                     let span = self.dirty.entry((x, y)).or_insert((z, z));
                     *span = (span.0.min(z), span.1.max(z));
+                }
+                if config.surface_heights && existed != voxel.health.is_some() {
+                    match voxel.health {
+                        Some(_) => created.push(voxel.key),
+                        None => removed.push(voxel.key),
+                    }
                 }
                 if voxel.health.is_some() {
                     self.widen_z(voxel.key.2);
@@ -548,6 +565,9 @@ mod gpu {
                 if i < report.hits {
                     coarse.insert(voxel.key);
                 }
+            }
+            if config.surface_heights {
+                mirror.observe_mirrored(points, origin, config, &created, &removed);
             }
             let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1e3;
             self.frame = GpuFrame {
@@ -970,6 +990,7 @@ mod tests {
             gpu: false,
             gpu_max_points: 1 << 18,
             gpu_list_capacity: 1 << 20,
+            surface_heights: false,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
@@ -1143,6 +1164,51 @@ mod tests {
         assert_eq!(mapper.global_points().len(), 30);
     }
 
+    /// A floor between grid lines comes out at its own height, not its voxel's
+    /// top face, and a voxel with one stacked on it keeps its top face.
+    #[test]
+    fn local_surface_points_carry_the_plane_height() {
+        const FLOOR_Z: f32 = 0.12;
+        let mut mapper = Mapper::new(Config {
+            voxel_size: 0.1,
+            shadow_depth: 0.1,
+            surface_heights: true,
+            ..config()
+        });
+        let mut cloud: Vec<Point> = Vec::new();
+        for i in 0..40 {
+            for j in 0..40 {
+                cloud.push((i as f32 * 0.05 - 1.0, j as f32 * 0.05 - 1.0, FLOOR_Z));
+            }
+        }
+        // A post on the floor at (0.55, 0.55).
+        for k in 0..6 {
+            cloud.push((0.55, 0.55, 0.22 + k as f32 * 0.02));
+        }
+        mapper.add_frame_world(cloud, (0.0, 0.0, 1.0));
+        let everywhere = Cylinder {
+            cx: 0.0,
+            cy: 0.0,
+            radius: 100.0,
+            z_min: -1.0,
+            z_max: 10.0,
+        }
+        .bounds();
+        let quads = mapper.local_surface_points(&everywhere);
+        assert_eq!(quads.len(), 4 * mapper.local_points(&everywhere).len() / 3);
+        let mut floor = 0;
+        for q in quads.chunks_exact(4) {
+            let post = (q[0] - 0.55).abs() < 1e-3 && (q[1] - 0.55).abs() < 1e-3;
+            if post && (q[2] - 0.15).abs() < 1e-3 {
+                assert!((q[3] - 0.2).abs() < 1e-4, "covered voxel at {}", q[3]);
+            } else if (q[2] - 0.15).abs() < 1e-3 && q[0].abs() < 0.8 && q[1].abs() < 0.8 && !post {
+                floor += 1;
+                assert!((q[3] - FLOOR_Z).abs() < 0.005, "floor at {}", q[3]);
+            }
+        }
+        assert!(floor > 100, "{floor} floor voxels checked");
+    }
+
     #[test]
     fn fine_points_none_when_layer_off() {
         let mut mapper = Mapper::new(config());
@@ -1200,6 +1266,10 @@ mod tests {
             support_min: 4,
             ..config()
         };
+        let cfg = Config {
+            surface_heights: true,
+            ..cfg
+        };
         let mut cpu = Mapper::new(cfg.clone());
         let mut gpu = Mapper::new(Config { gpu: true, ..cfg });
         if !gpu.on_gpu() {
@@ -1221,6 +1291,24 @@ mod tests {
             assert!(
                 n > 0 && local <= EMIT_TOLERANCE,
                 "local maps differ on {local} of {n}"
+            );
+            // The mirror folds the frame into its own moments, so surface heights match too.
+            let heights = |quads: Vec<f32>| -> ahash::AHashMap<(u32, u32, u32), f32> {
+                quads
+                    .chunks_exact(4)
+                    .map(|q| ((q[0].to_bits(), q[1].to_bits(), q[2].to_bits()), q[3]))
+                    .collect()
+            };
+            let cpu_heights = heights(cpu.local_surface_points(&cpu_bounds.bounds()));
+            let gpu_heights = heights(gpu.local_surface_points(&gpu_bounds.bounds()));
+            let off = cpu_heights
+                .iter()
+                .filter(|(k, h)| gpu_heights.get(*k).is_some_and(|g| (g - *h).abs() > 1e-3))
+                .count();
+            assert!(
+                off as f64 <= EMIT_TOLERANCE * cpu_heights.len() as f64,
+                "{off} of {} surface heights differ",
+                cpu_heights.len()
             );
         }
         let (global, n) = disagreement(&cpu.global_points(), &gpu.global_points());

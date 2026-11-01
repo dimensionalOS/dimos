@@ -80,6 +80,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     config: MLSPlannerNativeConfig
 
     global_map: In[PointCloud2]
+    # With a surface_z field (the ray tracer's fitted plane height per voxel), steps link by those heights.
     local_map: In[PointCloud2]
     region_bounds: In[PoseStamped]
     # A seeded map's regions as RayTracingVoxelMap lands them, applied through

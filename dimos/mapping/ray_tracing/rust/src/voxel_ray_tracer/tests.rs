@@ -40,6 +40,7 @@ fn basic_config() -> Config {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -407,6 +408,7 @@ fn ground_clipping_single_ray() {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -570,6 +572,7 @@ fn stair_clipping_ray_fan() {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -659,6 +662,7 @@ fn landing_floor_ray_fan() {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -736,6 +740,7 @@ fn landing_grazed_from_below() {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -882,6 +887,7 @@ fn grazing_ray_spares_planar_floor() {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -940,6 +946,7 @@ fn grazed_floor_with_recency() -> GrazedFloor {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         support_min: 0,
         ..basic_config()
     };
@@ -1421,6 +1428,7 @@ fn milestone_gated_normals_match_full_refit() {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -1550,6 +1558,7 @@ fn new_voxel_is_fit_before_grazing_ray() {
         gpu: false,
         gpu_max_points: 1 << 18,
         gpu_list_capacity: 1 << 20,
+        surface_heights: false,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;

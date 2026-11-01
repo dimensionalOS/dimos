@@ -29,7 +29,8 @@ pub use chunk_map::{ChunkKey, ChunkMap, CHUNK_EDGE};
 #[cfg(test)]
 use normals::fit_normal;
 use normals::{
-    mark_stale, pooled_normal, resolve_deferred, should_spare, NormalFit, NORMAL_MIN_POINTS,
+    mark_stale, pooled_normal, resolve_deferred, should_spare, surface_height, NormalFit,
+    SurfaceFit, NORMAL_MIN_POINTS,
 };
 
 pub type VoxelKey = (i32, i32, i32);
@@ -102,6 +103,9 @@ pub struct Config {
     /// Entries in each per-frame GPU work list (hits, misses, ...); a frame past it drops voxels.
     #[validate(range(min = 1))]
     pub gpu_list_capacity: u32,
+    /// Carry each local_map voxel's surface height (m, from its fitted plane) as a
+    /// surface_z field in place of intensity, for the planner to link steps by.
+    pub surface_heights: bool,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
     /// emits all. Higher drops isolated returns. The global map is unfiltered.
     #[validate(range(min = 0))]
@@ -261,6 +265,44 @@ impl VoxelMap {
             join_fine_key(key, index as usize, divisor)
         });
         (key, milestone, fine)
+    }
+
+    /// Fold a GPU frame's returns into the moments of the voxels mirrored from
+    /// it, which the GPU keeps to itself, so surface heights fit as on the CPU.
+    /// `created` and `removed` are the voxels the mirror gained and lost.
+    pub fn observe_mirrored(
+        &mut self,
+        points: &[(f32, f32, f32)],
+        origin: (f32, f32, f32),
+        cfg: &Config,
+        created: &[VoxelKey],
+        removed: &[VoxelKey],
+    ) {
+        let inv = 1.0 / cfg.voxel_size;
+        let max_range_sq = if cfg.max_range > 0.0 {
+            cfg.max_range * cfg.max_range
+        } else {
+            f32::INFINITY
+        };
+        let mut changed: AHashSet<VoxelKey> = created.iter().copied().collect();
+        for &(x, y, z) in points {
+            let (dx, dy, dz) = (x - origin.0, y - origin.1, z - origin.2);
+            if !in_key_range(x, y, z, inv) || dx * dx + dy * dy + dz * dz > max_range_sq {
+                continue;
+            }
+            let key = world_to_voxel(x, y, z, inv);
+            let center = Vector3::new(
+                (key.0 as f32 + 0.5) * cfg.voxel_size,
+                (key.1 as f32 + 0.5) * cfg.voxel_size,
+                (key.2 as f32 + 0.5) * cfg.voxel_size,
+            );
+            if let Some(v) = self.voxels.get_mut(&key) {
+                if v.observe(Vector3::new(x, y, z) - center) {
+                    changed.insert(key);
+                }
+            }
+        }
+        mark_stale(self, &changed, removed);
     }
 
     /// Settle `key`'s health crossing zero: its neighbors' support counts and
@@ -511,6 +553,7 @@ pub struct Voxel {
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
     normal: NormalFit,
+    surface: SurfaceFit,
     /// The map frame this voxel was last hit (or seeded) in.
     last_hit: u32,
 }
@@ -525,6 +568,7 @@ impl Default for Voxel {
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
+            surface: SurfaceFit::Stale,
             last_hit: 0,
         }
     }
@@ -949,6 +993,41 @@ fn emit_points_impl(
             continue;
         }
         out.extend_from_slice(&[x, y, z]);
+    }
+    out
+}
+
+/// emit_points with each voxel's surface height in meters after its center,
+/// flat (x, y, z, surface_z) quadruples: the pooled plane's height at the
+/// column center, or the top face where there is none. Fits the stale ones.
+pub fn emit_surface_points(
+    map: &mut VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+) -> Vec<f32> {
+    let centers = emit_points(map, voxel_size, bounds, live);
+    let inv = 1.0 / voxel_size;
+    let voxels = &map.voxels;
+    let fits: Vec<(VoxelKey, f32, bool)> = centers
+        .par_chunks_exact(3)
+        .map(|c| {
+            let key = world_to_voxel(c[0], c[1], c[2], inv);
+            match voxels.get(&key).map(|v| v.surface) {
+                Some(SurfaceFit::Height(h)) => (key, h, false),
+                Some(SurfaceFit::Stale) => (key, surface_height(voxels, key, voxel_size), true),
+                None => (key, voxel_size, false),
+            }
+        })
+        .collect();
+    let mut out = Vec::with_capacity(fits.len() * 4);
+    for (c, &(key, above, fresh)) in centers.chunks_exact(3).zip(&fits) {
+        if fresh {
+            if let Some(v) = map.voxels.get_mut(&key) {
+                v.surface = SurfaceFit::Height(above);
+            }
+        }
+        out.extend_from_slice(&[c[0], c[1], c[2], key.2 as f32 * voxel_size + above]);
     }
     out
 }

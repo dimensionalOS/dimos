@@ -1446,3 +1446,73 @@ fn chains_reach_their_nodes_through_a_stream_of_changes() {
         }
     }
 }
+
+/// Two floors, x < 1 m in voxel row 0 and x >= 1 m in voxel row `high_iz`,
+/// with each floor's surface height.
+fn two_floor_heights(high_iz: i32, low_z: f32, high_z: f32) -> (Vec<(f32, f32, f32)>, Vec<f32>) {
+    let mut points = Vec::new();
+    let mut heights = Vec::new();
+    for ix in 0..20 {
+        for iy in 0..10 {
+            let (iz, h) = if ix < 10 {
+                (0, low_z)
+            } else {
+                (high_iz, high_z)
+            };
+            points.push((
+                ix as f32 * 0.1 + 0.05,
+                iy as f32 * 0.1 + 0.05,
+                iz as f32 * 0.1 + 0.05,
+            ));
+            heights.push(h);
+        }
+    }
+    (points, heights)
+}
+
+fn floors_link(high_iz: i32, low_z: f32, high_z: f32) -> bool {
+    let cfg = test_config();
+    let bounds = RegionBounds {
+        origin_x: 1.0,
+        origin_y: 0.5,
+        radius: 3.0,
+        z_min: -1.0,
+        z_max: 2.0,
+    };
+    let (points, heights) = two_floor_heights(high_iz, low_z, high_z);
+    let mut planner = Planner::new(cfg.worker_threads);
+    planner.update_region_with_heights(&points, &heights, &bounds, &cfg);
+    cell_edges(&planner)[&(9, 5, 0)]
+        .iter()
+        .any(|&(dest, _)| dest == (10, 5, high_iz))
+}
+
+#[test]
+fn surface_heights_link_steps_by_their_planes_not_their_voxels() {
+    // Three voxel rows apart (past the 2-row step) but planes 0.22 m apart: a step.
+    assert!(floors_link(3, 0.09, 0.31));
+    // Two voxel rows apart (within the step) but planes 0.28 m apart: not one.
+    assert!(!floors_link(2, 0.0, 0.28));
+}
+
+#[test]
+fn moved_surface_heights_relink_with_no_voxel_change() {
+    let cfg = test_config();
+    let bounds = RegionBounds {
+        origin_x: 1.0,
+        origin_y: 0.5,
+        radius: 3.0,
+        z_min: -1.0,
+        z_max: 2.0,
+    };
+    let (points, heights) = two_floor_heights(3, 0.09, 0.31);
+    let mut planner = Planner::new(cfg.worker_threads);
+    planner.update_region_with_heights(&points, &heights, &bounds, &cfg);
+    let (_, refit) = two_floor_heights(3, 0.0, 0.31);
+    assert!(planner
+        .update_region_with_heights(&points, &refit, &bounds, &cfg)
+        .is_some());
+    assert!(!cell_edges(&planner)[&(9, 5, 0)]
+        .iter()
+        .any(|&(dest, _)| dest == (10, 5, 3)));
+}

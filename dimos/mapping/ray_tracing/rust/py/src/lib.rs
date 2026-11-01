@@ -153,6 +153,7 @@ impl VoxelRayMapper {
             gpu: false,
             gpu_max_points: 1 << 18,
             gpu_list_capacity: 1 << 20,
+            surface_heights: false,
             support_min,
             emit_every,
             global_emit_every: 1,

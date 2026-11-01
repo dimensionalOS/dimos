@@ -44,6 +44,14 @@ pub(super) enum NormalFit {
     Fitted(Option<Vector3<f32>>),
 }
 
+/// A voxel's cached surface height above its bottom face, from its pooled
+/// plane. Stale until an emit needs it.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum SurfaceFit {
+    Stale,
+    Height(f32),
+}
+
 /// The surface normal of a covariance, or None unless it is clearly planar.
 #[cfg(test)]
 pub(super) fn fit_normal(cov: Matrix3<f32>) -> Option<(Vector3<f32>, f32)> {
@@ -231,13 +239,119 @@ pub(super) fn pooled_normal(
     classify(&last_eig?)
 }
 
+/// A voxel's surface height above its bottom face: its pooled plane at the
+/// column center, kept within half a voxel of the voxel, as the GPU surface
+/// pass does. The top face when an occupied voxel sits on it, or the plane is
+/// missing or too steep to give a height.
+pub(super) fn surface_height(voxels: &ChunkMap, key: VoxelKey, voxel_size: f32) -> f32 {
+    if voxels.get(&(key.0, key.1, key.2 + 1)).is_some() {
+        return voxel_size;
+    }
+    let Some((normal, mean)) = surface_plane(voxels, key, voxel_size) else {
+        return voxel_size;
+    };
+    let n = if normal.z < 0.0 { -normal } else { normal };
+    if n.z <= 1e-3 {
+        return voxel_size;
+    }
+    let above_center = mean.z + (n.x * mean.x + n.y * mean.y) / n.z;
+    (above_center + 0.5 * voxel_size).clamp(-0.5 * voxel_size, 1.5 * voxel_size)
+}
+
+/// pooled_normal, except the first weights favor neighbors near this voxel's
+/// own height, so at a step edge the fit settles on the voxel's level rather
+/// than a plane through both (the GPU's fit). Returns the normal and the
+/// weighted mean relative to the voxel center.
+fn surface_plane(
+    voxels: &ChunkMap,
+    key: VoxelKey,
+    voxel_size: f32,
+) -> Option<(Vector3<f32>, Vector3<f32>)> {
+    let r = NORMAL_NEIGHBOR_RADIUS;
+    let mut nbs: ArrayVec<Neighbor, NEIGHBORHOOD_CAP> = ArrayVec::new();
+    let mut n_raw: u32 = 0;
+    let mut own_z: Option<f32> = None;
+    let near = voxels.neighborhood(key, r);
+    for dx in -r..=r {
+        for dy in -r..=r {
+            for dz in -r..=r {
+                let Some(v) = near.get((key.0 + dx, key.1 + dy, key.2 + dz)) else {
+                    continue;
+                };
+                if v.num_pts == 0 {
+                    continue;
+                }
+                let ni = v.num_pts as f32;
+                let d = Vector3::new(dx as f32, dy as f32, dz as f32) * voxel_size;
+                let s = v.sum + d * ni;
+                let t =
+                    v.m2 + v.sum * d.transpose() + d * v.sum.transpose() + d * d.transpose() * ni;
+                n_raw += v.num_pts;
+                if (dx, dy, dz) == (0, 0, 0) {
+                    own_z = Some(s.z / ni);
+                }
+                nbs.push(Neighbor {
+                    n: ni,
+                    s,
+                    t,
+                    centroid: s / ni,
+                });
+            }
+        }
+    }
+    if n_raw < NORMAL_MIN_POINTS {
+        return None;
+    }
+
+    let sigma = NORMAL_PLANE_SIGMA_FRAC * voxel_size;
+    let two_sig2 = 2.0 * sigma * sigma;
+    let mut weights = [1.0_f32; NEIGHBORHOOD_CAP];
+    if let Some(own_z) = own_z {
+        for (nb, w) in nbs.iter().zip(&mut weights) {
+            let rise = nb.centroid.z - own_z;
+            *w = (-(rise * rise) / two_sig2).exp();
+        }
+    }
+    let mut last_eig: Option<Sym3Eigen> = None;
+    for _ in 0..NORMAL_REWEIGHT_ITERS {
+        let (mut wn, mut s, mut t) = (0.0_f32, Vector3::zeros(), Matrix3::zeros());
+        for (nb, &w) in nbs.iter().zip(&weights) {
+            wn += w * nb.n;
+            s += nb.s * w;
+            t += nb.t * w;
+        }
+        if wn < 1e-6 {
+            return None;
+        }
+        let mean = s / wn;
+        let eig = sym3_eigen(&(t / wn - mean * mean.transpose()));
+        for (nb, w) in nbs.iter().zip(&mut weights) {
+            let dist = eig.smallest.dot(&(nb.centroid - mean));
+            *w = (-(dist * dist) / two_sig2).exp();
+        }
+        last_eig = Some(eig);
+    }
+    let (mut kept, mut s) = (0.0_f32, Vector3::zeros());
+    for (nb, &w) in nbs.iter().zip(&weights) {
+        kept += w * nb.n;
+        s += nb.s * w;
+    }
+    if kept < NORMAL_MIN_SUPPORT * n_raw as f32 || kept < 1e-6 {
+        return None;
+    }
+    let (normal, _) = classify(&last_eig?)?;
+    Some((normal, s / kept))
+}
+
 /// Mark stale every voxel whose neighborhood changed materially this frame:
 /// refit-milestone crossings and removals, dilated by the pooled-fit radius.
 pub(super) fn mark_stale(map: &mut VoxelMap, changed: &AHashSet<VoxelKey>, removed: &[VoxelKey]) {
     let r = NORMAL_NEIGHBOR_RADIUS;
     for &c in changed.iter().chain(removed.iter()) {
-        map.voxels
-            .for_each_near_mut(c, r, |_, v, _| v.normal = NormalFit::Stale);
+        map.voxels.for_each_near_mut(c, r, |_, v, _| {
+            v.normal = NormalFit::Stale;
+            v.surface = SurfaceFit::Stale;
+        });
     }
 }
 

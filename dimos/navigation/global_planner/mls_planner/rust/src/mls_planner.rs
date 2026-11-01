@@ -359,7 +359,28 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
-        self.update_region_within(local_points, bounds, config, config.node_window_cells())
+        self.update_region_within(
+            local_points,
+            None,
+            bounds,
+            config,
+            config.node_window_cells(),
+        )
+    }
+
+    /// update_region where each local point carries its voxel's surface height
+    /// in meters (the ray tracer's fitted plane), so neighbors link by height
+    /// instead of by whole voxels. A cell whose height moved less than
+    /// surface_change_m keeps its old height and its graph.
+    pub fn update_region_with_heights(
+        &mut self,
+        local_points: &[(f32, f32, f32)],
+        surface_z: &[f32],
+        bounds: &RegionBounds,
+        config: &Config,
+    ) -> Option<ColumnWindow> {
+        let window_steps = config.node_window_cells();
+        self.update_region_within(local_points, Some(surface_z), bounds, config, window_steps)
     }
 
     /// update_region with the region's surface extracted elsewhere (the GPU's):
@@ -508,12 +529,13 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) -> Option<ColumnWindow> {
-        self.update_region_within(points, bounds, config, config.buffer_window_cells())
+        self.update_region_within(points, None, bounds, config, config.buffer_window_cells())
     }
 
     fn update_region_within(
         &mut self,
         local_points: &[(f32, f32, f32)],
+        surface_z: Option<&[f32]>,
         bounds: &RegionBounds,
         config: &Config,
         window_steps: i32,
@@ -535,7 +557,25 @@ impl Planner {
                     region_columns,
                     ..Default::default()
                 };
-                return None;
+                // Planes refit as points arrive, so heights can move with no voxel changing.
+                let retuned = surface_z
+                    .map(|z| self.retune_heights(local_points, z, &[], &[], config))
+                    .unwrap_or_default();
+                let window = retuned
+                    .iter()
+                    .fold(None, |w: Option<ColumnWindow>, &(x, y, _)| {
+                        let w = w.unwrap_or((x, x, y, y));
+                        Some((w.0.min(x), w.1.max(x), w.2.min(y), w.3.max(y)))
+                    })?;
+                self.rebuild_region_graph_with(
+                    Vec::new(),
+                    Vec::new(),
+                    retuned,
+                    &edits,
+                    window_steps,
+                    config,
+                );
+                return Some(window);
             }
 
             // A changed column shifts surfaces only within pad of it, and
@@ -559,9 +599,12 @@ impl Planner {
             let (added, removed) = self.replace_surface_region(&write, &new_cells);
             let replace_ms = ms_since(stage);
             let (cells_added, cells_removed) = (added.len(), removed.len());
+            let retuned = surface_z
+                .map(|z| self.retune_heights(local_points, z, &added, &removed, config))
+                .unwrap_or_default();
 
             let stage = Instant::now();
-            self.rebuild_region_graph(added, removed, &edits, window_steps, config);
+            self.rebuild_region_graph_with(added, removed, retuned, &edits, window_steps, config);
             debug_throttled!(
                 DEBUG_LOG_PERIOD,
                 diff_ms,
@@ -577,6 +620,50 @@ impl Planner {
             );
             write.bounds()
         })
+    }
+
+    /// Take the surface heights of the local points that are surface cells,
+    /// dropping `removed`'s. Returns the kept cells (not `added`) whose height
+    /// moved past surface_change_m, which relink like changed cells.
+    fn retune_heights(
+        &mut self,
+        local_points: &[(f32, f32, f32)],
+        surface_z: &[f32],
+        added: &[VoxelKey],
+        removed: &[VoxelKey],
+        config: &Config,
+    ) -> Vec<VoxelKey> {
+        let voxel_size = config.voxel_size;
+        let heights = self.heights.get_or_insert_with(Default::default);
+        for k in removed {
+            heights.remove(k);
+        }
+        let added: AHashSet<VoxelKey> = added.iter().copied().collect();
+        let mut retuned = Vec::new();
+        for (&p, &h) in local_points.iter().zip(surface_z) {
+            let key = voxelize(p, voxel_size);
+            let is_cell = self
+                .graph
+                .surface_lookup
+                .get(&(key.0, key.1))
+                .is_some_and(|zs| zs.contains(&key.2));
+            if !h.is_finite() || !is_cell {
+                continue;
+            }
+            let fresh = added.contains(&key);
+            let old = heights
+                .get(&key)
+                .copied()
+                .unwrap_or((key.2 + 1) as f32 * voxel_size);
+            if !fresh && (old - h).abs() <= config.surface_change_m {
+                continue;
+            }
+            heights.insert(key, h);
+            if !fresh {
+                retuned.push(key);
+            }
+        }
+        retuned
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
