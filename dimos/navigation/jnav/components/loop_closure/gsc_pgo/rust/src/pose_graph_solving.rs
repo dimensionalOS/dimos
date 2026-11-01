@@ -367,6 +367,7 @@ impl GscPgo {
         };
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
+        self.graph_version += 1;
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
                 .into_iter()

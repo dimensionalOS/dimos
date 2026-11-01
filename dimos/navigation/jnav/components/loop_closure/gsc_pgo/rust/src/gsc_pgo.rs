@@ -653,6 +653,10 @@ pub struct GscPgo {
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
+    /// Bumped whenever a keyframe is added or a solve is adopted: what loop_overlap reads changes only then, so pressure
+    /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
+    pub(crate) graph_version: u64,
+    pub(crate) pressure_version: Option<u64>,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
     /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
@@ -1428,7 +1432,11 @@ impl GscPgo {
         }
         self.scans_seen += 1;
         let frequency = self.config.pressure_check_frequency;
-        if frequency > 0 && self.scans_seen.is_multiple_of(frequency) {
+        if frequency > 0
+            && self.scans_seen.is_multiple_of(frequency)
+            && self.pressure_version != Some(self.graph_version)
+        {
+            self.pressure_version = Some(self.graph_version);
             if let Some(overlap) = self.loop_overlap() {
                 self.pressure = Some((self.scans_seen, overlap));
             }
@@ -1738,6 +1746,7 @@ impl GscPgo {
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {
+        self.graph_version += 1;
         // every use of a keyframe's cloud (submaps, stacked clouds) voxelizes it at submap_resolution, so it is
         // stored that way: a dense scan (the Go2 L1's ~30k-point local map) would otherwise be kept whole
         let stored = match &cloud {
