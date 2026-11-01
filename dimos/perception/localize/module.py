@@ -80,6 +80,7 @@ GEOMETRY_STREAM = "geometry_memory"
 COLOR_CODEC = "jpeg"
 GEOMETRY_CODEC = "lz4+lcm"
 LIDAR_TOLERANCE = 0.2  # s - an embedded frame to its lidar scan
+SCAN_WINDOW_S = 3.0  # s - what scan_scene reads: what the camera sees now, three frames at EMBED_HZ
 
 
 class PerceptionLocalizeConfig(ModuleConfig):
@@ -107,6 +108,10 @@ class PerceptionLocalize(Module):
     pose are never embedded. Depth must be aligned to colour.
     """
 
+    # Its models hold the GIL for seconds at a time. Sharing a worker with ManipulationModule, the
+    # weights never finished loading (minutes, GPU idle, against 13 s alone).
+    dedicated_worker = True
+
     config: PerceptionLocalizeConfig
 
     color_image: In[Image]
@@ -126,6 +131,7 @@ class PerceptionLocalize(Module):
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
+        self._scanned: dict[str, tuple[str, Localization]] = {}
 
         embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
         memory_frames = int(self.config.horizon_s * embed_hz)
@@ -325,22 +331,89 @@ class PerceptionLocalize(Module):
         boxes: list[dict[str, Any]] = []
         for query, hits in zip(queries, results, strict=True):
             for hit in hits:
-                points = hit.point_cloud.as_numpy()[0]
-                low, high = points.min(axis=0), points.max(axis=0)
+                center, size = _extents(hit)
                 boxes.append(
                     {
                         "id": hit.instance_id,
                         "label": query,
                         "score": float(hit.semantic_score),
                         "views": int(hit.n_views),
-                        "center": [float(v) for v in (low + high) / 2],
-                        "size": [max(float(v), 1e-3) for v in high - low],
+                        "center": center,
+                        "size": size,
                         "position": [float(v) for v in hit.position_world_xyz],
                         "frame": hit.frame_id,
                         "seen_s_ago": float(max(0.0, head - hit.last_seen_timestamp)),
                     }
                 )
         return boxes
+
+    @rpc
+    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
+        """``localize`` for a pick: one instance per object ``text`` names in the last moments.
+
+        A scan reads afresh: what earlier calls proved of these labels is forgotten, or an
+        object already picked would answer from where it stood. Each instance is kept by id
+        until the next scan. Raises while the module is not ready, with its stage.
+        """
+        if not self._ready.is_set():
+            raise RuntimeError(f"localize cannot answer yet: {self._stage}")
+        labels = [label.strip() for label in text or [] if label.strip()]
+        for label in labels:
+            self._groups.pop(label, None)
+        queries, results, _index, rig, _times = self._localize_window(
+            ",".join(labels), -SCAN_WINDOW_S, SCAN_WINDOW_S, ""
+        )
+        self._scanned = {
+            hit.instance_id: (query, hit)
+            for query, hits in zip(queries, results, strict=True)
+            for hit in hits
+        }
+        return as_detection_array(queries, results, rig.world_frame)
+
+    @rpc
+    def get_detected_objects(self) -> list[dict[str, Any]]:
+        """The latest ``scan_scene`` for a UI: ``object_id``, ``name`` (the query it answered),
+        ``confidence``, ``center`` and ``size`` (metres in ``frame_id``), ``detections`` (views)
+        and ``last_seen``, as the scene registration's objects encode them."""
+        objects = []
+        for name, hit in self._scanned.values():
+            center, size = _extents(hit)
+            objects.append(
+                {
+                    "object_id": hit.instance_id,
+                    "name": name,
+                    "confidence": float(hit.semantic_score),
+                    "center": center,
+                    "size": size,
+                    "frame_id": hit.frame_id,
+                    "detections": int(hit.n_views),
+                    "last_seen": f"{round(time.time() - hit.last_seen_timestamp)}s ago",
+                }
+            )
+        return objects
+
+    @rpc
+    def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None:
+        """An instance's cloud from the latest ``scan_scene``, in the world frame."""
+        scanned = self._scanned.get(object_id)
+        return None if scanned is None else scanned[1].point_cloud
+
+    @rpc
+    def get_full_scene_pointcloud(
+        self,
+        exclude_object_id: str | None = None,
+        depth_trunc: float = 2.0,
+        voxel_size: float = 0.01,
+    ) -> PointCloud2 | None:
+        """Localize registers no scene, so a pick has nothing to check its grasps against."""
+        return None
+
+
+def _extents(hit: Localization) -> tuple[list[float], list[float]]:
+    """The centre and size of an instance's cloud, metres in its frame."""
+    points = hit.point_cloud.as_numpy()[0]
+    low, high = points.min(axis=0), points.max(axis=0)
+    return [float(v) for v in (low + high) / 2], [max(float(v), 1e-3) for v in high - low]
 
 
 def as_detection_array(

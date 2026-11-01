@@ -26,7 +26,9 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroup
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.spec.utils import Spec
 
 
@@ -284,3 +286,16 @@ class ManipulationSpec(Spec, Protocol):
     ) -> CommandResult: ...
 
     def cancel(self) -> ExecutionResult: ...
+
+
+class PickSceneSpec(Spec, Protocol):
+    """What a pick needs from perception: objects by id, each with its cloud."""
+
+    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray: ...
+    def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None: ...
+    def get_full_scene_pointcloud(
+        self,
+        exclude_object_id: str | None = None,
+        depth_trunc: float = 2.0,
+        voxel_size: float = 0.01,
+    ) -> PointCloud2 | None: ...

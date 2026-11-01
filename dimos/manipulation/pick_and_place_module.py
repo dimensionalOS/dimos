@@ -37,7 +37,12 @@ from dimos.manipulation.grasp_verification import (
     open_failure,
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ManipulationSpec,
+    PickSceneSpec,
+    PlanResult,
+)
 from dimos.manipulation.planning.gripper_contact import GraspContactChecker
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID
@@ -49,7 +54,6 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -192,7 +196,7 @@ class PickAndPlaceModule(Module):
     config: PickAndPlaceModuleConfig
     # Where the arms' shoulders are, for choosing an arm and for its reach.
     tf: In[TFMessage]
-    _scene: ObjectSceneRegistrationSpec
+    _scene: PickSceneSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
     # Leaves boxes out of the planner's map; a stack without a map has none.
