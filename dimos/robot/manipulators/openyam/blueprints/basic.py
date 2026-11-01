@@ -22,26 +22,21 @@ from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.common.damiao_blueprint import connect_damiao
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
-_openyam = OpenYamConnection.models()
+_openyam = OpenYamConnection.planning_model("arm")
 
 
 def _trajectory_task(*, priority: int = 10) -> TaskConfig:
-    return joint_trajectory_task(list(_openyam.joints), priority=priority)
+    return joint_trajectory_task([*_openyam.joint_names, "arm/gripper"], priority=priority)
 
 
 def _gripper_task() -> TaskConfig:
-    return TaskConfig(
-        name="arm_gripper",
-        type="gripper",
-        joint_names=list(_openyam.gripper_joints),
-        priority=20,
-    )
+    return TaskConfig(name="arm_gripper", type="gripper", joint_names=["arm/gripper"], priority=20)
 
 
 coordinator_openyam = connect_damiao(
     OpenYamConnection, tasks=[_trajectory_task(), _gripper_task()]
 ).remappings([])
 openyam_planner_coordinator = autoconnect(
-    planner(model=_openyam.planning),
+    planner(model=_openyam),
     connect_damiao(OpenYamConnection, tasks=[_trajectory_task(), _gripper_task()]),
 )

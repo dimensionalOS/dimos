@@ -167,5 +167,5 @@ Single grippers are `arm/gripper`; bimanual grippers are `arm/left_gripper` and
 Logical gripper links do not animate the physical finger meshes.
 
 Planner groups, task joints, and Quest recording names derive from the same
-`Connection.models()` schema. Existing recordings using the old bare names retain
+connection's `planning_model()` and `control_model()` views. Existing recordings using the old bare names retain
 their original schema; newly collected Quest recordings use the deployed names.

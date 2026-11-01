@@ -22,14 +22,14 @@ from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.common.damiao_blueprint import connect_damiao
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
-_dual_openyam = DualOpenYamConnection.models()
+_dual_openyam = DualOpenYamConnection.planning_model("arm")
 
 
 def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
-        joint_names=list(_dual_openyam.arm_joints),
+        joint_names=list(_dual_openyam.joint_names),
         priority=priority,
         params={"start_position_tolerance": 0.05},
     )
@@ -39,6 +39,6 @@ coordinator_dual_openyam = connect_damiao(
     DualOpenYamConnection, tasks=[dual_openyam_trajectory_task()]
 ).remappings([])
 dual_openyam_planner_coordinator = autoconnect(
-    planner(model=_dual_openyam.planning),
+    planner(model=_dual_openyam),
     connect_damiao(DualOpenYamConnection, tasks=[dual_openyam_trajectory_task()]),
 )

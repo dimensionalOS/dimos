@@ -21,14 +21,14 @@ from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.common.damiao_blueprint import connect_damiao
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
-_DEPLOYMENT = OpenArmConnection.models()
+_MODEL = OpenArmConnection.planning_model("arm")
 
 
 def _trajectory_task() -> TaskConfig:
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
-        joint_names=list(_DEPLOYMENT.arm_joints),
+        joint_names=list(_MODEL.joint_names),
         priority=10,
         params={"start_position_tolerance": 0.05},
     )
@@ -37,6 +37,6 @@ def _trajectory_task() -> TaskConfig:
 coordinator_openarm = connect_damiao(OpenArmConnection, tasks=[_trajectory_task()]).remappings([])
 
 openarm_planner_coordinator = autoconnect(
-    planner(model=_DEPLOYMENT.planning),
+    planner(model=_MODEL),
     coordinator_openarm,
 )

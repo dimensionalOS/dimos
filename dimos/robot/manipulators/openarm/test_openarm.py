@@ -21,7 +21,9 @@ from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
 @pytest.mark.parametrize("deployed", [False, True])
 def test_openarm_dual_model_contains_every_canonical_joint_and_group_frame(deployed: bool) -> None:
-    config = OpenArmConnection.models().planning if deployed else openarm_bimanual_model_config()
+    config = (
+        OpenArmConnection.planning_model("arm") if deployed else openarm_bimanual_model_config()
+    )
 
     description = prepare_robot_model(config).description
 

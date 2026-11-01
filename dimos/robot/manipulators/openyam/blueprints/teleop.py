@@ -32,15 +32,14 @@ from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolv
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
-_openyam = OpenYamConnection.models()
-_openyam_model = _openyam.planning
+_openyam_model = OpenYamConnection.planning_model("arm")
 
 
 def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
     return TaskConfig(
         name=EEF_TWIST_TASK_NAME,
         type="eef_twist",
-        joint_names=list(_openyam.arm_joints),
+        joint_names=list(_openyam_model.joint_names),
         priority=priority,
         params={"robot_model": _openyam_model, "target_frame": "gripper_tip"},
     )
@@ -70,7 +69,7 @@ _openyam_webxr_task = TaskConfig(
     name=OPENYAM_WEBXR_TASK_NAME,
     type="teleop_ik",
     priority=20,
-    joint_names=list(_openyam.arm_joints),
+    joint_names=list(_openyam_model.joint_names),
     params={
         "robot_model": _openyam_model,
         "solver_type": OpenYamPinkPoseTargetSolver,
@@ -92,7 +91,7 @@ teleop_webxr_openyam = autoconnect(
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
-                joint_names=list(_openyam.gripper_joints),
+                joint_names=["arm/gripper"],
                 priority=20,
                 stream_bind={"gripper_command": "right_gripper_command"},
             ),

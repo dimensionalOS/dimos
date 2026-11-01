@@ -88,9 +88,12 @@ def test_retained_entry_routes_every_task_through_its_connection(name, blueprint
     assert connection.module.deployment == "python"
     assert connection.kwargs["source"] == "arm"
     assert coordinator.kwargs.get("hardware", []) == []
-    model = connection.module.models()
+    model = connection.module.planning_model("arm")
+    joints = set(model.joint_names) | {
+        f"arm/{name}" for name in connection.module.gripper_joints.values()
+    }
     for task in coordinator.kwargs["tasks"]:
-        assert set(task.joint_names) <= set(model.joints)
+        assert set(task.joint_names) <= joints
     load.assert_not_called()
 
 

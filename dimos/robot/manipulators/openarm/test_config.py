@@ -27,12 +27,11 @@ from dimos.robot.manipulators.openarm.config import (
     OPENARM_DESCRIPTION_REF,
     OPENARM_DESCRIPTION_SOURCE,
     OPENARM_DESCRIPTION_URL,
-    OPENARM_JOINTS,
     OPENARM_SIDES,
     openarm_bimanual_model_config,
     openarm_urdf_joints,
 )
-from dimos.robot.manipulators.openarm.connection import OpenArmConnection, OpenArmConnectionConfig
+from dimos.robot.manipulators.openarm.connection import OpenArmConnectionConfig
 
 
 def test_openarm_model_uses_pinned_official_bimanual_xacro() -> None:
@@ -112,46 +111,6 @@ def test_openarm_connection_rejects_incomplete_or_ambiguous_bus_selection(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         OpenArmConnectionConfig(left_can_port=left_can_port, right_can_port=right_can_port)
-
-
-def test_openarm_topology_preserves_motor_addresses_gains_and_buses() -> None:
-    robot = OpenArmConnection.robot
-
-    assert robot.buses == ("left", "right")
-    assert [(arm.name, arm.bus) for arm in robot.arms] == [
-        ("left_arm", "left"),
-        ("right_arm", "right"),
-    ]
-    for side, arm in zip(("left", "right"), robot.arms, strict=True):
-        assert [
-            (joint.name, joint.motor, joint.send_id, joint.recv_id, joint.kp, joint.kd)
-            for joint in arm.joints
-        ] == [
-            (f"openarm_{side}_joint1", "DM8009", 1, 17, 100.0, 1.5),
-            (f"openarm_{side}_joint2", "DM8009", 2, 18, 100.0, 1.5),
-            (f"openarm_{side}_joint3", "DM4340", 3, 19, 80.0, 1.0),
-            (f"openarm_{side}_joint4", "DM4340", 4, 20, 80.0, 1.0),
-            (f"openarm_{side}_joint5", "DM4310", 5, 21, 60.0, 0.8),
-            (f"openarm_{side}_joint6", "DM4310", 6, 22, 60.0, 0.8),
-            (f"openarm_{side}_joint7", "DM4310", 7, 23, 60.0, 0.8),
-        ]
-    assert [
-        (
-            gripper.name,
-            gripper.bus,
-            gripper.motor,
-            gripper.send_id,
-            gripper.recv_id,
-            gripper.direction,
-            gripper.current,
-        )
-        for gripper in robot.grippers
-    ] == [
-        ("left_gripper", "left", "DM4310", 8, 24, "decreasing_position", 0.15),
-        ("right_gripper", "right", "DM4310", 8, 24, "decreasing_position", 0.15),
-    ]
-    assert robot.joint_names == tuple(OPENARM_JOINTS)
-    assert robot.mock_positions == (0.0,) * 16
 
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:

@@ -13,65 +13,22 @@
 # limitations under the License.
 
 
-"""OpenYAM topology and direct Damiao connection."""
+"""OpenYam native CAN topology and connection settings."""
 
 from __future__ import annotations
 
-from typing import ClassVar
-
+import can_motor_control
+from can_motor_control import damiao
 from pydantic import model_validator
 from typing_extensions import Self
 
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.damiao_connection import (
-    ArmSpec,
     DamiaoConnection,
     DamiaoConnectionConfig,
-    DamiaoRobot,
-    GripperSpec,
-    JointDrive,
 )
-from dimos.robot.manipulators.common.damiao_model import local_control_model
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.utils.data import LfsPath
-
-OPENYAM_ROBOT = DamiaoRobot(
-    buses=("openyam",),
-    arms=(
-        ArmSpec(
-            name="arm",
-            bus="openyam",
-            joints=tuple(
-                JointDrive(
-                    name=f"yam_joint{index}",
-                    motor="DM4340" if index <= 3 else "DM4310",
-                    send_id=index,
-                    recv_id=index + 0x10,
-                    kp=80.0 if index <= 3 else 10.0,
-                    kd=5.0 if index <= 3 else 1.5,
-                )
-                for index in range(1, 7)
-            ),
-        ),
-    ),
-    grippers=(
-        GripperSpec(
-            name="gripper",
-            bus="openyam",
-            motor="DM4310",
-            send_id=0x08,
-            recv_id=0x18,
-            direction="decreasing_position",
-            current=0.15,
-        ),
-    ),
-    physical_model=RobotModel.from_file(
-        LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
-    ),
-    planning=make_openyam_model_config(),
-    mock_positions=(0.0,) * 7,
-    gravity_comp=True,
-)
 
 
 class OpenYamConnectionConfig(DamiaoConnectionConfig):
@@ -83,13 +40,57 @@ class OpenYamConnectionConfig(DamiaoConnectionConfig):
         if self.can_port is not None and not self.can_port.strip():
             raise ValueError("CAN selector must not be empty")
         if self.model is None:
-            self.model = local_control_model(OPENYAM_ROBOT)
+            self.model = OpenYamConnection.control_model()
         return self
 
 
 class OpenYamConnection(DamiaoConnection):
     config: OpenYamConnectionConfig
-    robot: ClassVar[DamiaoRobot] = OPENYAM_ROBOT
+    bus_name = "openyam"
+    bus_names = [bus_name]
+    arm_joints = {"arm": [f"yam_joint{i}" for i in range(1, 7)]}
+    gripper_joints = {"gripper": "gripper"}
+    kinematic_joint_names = arm_joints["arm"]
+    kp = {"arm": [80.0, 80.0, 80.0, 10.0, 10.0, 10.0]}
+    kd = {"arm": [5.0, 5.0, 5.0, 1.5, 1.5, 1.5]}
+    kinematic_model = RobotModel.from_file(
+        LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
+    )
+    planning = make_openyam_model_config()
+    mock_positions = [0.0] * 7
 
     def _can_devices(self) -> dict[str, str] | None:
         return None if self.config.can_port is None else {"openyam": self.config.can_port}
+
+    def _build_robot(self) -> can_motor_control.Robot:
+        arm_motors = [
+            can_motor_control.MotorSpec("yam_joint1", damiao.MotorType.DM4340, 0x01, 0x11),
+            can_motor_control.MotorSpec("yam_joint2", damiao.MotorType.DM4340, 0x02, 0x12),
+            can_motor_control.MotorSpec("yam_joint3", damiao.MotorType.DM4340, 0x03, 0x13),
+            can_motor_control.MotorSpec("yam_joint4", damiao.MotorType.DM4310, 0x04, 0x14),
+            can_motor_control.MotorSpec("yam_joint5", damiao.MotorType.DM4310, 0x05, 0x15),
+            can_motor_control.MotorSpec("yam_joint6", damiao.MotorType.DM4310, 0x06, 0x16),
+        ]
+        gripper_motor = can_motor_control.MotorSpec(
+            "yam_gripper",
+            damiao.MotorType.DM4310,
+            0x08,
+            0x18,
+        )
+        return (
+            can_motor_control.Robot.builder()
+            .add_bus(
+                self.bus_name,
+                self._make_can_bus(self.bus_name),
+                damiao.DamiaoCodec(),
+            )
+            .add_arm("arm", bus=self.bus_name, motors=arm_motors)
+            .add_gripper(
+                "gripper",
+                bus=self.bus_name,
+                motor=gripper_motor,
+                opening_direction="decreasing_position",
+                default_current=0.15,
+            )
+            .build()
+        )

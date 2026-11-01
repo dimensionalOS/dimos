@@ -45,12 +45,12 @@ def test_dual_openyam_connection_defaults_to_complete_mock() -> None:
     try:
         assert connection.config.source == "dual_openyam"
         assert connection._can_devices() is None
-        assert connection.robot.joint_names == (
+        assert connection.joint_names == [
             *DUAL_OPENYAM_ARM_JOINTS,
             "left_gripper",
             "right_gripper",
-        )
-        assert connection.robot.mock_positions == (*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0)
+        ]
+        assert connection.mock_positions == [*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0]
     finally:
         connection.stop()
 
@@ -59,7 +59,7 @@ def test_dual_openyam_connection_uses_both_explicit_can_ports() -> None:
     connection = DualOpenYamConnection(left_can_port="can8", right_can_port="can9")
     try:
         assert connection._can_devices() == {"left": "can8", "right": "can9"}
-        assert connection.robot.gravity_comp is True
+        assert connection.gravity_comp is True
     finally:
         connection.stop()
 

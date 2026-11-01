@@ -30,13 +30,13 @@ from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolv
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 OPENARM_WEBXR_TASK_NAME = "teleop_openarm"
-_DEPLOYMENT = OpenArmConnection.models()
+_MODEL = OpenArmConnection.planning_model("arm")
 
 _OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0)
 _OPENARM_JOINT_VELOCITY_LIMITS_RAD_S = {
     joint_name: velocity_limit
     for joint_name, velocity_limit in zip(
-        _DEPLOYMENT.arm_joints,
+        _MODEL.joint_names,
         _OPENARM_ARM_VELOCITY_PROFILE_RAD_S * 2,
         strict=True,
     )
@@ -47,7 +47,10 @@ def _trajectory_task(*, priority: int = 10) -> TaskConfig:
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
-        joint_names=list(_DEPLOYMENT.joints),
+        joint_names=[
+            *_MODEL.joint_names,
+            *[f"arm/{name}" for name in OpenArmConnection.gripper_joints.values()],
+        ],
         priority=priority,
         params={"start_position_tolerance": 0.05},
     )
@@ -66,9 +69,9 @@ _openarm_webxr_task = TaskConfig(
     name=OPENARM_WEBXR_TASK_NAME,
     type="teleop_ik",
     priority=20,
-    joint_names=list(_DEPLOYMENT.arm_joints),
+    joint_names=list(_MODEL.joint_names),
     params={
-        "robot_model": _DEPLOYMENT.planning,
+        "robot_model": _MODEL,
         "bindings": [
             {
                 "hand": "left",
@@ -100,14 +103,14 @@ teleop_webxr_openarm = autoconnect(
             TaskConfig(
                 name="left_arm_gripper",
                 type="gripper",
-                joint_names=[_DEPLOYMENT.gripper_joints[0]],
+                joint_names=["arm/left_gripper"],
                 priority=20,
                 stream_bind={"gripper_command": "left_gripper_command"},
             ),
             TaskConfig(
                 name="right_arm_gripper",
                 type="gripper",
-                joint_names=[_DEPLOYMENT.gripper_joints[1]],
+                joint_names=["arm/right_gripper"],
                 priority=20,
                 stream_bind={"gripper_command": "right_gripper_command"},
             ),
@@ -115,7 +118,7 @@ teleop_webxr_openarm = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        model=_DEPLOYMENT.planning,
+        model=_MODEL,
         kinematics=_openarm_webxr_pink,
         visualization={"backend": "viser"},
     ),

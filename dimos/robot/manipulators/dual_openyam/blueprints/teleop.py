@@ -48,8 +48,7 @@ _dual_openyam_webxr_pink = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=1.0,
 )
-_dual_openyam = DualOpenYamConnection.models()
-_dual_openyam_webxr_model = _dual_openyam.planning
+_dual_openyam_webxr_model = DualOpenYamConnection.planning_model("arm")
 _dual_openyam_webxr_tasks = {
     side: TaskConfig(
         type="teleop_ik",
@@ -85,14 +84,14 @@ def build_dual_openyam_webxr(
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",
-                    joint_names=[_dual_openyam.gripper_joints[0]],
+                    joint_names=["arm/left_gripper"],
                     priority=20,
                     stream_bind={"gripper_command": "left_gripper_command"},
                 ),
                 TaskConfig(
                     name="right_arm_gripper",
                     type="gripper",
-                    joint_names=[_dual_openyam.gripper_joints[1]],
+                    joint_names=["arm/right_gripper"],
                     priority=20,
                     stream_bind={"gripper_command": "right_gripper_command"},
                 ),
