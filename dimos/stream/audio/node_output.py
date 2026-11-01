@@ -14,28 +14,19 @@
 # limitations under the License.
 
 import threading
-from typing import Any
 
 import numpy as np
 from reactivex import Observable
 import sounddevice as sd  # type: ignore[import-untyped]
 
-from dimos.stream.audio.base import (
-    AbstractAudioTransform,
-)
+from dimos.stream.audio.base import AbstractAudioConsumer
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class SounddeviceAudioOutput(AbstractAudioTransform):
-    """
-    Audio output implementation using the sounddevice library.
-
-    This class implements AbstractAudioTransform so it can both play audio and
-    optionally pass audio events through to other components (for example, to
-    record audio while playing it, or to visualize the waveform while playing).
-    """
+class SounddeviceAudioOutput(AbstractAudioConsumer):
+    """Play audio events using the sounddevice library."""
 
     def __init__(
         self,
@@ -65,7 +56,6 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         self._stream_lock = threading.Lock()
         self._running = threading.Event()
         self._subscription = None
-        self.audio_observable = None
 
     def consume_audio(self, audio_observable: Observable) -> "SounddeviceAudioOutput":  # type: ignore[type-arg]
         """
@@ -77,8 +67,6 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         Returns:
             Self for method chaining
         """
-        self.audio_observable = audio_observable  # type: ignore[assignment]
-
         # Try to create and start the output stream. If no audio device is
         # available (e.g. in CI / headless), log and continue — audio events
         # will still be drained from the observable and silently dropped.
@@ -107,18 +95,6 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         )
 
         return self
-
-    def emit_audio(self) -> Observable:  # type: ignore[type-arg]
-        """
-        Pass through the audio observable to allow chaining with other components.
-
-        Returns:
-            The same Observable that was provided to consume_audio
-        """
-        if self.audio_observable is None:
-            raise ValueError("No audio source provided. Call consume_audio() first.")
-
-        return self.audio_observable
 
     def stop(self) -> None:
         """Stop audio output and clean up resources."""
@@ -166,26 +142,3 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
                 self._stream.stop()
                 self._stream.close()
                 self._stream = None
-
-    def get_available_devices(self) -> list[dict[str, Any]]:
-        """Get a list of available audio output devices."""
-        return sd.query_devices()  # type: ignore[no-any-return]
-
-
-if __name__ == "__main__":
-    from dimos.stream.audio.node_microphone import (
-        SounddeviceAudioSource,
-    )
-    from dimos.stream.audio.node_normalizer import AudioNormalizer
-    from dimos.stream.audio.utils import keepalive
-
-    # Create microphone source, normalizer and audio output
-    mic = SounddeviceAudioSource()
-    normalizer = AudioNormalizer()
-    speaker = SounddeviceAudioOutput()
-
-    # Connect the components in a pipeline
-    normalizer.consume_audio(mic.emit_audio())
-    speaker.consume_audio(normalizer.emit_audio())
-
-    keepalive()

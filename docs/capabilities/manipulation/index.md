@@ -389,10 +389,16 @@ uv sync --extra manipulation --inexact
 
 The Viser panel talks to the concrete `ManipulationOperator` bound into its
 `VisualizationSession`. GUI callbacks enqueue operations through that operator
-for target evaluation, planning, preview, execution, cancellation, reset, and
+for target evaluation, planning, preview, execution, cancellation, and
 clear-plan actions. The panel owns only target drafts, selection state, and
 callback generations; it does not touch `WorldSpec`, IK, planner objects,
 `ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.
+
+The **Zero** preset sets selected groups' joint targets to `0.0` without moving the
+robot. Use **Joint space → Plan → Execute**; the existing feasibility checks apply.
+If any selected joint's limits exclude zero, the preset is rejected and targets
+stay unchanged. Unselected joints stay unchanged. Zero is not Home or hardware
+calibration.
 
 The panel's **Planning mode** selector chooses how the current target is
 reached:

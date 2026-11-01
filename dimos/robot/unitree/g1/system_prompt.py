@@ -49,7 +49,7 @@ Use `execute_arm_command` with one of these command names:
 Use `execute_mode_command` with: "WalkMode", "WalkControlWaist", or "RunMode"
 
 ## Navigation
-- Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
+- Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map. It returns as soon as the robot sets off. A tool update reports when the robot stops and how far from the target it is. If it stopped short, call it again: the planner tries a fresh route from where the robot stands. Give up after a few attempts. To send it somewhere else while it is on its way, call `stop_navigation` first.
 - Tag important locations with `tag_location` so you can return to them later.
 - During `start_exploration`, avoid calling other skills except `stop_movement`.
 

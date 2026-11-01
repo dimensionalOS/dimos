@@ -49,6 +49,7 @@ SOURCE_ROOTS = (
     "docker",
     "scripts",
     "web",
+    "release",
     ".github",
 )
 

@@ -13,28 +13,32 @@
 # limitations under the License.
 
 from collections.abc import Callable
-import os
+import gc
+from queue import Queue
 import sys
 import threading
 import time
 from typing import Any, TypeVar
+import weakref
 
 import numpy as np
 import pytest
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.disposable import Disposable
+from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.scheduler import ThreadPoolScheduler
-
-_IS_MACOS = sys.platform == "darwin"
+from reactivex.subject import Subject
 
 from dimos.utils.reactive import (
+    _LatestBackpressureObserver,
     backpressure,
     callback_to_observable,
     getter_ondemand,
     getter_streaming,
     iter_observable,
 )
+
+_IS_MACOS = sys.platform == "darwin"
 
 
 def measure_time(func: Callable[[], Any], iterations: int = 1) -> float:
@@ -87,162 +91,437 @@ def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
     return proxy
 
 
-@pytest.mark.skipif(
-    _IS_MACOS and bool(os.environ.get("CI")),
-    reason="rx.interval timing is too starved on the hosted macOS CI VM to hit the "
-    "item-count bounds; the backpressure behaviour is covered on real macs and Linux",
-)
-def test_backpressure_handling() -> None:
-    # Create a dedicated scheduler for this test to avoid thread leaks
-    test_scheduler = ThreadPoolScheduler(max_workers=8)
+class BackpressureResources:
+    """Own subscriptions, callback gates, and threads even when a test fails."""
+
+    def __init__(self):
+        self.scheduler = ThreadPoolScheduler(max_workers=4)
+        self.disposables = CompositeDisposable()
+        self.threads = []
+        self.waiting = Queue()
+        self.submitted = Queue()
+        self.releases = []
+
+    def own(self, disposable):
+        self.disposables.add(disposable)
+        return disposable
+
+    def release_event(self):
+        event = threading.Event()
+        self.releases.append(event)
+        return event
+
+    def start(self, target):
+        thread = threading.Thread(target=target)
+        self.threads.append(thread)
+        thread.start()
+        return thread
+
+
+def join_worker(worker):
+    # Shorter than the former five-second idle timeout: expiry cannot pass this check.
+    worker.join(timeout=2.0)
+    assert not worker.is_alive(), "backpressure worker did not stop promptly"
+
+
+@pytest.fixture
+def backpressure_resources(monkeypatch):
+    resources = BackpressureResources()
+    run = _LatestBackpressureObserver._run
+    submit = _LatestBackpressureObserver._submit
+
+    def tracked_run(observer):
+        worker = threading.current_thread()
+        resources.threads.append(worker)
+        wait = observer._cond.wait
+
+        def tracked_wait(timeout=None):
+            # Signal under the condition lock, so the next submission cannot
+            # overtake entry into wait(). Do not retain observers or payloads.
+            resources.waiting.put((worker, timeout))
+            return wait(timeout)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(observer._cond, "wait", tracked_wait)
+            run(observer)
+
+    def tracked_submit(observer, kind, payload):
+        submit(observer, kind, payload)
+        resources.submitted.put(kind)
+
+    monkeypatch.setattr(_LatestBackpressureObserver, "_run", tracked_run)
+    monkeypatch.setattr(_LatestBackpressureObserver, "_submit", tracked_submit)
     try:
-        received_fast = []
-        received_slow = []
-        # Create an observable that emits numpy arrays instead of integers
-        source = dispose_spy(
-            rx.interval(0.1).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50))
-        )
-
-        # Wrap with backpressure handling
-        safe_source = backpressure(source, scheduler=test_scheduler)
-
-        # Fast sub
-        subscription1 = safe_source.subscribe(lambda x: received_fast.append(x))
-
-        # Slow sub (shouldn't block above)
-        subscription2 = safe_source.subscribe(lambda x: (time.sleep(0.25), received_slow.append(x)))
-
-        time.sleep(2.5)
-
-        subscription1.dispose()
-        assert not source.is_disposed(), "Observable should not be disposed yet"
-        subscription2.dispose()
-        # Wait longer to ensure background threads finish processing
-        # (the slow subscriber sleeps for 0.25s, so we need to wait at least that long)
-        time.sleep(0.5)
-        assert source.is_disposed(), "Observable should be disposed"
-
-        # Check results
-        print("Fast observer received:", len(received_fast), [arr[0] for arr in received_fast])
-        print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
-
-        # Fast observer should get all or nearly all items
-        _min_fast = 10 if _IS_MACOS else 15
-        assert len(received_fast) > _min_fast, (
-            f"Expected fast observer to receive most items, got {len(received_fast)}"
-        )
-
-        # Slow observer should get fewer items due to backpressure handling
-        assert len(received_slow) < len(received_fast), (
-            "Slow observer should receive fewer items than fast observer"
-        )
-        # Specifically, processing at 0.25s means ~4 items per second, so expect 8-10 items
-        # (fewer on the hosted macOS CI VM, where the subscriber's own sleeps oversleep).
-        _min_slow = 4 if _IS_MACOS else 7
-        assert _min_slow <= len(received_slow) <= 11, (
-            f"Expected {_min_slow}-11 items, got {len(received_slow)}"
-        )
-
-        # The slow observer should skip items (not process them in sequence)
-        # We test this by checking that the difference between consecutive arrays is sometimes > 1
-        has_skips = False
-        for i in range(1, len(received_slow)):
-            if received_slow[i][0] - received_slow[i - 1][0] > 1:
-                has_skips = True
-                break
-        assert has_skips, "Slow observer should skip items due to backpressure"
+        yield resources
     finally:
-        # Always shutdown the scheduler to clean up threads
-        test_scheduler.executor.shutdown(wait=True)
+        for release in resources.releases:
+            release.set()
+        resources.disposables.dispose()
+        resources.scheduler.executor.shutdown(wait=True)
+        for thread in resources.threads:
+            thread.join(timeout=2.0)
+        assert all(not thread.is_alive() for thread in resources.threads)
 
 
-def test_backpressure_single_worker_thread() -> None:
-    """Latest-wins delivery runs on one resident thread per observer, not one thread per message.
+class ThreadReportingSink:
+    def __init__(self, delivered):
+        self.delivered = delivered
 
-    Regression test for the per-message ``threading.Thread`` of the original observer: with a
-    CUDA detector downstream each short-lived thread leaked ~1 MB (Jetson Orin Nano, 5 Hz:
-    +270 MB/min). The first callback is held open while a burst of messages is submitted, so the
-    worker provably delivers at least two messages (the held one, then the latest of the burst)
-    on the same thread; intermediate messages are dropped.
-    """
-    from dimos.utils.reactive import _LatestBackpressureObserver
+    def on_next(self, value):
+        self.delivered.put(threading.current_thread())
 
-    received: list[int] = []
-    workers: list[threading.Thread] = []
-    first_started = threading.Event()
-    release_first = threading.Event()
-    burst_done = threading.Event()
 
-    class Slow:
-        def on_next(self, x: int) -> None:
-            workers.append(threading.current_thread())
-            if x == 0:
-                first_started.set()
-                assert release_first.wait(5.0)
-            received.append(x)
-            if x == 199:
-                burst_done.set()
+def test_backpressure_handling(backpressure_resources) -> None:
+    """Subscribers own independent workers and can unsubscribe independently."""
+    resources = backpressure_resources
+    source = resources.own(Subject())
+    shared = backpressure(source, scheduler=resources.scheduler)
+    first = Queue()
+    second = Queue()
+    release = resources.release_event()
 
-        def on_error(self, e: Exception) -> None:
-            raise AssertionError(e)
+    def slow(value):
+        second.put((value, threading.current_thread()))
+        assert release.wait(5.0)
 
-        def on_completed(self) -> None:
-            pass
-
-    obs = _LatestBackpressureObserver(Slow(), idle_s=0.2)
-    obs.on_next(0)
-    assert first_started.wait(5.0)
-    for i in range(1, 200):
-        obs.on_next(i)  # all submitted while the first callback is still running
-    release_first.set()
-    assert burst_done.wait(5.0), f"last message not delivered, got {received[-5:]}"
-    assert received == [0, 199], received  # held message, then only the latest of the burst
-    assert len(workers) == 2 and workers[0] is workers[1], (
-        "both deliveries must reuse the same worker"
+    subscription = resources.own(
+        shared.subscribe(lambda value: first.put((value, threading.current_thread())))
     )
-    first_worker = obs._worker
-    assert first_worker is workers[0]
+    slow_subscription = resources.own(shared.subscribe(slow))
+    assert resources.threads == []  # Delivery workers start lazily.
 
-    # The worker is released when idle, and a later message starts a fresh one.
-    first_worker.join(timeout=5.0)
-    assert obs._worker is None and not first_worker.is_alive()
-    burst_done.clear()
-    obs.on_next(199)
-    assert burst_done.wait(2.0)
-    assert workers[-1] is not first_worker
-    obs.on_completed()
+    source.on_next(0)
+    first_value, first_worker = first.get(timeout=2.0)
+    second_value, second_worker = second.get(timeout=2.0)
+    assert (first_value, second_value) == (0, 0)
+    assert first_worker is not second_worker
+
+    source.on_next(1)
+    assert first.get(timeout=2.0) == (1, first_worker)
+    subscription.dispose()
+    join_worker(first_worker)
+    release.set()
+    assert second.get(timeout=2.0) == (1, second_worker)
+
+    source.on_next(2)
+    assert second.get(timeout=2.0) == (2, second_worker)
+    assert first.empty()
+
+    slow_subscription.dispose()
+    join_worker(second_worker)
+    assert source.observers == []  # The last unsubscribe disconnects the source.
 
 
-def test_backpressure_error_delivered_once() -> None:
-    """Latest error wins: both errors are submitted while the worker is busy, only the last arrives."""
-    from dimos.utils.reactive import _LatestBackpressureObserver
+def test_backpressure_single_worker_thread(backpressure_resources) -> None:
+    """A held callback and the latest of a burst use the same resident worker."""
+    resources = backpressure_resources
+    received = Queue()
+    release = resources.release_event()
 
-    errors: list[Exception] = []
-    busy = threading.Event()
-    release = threading.Event()
-    got = threading.Event()
-
-    class Sink:
-        def on_next(self, x: int) -> None:
-            busy.set()
+    def on_next(value):
+        received.put((value, threading.current_thread()))
+        if value == 0:
             assert release.wait(5.0)
 
-        def on_error(self, e: Exception) -> None:
-            errors.append(e)
-            got.set()
-
-        def on_completed(self) -> None:
-            pass
-
-    obs = _LatestBackpressureObserver(Sink(), idle_s=0.2)
-    obs.on_next(1)
-    assert busy.wait(5.0)
-    obs.on_error(RuntimeError("a"))
-    obs.on_error(RuntimeError("b"))  # submitted while the worker is still busy: replaces "a"
+    observer = resources.own(_LatestBackpressureObserver(rx.Observer(on_next)))
+    observer.on_next(0)
+    first_value, worker = received.get(timeout=2.0)
+    for value in range(1, 200):
+        observer.on_next(value)
     release.set()
-    assert got.wait(2.0)
-    time.sleep(0.1)
-    assert [str(e) for e in errors] == ["b"]
+
+    assert first_value == 0
+    assert received.get(timeout=2.0) == (199, worker)
+    assert resources.waiting.get(timeout=2.0) == (worker, None)
+    assert received.empty()
+
+
+def test_backpressure_releases_delivered_payload_while_idle(backpressure_resources) -> None:
+    resources = backpressure_resources
+    received = Queue()
+    # Exercise worker retention separately from backpressure()'s replay cache.
+    observer = resources.own(
+        _LatestBackpressureObserver(rx.Observer(ThreadReportingSink(received).on_next))
+    )
+    payload = np.zeros(1024 * 1024, dtype=np.uint8)
+    payload_ref = weakref.ref(payload)
+    observer.on_next(payload)
+    worker = received.get(timeout=2.0)
+    assert resources.waiting.get(timeout=2.0) == (worker, None)
+
+    del payload
+    gc.collect()
+
+    assert payload_ref() is None
+    assert worker.is_alive()
+
+
+def test_backpressure_disposal_releases_workers_owners_and_payloads(backpressure_resources) -> None:
+    resources = backpressure_resources
+    delivered = Queue()
+    owners = []
+    payloads = []
+    workers = []
+    for _ in range(3):
+        source = resources.own(Subject())
+        sink = ThreadReportingSink(delivered)
+        payload = np.zeros(1024 * 1024, dtype=np.uint8)
+        owners.append(weakref.ref(sink))
+        payloads.append(weakref.ref(payload))
+        subscription = resources.own(
+            backpressure(source, scheduler=resources.scheduler).subscribe(sink.on_next)
+        )
+        source.on_next(payload)
+        worker = delivered.get(timeout=2.0)
+        workers.append(worker)
+        assert resources.waiting.get(timeout=2.0) == (worker, None)
+        subscription.dispose()
+        source.dispose()
+        del source, sink, payload, subscription
+
+    # Drop fixture ownership too; Rx disposables and replay caches can retain callbacks/data.
+    resources.disposables.clear()
+    resources.scheduler.executor.shutdown(wait=True)
+    for worker in workers:
+        join_worker(worker)
+    gc.collect()
+
+    assert all(owner() is None for owner in owners)
+    assert all(payload() is None for payload in payloads)
+
+
+def test_backpressure_disposal_during_callback_discards_pending(backpressure_resources) -> None:
+    resources = backpressure_resources
+    source = resources.own(Subject())
+    received = []
+    started = Queue()
+    release = resources.release_event()
+    disposed = threading.Event()
+
+    def on_next(value):
+        received.append(value)
+        started.put(threading.current_thread())
+        assert release.wait(5.0)
+
+    subscription = resources.own(
+        backpressure(source, scheduler=resources.scheduler).subscribe(on_next)
+    )
+    source.on_next(0)
+    worker = started.get(timeout=2.0)
+    assert resources.submitted.get(timeout=2.0) == "next"
+    pending = np.zeros(1024 * 1024, dtype=np.uint8)
+    pending_ref = weakref.ref(pending)
+    source.on_next(pending)
+    assert resources.submitted.get(timeout=2.0) == "next"
+
+    def dispose():
+        subscription.dispose()
+        disposed.set()
+
+    disposer = resources.start(dispose)
+    assert disposed.wait(2.0), "disposal must not wait for the running callback"
+    join_worker(disposer)
+    resources.disposables.clear()
+    del source, subscription, pending
+    gc.collect()
+    assert pending_ref() is None
+    assert worker.is_alive()
+
+    release.set()
+    join_worker(worker)
+    assert received == [0]
+
+
+def test_backpressure_one_shot_disposes_inside_worker(backpressure_resources) -> None:
+    resources = backpressure_resources
+    source = resources.own(Subject())
+    received = Queue()
+    completed = threading.Event()
+    resources.own(
+        backpressure(source, scheduler=resources.scheduler)
+        .pipe(ops.first())
+        .subscribe(
+            lambda value: received.put((value, threading.current_thread())),
+            on_completed=completed.set,
+        )
+    )
+
+    source.on_next(1)
+    value, worker = received.get(timeout=2.0)
+    assert completed.wait(2.0)
+    join_worker(worker)
+    source.on_next(2)
+
+    assert value == 1
+    assert received.empty()
+    assert resources.threads == [worker]
+
+
+def test_backpressure_racing_submission_cannot_resurrect_worker(
+    backpressure_resources, monkeypatch
+) -> None:
+    resources = backpressure_resources
+    source = resources.own(Subject())
+    received = Queue()
+    subscription = resources.own(
+        backpressure(source, scheduler=resources.scheduler).subscribe(
+            ThreadReportingSink(received).on_next
+        )
+    )
+    source.on_next(0)
+    worker = received.get(timeout=2.0)
+    assert resources.waiting.get(timeout=2.0) == (worker, None)
+    assert resources.submitted.get(timeout=2.0) == "next"
+    entered = threading.Event()
+    release = resources.release_event()
+    submit = _LatestBackpressureObserver._submit
+
+    def paused_submit(observer, kind, payload):
+        entered.set()
+        assert release.wait(5.0)
+        submit(observer, kind, payload)
+
+    monkeypatch.setattr(_LatestBackpressureObserver, "_submit", paused_submit)
+    pending = np.zeros(1024 * 1024, dtype=np.uint8)
+    pending_ref = weakref.ref(pending)
+    source.on_next(pending)
+    assert entered.wait(2.0)
+
+    subscription.dispose()
+    subscription.dispose()
+    join_worker(worker)  # The idle worker is gone before the paused submission resumes.
+    release.set()
+    assert resources.submitted.get(timeout=2.0) == "next"
+    resources.disposables.clear()
+    resources.scheduler.executor.shutdown(wait=True)
+    del source, subscription, pending
+    gc.collect()
+
+    assert resources.threads == [worker]
+    assert received.empty()
+    assert pending_ref() is None
+
+
+def test_backpressure_error_delivered_once(backpressure_resources) -> None:
+    """A busy observer keeps only the latest error, delivered after the callback ends the worker."""
+    resources = backpressure_resources
+    started = Queue()
+    received = []
+    errors = []
+    release = resources.release_event()
+
+    def on_next(value):
+        received.append(value)
+        started.put(threading.current_thread())
+        assert release.wait(5.0)
+
+    observer = resources.own(_LatestBackpressureObserver(rx.Observer(on_next, errors.append)))
+    observer.on_next(1)
+    worker = started.get(timeout=2.0)
+    observer.on_next(2)
+    observer.on_error(RuntimeError("a"))
+    observer.on_error(RuntimeError("b"))
+    assert errors == []
+    release.set()
+    join_worker(worker)
+
+    assert received == [1]
+    assert [str(error) for error in errors] == ["b"]
+
+
+@pytest.mark.parametrize("terminal", ["on_completed", "on_error"])
+def test_backpressure_terminal_releases_idle_worker(backpressure_resources, terminal) -> None:
+    resources = backpressure_resources
+    source = resources.own(Subject())
+    received = Queue()
+    notifications = Queue()
+    resources.own(
+        backpressure(source, scheduler=resources.scheduler).subscribe(
+            ThreadReportingSink(received).on_next,
+            on_error=lambda error: notifications.put(str(error)),
+            on_completed=lambda: notifications.put("completed"),
+        )
+    )
+    source.on_next(1)
+    worker = received.get(timeout=2.0)
+    assert resources.waiting.get(timeout=2.0) == (worker, None)
+
+    if terminal == "on_error":
+        source.on_error(RuntimeError("failed"))
+    else:
+        source.on_completed()
+    notification = notifications.get(timeout=2.0)
+    join_worker(worker)
+
+    assert notification == {"on_error": "failed", "on_completed": "completed"}[terminal]
+    assert notifications.empty()
+
+
+def test_backpressure_completion_stays_immediate_during_callback(backpressure_resources) -> None:
+    resources = backpressure_resources
+    source = resources.own(Subject())
+    release = resources.release_event()
+    started = Queue()
+    completed = threading.Event()
+    received = []
+
+    def on_next(value):
+        received.append(value)
+        started.put(threading.current_thread())
+        assert release.wait(5.0)
+
+    resources.own(
+        backpressure(source, scheduler=resources.scheduler).subscribe(
+            on_next, on_completed=completed.set
+        )
+    )
+    source.on_next(0)
+    worker = started.get(timeout=2.0)
+    assert resources.submitted.get(timeout=2.0) == "next"
+    source.on_next(1)
+    assert resources.submitted.get(timeout=2.0) == "next"
+    source.on_completed()
+
+    assert completed.wait(2.0)
+    assert worker.is_alive()
+    release.set()
+    join_worker(worker)
+    assert received == [0]
+
+
+def test_backpressure_callback_exception_allows_later_recovery(
+    backpressure_resources, monkeypatch
+) -> None:
+    resources = backpressure_resources
+    source = resources.own(Subject())
+    received = Queue()
+    failures = Queue()
+    release = resources.release_event()
+    monkeypatch.setattr(threading, "excepthook", lambda args: failures.put(str(args.exc_value)))
+
+    def on_next(value):
+        received.put((value, threading.current_thread()))
+        if value == 0:
+            assert release.wait(5.0)
+            raise RuntimeError("callback failed")
+
+    resources.own(backpressure(source, scheduler=resources.scheduler).subscribe(on_next))
+    source.on_next(0)
+    first_value, first_worker = received.get(timeout=2.0)
+    assert resources.submitted.get(timeout=2.0) == "next"
+    source.on_next(1)
+    assert resources.submitted.get(timeout=2.0) == "next"
+    release.set()
+    join_worker(first_worker)
+    assert failures.get(timeout=2.0) == "callback failed"
+    assert received.empty()
+
+    source.on_next(2)
+    recovered_value, recovered_worker = received.get(timeout=2.0)
+    assert resources.waiting.get(timeout=2.0) == (recovered_worker, None)
+
+    assert (first_value, recovered_value) == (0, 2)
+    assert recovered_worker is not first_worker
 
 
 def test_getter_streaming_blocking() -> None:

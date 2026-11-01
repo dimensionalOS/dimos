@@ -21,7 +21,7 @@ use std::f64::consts::PI;
 use dimos_local_planner::planner::Emb;
 use dimos_trajectory_follower::emb::hinted_params;
 use dimos_trajectory_follower::geom::{ieee_remainder, TAU};
-use dimos_trajectory_follower::laws::hinted::{update, walk_command, HintedParams};
+use dimos_trajectory_follower::hinted::{update, walk_command, HintedParams};
 use dimos_trajectory_follower::stamps::decode_ceilings;
 
 fn cfg() -> HintedParams {
@@ -34,12 +34,12 @@ fn ground(cmd: f64) -> f64 {
     (cmd - c.walk_slip) / c.walk_gain
 }
 
-/// The python `_straight_path()`.
+/// A straight path along +x.
 fn straight() -> Vec<[f64; 3]> {
     (0..40).map(|k| [k as f64 * 0.1, 0.0, 0.0]).collect()
 }
 
-/// The python `_fan_path()`.
+/// A rotate-in-place fan, then a straight leg.
 fn fan() -> Vec<[f64; 3]> {
     let mut p: Vec<[f64; 3]> = [0.0, 0.3, 0.6, 0.9, 1.2, 1.5]
         .iter()
@@ -146,8 +146,8 @@ fn fan_advances_by_yaw_progress() {
     );
 }
 
-/// Asserted on the ground speed the command buys, not the command: the seed's creep
-/// was a stall dressed as caution (see `walk_slip`).
+/// Asserted on the ground speed the command buys, not the command, since a creep
+/// command below the slip is a stall (see `walk_slip`).
 #[test]
 fn governor_creeps_in_tight_room() {
     let c = cfg();
@@ -170,7 +170,7 @@ fn governor_is_open_room_and_a_no_op_without_clearance() {
     let open = update((-1.0, 0.0, 0.0), &p, Some(&wide), None, &c);
     let bare = update((-1.0, 0.0, 0.0), &p, None, None, &c);
     assert_eq!(open, bare, "wide clearance changed the command");
-    // a wrong-length annotation is ignored, exactly as in the python
+    // a wrong-length annotation is ignored
     let stub = vec![0.06; p.len() - 1];
     assert_eq!(update((-1.0, 0.0, 0.0), &p, Some(&stub), None, &c), bare);
 }

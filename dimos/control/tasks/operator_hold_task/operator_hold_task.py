@@ -72,6 +72,7 @@ class OperatorHoldStatus:
         started_at: Unix time in seconds the hold was requested; 0.0 when off.
         stamp: Unix time in seconds this status was produced.
         unheld: Joints with no valid position reading, not held yet.
+        estopped: True while the coordinator's e-stop is latched.
     """
 
     on: bool
@@ -80,6 +81,7 @@ class OperatorHoldStatus:
     started_at: float = 0.0
     stamp: float = 0.0
     unheld: tuple[str, ...] = ()
+    estopped: bool = False
 
 
 def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:
@@ -111,6 +113,10 @@ class OperatorHoldTask(BaseControlTask):
     the whole set is commanded every tick until ``acknowledge()``. A joint
     that appears later, e.g. hardware added during a hold, is frozen when
     first seen. A joint with no valid reading waits in ``unheld``.
+
+    An e-stop turns the hold on (route "failsafe", reason "e-stop"). While
+    the e-stop is latched the hold commands nothing; once it is cleared the
+    hold freezes each joint where it is then, and stays on until acknowledged.
 
     Status goes to the publisher given to ``set_status_publisher`` on the
     first tick after a request, once per ``status_interval`` after that, and
@@ -144,6 +150,7 @@ class OperatorHoldTask(BaseControlTask):
         self._held: dict[str, float] = {}  # joint -> value commanded while on
         self._unheld: set[str] = set()  # joints seen without a finite reading
         self._last_status_t: float | None = None  # coordinator time of the last status
+        self._estopped = False
 
     def set_status_publisher(self, publish: Callable[[OperatorHoldStatus], None] | None) -> None:
         """Where to send OperatorHoldStatus messages; None sends them nowhere."""
@@ -168,8 +175,10 @@ class OperatorHoldTask(BaseControlTask):
         with self._lock:
             if not self._on:
                 return None
+            # Freeze nothing while e-stopped, so after the clear the hold
+            # takes each joint where it is then. _held is empty until then.
             for name, position in state.joints.joint_positions.items():
-                if name in self._held:
+                if self._estopped or name in self._held:
                     continue
                 if math.isfinite(position):
                     self._held[name] = _hold_value(name, position)
@@ -235,9 +244,15 @@ class OperatorHoldTask(BaseControlTask):
     def acknowledge(self) -> OperatorHoldStatus:
         """Release the hold. Nothing resumes by itself; the next task to command a joint takes it.
 
+        While the e-stop is latched it refuses: the hold stays on, a warning
+        is logged and the unchanged status is returned.
+
         Operator only: never expose this as an agent skill.
         """
         with self._lock:
+            if self._estopped:
+                logger.warning("Operator hold cannot be acknowledged while the e-stop is latched")
+                return self._status_locked()
             was_on = self._on
             self._on = False
             self._held = {}
@@ -252,6 +267,30 @@ class OperatorHoldTask(BaseControlTask):
             self._emit(status)
         return status
 
+    def set_estop(self, estopped: bool) -> None:
+        """Turn the hold on when the e-stop is latched; keep it on when it is cleared.
+
+        The coordinator calls this from its own ``set_estop``. True requests
+        the hold (route "failsafe", reason "e-stop") and drops any frozen
+        positions; the hold commands nothing until the stop is cleared. False
+        leaves the hold on until ``acknowledge()``. Both send the status.
+        Never raises: a failure is logged.
+
+        Args:
+            estopped: True when the e-stop is latched, False when it is cleared.
+        """
+        try:
+            with self._lock:
+                self._estopped = estopped
+                if estopped:
+                    self._held = {}
+                    self._unheld = set()
+            if estopped:
+                self.request(HoldRoute.FAILSAFE.value, "e-stop")
+            self._emit(self.get_status())
+        except Exception:
+            logger.exception("Operator hold e-stop handling failed", estopped=estopped)
+
     def get_status(self) -> OperatorHoldStatus:
         """The current hold state, without changing anything."""
         with self._lock:
@@ -265,6 +304,7 @@ class OperatorHoldTask(BaseControlTask):
             started_at=self._started_at,
             stamp=time.time(),
             unheld=tuple(sorted(self._unheld)),
+            estopped=self._estopped,
         )
 
     def _emit(self, status: OperatorHoldStatus) -> None:

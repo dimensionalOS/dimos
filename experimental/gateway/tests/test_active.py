@@ -67,7 +67,8 @@ def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(client: TestClient
     config = {"global": {"n_workers": 4, "replay": True}, "modules": {"agent": {"api_key": "k1"}}}
     started = client.post("/active/launch", json={"blueprint": "demo", "config": config})
     assert started.status_code == 200, started.text
-    assert started.json()["phase"] == "starting"
+    # the fake dimos registers at once, so on a busy machine it can be running before the gateway answers
+    assert started.json()["phase"] in ("starting", "running")
     until(output_has(client, "secret k1"))
     until(output_has(client, "dtop 1"))
     until(running(client))
@@ -127,6 +128,62 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     until(running(client))
     assert client.get("/active").json()["runId"] != old
     assert launch_of(client)["output"].splitlines()[0].endswith("run demo --n-workers=7")
+
+
+def test_a_launch_that_registers_before_the_answer_answers_running(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remember = launches._remember
+
+    def remember_late(blueprint: str, pid: int, *rest: Any) -> None:
+        until(lambda: any(int(run["pid"]) == pid for run in launches.registry_runs()))
+        remember(blueprint, pid, *rest)
+
+    monkeypatch.setattr(launches, "_remember", remember_late)
+    started = client.post("/active/launch", json={"blueprint": "demo"})
+    assert started.status_code == 200, started.text
+    assert started.json()["phase"] == "running"
+
+
+def test_relaunch_waits_for_the_stopped_run_to_be_reaped(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reap = launches._wait_then_tell
+
+    def slow_reap(child: subprocess.Popen[bytes]) -> None:
+        until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, 60)
+        time.sleep(0.5)
+        reap(child)
+
+    monkeypatch.setattr(launches, "_wait_then_tell", slow_reap)
+    client.post("/active/launch", json={"blueprint": "demo"})
+    until(running(client))
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
+
+
+def test_a_launch_right_after_a_stop_starts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reap = launches._wait_then_tell
+
+    def slow_reap(child: subprocess.Popen[bytes]) -> None:
+        until(lambda: psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE, 60)
+        time.sleep(0.5)
+        reap(child)
+
+    monkeypatch.setattr(launches, "_wait_then_tell", slow_reap)
+    client.post("/active/launch", json={"blueprint": "demo"})
+    until(running(client))
+    assert client.post("/active/stop").status_code == 200
+    launched = client.post("/active/launch", json={"blueprint": "demo"})
+    assert launched.status_code == 200, launched.text
+    until(running(client))
+    client.post("/active/stop")
+    until(stopped(client))
 
 
 def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) -> None:
@@ -288,9 +345,9 @@ def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
 def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from experimental.gateway import events, store
+    from experimental.gateway import events, shared_config
 
-    assert (events.resolve_namespace(), store.setting("dimos-gateway", "socket")) == (
+    assert (events.resolve_namespace(), shared_config.setting("dimos-gateway", "socket")) == (
         None,
         None,
     )
@@ -301,14 +358,14 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     )
     assert events.resolve_namespace() == "desk1"
     assert events.resolve_connect() == ["tcp/10.0.0.2:7447"]
-    assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    assert shared_config.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
     app = {
         "home": str(tmp_path / "dimos_home"),
         "socket": "/tmp/app.sock",
         "zenohNamespace": "app1",
     }
     monkeypatch.setenv("DIMOS_APP", json.dumps(app))
-    assert (events.resolve_namespace(), store.setting("dimos-gateway", "socket")) == (
+    assert (events.resolve_namespace(), shared_config.setting("dimos-gateway", "socket")) == (
         "app1",
         "/tmp/app.sock",
     )

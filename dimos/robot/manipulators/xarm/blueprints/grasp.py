@@ -47,6 +47,7 @@ from dimos.robot.manipulators.common.blueprints import (
     trajectory_task,
 )
 from dimos.robot.manipulators.xarm.config import (
+    XARM_HEURISTIC_AIM,
     make_xarm7_model_config,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
@@ -202,7 +203,7 @@ _XARM_GRASP_MODULES = (
         voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
+    PickAndPlaceModule.blueprint(planning_frame="world", robot=_model),
     *_sensing(),
     _scene_registration(),
     manipulation_mapping(
@@ -225,12 +226,14 @@ _XARM_GRASP_MODULES = (
     ),
 )
 
-xarm_grasp = autoconnect(*_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint())
+xarm_grasp = autoconnect(*_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM))
 
 xarm_grasp_graspgenx = autoconnect(
     *_XARM_GRASP_MODULES,
     GraspGenXModule.blueprint(
         gripper=XARM_GRIPPER_SWEEP_VOLUME,
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+        # Return every sample: the pick's contact check chooses among them.
+        max_candidates=500,
     ),
 )

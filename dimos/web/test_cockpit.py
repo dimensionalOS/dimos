@@ -15,7 +15,6 @@
 """Authoring-API tests: cockpit()/panels/layout compile to pinned manifests."""
 
 from dataclasses import dataclass
-import pickle
 import struct
 import subprocess
 import sys
@@ -44,6 +43,7 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import (
     Channel,
     ChannelRequest,
@@ -169,11 +169,11 @@ def test_default_preset() -> None:
     assert manifest == GO2_MANIFEST
 
 
-def test_blueprint_pickles() -> None:
+def test_blueprint_crosses_the_worker_pipe() -> None:
     # Blueprint kwargs cross the forkserver Pipe; the manifest dict must
-    # survive a pickle round-trip unchanged.
+    # survive the round trip unchanged.
     blueprint = cockpit(layout=GO2_LAYOUT)
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
     assert manifest_of(restored) == GO2_MANIFEST
 
 
@@ -415,7 +415,7 @@ def test_channel_params_are_immutable() -> None:
         channel.params["nested"]["a"] = []
     # Nested sequences freeze to tuples: no append surface at all.
     assert channel.params["nested"]["a"] == (1, 2)
-    restored = pickle.loads(pickle.dumps(channel))
+    restored = decode(encode(channel))
     assert restored.params == channel.params
     with pytest.raises(TypeError, match="immutable"):
         restored.params["scale"] = 10
@@ -474,8 +474,8 @@ def test_channels_only_blueprint() -> None:
     assert specs[0].encoder_takes_params is False
     assert specs[1].encoder is encode_json_v1 and specs[1].message_type is _OpsNote
     # Blueprint kwargs cross the forkserver Pipe: class identity and the
-    # by-reference encoder must survive pickling.
-    restored = pickle.loads(pickle.dumps(blueprint))
+    # by-reference encoder must survive the trip.
+    restored = decode(encode(blueprint))
     (ratom,) = restored.blueprints
     assert ratom.module is atom.module
     assert ratom.kwargs["channels"][0].encoder is _encode_path_xy
@@ -512,8 +512,8 @@ def test_publish_tx_channel_blueprint() -> None:
     assert spec.decoder is decode_text and spec.decoder_takes_context is False
     assert spec.encoder is None
     # Blueprint kwargs cross the forkserver Pipe: the by-reference decoder
-    # must survive pickling.
-    restored = pickle.loads(pickle.dumps(blueprint))
+    # must survive the trip.
+    restored = decode(encode(blueprint))
     (ratom,) = restored.blueprints
     assert ratom.module is atom.module
     assert ratom.kwargs["channels"][0].decoder is decode_text
@@ -549,7 +549,7 @@ def test_chat_panel_blueprint() -> None:
     assert specs["human_input"].decoder is decode_text
     assert specs["audio_in"].decoder is decode_audio_chunk
     assert not specs["audio_in"].decoder_takes_context and specs["audio_in"].encoder is None
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
     (ratom,) = restored.blueprints
     assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["audio_in"] is decode_audio_chunk
     # Pacing is the chat panel's, not the stream's: the same streams declared
@@ -603,7 +603,7 @@ def test_map2d_nav_channels_blueprint() -> None:
     assert specs["path"].paced and specs["path"].resend_on_subscribe
     assert specs["clicked_point"].decoder is decode_point
     assert specs["stop_movement"].decoder is decode_bool
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
     (ratom,) = restored.blueprints
     assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["clicked_point"] is decode_point
 
@@ -630,7 +630,7 @@ def test_map3d_blueprint() -> None:
     spec = next(s for s in atom.kwargs["channels"] if s.ch == "global_map")
     assert spec.encoder is encode_voxels
     assert spec.resend_on_subscribe and not spec.paced
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
     (ratom,) = restored.blueprints
     assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["global_map"] is encode_voxels
 
@@ -769,13 +769,13 @@ def test_stats_panel_blueprint() -> None:
     assert manifest["pages"] == ["p1"]
     assert parse_manifest(manifest).model_dump() == manifest
     # The producer is the coordinator's resource monitor, not a module: the
-    # generated In[dict] port autoconnects to its pickled /resource_stats
+    # generated In[dict] port autoconnects to its /resource_stats
     # topic by name.
     ports = {(s.name, s.direction): s.type for s in atom.streams}
     assert ports[("resource_stats", "in")] is dict
     spec = next(s for s in atom.kwargs["channels"] if s.ch == "resource_stats")
     assert spec.encoder is encode_stats and not spec.paced
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
     (ratom,) = restored.blueprints
     assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["resource_stats"] is encode_stats
 
@@ -941,7 +941,7 @@ def test_lcm_channel_blueprint() -> None:
     assert any(
         s.name == "pose" and s.type is PoseStamped and s.direction == "in" for s in atom.streams
     )
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
     assert restored.blueprints[0].kwargs["channels"][0].encoder is encode_lcm_v1
 
 
