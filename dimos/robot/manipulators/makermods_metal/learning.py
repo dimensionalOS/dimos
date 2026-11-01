@@ -158,6 +158,7 @@ def build_metal_learning(
                 gripper_joint_names=list(grippers.values()),
                 max_joint_velocity_rad_s=0.5,
                 feedback_limit_tolerance=0.06,
+                position_tolerance_m=0.05,
             )
         )
     coordinator = DualMetalLearningCoordinator if dual else MetalLearningCoordinator

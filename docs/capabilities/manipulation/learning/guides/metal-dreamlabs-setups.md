@@ -134,6 +134,11 @@ Wait for `busy=False` and inspect target frames and gripper directions. Explicit
 request `policy.start_rollout(dispatch_actions=True)` to execute. Stop and drain
 policy before manual planning. Preview counters do not confirm trajectory execution.
 
+Metal EEF playback uses a 5 cm final position tolerance. Completion can therefore
+leave the tool up to 5 cm from the requested endpoint; it does not establish grasp
+accuracy. Orientation, gripper, velocity, start-state, and tracking-error checks
+still apply.
+
 ## Validate each station
 
 Offline tests cover station schemas, camera selection, CLI parsing, missing

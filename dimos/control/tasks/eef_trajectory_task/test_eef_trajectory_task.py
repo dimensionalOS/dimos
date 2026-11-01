@@ -125,6 +125,21 @@ def test_eef_unreached_final_target_faults_after_settling_timeout(setup_task):
     assert "gripper=1.000000 (limit=0.020000)" in task.get_status().error
 
 
+@pytest.mark.parametrize(
+    "residual, expected", [(0.04, TrajectoryState.COMPLETED), (0.06, TrajectoryState.FAULT)]
+)
+def test_relaxed_position_tolerance_still_rejects_outside_endpoints(setup_task, residual, expected):
+    original, solver = setup_task
+    task = EefTrajectoryTask(
+        attrs.evolve(original._config, position_tolerance_m=0.05), solver=solver
+    )
+    execute_with_state(task, trajectory(), state().joints.joint_positions)
+    task.compute(state(t=10))
+    solver.frame_poses.return_value = {frame: pose(0.1 - residual) for frame in ("left", "right")}
+    task.compute(state(t=13.1, opening=1))
+    assert task.get_state() == expected
+
+
 @pytest.mark.parametrize("stop", ["cancel", "estop", "preempt", "reset"])
 def test_eef_stop_clears_chunk_and_never_resumes_old_motion(setup_task, stop):
     task, solver = setup_task
