@@ -106,6 +106,7 @@ config! {
     closure_gnc_inlier_probability: f64,
     closure_informative_by_graph_covariance: bool,
     closure_uninformative_gate: bool,
+    closure_uninformative_only_repeats: bool,
     odometry_error_estimate_xy_per_sqrt_m: f64,
     odometry_error_estimate_xy_per_sqrt_rad: f64,
     odometry_error_estimate_z_per_sqrt_m: f64,

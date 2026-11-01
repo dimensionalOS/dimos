@@ -154,6 +154,9 @@ class PGOConfig(NativeModuleConfig):
     closure_informative_by_graph_covariance: bool = True
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
     closure_uninformative_gate: bool = True
+    # True: the uninformative gate rejects only a repeat of a kept closure (source and target each within
+    # closure_search_radius of its two ends)
+    closure_uninformative_only_repeats: bool = True
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
     # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. Defaults: Mid-360 +
     # FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning). After each solve
