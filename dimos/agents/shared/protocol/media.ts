@@ -50,8 +50,8 @@ const RenderedViewSchema = Type.Union([
 export type RenderedView = Static<typeof RenderedViewSchema>;
 
 /**
- * The views of one tool result or input. Preview FileRefs stay on disk; the model receives images only after
- * request-scoped hydrate. The cap bounds what one result costs on every later request; six fit the terminal's gallery.
+ * The views, and so the images the model receives, of one tool result or input. Every result stays in context until
+ * compaction, so the cap bounds what one result costs on every later request; six fit the terminal's gallery.
  */
 export const MAX_VIEWS = 6;
 

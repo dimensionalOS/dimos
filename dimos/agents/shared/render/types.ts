@@ -7,14 +7,10 @@ export type RenderProgress = {
   readonly latest: FileRef | null;
 };
 
-/**
- * A rendering: caption lines (including Preview: paths), optional eager images for local callers, and details.
- * Stored tool results / inputs must keep path-only content; `beforeRequest` hydrates images for the LLM.
- */
+/** A rendering as it enters a tool result or an input: caption lines, one image per view, and the details. */
 export type Rendering = {
-  /** One caption (with Preview: path) per view, one notice per listed file, one line per failed file. */
+  /** One line per view (label, source path, SHA-256), one notice per listed file, one line per failed file. */
   readonly text: string;
-  /** Eager model images for /inspect and tests; do not spread into stored tool results. */
   readonly images: readonly ImageContent[];
   readonly details: RenderDetails;
 };
