@@ -66,7 +66,7 @@ fn read_stream<T>(
     mut decode: impl FnMut(f64, &[u8]) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let mut out = Vec::new();
-    for_each_row(connection, stream, 1, |ts, data| {
+    for_each_row(connection, stream, 1, f64::INFINITY, |ts, data| {
         if let Some(value) = decode(ts, data) {
             out.push(value);
         }
@@ -81,6 +81,7 @@ fn for_each_row(
     connection: &Connection,
     stream: &str,
     stride: usize,
+    until_s: f64,
     mut visit: impl FnMut(f64, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
     let stride = stride.max(1);
@@ -95,10 +96,15 @@ fn for_each_row(
         .prepare(&format!("SELECT data FROM {blob_table} WHERE id = ?1"))
         .map_err(|e| e.to_string())?;
     let mut index = 0usize;
+    let mut first_ts = None;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
         if index.is_multiple_of(stride) {
             let id: i64 = row.get(0).map_err(|e| e.to_string())?;
             let ts: f64 = row.get(1).map_err(|e| e.to_string())?;
+            // rows come in time order: past `until_s` of the stream there is nothing more to visit
+            if ts - *first_ts.get_or_insert(ts) > until_s {
+                break;
+            }
             let mut blob_rows = blob_statement.query([id]).map_err(|e| e.to_string())?;
             if let Some(blob_row) = blob_rows.next().map_err(|e| e.to_string())? {
                 let data = blob_row.get_ref(0).map_err(|e| e.to_string())?;
@@ -182,14 +188,16 @@ pub fn read_odometry(connection: &Connection, stream: &str) -> Result<Vec<OdomRo
     Ok(rows)
 }
 
-/// Call `visit` with each scan of a lidar stream of PointCloud2s, in time order, one at a time.
+/// Call `visit` with each scan of a lidar stream of PointCloud2s, in time order, one at a time, stopping after the
+/// stream's first `until_s` seconds.
 pub fn for_each_scan(
     connection: &Connection,
     stream: &str,
     stride: usize,
+    until_s: f64,
     mut visit: impl FnMut(ScanRow) -> Result<(), String>,
 ) -> Result<(), String> {
-    for_each_row(connection, stream, stride, |ts, data| {
+    for_each_row(connection, stream, stride, until_s, |ts, data| {
         let Ok(message) = PointCloud2::decode(data) else {
             return Ok(());
         };
@@ -275,7 +283,7 @@ impl TfTree {
         if !has_tf {
             return Ok(TfTree { edges });
         }
-        for_each_row(connection, "tf", 1, |_, data| {
+        for_each_row(connection, "tf", 1, f64::INFINITY, |_, data| {
             let Ok(message) = TFMessage::decode(data) else {
                 return Ok(());
             };
