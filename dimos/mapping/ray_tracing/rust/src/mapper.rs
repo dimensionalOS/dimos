@@ -534,6 +534,10 @@ mod gpu {
             let started = std::time::Instant::now();
             self.map.integrate(origin, points);
             let integrated = std::time::Instant::now();
+            // The CPU folds the returns into the mirror's moments while the GPU works.
+            let fold = config
+                .surface_heights
+                .then(|| mirror.fold_mirrored(points, origin, config));
             let report = self.map.read_report();
             let read = std::time::Instant::now();
             if report.overflow != 0 {
@@ -566,8 +570,8 @@ mod gpu {
                     coarse.insert(voxel.key);
                 }
             }
-            if config.surface_heights {
-                mirror.observe_mirrored(points, origin, config, &created, &removed);
+            if let Some(fold) = fold {
+                mirror.settle_mirrored(fold, config.voxel_size, &created, &removed);
             }
             let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1e3;
             self.frame = GpuFrame {
@@ -1165,7 +1169,7 @@ mod tests {
     }
 
     /// A floor between grid lines comes out at its own height, not its voxel's
-    /// top face, and a voxel with one stacked on it keeps its top face.
+    /// top face, and a voxel with one stacked on it has none.
     #[test]
     fn local_surface_points_carry_the_plane_height() {
         const FLOOR_Z: f32 = 0.12;
@@ -1200,7 +1204,7 @@ mod tests {
         for q in quads.chunks_exact(4) {
             let post = (q[0] - 0.55).abs() < 1e-3 && (q[1] - 0.55).abs() < 1e-3;
             if post && (q[2] - 0.15).abs() < 1e-3 {
-                assert!((q[3] - 0.2).abs() < 1e-4, "covered voxel at {}", q[3]);
+                assert!(q[3].is_nan(), "covered voxel at {}", q[3]);
             } else if (q[2] - 0.15).abs() < 1e-3 && q[0].abs() < 0.8 && q[1].abs() < 0.8 && !post {
                 floor += 1;
                 assert!((q[3] - FLOOR_Z).abs() < 0.005, "floor at {}", q[3]);
@@ -1301,9 +1305,10 @@ mod tests {
             };
             let cpu_heights = heights(cpu.local_surface_points(&cpu_bounds.bounds()));
             let gpu_heights = heights(gpu.local_surface_points(&gpu_bounds.bounds()));
+            let differ = |a: f32, b: f32| a.is_nan() != b.is_nan() || (a - b).abs() > 1e-3;
             let off = cpu_heights
                 .iter()
-                .filter(|(k, h)| gpu_heights.get(*k).is_some_and(|g| (g - *h).abs() > 1e-3))
+                .filter(|(k, h)| gpu_heights.get(*k).is_some_and(|g| differ(*g, **h)))
                 .count();
             assert!(
                 off as f64 <= EMIT_TOLERANCE * cpu_heights.len() as f64,

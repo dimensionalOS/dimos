@@ -45,7 +45,7 @@ pub(super) enum NormalFit {
 }
 
 /// A voxel's cached surface height above its bottom face, from its pooled
-/// plane. Stale until an emit needs it.
+/// plane, NaN with none. Stale until an emit needs it.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum SurfaceFit {
     Stale,
@@ -241,18 +241,18 @@ pub(super) fn pooled_normal(
 
 /// A voxel's surface height above its bottom face: its pooled plane at the
 /// column center, kept within half a voxel of the voxel, as the GPU surface
-/// pass does. The top face when an occupied voxel sits on it, or the plane is
-/// missing or too steep to give a height.
+/// pass does. NaN when an occupied voxel sits on it (it is no surface), or the
+/// plane is missing or too steep to give a height.
 pub(super) fn surface_height(voxels: &ChunkMap, key: VoxelKey, voxel_size: f32) -> f32 {
     if voxels.get(&(key.0, key.1, key.2 + 1)).is_some() {
-        return voxel_size;
+        return f32::NAN;
     }
     let Some((normal, mean)) = surface_plane(voxels, key, voxel_size) else {
-        return voxel_size;
+        return f32::NAN;
     };
     let n = if normal.z < 0.0 { -normal } else { normal };
     if n.z <= 1e-3 {
-        return voxel_size;
+        return f32::NAN;
     }
     let above_center = mean.z + (n.x * mean.x + n.y * mean.y) / n.z;
     (above_center + 0.5 * voxel_size).clamp(-0.5 * voxel_size, 1.5 * voxel_size)

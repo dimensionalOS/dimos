@@ -19,8 +19,9 @@
 //! `both` runs the two in lockstep, then plans from the first pose to goals
 //! every 2 m along the trajectory on each and compares which it reaches.
 //! `cargo run --release --example nav_replay -- <frames> cpu|gpu|both [max_frames] [skip]`
-//! On the cpu path, NAV_REPLAY_GPU_TRACER runs the ray tracer on the GPU (the
-//! live default), and NAV_REPLAY_HEIGHTS links steps by the local map's surface_z.
+//! `heights` runs the cpu path without and with steps linked by the local map's
+//! surface_z (NAV_REPLAY_HEIGHTS turns it on for `cpu` and `both`), and
+//! NAV_REPLAY_GPU_TRACER runs the cpu path's ray tracer on the GPU, the live default.
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -156,6 +157,12 @@ struct Pipeline {
     config: PlannerConfig,
     request: SurfaceRequest,
     frame_ms: Vec<f64>,
+    /// The frame's local map emit alone, and the GPU frame's mirror into the CPU map.
+    emit_ms: Vec<f64>,
+    mirror_ms: Vec<f64>,
+    /// Planner cells whose surface height moved, and the time taking the heights.
+    retuned: Vec<f64>,
+    retune_ms: Vec<f64>,
     surface_ms: Vec<f64>,
     planner_ms: Vec<f64>,
     total_ms: Vec<f64>,
@@ -172,8 +179,8 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    fn new(gpu: bool) -> Self {
-        let heights = !gpu && std::env::var("NAV_REPLAY_HEIGHTS").is_ok();
+    fn new(gpu: bool, heights: bool) -> Self {
+        let heights = heights && !gpu;
         let gpu_tracer = gpu || std::env::var("NAV_REPLAY_GPU_TRACER").is_ok();
         let mut mapper = Mapper::new(mapper_config(gpu_tracer, heights));
         assert_eq!(mapper.on_gpu(), gpu_tracer, "the GPU map did not come up");
@@ -198,6 +205,10 @@ impl Pipeline {
             config,
             request,
             frame_ms: Vec::new(),
+            emit_ms: Vec::new(),
+            mirror_ms: Vec::new(),
+            retuned: Vec::new(),
+            retune_ms: Vec::new(),
             surface_ms: Vec::new(),
             planner_ms: Vec::new(),
             total_ms: Vec::new(),
@@ -221,6 +232,10 @@ impl Pipeline {
             return;
         }
         let cylinder = self.mapper.take_local_bounds();
+        let emit_start = Instant::now();
+        if self.mapper.on_gpu() {
+            self.mirror_ms.push(self.mapper.gpu_frame().mirror_ms);
+        }
         let (local, surface_z): (Vec<Point>, Vec<f32>) = match self.heights {
             true => self
                 .mapper
@@ -236,6 +251,8 @@ impl Pipeline {
                 .unzip(),
         };
         let mapped = Instant::now();
+        self.emit_ms
+            .push(mapped.duration_since(emit_start).as_secs_f64() * 1e3);
         let cells = match self.gpu {
             true => self.mapper.surfaces(&cylinder, &self.request).map(|flat| {
                 flat.chunks_exact(SURFACE_CELL_FLOATS)
@@ -282,6 +299,10 @@ impl Pipeline {
                 };
                 let redo = self.planner.last_redo();
                 self.dirty.push(redo.changed_columns as f64);
+                if self.heights {
+                    self.retuned.push(redo.retuned as f64);
+                    self.retune_ms.push(redo.retune_ms);
+                }
                 if redo.region_columns > 0 {
                     self.redo_pct
                         .push(100.0 * redo.read_columns as f64 / redo.region_columns as f64);
@@ -307,6 +328,10 @@ impl Pipeline {
     fn clear_timings(&mut self) {
         for v in [
             &mut self.frame_ms,
+            &mut self.emit_ms,
+            &mut self.mirror_ms,
+            &mut self.retuned,
+            &mut self.retune_ms,
             &mut self.surface_ms,
             &mut self.planner_ms,
             &mut self.total_ms,
@@ -324,15 +349,27 @@ impl Pipeline {
         self.passes.clear();
     }
 
+    fn name(&self) -> &'static str {
+        match (self.gpu, self.heights) {
+            (true, _) => "GPU",
+            (false, true) => "CPU+heights",
+            (false, false) => "CPU",
+        }
+    }
+
     fn report(&self) {
         println!(
             "{} {} regions, {} voxels and {} surface cells in the planner",
-            if self.gpu { "GPU" } else { "CPU" },
+            self.name(),
             self.total_ms.len(),
             self.planner.voxel_count(),
             self.planner.surface().count()
         );
         summarize("frame", self.frame_ms.clone());
+        summarize("emit", self.emit_ms.clone());
+        summarize("mirror", self.mirror_ms.clone());
+        summarize("retuned", self.retuned.clone());
+        summarize("retune", self.retune_ms.clone());
         summarize("surface", self.surface_ms.clone());
         summarize("planner", self.planner_ms.clone());
         summarize("total", self.total_ms.clone());
@@ -395,8 +432,9 @@ fn compare_reach(cpu: &Pipeline, gpu: &Pipeline, origins: &[Point]) {
         }
     }
     let n = goals.len() as f64;
+    let (a, b) = (cpu.name(), gpu.name());
     println!(
-        "reach over {} goals: cpu {:.1}% gpu {:.1}% (both {both}, only cpu {only_cpu}, only gpu {only_gpu}, neither {neither})",
+        "reach over {} goals: {a} {:.1}% {b} {:.1}% (both {both}, only {a} {only_cpu}, only {b} {only_gpu}, neither {neither})",
         goals.len(),
         100.0 * (both + only_cpu) as f64 / n,
         100.0 * (both + only_gpu) as f64 / n,
@@ -416,18 +454,23 @@ fn main() {
             .init();
     }
     let args: Vec<String> = std::env::args().collect();
-    let usage = "usage: nav_replay <frames> cpu|gpu|both [max_frames] [skip]";
+    let usage = "usage: nav_replay <frames> cpu|gpu|both|heights [max_frames] [skip]";
     let path = args.get(1).expect(usage);
-    let modes: &[bool] = match args.get(2).map(String::as_str) {
-        Some("gpu") => &[true],
-        Some("cpu") => &[false],
-        Some("both") => &[false, true],
+    let heights = std::env::var("NAV_REPLAY_HEIGHTS").is_ok();
+    let modes: &[(bool, bool)] = match args.get(2).map(String::as_str) {
+        Some("gpu") => &[(true, false)],
+        Some("cpu") => &[(false, heights)],
+        Some("both") => &[(false, heights), (true, false)],
+        Some("heights") => &[(false, false), (false, true)],
         _ => panic!("{usage}"),
     };
     let max_frames: usize = args.get(3).map_or(usize::MAX, |s| s.parse().expect(usage));
     let skip: usize = args.get(4).map_or(0, |s| s.parse().expect(usage));
 
-    let mut pipelines: Vec<Pipeline> = modes.iter().map(|&gpu| Pipeline::new(gpu)).collect();
+    let mut pipelines: Vec<Pipeline> = modes
+        .iter()
+        .map(|&(gpu, heights)| Pipeline::new(gpu, heights))
+        .collect();
     let frames = Frames(BufReader::with_capacity(
         1 << 22,
         File::open(path).expect("a frames file"),

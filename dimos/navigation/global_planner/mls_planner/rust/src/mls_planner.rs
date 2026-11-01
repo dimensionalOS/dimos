@@ -251,6 +251,9 @@ pub struct RegionRedo {
     /// Columns the extraction read, and the region's column box.
     pub read_columns: usize,
     pub region_columns: usize,
+    /// Cells whose surface height moved past surface_change_m, and the time taking the heights.
+    pub retuned: usize,
+    pub retune_ms: f64,
 }
 
 impl Planner {
@@ -590,6 +593,7 @@ impl Planner {
                 changed_columns: edits.columns().count(),
                 read_columns: read.rows().map(|r| read.row_columns(r).count()).sum(),
                 region_columns,
+                ..Default::default()
             };
             let stage = Instant::now();
             let new_cells =
@@ -633,6 +637,7 @@ impl Planner {
         removed: &[VoxelKey],
         config: &Config,
     ) -> Vec<VoxelKey> {
+        let start = Instant::now();
         let voxel_size = config.voxel_size;
         let heights = self.heights.get_or_insert_with(Default::default);
         for k in removed {
@@ -640,14 +645,18 @@ impl Planner {
         }
         let added: AHashSet<VoxelKey> = added.iter().copied().collect();
         let mut retuned = Vec::new();
+        // A NaN height is a voxel with no plane, which stands on its top face.
         for (&p, &h) in local_points.iter().zip(surface_z) {
+            if !h.is_finite() {
+                continue;
+            }
             let key = voxelize(p, voxel_size);
             let is_cell = self
                 .graph
                 .surface_lookup
                 .get(&(key.0, key.1))
                 .is_some_and(|zs| zs.contains(&key.2));
-            if !h.is_finite() || !is_cell {
+            if !is_cell {
                 continue;
             }
             let fresh = added.contains(&key);
@@ -663,6 +672,8 @@ impl Planner {
                 retuned.push(key);
             }
         }
+        self.last_redo.retuned = retuned.len();
+        self.last_redo.retune_ms = ms_since(start);
         retuned
     }
 

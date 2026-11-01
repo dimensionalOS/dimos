@@ -68,7 +68,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     gpu_list_capacity: int = 2**20
     # Carry each local_map voxel's surface height (m, from its fitted plane) as a
     # surface_z field in place of intensity, for the planner to link steps by.
-    surface_heights: bool = True
+    # Off: on the china replay it costs ~5 ms a region for the same reach.
+    surface_heights: bool = False
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4
