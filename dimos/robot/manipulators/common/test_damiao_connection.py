@@ -152,8 +152,8 @@ def test_simulation_ignores_explicit_devices(connection_class, boundary, monkeyp
         module.stop()
 
 
-def test_topology_mismatch_fails_before_bus(connection_class, boundary, robot_spec):
-    module = connection_class(model=robot_spec.planning.model)
+def test_topology_mismatch_fails_before_bus(connection_class, boundary):
+    module = connection_class(model=connection_class.planning.model)
     with pytest.raises(ValueError, match="topology"):
         module.start()
     boundary[1].assert_not_called()
@@ -171,8 +171,10 @@ def test_disable_failure_still_releases_all_session_handles(make_rig, boundary):
     module.stop()
 
 
-def test_no_native_or_pinocchio_import_for_mock_session(connection_class, mocker):
-    native = mocker.patch.object(common, "_native", side_effect=AssertionError("native import"))
+def test_mock_session_needs_no_native_robot_or_physical_model(connection_class, mocker):
+    native = mocker.patch.object(
+        common.can_motor_control.Robot, "builder", side_effect=AssertionError("native robot")
+    )
     physical = mocker.patch.object(
         common, "PhysicalModel", side_effect=AssertionError("physical import")
     )

@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Opt-in fixtures for direct-native Damiao connection tests."""
-
-from __future__ import annotations
+"""Opt-in fixtures for native Damiao connection tests."""
 
 from types import SimpleNamespace
-from typing import ClassVar
 
 import can_motor_control
 from can_motor_control import damiao
@@ -28,7 +25,7 @@ from typing_extensions import Self
 from dimos.control._control_test_helpers import fake_arm_model
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.manipulators.common import damiao_connection as common, damiao_model
+from dimos.robot.manipulators.common import damiao_connection as common
 from dimos.robot.manipulators.common._damiao_native_test_helpers import (
     Builder,
     FakeArm,
@@ -37,53 +34,15 @@ from dimos.robot.manipulators.common._damiao_native_test_helpers import (
     LocalTransport,
 )
 from dimos.robot.manipulators.common.damiao_connection import (
-    ArmSpec,
     DamiaoConnection,
     DamiaoConnectionConfig,
-    DamiaoRobot,
-    GripperSpec,
-    JointDrive,
 )
-from dimos.robot.manipulators.common.damiao_model import local_control_model
+from dimos.robot.manipulators.common.damiao_model import PhysicalModel
 from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
-def robot_spec(tmp_path, monkeypatch):
-    monkeypatch.setattr(damiao_model, "DEFAULT_ROBOT_ASSET_CACHE_ROOT", tmp_path)
-    arm_model = fake_arm_model(("joint1", "joint2", "joint3"))
-    return DamiaoRobot(
-        buses=("right", "left"),
-        arms=(
-            ArmSpec(
-                "left_arm",
-                "left",
-                (
-                    JointDrive("joint1", "DM4340", 1, 17, 80, 5),
-                    JointDrive("joint2", "DM4310", 2, 18, 10, 1.5),
-                ),
-            ),
-            ArmSpec("right_arm", "right", (JointDrive("joint3", "DM4310", 1, 17, 20, 0.6),)),
-        ),
-        grippers=(
-            GripperSpec("left_gripper", "left", "DM4310", 8, 24, "decreasing_position", 0.15),
-            GripperSpec("right_gripper", "right", "DM4310", 8, 24, "increasing_position", 0.1),
-        ),
-        physical_model=arm_model,
-        planning=RobotModelConfig(
-            model=arm_model,
-            joint_names=["joint1", "joint2", "joint3"],
-            planning_groups=[
-                PlanningGroupDefinition("both", ("joint1", "joint2", "joint3"), "link0")
-            ],
-        ),
-        mock_positions=(0.2, 0.2, 0.2, 0.4, 0.4),
-        gravity_comp=False,
-    )
-
-
-@pytest.fixture
-def connection_class(robot_spec):
+def connection_class():
     class Config(DamiaoConnectionConfig):
         source: str = "arm"
         native: bool = True
@@ -91,31 +50,100 @@ def connection_class(robot_spec):
         @model_validator(mode="after")
         def _model(self) -> Self:
             if self.model is None:
-                self.model = local_control_model(robot_spec)
+                self.model = Connection.control_model()
             return self
 
     class Connection(DamiaoConnection):
         config: Config
-        robot: ClassVar[DamiaoRobot] = robot_spec
+        bus_names = ["right", "left"]
+        arm_joints = {"left_arm": ["joint1", "joint2"], "right_arm": ["joint3"]}
+        gripper_joints = {"left_gripper": "left_gripper", "right_gripper": "right_gripper"}
+        kinematic_joint_names = ["joint1", "joint2", "joint3"]
+        kinematic_model = fake_arm_model(("joint1", "joint2", "joint3"))
+        planning = RobotModelConfig(
+            model=kinematic_model,
+            joint_names=["joint1", "joint2", "joint3"],
+            planning_groups=[
+                PlanningGroupDefinition("both", ("joint1", "joint2", "joint3"), "link0")
+            ],
+            base_link="link0",
+        )
+        kp = {"left_arm": [80.0, 10.0], "right_arm": [20.0]}
+        kd = {"left_arm": [5.0, 1.5], "right_arm": [0.6]}
+        mock_positions = [0.2, 0.2, 0.2, 0.4, 0.4]
+        gravity_comp = False
 
         def _can_devices(self):
             return {"left": "can1", "right": "can0"} if self.config.native else None
 
+        def _build_robot(self):
+            return (
+                can_motor_control.Robot.builder()
+                .add_bus("right", self._make_can_bus("right"), damiao.DamiaoCodec())
+                .add_bus("left", self._make_can_bus("left"), damiao.DamiaoCodec())
+                .add_arm(
+                    "left_arm",
+                    bus="left",
+                    motors=[
+                        can_motor_control.MotorSpec("joint1", damiao.MotorType.DM4340, 1, 17),
+                        can_motor_control.MotorSpec("joint2", damiao.MotorType.DM4310, 2, 18),
+                    ],
+                )
+                .add_arm(
+                    "right_arm",
+                    bus="right",
+                    motors=[
+                        can_motor_control.MotorSpec("joint3", damiao.MotorType.DM4310, 1, 17),
+                    ],
+                )
+                .add_gripper(
+                    "left_gripper",
+                    bus="left",
+                    motor=can_motor_control.MotorSpec(
+                        "left_gripper", damiao.MotorType.DM4310, 8, 24
+                    ),
+                    opening_direction="decreasing_position",
+                    default_current=0.15,
+                )
+                .add_gripper(
+                    "right_gripper",
+                    bus="right",
+                    motor=can_motor_control.MotorSpec(
+                        "right_gripper", damiao.MotorType.DM4310, 8, 24
+                    ),
+                    opening_direction="increasing_position",
+                    default_current=0.1,
+                )
+                .build()
+            )
+
     Connection.__annotations__["config"] = Config
     return Connection
+
+
+@pytest.fixture
+def make_physical(connection_class):
+    def make(**kwargs):
+        return PhysicalModel(
+            connection_class.kinematic_model,
+            connection_class.kinematic_joint_names,
+            gravity_comp=kwargs.pop("gravity_comp", False),
+            **kwargs,
+        )
+
+    return make
 
 
 @pytest.fixture(params=["linux", "darwin"])
 def boundary(mocker, request):
     mocker.patch.object(common, "sys", SimpleNamespace(platform=request.param))
     native = FakeRobot()
-    mocker.patch.object(common, "_native", return_value=can_motor_control)
-    mocker.patch.object(common, "_codec", return_value=damiao)
     mocker.patch.object(
         can_motor_control, "Robot", SimpleNamespace(builder=lambda: Builder(native))
     )
     mocker.patch.object(can_motor_control, "Arm", FakeArm)
     mocker.patch.object(can_motor_control, "Gripper", FakeGripper)
+    mocker.patch.object(can_motor_control, "MotorSpec", side_effect=lambda *args: args)
     if common.sys.platform == "darwin":
         bus = mocker.patch.object(
             can_motor_control,

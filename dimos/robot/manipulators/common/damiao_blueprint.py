@@ -63,7 +63,7 @@ def connect_damiao(
     return autoconnect(
         coordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=connection.models().control,
+            model=connection.control_model("arm"),
             tasks=list(tasks),
         ),
         connection.blueprint(source="arm"),
@@ -77,10 +77,11 @@ def connect_damiao(
 
 def damiao_connection_control(connection: type[DamiaoConnection]) -> Blueprint:
     """Trajectories and normalized grippers with the robot model served to clients."""
-    deployed = connection.models()
-    sides = ("left", "right") if len(deployed.gripper_joints) == 2 else ("right",)
+    model = connection.planning_model("arm")
+    gripper_joints = [f"arm/{name}" for name in connection.gripper_joints.values()]
+    sides = ("left", "right") if len(gripper_joints) == 2 else ("right",)
     tasks = [
-        joint_trajectory_task(deployed.joints),
+        joint_trajectory_task([*model.joint_names, *gripper_joints]),
         *[
             TaskConfig(
                 name=f"arm_{joint.rsplit('/', 1)[1]}",
@@ -89,10 +90,10 @@ def damiao_connection_control(connection: type[DamiaoConnection]) -> Blueprint:
                 priority=20,
                 stream_bind={"gripper_command": f"{side}_gripper_command"},
             )
-            for joint, side in zip(deployed.gripper_joints, sides, strict=True)
+            for joint, side in zip(gripper_joints, sides, strict=True)
         ],
     ]
     return autoconnect(
         connect_damiao(connection, tasks=tasks),
-        UrdfManager.blueprint(model=deployed.control),
+        UrdfManager.blueprint(model=connection.control_model("arm")),
     )

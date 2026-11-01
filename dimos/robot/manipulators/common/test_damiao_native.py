@@ -16,18 +16,12 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import can_motor_control
-from can_motor_control import damiao
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common import damiao_connection as common
-from dimos.robot.manipulators.common.damiao_connection import (
-    MotorProfileSpec,
-)
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -108,36 +102,19 @@ def test_platform_bus_selectors_preserve_logical_mapping(
     connection_class, boundary, monkeypatch, mocker
 ):
     module = connection_class()
+    module._bus_devices = {"left": "SERIAL", "right": "can0"}
     monkeypatch.setattr(common.sys, "platform", "darwin")
     usb = mocker.patch.object(can_motor_control, "GsUsbBus", create=True)
-    module._make_can_bus("left", {"left": "SERIAL"})
+    module._make_can_bus("left")
     usb.assert_called_once_with(vendor_id=0x1D50, product_id=0x606F, serial_number="SERIAL")
     monkeypatch.setattr(common.sys, "platform", "linux")
     socket = mocker.patch.object(can_motor_control, "SocketCanBus", create=True)
-    module._make_can_bus("right", {"right": "can0"})
+    module._make_can_bus("right")
     socket.assert_called_once_with("can0")
     monkeypatch.setattr(common.sys, "platform", "unsupported")
     with pytest.raises(RuntimeError, match="unsupported"):
-        module._make_can_bus("left", {"left": "SERIAL"})
+        module._make_can_bus("left")
     module.stop()
-
-
-def test_missing_custom_profiles_fails_before_bus(
-    connection_class, boundary, robot_spec, monkeypatch
-):
-    profile = MotorProfileSpec(0x8000, 6.28, 10, 30)
-    arm = replace(
-        robot_spec.arms[0],
-        joints=(replace(robot_spec.arms[0].joints[0], motor=profile), robot_spec.arms[0].joints[1]),
-    )
-    monkeypatch.setattr(
-        connection_class, "robot", replace(robot_spec, arms=(arm, robot_spec.arms[1]))
-    )
-    monkeypatch.delattr(damiao, "MotorProfile", raising=False)
-    module = connection_class()
-    with pytest.raises(RuntimeError, match="0.0.11"):
-        module.start()
-    boundary[1].assert_not_called()
 
 
 def test_native_builder_preserves_bus_and_gripper_specs(make_rig, boundary):
@@ -155,29 +132,6 @@ def test_native_builder_preserves_bus_and_gripper_specs(make_rig, boundary):
     assert native.gripper_specs[0][1]["default_current"] == 0.15
     assert native.gripper_specs[1][1]["opening_direction"] == "increasing_position"
     assert native.gripper_specs[1][1]["default_current"] == 0.1
-
-
-def test_custom_profiles_are_registered_on_their_bus(
-    connection_class, boundary, robot_spec, monkeypatch, mocker
-):
-    profile = MotorProfileSpec(0x8001, 6.28, 10, 120)
-    arm = robot_spec.arms[0]
-    custom = replace(arm, joints=(replace(arm.joints[0], motor=profile), arm.joints[1]))
-    monkeypatch.setattr(
-        connection_class, "robot", replace(robot_spec, arms=(custom, robot_spec.arms[1]))
-    )
-    create_profile = mocker.patch.object(
-        damiao, "MotorProfile", create=True, return_value=damiao.MotorType.DM4340
-    )
-    codec = mocker.patch.object(damiao, "DamiaoCodec")
-    module = connection_class()
-    try:
-        module.connect()
-        create_profile.assert_called_once_with(0x8001, p_max=6.28, v_max=10, t_max=120)
-        assert codec.call_args_list[0].kwargs == {}
-        assert codec.call_args_list[1].kwargs == {"profiles": [damiao.MotorType.DM4340]}
-    finally:
-        module.stop()
 
 
 def test_write_failure_attempts_measured_hold(make_rig, boundary, mocker):
@@ -246,14 +200,12 @@ def test_inactive_feedback_uses_gripper_placeholders(connection_class, boundary)
 @pytest.mark.parametrize("gain", ["kp", "kd"])
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
 def test_invalid_second_arm_gain_prevents_all_native_sends(
-    make_rig, boundary, robot_spec, monkeypatch, gain, bad
+    make_rig, boundary, monkeypatch, gain, bad
 ):
     module, commands, _ = make_rig()
-    second_arm = robot_spec.arms[1]
-    invalid = replace(second_arm, joints=(replace(second_arm.joints[0], **{gain: bad}),))
-    monkeypatch.setattr(
-        type(module), "robot", replace(robot_spec, arms=(robot_spec.arms[0], invalid))
-    )
+    gains = {name: list(values) for name, values in getattr(module, gain).items()}
+    gains["right_arm"][0] = bad
+    monkeypatch.setattr(type(module), gain, gains)
     commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
     assert "non-finite" in module.status().last_error
     assert boundary[0].groups["left_arm"].commands == []

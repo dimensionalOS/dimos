@@ -173,6 +173,8 @@ class RobotModel:
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
     _default_joint_acceleration_limit: float | None = None
+    _base_model: RobotModel | None = None
+    _added_joints: tuple[JointDescription, ...] = ()
 
     @classmethod
     def from_file(
@@ -255,12 +257,15 @@ class RobotModel:
             raise ValueError("At least one joint rename is required")
         if any(not source or not target for source, target in names.items()):
             raise ValueError("Joint rename names must not be empty")
-        requested = (*self._renamed_joints, *names.items())
-        sources = [source for source, _target in requested]
-        if len(sources) != len(set(sources)):
-            duplicate = next(name for name in sources if sources.count(name) > 1)
-            raise ValueError(f"Joint is already renamed: {duplicate}")
-        return replace(self, _renamed_joints=requested)
+        return RobotModel(
+            _source_path=self._source_path, _base_model=self, _renamed_joints=tuple(names.items())
+        )
+
+    def with_added_joints(self, *joints: JointDescription) -> RobotModel:
+        """Add joints and their child links after loading this model's existing view."""
+        if not joints:
+            raise ValueError("At least one joint must be added")
+        return RobotModel(_source_path=self._source_path, _base_model=self, _added_joints=joints)
 
     def with_joint_position_limits(
         self,
@@ -294,20 +299,23 @@ class RobotModel:
 
     @cached_property
     def _loaded(self) -> LoadedRobotModel:
-        source_path = Path(os.fspath(self._source_path)).resolve()
-        if source_path.suffix.lower() not in {".urdf", ".xacro"}:
-            raise ValueError(
-                f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
-            )
-        package_paths = _normalize_package_paths(dict(self._package_paths))
-        if not source_path.exists():
-            raise FileNotFoundError(f"Robot model not found: {source_path}")
-
-        if source_path.suffix.lower() == ".xacro":
-            xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
+        if self._base_model is not None:
+            loaded = self._base_model.load()
+            source_path, package_paths, xml = loaded.source_path, loaded.package_paths, loaded.xml
         else:
-            xml = source_path.read_text()
-        xml = _resolve_package_uris(xml, package_paths)
+            source_path = Path(os.fspath(self._source_path)).resolve()
+            if source_path.suffix.lower() not in {".urdf", ".xacro"}:
+                raise ValueError(
+                    f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
+                )
+            package_paths = _normalize_package_paths(dict(self._package_paths))
+            if not source_path.exists():
+                raise FileNotFoundError(f"Robot model not found: {source_path}")
+            if source_path.suffix.lower() == ".xacro":
+                xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
+            else:
+                xml = source_path.read_text()
+            xml = _resolve_package_uris(xml, package_paths)
         if self._subtree_root_link is not None or self._removed_joint_subtrees:
             xml = _select_structural_subtree(
                 xml,
@@ -315,11 +323,12 @@ class RobotModel:
                 removed_joint_subtrees=self._removed_joint_subtrees,
             )
         xml = _resolve_relative_asset_paths(
-            xml,
-            search_directories=(source_path.parent, *package_paths.values()),
+            xml, search_directories=(source_path.parent, *package_paths.values())
         )
         if self._planar_base is not None:
             xml = _add_planar_base(xml, self._planar_base)
+        if self._added_joints:
+            xml = _add_joints(xml, self._added_joints)
         if self._fixed_joints:
             xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
@@ -344,6 +353,47 @@ class RobotModel:
     def __setstate__(self, state: dict[str, object]) -> None:
         for name, value in state.items():
             object.__setattr__(self, name, value)
+
+
+def _add_joints(xml: str, joints: tuple[JointDescription, ...]) -> str:
+    root = ET.fromstring(xml)
+    links = {link.get("name") for link in root.findall("link")}
+    names = {joint.get("name") for joint in root.findall("joint")}
+    for joint in joints:
+        if not joint.name or joint.name in names:
+            raise ValueError(f"Joint already exists or has no name: {joint.name!r}")
+        if joint.parent_link not in links:
+            raise ValueError(f"Joint parent link does not exist: {joint.parent_link!r}")
+        if not joint.child_link or joint.child_link in links:
+            raise ValueError(
+                f"Joint child link already exists or has no name: {joint.child_link!r}"
+            )
+        ET.SubElement(root, "link", name=joint.child_link)
+        element = ET.SubElement(root, "joint", name=joint.name, type=joint.type)
+        ET.SubElement(element, "parent", link=joint.parent_link)
+        ET.SubElement(element, "child", link=joint.child_link)
+        ET.SubElement(
+            element,
+            "origin",
+            xyz=" ".join(map(str, joint.origin_xyz)),
+            rpy=" ".join(map(str, joint.origin_rpy)),
+        )
+        ET.SubElement(element, "axis", xyz=" ".join(map(str, joint.axis)))
+        limits = {
+            name: str(value)
+            for name in ("lower", "upper", "velocity", "effort", "acceleration")
+            if (value := getattr(joint, name)) is not None
+        }
+        if limits:
+            ET.SubElement(element, "limit", limits)
+        if joint.mimic is not None:
+            leader, multiplier, offset = joint.mimic
+            ET.SubElement(
+                element, "mimic", joint=leader, multiplier=str(multiplier), offset=str(offset)
+            )
+        links.add(joint.child_link)
+        names.add(joint.name)
+    return ET.tostring(root, encoding="unicode")
 
 
 def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:

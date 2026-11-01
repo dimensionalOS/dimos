@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import importlib
 from types import SimpleNamespace
 
@@ -26,55 +25,55 @@ import pytest
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.common import damiao_connection as common
-from dimos.robot.manipulators.common.damiao_model import PhysicalModel
 
 
-def test_control_and_planning_namespace_are_lazy_consistent_and_portable(robot_spec, mocker):
+def test_control_and_planning_namespace_are_lazy_consistent_and_portable(connection_class, mocker):
     load = mocker.patch.object(
         common.RobotModel, "load", side_effect=AssertionError("must stay lazy")
     )
-    deployed = common.deployment(robot_spec, "other")
-    assert deployed.arm_joints == ("other/joint1", "other/joint2", "other/joint3")
-    assert deployed.gripper_joints == ("other/left_gripper", "other/right_gripper")
-    assert deployed.planning.planning_groups[0].joint_names == deployed.arm_joints
-    assert deployed.planning.planning_groups[0].base_link == "link0"
+    planning = connection_class.planning_model("other")
+    control = connection_class.control_model("other")
+    assert planning.joint_names == ["other/joint1", "other/joint2", "other/joint3"]
+    assert planning.planning_groups[0].joint_names == tuple(planning.joint_names)
+    assert planning.planning_groups[0].base_link == "link0"
     mocker.stop(load)
-    assert [joint.name for joint in deployed.planning.model.load().joints] == list(
-        deployed.arm_joints
-    )
-    loaded = deployed.control.load()
-    assert [j.name for j in loaded.joints] == list(deployed.joints)
+    assert [joint.name for joint in planning.model.load().joints] == planning.joint_names
+    loaded = control.load()
+    assert [joint.name for joint in loaded.joints] == [
+        *planning.joint_names,
+        "other/left_gripper",
+        "other/right_gripper",
+    ]
     assert [(j.lower, j.upper) for j in loaded.joints[-2:]] == [(0.0, 1.0), (0.0, 1.0)]
-    assert decode(encode(deployed.control)).load().xml == loaded.xml
+    assert decode(encode(control)).load().xml == loaded.xml
 
 
-def test_physical_limits_clamp_margin_and_reject_gross_error(robot_spec):
-    physical = PhysicalModel(robot_spec)
+def test_physical_limits_clamp_margin_and_reject_gross_error(make_physical):
+    physical = make_physical()
     upper = float(physical._upper[0])
     assert physical.normalize([upper + 0.05, 0.2, 0.2]) == [upper, 0.2, 0.2]
     with pytest.raises(RuntimeError, match="outside"):
         physical.normalize([upper + 0.051, 0.2, 0.2])
-    metal = PhysicalModel(replace(robot_spec, feedback_margin_rad=0.06))
+    metal = make_physical(feedback_margin_rad=0.06)
     assert metal.normalize([upper + 0.05050, 0.2, 0.2])[0] == upper
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
-def test_gravity_rejects_invalid_positions(robot_spec, bad):
+def test_gravity_rejects_invalid_positions(make_physical, bad):
     with pytest.raises(ValueError, match="positions"):
-        PhysicalModel(robot_spec).gravity(np.array([bad, 0.2, 0.2]))
+        make_physical().gravity(np.array([bad, 0.2, 0.2]))
 
 
-def test_physical_model_order_must_match_even_without_gravity(robot_spec):
-    arm = robot_spec.arms[0]
-    reordered = replace(
-        robot_spec, arms=(replace(arm, joints=tuple(reversed(arm.joints))), robot_spec.arms[1])
-    )
+def test_physical_model_order_must_match_even_without_gravity(
+    connection_class, make_physical, monkeypatch
+):
+    monkeypatch.setattr(connection_class, "kinematic_joint_names", ["joint2", "joint1", "joint3"])
     with pytest.raises(ValueError, match="order"):
-        PhysicalModel(reordered)
+        make_physical()
 
 
 @pytest.mark.parametrize("invalid", ["dimensions", "lower", "upper", "inverted"])
-def test_physical_model_rejects_invalid_ranges_and_dimensions(robot_spec, mocker, invalid):
+def test_physical_model_rejects_invalid_ranges_and_dimensions(make_physical, mocker, invalid):
     pin = importlib.import_module("pinocchio")
     model = SimpleNamespace(
         nq=3,
@@ -93,11 +92,11 @@ def test_physical_model_rejects_invalid_ranges_and_dimensions(robot_spec, mocker
         model.lowerPositionLimit[0] = 2.0
     mocker.patch.object(pin, "buildModelFromXML", return_value=model)
     with pytest.raises(ValueError, match="dimensions|position limits"):
-        PhysicalModel(robot_spec)
+        make_physical()
 
 
-def test_gravity_rejects_nonfinite_calculation(robot_spec, mocker):
-    physical = PhysicalModel(replace(robot_spec, gravity_comp=True))
+def test_gravity_rejects_nonfinite_calculation(make_physical, mocker):
+    physical = make_physical(gravity_comp=True)
     mocker.patch.object(
         physical._pinocchio,
         "computeGeneralizedGravity",
@@ -107,46 +106,35 @@ def test_gravity_rejects_nonfinite_calculation(robot_spec, mocker):
         physical.gravity(np.array([0.2, 0.2, 0.2]))
 
 
-def test_models_accessor_preserves_framework_deployment(connection_class):
+def test_model_views_preserve_the_framework_deployment(connection_class):
     assert connection_class.deployment == "python"
-    assert connection_class.models(source="robot2").joints == (
+    assert connection_class.planning_model("robot2").joint_names == [
         "robot2/joint1",
         "robot2/joint2",
         "robot2/joint3",
-        "robot2/left_gripper",
-        "robot2/right_gripper",
-    )
+    ]
 
 
-def test_deployment_materializes_existing_canonical_joint_rename(robot_spec):
-    renamed = robot_spec.planning.model.with_renamed_joints({"joint1": "yam_joint1"})
-    first_arm = robot_spec.arms[0]
-    robot = replace(
-        robot_spec,
-        arms=(
-            replace(
-                first_arm,
-                joints=(replace(first_arm.joints[0], name="yam_joint1"), first_arm.joints[1]),
-            ),
-            robot_spec.arms[1],
-        ),
-        planning=robot_spec.planning.model_copy(
-            update={
-                "model": renamed,
-                "joint_names": ["yam_joint1", "joint2", "joint3"],
-                "planning_groups": [
-                    PlanningGroupDefinition("both", ("yam_joint1", "joint2", "joint3"), "link0")
-                ],
-            }
-        ),
+def test_model_views_compose_an_existing_canonical_joint_rename(connection_class, monkeypatch):
+    renamed = connection_class.planning.model.with_renamed_joints({"joint1": "yam_joint1"})
+    planning = connection_class.planning.model_copy(
+        update={
+            "model": renamed,
+            "joint_names": ["yam_joint1", "joint2", "joint3"],
+            "planning_groups": [
+                PlanningGroupDefinition("both", ("yam_joint1", "joint2", "joint3"), "link0")
+            ],
+        }
     )
-    deployed = common.deployment(robot, "arm")
+    monkeypatch.setattr(connection_class, "planning", planning)
+    deployed = connection_class.planning_model("arm")
+    control = connection_class.control_model("arm")
     expected = ["arm/yam_joint1", "arm/joint2", "arm/joint3"]
-    assert [joint.name for joint in deployed.planning.model.load().joints] == expected
-    assert [joint.name for joint in deployed.control.load().joints] == [
+    assert [joint.name for joint in deployed.model.load().joints] == expected
+    assert [joint.name for joint in control.load().joints] == [
         *expected,
         "arm/left_gripper",
         "arm/right_gripper",
     ]
-    assert deployed.planning.planning_groups[0].joint_names == tuple(expected)
-    assert decode(encode(deployed.planning.model)).load().xml == deployed.planning.model.load().xml
+    assert deployed.planning_groups[0].joint_names == tuple(expected)
+    assert decode(encode(deployed.model)).load().xml == deployed.model.load().xml

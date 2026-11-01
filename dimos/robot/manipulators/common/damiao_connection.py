@@ -17,14 +17,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass, field
-import importlib
+from dataclasses import dataclass, field, replace
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import Any, ClassVar
 import uuid
 
+import can_motor_control
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field, model_validator
@@ -41,82 +41,11 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.common.damiao_model import (
-    Deployment,
-    PhysicalModel,
-    deployment,
-)
+from dimos.robot.assets.model import JointDescription, RobotModel
+from dimos.robot.manipulators.common.damiao_model import PhysicalModel
 from dimos.utils.logging_config import setup_logger
 
-if TYPE_CHECKING:
-    import can_motor_control
-
-
 logger = setup_logger()
-
-
-def _native() -> Any:
-    # Mock sessions and blueprint parsing do not need the optional native SDK.
-    return importlib.import_module("can_motor_control")
-
-
-def _codec() -> Any:
-    return importlib.import_module("can_motor_control.damiao")
-
-
-@dataclass(frozen=True)
-class MotorProfileSpec:
-    id: int
-    p_max: float
-    v_max: float
-    t_max: float
-
-
-@dataclass(frozen=True)
-class JointDrive:
-    name: str
-    motor: Literal["DM8009", "DM4340", "DM4310"] | MotorProfileSpec
-    send_id: int
-    recv_id: int
-    kp: float
-    kd: float
-
-
-@dataclass(frozen=True)
-class ArmSpec:
-    name: str
-    bus: str
-    joints: tuple[JointDrive, ...]
-
-
-@dataclass(frozen=True)
-class GripperSpec:
-    name: str
-    bus: str
-    motor: Literal["DM4310"] | MotorProfileSpec
-    send_id: int
-    recv_id: int
-    direction: Literal["decreasing_position", "increasing_position"]
-    current: float
-
-
-@dataclass(frozen=True)
-class DamiaoRobot:
-    buses: tuple[str, ...]
-    arms: tuple[ArmSpec, ...]
-    grippers: tuple[GripperSpec, ...]
-    physical_model: RobotModel
-    planning: RobotModelConfig
-    mock_positions: tuple[float, ...]
-    gravity_comp: bool
-    feedback_margin_rad: float = 0.05
-
-    @property
-    def joint_names(self) -> tuple[str, ...]:
-        return tuple(joint.name for arm in self.arms for joint in arm.joints) + tuple(
-            gripper.name for gripper in self.grippers
-        )
 
 
 @dataclass
@@ -147,13 +76,24 @@ class DamiaoConnectionConfig(ConnectionConfig):
 class DamiaoConnection(ConnectionModule):
     """Own one native robot, its measured states and position targets."""
 
-    robot: ClassVar[DamiaoRobot]
+    arm_joints: ClassVar[dict[str, list[str]]]
+    gripper_joints: ClassVar[dict[str, str]]
+    bus_names: ClassVar[list[str]]
+    kp: ClassVar[dict[str, list[float]]]
+    kd: ClassVar[dict[str, list[float]]]
+    kinematic_model: ClassVar[RobotModel]
+    kinematic_joint_names: ClassVar[list[str]]
+    planning: ClassVar[RobotModelConfig]
+    mock_positions: ClassVar[list[float]]
+    gravity_comp: ClassVar[bool] = True
+    feedback_clamp_margin_rad: ClassVar[float] = 0.05
     config: DamiaoConnectionConfig
     position_command: In[JointState]
     joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._bus_devices: dict[str, str] = {}
         self._session: _NativeSession | _MockSession | None = None
         self._physical: PhysicalModel | None = None
         self._targets: dict[str, float] = {}
@@ -162,125 +102,107 @@ class DamiaoConnection(ConnectionModule):
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
 
+    @property
+    def joint_names(self) -> list[str]:
+        return [joint for joints in self.arm_joints.values() for joint in joints] + list(
+            self.gripper_joints.values()
+        )
+
     @classmethod
-    def models(cls, *, source: str = "arm") -> Deployment:
-        return deployment(cls.robot, source)
+    def planning_model(cls, source: str | None = None) -> RobotModelConfig:
+        planning = cls.planning.model_copy(deep=True)
+        if source is None:
+            return planning
+        names = {name: f"{source}/{name}" for name in planning.joint_names}
+        return planning.model_copy(
+            update={
+                "model": planning.model.with_renamed_joints(names),
+                "joint_names": list(names.values()),
+                "planning_groups": [
+                    replace(group, joint_names=tuple(names[name] for name in group.joint_names))
+                    for group in planning.planning_groups
+                ],
+                "gripper_hardware_id": source if len(cls.gripper_joints) == 1 else None,
+            }
+        )
+
+    @classmethod
+    def control_model(cls, source: str | None = None) -> RobotModel:
+        model = cls.planning.model
+        grippers = [
+            JointDescription(
+                name=name,
+                type="revolute",
+                parent_link=cls.planning.base_link,
+                child_link=f"{name}_control_link",
+                lower=0.0,
+                upper=1.0,
+                velocity=0.0,
+                effort=0.0,
+            )
+            for name in cls.gripper_joints.values()
+        ]
+        if grippers:
+            model = model.with_added_joints(*grippers)
+        if source is not None:
+            names = [*cls.planning.joint_names, *cls.gripper_joints.values()]
+            model = model.with_renamed_joints({name: f"{source}/{name}" for name in names})
+        return model
 
     @abstractmethod
     def _can_devices(self) -> dict[str, str] | None:
         """Return explicit logical-bus selectors, or None for an in-memory session."""
 
-    def _make_can_bus(self, name: str, devices: dict[str, str]) -> Any:
+    @abstractmethod
+    def _build_robot(self) -> can_motor_control.Robot:
+        """Construct the native robot using the vendor's bus and motor declarations."""
+
+    def _make_can_bus(self, name: str) -> Any:
+        devices = self._bus_devices
         if sys.platform == "linux":
-            return _native().SocketCanBus(devices[name])
+            return can_motor_control.SocketCanBus(devices[name])
         if sys.platform == "darwin":
-            return _native().GsUsbBus(
+            return can_motor_control.GsUsbBus(
                 vendor_id=0x1D50, product_id=0x606F, serial_number=devices[name]
             )
         raise RuntimeError(f"Damiao CAN transport is unsupported on {sys.platform}")
 
     def connect(self) -> None:
         assert self.config.model is not None
-        if {joint.name for joint in movable_joints(self.config.model)} != set(
-            self.robot.joint_names
-        ):
+        if {joint.name for joint in movable_joints(self.config.model)} != set(self.joint_names):
             raise ValueError("connection model joints must match the vendor topology")
         self._state_frame = self.frame(self.config.model.load().root_link)
         devices = self._can_devices()
         if devices is None or self.config.g.simulation:
-            self._session = _MockSession(list(self.robot.mock_positions))
+            self._session = _MockSession(list(self.mock_positions))
             return
-        if set(devices) != set(self.robot.buses) or any(
+        if set(devices) != set(self.bus_names) or any(
             not device.strip() for device in devices.values()
         ):
             raise ValueError("CAN selectors must cover exactly the robot buses")
         if len(set(devices.values())) != len(devices):
             raise ValueError("CAN selectors must be distinct")
-        self._physical = PhysicalModel(self.robot)
-        sdk, damiao = _native(), _codec()
-        profiles = {
-            motor
-            for motor in (
-                *(joint.motor for arm in self.robot.arms for joint in arm.joints),
-                *(gripper.motor for gripper in self.robot.grippers),
-            )
-            if isinstance(motor, MotorProfileSpec)
-        }
-        profile_type = getattr(damiao, "MotorProfile", None)
-        if profiles and profile_type is None:
-            raise RuntimeError(
-                f"{type(self).__name__} requires can-motor-control>=0.0.11 with MotorProfile support"
-            )
-        native_profiles: dict[MotorProfileSpec, Any] = {}
-        for profile in profiles:
-            assert profile_type is not None
-            native_profiles[profile] = profile_type(
-                profile.id, p_max=profile.p_max, v_max=profile.v_max, t_max=profile.t_max
-            )
-        builder = sdk.Robot.builder()
-        for bus in self.robot.buses:
-            bus_profiles = {
-                motor
-                for motor in (
-                    *(
-                        joint.motor
-                        for arm in self.robot.arms
-                        if arm.bus == bus
-                        for joint in arm.joints
-                    ),
-                    *(gripper.motor for gripper in self.robot.grippers if gripper.bus == bus),
-                )
-                if isinstance(motor, MotorProfileSpec)
-            }
-            codec = (
-                damiao.DamiaoCodec(
-                    profiles=[native_profiles[p] for p in sorted(bus_profiles, key=lambda p: p.id)]
-                )
-                if bus_profiles
-                else damiao.DamiaoCodec()
-            )
-            builder.add_bus(bus, self._make_can_bus(bus, devices), codec)
-
-        def motor_type(motor: str | MotorProfileSpec) -> Any:
-            return (
-                native_profiles[motor]
-                if isinstance(motor, MotorProfileSpec)
-                else getattr(damiao.MotorType, motor)
-            )
-
-        for arm in self.robot.arms:
-            builder.add_arm(
-                arm.name,
-                bus=arm.bus,
-                motors=[
-                    sdk.MotorSpec(joint.name, motor_type(joint.motor), joint.send_id, joint.recv_id)
-                    for joint in arm.joints
-                ],
-            )
-        for gripper in self.robot.grippers:
-            builder.add_gripper(
-                gripper.name,
-                bus=gripper.bus,
-                motor=sdk.MotorSpec(
-                    gripper.name, motor_type(gripper.motor), gripper.send_id, gripper.recv_id
-                ),
-                opening_direction=gripper.direction,
-                default_current=gripper.current,
-            )
-        native = builder.build()
+        self._bus_devices = devices
+        self._physical = PhysicalModel(
+            self.kinematic_model,
+            self.kinematic_joint_names,
+            gravity_comp=self.gravity_comp,
+            feedback_margin_rad=self.feedback_clamp_margin_rad,
+        )
+        native = self._build_robot()
         session = _NativeSession(native)
         self._session = session
         native.connect()
-        for arm in self.robot.arms:
-            group = native[arm.name]
-            if not isinstance(group, sdk.Arm):
-                raise TypeError(f"native group {arm.name!r} is not an Arm")
-            session.arms[arm.name] = group
-        for gripper in self.robot.grippers:
-            group = native[gripper.name]
-            if not isinstance(group, sdk.Gripper):
-                raise TypeError(f"native group {gripper.name!r} is not a Gripper")
-            session.grippers[gripper.name] = group
+        for name in self.arm_joints:
+            group = native[name]
+            if not isinstance(group, can_motor_control.Arm):
+                raise TypeError(f"native group {name!r} is not an Arm")
+            session.arms[name] = group
+        for name in self.gripper_joints:
+            group = native[name]
+            if not isinstance(group, can_motor_control.Gripper):
+                raise TypeError(f"native group {name!r} is not a Gripper")
+            session.grippers[name] = group
         self._read_state()
 
     @rpc
@@ -377,7 +299,7 @@ class DamiaoConnection(ConnectionModule):
         if self._fault is not None:
             raise RuntimeError(self._fault)
         if not self._targets:
-            self._targets = dict(zip(self.robot.joint_names, self._read_state()[0], strict=True))
+            self._targets = dict(zip(self.joint_names, self._read_state()[0], strict=True))
         prefix = f"{self.config.source}/"
         self._targets.update(
             {
@@ -389,10 +311,10 @@ class DamiaoConnection(ConnectionModule):
 
     def _send_targets(self) -> None:
         session = self._session
-        positions = [self._targets[name] for name in self.robot.joint_names]
+        positions = [self._targets[name] for name in self.joint_names]
         if not np.isfinite(positions).all():
             raise ValueError("position command contains non-finite values")
-        arm_count = sum(len(arm.joints) for arm in self.robot.arms)
+        arm_count = sum(map(len, self.arm_joints.values()))
         if any(not 0 <= q <= 1 for q in positions[arm_count:]):
             raise ValueError("gripper opening must be in [0, 1]")
         if isinstance(session, _MockSession):
@@ -404,29 +326,35 @@ class DamiaoConnection(ConnectionModule):
         gravity = self._physical.gravity(self._arm_positions(session))
         offset = 0
         arm_rows: list[tuple[str, NDArray[np.float64]]] = []
-        for arm in self.robot.arms:
+        for name, joints in self.arm_joints.items():
             rows = np.asarray(
                 [
-                    [joint.kp, joint.kd, positions[offset + index], 0.0, gravity[offset + index]]
-                    for index, joint in enumerate(arm.joints)
+                    [
+                        self.kp[name][index],
+                        self.kd[name][index],
+                        positions[offset + index],
+                        0.0,
+                        gravity[offset + index],
+                    ]
+                    for index in range(len(joints))
                 ],
                 dtype=np.float64,
             )
             if not np.isfinite(rows).all():
-                raise ValueError(f"arm {arm.name!r} command contains non-finite values")
-            arm_rows.append((arm.name, rows))
-            offset += len(arm.joints)
+                raise ValueError(f"arm {name!r} command contains non-finite values")
+            arm_rows.append((name, rows))
+            offset += len(joints)
         for name, rows in arm_rows:
             session.arms[name].mit_control(rows)
-        for gripper in self.robot.grippers:
-            session.grippers[gripper.name].set_opening(positions[offset])
+        for name in self.gripper_joints:
+            session.grippers[name].set_opening(positions[offset])
             offset += 1
         session.robot.tick(1_000)
 
     def halt(self) -> None:
         if self._session is None or self._fault is not None:
             return
-        self._targets = dict(zip(self.robot.joint_names, self._read_state()[0], strict=True))
+        self._targets = dict(zip(self.joint_names, self._read_state()[0], strict=True))
         self._send_targets()
 
     @staticmethod
@@ -458,19 +386,19 @@ class DamiaoConnection(ConnectionModule):
         q: list[float] = []
         dq: list[float] = []
         tau: list[float] = []
-        for arm in self.robot.arms:
-            group = session.arms[arm.name]
+        for name, joints in self.arm_joints.items():
+            group = session.arms[name]
             arrays = [group.positions(), group.velocities(), group.torques()]
-            if any(len(array) != len(arm.joints) for array in arrays):
-                raise RuntimeError(f"native arm {arm.name!r} returned the wrong state length")
+            if any(len(array) != len(joints) for array in arrays):
+                raise RuntimeError(f"native arm {name!r} returned the wrong state length")
             for output, array in zip((q, dq, tau), arrays, strict=True):
                 output.extend(array.astype(np.float64).tolist())
         assert self._physical is not None
         q = self._physical.normalize(q)
-        for gripper in self.robot.grippers:
-            opening = float(session.grippers[gripper.name].opening) if session.active else 0.0
+        for name in self.gripper_joints:
+            opening = float(session.grippers[name].opening) if session.active else 0.0
             if not np.isfinite(opening) or not 0 <= opening <= 1:
-                raise RuntimeError(f"gripper {gripper.name!r} returned invalid opening {opening}")
+                raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")
             q.append(opening)
             dq.append(0.0)
             tau.append(0.0)
@@ -504,7 +432,7 @@ class DamiaoConnection(ConnectionModule):
                     JointState(
                         ts=time.time(),
                         frame_id=self._state_frame,
-                        name=[f"{self.config.source}/{name}" for name in self.robot.joint_names],
+                        name=[f"{self.config.source}/{name}" for name in self.joint_names],
                         position=q,
                         velocity=dq,
                         effort=tau,

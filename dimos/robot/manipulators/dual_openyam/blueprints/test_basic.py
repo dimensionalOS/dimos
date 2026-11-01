@@ -25,8 +25,8 @@ from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnecti
 
 
 def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
-    deployed = DualOpenYamConnection.models()
-    names = deployed.arm_joints
+    deployed = DualOpenYamConnection.planning_model("arm")
+    names = deployed.joint_names
     bounds = {name: (-float(i + 1), float(i + 2)) for i, name in enumerate(names)}
     xml = (
         '<robot name="test"><link name="base"/>'
@@ -40,17 +40,31 @@ def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
             f'<link name="{name}_link"/><joint name="{name}" type="revolute">'
             f'<parent link="base"/><child link="{name}_link"/>'
             '<limit lower="0" upper="1"/></joint>'
-            for name in deployed.gripper_joints
+            for name in [f"arm/{name}" for name in DualOpenYamConnection.gripper_joints.values()]
         )
         + "</robot>"
     )
     mocker.patch.object(
         RobotModel, "load", return_value=LoadedRobotModel(xml, Path("model.urdf"), {})
     )
-    source = ConnectionSource("arm", ["position_command"], ["joint_state"], deployed.control, 1)
+    source = ConnectionSource(
+        "arm", ["position_command"], ["joint_state"], DualOpenYamConnection.control_model("arm"), 1
+    )
     source.on_message(
         "joint_state",
-        JointState(name=list(deployed.joints), position=[0.0] * len(deployed.joints)),
+        JointState(
+            name=[
+                *deployed.joint_names,
+                *[f"arm/{name}" for name in DualOpenYamConnection.gripper_joints.values()],
+            ],
+            position=[0.0]
+            * len(
+                [
+                    *deployed.joint_names,
+                    *[f"arm/{name}" for name in DualOpenYamConnection.gripper_joints.values()],
+                ]
+            ),
+        ),
     )
     # Every name is tested against its own distinct range, independent of XML order.
     for name in names:

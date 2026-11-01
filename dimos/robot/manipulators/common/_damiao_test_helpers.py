@@ -106,8 +106,10 @@ class MockConnectionRig:
 def _local_test_model(connection: type[DamiaoConnection], path: Path) -> RobotModel:
     root = ET.Element("robot", name="test")
     ET.SubElement(root, "link", name="base")
-    grippers = {gripper.name for gripper in connection.robot.grippers}
-    for index, name in enumerate(connection.robot.joint_names):
+    grippers = set(connection.gripper_joints.values())
+    for index, name in enumerate(
+        [*connection.kinematic_joint_names, *connection.gripper_joints.values()]
+    ):
         child = f"link{index}"
         ET.SubElement(root, "link", name=child)
         joint = ET.SubElement(root, "joint", name=name, type="revolute")
@@ -144,7 +146,13 @@ def mock_connection_rig(
             model = _local_test_model(connection_type, tmp_path / "control.urdf")
             connection = connection_type(model=model, source="arm", deadman_timeout_s=10)
             coordinator.config.model = model.with_renamed_joints(
-                {name: f"arm/{name}" for name in connection_type.robot.joint_names}
+                {
+                    name: f"arm/{name}"
+                    for name in [
+                        *connection_type.kinematic_joint_names,
+                        *connection_type.gripper_joints.values(),
+                    ]
+                }
             )
             inputs = {name: LocalTransport[Any]() for name in coordinator.inputs}
             for name, transport in inputs.items():

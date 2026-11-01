@@ -41,10 +41,13 @@ from dimos.robot.manipulators.openyam.config import (
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 
-_DEPLOYMENT = OpenYamConnection.models()
-_JOINTS = list(_DEPLOYMENT.joints)
-_ARM_JOINTS = list(_DEPLOYMENT.arm_joints)
-_GRIPPER_JOINT = _DEPLOYMENT.gripper_joints[0]
+_MODEL = OpenYamConnection.planning_model("arm")
+_JOINTS = [
+    *_MODEL.joint_names,
+    *[f"arm/{name}" for name in OpenYamConnection.gripper_joints.values()],
+]
+_ARM_JOINTS = list(_MODEL.joint_names)
+_GRIPPER_JOINT = "arm/gripper"
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -114,7 +117,7 @@ def test_openyam_connection_defaults_to_mock_and_accepts_explicit_selector() -> 
         assert default.config.source == "yam"
         assert default._can_devices() is None
         assert physical._can_devices() == {"openyam": "can1"}
-        assert default.robot.mock_positions == (0.0,) * 7
+        assert default.mock_positions == [0.0] * 7
     finally:
         default.stop()
         physical.stop()
@@ -153,7 +156,7 @@ def test_openyam_basic_trajectory_accepts_all_deployed_joints(blueprint: Bluepri
         "arm_gripper",
         [_GRIPPER_JOINT],
     )
-    assert gripper.name == f"{_DEPLOYMENT.planning.gripper_hardware_id}_gripper"
+    assert gripper.name == f"{_MODEL.gripper_hardware_id}_gripper"
 
 
 @pytest.mark.parametrize(
