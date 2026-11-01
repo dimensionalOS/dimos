@@ -490,8 +490,9 @@ pub struct Config {
     /// (the new surface it covers).
     pub closure_likelihood_confidence: bool,
     /// When true, a keyframe whose search is rejected tries its next scan-context match (other places under the match
-    /// threshold, closest first), up to 1 + ceil(1 / (1 - pressure)) tries per keyframe (2 at no pressure), at most
-    /// scan_context_top_k; a newer keyframe's better match still outranks a waiting retry.
+    /// threshold, closest first), up to 1 + floor(sqrt(min(ceil(1 / (1 - pressure)), scan_context_top_k - 1))) tries per
+    /// keyframe (3 at pressure 0.8, 4 at 0.9 and above with top_k 10); a newer keyframe's better match still outranks a
+    /// waiting retry.
     pub closure_alternative_places: bool,
     /// Alternative places are tried only at or above this pressure; below it a keyframe tries only its best match.
     /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
@@ -1719,8 +1720,8 @@ impl GscPgo {
         self.record_search(diag);
         self.commit_closure(source, target, rotation_offset, translation_offset, score);
     }
-    /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 + ceil(1 /
-    /// (1 - pressure)), at most scan_context_top_k (`closure_alternative_places`).
+    /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 +
+    /// floor(sqrt(min(ceil(1 / (1 - pressure)), scan_context_top_k - 1))) (`closure_alternative_places`).
     fn retry_alternative(
         &mut self,
         rejected: &ClosureCandidateDiag,
@@ -1735,8 +1736,12 @@ impl GscPgo {
         {
             return;
         }
-        let allowed = (1.0 + (1.0 / (1.0 - rejected.pressure).max(f64::EPSILON)).ceil())
-            .min(self.scan_context_config.candidate_top_k as f64) as usize;
+        // the extra tries grow with pressure as before, but under a square root: retries far down the match list
+        // rarely close (small Mid-360: 1 accept in 419 tries past the second)
+        let extra = (1.0 / (1.0 - rejected.pressure).max(f64::EPSILON))
+            .ceil()
+            .min(self.scan_context_config.candidate_top_k.saturating_sub(1) as f64);
+        let allowed = 1 + extra.sqrt().floor() as usize;
         if tries >= allowed {
             return;
         }
