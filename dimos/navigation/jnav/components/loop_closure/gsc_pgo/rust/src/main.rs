@@ -131,7 +131,7 @@ config! {
     closure_sharpness_nudge_deg: f64,
     closure_likelihood_confidence: bool,
     closure_alternative_places: bool,
-    closure_commitments: bool,
+    solve_max_cost_growth: f64,
     closure_likelihood_visibility: bool,
     learned_odometry_error_estimate_from_closures: bool,
     odometry_error_estimate_evidence_core: bool,

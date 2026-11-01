@@ -82,7 +82,6 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
-            committed: Vec::new(),
             evidence_core: false,
             learned_evidence: true,
         },
@@ -141,7 +140,6 @@ fn relative_covariance_of_a_chain_is_its_odometry_error_estimate() {
         gnc_variance_scale: 10.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
-        committed: Vec::new(),
         evidence_core: false,
         learned_evidence: true,
     };
@@ -221,12 +219,10 @@ fn revisited_square(yaw_sd: f64, revisit: usize) -> (Poses, Poses) {
     (truth, odometry)
 }
 
-/// The revisited square with its five true closures committed (the previous solve kept them), then nine look-alikes
-/// arrive that agree with each other and with the dead-reckoned graph (they claim the revisit is where the drifted
-/// odometry puts it, as a burst of wrong matches dragged along by the drift does). A cold solve, starting from the
-/// odometry, keeps the nine and drops the true five (`cold`); held as commitments, the five stay kept, the look-alikes,
-/// which contradict them, are voted out and the revisit lands on the first side (`closure_commitments`).
-fn committed_square(committed: bool) -> (Vec<f64>, f64, f64) {
+/// The revisited square with its five true closures, then nine look-alikes that agree with each other and with the
+/// dead-reckoned graph (they claim the revisit is where the drifted odometry puts it, as a burst of wrong matches dragged
+/// along by the drift does). A solve, starting from the odometry, keeps the nine and drops the true five.
+fn look_alike_square() -> (Vec<f64>, f64, f64) {
     let (yaw_sd, revisit, closure_var) = (0.003, 5, 1e-4);
     let (truth, odometry) = revisited_square(yaw_sd, revisit);
     let last = truth.len() - 1;
@@ -249,11 +245,6 @@ fn committed_square(committed: bool) -> (Vec<f64>, f64, f64) {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
-            committed: if committed {
-                [vec![true; revisit], vec![false; 9]].concat()
-            } else {
-                Vec::new()
-            },
             evidence_core: false,
             learned_evidence: true,
         },
@@ -268,23 +259,12 @@ fn committed_square(committed: bool) -> (Vec<f64>, f64, f64) {
 
 #[test]
 fn a_cold_solve_follows_a_larger_group_of_look_alikes_that_agree_with_the_drift() {
-    let (weights, drifted, solved) = committed_square(false);
-    eprintln!("cold {weights:?} drifted {drifted} solved {solved}");
+    let (weights, drifted, solved) = look_alike_square();
+    eprintln!("{weights:?} drifted {drifted} solved {solved}");
     assert_eq!(weights, [vec![0.0; 5], vec![1.0; 9]].concat());
     assert!(
         solved > 0.9 * drifted,
         "the revisit should stay drifted: {solved} of {drifted}"
-    );
-}
-
-#[test]
-fn committed_closures_hold_against_a_larger_group_of_agreeing_look_alikes() {
-    let (weights, drifted, solved) = committed_square(true);
-    eprintln!("committed {weights:?} drifted {drifted} solved {solved}");
-    assert_eq!(weights, [vec![1.0; 5], vec![0.0; 9]].concat());
-    assert!(
-        solved < 0.25 * drifted,
-        "the revisit should land on the first side: {solved} of {drifted}"
     );
 }
 
@@ -352,7 +332,6 @@ fn closures_agree_around_a_drifting_cycle() {
         gnc_variance_scale: 1.0,
         gnc_inlier_probability: 0.99,
         huber_k: 0.0,
-        committed: Vec::new(),
         evidence_core: false,
         learned_evidence: true,
     };

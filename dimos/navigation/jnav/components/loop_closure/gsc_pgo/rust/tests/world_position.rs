@@ -116,7 +116,6 @@ fn config() -> SolveConfig {
         gnc_variance_scale: 1.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
-        committed: Vec::new(),
         evidence_core: false,
         learned_evidence: true,
     }
