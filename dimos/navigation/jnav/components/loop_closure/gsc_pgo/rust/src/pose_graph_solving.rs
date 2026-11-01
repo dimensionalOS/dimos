@@ -257,6 +257,9 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
             evidence_core: config.odometry_error_estimate_evidence_core,
+            // the learned estimate is only logged, so its evidence is computed only when there is a log to write
+            learned_evidence: config.learned_odometry_error_estimate_from_closures
+                && std::env::var_os("GSC_LEARN_LOG").is_some(),
             committed: if config.closure_commitments {
                 self.committed_closures
                     .iter()
