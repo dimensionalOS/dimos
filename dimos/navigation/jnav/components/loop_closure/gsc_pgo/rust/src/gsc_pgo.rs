@@ -343,6 +343,13 @@ pub struct Config {
     /// (`proportional_confidence::yank_evidence`): a candidate's yank is priced averaged over it, so a large jump costs
     /// about 3 ln z of evidence instead of z^2 / 2 and GNC judges it. 1 = the stated odometry error estimate is trusted exactly.
     pub closure_yank_drift_range: f64,
+    /// Don't extend a candidate whose required evidence a full stack could not reach at its single scan's evidence per
+    /// keyframe.
+    pub closure_extension_skip_unreachable: bool,
+    /// Stop extending once a step's evidence is no higher than the step before.
+    pub closure_extension_stop_when_flat: bool,
+    /// Stop extending once a step's fit moves a stacked keyframe farther than the search radius from the single fit.
+    pub closure_extension_stop_on_swing: bool,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -498,6 +505,9 @@ impl Default for Config {
             closure_min_degeneracy: 0.05,
             closure_yank_gate_width: 1.0,
             closure_yank_drift_range: 100.0,
+            closure_extension_skip_unreachable: true,
+            closure_extension_stop_when_flat: true,
+            closure_extension_stop_on_swing: true,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -1001,7 +1011,8 @@ impl ClosureSearch {
         diag.required_confidence = 1.0 - (-single_required).exp();
         // a stack of keyframes earns about the single scan's evidence per keyframe at best: one that could not reach the
         // required evidence even at the full stack is not extended
-        let reachable = !self.config.closure_likelihood_confidence
+        let reachable = !self.config.closure_extension_skip_unreachable
+            || !self.config.closure_likelihood_confidence
             || evidence.max(std::f64::consts::LN_2)
                 * self.config.closure_extended_icp_max_keyframes as f64
                 >= single_required;

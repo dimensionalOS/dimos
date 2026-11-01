@@ -33,12 +33,28 @@ pub struct KeyframeCloud {
     body: Arc<PointCloud>,
     voxelized: OnceLock<PointCloud>,
     bins: OnceLock<Arc<connection_fit::RangeBins>>,
+    reach: OnceLock<f64>,
 }
 
 impl KeyframeCloud {
     pub(crate) fn voxelized(&self, resolution: f64) -> &PointCloud {
         self.voxelized
             .get_or_init(|| voxel_downsample(&self.body, resolution))
+    }
+    /// How far the scan sees across the ground: its points' 95th-percentile planar range.
+    pub(crate) fn reach(&self) -> f64 {
+        *self.reach.get_or_init(|| {
+            let mut ranges: Vec<f64> = self
+                .body
+                .iter()
+                .map(|p| (p[0] as f64).hypot(p[1] as f64))
+                .collect();
+            if ranges.is_empty() {
+                return 0.0;
+            }
+            let k = (ranges.len() * 95 / 100).min(ranges.len() - 1);
+            *ranges.select_nth_unstable_by(k, f64::total_cmp).1
+        })
     }
     pub(crate) fn bins(&self) -> Arc<connection_fit::RangeBins> {
         self.bins
@@ -64,6 +80,7 @@ impl KeyframeClouds {
                     body: body.clone(),
                     voxelized: OnceLock::new(),
                     bins: OnceLock::new(),
+                    reach: OnceLock::new(),
                 })
             })
             .clone()
@@ -350,13 +367,23 @@ impl ClosureSearch {
             &mat3::mat_vec(&first.rotation, &positions[cur_idx]),
             &first.translation,
         );
+        // a keyframe can add to a stack wherever its scan overlaps the match's: two scans of reach r cover discs that
+        // meet while their centres are within 2r
+        let reach = 2.0
+            * self.key_poses[cur_idx]
+                .body_cloud
+                .as_ref()
+                .map_or(radius, |body| {
+                    self.keyframe_clouds.get(cur_idx, body).reach()
+                })
+                .max(radius);
         let (source_pool, target_pool, base_len) = extension_pools(
             &positions,
             target_idx,
             cur_idx,
             half_range,
             max_keyframes,
-            radius,
+            reach,
             &placed_cur,
         );
         // recording an ICP cache, every step up to the budget is computed (so a replay that extends further, or
@@ -504,6 +531,7 @@ impl ClosureSearch {
                 let b = mat3::add(&mat3::mat_vec(&first.rotation, p), &first.translation);
                 mat3::norm(&mat3::sub(&a, &b)) > radius
             });
+            let moved = moved && self.config.closure_extension_stop_on_swing;
             if moved && !record_all {
                 break;
             }
@@ -513,7 +541,10 @@ impl ClosureSearch {
                 }
                 found = Some((icp.clone(), diag.clone()));
             }
-            if evidence <= previous_evidence && !record_all {
+            if self.config.closure_extension_stop_when_flat
+                && evidence <= previous_evidence
+                && !record_all
+            {
                 break;
             }
             previous_evidence = evidence;
@@ -530,9 +561,9 @@ impl ClosureSearch {
 }
 
 /// The keyframes an extension may stack, each list nearest first (the target's own submap ahead of the rest; the third
-/// value is its size). Source: the newer side, keyframes from `split` to
-/// `cur_idx` within `radius` of the current keyframe. Target: the older side, any keyframe up to `split - 1 - half_range`
-/// (either side of `target_idx` in time) within `radius` of where the single fit puts the current keyframe. The sides
+/// value is its size). Source: the newer side, keyframes from `split` to `cur_idx` within `reach` (how far a scan
+/// overlaps another) of the current keyframe. Target: the older side, any keyframe up to `split - 1 - half_range`
+/// (either side of `target_idx` in time) within `reach` of where the single fit puts the current keyframe. The sides
 /// never share a keyframe, and `half_range` keyframes separate them so neighbouring scans (which share points) cannot
 /// land on both; `split` leaves room for the target's own submap (`target_idx` +- `half_range`) and at most twice the
 /// budget of newer keyframes.
@@ -542,7 +573,7 @@ pub(crate) fn extension_pools(
     cur_idx: usize,
     half_range: usize,
     max_keyframes: usize,
-    radius: f64,
+    reach: f64,
     placed_cur: &Vec3,
 ) -> (Vec<usize>, Vec<usize>, usize) {
     let split = (target_idx + 2 * half_range + 1)
@@ -551,7 +582,7 @@ pub(crate) fn extension_pools(
     let near = |ids: std::ops::Range<usize>, to: &Vec3| -> Vec<usize> {
         let mut found: Vec<(f64, usize)> = ids
             .map(|k| (mat3::norm(&mat3::sub(&positions[k], to)), k))
-            .filter(|&(d, _)| d < radius)
+            .filter(|&(d, _)| d < reach)
             .collect();
         found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         found.into_iter().map(|(_, k)| k).collect()
