@@ -390,19 +390,11 @@ impl GscPgo {
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
         self.timing.solve_s += seconds;
-        // a solve that stalled short of a minimum, or whose cost leapt far past the previous adopted one's, would bend
-        // the map wrong: the map keeps the previous solve
+        // a solve that stalled short of a minimum would bend the map wrong: the map keeps the previous solve (a real loop
+        // closure can raise the cost a hundredfold, so the cost itself is no test)
         let previous = self.graph_error;
-        let rejected = if !solution.converged {
-            Some("lm_not_converged")
-        } else if !solution.error.is_finite()
-            || (previous > 0.0 && solution.error > self.config.solve_max_cost_growth * previous)
-        {
-            Some("cost_growth")
-        } else {
-            None
-        };
-        if let Some(reason) = rejected {
+        if !solution.converged {
+            let reason = "lm_not_converged";
             if let Some(dispatched) = &solving.dispatched {
                 self.log_rejected_solve(
                     solving.keyframes,
@@ -635,8 +627,8 @@ impl GscPgo {
         );
         append_solve_log(&line);
     }
-    /// A `GSC_SOLVE_LOG` line for a solve that was not adopted (`solve_max_cost_growth`), with why and the previous
-    /// adopted solve's final cost.
+    /// A `GSC_SOLVE_LOG` line for a solve that was not adopted (its last Levenberg-Marquardt pass did not converge), with
+    /// why and the previous adopted solve's final cost.
     fn log_rejected_solve(
         &self,
         n: usize,

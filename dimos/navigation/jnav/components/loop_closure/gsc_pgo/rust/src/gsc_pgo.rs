@@ -513,9 +513,6 @@ pub struct Config {
     /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
     /// loops; huge: 12,012 of 16,867 for 69 right and 150 wrong).
     pub closure_alternative_places_min_pressure: f64,
-    /// A solve is not adopted when its final cost is above this many times the previous adopted solve's (or its last
-    /// Levenberg-Marquardt pass did not converge): the map keeps the previous solve ("rejected_solve" in the solve log).
-    pub solve_max_cost_growth: f64,
     /// With `closure_likelihood_confidence`: score only the source points the target can speak to, those within ICP's
     /// inlier distance of it or in space a target scan looked through (`connection_fit::likelihood_ratio_visible`);
     /// a point no target scan saw counts for nothing instead of as a misfit.
@@ -628,7 +625,6 @@ impl Default for Config {
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
             closure_alternative_places_min_pressure: 0.8,
-            solve_max_cost_growth: 100.0,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,

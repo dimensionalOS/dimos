@@ -78,7 +78,7 @@ pub struct Solution {
     /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
-    /// Whether the last Levenberg-Marquardt pass (the kept closures, Huber-weighted) reached a minimum.
+    /// Whether GNC's last Levenberg-Marquardt pass reached a minimum.
     pub converged: bool,
     /// Variance-component evidence on the odometry error estimate from the solved graph (`odometry_error_estimate_evidence`): per source
     /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
@@ -264,7 +264,8 @@ pub(crate) fn solve_core(
         [f64::NAN; 3]
     };
     let (mut gnc_iterations, mut gnc_mu, mut gnc_stop) = (0, f64::NAN, "under_cutoff");
-    levenberg_marquardt(
+    // whether the newest Levenberg-Marquardt pass of GNC (or of its start, when GNC never runs) reached a minimum
+    let mut converged = levenberg_marquardt(
         &mut state,
         &pattern,
         odometry,
@@ -317,7 +318,7 @@ pub(crate) fn solve_core(
             for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
                 *w = tls(r, 1.0, mu);
             }
-            levenberg_marquardt(
+            converged = levenberg_marquardt(
                 &mut state,
                 &pattern,
                 odometry,
@@ -374,9 +375,8 @@ pub(crate) fn solve_core(
 
     // the kept closures at their own variances, Huber-weighted
     let mut huber = kept.clone();
-    let mut converged = false;
     for _ in 0..3 {
-        converged = levenberg_marquardt(
+        levenberg_marquardt(
             &mut state,
             &pattern,
             odometry,

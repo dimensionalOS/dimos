@@ -133,9 +133,6 @@ class PGOConfig(NativeModuleConfig):
     # True: a keyframe whose closure search is rejected tries its next scan-context match, up to
     # 1 + floor(sqrt(min(ceil(1/(1 - pressure)), scan_context_top_k - 1))) tries (3 at pressure 0.8, 4 from 0.9 with top_k 10)
     closure_alternative_places: bool = True
-    # A solve whose final cost is above this many times the previous adopted solve's (or whose last LM pass did not
-    # converge) is not adopted; the map keeps the previous solve
-    solve_max_cost_growth: float = 100.0
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
     closure_likelihood_visibility: bool = True
     # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
