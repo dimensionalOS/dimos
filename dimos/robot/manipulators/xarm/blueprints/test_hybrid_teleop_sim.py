@@ -39,11 +39,15 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import OperatorHoldCoordinator
+from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import (
+    OperatorHoldCoordinator,
+    hybrid_teleop_sim,
+)
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -171,3 +175,9 @@ class TestEstopStatus:
             coordinator.stop()
 
         assert [msg.data for msg in statuses] == [False]
+
+
+def test_request_operator_reaches_the_coordinator() -> None:
+    assert resolve_module_refs(hybrid_teleop_sim)["teleopskills", "_coordinator"] == (
+        "ControlCoordinator"
+    )
