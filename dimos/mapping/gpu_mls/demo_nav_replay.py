@@ -14,7 +14,7 @@
 
 """Replay a Mid-360 recording through alfred-nav's voxel map and MLS planner, on the GPU or the CPU.
 
-    DIMOS_LOG_LEVEL=DEBUG python dimos/mapping/gpu_mls/demo_nav_replay.py <mem2.db> [--cpu | --cpu-surfaces] [--seek S] [--duration S]
+    DIMOS_LOG_LEVEL=DEBUG python dimos/mapping/gpu_mls/demo_nav_replay.py <mem2.db> [--cpu | --cpu-surfaces] [--surface-heights] [--seek S] [--duration S]
 
 The raw lidar stream is placed by an odometry stream turned into tf, as Point-LIO does live.
 """
@@ -81,6 +81,9 @@ def main() -> None:
     parser.add_argument(
         "--cpu-surfaces", action="store_true", help="GPU ray tracer, surfaces on the CPU"
     )
+    parser.add_argument(
+        "--surface-heights", action="store_true", help="local_map carries plane heights"
+    )
     parser.add_argument("--sensor-frame", default="mid360_link")
     parser.add_argument("--seek", type=float, default=None)
     parser.add_argument("--duration", type=float, default=None)
@@ -100,6 +103,7 @@ def main() -> None:
             max_range=MAX_RANGE_METERS,
             global_emit_every=50,
             gpu=gpu,
+            surface_heights=args.surface_heights,
         ).remappings([(RayTracingVoxelMap, "lidar", LIDAR_STREAM)]),
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
