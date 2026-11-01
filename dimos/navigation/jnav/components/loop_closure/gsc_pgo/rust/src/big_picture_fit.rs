@@ -357,7 +357,9 @@ pub(crate) fn solve_core(
                 .chain(&unary_weights)
                 .chain(&sighting_weights)
                 .all(|&w| !(1e-4..=1.0 - 1e-4).contains(&w));
-            if settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost {
+            // below mu 1 the surrogate is still the convex start (every weight tiny next to the worst residual), so
+            // neither stop applies until GNC has graduated to where a weight can reach 1
+            if mu >= 1.0 && (settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost) {
                 gnc_stop = if settled { "converged" } else { "cost_change" };
                 break;
             }
