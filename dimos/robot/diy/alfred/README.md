@@ -123,7 +123,7 @@ On a laptop (macOS on Apple Silicon, or Linux x86_64 with or without NVIDIA):
 git checkout mustafa/integration/hybrid-teleop-alfred
 uv sync --inexact --extra manipulation                              # Linux
 uv sync --inexact --extra manipulation --no-install-package drake  # macOS, only if uv finds no drake wheel for your Python: the sim plans on RoboPlan
-git lfs pull --include="data/.lfs/alfred_description.tar.gz,data/.lfs/models_edgetam.tar.gz"
+git lfs pull --exclude= --include="data/.lfs/alfred_description.tar.gz,data/.lfs/models_edgetam.tar.gz"
 .venv/bin/python -m dimos.robot.diy.alfred.tools.tool_render_bench --out /tmp/bench  # one frame, checked
 ```
 
