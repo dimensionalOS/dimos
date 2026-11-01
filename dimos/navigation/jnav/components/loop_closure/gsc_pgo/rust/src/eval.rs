@@ -472,6 +472,7 @@ fn load_config(
     ] {
         *term *= k;
     }
+    config.pgo.validate().map_err(|e| format!("config: {e}"))?;
     Ok(config)
 }
 

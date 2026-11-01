@@ -334,6 +334,7 @@ impl ClosureSearch {
         target_idx: usize,
         source_points: usize,
         first: &IcpResult,
+        first_ratio: f64,
         diag: &mut ClosureCandidateDiag,
         required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
         // an alignment's cloud computation through the cache, its encoded alignment starting at the given index
@@ -342,13 +343,13 @@ impl ClosureSearch {
         let max_keyframes = diag
             .extension_budget
             .min(self.config.closure_extended_icp_max_keyframes);
-        if max_keyframes < 2 || !first.converged {
+        if !first.converged {
             return None;
         }
         let single = (first.overlap * source_points as f64).round() as usize;
         diag.single_inliers = single;
-        if single == 0 {
-            return None;
+        if max_keyframes < 2 || single == 0 {
+            return (first_ratio >= 1.0).then(|| first.clone());
         }
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
@@ -394,16 +395,28 @@ impl ClosureSearch {
             .is_some_and(|c| c.mode == crate::icp_cache::Mode::Record);
         let sharp = self.config.closure_sharpness_half > 0.0;
         let likelihood = self.config.closure_likelihood_confidence;
+        // what is decided when the extension cannot go on: the newest converged step (the single fit before any) on
+        // which side of its bar it fell
+        let mut last = (first.clone(), diag.clone(), first_ratio);
+        let decide = |last: (IcpResult, ClosureCandidateDiag, f64),
+                      diag: &mut ClosureCandidateDiag| {
+            let (icp, kept, ratio) = last;
+            *diag = kept;
+            (ratio >= 1.0).then_some(icp)
+        };
         if target_pool.is_empty() {
-            return None;
+            return decide(last, diag);
         }
+        let range = UncertaintyRange::new(&self.config, max_keyframes, diag.pressure);
         let mut source = Stack::default();
         let mut target = Stack::default();
         let (mut seed_rotation, mut seed_translation) = (first.rotation, first.translation);
-        let mut found: Option<(IcpResult, ClosureCandidateDiag)> = None;
+        let mut found: Option<Option<(IcpResult, ClosureCandidateDiag)>> = None;
         let mut previous_evidence = f64::NEG_INFINITY;
         let mut keyframes = 2;
+        let mut step = 0;
         while keyframes <= max_keyframes {
+            step += 1;
             let source_ids: Vec<usize> = std::iter::once(cur_idx)
                 .chain(source_pool.iter().copied())
                 .take(keyframes)
@@ -530,22 +543,36 @@ impl ClosureSearch {
                 let a = mat3::add(&mat3::mat_vec(&icp.rotation, p), &icp.translation);
                 let b = mat3::add(&mat3::mat_vec(&first.rotation, p), &first.translation);
                 mat3::norm(&mat3::sub(&a, &b)) > radius
-            });
-            let moved = moved && self.config.closure_extension_stop_on_swing;
-            if moved && !record_all {
-                break;
-            }
-            if !moved && evidence >= required && found.is_none() {
+            }) && self.config.closure_extension_stop_on_swing;
+            let ratio = if required > 0.0 {
+                evidence / required
+            } else {
+                f64::INFINITY
+            };
+            let flat =
+                self.config.closure_extension_stop_when_flat && evidence <= previous_evidence;
+            let (low, high) = range.at(step);
+            let verdict = if moved {
+                Some(None)
+            } else if ratio >= high {
+                Some(Some((icp.clone(), diag.clone())))
+            } else if ratio <= low {
+                Some(None)
+            } else if flat {
+                // no new information: decide by which side of the bar it sits
+                Some((ratio >= 1.0).then(|| (icp.clone(), diag.clone())))
+            } else {
+                None
+            };
+            last = (icp.clone(), diag.clone(), ratio);
+            if let Some(verdict) = verdict {
                 if !record_all {
-                    return Some(icp);
+                    return verdict.map(|(icp, kept)| {
+                        *diag = kept;
+                        icp
+                    });
                 }
-                found = Some((icp.clone(), diag.clone()));
-            }
-            if self.config.closure_extension_stop_when_flat
-                && evidence <= previous_evidence
-                && !record_all
-            {
-                break;
+                found.get_or_insert(verdict);
             }
             previous_evidence = evidence;
             if !sharp {
@@ -553,10 +580,52 @@ impl ClosureSearch {
             }
             keyframes *= 2;
         }
-        found.map(|(icp, kept)| {
-            *diag = kept;
-            icp
-        })
+        match found {
+            Some(verdict) => verdict.map(|(icp, kept)| {
+                *diag = kept;
+                icp
+            }),
+            None => decide(last, diag),
+        }
+    }
+}
+
+/// The uncertainty range: ratios of a candidate's evidence to its bar (both in yank units). At or above `high` it accepts,
+/// at or below `low` it rejects, and in between the stack grows. Both ratios move linearly to 1 over the extension's
+/// steps, stretched by 1 / (1 - pressure)^`decisive_pressure_rate` (50% pressure: twice as long at the default rate 1),
+/// so the budget's end forces a decision at ratio >= 1 while a high pressure keeps the uncertainty range wide longer.
+pub(crate) struct UncertaintyRange {
+    low: f64,
+    high: f64,
+    steps: f64,
+}
+
+impl UncertaintyRange {
+    pub(crate) fn new(
+        config: &crate::gsc_pgo::Config,
+        max_keyframes: usize,
+        pressure: f64,
+    ) -> UncertaintyRange {
+        let doublings = (max_keyframes.max(2) as f64).log2().floor().max(1.0);
+        let pressure = if pressure.is_finite() {
+            pressure.clamp(0.0, 0.999)
+        } else {
+            0.0
+        };
+        UncertaintyRange {
+            low: config.barely_fail_uncertainty_range,
+            high: config.barely_pass_uncertainty_range,
+            steps: doublings
+                * (1.0 / (1.0 - pressure)).powf(config.decisive_pressure_rate.max(0.0)),
+        }
+    }
+    /// (low, high) after `step` extension steps (0: the single scan).
+    pub(crate) fn at(&self, step: usize) -> (f64, f64) {
+        let left = (1.0 - step as f64 / self.steps).max(0.0);
+        (
+            1.0 - (1.0 - self.low) * left,
+            1.0 + (self.high - 1.0) * left,
+        )
     }
 }
 
@@ -603,6 +672,34 @@ pub(crate) fn extension_pools(
         )
         .collect();
     (source, target, base.len())
+}
+
+#[cfg(test)]
+mod uncertainty_range_tests {
+    use super::UncertaintyRange;
+
+    /// The uncertainty range starts at the configured ratios, is shut (both at 1) by the budget's last step at no pressure, and at
+    /// 50% pressure takes twice as many steps to close.
+    #[test]
+    fn pressure_keeps_the_uncertainty_range_open_longer() {
+        let config = crate::gsc_pgo::Config::default();
+        let calm = UncertaintyRange::new(&config, 16, 0.0);
+        assert_eq!(
+            calm.at(0),
+            (
+                config.barely_fail_uncertainty_range,
+                config.barely_pass_uncertainty_range
+            )
+        );
+        assert_eq!(calm.at(4), (1.0, 1.0));
+        let pressed = UncertaintyRange::new(&config, 16, 0.5);
+        let half = 1.0 + (config.barely_pass_uncertainty_range - 1.0) / 2.0;
+        assert!((pressed.at(4).1 - half).abs() < 1e-12);
+        assert_eq!(pressed.at(8), (1.0, 1.0));
+        for step in 0..8 {
+            assert!(pressed.at(step).0 <= calm.at(step).0 && pressed.at(step).1 >= calm.at(step).1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -735,7 +832,7 @@ mod yank_evidence_tests {
     use super::yank_evidence;
 
     /// Trusting the stated odometry error estimate exactly prices a yank as z^2 / 2; an unknown drift up to 100x prices a 79-sigma jump
-    /// (huge's missed return to the start) at a dozen nats, and leaves no yank more expensive than z^2 / 2.
+    /// (huge's missed return to the start) at a dozen yank units, and leaves no yank more expensive than z^2 / 2.
     #[test]
     fn a_wide_drift_range_caps_large_yanks() {
         assert!((yank_evidence(3.0, 1.0) - 4.5).abs() < 1e-12);

@@ -96,6 +96,12 @@ class PGOConfig(NativeModuleConfig):
     closure_extension_skip_unreachable: bool = True
     closure_extension_stop_when_flat: bool = True
     closure_extension_stop_on_swing: bool = True
+    # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail
+    # reject, extend the match in between (barely_fail < 1 < barely_pass)
+    barely_fail_uncertainty_range: float = 0.95
+    barely_pass_uncertainty_range: float = 1.05
+    # The uncertainty range narrows over the extension's steps, slowed by 1 / (1 - pressure)^this
+    decisive_pressure_rate: float = 1.0
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off

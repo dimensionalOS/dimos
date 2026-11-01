@@ -178,7 +178,7 @@ pub struct ClosureCandidateDiag {
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
     pub extended_sharpness: f64,
-    /// `connection_fit::likelihood_ratio` (mean log ratio, nats) of the single-scan and the last extended alignment, and
+    /// `connection_fit::likelihood_ratio` (mean log ratio, yank units) of the single-scan and the last extended alignment, and
     /// the aligned-distance width it measured (NaN when not scored).
     pub likelihood_ratio: f64,
     pub extended_likelihood_ratio: f64,
@@ -350,6 +350,14 @@ pub struct Config {
     pub closure_extension_stop_when_flat: bool,
     /// Stop extending once a step's fit moves a stacked keyframe farther than the search radius from the single fit.
     pub closure_extension_stop_on_swing: bool,
+    /// The uncertainty range, as ratios of a candidate's evidence to its bar (the required evidence; both in yank units):
+    /// at or above `barely_pass_uncertainty_range` (> 1) the single scan accepts, at or below
+    /// `barely_fail_uncertainty_range` (< 1) it rejects, and in between the match is extended until the ratio leaves the
+    /// range, which narrows toward 1 each step (`proportional_confidence::UncertaintyRange`).
+    pub barely_fail_uncertainty_range: f64,
+    pub barely_pass_uncertainty_range: f64,
+    /// How much the pressure keeps the uncertainty range wide: its narrowing is stretched by 1 / (1 - pressure)^this.
+    pub decisive_pressure_rate: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -444,7 +452,7 @@ pub struct Config {
     /// The nudge `sharpness` measures against: this far (m) along x and y, and this many degrees about z.
     pub closure_sharpness_nudge_m: f64,
     pub closure_sharpness_nudge_deg: f64,
-    /// When true, a closure's evidence (nats) is its likelihood ratio (`connection_fit::likelihood_ratio`, scales measured
+    /// When true, a closure's evidence (yank units) is its likelihood ratio (`connection_fit::likelihood_ratio`, scales measured
     /// from the clouds, misfit reach = `closure_icp_max_correspondence_m`), as confidence 1 - e^-ratio, in place of scan
     /// context x ICP x degeneracy, and an extended stack's is the stack's own ratio. It also sets the extension budget: the keyframes the still-needed evidence takes at the
     /// single scan's evidence per keyframe (at least one bit), up to the next doubling, at most
@@ -482,6 +490,22 @@ pub struct Config {
 }
 
 impl Config {
+    /// An error naming the first setting out of its allowed range, if any.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(self.barely_fail_uncertainty_range < 1.0) {
+            return Err(format!(
+                "barely_fail_uncertainty_range must be < 1 (got {})",
+                self.barely_fail_uncertainty_range
+            ));
+        }
+        if !(self.barely_pass_uncertainty_range > 1.0) {
+            return Err(format!(
+                "barely_pass_uncertainty_range must be > 1 (got {})",
+                self.barely_pass_uncertainty_range
+            ));
+        }
+        Ok(())
+    }
     /// `closure_icp_inlier_distance_m` squared, the form ICP compares against.
     pub fn closure_inlier_squared_distance(&self) -> f64 {
         self.closure_icp_inlier_distance_m.powi(2)
@@ -508,6 +532,9 @@ impl Default for Config {
             closure_extension_skip_unreachable: true,
             closure_extension_stop_when_flat: true,
             closure_extension_stop_on_swing: true,
+            barely_fail_uncertainty_range: 0.95,
+            barely_pass_uncertainty_range: 1.05,
+            decisive_pressure_rate: 1.0,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -1000,26 +1027,38 @@ impl ClosureSearch {
         };
         let evidence = -(1.0 - diag.confidence).ln();
         let single_required = required(evidence, &mut diag);
+        // evidence over its bar, both in yank units (an unmet bar of 0 counts as passed)
+        let ratio = if single_required > 0.0 {
+            evidence / single_required
+        } else {
+            f64::INFINITY
+        };
+        let (low, high) = (
+            self.config.barely_fail_uncertainty_range,
+            self.config.barely_pass_uncertainty_range,
+        );
         if self.config.closure_likelihood_confidence {
-            // extend as far as the evidence still needed takes at this scan's own evidence per keyframe (at least one bit):
+            // extend as far as reaching the uncertainty range's top takes at this scan's own evidence per keyframe (at least one bit):
             // the yank and the look-alike places it matched set what is needed, not the pressure
             let per_keyframe = evidence.max(std::f64::consts::LN_2);
-            diag.extension_budget = ((single_required / per_keyframe).ceil().max(1.0) as usize)
+            diag.extension_budget = ((single_required * high / per_keyframe).ceil().max(2.0)
+                as usize)
                 .next_power_of_two()
                 .min(self.config.closure_extended_icp_max_keyframes);
         }
         diag.required_confidence = 1.0 - (-single_required).exp();
-        // a stack of keyframes earns about the single scan's evidence per keyframe at best: one that could not reach the
-        // required evidence even at the full stack is not extended
+        // a stack of keyframes earns about the single scan's evidence per keyframe at best: one that could not climb to
+        // its bar even at the full stack is decided now
         let reachable = !self.config.closure_extension_skip_unreachable
             || !self.config.closure_likelihood_confidence
             || evidence.max(std::f64::consts::LN_2)
                 * self.config.closure_extended_icp_max_keyframes as f64
                 >= single_required;
-        if evidence < single_required && !reachable {
+        // outside the uncertainty range the single scan decides; inside it the match is extended until it does
+        if ratio <= low || (ratio < 1.0 && !reachable) {
             return rejected(diag, "yank_confidence_reject", timing);
         }
-        if evidence < single_required {
+        if ratio < high {
             let t0 = std::time::Instant::now();
             let source_points = memo("srcn", &mut || vec![clouds().0.len() as f64])[0] as usize;
             let extended = self.extended_icp(
@@ -1027,6 +1066,7 @@ impl ClosureSearch {
                 target_idx,
                 source_points,
                 &icp,
+                ratio,
                 &mut diag,
                 &mut required,
                 &memo_alignment,
@@ -1053,6 +1093,9 @@ impl ClosureSearch {
 
 impl GscPgo {
     pub fn new(config: Config) -> GscPgo {
+        if let Err(e) = config.validate() {
+            panic!("gsc_pgo config: {e}");
+        }
         let scan_context_config = similarity_discovery::Config {
             n_rings: config.scan_context_num_rings.max(0) as usize,
             n_sectors: config.scan_context_num_sectors.max(0) as usize,
@@ -1671,5 +1714,30 @@ impl GscPgo {
             gnc_weight: f64::NAN,
         });
         self.new_closure = true;
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::Config;
+
+    /// The uncertainty range must straddle the bar: barely_fail below 1, barely_pass above it.
+    #[test]
+    fn the_uncertainty_range_must_straddle_one() {
+        assert!(Config::default().validate().is_ok());
+        for (fail, pass) in [
+            (1.0, 1.05),
+            (1.2, 1.5),
+            (0.95, 1.0),
+            (0.95, 0.9),
+            (f64::NAN, 1.05),
+        ] {
+            let config = Config {
+                barely_fail_uncertainty_range: fail,
+                barely_pass_uncertainty_range: pass,
+                ..Config::default()
+            };
+            assert!(config.validate().is_err(), "{fail} {pass}");
+        }
     }
 }
