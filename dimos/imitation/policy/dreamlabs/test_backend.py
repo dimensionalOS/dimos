@@ -30,6 +30,23 @@ from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 STATE = np.array([0.25, 0.2], dtype=np.float32)
 
 
+@pytest.mark.parametrize("timeout, expected", [(None, 15000), (30000, 30000)])
+def test_cloud_request_timeout_reaches_sdk(
+    policy_config_fixture, images, mocker, timeout, expected
+):
+    if timeout is not None:
+        original = policy_config_fixture.dreamlabs
+        policy_config_fixture.dreamlabs = DreamlabsBackendConfig(
+            mode=original.mode, model=original.model, arms=original.arms, timeout_ms=timeout
+        )
+    client = mocker.Mock()
+    mocker.patch("dimos.imitation.policy.dreamlabs.backend.create_client", return_value=client)
+    with closing(DreamlabsBackend(policy_config_fixture)) as instance:
+        instance.observe(images, STATE, task="move", timestamp=1000.0)
+    assert client.policy.call_args.args[0]["timeout_ms"] == expected
+    client.get_action.assert_not_called()
+
+
 def test_observation_encodes_each_rgb_once_without_request_or_recording(backend, images, mocker):
     instance, client = backend
     encode = mocker.spy(cv2, "imencode")

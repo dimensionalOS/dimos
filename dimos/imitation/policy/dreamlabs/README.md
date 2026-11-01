@@ -59,6 +59,11 @@ Wait for `busy=False` after stop before another episode. Use `set_task(text)` to
 stop, drain, and replace task language. An in-flight request may finish after stop;
 its result cannot preview or dispatch. Stop is not an E-stop.
 
+Cloud requests use the pinned SDK's 15-second timeout by default. Override it with
+`--policy.dreamlabs.timeout-ms 30000` for a slower connection. This controls request
+waiting, not motion speed or the coordinator's execution deadman. Do not repeatedly
+start rollout while a request is active or draining.
+
 Actuator dispatch is a separate opt-in:
 
 ```python
