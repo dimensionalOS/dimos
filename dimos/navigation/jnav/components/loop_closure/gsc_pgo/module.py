@@ -94,6 +94,8 @@ class PGOConfig(NativeModuleConfig):
     # Extension stops: skip a candidate a full stack could not carry, stop when a step's evidence stops rising, stop when
     # a step's fit leaves the single fit's place
     closure_extension_skip_unreachable: bool = True
+    # Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give
+    closure_yank_pre_check: bool = False
     closure_extension_stop_when_flat: bool = True
     closure_extension_stop_on_swing: bool = True
     # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail

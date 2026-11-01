@@ -86,6 +86,7 @@ config! {
     closure_yank_gate_width: f64,
     closure_yank_drift_range: f64,
     closure_extension_skip_unreachable: bool,
+    closure_yank_pre_check: bool,
     closure_extension_stop_when_flat: bool,
     closure_extension_stop_on_swing: bool,
     barely_fail_uncertainty_range: f64,

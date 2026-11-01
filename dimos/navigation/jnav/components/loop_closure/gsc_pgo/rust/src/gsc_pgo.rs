@@ -346,6 +346,8 @@ pub struct Config {
     /// Don't extend a candidate whose required evidence a full stack could not reach at its single scan's evidence per
     /// keyframe.
     pub closure_extension_skip_unreachable: bool,
+    /// Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give.
+    pub closure_yank_pre_check: bool,
     /// Stop extending once a step's evidence is no higher than the step before.
     pub closure_extension_stop_when_flat: bool,
     /// Stop extending once a step's fit moves a stacked keyframe farther than the search radius from the single fit.
@@ -530,6 +532,7 @@ impl Default for Config {
             closure_yank_gate_width: 1.0,
             closure_yank_drift_range: 100.0,
             closure_extension_skip_unreachable: true,
+            closure_yank_pre_check: false,
             closure_extension_stop_when_flat: true,
             closure_extension_stop_on_swing: true,
             barely_fail_uncertainty_range: 0.95,
@@ -747,6 +750,13 @@ impl ClosureSearch {
         let clearance = self.config.closure_ground_clearance_m;
         // the source scan, the target submap and its tree, built only when a computation needs them (never when every
         // result comes from the ICP cache)
+        // the source scan alone (all the degeneracy gate reads), built apart from the target and its tree
+        let source_cell = std::cell::OnceCell::new();
+        let source_cloud = || -> &PointCloud {
+            source_cell.get_or_init(|| {
+                above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance)
+            })
+        };
         let clouds_cell = std::cell::OnceCell::new();
         let clouds = || -> &(PointCloud, PointCloud, KdTree) {
             clouds_cell.get_or_init(|| {
@@ -757,10 +767,8 @@ impl ClosureSearch {
                     ),
                     clearance,
                 );
-                let source_cloud =
-                    above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance);
                 let target_tree = KdTree::build(&target_cloud);
-                (source_cloud, target_cloud, target_tree)
+                (source_cloud().clone(), target_cloud, target_tree)
             })
         };
         // a cloud computation, through the ICP cache when there is one; a point-to-plane alignment is a different
@@ -822,13 +830,85 @@ impl ClosureSearch {
         };
         let t0 = std::time::Instant::now();
         diag.degeneracy_min = memo("deg", &mut || {
-            vec![uniqueness::degeneracy(&clouds().0) as f64]
+            vec![uniqueness::degeneracy(source_cloud()) as f64]
         })[0] as f32;
         timing.degeneracy_s += t0.elapsed().as_secs_f64();
         if degenerate(diag.degeneracy_min) {
             return rejected(diag, "degeneracy_reject", timing);
         }
 
+        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
+        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
+        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
+        // kept would count the same evidence twice
+        let gate_error_estimate = diag.odometry_error_estimate_gate;
+        let odometry_step = self.mean_step_xy_variance * gate_error_estimate[0];
+        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
+        let by_graph = diag
+            .innovation_covariance
+            .iter()
+            .flatten()
+            .all(|v| v.is_finite());
+        // at the upper bound: scaled by the most any component's bound exceeds its estimate
+        let widen = (0..4)
+            .map(|c| gate_error_estimate[c] / diag.learned_odometry_error_estimate[c])
+            .fold(1.0, f64::max);
+        let known = if by_graph {
+            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
+            // closures included): the closure adds something only where it is surer than the graph in some direction.
+            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
+            widen
+                * mat3::jacobi_eigen(diag.innovation_covariance)
+                    .0
+                    .into_iter()
+                    .fold(0.0, f64::max)
+        } else {
+            self.kept_closures
+                .iter()
+                .fold(step(cur_idx, target_idx), |known, l| {
+                    let via = |a: usize, b: usize| {
+                        step(target_idx, a) + l.variances[3] + step(cur_idx, b)
+                    };
+                    known.min(via(l.from, l.to)).min(via(l.to, l.from))
+                })
+        };
+        // no alignment of two voxelized scans fits tighter than the spread of a surface's voxel centroids between them
+        // (two independent offsets within a voxel of the submap resolution r: variance r^2 / 6 along the normal), so a
+        // graph surer than that makes the closure uninformative whatever ICP returns: it is not aligned at all
+        let closure_variance_floor = self.config.submap_resolution.powi(2) / 6.0;
+        if self.config.closure_uninformative_gate && closure_variance_floor >= known {
+            return rejected(diag, "uninformative", timing);
+        }
+        // a candidate whose least yank ICP could leave still needs more evidence than any stack of scans could give is
+        // rejected unaligned: ICP pairs points only within its match distance, so it moves the source from the seed (the
+        // target's position) by about that much at most; the closure's own variance is at most the fitness limit squared;
+        // and a point's likelihood ratio is at most ln(2 reach / (width sqrt(2 pi))) with width no less than a quarter
+        // voxel, times the largest stack
+        if self.config.closure_likelihood_confidence && self.config.closure_yank_pre_check {
+            let reach = self.config.closure_icp_max_correspondence_m;
+            let source_position = self.key_poses[cur_idx].translation_global;
+            let seeded = self.key_poses[target_idx].translation_global;
+            let jump = mat3::norm(&mat3::sub(&seeded, &source_position));
+            let spread = mat3::jacobi_eigen(diag.innovation_covariance)
+                .0
+                .into_iter()
+                .fold(0.0, f64::max)
+                + self.config.closure_icp_max_fitness_m.powi(2);
+            if spread.is_finite() && spread > 0.0 && jump > reach {
+                let least_yank = (jump - reach) / spread.sqrt();
+                let width = self.config.submap_resolution / 4.0;
+                let most_evidence = (2.0 * reach / (width * (2.0 * std::f64::consts::PI).sqrt()))
+                    .ln()
+                    * self.config.closure_extended_icp_max_keyframes.max(1) as f64;
+                let least_required = crate::proportional_confidence::yank_evidence(
+                    least_yank / self.config.closure_yank_gate_width.max(f64::EPSILON),
+                    self.config.closure_yank_drift_range,
+                );
+                if least_required > most_evidence {
+                    return rejected(diag, "yank_confidence_reject", timing);
+                }
+            }
+        }
         let t0 = std::time::Instant::now();
         let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
@@ -867,41 +947,6 @@ impl ClosureSearch {
         if !icp.converged || icp.fitness > self.config.closure_icp_max_fitness_m.powi(2) {
             return rejected(diag, "icp_reject", timing);
         }
-        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
-        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
-        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
-        // kept would count the same evidence twice
-        let gate_error_estimate = diag.odometry_error_estimate_gate;
-        let odometry_step = self.mean_step_xy_variance * gate_error_estimate[0];
-        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let by_graph = diag
-            .innovation_covariance
-            .iter()
-            .flatten()
-            .all(|v| v.is_finite());
-        // at the upper bound: scaled by the most any component's bound exceeds its estimate
-        let widen = (0..4)
-            .map(|c| gate_error_estimate[c] / diag.learned_odometry_error_estimate[c])
-            .fold(1.0, f64::max);
-        let known = if by_graph {
-            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
-            // closures included): the closure adds something only where it is surer than the graph in some direction.
-            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            widen
-                * mat3::jacobi_eigen(diag.innovation_covariance)
-                    .0
-                    .into_iter()
-                    .fold(0.0, f64::max)
-        } else {
-            self.kept_closures
-                .iter()
-                .fold(step(cur_idx, target_idx), |known, l| {
-                    let via = |a: usize, b: usize| {
-                        step(target_idx, a) + l.variances[3] + step(cur_idx, b)
-                    };
-                    known.min(via(l.from, l.to)).min(via(l.to, l.from))
-                })
-        };
         // the closure's translation variance as the graph will take it: its inliers' mean squared distance
         // (`IcpResult::inlier_mean_square`)
         let closure_variance = icp.inlier_mean_square();
@@ -1060,7 +1105,7 @@ impl ClosureSearch {
         }
         if ratio < high {
             let t0 = std::time::Instant::now();
-            let source_points = memo("srcn", &mut || vec![clouds().0.len() as f64])[0] as usize;
+            let source_points = memo("srcn", &mut || vec![source_cloud().len() as f64])[0] as usize;
             let extended = self.extended_icp(
                 cur_idx,
                 target_idx,
