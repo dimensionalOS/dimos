@@ -219,6 +219,13 @@ pub struct ClosureCandidateDiag {
     pub speed_mps: f64,
     pub scan_index_proposed: usize,
     pub scan_index_finished: usize,
+    /// The deterministic schedule (`closure_search_hold_enabled`): the scan count at the search's dispatch, its estimate
+    /// (seconds, the extension rounds it ran included, and scans after dispatch), and whether it ran past the data time
+    /// its estimate spanned.
+    pub scan_index_dispatched: usize,
+    pub estimate_s: f64,
+    pub estimate_scans: usize,
+    pub search_overshoot: bool,
     pub agreement_multiplier: f64,
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
@@ -302,6 +309,10 @@ impl ClosureCandidateDiag {
             speed_mps: f64::NAN,
             scan_index_proposed: 0,
             scan_index_finished: 0,
+            scan_index_dispatched: 0,
+            estimate_s: f64::NAN,
+            estimate_scans: 0,
+            search_overshoot: false,
             agreement_multiplier: 1.0,
             sharpness: f64::NAN,
             extended_sharpness: f64::NAN,
@@ -481,6 +492,28 @@ pub struct Config {
     pub solve_estimate_rejected_power: f64,
     pub solve_estimate_speed_power: f64,
     pub solve_estimate_speed_floor_mps: f64,
+    /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
+    /// once `estimate` scans have passed since its dispatch, an upper bound on its cost in scans fixed before each piece
+    /// of work starts, and the search thread takes no other search until then, so which searches run and when their
+    /// closures land is the same however fast the machine is; one still running then is an overshoot (logged loudly,
+    /// counted) and lands as soon as it finishes. At dispatch (seconds): the scan-context lookup (the bench curve
+    /// `lookup_s + lookup_per_keyframe_s * keyframes`, none for a retry) + `build_per_point_s * (source + target points)`
+    /// + `degeneracy_per_point_s * source` + `icp_s * source * log2(target) * closure_icp_max_iterations` + `gates_s`,
+    /// the points the voxelized source keyframe's and the single target submap's keyframes' (before merging); the
+    /// extension adds `extension_overhead_s` as it starts and `extension_cloud_s` before each cloud's round. Seconds are
+    /// turned into scans by the median of the newest 50 scan periods (recorded times), rounded up. The coefficients are
+    /// the largest of six recordings' (huge, huge L1, gir1, gir2, small L1, small Mid-360; Mac) 95th percentiles of each
+    /// step's seconds per its feature, the lowest percentile at which the whole estimate bounds >= 99% of every
+    /// recording's searches.
+    pub closure_search_hold_enabled: bool,
+    pub closure_search_estimate_lookup_s: f64,
+    pub closure_search_estimate_lookup_per_keyframe_s: f64,
+    pub closure_search_estimate_build_per_point_s: f64,
+    pub closure_search_estimate_degeneracy_per_point_s: f64,
+    pub closure_search_estimate_icp_s: f64,
+    pub closure_search_estimate_gates_s: f64,
+    pub closure_search_estimate_extension_overhead_s: f64,
+    pub closure_search_estimate_extension_cloud_s: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -629,6 +662,19 @@ impl Config {
                 self.barely_pass_uncertainty_range
             ));
         }
+        let estimates = [
+            ("closure_search_estimate_lookup_s", self.closure_search_estimate_lookup_s),
+            ("closure_search_estimate_lookup_per_keyframe_s", self.closure_search_estimate_lookup_per_keyframe_s),
+            ("closure_search_estimate_build_per_point_s", self.closure_search_estimate_build_per_point_s),
+            ("closure_search_estimate_degeneracy_per_point_s", self.closure_search_estimate_degeneracy_per_point_s),
+            ("closure_search_estimate_icp_s", self.closure_search_estimate_icp_s),
+            ("closure_search_estimate_gates_s", self.closure_search_estimate_gates_s),
+            ("closure_search_estimate_extension_overhead_s", self.closure_search_estimate_extension_overhead_s),
+            ("closure_search_estimate_extension_cloud_s", self.closure_search_estimate_extension_cloud_s),
+        ];
+        if let Some((name, value)) = estimates.iter().find(|(_, v)| !(*v >= 0.0)) {
+            return Err(format!("{name} must be >= 0 (got {value})"));
+        }
         Ok(())
     }
     /// `closure_icp_inlier_distance_m` squared, the form ICP compares against.
@@ -677,6 +723,15 @@ impl Default for Config {
             solve_estimate_rejected_power: 0.558,
             solve_estimate_speed_power: 0.0,
             solve_estimate_speed_floor_mps: 0.05,
+            closure_search_hold_enabled: true,
+            closure_search_estimate_lookup_s: 610e-6,
+            closure_search_estimate_lookup_per_keyframe_s: 5.7e-9,
+            closure_search_estimate_build_per_point_s: 7.894e-7,
+            closure_search_estimate_degeneracy_per_point_s: 2.533e-6,
+            closure_search_estimate_icp_s: 6.913e-8,
+            closure_search_estimate_gates_s: 0.0122,
+            closure_search_estimate_extension_overhead_s: 0.02828,
+            closure_search_estimate_extension_cloud_s: 0.2604,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -775,6 +830,14 @@ pub struct GscPgo {
     /// Solves slower than the data their estimate spanned (`solve_hold_enabled`), and the newest scan's recorded time.
     pub(crate) solve_overshoots: usize,
     pub(crate) scan_time: f64,
+    /// The newest 51 scans' recorded times, for the scan period closure-search estimates are counted in.
+    pub(crate) recent_scan_times: std::collections::VecDeque<f64>,
+    /// The closure search running or held (`closure_search_hold_enabled`), the recorded times of the scans since its
+    /// dispatch, the searches that overshot their estimate and the seconds a lockstep replay waited on them.
+    pub(crate) closure_search: Option<crate::closure_search_schedule::RunningSearch>,
+    pub(crate) search_scan_times: Vec<f64>,
+    pub(crate) closure_search_overshoots: usize,
+    pub(crate) closure_search_wait_s: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
@@ -875,12 +938,14 @@ pub struct ClosureSearch {
     pub(crate) dump_s: Arc<std::sync::Mutex<f64>>,
     /// The keyframes' mean scan reach (m), which spaces an extension's separate source clouds.
     pub(crate) mean_reach: f64,
+    /// Where the search reports each extension round before it starts and its end (`closure_search_hold_enabled`).
+    pub(crate) progress: Option<Arc<crate::closure_search_schedule::SearchProgress>>,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
 /// fitness), and the time each stage took.
 pub struct ClosureSearchResult {
-    diag: ClosureCandidateDiag,
+    pub(crate) diag: ClosureCandidateDiag,
     accepted: Option<(Mat3, Vec3, f64)>,
     timing: TimingStats,
     /// The search's place-recognition inputs, for a retry on the next alternative (`closure_alternative_places`).
@@ -911,6 +976,7 @@ impl ClosureSearch {
             self.tries,
         );
         let (started, dumps) = (std::time::Instant::now(), self.dump_s.clone());
+        let progress = self.progress.clone();
         let mut result = self.search();
         result.timing.search_s =
             started.elapsed().as_secs_f64() - *dumps.lock().expect("dump seconds");
@@ -923,6 +989,9 @@ impl ClosureSearch {
         diag.cost_search_s = t.search_s;
         diag.cost_gates_s = t.search_s - t.submap_s - t.degeneracy_s - t.icp_s - t.extended_icp_s;
         result.retry = Some(retry);
+        if let Some(progress) = &progress {
+            progress.done();
+        }
         result
     }
     fn search(self) -> ClosureSearchResult {
@@ -1624,6 +1693,13 @@ impl GscPgo {
         }
         self.scans_seen += 1;
         self.scan_time = pose.second;
+        if self.recent_scan_times.len() > 50 {
+            self.recent_scan_times.pop_front();
+        }
+        self.recent_scan_times.push_back(pose.second);
+        if self.closure_search.is_some() {
+            self.search_scan_times.push(pose.second);
+        }
         // the running solve's estimate ends at this scan: its data time, to judge an overshoot by
         if let Some(solving) = &mut self.solving {
             if solving.schedule.due_time.is_none() && self.scans_seen >= solving.schedule.due_scan()
@@ -1914,6 +1990,7 @@ impl GscPgo {
             keyframe_clouds: self.keyframe_clouds.clone(),
             debug_io_s: std::cell::Cell::new(0.0),
             dump_s: Arc::new(std::sync::Mutex::new(0.0)),
+            progress: None,
             mean_reach: if self.keyframe_reach.1 > 0 {
                 self.keyframe_reach.0 / self.keyframe_reach.1 as f64
             } else {
@@ -1921,8 +1998,14 @@ impl GscPgo {
             },
         })
     }
-    /// Search for a closure at the newest keyframe, all on this thread.
+    /// Search for a closure at the newest keyframe as a lockstep replay does: under the deterministic schedule
+    /// (`closure_search_hold_enabled`) on the search thread, waiting for a search only once its estimate has passed
+    /// (`step_closure_search`); else all on this thread.
     pub fn search_for_closure_pairs(&mut self) {
+        if self.config.closure_search_hold_enabled {
+            self.step_closure_search(true, true);
+            return;
+        }
         self.propose_closure();
         // a rejected search may queue the keyframe's next alternative, which this thread tries right away
         while let Some(search) = self.begin_closure_search() {

@@ -732,7 +732,6 @@ fn run() -> Result<(), String> {
                 queue.lock().expect("queue").1 = true;
                 arrived.notify_all();
             });
-            let mut closure_search: Option<std::thread::ScopedJoinHandle<'_, _>> = None;
             loop {
                 let (cloud_with_pose, ts, arrived_at) = {
                     let mut queued = queue.lock().expect("queue");
@@ -741,11 +740,7 @@ fn run() -> Result<(), String> {
                             break next;
                         }
                         if queued.1 {
-                            if let Some(search) = closure_search.take() {
-                                pgo.finish_closure_search(
-                                    search.join().expect("closure search thread panicked"),
-                                );
-                            }
+                            pgo.land_remaining_closure_search();
                             return Ok(());
                         }
                         queued = arrived.wait(queued).expect("queue");
@@ -753,22 +748,10 @@ fn run() -> Result<(), String> {
                 };
                 let step_started = Instant::now();
                 if recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
-                    if closure_search
-                        .as_ref()
-                        .is_some_and(|search| search.is_finished())
-                    {
-                        let search = closure_search.take().expect("checked above");
-                        pgo.finish_closure_search(
-                            search.join().expect("closure search thread panicked"),
-                        );
-                    }
-                    pgo.propose_closure();
+                    // a finished search lands (once its estimate has passed), this keyframe's match is proposed, and the
+                    // best waiting one starts when the search thread is free and no scans are waiting
                     let behind = !queue.lock().expect("queue").0.is_empty();
-                    if !behind && closure_search.is_none() {
-                        if let Some(search) = pgo.begin_closure_search() {
-                            closure_search = Some(scope.spawn(move || search.run()));
-                        }
-                    }
+                    pgo.step_closure_search(false, !behind);
                     recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
                         pgo.update();
                     })?;
@@ -981,6 +964,11 @@ fn run() -> Result<(), String> {
         speed.lag_max_s,
         speed.solve_overshoots,
         speed.replay_solve_wait_s,
+    );
+    eprintln!(
+        "pgo-eval: closure searches: {} overshot their estimate; this replay waited {:.1}s for searches",
+        pgo.closure_search_overshoots(),
+        pgo.closure_search_wait_s(),
     );
     eprintln!(
         "pgo-eval: {} scans, {} keyframes, {} closures, {:.1}s data in {:.2}s replay wall time ({:.1}x realtime) -> {:?}",
