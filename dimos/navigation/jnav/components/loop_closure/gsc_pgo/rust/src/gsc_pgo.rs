@@ -473,6 +473,10 @@ pub struct Config {
     /// threshold, closest first), up to 1 + ceil(1 / (1 - pressure)) tries per keyframe (2 at no pressure), at most
     /// scan_context_top_k; a newer keyframe's better match still outranks a waiting retry.
     pub closure_alternative_places: bool,
+    /// Alternative places are tried only at or above this pressure; below it a keyframe tries only its best match.
+    /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
+    /// loops; huge: 12,012 of 16,867 for 69 right and 150 wrong).
+    pub closure_alternative_places_min_pressure: f64,
     /// When true, a closure the previous solve kept is a commitment: each solve holds the committed closures in, and
     /// drops them only when a cold solve (every closure re-decided) keeps more closures and rejects some committed one,
     /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
@@ -582,6 +586,7 @@ impl Default for Config {
             closure_sharpness_nudge_deg: 5.0,
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
+            closure_alternative_places_min_pressure: 0.8,
             closure_commitments: true,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
@@ -1671,6 +1676,7 @@ impl GscPgo {
         tries: usize,
     ) {
         if !self.config.closure_alternative_places
+            || rejected.pressure < self.config.closure_alternative_places_min_pressure
             || alternatives.is_empty()
             || rejected.source_id >= self.key_poses.len()
         {
