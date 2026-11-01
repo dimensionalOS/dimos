@@ -269,6 +269,10 @@ impl GscPgo {
             self.odometry_error_estimate_rescale = true;
             moved |= self.settle();
         }
+        // the final graph is the solver's last output, whatever the graph change heat
+        let keyframes = self.key_poses.len();
+        let heat = self.heat_at(keyframes);
+        moved |= self.adopt_pending_solve(keyframes, heat);
         moved
     }
     /// Adopt solves until every closure, position and sighting has been through one.
@@ -413,6 +417,46 @@ impl GscPgo {
             }
             return false;
         }
+        let finished = FinishedSolve {
+            solution,
+            seconds,
+            landmark_ids,
+            keyframes: solving.keyframes,
+            dispatched: solving.dispatched,
+            arrived_keyframes: self.key_poses.len(),
+        };
+        if !self.config.graph_change_heat_enabled {
+            return self.adopt_solution(finished, None);
+        }
+        // the newest finished solve is the one waiting; an older one still waiting is superseded
+        let arrived = self.key_poses.len();
+        let heat = self.heat_at(arrived);
+        if let Some(older) = self.pending_solve.replace(finished) {
+            self.log_heat_event("superseded", &older, heat);
+        }
+        if self.release_pending_solve(arrived) {
+            return true;
+        }
+        if let Some(waiting) = &self.pending_solve {
+            self.log_heat_event("held", waiting, heat);
+        }
+        false
+    }
+    /// Adopt a finished solve: its poses, the correction the keyframes since then ride on, and its closure verdicts;
+    /// `heat`, the graph change heat before it, its cost and after it (for the solve log). Returns true.
+    pub(crate) fn adopt_solution(
+        &mut self,
+        finished: FinishedSolve,
+        heat: Option<(f64, f64, f64)>,
+    ) -> bool {
+        let FinishedSolve {
+            solution,
+            seconds,
+            landmark_ids,
+            keyframes,
+            dispatched,
+            arrived_keyframes,
+        } = finished;
         self.graph_version += 1;
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
@@ -424,9 +468,9 @@ impl GscPgo {
         if !solution.world_alignment.is_empty() {
             self.world_alignment = solution.world_alignment.clone();
         }
-        let n = solving.keyframes;
+        let n = keyframes;
         // the largest move any keyframe makes from the previous map to this solve's (only when logging)
-        let largest_move = solving.dispatched.as_ref().map(|_| {
+        let largest_move = dispatched.as_ref().map(|_| {
             self.key_poses[..n]
                 .iter()
                 .zip(&solution.positions)
@@ -439,7 +483,7 @@ impl GscPgo {
                     |best, (k, d)| if d > best.1 { (k, d) } else { best },
                 )
         });
-        let previous_kept: Vec<bool> = if solving.dispatched.is_some() {
+        let previous_kept: Vec<bool> = if dispatched.is_some() {
             self.committed_closures
                 .iter()
                 .map(|c| c.gnc_weight > 0.5)
@@ -518,7 +562,7 @@ impl GscPgo {
         }
         self.graph_error = solution.error;
         if let (Some(dispatched), Some((largest_move_keyframe, largest_move))) =
-            (&solving.dispatched, largest_move)
+            (&dispatched, largest_move)
         {
             self.log_solve(
                 n,
@@ -528,6 +572,7 @@ impl GscPgo {
                 largest_move_keyframe,
                 largest_move,
                 seconds,
+                &heat_fields(arrived_keyframes, heat),
             );
         }
         self.update_learned_odometry_error_estimate(solution.odometry_error_estimate_evidence);
@@ -591,6 +636,7 @@ impl GscPgo {
         largest_move_keyframe: usize,
         largest_move: f64,
         seconds: f64,
+        heat: &str,
     ) {
         use std::fmt::Write as _;
         let Some(trace) = &solution.trace else {
@@ -626,7 +672,7 @@ impl GscPgo {
             }
         }
         let line = format!(
-            "{{{},\"weight_histogram\":{:?},\"largest_move_m\":{},\"largest_move_keyframe\":{largest_move_keyframe},\"changed\":[{changed}]}}\n",
+            "{{{}{heat},\"weight_histogram\":{:?},\"largest_move_m\":{},\"largest_move_keyframe\":{largest_move_keyframe},\"changed\":[{changed}]}}\n",
             self.solve_fields(n, dispatched, solution, seconds),
             histogram,
             json_number(largest_move),
@@ -686,6 +732,168 @@ impl GscPgo {
             trace.map_or([f64::NAN; 3], |t| t.final_cost).map(json_number).join(","),
         )
     }
+}
+
+/// A finished solve's result and what it was dispatched over, waiting to be adopted (`graph_change_heat_enabled`).
+pub(crate) struct FinishedSolve {
+    solution: Solution,
+    seconds: f64,
+    landmark_ids: Vec<u64>,
+    keyframes: usize,
+    dispatched: Option<SolveDispatch>,
+    /// The keyframe count when it finished.
+    arrived_keyframes: usize,
+}
+
+/// The solve log's graph change heat fields for an adopted solve: when it finished, and the heat before, its cost and
+/// the heat after (none with the heat off).
+fn heat_fields(arrived_keyframes: usize, heat: Option<(f64, f64, f64)>) -> String {
+    match heat {
+        Some((before, cost, after)) => format!(
+            ",\"arrived_keyframes\":{arrived_keyframes},\"heat_before\":{},\"heat_cost\":{},\"heat_after\":{}",
+            json_number(before),
+            json_number(cost),
+            json_number(after)
+        ),
+        None => String::new(),
+    }
+}
+
+impl GscPgo {
+    /// The graph change heat decayed to keyframe count `keyframes` (`graph_change_heat_decay` per keyframe).
+    pub(crate) fn heat_at(&self, keyframes: usize) -> f64 {
+        self.heat
+            * self
+                .config
+                .graph_change_heat_decay
+                .powi(keyframes.saturating_sub(self.heat_keyframes) as i32)
+    }
+    /// Adopt the waiting solve if the heat at keyframe count `keyframes` is at or under `graph_change_heat_threshold`,
+    /// adding its cost to the heat. Returns whether it was adopted.
+    pub(crate) fn release_pending_solve(&mut self, keyframes: usize) -> bool {
+        if self.pending_solve.is_none() {
+            return false;
+        }
+        let heat = self.heat_at(keyframes);
+        if heat > self.config.graph_change_heat_threshold {
+            return false;
+        }
+        self.adopt_pending_solve(keyframes, heat)
+    }
+    /// Adopt the waiting solve whatever the heat (`finish`, so the final graph is the solver's last output).
+    pub(crate) fn adopt_pending_solve(&mut self, keyframes: usize, heat: f64) -> bool {
+        let Some(waiting) = self.pending_solve.take() else {
+            return false;
+        };
+        let cost = self.graph_change_cost(&waiting.solution, waiting.keyframes);
+        self.heat = heat + cost;
+        self.heat_keyframes = keyframes;
+        self.adopt_solution(waiting, Some((heat, cost, self.heat)))
+    }
+    /// What adopting `solution` (solved over the first `solved` keyframes) costs in graph change heat: the largest
+    /// keyframe move from the accepted graph to the new one (the keyframes after `solved` riding its newest's
+    /// correction), in standard deviations of the stated odometry error accumulated along the path from the start (xy,
+    /// z and yaw combined; 1 m of travel at least), curbed (`curbed_yank`, drift range `closure_yank_drift_range`),
+    /// above `graph_change_heat_floor`.
+    fn graph_change_cost(&self, solution: &Solution, solved: usize) -> f64 {
+        let config = &self.config;
+        let newest = &self.key_poses[solved - 1];
+        let ride_rotation = mat3::mat_mul(
+            &solution.rotations[solved - 1],
+            &mat3::transpose(&newest.rotation_local),
+        );
+        let ride_translation = mat3::sub(
+            &solution.positions[solved - 1],
+            &mat3::mat_vec(&ride_rotation, &newest.translation_local),
+        );
+        let yaw = |r: &Mat3| r[1][0].atan2(r[0][0]);
+        let (mut travelled, mut turned, mut largest) = (0.0, 0.0, 0.0f64);
+        for (k, key_pose) in self.key_poses.iter().enumerate() {
+            if k > 0 {
+                let before = &self.key_poses[k - 1];
+                travelled += mat3::norm(&mat3::sub(
+                    &key_pose.translation_local,
+                    &before.translation_local,
+                ));
+                turned += mat3::angular_distance(&key_pose.rotation_local, &before.rotation_local);
+            }
+            let spread = |per_sqrt_m: f64, per_sqrt_rad: f64| {
+                (per_sqrt_m * per_sqrt_m * (travelled + 1.0) + per_sqrt_rad * per_sqrt_rad * turned)
+                    .sqrt()
+            };
+            let (rotation, position) = if k < solved {
+                (solution.rotations[k], solution.positions[k])
+            } else {
+                (
+                    mat3::mat_mul(&ride_rotation, &key_pose.rotation_local),
+                    mat3::add(
+                        &mat3::mat_vec(&ride_rotation, &key_pose.translation_local),
+                        &ride_translation,
+                    ),
+                )
+            };
+            let moved = mat3::sub(&position, &key_pose.translation_global);
+            let turn = (yaw(&rotation) - yaw(&key_pose.rotation_global) + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU)
+                - std::f64::consts::PI;
+            let z = ((moved[0].hypot(moved[1])
+                / spread(
+                    config.odometry_error_estimate_xy_per_sqrt_m,
+                    config.odometry_error_estimate_xy_per_sqrt_rad,
+                ))
+            .powi(2)
+                + (moved[2]
+                    / spread(
+                        config.odometry_error_estimate_z_per_sqrt_m,
+                        config.odometry_error_estimate_z_per_sqrt_rad,
+                    ))
+                .powi(2)
+                + (turn
+                    / spread(
+                        config.odometry_error_estimate_yaw_per_sqrt_m,
+                        config.odometry_error_estimate_yaw_per_sqrt_rad,
+                    ))
+                .powi(2))
+            .sqrt();
+            largest = largest.max(z);
+        }
+        (curbed_yank(largest, config.closure_yank_drift_range) - config.graph_change_heat_floor)
+            .max(0.0)
+    }
+    /// A `GSC_SOLVE_LOG` line for a solve the graph change heat held or superseded, with the heat then.
+    fn log_heat_event(&self, event: &str, finished: &FinishedSolve, heat: f64) {
+        let Some(dispatched) = &finished.dispatched else {
+            return;
+        };
+        let line = format!(
+            "{{\"{event}_solve\":true,{},\"arrived_keyframes\":{},\"heat\":{},\"heat_threshold\":{}}}\n",
+            self.solve_fields(finished.keyframes, dispatched, &finished.solution, finished.seconds),
+            finished.arrived_keyframes,
+            json_number(heat),
+            json_number(self.config.graph_change_heat_threshold),
+        );
+        append_solve_log(&line);
+    }
+}
+
+/// A yank's cost in yank units when the odometry may drift up to `drift_range` times its stated error estimate: about
+/// z^2 / 2 for a small yank, about 3 ln z for a large one (`proportional_confidence::yank_evidence`), summed in log
+/// space so a yank far past the range keeps growing instead of overflowing.
+fn curbed_yank(z: f64, drift_range: f64) -> f64 {
+    const STEPS: usize = 64;
+    let top = drift_range.ln();
+    let log_sum = |z: f64| {
+        let terms: Vec<f64> = (0..=STEPS)
+            .map(|i| {
+                let ln_s = top * i as f64 / STEPS as f64;
+                let weight: f64 = if i == 0 || i == STEPS { 0.5 } else { 1.0 };
+                weight.ln() - 3.0 * ln_s - z * z / (2.0 * (2.0 * ln_s).exp())
+            })
+            .collect();
+        let most = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        most + terms.iter().map(|t| (t - most).exp()).sum::<f64>().ln()
+    };
+    log_sum(0.0) - log_sum(z)
 }
 
 /// Append one line to the `GSC_SOLVE_LOG` file.
