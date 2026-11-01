@@ -471,7 +471,8 @@ class _PolicyRuntime(PolicyModule):
                     self._submitted_task = None
                 return
             if status.state != TrajectoryState.EXECUTING:
-                raise RuntimeError(f"trajectory ended in {status.state.name}")
+                detail = f": {status.error}" if status.error else ""
+                raise RuntimeError(f"trajectory ended in {status.state.name}{detail}")
             self._stop_event.wait(0.05)
 
     def _wait_for_newer_joint_state(self, previous_ts: float) -> None:

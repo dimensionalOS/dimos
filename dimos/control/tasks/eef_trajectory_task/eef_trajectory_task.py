@@ -271,7 +271,13 @@ class EefTrajectoryTask(PoseTargetIKTask):
                     return hold
                 if self._clock.elapsed > trajectory.duration + self._config.settling_timeout_s:
                     raise ValueError(
-                        "EEF final target did not reach measured completion tolerances"
+                        "EEF final target did not reach measured completion tolerances: "
+                        f"position={position_error:.6f}m "
+                        f"(limit={self._config.position_tolerance_m:.6f}m), "
+                        f"orientation={rotation_error:.6f}rad "
+                        f"(limit={self._config.orientation_tolerance_rad:.6f}rad), "
+                        f"gripper={max(gripper_errors, default=0.0):.6f} "
+                        f"(limit={self._config.gripper_tolerance:.6f})"
                     )
             snapshot = self._frame_target_snapshot(state, desired)
             assert snapshot is not None

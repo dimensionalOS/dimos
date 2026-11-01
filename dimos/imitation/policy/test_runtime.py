@@ -131,6 +131,21 @@ def test_remote_rollout_defaults_to_preview(rollout: tuple[Any, Any, Any]) -> No
     control.cancel.assert_not_called()
 
 
+def test_rollout_reports_coordinator_fault_reason(rollout):
+    module, backend, control = rollout
+    control.status.return_value = TrajectoryStatus(
+        state=TrajectoryState.FAULT, error="EEF final target outside position tolerance"
+    )
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: not module.rollout_status()["active"], timeout=1)
+    module.stop_rollout()
+    assert module.rollout_status()["last_error"] == (
+        "trajectory ended in FAULT: EEF final target outside position tolerance"
+    )
+    assert module.rollout_status()["chunks_completed"] == 0
+
+
 def test_stop_discards_a_delayed_inference_and_blocks_restart_until_drained(
     rollout: tuple[Any, Any, Any], mocker: Any
 ) -> None:

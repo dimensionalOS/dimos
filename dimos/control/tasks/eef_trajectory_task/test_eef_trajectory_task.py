@@ -121,6 +121,8 @@ def test_eef_unreached_final_target_faults_after_settling_timeout(setup_task):
     assert task.compute(state(t=13.1)) is None
     assert task.get_state() == TrajectoryState.FAULT
     assert "completion" in task.get_status().error
+    assert "position=0.100000m (limit=0.005000m)" in task.get_status().error
+    assert "gripper=1.000000 (limit=0.020000)" in task.get_status().error
 
 
 @pytest.mark.parametrize("stop", ["cancel", "estop", "preempt", "reset"])
