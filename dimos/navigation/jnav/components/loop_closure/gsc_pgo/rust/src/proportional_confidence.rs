@@ -564,13 +564,10 @@ mod uncertainty_range_tests {
         let config = crate::gsc_pgo::Config::default();
         // 5 clouds: the single scan and 4 more, so 4 rounds
         let calm = UncertaintyRange::new(&config, 5, 0.0);
-        assert_eq!(
-            calm.at(0),
-            (
-                config.barely_fail_uncertainty_range,
-                config.barely_pass_uncertainty_range
-            )
-        );
+        // 1 - (1 - low) is low only to rounding
+        let (low, high) = calm.at(0);
+        assert!((low - config.barely_fail_uncertainty_range).abs() < 1e-12);
+        assert!((high - config.barely_pass_uncertainty_range).abs() < 1e-12);
         assert_eq!(calm.at(4), (1.0, 1.0));
         let pressed = UncertaintyRange::new(&config, 5, 0.5);
         let half = 1.0 + (config.barely_pass_uncertainty_range - 1.0) / 2.0;
