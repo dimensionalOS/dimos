@@ -1,4 +1,4 @@
-import type { Refusal } from "../protocol/outcome.ts";
+import type { Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
 
 /** The one sentence each refusal becomes, in every frontend. Times are clock times in the viewer's zone. */
 export function refusalText(refusal: Refusal): string {

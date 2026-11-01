@@ -1,6 +1,6 @@
-import type { AgentTool } from "../tools/base.ts";
-import type { AgentToolName, Background } from "../../shared/protocol/tools/details.ts";
-import type { CallId, Detachable, MovedCall } from "../../shared/protocol/conversation/calls.ts";
+import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
+import type { AgentToolName, Background } from "#dimos/agents/shared/protocol/tools/details.ts";
+import type { CallId, Detachable, MovedCall } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { Context } from "@earendil-works/chord/context";
 import type {
   ConversationId,
@@ -14,17 +14,17 @@ import type {
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { InputGate } from "../inputs/gate.ts";
-import type { Live } from "../../shared/protocol/status.ts";
-import type { RenderDetails } from "../../shared/protocol/media.ts";
-import { MovedSchema } from "../../shared/protocol/tools/details.ts";
-import { Status } from "../../shared/protocol/status.ts";
+import type { InputGate } from "#dimos/agents/harness/inputs/gate.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
+import { MovedSchema } from "#dimos/agents/shared/protocol/tools/details.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
 import type { TSchema } from "typebox";
 import { Type } from "typebox";
 import { awaitWithContext, withAbortSignal, withoutAbortSignal } from "@earendil-works/chord/context";
 import { defineExtension, defineTask } from "@earendil-works/pi-durable";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { renderOf } from "../tools/details.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { renderOf } from "#dimos/agents/harness/tools/details.ts";
 
 /** As often as pi-durable publishes a running call's output. */
 const MOVED_OUTPUT_PACE_MS = 100;

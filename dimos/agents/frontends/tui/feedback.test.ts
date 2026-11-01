@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ChordError } from "@earendil-works/chord";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { Feedback } from "./feedback.ts";
-import { newUserRequest } from "../../shared/protocol/actions/request.ts";
-import { done, refused } from "../../shared/protocol/outcome.ts";
-import { actionLine, pendingSends } from "../../shared/view-models/actions.ts";
-import { RefusalError } from "../../sdk/failures.ts";
+import { Feedback } from "#dimos/agents/frontends/tui/feedback.ts";
+import { newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
+import { actionLine, pendingSends } from "#dimos/agents/shared/view-models/actions.ts";
+import { RefusalError } from "#dimos/agents/sdk/failures.ts";
 
 test("feedback keeps pending sends visible and reports server refusals, unknown outcomes and terminal closure", async () => {
   let close: (error: Error) => void = () => {};

@@ -7,7 +7,7 @@ read the records, and the harness builds the records. You come here to add an ac
 exact shape of what a client sends and receives. Start at a `contract.ts`, such as
 [gateway/contract.ts](/dimos/agents/shared/protocol/gateway/contract.ts), and at [actions/catalog.ts](/dimos/agents/shared/protocol/actions/catalog.ts).
 
-Source: [dimos/agents/shared/protocol/](/dimos/agents/shared/protocol/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/shared/protocol/](/dimos/agents/shared/protocol/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs shared/protocol/demo_example.ts`.
 Remove the temporary file with `rm shared/protocol/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -34,15 +34,15 @@ this contract gives `bind` in [gateway/server/objects/lib/bind.ts](/dimos/agents
 gateway fails to compile until the executor exists. The snippets under Usage continue from these declarations.
 
 ```ts
-import type { ActionGroup } from "./actions/base.ts";
-import type { EpochMs } from "./time.ts";
+import type { ActionGroup } from "#dimos/agents/shared/protocol/actions/base.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type { Ref } from "@earendil-works/chord";
 import { Type } from "typebox";
-import { action } from "./actions/lib/action.ts";
-import { carried } from "./schema.ts";
+import { action } from "#dimos/agents/shared/protocol/actions/lib/action.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { hostNamed, remote } from "@earendil-works/chord";
-import { methodsOf } from "./actions/methods.ts";
-import { rules } from "./actions/standing.ts";
+import { methodsOf } from "#dimos/agents/shared/protocol/actions/methods.ts";
+import { rules } from "#dimos/agents/shared/protocol/actions/standing.ts";
 
 type Note = { readonly text: string; readonly at: EpochMs };
 
@@ -84,8 +84,8 @@ dimOS link and the conversation's state, and runs the rule before the executor. 
 answers with `dimos_unavailable` and the executor is skipped.
 
 ```ts
-import type { Standing } from "./actions/standing.ts";
-import { epochMs } from "./time.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 const guarded = action({ ...NOTE_ACTIONS.write, rule: rules.dimosUp });
 const standing: Standing = {
@@ -102,7 +102,7 @@ gateway answers the retry with the first call's outcome, which it keeps for five
 `by_request_id` on an action whose arguments carry `request`.
 
 ```ts
-import { ActionRequestIdSchema } from "./args.ts";
+import { ActionRequestIdSchema } from "#dimos/agents/shared/protocol/args.ts";
 
 const retried = action({
     args: Type.Object({ request: ActionRequestIdSchema, text: Type.String({ minLength: 1 }) }),
@@ -120,7 +120,7 @@ type the gateway produces.
 
 ```ts
 import type { Static } from "typebox";
-import { ConversationState } from "./conversation/contract.ts";
+import { ConversationState } from "#dimos/agents/shared/protocol/conversation/contract.ts";
 
 type Queue = Static<typeof ConversationState.queue>;
 const empty: Queue = { items: [] };

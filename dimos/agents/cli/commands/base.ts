@@ -1,5 +1,5 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { AgentPaths } from "../../gateway/config/paths.ts";
+import type { AgentPaths } from "#dimos/agents/gateway/config/paths.ts";
 
 export type CommandContext = {
   readonly paths: AgentPaths;

@@ -1,4 +1,4 @@
-import type { FileRef, Sha256 } from "../../protocol/media.ts";
+import type { FileRef, Sha256 } from "#dimos/agents/shared/protocol/media.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { mkdir, readFile, readdir, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";

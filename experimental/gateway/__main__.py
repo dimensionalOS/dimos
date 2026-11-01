@@ -23,7 +23,7 @@ import sys
 import typer
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from experimental.gateway import constants, store
+from experimental.gateway import constants, shared_config, store
 
 
 # a gateway is listening when its socket takes a connection (a stale socket file refuses)
@@ -134,7 +134,7 @@ def gateway(
     zenoh: bool = typer.Option(True),
     ready_fd: int = typer.Option(None, hidden=True),
 ) -> None:
-    configured = store.setting("dimos-gateway", "socket")
+    configured = shared_config.setting("dimos-gateway", "socket")
     socket_path = Path(configured) if configured else store.gateway_dir() / "dimos-gateway.sock"
     if detach_:
         detach([arg for arg in sys.argv[1:] if arg != "--detach"], socket_path)

@@ -1,14 +1,20 @@
-import type { ActionGroup } from "./base.ts";
+import type { ActionGroup } from "#dimos/agents/shared/protocol/actions/base.ts";
 import type { ConversationId, SubmissionId, TaskId } from "@earendil-works/pi-durable";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { QueuedText } from "../conversation/queue.ts";
-import type { UserRequestId } from "../conversation/input.ts";
-import { ActionRequestIdSchema, CallIdSchema, EntryIdSchema, ModelRefSchema, ThinkingLevelSchema } from "../args.ts";
-import { ImageAddressSchema } from "../conversation/images.ts";
+import type { QueuedText } from "#dimos/agents/shared/protocol/conversation/queue.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import {
+  ActionRequestIdSchema,
+  CallIdSchema,
+  EntryIdSchema,
+  ModelRefSchema,
+  ThinkingLevelSchema,
+} from "#dimos/agents/shared/protocol/args.ts";
+import { ImageAddressSchema } from "#dimos/agents/shared/protocol/conversation/images.ts";
 import { Type } from "typebox";
-import { action } from "./lib/action.ts";
-import { carried, nullable } from "../schema.ts";
-import { rules } from "./standing.ts";
+import { action } from "#dimos/agents/shared/protocol/actions/lib/action.ts";
+import { carried, nullable } from "#dimos/agents/shared/protocol/schema.ts";
+import { rules } from "#dimos/agents/shared/protocol/actions/standing.ts";
 
 const ImageSchema = Type.Unsafe<ImageContent>(
   Type.Object({ type: Type.Literal("image"), data: Type.String(), mimeType: Type.String() }),

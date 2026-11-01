@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { FileRenderer } from "./render.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { fitCamera, paintCloud, parseCloud, projectPoint } from "./points.ts";
+import { fitCamera, paintCloud, parseCloud, projectPoint } from "#dimos/agents/shared/render/points.ts";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";

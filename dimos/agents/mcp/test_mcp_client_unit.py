@@ -13,20 +13,24 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty
-from threading import RLock
+from threading import RLock, Thread
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, create_autospec, patch
 
-from langchain_core.messages import HumanMessage
+from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 import pytest
 import requests
 
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.testing.mock_model import MockModel
+from dimos.utils.testing.waiting import wait_until
 
 
 def _mock_payload(body: dict[str, object]) -> dict[str, object]:
@@ -338,3 +342,132 @@ def test_set_trace_dir_rebuilds_the_model_with_capture(
         configured_mcp_client.set_trace_dir(None)
         assert init.call_args.kwargs["trace_dir"] is None
         assert create_agent.call_count == 2
+
+
+def _call(name: str, call_id: str, **args: Any) -> dict[str, Any]:
+    return {"name": name, "args": args, "id": call_id, "type": "tool_call"}
+
+
+class _FailsOnceGraph:
+    """Fake agent graph that records the messages each turn is given in `seen`.
+
+    The first turn streams `first_turn`, then times out; later turns answer "done".
+    """
+
+    def __init__(self, first_turn: list[BaseMessage]) -> None:
+        self.first_turn = first_turn
+        self.seen: list[list[BaseMessage]] = []
+
+    def stream(
+        self, state: dict[str, list[BaseMessage]], stream_mode: str
+    ) -> Iterator[dict[str, Any]]:
+        self.seen.append(list(state["messages"]))
+        if len(self.seen) == 1:
+            for message in self.first_turn:
+                yield {"node": {"messages": [message]}}
+            raise TimeoutError("LLM API timed out")
+        yield {"model": {"messages": [AIMessage(content="done")]}}
+
+
+@pytest.fixture
+def agent_thread(mcp_client: McpClient) -> Iterator[Thread]:
+    """Run McpClient's message loop, which the `mcp_client` fixture doesn't start."""
+    thread = Thread(target=mcp_client._thread_loop, daemon=True)
+    thread.start()
+    try:
+        yield thread
+    finally:
+        mcp_client._stop_event.set()
+        thread.join(timeout=2)
+
+
+def _send_first_and_second(
+    mcp_client: McpClient, agent_thread: Thread, graph: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run `graph` on the messages "first" and "second", and wait for "done"."""
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
+    mcp_client._message_queue.put(HumanMessage("first"))
+    mcp_client._message_queue.put(HumanMessage("second"))
+
+    def done_or_thread_dead() -> bool:
+        done = bool(mcp_client._history) and mcp_client._history[-1].content == "done"
+        return done or not agent_thread.is_alive()
+
+    wait_until(
+        done_or_thread_dead,
+        timeout=5,
+        interval=0.01,
+        message="the second message was never processed",
+    )
+    assert agent_thread.is_alive(), "the agent thread died"
+
+
+def test_a_failed_turn_does_not_stop_the_agent_thread(
+    mcp_client: McpClient, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call = AIMessage(content="", tool_calls=[_call("add", "c1")])
+    graph = _FailsOnceGraph([call])
+
+    _send_first_and_second(mcp_client, agent_thread, graph, monkeypatch)
+
+    second_turn = graph.seen[1]
+    first, kept_call, result, note, second, done = mcp_client._history
+    assert (first.content, kept_call) == ("first", call)
+    assert isinstance(result, ToolMessage)
+    assert (result.tool_call_id, result.status) == ("c1", "error")
+    assert result.content == (
+        "No result: the agent turn failed with TimeoutError: LLM API timed out. "
+        "The call may or may not have run."
+    )
+    assert note.content == "This turn failed with TimeoutError: LLM API timed out"
+    assert note.additional_kwargs == {TURN_FAILED_KEY: True}
+    # Append-only: the next turn sees everything.
+    assert second_turn == mcp_client._history[:5]
+    assert (second.content, done.content) == ("second", "done")
+
+
+def test_only_unanswered_tool_calls_get_a_failure_result(
+    mcp_client: McpClient, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A call that returned keeps its real result, so the model knows it ran."""
+    both = AIMessage(content="", tool_calls=[_call("add", "c1"), _call("greet", "c2")])
+    real_result = ToolMessage(content="3", tool_call_id="c1")
+    graph = _FailsOnceGraph([both, real_result])
+
+    _send_first_and_second(mcp_client, agent_thread, graph, monkeypatch)
+
+    first, kept_both, kept_result, failure_result, note = graph.seen[1][:5]
+    assert (kept_both, kept_result) == (both, real_result)
+    assert isinstance(failure_result, ToolMessage)
+    assert (failure_result.tool_call_id, failure_result.status) == ("c2", "error")
+    assert note.content == "This turn failed with TimeoutError: LLM API timed out"
+
+
+def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
+    mcp_client: McpClient, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed MCP request escapes the real agent graph; a skill error would be a result."""
+    tools = mcp_client._fetch_tools()
+
+    def unreachable(body: dict[str, object]) -> dict[str, object]:
+        raise requests.ConnectionError("MCP server unreachable")
+
+    mcp_client._http_client = _mock_session(unreachable)
+    call = _call("add", "c1", x=1, y=2)
+    model = MockModel(
+        responses=[AIMessage(content="", tool_calls=[call]), AIMessage(content="done")]
+    )
+    _send_first_and_second(
+        mcp_client,
+        agent_thread,
+        create_agent(model=model, tools=tools, system_prompt=""),
+        monkeypatch,
+    )
+
+    first, kept_call, result, note, second, done = mcp_client._history
+    assert (first.content, second.content, done.content) == ("first", "second", "done")
+    assert isinstance(kept_call, AIMessage)
+    assert [c["id"] for c in kept_call.tool_calls] == ["c1"]
+    assert isinstance(result, ToolMessage)
+    assert (result.tool_call_id, result.status) == ("c1", "error")
+    assert note.content == "This turn failed with ConnectionError: MCP server unreachable"

@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import type { Camera } from "./points.ts";
+import type { Camera } from "#dimos/agents/shared/render/points.ts";
 
 /** The pixels a card shows its picture in; every frame is painted at this size, so a swap sends only what shows. */
 export type FrameBox = { readonly width: number; readonly height: number };

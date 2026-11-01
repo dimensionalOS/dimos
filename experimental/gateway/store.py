@@ -39,10 +39,6 @@ def logs_dir() -> Path:
     return gateway_dir() / "logs"
 
 
-def setting(section: str, key: str) -> Any:
-    return shared_config.setting(section, key)
-
-
 # the checkout the gateway serves (new_state), which may not be the gateway's own (Desktop's pinned copy)
 _served: Path = DIMOS_PROJECT_ROOT
 
@@ -53,22 +49,16 @@ def serve(dimos_dir: Path) -> None:
 
 
 def recordings_dir(dimos_dir: Path | None = None) -> Path:
-    """The configured one, else where the served checkout's dimos records by default (not the gateway copy's)."""
-    configured = setting("recordings", "dir")
-    if configured:
-        return Path(str(configured)).expanduser()
+    """The configured one (a relative one is under the checkout, where launches run), else the checkout's default."""
     dimos_dir = dimos_dir or _served
+    configured = shared_config.setting("recordings", "dir")
+    if configured:
+        return dimos_dir / Path(str(configured)).expanduser()
     return dimos_dir / "recordings" if (dimos_dir / ".git").exists() else STATE_DIR / "recordings"
 
 
 def shared_settings() -> dict[str, Any]:
-    """What `GET /config` answers, and what the `config` event says has changed: the shared
-    `config.yaml`'s settings as the gateway resolves them for each use.
-
-    The settings fixed when the gateway started (`zenoh.namespace`, `dimos-gateway.socket`, where a
-    flag wins over the file) are not here: they cannot change while it runs, and the running ones are
-    `GET /info`'s. So everything here is read fresh, and a change to any of it is news.
-    """
+    """`GET /config` and the `config` event: the settings read fresh on each use (socket and namespace are fixed at start: `GET /info`)."""
     return {"path": str(shared_config.config_file()), "recordingsDir": str(recordings_dir())}
 
 

@@ -1,14 +1,14 @@
 import type { AgentState, ConversationRecord, InboxState, LiveState, UsageState } from "@earendil-works/pi-durable";
-import type { Detachable, MovedCall } from "./calls.ts";
-import type { InputOutcome, OwnedStream, Transcript } from "./state.ts";
-import type { JobRow } from "../jobs/state.ts";
-import type { ModuleRow } from "../runtime/module.ts";
-import { CONVERSATION_ACTIONS } from "../actions/conversation.ts";
-import { ConversationIdSchema } from "../args.ts";
+import type { Detachable, MovedCall } from "#dimos/agents/shared/protocol/conversation/calls.ts";
+import type { InputOutcome, OwnedStream, Transcript } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
+import { ConversationIdSchema } from "#dimos/agents/shared/protocol/args.ts";
 import { Type } from "typebox";
-import { carried } from "../schema.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { hostNamed, remote } from "@earendil-works/chord";
-import { methodsOf } from "../actions/methods.ts";
+import { methodsOf } from "#dimos/agents/shared/protocol/actions/methods.ts";
 
 /**
  * Everything one conversation shows, one record used by the gateway's ConversationRoom and by both variants of the

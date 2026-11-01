@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, posix, relative, sep } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const SDK_BROWSER = /^sdk\/(?!node\.ts$|relay\.ts$|streams\/)/;
@@ -156,10 +157,14 @@ function packageFiles(root: string, program: ts.Program): ReadonlyMap<string, ts
   return files;
 }
 
-function importsOf(path: string, file: ts.SourceFile): Import[] {
+function importsOf(root: string, file: ts.SourceFile): Import[] {
   const found = new Map<string, Import>();
   const add = (spec: string, typeOnly: boolean): void => {
-    const target = spec.startsWith(".") ? posix.normalize(posix.join(posix.dirname(path), spec)) : null;
+    const target = spec.startsWith("#")
+      ? relative(root, fileURLToPath(import.meta.resolve(spec)))
+          .split(sep)
+          .join("/")
+      : null;
     found.set(`${typeOnly}:${spec}`, { spec, target, typeOnly });
   };
   const visit = (node: ts.Node): void => {
@@ -248,7 +253,7 @@ function durableSubmits(program: ts.Program, files: ReadonlyMap<string, ts.Sourc
   return found;
 }
 
-/** Each import cycle once, as `a -> b -> a`, over every relative import, type-only ones included. */
+/** Each import cycle once, as `a -> b -> a`, over every local import, type-only ones included. */
 function cycles(imports: ReadonlyMap<string, readonly Import[]>): string[] {
   const found = new Set<string>();
   const done = new Set<string>();
@@ -289,7 +294,7 @@ function terminalRuntime(imports: ReadonlyMap<string, readonly Import[]>): Map<s
 function boundaryViolations(root: string): string[] {
   const program = packageProgram(root);
   const files = packageFiles(root, program);
-  const imports = new Map([...files].map(([path, file]) => [path, importsOf(path, file)] as const));
+  const imports = new Map([...files].map(([path, file]) => [path, importsOf(root, file)] as const));
   const problems: string[] = [];
 
   if (!program.getSourceFiles().some((file) => file.fileName.includes("/@earendil-works/pi-durable/"))) {
@@ -301,6 +306,8 @@ function boundaryViolations(root: string): string[] {
     if (reexports(file)) problems.push(`${path}: re-exports; import from the defining file`);
     for (const item of imports.get(path) ?? []) {
       const { spec, target } = item;
+      if (spec.startsWith("."))
+        problems.push(`${path}: imports ${spec}; use a package subpath starting with #dimos/agents/`);
       if (spec.startsWith("@earendil-works/pi-mcp") && path !== MCP_CLIENT)
         problems.push(`${path}: imports ${spec}; only ${MCP_CLIENT} may`);
       if (spec.startsWith("@earendil-works/pi-coding-agent") && !CODING_AGENT_IMPORTERS.test(path))
@@ -406,10 +413,10 @@ test("imports respect the package boundaries, the family contracts and the one s
 /** Chord refuses a state member that shares its name with a method at `remote()` time; this says which one, before a gateway starts. */
 test("no served contract names a state member and a method alike", async () => {
   const contracts = [
-    (await import("../shared/protocol/conversation/contract.ts")).ConversationContract,
-    (await import("../shared/protocol/gateway/contract.ts")).GatewayContract,
-    (await import("../shared/protocol/lifecycle/contract.ts")).LifecycleContract,
-    (await import("../shared/protocol/inventory/contract.ts")).InventoryContract,
+    (await import("#dimos/agents/shared/protocol/conversation/contract.ts")).ConversationContract,
+    (await import("#dimos/agents/shared/protocol/gateway/contract.ts")).GatewayContract,
+    (await import("#dimos/agents/shared/protocol/lifecycle/contract.ts")).LifecycleContract,
+    (await import("#dimos/agents/shared/protocol/inventory/contract.ts")).InventoryContract,
   ];
   const clashes: string[] = [];
   for (const contract of contracts) {

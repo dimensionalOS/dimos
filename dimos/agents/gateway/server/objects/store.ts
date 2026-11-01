@@ -1,12 +1,12 @@
-import type { InventoryView } from "../../../shared/protocol/inventory/contract.ts";
-import type { ServeObject } from "./base.ts";
-import { GatewayState } from "../../../shared/protocol/gateway/contract.ts";
+import type { InventoryView } from "#dimos/agents/shared/protocol/inventory/contract.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import { GatewayState } from "#dimos/agents/shared/protocol/gateway/contract.ts";
 import { Type } from "typebox";
-import { carried } from "../../../shared/protocol/schema.ts";
-import { feed } from "./lib/feed.ts";
-import { conversationRows } from "./lib/conversations.ts";
-import { jobRows } from "./lib/jobs.ts";
-import { runtimeView } from "./lib/runtime.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
+import { feed } from "#dimos/agents/gateway/server/objects/lib/feed.ts";
+import { conversationRows } from "#dimos/agents/gateway/server/objects/lib/conversations.ts";
+import { jobRows } from "#dimos/agents/gateway/server/objects/lib/jobs.ts";
+import { runtimeView } from "#dimos/agents/gateway/server/objects/lib/runtime.ts";
 import { local } from "@earendil-works/chord";
 
 /**

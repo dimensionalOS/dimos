@@ -1,4 +1,4 @@
-import type { DimosInstall } from "../../harness/dimos/install.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
 
 /** Reads DIMOS_ROOT, DIMOS_PYTHON, DIMOS_CLI, DIMOS_MCP_URL, DIMOS_RUNS_DIR and DIMOS_STATE_DIR; throws naming the missing one. */
 export function parseDimosInstall(env: NodeJS.ProcessEnv): DimosInstall {

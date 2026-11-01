@@ -20,7 +20,7 @@ stub, and runner environments implement the same lifecycle as real environments.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 import json
 from pathlib import Path
@@ -36,6 +36,8 @@ from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.agents.mcp.constants import TURN_FAILED_KEY
+from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
@@ -795,16 +797,21 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
         load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
 
-@pytest.mark.parametrize("goes_idle", [True, False])
-def test_mcp_client_adapter_drives_a_turn_over_real_transports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
-) -> None:
-    """The production agent points the McpClient's raw capture at run_dir/raw,
-    publishes on /human_input, reads the turn back on /agent until
-    /agent_idle or its budget runs out, and links every model call to the
-    McpClient's trace files (the message must arrive with no flush sleep: LCM
-    publish is a synchronous send)."""
+def _write_trace_pair(trace_dir: Path, seq: int, *, response: bool = True) -> None:
+    (trace_dir / f"{seq:03d}-request.json").write_text(
+        json.dumps({"started_at": 1_700_000_000.0 + seq})
+    )
+    if response:
+        (trace_dir / f"{seq:03d}-response.json").write_text(json.dumps({"latency_s": 0.25 + seq}))
 
+
+def _run_mcp_client_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_mcp_client: Callable[[str, Path, PubSubTransport[Any], PubSubTransport[Any]], None],
+    timeout_s: float,
+) -> Trajectory:
+    """Run McpClientAdapter over real transports, with `fake_mcp_client` as McpClient."""
     trace_dir = tmp_path / "case" / "raw"
     trace_dir.mkdir(parents=True)
 
@@ -822,14 +829,47 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     for t in (human, agent_t, idle):
         t.start()
 
-    def fake_mcp_client(text: str) -> None:
+    workers: list[threading.Thread] = []
+
+    def on_human(msg: str) -> None:
+        worker = threading.Thread(target=fake_mcp_client, args=(msg, trace_dir, agent_t, idle))
+        workers.append(worker)
+        worker.start()
+
+    unsubscribe = human.subscribe(on_human)
+    try:
+        env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
+        trajectory = McpClientAdapter().run(
+            "go to the bed", env, tmp_path / "case", timeout_s=timeout_s
+        )
+    finally:
+        unsubscribe()
+        for worker in workers:  # a publish still in flight would race the undeclare below
+            worker.join(timeout=5.0)
+        for t in (human, agent_t, idle):
+            t.stop()
+
+    assert repointed == [str(trace_dir)]
+    return trajectory
+
+
+@pytest.mark.parametrize("goes_idle", [True, False])
+def test_mcp_client_adapter_drives_a_turn_over_real_transports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
+) -> None:
+    """The production agent points the McpClient's raw capture at run_dir/raw,
+    publishes on /human_input, reads the turn back on /agent until
+    /agent_idle or its budget runs out, and links every model call to the
+    McpClient's trace files (the message must arrive with no flush sleep: LCM
+    publish is a synchronous send)."""
+
+    def fake_mcp_client(
+        text: str, trace_dir: Path, agent_t: PubSubTransport[Any], idle: PubSubTransport[Any]
+    ) -> None:
         idle.publish(False)
         agent_t.publish(HumanMessage(content=text))
         for i in range(2):
-            (trace_dir / f"{i:03d}-request.json").write_text(
-                json.dumps({"started_at": 1_700_000_000.0 + i})
-            )
-            (trace_dir / f"{i:03d}-response.json").write_text(json.dumps({"latency_s": 0.25 + i}))
+            _write_trace_pair(trace_dir, i)
         agent_t.publish(
             AIMessage(
                 content=[{"type": "reasoning", "summary": [{"text": "Navigate to the bed."}]}],
@@ -843,28 +883,10 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
         if goes_idle:
             idle.publish(True)
 
-    workers: list[threading.Thread] = []
+    trajectory = _run_mcp_client_adapter(
+        tmp_path, monkeypatch, fake_mcp_client, timeout_s=10.0 if goes_idle else 0.5
+    )
 
-    def on_human(msg: str) -> None:
-        worker = threading.Thread(target=fake_mcp_client, args=(msg,))
-        workers.append(worker)
-        worker.start()
-
-    unsubscribe = human.subscribe(on_human)
-    try:
-        env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
-        agent = McpClientAdapter()
-        trajectory = agent.run(
-            "go to the bed", env, tmp_path / "case", timeout_s=10.0 if goes_idle else 0.5
-        )
-    finally:
-        unsubscribe()
-        for worker in workers:  # a publish still in flight would race the undeclare below
-            worker.join(timeout=5.0)
-        for t in (human, agent_t, idle):
-            t.stop()
-
-    assert repointed == [str(trace_dir)]
     assert trajectory.extra.ended_by == ("answer" if goes_idle else "timeout")
     assert trajectory.final_answer == "I am at the bed"
     assert len(trajectory.steps) == 3 and trajectory.final_metrics.total_prompt_tokens == 10
@@ -883,6 +905,39 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     assert last.extra.latency_s == 1.25
     assert datetime.fromisoformat(first.timestamp).timestamp() == 1_700_000_000.0
     assert datetime.fromisoformat(last.timestamp).timestamp() == 1_700_000_001.0
+
+
+@pytest.mark.parametrize("error_response", [False, True], ids=["no_response", "http_error"])
+def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_response: bool
+) -> None:
+    """McpClient's failure note is not a model call, so it ends the case as an error.
+
+    An HTTP error leaves a trace pair for the failed request; a connection error doesn't.
+    """
+    note = "This turn failed with AuthenticationError: Error code: 401"
+
+    def fake_mcp_client(
+        text: str, trace_dir: Path, agent_t: PubSubTransport[Any], idle: PubSubTransport[Any]
+    ) -> None:
+        idle.publish(False)
+        agent_t.publish(HumanMessage(content=text))
+        _write_trace_pair(trace_dir, 0)
+        agent_t.publish(
+            AIMessage(content="", tool_calls=[{"name": "move_to", "args": {}, "id": "c1"}])
+        )
+        agent_t.publish(ToolMessage(content="arrived", tool_call_id="c1"))
+        _write_trace_pair(trace_dir, 1, response=error_response)
+        agent_t.publish(AIMessage(content=note, additional_kwargs={TURN_FAILED_KEY: True}))
+        idle.publish(True)
+
+    trajectory = _run_mcp_client_adapter(tmp_path, monkeypatch, fake_mcp_client, timeout_s=10.0)
+
+    assert (trajectory.extra.ended_by, trajectory.extra.error) == ("error", note)
+    user, first = trajectory.steps
+    assert first.observation == Observation(
+        results=(ObservationResult(source_call_id="c1", content="arrived"),)
+    )
 
 
 def test_agents_report_every_available_tool() -> None:

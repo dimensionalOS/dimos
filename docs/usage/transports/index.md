@@ -88,7 +88,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
 
 blueprint = blueprint.transports(
-    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+    {("image", WebcamModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
 )
 ```
 
@@ -173,7 +173,7 @@ ros = nav.transports(
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
-The runnable example below uses a tiny synthetic image publisher instead of `CameraModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
+The runnable example below uses a tiny synthetic image publisher instead of `WebcamModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
 
 ```python ansi=false
 import time

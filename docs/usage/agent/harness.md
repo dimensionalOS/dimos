@@ -8,7 +8,7 @@ objects in [Agent gateway](/docs/usage/agent/gateway.md). The entry is `openAgen
 [Python agent runtime](/docs/usage/agent/runtime.md) is the Python half, HarnessRuntime, which `dimos agent load` puts into the running dimOS
 system and which the harness reaches over MCP.
 
-Source: [dimos/agents/harness/](/dimos/agents/harness/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/harness/](/dimos/agents/harness/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs harness/demo_example.ts`.
 Remove the temporary file with `rm harness/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -39,7 +39,7 @@ and prints the answer. The gateway's [main.ts](/dimos/agents/gateway/main.ts) op
 credentials from its config. The snippets under Usage continue from this `agent` and `conversation`.
 
 ```ts
-import type { UserRequestId } from "../shared/protocol/conversation/input.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import { AssistantEntry } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -47,8 +47,8 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { openAgent } from "./main.ts";
-import { until } from "../sdk/until.ts";
+import { openAgent } from "#dimos/agents/harness/main.ts";
+import { until } from "#dimos/agents/sdk/until.ts";
 
 const context = BACKGROUND_CONTEXT;
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -130,7 +130,7 @@ console.log(`forked into conversation ${branch.conversation}`);
 cell of its gateway object.
 
 ```ts
-import { describeLink } from "../shared/protocol/gateway/link.ts";
+import { describeLink } from "#dimos/agents/shared/protocol/gateway/link.ts";
 
 const stop = agent.connection.status.subscribe((link) => console.log(describeLink(link)));
 console.log(agent.loader.status.value.state, agent.runs.status.value.length);
@@ -142,7 +142,7 @@ action submits its text through `inputs` as a turn in the job's conversation, an
 the link directly. `runtime` is the other side of the link: module operations and the inventory.
 
 ```ts
-import type { JobName, TimeZone } from "../shared/protocol/jobs/state.ts";
+import type { JobName, TimeZone } from "#dimos/agents/shared/protocol/jobs/state.ts";
 
 const job = await agent.jobs.create(
     {
