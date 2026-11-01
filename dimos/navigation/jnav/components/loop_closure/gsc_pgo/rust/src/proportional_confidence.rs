@@ -346,9 +346,11 @@ impl ClosureSearch {
         if max_clouds < 2 || target_ids.is_empty() || clouds.is_empty() {
             return accept(first_ratio);
         }
+        // the single fit already placed every cloud, so a cloud's fit only refines it: pairs out to the single fit's
+        // 10 m let a cloud that half overlaps the target pull its unseen half onto other structure (huge: 4-6 m, 8-25 deg off)
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
-            max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
+            max_correspondence_distance: self.config.closure_icp_inlier_distance_m,
             inlier_squared_distance: self.config.closure_inlier_squared_distance(),
             point_to_plane: self.config.closure_icp_point_to_plane,
         };
