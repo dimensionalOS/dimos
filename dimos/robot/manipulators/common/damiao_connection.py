@@ -47,9 +47,13 @@ from dimos.robot.manipulators.common.damiao_model import (
     PhysicalModel,
     deployment,
 )
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import can_motor_control
+
+
+logger = setup_logger()
 
 
 def _native() -> Any:
@@ -205,7 +209,7 @@ class DamiaoConnection(ConnectionModule):
         profile_type = getattr(damiao, "MotorProfile", None)
         if profiles and profile_type is None:
             raise RuntimeError(
-                "Metal Arm requires can-motor-control>=0.0.11 with MotorProfile support"
+                f"{type(self).__name__} requires can-motor-control>=0.0.11 with MotorProfile support"
             )
         native_profiles: dict[MotorProfileSpec, Any] = {}
         for profile in profiles:
@@ -293,15 +297,27 @@ class DamiaoConnection(ConnectionModule):
                     self._physical.gravity(self._arm_positions(session))
                     for arm in session.arms.values():
                         arm.set_mode("mit")
+                    logger.info(
+                        "Enabling robot and calibrating grippers",
+                        connection=type(self).__name__,
+                        source=self.config.source,
+                    )
                     session.robot.enable()
                     session.active = True
                 self._read_state()
+                self.register_disposable(
+                    Disposable(self.position_command.subscribe(self._on_position))
+                )
+                self._reader = threading.Thread(
+                    target=self._read_loop, daemon=True, name=f"{self.config.source}-read"
+                )
+                self._reader.start()
                 self._connected = True
-            self.register_disposable(Disposable(self.position_command.subscribe(self._on_position)))
-            self._reader = threading.Thread(
-                target=self._read_loop, daemon=True, name=f"{self.config.source}-read"
-            )
-            self._reader.start()
+                logger.info(
+                    "Robot connection ready",
+                    connection=type(self).__name__,
+                    source=self.config.source,
+                )
         except Exception:
             try:
                 self.stop()
@@ -314,7 +330,11 @@ class DamiaoConnection(ConnectionModule):
     @rpc
     def stop(self) -> None:
         self._stop_reading.set()
-        if self._reader is not None and self._reader is not threading.current_thread():
+        if (
+            self._reader is not None
+            and self._reader.is_alive()
+            and self._reader is not threading.current_thread()
+        ):
             self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         try:
             try:
@@ -334,7 +354,11 @@ class DamiaoConnection(ConnectionModule):
                         self._physical = None
                         self._targets.clear()
         finally:
-            if self._reader is not None and self._reader is not threading.current_thread():
+            if (
+                self._reader is not None
+                and self._reader.is_alive()
+                and self._reader is not threading.current_thread()
+            ):
                 self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 if self._reader.is_alive():
                     error = f"{self.config.source} reader did not stop before the shutdown timeout"
@@ -471,7 +495,7 @@ class DamiaoConnection(ConnectionModule):
             started = time.monotonic()
             try:
                 with self._hardware_lock:
-                    if self._session is None:
+                    if self._session is None or not self._connected:
                         return
                     q, dq, tau = self._read_state()
                 if self._stop_reading.is_set():
