@@ -107,6 +107,8 @@ class Rig:
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
         )
+        # The coordinator reads joint positions from its tick loop's last tick.
+        self.coordinator._tick_loop = self._loop
 
     def tick(self) -> None:
         self._loop._tick()
