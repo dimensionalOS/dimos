@@ -92,7 +92,8 @@ pub struct CommittedClosure {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "native", derive(serde::Serialize))]
 pub struct ClosureCandidateDiag {
-    /// "accepted", "outranked" (a better proposal took the search thread), or the gate that rejected it:
+    /// "accepted", "outranked" (a better proposal took the search thread), "stale" (still waiting for the busy search
+    /// thread when a newer keyframe arrived), or the gate that rejected it:
     /// "low_occupancy", "no_candidate", "degeneracy_reject", "icp_reject", "uninformative", "yank_confidence_reject".
     pub outcome: &'static str,
     pub source_id: usize,
@@ -1556,6 +1557,16 @@ impl GscPgo {
             return;
         }
         let cur_idx = self.key_poses.len() - 1;
+        // a proposal still waiting from an older keyframe (the search thread was busy) is dropped, not queued: the
+        // newest keyframe's search replaces it
+        if let Some(stale) = self
+            .waiting_proposal
+            .take_if(|waiting| waiting.diag.source_id < cur_idx)
+        {
+            let mut diag = stale.diag;
+            diag.outcome = "stale";
+            self.record_search(diag);
+        }
         let current = &self.key_poses[cur_idx];
         let mut diag = ClosureCandidateDiag::new(cur_idx, current.time, current.translation_global);
 
