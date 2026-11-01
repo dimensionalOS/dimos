@@ -564,7 +564,7 @@ impl Default for Config {
             closure_extension_stop_when_flat: true,
             closure_extension_stop_on_swing: true,
             barely_fail_uncertainty_range: 0.8,
-            barely_pass_uncertainty_range: 1.05,
+            barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
             extension_cloud_spacing: 0.25,
             closure_icp_dump_dir: String::new(),
