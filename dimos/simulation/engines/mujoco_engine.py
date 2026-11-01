@@ -134,6 +134,18 @@ class _CameraRendererState:
     last_render_time: float = 0.0
 
 
+@dataclass(frozen=True)
+class _BodyMove:
+    """A free body's new position, applied by the sim loop before its next step."""
+
+    qpos_adr: int
+    dof_adr: int
+    x: float
+    y: float
+    z: float | None  # None keeps the current height
+    done: threading.Event
+
+
 @dataclass
 class _RaycastLidarState:
     cfg: RaycastLidarConfig
@@ -220,6 +232,7 @@ class MujocoEngine(SimulationEngine):
         self._lock = threading.Lock()
         self._reset_requested = False
         self._reset_done_events: list[threading.Event] = []
+        self._body_moves: list[_BodyMove] = []
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
 
@@ -598,6 +611,17 @@ class MujocoEngine(SimulationEngine):
                 self._data.qvel[mapping.dof_adr] = 0.0
         mujoco.mj_forward(self._model, self._data)
 
+    def _apply_body_moves_unlocked(self, moves: list[_BodyMove]) -> None:
+        if not moves:
+            return
+        for move in moves:
+            self._data.qpos[move.qpos_adr] = move.x
+            self._data.qpos[move.qpos_adr + 1] = move.y
+            if move.z is not None:
+                self._data.qpos[move.qpos_adr + 2] = move.z
+            self._data.qvel[move.dof_adr : move.dof_adr + 6] = 0.0
+        mujoco.mj_forward(self._model, self._data)
+
     def _sim_loop(self) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
@@ -615,8 +639,12 @@ class MujocoEngine(SimulationEngine):
                     self._reset_unlocked()
                     reset_done_events = self._reset_done_events
                     self._reset_done_events = []
+                body_moves, self._body_moves = self._body_moves, []
+                self._apply_body_moves_unlocked(body_moves)
             for reset_done_event in reset_done_events:
                 reset_done_event.set()
+            for move in body_moves:
+                move.done.set()
             if self._on_before_step is not None:
                 try:
                     self._on_before_step(self)
@@ -874,6 +902,47 @@ class MujocoEngine(SimulationEngine):
             position = self._data.xpos[body_id].copy()
             qw, qx, qy, qz = self._data.xquat[body_id].copy()
         return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
+    def request_free_body_position(
+        self,
+        body_name: str,
+        x: float,
+        y: float,
+        z: float | None = None,
+        *,
+        timeout: float = _RESET_WAIT_TIMEOUT_S,
+    ) -> bool:
+        """Put a freely moving body at a new position, at rest, before the next physics step.
+
+        Its orientation is kept; its linear and angular velocity become zero.
+
+        Args:
+            body_name: MJCF name of a body whose only joint is a free joint.
+            x: World-frame x of the body's origin, metres.
+            y: World-frame y of the body's origin, metres.
+            z: World-frame height of the body's origin, metres; None keeps its height.
+            timeout: Seconds to wait for the sim loop to apply the move.
+
+        Returns True once applied; False when the body has no free joint of its
+        own, or the sim loop did not run within ``timeout``.
+        """
+        body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        if body_id < 0 or int(self._model.body_jntnum[body_id]) != 1:
+            return False
+        joint_id = int(self._model.body_jntadr[body_id])
+        if int(self._model.jnt_type[joint_id]) != _MJJNT_FREE:
+            return False
+        move = _BodyMove(
+            qpos_adr=int(self._model.jnt_qposadr[joint_id]),
+            dof_adr=int(self._model.jnt_dofadr[joint_id]),
+            x=float(x),
+            y=float(y),
+            z=None if z is None else float(z),
+            done=threading.Event(),
+        )
+        with self._lock:
+            self._body_moves.append(move)
+        return move.done.wait(timeout)
 
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
         mapping = self._joint_mappings[joint_index]
