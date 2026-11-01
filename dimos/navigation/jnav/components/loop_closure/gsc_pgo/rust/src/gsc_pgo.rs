@@ -614,6 +614,8 @@ pub struct GscPgo {
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
     pub(crate) learned_odometry_error_estimate_ln_dispatched: [f64; 4],
     pub(crate) odometry_error_estimate_rescale: bool,
+    /// The next solve also measures the learned odometry error estimate's evidence (only `finish`'s last solve does).
+    pub(crate) learned_evidence_requested: bool,
     /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
     /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
     pub(crate) odometry_error_estimate_rescaled: bool,
