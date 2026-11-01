@@ -185,9 +185,11 @@ def test_cancel_uncertainty_prevents_restart(rollout: tuple[Any, Any, Any]) -> N
     assert module.start_rollout()["active"] is False
 
 
-def test_eef_chunk_uses_eef_task_and_cancellation(rollout: tuple[Any, Any, Any]) -> None:
+@pytest.mark.parametrize("require_convergence", [True, False])
+def test_eef_chunk_uses_eef_task_and_cancellation(rollout, require_convergence):
     module, backend, control = rollout
     module.config.dreamlabs.mode = "eef"
+    module.config.dreamlabs.require_endpoint_convergence = require_convergence
     backend.predict.return_value = EefTrajectory(
         points=[
             EefTrajectoryPoint(0.0, {"tool": PoseStamped(frame_id="world")}),
@@ -204,11 +206,14 @@ def test_eef_chunk_uses_eef_task_and_cancellation(rollout: tuple[Any, Any, Any])
     control.execute.assert_not_called()
     control.eef_cancel.assert_called_once_with()
     assert module.rollout_status()["chunks_accepted"] == 1
-    assert control.eef_execute.call_args.kwargs == {"deadman_timeout": 1.0}
+    expected_kwargs = {"deadman_timeout": 1.0}
+    if not require_convergence:
+        expected_kwargs["require_endpoint_convergence"] = False
+    assert control.eef_execute.call_args.kwargs == expected_kwargs
     control.task_invoke.assert_any_call(
         "eef_trajectory",
         "execute",
-        {"trajectory": backend.predict.return_value, "deadman_timeout": 1.0},
+        {"trajectory": backend.predict.return_value, **expected_kwargs},
     )
     control.task_invoke.assert_any_call("eef_trajectory", "cancel", {})
     control.task_invoke.assert_any_call("eef_trajectory", "keepalive", {})

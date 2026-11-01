@@ -83,6 +83,7 @@ class DreamlabsBackendConfig(BaseModel):
     # Match dreamlabs-client's per-request default and signed C-int limit.
     timeout_ms: int = Field(default=15000, gt=0, le=2**31 - 1)
     deadman_timeout_s: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    require_endpoint_convergence: bool = True
     model: RobotModel = DUAL_OPENYAM_MODEL
     arms: dict[ArmSide, DreamlabsArmConfig] = Field(default_factory=yam_arms)
 

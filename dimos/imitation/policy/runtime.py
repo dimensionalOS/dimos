@@ -405,6 +405,11 @@ class _PolicyRuntime(PolicyModule):
                         kwargs: dict[str, Any] = {"trajectory": trajectory}
                         if self.config.backend == "dreamlabs":
                             kwargs["deadman_timeout"] = self.config.dreamlabs.deadman_timeout_s
+                            if (
+                                self._task_name == "eef_trajectory"
+                                and not self.config.dreamlabs.require_endpoint_convergence
+                            ):
+                                kwargs["require_endpoint_convergence"] = False
                         result = self._control.task_invoke(self._task_name, "execute", kwargs)
                         retry_state = (
                             result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH

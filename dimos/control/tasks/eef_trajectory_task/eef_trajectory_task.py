@@ -43,7 +43,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
+
+logger = setup_logger()
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
@@ -92,6 +95,7 @@ class EefTrajectoryTask(PoseTargetIKTask):
         self._duration = 0.0
         self._error = ""
         self._estopped = False
+        self._require_endpoint_convergence = True
         self._gripper_commands: dict[str, float] = {}
         super().__init__(
             EEF_TRAJECTORY_TASK_NAME,
@@ -107,6 +111,7 @@ class EefTrajectoryTask(PoseTargetIKTask):
         self,
         trajectory: EefTrajectory,
         deadman_timeout: float | None = None,
+        require_endpoint_convergence: bool = True,
     ) -> TrajectoryExecutionResult:
         """Accept one complete chunk, rejecting replacement while a chunk is active."""
         try:
@@ -199,6 +204,7 @@ class EefTrajectoryTask(PoseTargetIKTask):
         self._clock = clock
         self._duration = trajectory.duration
         self._gripper_commands = {name: current_positions[name] for name in first.grippers}
+        self._require_endpoint_convergence = require_endpoint_convergence
         self._error = ""
         self._state = TrajectoryState.EXECUTING
         return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
@@ -258,9 +264,15 @@ class EefTrajectoryTask(PoseTargetIKTask):
                     and rotation_error <= self._config.orientation_tolerance_rad
                     and all(error <= self._config.gripper_tolerance for error in gripper_errors)
                 )
-                if reached:
-                    # End at measured feedback rather than emit a lagging solver
-                    # command after feedback has already reached the target.
+                if reached or not self._require_endpoint_convergence:
+                    if not reached:
+                        logger.warning(
+                            "EEF duration elapsed without endpoint convergence",
+                            position_error_m=position_error,
+                            orientation_error_rad=rotation_error,
+                            gripper_error=max(gripper_errors, default=0.0),
+                        )
+                    # Hold measured feedback at completion, including time-only playback.
                     names = [*self._joint_names, *self._additional_claimed_joints]
                     hold = JointCommandOutput(
                         joint_names=names,

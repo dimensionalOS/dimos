@@ -114,6 +114,12 @@ EEF execution samples Cartesian targets on coordinator ticks, solves all target
 frames together, and bounds commands using the existing Pink control core.
 Tracking error, invalid feedback, IK failure, and settling timeout fault the task.
 Completion requires measured TCP and gripper error within configured tolerances.
+For temporary time-only EEF playback, set
+`policy.dreamlabs.require_endpoint_convergence` to `false` in station configuration.
+Each chunk then completes at its scheduled duration and holds measured joint
+positions. Unreached endpoint errors are logged as warnings; `chunks_completed`
+counts elapsed chunks, not confirmed endpoint accuracy. Tracking, feedback, IK,
+velocity, start-state, and deadman checks still apply. The default remains `true`.
 Dreamlabs dispatch retains the standalone adapter's coordinator deadman, with a
 one-second default. The runtime refreshes it while awaiting execution. Lost
 heartbeats abort the task; ordinary planning trajectories have no default deadman.
