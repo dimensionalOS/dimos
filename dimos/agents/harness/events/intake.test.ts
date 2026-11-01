@@ -155,8 +155,7 @@ test("notice drafts preserve ownership, exported images, data, and suppression c
   });
   const draft = await new EventDrafts(renderer(join(dir, "cache"))).forEvent(event);
   assert.deepEqual(draft.source, { kind: "event", event });
-  // Path-only: images hydrate at beforeRequest from Preview: / render.views; not stored on the draft.
-  assert.equal(draft.images.length, 0);
+  assert.equal(draft.images.length, 1);
   assert.equal(draft.render?.views[0]?.kind, "image");
   assert.match(draft.text, /Preview: /);
   assert.match(draft.text, /beacon: beat/);
