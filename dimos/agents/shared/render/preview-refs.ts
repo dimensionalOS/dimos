@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import type { ImageContent, Message } from "@earendil-works/pi-ai";
 import type { FileRef, RenderDetails, RenderedView } from "#dimos/agents/shared/protocol/media.ts";
 import { RenderDetailsSchema } from "#dimos/agents/shared/protocol/media.ts";
@@ -35,16 +35,45 @@ export function renderDetailsOf(details: unknown): RenderDetails | null {
 }
 
 /**
- * Re-render a clip contact sheet from the verified frame index when the cache entry was pruned.
- * Frame files are checked against the hashes saved on the tool result (`view.clip.frames`), not the
- * optional hashes in the index JSON, so a later overwrite cannot change historical model images.
+ * Re-render a clip contact sheet when the cache entry was pruned.
+ * Seals the exact bytes verified against `view.clip.frames` into a temp index (with those hashes),
+ * then renders that sealed copy — the renderer never re-reads the live source tree.
  */
 async function rebuildClipSheet(view: Extract<RenderedView, { kind: "clip" }>): Promise<ImageContent> {
-  for (const frame of view.clip.frames) await readVerified(frame.source);
+  const indexBytes = await readVerified(view.source);
+  const indexJson: unknown = JSON.parse(indexBytes.toString("utf8"));
+  if (
+    typeof indexJson !== "object" ||
+    indexJson === null ||
+    !("type" in indexJson) ||
+    (indexJson.type !== "image" && indexJson.type !== "points")
+  ) {
+    throw new Error("clip index is not a frame index");
+  }
+  const timeOrigin =
+    "timeOrigin" in indexJson && typeof indexJson.timeOrigin === "number" ? indexJson.timeOrigin : undefined;
+
   const dir = await mkdtemp(join(tmpdir(), "clip-hydrate-"));
   try {
-    const cache = new RenderCache(dir, REBUILD_MAX_BYTES);
-    const source = await readSource(view.source.path, REBUILD_MAX_BYTES, view.source.sha256);
+    const sealedFrames: { path: string; timestamp: number; sha256: string }[] = [];
+    for (const frame of view.clip.frames) {
+      const bytes = await readVerified(frame.source);
+      const ext = extname(frame.source.path) || (indexJson.type === "points" ? ".json" : ".bin");
+      const name = `frame-${frame.index}${ext}`;
+      await writeFile(join(dir, name), bytes);
+      sealedFrames.push({ path: name, timestamp: frame.timestamp, sha256: frame.source.sha256 });
+    }
+    const sealedIndexPath = join(dir, "index.json");
+    await writeFile(
+      sealedIndexPath,
+      JSON.stringify({
+        type: indexJson.type,
+        ...(timeOrigin === undefined ? {} : { timeOrigin }),
+        frames: sealedFrames,
+      }),
+    );
+    const cache = new RenderCache(join(dir, "cache"), REBUILD_MAX_BYTES);
+    const source = await readSource(sealedIndexPath, REBUILD_MAX_BYTES, null);
     const part = await cache.pinning((previewCache) =>
       clipRenderer.render(source, view.label, {
         cache: previewCache,
