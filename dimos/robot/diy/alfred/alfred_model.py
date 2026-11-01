@@ -138,7 +138,21 @@ ALFRED_V2_MODEL = (
 ALFRED_FINGER_JOINTS = [
     f"openarm_{side}_finger_joint{index}" for side in OPENARM_SIDES for index in (1, 2)
 ]
-ALFRED_SELF_FILTER_MODEL = ALFRED_V1_MODEL.with_fixed_joints(*ALFRED_FINGER_JOINTS)
+
+# What a D455's driver owns: each imager under camera_*_link, from factory extrinsics, and with
+# rotate_180 an optical frame turned with its pixels. The urdf models the housing, so its edges
+# for these frames would put the camera's pose half a turn off on tf between the driver's samples.
+ALFRED_CAMERA_IMAGER_JOINTS = (
+    *(
+        f"camera_{camera}_{imager}_joint"
+        for camera in ("front", "back")
+        for imager in ("depth", "color", "infra1", "infra2")
+    ),
+    "camera_front_imu_joint",
+)
+# The robot as UrdfManager serves it and poses it on tf.
+ALFRED_TF_MODEL = ALFRED_V1_MODEL.without_joint_subtrees(*ALFRED_CAMERA_IMAGER_JOINTS)
+ALFRED_SELF_FILTER_MODEL = ALFRED_TF_MODEL.with_fixed_joints(*ALFRED_FINGER_JOINTS)
 
 # The FlowBase as three synthetic planning coordinates. Deliberately slower than
 # free navigation - the arms are out. TUNE ON HARDWARE.
@@ -169,25 +183,6 @@ ALFRED_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 
 # Below this, with the arms hanging straight down, the right gripper enters the lidar module.
 ALFRED_LIFT_SAFE_MIN_M = -0.35
-
-# Every link under a movable joint of alfred_v1.urdf, in URDF order. The planner publishes
-# these on tf from the coordinator's joint state (odom -> link), which is how Desktop's
-# Controller draws the lift and arms where they are; the fixed mounts come from AlfredMountTf.
-# test_alfred_full checks this against the urdf.
-ALFRED_MOVING_LINKS = [
-    ALFRED_LIFT_LINK,
-    *[
-        f"openarm_{side}_{link}"
-        for side in OPENARM_SIDES
-        for link in (
-            *(f"link{index}" for index in range(1, 7)),
-            "ee_base_link",
-            "ee_link1",
-            "ee_link2",
-        )
-    ],
-]
-
 
 # The arms' ready pose: shoulders pitched forward and elbows bent. Hanging straight down
 # (all zeros) is a singular, fully extended configuration from which differential IK can
@@ -268,11 +263,7 @@ def alfred_planar_joint_names() -> list[str]:
     return [*ALFRED_PLANAR_BASE.joint_names, *alfred_joint_names()]
 
 
-def alfred_planar_model_config(
-    *,
-    wheels: bool = False,
-    tf_extra_links: list[str] | None = None,
-) -> RobotModelConfig:
+def alfred_planar_model_config(*, wheels: bool = False) -> RobotModelConfig:
     """The whole-body model: planar base, lift and both arms in one planning robot.
 
     Same model as ``alfred_model_config`` with three synthetic base coordinates ahead of
@@ -296,7 +287,6 @@ def alfred_planar_model_config(
         ],
         collision_exclusion_pairs=ALFRED_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
-        tf_extra_links=list(tf_extra_links or []),
         home_joints=home_joints,
     )
 

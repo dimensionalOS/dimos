@@ -420,21 +420,24 @@ robots:
         alfred-nav:
           title: Alfred navigation (Mid-360, saved map)
           description: Navigation off the Mid-360 alone, with Point-LIO odometry and relocalization in a saved map.
-        alfred-full:
-          title: Alfred, the whole robot
-          description: Mid-360 navigation on the coordinator's holonomic follower, with the pillar and both OpenArms planned on the same coordinator; drive and plan from the Controller.
-        alfred-full-perception:
-          title: Alfred, the whole robot + D455
-          description: alfred-full plus the mast D455, as an obstacle map for the arm planner and, with a GPU, the perception stack's localize for the Manipulation app's scan.
+        alfred-base:
+          title: Alfred basics
+          description: The FlowBase, the pillar and both OpenArms on one coordinator, the mast D455 and the URDF on tf; drive from the Controller. No perception, planner or lidar.
+        alfred-perception:
+          title: Alfred perception
+          description: alfred-base plus localize on the mast D455, in 3D, and an MCP server on 9990. Needs CUDA.
         alfred-manipulation:
-          title: Alfred at the bench
-          description: Arms, lift, whole-body planner and the mast D455 (obstacle map, localize); teleop and wheel odometry, no lidar or navigation. One of the Orin's two stacks.
+          title: Alfred manipulation
+          description: alfred-perception plus the whole-body planner, its obstacle map and the pick pipeline (GraspGenX); no lidar or navigation. One of the Orin's two stacks.
+        alfred-manipulation-heuristic:
+          title: Alfred manipulation (top-down grasps)
+          description: alfred-manipulation with one top-down grasp per object, for when GraspGenX's environment is not there.
+        alfred-manipulation-sim:
+          title: Alfred manipulation (simulated)
+          description: alfred-manipulation with all of its hardware simulated, for rehearsing with no robot. Never run it on a network shared with the robot's stack.
         alfred-navigation:
           title: Alfred on the move
           description: Mid-360 navigation on the coordinator's holonomic follower with Controller teleop and "Go here"; the lift parked, no arms or planner. The other of the Orin's two stacks.
-        alfred-full-agentic:
-          title: Alfred, agentic
-          description: alfred-full-perception plus an LLM agent (needs OPENAI_API_KEY) that drives, navigates, looks and plans the arms and lift from a sentence; MCP server on 9990.
         alfred-pillar:
           title: Alfred pillar bring-up
           description: The lift alone on its serial link, for homing and bench tests.

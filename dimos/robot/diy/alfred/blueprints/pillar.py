@@ -25,56 +25,58 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
     joint_trajectory_task,
 )
-from dimos.core.coordination.blueprints import TransportSpec, autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.diy.alfred.alfred_model import ALFRED_V1_MODEL
 from dimos.robot.diy.alfred.channels import channel_spec
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
     PILLAR_LIFT_JOINT,
     PillarConnection,
-    pillar_hardware,
 )
 
 # Streamed joint_command targets go through the canonical trajectory task (#3610).
 PILLAR_TASK_NAME = JOINT_TRAJECTORY_TASK_NAME
 PILLAR_LIFT_VELOCITY_LIMIT_M_S = 0.1
 
-_pillar_hardware = pillar_hardware()
+# PillarConnection onto a coordinator's ports for the robot "pillar".
+PILLAR_CONNECTION_PORTS = [
+    (PillarConnection, "position_command", f"{PILLAR_HARDWARE_ID}_position_command"),
+    (PillarConnection, "joint_state", f"{PILLAR_HARDWARE_ID}_joint_state"),
+]
 
 
-def pillar_motor_transports() -> dict[tuple[str, type], TransportSpec]:
-    """The connection's two streams, pinned to the channels the whole-body adapter uses."""
-    return {
-        ("motor_command", MotorCommandArray): channel_spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
+class AlfredPillarCoordinator(ControlCoordinator):
+    """Drives the pillar through its connection module."""
+
+    pillar_position_command: Out[JointState]
+    pillar_joint_state: In[JointState]
+
+
+alfred_pillar = (
+    autoconnect(
+        PillarConnection.blueprint(),
+        AlfredPillarCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=ALFRED_V1_MODEL,
+            tasks=[
+                joint_trajectory_task(
+                    [PILLAR_LIFT_JOINT],
+                    velocity_limits={PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S},
+                ),
+            ],
         ),
-        ("motor_states", JointState): channel_spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
-        ),
-    }
-
-
-alfred_pillar = autoconnect(
-    PillarConnection.blueprint(),
-    ControlCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_pillar_hardware],
-        tasks=[
-            joint_trajectory_task(
-                [PILLAR_LIFT_JOINT],
-                velocity_limits={PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S},
+    )
+    .remappings(PILLAR_CONNECTION_PORTS)
+    .transports(
+        {
+            ("joint_command", JointState): channel_spec(
+                f"/{PILLAR_HARDWARE_ID}/joint_command", JointState
             ),
-        ],
-    ),
-).transports(
-    {
-        **pillar_motor_transports(),
-        ("joint_command", JointState): channel_spec(
-            f"/{PILLAR_HARDWARE_ID}/joint_command", JointState
-        ),
-        ("coordinator_joint_state", JointState): channel_spec(
-            f"/{PILLAR_HARDWARE_ID}/joints", JointState
-        ),
-    }
+            ("coordinator_joint_state", JointState): channel_spec(
+                f"/{PILLAR_HARDWARE_ID}/joints", JointState
+            ),
+        }
+    )
 )

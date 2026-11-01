@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred's physical layer: mount transforms and base controller, with or without the mast D455.
-
-Every Alfred blueprint composes one of these and then adds what it does with the sensors. Private,
-so they stay out of the runnable blueprint registry: sensors with nothing consuming them.
+"""The navigation stacks' physical layer: mount transforms and base controller, with or without
+the mast D455. Each composes one of these and then adds what it does with the sensors (the bench
+stacks stand on ``alfred_base`` instead). Private, so they stay out of the runnable blueprint
+registry: sensors with nothing consuming them.
 """
 
 from __future__ import annotations

@@ -25,6 +25,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.core.module import Module
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.diy.alfred import effector_high_level
 from dimos.robot.diy.alfred.effector_high_level import (
@@ -144,3 +146,59 @@ def test_rebase_is_a_change_of_origin_not_a_subtraction() -> None:
     assert _rebase(facing_left, 1.0, 3.0, math.pi / 2 + 0.1) == pytest.approx((1.0, 0.0, 0.1))
     assert _rebase(facing_left, 2.0, 2.0, math.pi / 2) == pytest.approx((0.0, -1.0, 0.0))
     assert _rebase((0.0, 0.0, 3.0), 0.0, 0.0, -3.0) == pytest.approx((0.0, 0.0, 2 * math.pi - 6.0))
+
+
+def _sends(velocities: list[tuple[float, float, float]]) -> list[tuple[float, float, float]]:
+    """What goes out to the Pi when ``velocities`` are written one after another, each sent
+    before the next arrives."""
+    module = AlfredHighLevel.__new__(AlfredHighLevel)
+    sent: list[tuple[float, float, float]] = []
+
+    async def run() -> None:
+        module._velocity_ready = asyncio.Event()
+        module._last_velocities = [0.0, 0.0, 0.0]
+
+        async def send(vx: float, vy: float, wz: float) -> bool:
+            sent.append((vx, vy, wz))
+            return True
+
+        module._send_velocity = send  # type: ignore[method-assign]
+        task = asyncio.create_task(module._send_velocities())
+        for velocity in velocities:
+            module._velocity = velocity
+            module._velocity_ready.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        task.cancel()
+
+    asyncio.run(run())
+    return sent
+
+
+def test_a_base_at_rest_is_not_told_so_over_portal_every_tick() -> None:
+    assert _sends([(0.0, 0.0, 0.0)] * 5) == []
+
+
+def test_the_stop_after_a_move_is_sent_once() -> None:
+    assert _sends([(0.2, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]) == [
+        (0.2, 0.0, 0.0),
+        (0.0, 0.0, 0.0),
+    ]
+
+
+def test_speeds_go_out_in_the_controllers_inverted_y_frame() -> None:
+    assert _sends([(0.1, 0.2, 0.3)]) == [(0.1, -0.2, -0.3)]
+
+
+def test_move_velocity_drives_through_the_teleop_stream_and_stops_it() -> None:
+    """Not to the Pi directly: it goes through whatever arbitrates the base, so a hold stops it."""
+    module = AlfredHighLevel.__new__(AlfredHighLevel)
+    module.tele_cmd_vel = MagicMock()
+    twist = Twist(linear=Vector3(0.1, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.2))
+
+    asyncio.run(module._drive_for(twist, 0.25))
+
+    published = [call.args[0] for call in module.tele_cmd_vel.publish.call_args_list]
+    assert len(published) >= 3
+    assert all(msg.linear.x == 0.1 for msg in published[:-1])
+    assert published[-1].linear.x == 0.0 and published[-1].angular.z == 0.0

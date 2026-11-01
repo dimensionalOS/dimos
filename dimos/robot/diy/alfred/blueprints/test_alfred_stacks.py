@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""alfred-full composes navigation, the pillar and the arms on one coordinator, as commissioned."""
+"""Alfred's stacks as commissioned: alfred-base, localize on top of it, manipulation on top of that,
+and the driving stack beside them."""
 
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ import json
 import math
 from pathlib import Path
 import re
+from types import SimpleNamespace
 from typing import Any, cast
 import xml.etree.ElementTree as ElementTree
 
@@ -30,26 +32,25 @@ from scipy.spatial.transform import Rotation
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.control.components import HardwareType
+from dimos.agents.skills.observe_skill import ObserveSkill
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.operator_handoff import OperatorHandoff
 from dimos.control.tasks.operator_hold_task.operator_hold_task import OPERATOR_HOLD_TASK_NAME
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
-from dimos.core.global_config import global_config
-from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.core.transport_factory import transport_topic
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.module_coordinator import (
+    resolve_module_refs,
+    verify_no_name_conflicts,
+)
 from dimos.hardware.drive_trains.flowbase.config import FLOWBASE_MAX_LINEAR_CMD_M_S
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig, GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS
-from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
-    RoboPlanPointCloudSelfFilter,
-)
 from dimos.mapping.pointclouds.box_filter import (
     PointCloudBoxFilter,
     inside_crop,
@@ -57,27 +58,26 @@ from dimos.mapping.pointclouds.box_filter import (
 )
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.local_planner.native import LocalPlannerNative
-from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.localize.module import PerceptionLocalize
 from dimos.robot.diy.alfred import alfred_model
 from dimos.robot.diy.alfred.alfred_model import (
     ALFRED_ARM_READY,
+    ALFRED_CAMERA_IMAGER_JOINTS,
     ALFRED_FOLLOWER_ARTIFACT,
     ALFRED_FOOTPRINT_RADIUS_M,
     ALFRED_HEIGHT_M,
     ALFRED_LIFT_LOWER_M,
     ALFRED_LIFT_UPPER_M,
-    ALFRED_MOVING_LINKS,
     ALFRED_PLANAR_BASE,
+    ALFRED_SELF_FILTER_MODEL,
+    ALFRED_TF_MODEL,
     ALFRED_V1_MODEL,
     alfred_arm_joints,
     alfred_base_command_gains,
@@ -87,17 +87,24 @@ from dimos.robot.diy.alfred.alfred_model import (
     alfred_rerun_urdf,
 )
 from dimos.robot.diy.alfred.blueprints import (
-    alfred_full_perception as perception,
     alfred_manipulation_sim as sim,
+    alfred_perception as perception,
 )
 from dimos.robot.diy.alfred.blueprints._nav import WALL_CLEARANCE_M
-from dimos.robot.diy.alfred.blueprints.alfred_full import (
-    ALFRED_BASE_HARDWARE_ID,
+from dimos.robot.diy.alfred.blueprints.alfred_base import (
+    ALFRED_BASE_ROBOT,
     ALFRED_GRIPPER_TASKS,
     BASE_FRAME,
     BASE_TRAJECTORY_TASK_NAME,
     BASE_VELOCITY_TASK_NAME,
-    MANIP_VOXEL_M,
+    D455_FPS,
+    D455_HEIGHT,
+    D455_POINTCLOUD_DECIMATION,
+    D455_POINTCLOUD_FPS,
+    D455_WIDTH,
+    DEPTH_TRUNC_M,
+    FLOWBASE_DEADMAN_S,
+    JOINT_TF_HZ,
     NAV_FOLLOWER_TASK_NAME,
     ODOM_FRAME,
     OPENARM_LEFT_CAN_ENV,
@@ -105,67 +112,76 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
     AlfredNavCoordinator,
     AlfredOperatorCoordinator,
     _openarm_hardware_from_env,
+    alfred_base,
     alfred_coordinator_tasks,
-    alfred_full,
 )
-from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
-    D455_FPS,
-    D455_HEIGHT,
-    D455_POINTCLOUD_DECIMATION,
-    D455_POINTCLOUD_FPS,
-    D455_WIDTH,
-    DEPTH_TRUNC_M,
+from dimos.robot.diy.alfred.blueprints.alfred_manipulation import (
     MANIP_MAP_CROP_MAX,
     MANIP_MAP_CROP_MIN,
     MANIP_MAP_SELF_FILTER,
+    MANIP_VOXEL_M,
     MANIP_VOXEL_MAP,
-    MOUNT_TF_TOLERANCE_S,
     OPENARM_REACH_M,
     OPENARM_WRIST_TO_TIP_M,
-    SCENE_DETECTOR_CONFIDENCE,
-    PerceptionDevice,
-    alfred_full_perception,
-    alfred_perception_modules,
-    perception_device,
-)
-from dimos.robot.diy.alfred.blueprints.alfred_manipulation import (
+    TF_TOLERANCE_S,
     alfred_manipulation,
     alfred_manipulation_heuristic,
+    alfred_manipulation_modules,
     alfred_operator_modules,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_manipulation_sim import (
-    SIM_SCENE_DETECTOR_CONFIDENCE,
+    OWLV2_FLOAT32,
+    SIM_LOCALIZE_PARAMS,
     alfred_manipulation_sim,
     alfred_sim_modules,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_navigation import alfred_navigation
+from dimos.robot.diy.alfred.blueprints.alfred_perception import (
+    ALFRED_BENCH_PARAMS,
+    PerceptionDevice,
+    alfred_perception,
+    cuda_torch,
+    perception_device,
+)
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
-from dimos.robot.diy.alfred.coordinator_base_odometry import CoordinatorBaseOdometry
-from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
+from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel, AlfredHighLevelConfig
 from dimos.robot.diy.alfred.gripper import (
     OPENARM_V10_FINGERTIP_DEPTH_M,
     OPENARM_V10_GRASP_FRAME_TO_TCP,
     OPENARM_V10_SWEEP_VOLUME,
 )
+from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
     PILLAR_LIFT_JOINT,
     PILLAR_SIM_DEVICE,
     PillarConnection,
 )
+from dimos.robot.diy.alfred.sim_flowbase import SimFlowBase
+from dimos.robot.diy.alfred.system_prompt import ALFRED_SYSTEM_PROMPT
 from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 from dimos.robot.manipulators.openarm.config import OPENARM_HARDWARE_ID
+from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
-from dimos.utils.gpu_utils import is_cuda_available
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+
+_LAYERED_STACKS = [
+    pytest.param(alfred_base, id="alfred-base"),
+    pytest.param(alfred_perception, id="alfred-perception"),
+    pytest.param(alfred_manipulation, id="alfred-manipulation"),
+    pytest.param(alfred_manipulation_heuristic, id="alfred-manipulation-heuristic"),
+    pytest.param(alfred_manipulation_sim, id="alfred-manipulation-sim"),
+]
+_MANIPULATION_STACKS = _LAYERED_STACKS[2:]
 
 
 def _atoms(blueprint: Blueprint, module: type) -> list[Any]:
     return [
         atom
-        for atom in blueprint.blueprints
+        for atom in blueprint.active_blueprints
         if isinstance(atom.module, type) and issubclass(atom.module, module)
     ]
 
@@ -189,7 +205,7 @@ def _writers(blueprint: Blueprint, stream: str) -> set[str]:
     """The instances whose outputs land on a stream."""
     return {
         atom.name
-        for atom in blueprint.blueprints
+        for atom in blueprint.active_blueprints
         for port in atom.streams
         if port.direction != "in" and _wired(blueprint, atom.name, port.name) == stream
     }
@@ -197,83 +213,188 @@ def _writers(blueprint: Blueprint, stream: str) -> set[str]:
 
 def _self_filters(blueprint: Blueprint) -> tuple[Any, Any]:
     """The camera cloud's self filter, and the planner map's (the carve)."""
-    filters = {atom.name: atom for atom in _atoms(blueprint, RoboPlanPointCloudSelfFilter)}
+    filters = {atom.name: atom for atom in _atoms(blueprint, UrdfManagerPointClearing)}
     carve = filters.pop(MANIP_MAP_SELF_FILTER)
     (camera,) = filters.values()
     return camera, carve
-
-
-def _channel(blueprint: Blueprint, key: tuple[str, type]) -> tuple[type, str]:
-    """The backend class and topic a stream is pinned to."""
-    spec = blueprint.transport_map[key]
-    assert isinstance(spec, TransportSpec)
-    return spec.cls, cast("str", spec.args[0])
 
 
 # The urdf is LFS data, so these run where it is pulled (like test_alfred.py).
 needs_lfs = pytest.mark.self_hosted
 
 
-def test_alfred_full_composes_nav_pillar_arms_and_the_viewer() -> None:
-    modules = {atom.module for atom in alfred_full.blueprints}
-    assert {
+def _modules(blueprint: Blueprint) -> set[Any]:
+    return {atom.module for atom in blueprint.active_blueprints}
+
+
+def test_alfred_base_is_the_connections_the_camera_and_the_urdf() -> None:
+    assert _modules(alfred_base) == {
+        RealSenseCamera,
         AlfredHighLevel,
-        PointLio,
-        RayTracingVoxelMap,
-        MLSPlannerNative,
-        LocalPlannerNative,
-        LocalMapRelocalization,
+        WheelOdometryRelay,
         PillarConnection,
+        AlfredOperatorCoordinator,
+        UrdfManager,
+    }
+
+
+def test_perception_adds_localize_and_an_mcp_server_to_the_base() -> None:
+    assert _modules(alfred_perception) - _modules(alfred_base) == {PerceptionLocalize, McpServer}
+    assert _modules(alfred_base) <= _modules(alfred_perception)
+
+
+def test_manipulation_adds_to_perception_and_swaps_only_the_urdf_manager() -> None:
+    """The self filter is a UrdfManager, so one module poses the robot and cuts it out."""
+    assert _modules(alfred_perception) - _modules(alfred_manipulation) == {UrdfManager}
+    assert _modules(alfred_manipulation) - _modules(alfred_perception) == {
+        UrdfManagerPointClearing,
+        RayTracingVoxelMap,
+        PointCloudBoxFilter,
         ManipulationModule,
-        AlfredNavCoordinator,
-        RerunWebSocketServer,
-    } <= modules
+        PickAndPlaceModule,
+        GraspGenXModule,
+        OperatorHandoff,
+    }
 
 
-def test_the_flowbase_is_arbitrated_on_the_coordinator_but_written_by_alfred_high_level() -> None:
-    """The coordinator plans for the base but must never be a second Portal writer.
+@pytest.mark.parametrize("stack", _LAYERED_STACKS)
+def test_a_layer_never_touches_the_coordinator_below_it(stack: Blueprint) -> None:
+    assert _coordinator_kwargs(stack)["tasks"] == _coordinator_kwargs(alfred_base)["tasks"]
 
-    Its base is a transport adapter: the arbitrated twist goes out on /flowbase/cmd_vel,
-    AlfredHighLevel's cmd_vel is pinned to that channel, and the adapter reads the base
-    pose back off /flowbase/odom, which StartRelay fills from tf.
-    """
-    hardware = {hw.hardware_id: hw for hw in _coordinator_kwargs(alfred_full)["hardware"]}
-    assert set(hardware) == {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID, ALFRED_BASE_HARDWARE_ID}
-    base = hardware[ALFRED_BASE_HARDWARE_ID]
-    assert base.hardware_type is HardwareType.BASE
-    assert base.adapter_type == "transport_lcm", "a direct FlowBase adapter would double-write"
 
-    backend = ZenohTransport if global_config.transport == "zenoh" else LCMTransport
-    assert _channel(alfred_full, ("cmd_vel", Twist)) == (
-        backend,
-        transport_topic(f"/{ALFRED_BASE_HARDWARE_ID}/cmd_vel"),
+@pytest.mark.parametrize("stack", [*_LAYERED_STACKS, alfred_navigation])
+def test_every_stack_wires_up(stack: Blueprint) -> None:
+    """The coordinator's own checks, short of deploying: stream names agree on their types, and
+    every module reference finds its one provider."""
+    verify_no_name_conflicts(stack)
+    resolve_module_refs(stack)
+
+
+def test_the_agents_skills_wire_up_with_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    stack = autoconnect(alfred_perception, *alfred_manipulation_modules())
+    stack = stack.disabled_modules(UrdfManager)
+    verify_no_name_conflicts(stack)
+    (skills,) = _atoms(stack, ManipulationSkills)
+    (planner,) = _atoms(stack, ManipulationModule)
+    assert resolve_module_refs(stack)[skills.name, "manipulation"] == planner.name
+
+
+def test_the_agents_prompt_names_no_skill_the_stack_lacks() -> None:
+    for gone in ("go_to", "stop_navigation", "lidar"):
+        assert gone not in ALFRED_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("stack", _LAYERED_STACKS)
+def test_what_a_layer_reads_has_a_writer(stack: Blueprint) -> None:
+    assert _writers(stack, "coordinator_joint_state") == {"ControlCoordinator"}, "the robot on tf"
+    if PerceptionLocalize in _modules(stack):
+        cameras = _writers(stack, "color_image")
+        assert len(cameras) == 1
+        assert _writers(stack, "depth_image") == _writers(stack, "camera_info") == cameras
+
+
+@pytest.mark.parametrize("stack", _MANIPULATION_STACKS)
+def test_a_pick_scans_through_localize(stack: Blueprint) -> None:
+    """Scene registration loaded a second OWLv2 + EdgeTAM beside localize's, which filled the
+    Orin's 16 GB and swapped: one of them is the scene."""
+    assert ObjectSceneRegistrationModule not in _modules(stack)
+    (pick,) = _atoms(stack, PickAndPlaceModule)
+    (localize,) = _atoms(stack, PerceptionLocalize)
+    assert resolve_module_refs(stack)[pick.name, "_scene"] == localize.name
+
+
+def test_localize_is_a_grasp_away_from_the_arm() -> None:
+    """Instances in odom, like the map: PickAndPlace re-expresses a cloud in its planning frame."""
+    (localize,) = _atoms(alfred_perception, PerceptionLocalize)
+    assert localize.kwargs["world_frame"] == ODOM_FRAME, "objects stay put when the base drives"
+    assert localize.kwargs["geometry"] == "depth" and localize.kwargs["mobile"] is False
+    assert localize.kwargs["params"].min_views == 1, "a robot standing still: one viewpoint"
+    assert localize.kwargs["params"].accept_score <= 0.3, "OWLv2 scores 0.3-0.6 on this bench"
+    assert localize.kwargs["params"].fuse_voxel_m <= 0.002, "a grasp generator reads this cloud"
+    assert localize.kwargs["detector"] == "owlv2" and localize.kwargs["segmenter"] == "edgetam"
+    assert localize.kwargs["feed_frames"] <= 45, "the module's 300 frames hold 600 MB"
+    (pick,) = _atoms(alfred_manipulation, PickAndPlaceModule)
+    assert pick.kwargs["planning_frame"] == BASE_FRAME, "grasps where the arm plans"
+    for side in ("left", "right"):
+        reach = pick.kwargs["reach"][f"{side}_manipulator"]
+        assert reach.shoulder_frame == f"openarm_{side}_link1", "a frame UrdfManager puts on tf"
+        assert 0.40 <= reach.radius <= 0.45 and abs(reach.wrist_to_tip - 0.186) < 1e-9
+
+
+@pytest.mark.parametrize("stack", [alfred_perception, alfred_manipulation])
+def test_a_stack_with_models_refuses_a_cpu_torch(
+    stack: Blueprint, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dropping the models quietly left a stack with no Scan and no Pick, and nothing to say why."""
+    assert cuda_torch in stack.requirement_checks
+    monkeypatch.setattr(perception, "is_cuda_available", lambda: False)
+    assert "CUDA" in (cuda_torch() or "")
+    monkeypatch.setattr(perception, "is_cuda_available", lambda: True)
+    assert cuda_torch() is None
+
+
+def test_the_sim_needs_no_cuda() -> None:
+    assert cuda_torch not in alfred_manipulation_sim.requirement_checks
+
+
+@pytest.mark.parametrize("stack", [*_LAYERED_STACKS, alfred_navigation])
+def test_every_command_goes_through_the_coordinators_ports(stack: Blueprint) -> None:
+    """The pillar and the FlowBase are connection modules: the coordinator arbitrates its tasks
+    and is the only writer of their commands, on real ports, with nothing pinned by hand. The
+    FlowBase's module stays the only thing that talks to its Pi."""
+    (coordinator,) = _atoms(stack, ControlCoordinator)
+    base = next(iter(_atoms(stack, AlfredHighLevel) or _atoms(stack, SimFlowBase)))
+    (pillar,) = _atoms(stack, PillarConnection)
+    assert _wired(stack, base.name, "cmd_vel") == "flowbase_cmd_vel"
+    assert _wired(stack, pillar.name, "position_command") == "pillar_position_command"
+    assert _wired(stack, pillar.name, "joint_state") == "pillar_joint_state"
+    assert _writers(stack, "flowbase_cmd_vel") == {coordinator.name}
+    assert _writers(stack, "pillar_position_command") == {coordinator.name}
+    assert _writers(stack, "pillar_joint_state") == {pillar.name}
+    assert len(_writers(stack, "flowbase_odom")) == 1, "one base pose"
+    assert not any(
+        hw.hardware_id in ("pillar", "flowbase") for hw in _coordinator_kwargs(stack)["hardware"]
     )
-    assert _channel(alfred_full, ("start_pose", PoseStamped)) == (
-        backend,
-        transport_topic(f"/{ALFRED_BASE_HARDWARE_ID}/odom"),
-    )
+    assert not stack.transport_map, "no stream goes round the blueprint"
 
 
-def test_the_pillar_meets_its_adapter_on_the_active_backend() -> None:
-    backend = ZenohTransport if global_config.transport == "zenoh" else LCMTransport
-    for stream, msg_type in (("motor_command", MotorCommandArray), ("motor_states", JointState)):
-        assert _channel(alfred_full, (stream, msg_type)) == (
-            backend,
-            transport_topic(f"/{PILLAR_HARDWARE_ID}/{stream}"),
-        )
+@pytest.mark.parametrize("stack", _LAYERED_STACKS)
+def test_the_arms_stay_on_their_adapter(stack: Blueprint) -> None:
+    """Their CAN bus runs in the coordinator's process, on its tick: over a transport a read
+    that stalls 0.3 s would outlast the reading timeout, and the arms would go uncommanded."""
+    (arms,) = _coordinator_kwargs(stack)["hardware"]
+    assert arms.hardware_id == OPENARM_HARDWARE_ID
+
+
+def test_the_coordinator_knows_the_lifts_joint_from_the_model() -> None:
+    joints = {joint.name for joint in ALFRED_V1_MODEL.load().joints}
+    assert PILLAR_LIFT_JOINT in joints
+    assert _coordinator_kwargs(alfred_base)["model"] is ALFRED_V1_MODEL
+
+
+def test_an_e_stop_stops_the_base_on_its_deadman_within_a_tenth() -> None:
+    """An e-stopped coordinator sends nothing more, by design, so this is the base's stop."""
+    (base,) = _atoms(alfred_base, AlfredHighLevel)
+    assert base.kwargs["deadman_timeout_s"] == FLOWBASE_DEADMAN_S <= 0.1
+
+
+def test_the_stacks_without_a_coordinator_keep_a_slower_deadman() -> None:
+    """A MovementManager streams far slower than a coordinator's tick."""
+    assert AlfredHighLevelConfig().deadman_timeout_s >= 0.2
 
 
 def test_teleop_enters_the_coordinator_not_the_base() -> None:
     """Whatever publishes tele_cmd_vel (the Controller, the web viewer) is one base claim."""
-    assert alfred_full.remapping_map[("ControlCoordinator", "twist_command")] == "tele_cmd_vel"
+    assert alfred_base.remapping_map[("ControlCoordinator", "twist_command")] == "tele_cmd_vel"
 
 
 def test_base_claims_rank_teleop_over_plan_over_navigation() -> None:
-    tasks = _tasks(alfred_full)
+    tasks = _tasks(alfred_navigation)
     teleop = tasks[BASE_VELOCITY_TASK_NAME]
     plan = tasks[BASE_TRAJECTORY_TASK_NAME]
     nav = tasks[NAV_FOLLOWER_TASK_NAME]
-    base_joints = [f"{ALFRED_BASE_HARDWARE_ID}/{axis}" for axis in ("vx", "vy", "wz")]
+    base_joints = [f"{ALFRED_BASE_ROBOT}/{axis}" for axis in ("vx", "vy", "wz")]
     for task in (teleop, plan, nav):
         assert task.joint_names == base_joints
     assert teleop.priority > plan.priority > nav.priority
@@ -289,7 +410,7 @@ def test_base_claims_rank_teleop_over_plan_over_navigation() -> None:
 
 def test_the_follower_runs_on_alfreds_measured_plant() -> None:
     """The artifact is config, not a build output: losing it degrades silently to Go2 gains."""
-    nav = _tasks(alfred_full)[NAV_FOLLOWER_TASK_NAME]
+    nav = _tasks(alfred_navigation)[NAV_FOLLOWER_TASK_NAME]
     assert nav.params["artifact_path"] == ALFRED_FOLLOWER_ARTIFACT
     artifact = json.loads(Path(ALFRED_FOLLOWER_ARTIFACT).read_text())
     assert artifact["provenance"]["robot_id"] == "alfred"
@@ -310,7 +431,7 @@ def test_the_follower_falls_back_to_the_go2_artifact_until_alfred_has_one(
 
 
 def test_one_trajectory_task_covers_the_lift_and_both_arms_with_the_hold_under_it() -> None:
-    tasks = _tasks(alfred_full)
+    tasks = _tasks(alfred_base)
     trajectory = tasks[JOINT_TRAJECTORY_TASK_NAME]
     hold = tasks["hold_arms"]
     assert trajectory.joint_names == [*alfred_arm_joints(), PILLAR_LIFT_JOINT]
@@ -326,16 +447,16 @@ def test_one_trajectory_task_covers_the_lift_and_both_arms_with_the_hold_under_i
         assert gripper.type == "gripper"
         assert gripper.joint_names in (["left_arm/gripper"], ["right_arm/gripper"])
         assert gripper.priority > trajectory.priority, "a hand command beats a trajectory's hold"
-    (planner,) = _atoms(alfred_full, ManipulationModule)
+    (planner,) = _atoms(alfred_manipulation, ManipulationModule)
     assert planner.kwargs["gripper_tasks"] == ALFRED_GRIPPER_TASKS, "one hand per arm"
 
 
 def test_the_whole_body_is_planned_in_the_robots_own_frame() -> None:
     """Targets are poses on the robot (base_link), so they ride with it and never depend on
-    where Point-LIO woke up or whether its odometry jumps; "world" is an identity edge under
+    where odometry woke up or whether it jumps; "world" is an identity edge under
     base_link for the Controller and the stock tooling. The planar base joints are the base's
     motion from here: held at zero, never fed from odometry, executed as a relative trajectory."""
-    (atom,) = _atoms(alfred_full, ManipulationModule)
+    (atom,) = _atoms(alfred_manipulation, ManipulationModule)
     assert atom.kwargs["world_frame"] == BASE_FRAME
     (world,) = atom.kwargs["static_transforms"]
     assert (world.frame_id, world.child_frame_id) == (BASE_FRAME, "world")
@@ -363,20 +484,15 @@ def test_the_planner_gets_the_real_height_and_a_footprint_under_the_robot() -> N
     """robot_height decides whether a cell is floor at all (surfaces.rs is_standable), so
     tables and sub-2 m doorways read as blocked; wall_clearance_m is knowingly below the
     footprint radius - 0.2 plans on the robot, 0.28 cannot."""
-    (planner,) = _atoms(alfred_full, MLSPlannerNative)
+    (planner,) = _atoms(alfred_navigation, MLSPlannerNative)
     assert planner.kwargs["robot_height"] == ALFRED.height == ALFRED_HEIGHT_M
     assert planner.kwargs["wall_clearance_m"] == WALL_CLEARANCE_M
     assert WALL_CLEARANCE_M < ALFRED_FOOTPRINT_RADIUS_M
 
 
-def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
-    """A second, short-range voxel map under its own name, so the nav map's streams stay put."""
-    modules = {atom.module for atom in alfred_full_perception.blueprints}
-    assert {RealSenseCamera, RoboPlanPointCloudSelfFilter, PointCloudBoxFilter} <= modules
-    assert Detection2DModule not in modules, "the perception stack's localize replaced YOLO"
-    assert (PerceptionLocalize in modules) == is_cuda_available(), "localize needs the GPU"
-    assert len(_atoms(alfred_full_perception, RayTracingVoxelMap)) == 2
-    remaps = alfred_full_perception.remapping_map
+def test_the_planner_gets_a_filtered_d455_map() -> None:
+    """A short-range voxel map under its own name, so a nav map's streams would stay put."""
+    remaps = alfred_manipulation.remapping_map
     assert remaps[(MANIP_VOXEL_MAP, "lidar")] == "filtered_pointcloud"
     assert remaps[(MANIP_VOXEL_MAP, "global_map")] == "manip_global_map"
     nav_map_outputs = (
@@ -395,13 +511,9 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert remaps[(PointCloudBoxFilter.name, "filtered_cloud")] == carve_input, (
         "on to the planner through the carve"
     )
-    manip_map = next(
-        atom
-        for atom in _atoms(alfred_full_perception, RayTracingVoxelMap)
-        if atom.kwargs.get("instance_name") == MANIP_VOXEL_MAP
-    )
+    (manip_map,) = _atoms(alfred_manipulation, RayTracingVoxelMap)
     assert manip_map.kwargs["world_frame"] == ODOM_FRAME, "a drive must not move the bench"
-    assert manip_map.kwargs["tf_match_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, "a 5 Hz mount edge"
+    assert manip_map.kwargs["tf_match_tolerance_s"] >= TF_TOLERANCE_S, "a stalled joint state"
     assert manip_map.kwargs["max_range"] <= 1.5, "the bench, not the floor beyond it"
     assert manip_map.kwargs["voxel_size"] == MANIP_VOXEL_M <= 0.02, (
         "at 5 cm the bench's layer reached 3 cm above its surface, in the way of a low grasp"
@@ -412,12 +524,12 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     )
     assert manip_map.kwargs["shadow_depth"] == 0.0, "a shadow carves the layer under the bench top"
     assert manip_map.kwargs["global_emit_every"] >= 5, "the planner rebuilds its octree per map"
-    (box_filter,) = _atoms(alfred_full_perception, PointCloudBoxFilter)
+    (box_filter,) = _atoms(alfred_manipulation, PointCloudBoxFilter)
     assert box_filter.kwargs["target_frame"] == BASE_FRAME, "the planner drops any other frame"
-    assert box_filter.kwargs["tf_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, (
+    assert box_filter.kwargs["tf_tolerance_s"] >= TF_TOLERANCE_S, (
         "odom -> base_link lands at 47 Hz; the map's stamp is a 5 Hz camera's"
     )
-    (planner,) = _atoms(alfred_full_perception, ManipulationModule)
+    (planner,) = _atoms(alfred_manipulation, ManipulationModule)
     assert planner.kwargs["world_frame"] == box_filter.kwargs["target_frame"]
     assert planner.kwargs["voxel_map_resolution"] == manip_map.kwargs["voxel_size"], (
         "the octree's cells are the map's voxels"
@@ -425,77 +537,13 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert box_filter.kwargs["target_voxel_m"] == planner.kwargs["voxel_map_resolution"], (
         "the map is re-rasterized onto the octree's own cells, or a turned base leaves it holes"
     )
-    camera_filter, _ = _self_filters(alfred_full_perception)
+    camera_filter, _ = _self_filters(alfred_manipulation)
     assert camera_filter.kwargs["padding_m"] >= 0.044, "an open finger is 4.4 cm outside the model"
-    (camera,) = _atoms(alfred_full_perception, RealSenseCamera)
+    (camera,) = _atoms(alfred_manipulation, RealSenseCamera)
     assert camera.kwargs["enable_pointcloud"] and camera.kwargs["enable_color"]
-    localize = next(
-        atom
-        for fragment in alfred_perception_modules(models=True)
-        for atom in fragment.blueprints
-        if atom.module is PerceptionLocalize
-    )
-    assert localize.kwargs["world_frame"] == BASE_FRAME, "a found object is an arm target"
-    assert localize.kwargs["geometry"] == "depth" and localize.kwargs["mobile"] is False
-    assert localize.kwargs["params"].min_views == 1, "one fixed camera: one viewpoint"
-    assert "float16" not in localize.kwargs["detector"], "the registry's fp16 build is for a GPU"
-    assert localize.kwargs["segmenter"] == "none", "EdgeTAM needs a GPU"
-    with_gpu = {
-        atom.module for f in alfred_perception_modules(models=True) for atom in f.blueprints
-    }
-    assert {ObjectSceneRegistrationModule, PickAndPlaceModule, GraspGenXModule} <= with_gpu
-    without = {
-        atom.module for f in alfred_perception_modules(models=False) for atom in f.blueprints
-    }
-    assert not ({ObjectSceneRegistrationModule, PickAndPlaceModule} & without)
-    scene = next(
-        atom
-        for f in alfred_perception_modules(models=True)
-        for atom in f.blueprints
-        if atom.module is ObjectSceneRegistrationModule
-    )
-    # The scene is kept in odom like the map, so a drive leaves the objects where they are;
-    # PickAndPlaceModule re-expresses an object's cloud in its planning frame through tf.
-    assert scene.kwargs["target_frame"] == ODOM_FRAME, "objects stay put when the base drives"
-    assert scene.kwargs["tf_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, "a 5 Hz mount edge"
-    assert pick_planning_frame(alfred_perception_modules(models=True)) == BASE_FRAME, (
-        "grasps where the arm plans"
-    )
-    assert scene.kwargs["detector_confidence"] < 0.6, "OWLv2 scores 0.3-0.6 on this bench"
-    assert scene.kwargs["detect_on_request"] is True, "a scan, not a stream"
-    pick = next(
-        atom
-        for f in alfred_perception_modules(models=True)
-        for atom in f.blueprints
-        if atom.module is PickAndPlaceModule
-    )
-    for side in ("left", "right"):
-        reach = pick.kwargs["reach"][f"{side}_manipulator"]
-        assert reach.shoulder_frame == f"openarm_{side}_link1", "a frame the planner puts on tf"
-        assert 0.40 <= reach.radius <= 0.45 and abs(reach.wrist_to_tip - 0.186) < 1e-9
-    assert not alfred_perception_modules(models=False) or all(
-        atom.module is not PerceptionLocalize
-        for fragment in alfred_perception_modules(models=False)
-        for atom in fragment.blueprints
-    ), "on a CPU-only torch localize would peg the box"
 
 
-def pick_planning_frame(fragments: tuple[Any, ...]) -> str:
-    (pick,) = [
-        atom for f in fragments for atom in f.blueprints if atom.module is PickAndPlaceModule
-    ]
-    return cast("str", pick.kwargs["planning_frame"])
-
-
-@pytest.mark.parametrize(
-    "stack",
-    [
-        pytest.param(alfred_full_perception, id="alfred-full-perception"),
-        pytest.param(alfred_manipulation, id="alfred-manipulation"),
-        pytest.param(alfred_manipulation_heuristic, id="alfred-manipulation-heuristic"),
-        pytest.param(alfred_manipulation_sim, id="alfred-manipulation-sim"),
-    ],
-)
+@pytest.mark.parametrize("stack", _MANIPULATION_STACKS)
 def test_the_planner_map_has_the_robot_carved_out(stack: Blueprint) -> None:
     """A second self filter between the box filter and the planner drops every cell the robot
     touches: the map remembers the bench edge, and a hand hovering just over it overlapped two
@@ -516,20 +564,15 @@ def test_the_planner_map_has_the_robot_carved_out(stack: Blueprint) -> None:
         "the obstacle around the hand for its next motion"
     )
     assert carve.kwargs["model"] == camera_filter.kwargs["model"], "the planner's own model"
+    assert carve.kwargs["publish_joint_tf"] is False, "one module owns the robot on tf"
+    for port in ("render_file_request", "file_info"):
+        assert _wired(stack, carve.name, port) != port, "one module answers for the URDF's files"
     for tolerance in ("state_tolerance_s", "tf_tolerance_s", "tf_forward_tolerance_s"):
         assert carve.kwargs[tolerance] == camera_filter.kwargs[tolerance], tolerance
     assert box_filter.kwargs["target_frame"] == BASE_FRAME, "the model's root: no tf to wait on"
 
 
-@pytest.mark.parametrize(
-    "stack",
-    [
-        pytest.param(alfred_full_perception, id="alfred-full-perception"),
-        pytest.param(alfred_manipulation, id="alfred-manipulation"),
-        pytest.param(alfred_manipulation_heuristic, id="alfred-manipulation-heuristic"),
-        pytest.param(alfred_manipulation_sim, id="alfred-manipulation-sim"),
-    ],
-)
+@pytest.mark.parametrize("stack", _MANIPULATION_STACKS)
 def test_the_planner_map_is_cropped_to_the_arms_reach(stack: Blueprint) -> None:
     """The map is kept in odom and remembers everything the camera saw as the base drove round
     the room: at 200148 points the planner refused every map and planned on one hours stale
@@ -640,7 +683,7 @@ def test_the_planner_map_crop_holds_both_arms_reach_with_the_base_helping() -> N
 
 def test_the_bench_stack_runs_without_the_lidar() -> None:
     """alfred-manipulation: arms, lift, planner, camera; the base pose from wheel odometry."""
-    modules = {atom.module for atom in alfred_manipulation.blueprints}
+    modules = _modules(alfred_manipulation)
     assert {
         AlfredHighLevel,
         WheelOdometryRelay,
@@ -648,10 +691,9 @@ def test_the_bench_stack_runs_without_the_lidar() -> None:
         ManipulationModule,
         AlfredOperatorCoordinator,
         RealSenseCamera,
-        RoboPlanPointCloudSelfFilter,
+        UrdfManagerPointClearing,
     } <= modules
     assert not {PointLio, MLSPlannerNative, LocalPlannerNative, LocalMapRelocalization} & modules
-    assert PerceptionLocalize not in modules, "the bench picks through the scene registration"
     tasks = _tasks(alfred_manipulation)
     assert NAV_FOLLOWER_TASK_NAME not in tasks, "no path to follow here"
     assert {BASE_VELOCITY_TASK_NAME, BASE_TRAJECTORY_TASK_NAME, "hold_arms"} <= set(tasks)
@@ -665,23 +707,20 @@ def test_the_bench_stack_runs_without_the_lidar() -> None:
     assert planner.kwargs["voxel_map_resolution"] == voxel_map.kwargs["voxel_size"]
 
 
-@pytest.mark.parametrize(
-    "blueprint",
-    [
-        pytest.param(alfred_manipulation, id="alfred-manipulation"),
-        pytest.param(alfred_manipulation_sim, id="alfred-manipulation-sim"),
-    ],
-)
-def test_an_operator_can_hold_the_bench_stacks(blueprint: Blueprint) -> None:
+@pytest.mark.parametrize("blueprint", _LAYERED_STACKS)
+def test_an_operator_can_hold_every_layer(blueprint: Blueprint) -> None:
     """The operator hold outranks every claim, so it freezes arms, grippers, lift and base."""
     tasks = _tasks(blueprint)
     hold = tasks[OPERATOR_HOLD_TASK_NAME]
     assert hold.type == "operator_hold" and not hold.joint_names, "it claims every joint"
     assert hold.params["hold_through_estop"], "teleop's velocity task ignores the e-stop"
     assert all(task.priority < hold.priority for task in tasks.values() if task is not hold)
-    modules = {atom.module for atom in blueprint.blueprints}
-    assert {AlfredOperatorCoordinator, OperatorHandoff, McpServer} <= modules
+    assert AlfredOperatorCoordinator in _modules(blueprint)
     assert AlfredNavCoordinator in AlfredOperatorCoordinator.__mro__, "the follower's ports stay"
+
+
+def test_manipulation_has_the_handoff_and_every_skill_on_mcp() -> None:
+    assert {OperatorHandoff, McpServer} <= _modules(alfred_manipulation)
 
 
 def test_the_agent_joins_the_bench_stacks_only_with_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -691,7 +730,14 @@ def test_the_agent_joins_the_bench_stacks_only_with_a_key(monkeypatch: pytest.Mo
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert McpClient not in modules()
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    assert McpClient in modules()
+    assert {McpClient, ManipulationSkills, ObserveSkill} <= modules()
+    (client,) = [
+        atom
+        for part in alfred_operator_modules()
+        for atom in part.blueprints
+        if atom.module is McpClient
+    ]
+    assert client.kwargs["system_prompt"] is ALFRED_SYSTEM_PROMPT
 
 
 def test_the_driving_stack_runs_without_the_arms() -> None:
@@ -705,9 +751,10 @@ def test_the_driving_stack_runs_without_the_arms() -> None:
         PillarConnection,
     } <= (modules)
     assert not {ManipulationModule, RealSenseCamera, WheelOdometryRelay} & modules
-    hardware_ids = {hw.hardware_id for hw in _coordinator_kwargs(alfred_navigation)["hardware"]}
-    assert ALFRED_BASE_HARDWARE_ID in hardware_ids
-    assert not any("openarm" in hw_id or "arm" in hw_id for hw_id in hardware_ids), "no arms' CAN"
+    assert (
+        "hardware" not in _coordinator_kwargs(alfred_navigation)
+        or not (_coordinator_kwargs(alfred_navigation)["hardware"])
+    ), "no arms' CAN"
     tasks = _tasks(alfred_navigation)
     assert {BASE_VELOCITY_TASK_NAME, NAV_FOLLOWER_TASK_NAME} <= set(tasks)
     assert "hold_arms" not in tasks
@@ -752,31 +799,91 @@ def test_rerun_urdf_is_materialized_with_resolved_meshes_and_coordinator_joints(
     assert meshes and all(Path(m).is_file() for m in meshes), "unresolved mesh path"
 
 
-def test_the_controller_gets_the_urdf_without_a_second_tf_tree() -> None:
-    """UrdfManager serves the XML and meshes; Point-LIO and the mount tree keep tf, and the
-    planner puts the moving links on it."""
-    (urdf,) = _atoms(alfred_full, UrdfManager)
+@pytest.mark.parametrize("stack", _LAYERED_STACKS)
+def test_one_urdf_manager_owns_the_robot_on_tf(stack: Blueprint) -> None:
+    """The mounts, the lift and the arms, from the joint state; no planner has to publish them
+    (alfred-base has none), and no static mount tree runs beside it."""
+    assert AlfredMountTf not in _modules(stack)
+    (urdf,) = [atom for atom in _atoms(stack, UrdfManager) if atom.name != MANIP_MAP_SELF_FILTER]
+    assert urdf.kwargs.get("publish_joint_tf", True) is True
+    assert urdf.kwargs["model"] in (ALFRED_TF_MODEL, ALFRED_SELF_FILTER_MODEL)
+    assert 1.0 / urdf.kwargs["unchanged_tf_hz"] < 2 * 0.12, "localize's tf tolerance"
+    assert urdf.kwargs["joint_tf_hz"] == JOINT_TF_HZ <= 10.0, "30 Hz is a third of the Orin's core"
+
+
+@pytest.mark.parametrize("stack", _MANIPULATION_STACKS)
+def test_the_planner_leaves_the_links_to_the_urdf_manager(stack: Blueprint) -> None:
+    (planner,) = _atoms(stack, ManipulationModule)
+    assert not planner.kwargs["model"].tf_extra_links
+
+
+def test_the_driving_stack_keeps_its_tf_tree_under_the_lidar() -> None:
+    """Point-LIO owns the lidar's parent edge, so UrdfManager only serves the XML and meshes."""
+    (urdf,) = _atoms(alfred_navigation, UrdfManager)
     assert urdf.kwargs["publish_joint_tf"] is False
-    (planner,) = _atoms(alfred_full, ManipulationModule)
-    assert planner.kwargs["model"].tf_extra_links == ALFRED_MOVING_LINKS
+    (mounts,) = _atoms(alfred_navigation, AlfredMountTf)
+    assert mounts.kwargs["root_frame"] == "mid360_link"
 
 
 @needs_lfs
-def test_the_moving_links_are_every_link_under_a_movable_joint() -> None:
-    root = ElementTree.fromstring(ALFRED_V1_MODEL.load().xml)
-    under_movable = [
-        joint.find("child").attrib["link"]  # type: ignore[union-attr]
-        for joint in root.findall("joint")
-        if joint.attrib["type"] != "fixed"
-    ]
-    assert ALFRED_MOVING_LINKS == under_movable
+def test_the_urdf_manager_poses_the_robot_as_the_planner_does_and_cuts_it_out() -> None:
+    """Off the coordinator's joint state as it arrives, grippers and base included: tf reaches
+    each hand where RoboPlan's forward kinematics puts it, and the filter drops the arm from a
+    cloud and keeps the bench."""
+    positions = {**dict.fromkeys(alfred_arm_joints(), 0.0), **ALFRED_ARM_READY}
+    positions[PILLAR_LIFT_JOINT] = -0.2
+    reported = {**positions, "left_arm/gripper": 1.0, "flowbase/vx": 0.1}
+    state = JointState(ts=1.0, name=list(reported), position=list(reported.values()))
+    model = ALFRED_SELF_FILTER_MODEL.load()
+    # Off the method, not a module: constructing one opens an RPC session.
+    manager: Any = SimpleNamespace(_joints={joint.name: joint for joint in model.joints})
+    parent = {edge.child_frame_id: edge for edge in UrdfManager.joint_transforms(manager, state)}
+
+    def on_tf(link: str) -> NDArray[np.float64]:
+        pose = np.eye(4)
+        while link in parent:
+            pose = parent[link].to_matrix() @ pose
+            link = parent[link].frame_id
+        assert link == BASE_FRAME
+        return pose
+
+    backend = RoboPlanBodyFilter(model, padding_m=0.05)
+    q = backend.configuration(reported, {})
+    for tip in ("openarm_left_grasp_frame", "openarm_right_grasp_frame", "camera_front_link"):
+        kinematics = np.asarray(backend._context.forwardKinematics(q, tip, BASE_FRAME))
+        assert np.allclose(on_tf(tip), kinematics, atol=1e-6), tip
+    elbow = on_tf("openarm_left_link4")[:3, 3]
+    bench = np.array([1.0, 0.0, 0.75])
+    keep = backend.keep_mask(np.array([elbow, bench]), reported, {})
+    assert keep is not None and keep.tolist() == [False, True]
+
+
+@needs_lfs
+def test_the_tf_model_leaves_the_imagers_to_the_camera_driver() -> None:
+    """With rotate_180 the driver's optical frames are half a turn from the urdf's: an edge from
+    both would flip the camera's pose on tf from one sample to the next."""
+    full = {joint.name for joint in ALFRED_V1_MODEL.load().joints}
+    assert set(ALFRED_CAMERA_IMAGER_JOINTS) <= full, "names off the urdf"
+    loaded = ALFRED_TF_MODEL.load()
+    links = {joint.child_link for joint in loaded.joints}
+    assert {"camera_front_link", "camera_back_link", "mid360_link"} <= links
+    assert not [link for link in links if "optical" in link or link.endswith("_imu_frame")]
+    assert all(
+        joint.parent_link not in ("camera_front_link", "camera_back_link")
+        for joint in loaded.joints
+    )
+    moving = {joint.name for joint in loaded.joints if joint.type != "fixed"}
+    assert {PILLAR_LIFT_JOINT, *alfred_arm_joints()} <= moving
+    filtered = {j.name for j in ALFRED_SELF_FILTER_MODEL.load().joints if j.type != "fixed"}
+    assert filtered == {PILLAR_LIFT_JOINT, *alfred_arm_joints()}, (
+        "the joints the coordinator reports"
+    )
 
 
 def test_a_click_is_the_goal() -> None:
-    """The Controller's "Go here" and the rerun viewer publish clicked_point; with no
-    MovementManager to relay it, the planner listens there itself."""
-    assert alfred_full.remapping_map[(MLSPlannerNative.name, "goal")] == "clicked_point"
-    assert (RerunWebSocketServer.name, "clicked_point") not in alfred_full.remapping_map
+    """The Controller's "Go here" publishes clicked_point; with no MovementManager to relay it,
+    the planner listens there itself."""
+    assert alfred_navigation.remapping_map[(MLSPlannerNative.name, "goal")] == "clicked_point"
 
 
 def test_mock_arms_start_in_the_ready_pose(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -793,26 +900,6 @@ def test_mock_arms_start_in_the_ready_pose(monkeypatch: pytest.MonkeyPatch) -> N
     assert {name: home[name] for name in ALFRED_ARM_READY} == ALFRED_ARM_READY, (
         "home is the ready pose"
     )
-
-
-def test_the_agent_drives_the_same_stack_the_controller_does() -> None:
-    from dimos.agents.mcp.mcp_client import McpClient
-    from dimos.agents.mcp.mcp_server import McpServer
-    from dimos.agents.skills.point_nav import PointNavSkillContainer
-    from dimos.manipulation.manipulation_skills import ManipulationSkills
-    from dimos.robot.diy.alfred.blueprints.alfred_full_agentic import alfred_full_agentic
-    from dimos.robot.diy.alfred.system_prompt import ALFRED_SYSTEM_PROMPT
-
-    modules = {atom.module for atom in alfred_full_agentic.blueprints}
-    assert {McpServer, McpClient, PointNavSkillContainer, ManipulationSkills} <= modules
-    (client,) = _atoms(alfred_full_agentic, McpClient)
-    assert client.kwargs["system_prompt"] is ALFRED_SYSTEM_PROMPT
-    # go_to publishes where "Go here" does, so one planner input serves both.
-    assert (
-        alfred_full_agentic.remapping_map[(PointNavSkillContainer.name, "goal")] == "clicked_point"
-    )
-    (nav,) = _atoms(alfred_full_agentic, PointNavSkillContainer)
-    assert nav.kwargs["world_frame"] == "odom"
 
 
 @needs_lfs
@@ -886,43 +973,28 @@ def test_graspgenx_sees_the_v10_gripper_the_urdf_carries() -> None:
 def test_the_bench_stack_picks_with_graspgenx_and_can_fall_back_to_the_heuristic() -> None:
     """alfred-manipulation: GraspGenX answers propose_grasps; -heuristic is the same stack with
     the one-top-down-grasp generator and no second environment."""
-    learned = {atom.module for atom in alfred_manipulation.blueprints}
+    learned = _modules(alfred_manipulation)
     assert GraspGenXModule in learned and HeuristicGraspModule not in learned
-    heuristic = {atom.module for atom in alfred_manipulation_heuristic.blueprints}
+    heuristic = _modules(alfred_manipulation_heuristic)
     assert HeuristicGraspModule in heuristic and GraspGenXModule not in heuristic
     assert learned - {GraspGenXModule} == heuristic - {HeuristicGraspModule}, "only the generator"
     (graspgenx,) = _atoms(alfred_manipulation, GraspGenXModule)
     assert graspgenx.kwargs["gripper"] == OPENARM_V10_SWEEP_VOLUME
     assert graspgenx.kwargs["grasp_frame_to_tcp"] == OPENARM_V10_GRASP_FRAME_TO_TCP
-    assert GraspGenXModule not in {
-        atom.module for f in alfred_perception_modules(models=False) for atom in f.blueprints
-    }, "GraspGenX is a GPU model"
 
 
 def test_graspgenx_has_time_to_start_beside_the_models() -> None:
     """The 30 s default covers `uv run` and the runtime's imports, which on the Orin run while ten
     workers start and OWLv2 and EdgeTAM load; the model itself loads later, in start()."""
-    (graspgenx,) = [
-        atom
-        for fragment in alfred_perception_modules(models=True)
-        for atom in fragment.blueprints
-        if atom.module is GraspGenXModule
-    ]
+    (graspgenx,) = _atoms(alfred_manipulation, GraspGenXModule)
     assert GraspGenXConfig.model_validate(graspgenx.kwargs).startup_timeout >= 60.0
 
 
-def test_the_rerun_bridge_keeps_little_for_late_viewers() -> None:
-    """A quarter of the Orin's RAM (the bridge's default) is what the models run in: that
-    worker reached 6.4 GB and was OOM-killed, with the box thrashing first."""
-    (bridge,) = _atoms(alfred_full, RerunBridgeModule)
-    assert bridge.kwargs["memory_limit"] == "256MB"
-
-
-@pytest.mark.parametrize("stack", [alfred_manipulation, alfred_navigation], ids=["bench", "nav"])
-def test_the_split_stacks_run_no_rerun_bridge(stack: Blueprint) -> None:
-    """The Desktop reads zenoh itself; the bridge only cost the Orin memory (the OOM above)."""
-    modules = {atom.module for atom in stack.blueprints}
-    assert not ({RerunBridgeModule, RerunWebSocketServer} & modules)
+@pytest.mark.parametrize("stack", [*_LAYERED_STACKS, alfred_navigation])
+def test_no_stack_runs_a_rerun_bridge(stack: Blueprint) -> None:
+    """The Desktop reads zenoh itself; a quarter of the Orin's RAM (the bridge's default) is what
+    the models run in: that worker reached 6.4 GB and was OOM-killed, with the box thrashing."""
+    assert not ({RerunBridgeModule, RerunWebSocketServer} & _modules(stack))
 
 
 def test_the_base_task_commands_through_the_inverse_of_the_measured_plant() -> None:
@@ -930,7 +1002,7 @@ def test_the_base_task_commands_through_the_inverse_of_the_measured_plant() -> N
     they are, a turn ran away from the task's feedback and aborted. The gains are 1/K per
     axis from the artifact, and the physical limit times the gain stays under the firmware's
     cap so a fast diagonal is not clipped off its heading."""
-    plan = _tasks(alfred_full)[BASE_TRAJECTORY_TASK_NAME]
+    plan = _tasks(alfred_base)[BASE_TRAJECTORY_TASK_NAME]
     gains = plan.params["command_gains"]
     assert gains == pytest.approx((1.30, 1.30, 0.35), abs=0.05)
     assert gains == alfred_base_command_gains()
@@ -961,7 +1033,7 @@ def test_the_base_task_runs_uncompensated_until_alfred_has_a_plant_model(
 
 # What drives hardware in the bench stack, and what stands in for it in the sim.
 _BENCH_HARDWARE: set[type] = {RealSenseCamera, AlfredHighLevel}
-_SIM_HARDWARE: set[type] = {MujocoSimModule, CoordinatorBaseOdometry}
+_SIM_HARDWARE: set[type] = {MujocoSimModule, SimFlowBase}
 
 
 def _streams(blueprint: Blueprint, module: type) -> set[tuple[str, Any, type]]:
@@ -984,29 +1056,22 @@ def test_the_sim_bench_stack_opens_no_hardware(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv(OPENARM_LEFT_CAN_ENV, "can2")
     monkeypatch.setenv(OPENARM_RIGHT_CAN_ENV, "can3")
     stack = autoconnect(*alfred_sim_modules(device="cpu"))
-    modules = {atom.module for atom in stack.blueprints}
+    modules = _modules(stack)
     assert not (_BENCH_HARDWARE & modules), "no D455, no Portal client"
     assert _SIM_HARDWARE <= modules
-    hardware = {hw.hardware_id: hw for hw in _coordinator_kwargs(stack)["hardware"]}
-    assert set(hardware) == {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID, ALFRED_BASE_HARDWARE_ID}
-    arms = hardware[OPENARM_HARDWARE_ID]
+    (arms,) = _coordinator_kwargs(stack)["hardware"]
+    assert arms.hardware_id == OPENARM_HARDWARE_ID
     assert arms.adapter_type == "mock_whole_body", "the CAN ports in the env are ignored"
     start = dict(zip(arms.joints, arms.adapter_kwargs["initial_positions"], strict=True))
     assert {name: start[name] for name in ALFRED_ARM_READY} == ALFRED_ARM_READY
-    assert hardware[PILLAR_HARDWARE_ID].adapter_type == "transport_lcm", "as on the robot"
     (pillar,) = _atoms(stack, PillarConnection)
     assert pillar.kwargs["device_path"] == PILLAR_SIM_DEVICE
-    base = hardware[ALFRED_BASE_HARDWARE_ID]
-    assert base.adapter_type == "mock_twist_base"
-    assert base.adapter_kwargs["integrate_odometry"] is True
-    assert base.adapter_kwargs["step_dt"] == pytest.approx(0.01), "one coordinator tick"
     # The measured plant: the base task's command gains (its inverse) move it as planned.
-    plant = base.adapter_kwargs["plant_gains"]
+    (base,) = _atoms(stack, SimFlowBase)
+    plant = base.kwargs["plant_gains"]
     assert [k * g for k, g in zip(plant, alfred_base_command_gains(), strict=True)] == (
         pytest.approx([1.0, 1.0, 1.0])
     )
-    (odometry,) = _atoms(stack, CoordinatorBaseOdometry)
-    assert odometry.kwargs["base_joints"] == base.joints
 
 
 def test_the_sim_coordinator_runs_the_bench_stacks_claims() -> None:
@@ -1018,17 +1083,17 @@ def test_the_sim_coordinator_runs_the_bench_stacks_claims() -> None:
 def test_the_sim_has_the_bench_stacks_streams_and_remappings_off_the_hardware() -> None:
     """Every module that drives no hardware is wired as on the robot; the stand-ins publish
     what the hardware's drivers do, under the same names."""
-    bench = {atom.module for atom in alfred_manipulation.blueprints} - _BENCH_HARDWARE
-    assert bench == {atom.module for atom in alfred_manipulation_sim.blueprints} - _SIM_HARDWARE
+    bench = _modules(alfred_manipulation) - _BENCH_HARDWARE
+    assert bench == _modules(alfred_manipulation_sim) - _SIM_HARDWARE
     for module in bench:
         assert _streams(alfred_manipulation_sim, module) == _streams(alfred_manipulation, module)
     camera = MujocoSimModule.name
-    assert {
-        key: value
-        for key, value in alfred_manipulation_sim.remapping_map.items()
-        if key[0] != camera
-    } == dict(alfred_manipulation.remapping_map)
-    assert dict(alfred_manipulation_sim.transport_map) == dict(alfred_manipulation.transport_map)
+    same = lambda stack, *apart: {  # noqa: E731
+        key: value for key, value in stack.remapping_map.items() if key[0] not in apart
+    }
+    assert same(alfred_manipulation_sim, camera, SimFlowBase.name) == same(
+        alfred_manipulation, AlfredHighLevel.name
+    )
     published = {
         (stream, type_) for _, stream, type_ in _streams(alfred_manipulation, RealSenseCamera)
     }
@@ -1038,15 +1103,12 @@ def test_the_sim_has_the_bench_stacks_streams_and_remappings_off_the_hardware() 
         }
         assert {(name, type_) for name, type_ in published if name == stream} <= sim_streams
     driver = {(name, type_) for _, name, type_ in _streams(alfred_manipulation, AlfredHighLevel)}
-    reader = {
-        (name, type_)
-        for _, name, type_ in _streams(alfred_manipulation_sim, CoordinatorBaseOdometry)
-    }
-    assert ("wheel_odometry", Odometry) in driver & reader
+    reader = {(name, type_) for _, name, type_ in _streams(alfred_manipulation_sim, SimFlowBase)}
+    assert {("wheel_odometry", Odometry), ("flowbase_cmd_vel", Twist)} <= driver & reader
 
 
 def test_the_sim_camera_is_the_mast_d455() -> None:
-    """The D455's names, frames, size and rates; mounted under AlfredMountTf's camera_front_link
+    """The D455's names, frames, size and rates; mounted under UrdfManager's camera_front_link
     and carried along by the base's odometry (the pose WheelOdometryRelay publishes)."""
     (real,) = _atoms(alfred_manipulation, RealSenseCamera)
     (atom,) = _atoms(alfred_manipulation_sim, MujocoSimModule)
@@ -1063,45 +1125,45 @@ def test_the_sim_camera_is_the_mast_d455() -> None:
     assert Path(str(config.address)).is_file()
     assert config.mocap_body == "base_link"
     remaps = alfred_manipulation_sim.remapping_map
-    assert remaps[(MujocoSimModule.name, "mocap_pose")] == "start_pose"
-    assert _channel(alfred_manipulation_sim, ("start_pose", PoseStamped))[1] == transport_topic(
-        f"/{ALFRED_BASE_HARDWARE_ID}/odom"
-    )
+    assert remaps[(MujocoSimModule.name, "mocap_pose")] == "flowbase_odom"
 
 
 @pytest.mark.parametrize(
-    ("device", "grasp", "segmenter"),
+    ("device", "grasp", "detector", "segmenter"),
     [
-        ("cuda", GraspGenXModule, "edgetam"),
-        ("mps", HeuristicGraspModule, "edgetam"),
-        ("cpu", HeuristicGraspModule, "none"),
+        ("cuda", GraspGenXModule, "owlv2", "edgetam"),
+        ("mps", HeuristicGraspModule, OWLV2_FLOAT32, "edgetam"),
+        ("cpu", HeuristicGraspModule, OWLV2_FLOAT32, "none"),
     ],
 )
 def test_the_sim_runs_the_models_this_machine_can(
-    monkeypatch: pytest.MonkeyPatch, device: PerceptionDevice, grasp: type, segmenter: str
+    monkeypatch: pytest.MonkeyPatch,
+    device: PerceptionDevice,
+    grasp: type,
+    detector: str,
+    segmenter: str,
 ) -> None:
-    """GraspGenX only on CUDA, EdgeTAM on CUDA or MPS; OWLv2 and the pick pipeline everywhere,
+    """GraspGenX only on CUDA, EdgeTAM on CUDA or MPS; localize and the pick pipeline everywhere,
     so a Mac or a laptop with no GPU still scans and picks."""
     monkeypatch.setattr(sim, "perception_device", lambda: device)
     stack = autoconnect(*alfred_sim_modules())
-    modules = {atom.module for atom in stack.blueprints}
-    assert {ObjectSceneRegistrationModule, PickAndPlaceModule, grasp} <= modules
+    modules = _modules(stack)
+    assert {PerceptionLocalize, PickAndPlaceModule, grasp} <= modules
     assert len(modules & {GraspGenXModule, HeuristicGraspModule}) == 1, "one generator"
-    assert PerceptionLocalize not in modules, "as on the bench"
-    (scene,) = _atoms(stack, ObjectSceneRegistrationModule)
-    assert scene.kwargs["detector_backend"] == "owlv2"
-    assert scene.kwargs["segmentation_backend"] == segmenter
-    assert scene.kwargs["detector_confidence"] == SIM_SCENE_DETECTOR_CONFIDENCE
-    (bench_scene,) = _atoms(alfred_manipulation, ObjectSceneRegistrationModule)
-    unchanged = ("detector_backend", "detector_confidence", "segmentation_backend")
-    assert {k: v for k, v in scene.kwargs.items() if k not in unchanged} == {
-        k: v for k, v in bench_scene.kwargs.items() if k not in unchanged
+    (localize,) = _atoms(stack, PerceptionLocalize)
+    assert localize.kwargs["detector"] == detector and localize.kwargs["segmenter"] == segmenter
+    assert localize.kwargs["params"] == SIM_LOCALIZE_PARAMS
+    (bench,) = _atoms(alfred_perception, PerceptionLocalize)
+    machine = ("detector", "segmenter", "params")
+    assert {k: v for k, v in localize.kwargs.items() if k not in machine} == {
+        k: v for k, v in bench.kwargs.items() if k not in machine
     }, "only what renders and the machine need"
 
 
-def test_renders_score_below_the_benchs_detector_threshold() -> None:
+def test_renders_score_below_the_benchs_accept_score() -> None:
     """OWLv2 scored the rendered cucumber 0.16 and bottle 0.27 (false boxes 0.07 at most)."""
-    assert 0.07 < SIM_SCENE_DETECTOR_CONFIDENCE < 0.16 < SCENE_DETECTOR_CONFIDENCE
+    assert 0.07 < SIM_LOCALIZE_PARAMS.accept_score < 0.16 < ALFRED_BENCH_PARAMS.accept_score
+    assert SIM_LOCALIZE_PARAMS.candidate_floor <= SIM_LOCALIZE_PARAMS.accept_score
 
 
 @pytest.mark.parametrize(

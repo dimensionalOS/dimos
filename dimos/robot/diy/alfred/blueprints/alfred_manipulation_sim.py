@@ -16,23 +16,22 @@
 
     dimos run alfred-manipulation-sim
 
-The modules and the wiring are alfred-manipulation's (``alfred_bench_modules``), so the
-Manipulation app and the Controller drive it as they drive the robot. Only what touches
-hardware is swapped:
+The modules and the wiring are alfred-manipulation's, layer by layer (``alfred_base_modules``,
+``alfred_localize``, ``alfred_manipulation_modules``), so the Manipulation app and the Controller
+drive it as they drive the robot. Only what touches hardware is swapped:
 
 * arms: the OpenArms' mock adapter in the ready pose, whatever OPENARM_LEFT_CAN and
   OPENARM_RIGHT_CAN say (the robot's .env sets them): no CAN is opened. The grippers keep
   their coordinator tasks, so Open and Close work;
 * lift: PillarConnection on ``PILLAR_SIM_DEVICE``, the Nano's serial protocol emulated
   in-process (``pillar_emulator``): home, set_position, stop_motion and get_status answer as on
-  the robot, and the coordinator reaches the lift through the same transport adapter;
-* base: the coordinator's mock twist base, integrating what it is told through Alfred's
+  the robot, and the coordinator reaches the lift through the same ports;
+* base: ``SimFlowBase``, a connection module on AlfredHighLevel's ports, moving through Alfred's
   measured plant (``alfred_posedomain.json``: yaw 2.85x, translation 0.77x), so a plan's base
-  segment runs on the same command gains as on the robot. ``CoordinatorBaseOdometry`` reads its
-  pose back as the wheel odometry AlfredHighLevel publishes there, and the same
-  ``WheelOdometryRelay`` puts ``odom -> base_link`` on tf and ``/flowbase/odom``;
+  segment runs on the same command gains as on the robot. The same ``WheelOdometryRelay`` puts
+  its ``wheel_odometry`` on tf and on the coordinator's ``flowbase_odom``;
 * camera: ``MujocoSimModule`` rendering ``alfred_bench_scene.xml`` from the mast D455's pose,
-  under its names and frames (``camera_front_color_optical_frame`` under AlfredMountTf's
+  under its names and frames (``camera_front_color_optical_frame`` under UrdfManager's
   ``camera_front_link``), 848x480 at 15 Hz, a cloud of every third pixel to 3 m at 5 Hz. The
   scene's ``base_link`` follows ``/flowbase/odom``, so the picture moves when the base does;
 * models: what this machine runs (``perception_device``, see ``SIM_MODELS``).
@@ -46,38 +45,41 @@ peers on the LAN, and this coordinator answers to the same RPC names as the real
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from dimos.control.blueprints.mobile import _mock_twist_base
-from dimos.control.components import HardwareComponent
-from dimos.control.coordinator import ControlCoordinatorConfig
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.diy.alfred.alfred_model import alfred_base_command_gains
-from dimos.robot.diy.alfred.blueprints.alfred_full import (
-    ALFRED_BASE_HARDWARE_ID,
-    alfred_base_transports,
-    alfred_openarm_hardware,
-)
-from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
+from dimos.robot.diy.alfred.blueprints.alfred_base import (
     D455_FPS,
     D455_HEIGHT,
     D455_POINTCLOUD_DECIMATION,
     D455_POINTCLOUD_FPS,
     D455_WIDTH,
     DEPTH_TRUNC_M,
-    GraspGenerator,
-    PerceptionDevice,
-    SceneSegmenter,
-    alfred_perception_modules,
-    perception_device,
+    FLOWBASE_DEADMAN_S,
+    AlfredHardware,
+    alfred_base_modules,
+    alfred_connections,
+    alfred_openarm_hardware,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_manipulation import (
-    BenchHardware,
-    alfred_bench_modules,
+    GraspGenerator,
+    alfred_manipulation_modules,
 )
-from dimos.robot.diy.alfred.coordinator_base_odometry import CoordinatorBaseOdometry
+from dimos.robot.diy.alfred.blueprints.alfred_perception import (
+    ALFRED_BENCH_PARAMS,
+    PerceptionDevice,
+    alfred_localize,
+    perception_device,
+)
 from dimos.robot.diy.alfred.pillar_connection import PILLAR_SIM_DEVICE
+from dimos.robot.diy.alfred.sim_flowbase import SimFlowBase
+from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.simulation.mujoco.headless_gl import default_mujoco_gl
 
@@ -87,33 +89,33 @@ SIM_CAMERA = "camera_front"
 # The scene body that stands for base_link, moved by the base's odometry.
 SIM_BASE_BODY = "base_link"
 
+# The registry's "owlv2" is built in float16 for CUDA; elsewhere that is slow or unsupported, so
+# the detector class is named directly (its default dtype is float32).
+OWLV2_FLOAT32 = "dimos.perception.detection.detectors.owlv2:Owlv2Detector"
 # What the pick pipeline runs where: GraspGenX needs CUDA, EdgeTAM CUDA or Apple's MPS.
-SIM_MODELS: dict[PerceptionDevice, tuple[GraspGenerator, SceneSegmenter]] = {
-    "cuda": ("graspgenx", "edgetam"),
-    "mps": ("heuristic", "edgetam"),
-    "cpu": ("heuristic", "none"),
+SIM_MODELS: dict[PerceptionDevice, tuple[GraspGenerator, str, str]] = {
+    "cuda": ("graspgenx", "owlv2", "edgetam"),
+    "mps": ("heuristic", OWLV2_FLOAT32, "edgetam"),
+    "cpu": ("heuristic", OWLV2_FLOAT32, "none"),
 }
 # OWLv2 on one rendered frame of the scene (2026-10-25): tennis ball 0.69, cardboard box 0.39,
 # soda can 0.31, bottle 0.27, cucumber 0.16 (the app's "ball", "box", "cup" 0.60, 0.56, 0.25),
 # the best false box 0.07. The bench's 0.3 would miss three of the five; EdgeTAM masked all
 # five at IoU 0.99 against the scene's own segmentation.
-SIM_SCENE_DETECTOR_CONFIDENCE = 0.1
+SIM_LOCALIZE_PARAMS: LocalizeParams = replace(
+    ALFRED_BENCH_PARAMS, candidate_floor=0.1, accept_score=0.1
+)
 
 # The worker that renders imports mujoco after this; on Linux with no display it needs EGL.
 default_mujoco_gl()
 
 
-def alfred_sim_flowbase() -> HardwareComponent:
-    """The coordinator's mock twist base under the FlowBase's name (the tasks claim its joints),
-    integrated once a tick through the measured plant the base task's command gains invert."""
-    base = _mock_twist_base(ALFRED_BASE_HARDWARE_ID)
-    tick_rate = ControlCoordinatorConfig.model_fields["tick_rate"].default
-    base.adapter_kwargs = {
-        "integrate_odometry": True,
-        "step_dt": 1.0 / tick_rate,
-        "plant_gains": tuple(1.0 / gain for gain in alfred_base_command_gains()),
-    }
-    return base
+def alfred_sim_flowbase() -> Any:
+    """The FlowBase moving through the measured plant the base task's command gains invert."""
+    return SimFlowBase.blueprint(
+        plant_gains=tuple(1.0 / gain for gain in alfred_base_command_gains()),
+        deadman_timeout_s=FLOWBASE_DEADMAN_S,
+    )
 
 
 def alfred_sim_camera() -> Any:
@@ -122,8 +124,8 @@ def alfred_sim_camera() -> Any:
         address=str(ALFRED_BENCH_SCENE),
         headless=True,
         camera_name=SIM_CAMERA,
-        # Mounted on a body named for the D455's link: the mount tree (AlfredMountTf) owns
-        # base_link -> camera_front_link; the camera adds only its optical frames below it.
+        # Mounted on a body named for the D455's link: UrdfManager owns base_link ->
+        # camera_front_link; the camera adds only its optical frames below it.
         base_frame_id=f"{SIM_CAMERA}_link",
         width=D455_WIDTH,
         height=D455_HEIGHT,
@@ -139,40 +141,38 @@ def alfred_sim_camera() -> Any:
     ).remappings(
         [
             # base_link's pose in odom, as WheelOdometryRelay publishes it for the coordinator.
-            (MujocoSimModule, "mocap_pose", "start_pose"),
+            (MujocoSimModule, "mocap_pose", "flowbase_odom"),
             # Only a scene with a free-jointed robot publishes it: odom is tf's frame here.
             (MujocoSimModule, "odom", "mujoco_odom_unused"),
         ]
     )
 
 
-def alfred_sim_hardware(device: PerceptionDevice) -> BenchHardware:
-    """Every stand-in the bench stack needs, and the models ``device`` can run."""
-    grasp, segmenter = SIM_MODELS[device]
-    base = alfred_sim_flowbase()
-    return BenchHardware(
-        flowbase=CoordinatorBaseOdometry.blueprint(base_joints=list(base.joints)),
+def alfred_sim_hardware() -> AlfredHardware:
+    """Every stand-in alfred-base needs."""
+    return AlfredHardware(
+        flowbase=alfred_sim_flowbase(),
         pillar_device_path=PILLAR_SIM_DEVICE,
         arms=alfred_openarm_hardware(),
-        base=base,
-        perception=alfred_perception_modules(
-            models=True,
-            localize=False,
-            grasp=grasp,
-            camera=alfred_sim_camera(),
-            scene_segmenter=segmenter,
-            scene_detector_confidence=SIM_SCENE_DETECTOR_CONFIDENCE,
-        ),
+        camera=alfred_sim_camera(),
     )
 
 
 def alfred_sim_modules(device: PerceptionDevice | None = None) -> tuple[Any, ...]:
-    """alfred-manipulation's modules on simulated hardware; ``device`` overrides the probe."""
-    return alfred_bench_modules(hardware=alfred_sim_hardware(device or perception_device()))
+    """alfred-manipulation's layers on simulated hardware, with the models ``device`` can run
+    (the machine's, by default)."""
+    grasp, detector, segmenter = SIM_MODELS[device or perception_device()]
+    return (
+        *alfred_base_modules(alfred_sim_hardware()),
+        alfred_localize(detector=detector, segmenter=segmenter, params=SIM_LOCALIZE_PARAMS),
+        McpServer.blueprint(),
+        *alfred_manipulation_modules(grasp=grasp),
+    )
 
 
 alfred_manipulation_sim = (
     autoconnect(*alfred_sim_modules())
-    .transports(alfred_base_transports())
+    .disabled_modules(UrdfManager)
+    .remappings(alfred_connections(SimFlowBase, WheelOdometryRelay))
     .global_config(n_workers=10, robot_model="alfred")
 )

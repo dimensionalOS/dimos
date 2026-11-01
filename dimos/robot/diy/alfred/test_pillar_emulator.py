@@ -27,7 +27,6 @@ import pytest
 
 from dimos.core.module import Module
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_FIRMWARE_JOINT,
     PILLAR_HOME_POSITION_M,
@@ -263,8 +262,8 @@ def pillar(monkeypatch: pytest.MonkeyPatch) -> Iterator[PillarConnection]:
     module.config = PillarConnectionConfig(
         device_path=PILLAR_SIM_DEVICE, speed_mm_s=250.0, accel_mm_s2=2500.0
     )
-    module.motor_states = MagicMock()
-    module._connect()
+    module.joint_state = MagicMock()
+    module.connect()
     try:
         yield module
     finally:
@@ -303,7 +302,7 @@ def test_the_connection_homes_jogs_and_stops_the_emulated_rail(pillar: PillarCon
     stopped = pillar.get_status()
     assert -0.45 < stopped["position_m"] < -0.25 and stopped["fault"] is None
 
-    publish = cast("MagicMock", pillar.motor_states.publish)
+    publish = cast("MagicMock", pillar.joint_state.publish)
     published = [call.args[0] for call in publish.call_args_list]
     assert published and all(isinstance(msg, JointState) for msg in published)
     assert published[-1].name == [PILLAR_LIFT_JOINT]
@@ -316,8 +315,8 @@ def _home(pillar: PillarConnection) -> None:
     _wait(lambda: pillar.get_status()["homed"] and not pillar.get_status()["motion_active"])
 
 
-def _command(height_m: float) -> MotorCommandArray:
-    return MotorCommandArray(q=[height_m], dq=[0.0], kp=[0.0], kd=[0.0], tau=[0.0])
+def _command(position_m: float) -> dict[str, float]:
+    return {f"{PILLAR_LIFT_JOINT}/position": position_m}
 
 
 def test_a_move_done_torn_into_telemetry_still_ends_the_move(pillar: PillarConnection) -> None:
@@ -360,25 +359,83 @@ def test_a_lost_move_done_away_from_the_target_still_faults(pillar: PillarConnec
     assert pillar.get_status()["fault"] == "pillar move did not report move_done in time"
 
 
-@pytest.mark.asyncio
-async def test_holding_the_idle_lift_where_it_stands_sends_no_move(
+def test_holding_the_idle_lift_where_it_stands_sends_no_move(
     pillar: PillarConnection,
 ) -> None:
     _home(pillar)
     here = pillar.get_status()["position_m"]
 
-    await pillar.handle_motor_command(_command(here + 0.0001))
+    pillar.write(_command(here + 0.0001))
 
     status = pillar.get_status()
     assert (status["active_target_m"], status["pending_target_m"]) == (None, None)
     assert status["motion_active"] is False
 
 
-@pytest.mark.asyncio
-async def test_a_command_away_from_the_idle_lift_moves_it(pillar: PillarConnection) -> None:
+def test_a_command_away_from_the_idle_lift_moves_it(pillar: PillarConnection) -> None:
     _home(pillar)
     target = pillar.get_status()["position_m"] - 0.01
 
-    await pillar.handle_motor_command(_command(target))
+    pillar.write(_command(target))
 
     _wait(lambda: abs(pillar.get_status()["position_m"] - target) < 0.001)
+
+
+def test_the_coordinators_repeated_height_leaves_a_jog_alone(pillar: PillarConnection) -> None:
+    """The coordinator tells the lift its hold every tick; a jog goes round it, through
+    set_position. Taken at their word those ticks would stop the jog dead."""
+    _home(pillar)
+    here = pillar.get_status()["position_m"]
+    pillar.write(_command(here))
+
+    assert pillar.set_position(here - 0.05) is True
+    pillar.write(_command(here))
+
+    _wait(lambda: pillar.get_status()["position_m"] < here - 0.04)
+    pillar.write(_command(here))
+    assert pillar.get_status()["active_target_m"] == pytest.approx(here - 0.05)
+
+
+def test_a_height_that_changes_is_a_command(pillar: PillarConnection) -> None:
+    _home(pillar)
+    here = pillar.get_status()["position_m"]
+    pillar.write(_command(here))
+    pillar.write(_command(here - 0.01))
+    _wait(lambda: abs(pillar.get_status()["position_m"] - (here - 0.01)) < 0.001)
+
+
+def test_a_hold_goes_past_a_lift_that_is_not_homed(pillar: PillarConnection) -> None:
+    """Every tick from the first: refused, quietly, and the lift never moves."""
+    _wait(lambda: pillar.get_status()["ready"])
+    pillar.write(_command(-0.10))
+    status = pillar.get_status()
+    assert status["motion_active"] is False and status["fault"] is None
+
+
+def test_the_skills_that_move_the_lift_wait_for_an_operator_hold(
+    pillar: PillarConnection,
+) -> None:
+    """The coordinator holds the lift by telling it nothing new, so nothing would take back a
+    move these skills started."""
+    _home(pillar)
+    pillar._operator_hold = True
+    assert pillar.set_position(-0.20) is False
+    assert pillar.home() is False
+    assert pillar.get_status()["motion_active"] is False
+    pillar._operator_hold = False
+    assert pillar.set_position(-0.20) is True
+
+
+def test_a_coordinator_gone_quiet_stops_a_moving_lift(pillar: PillarConnection) -> None:
+    _home(pillar)
+    pillar.set_position(-0.45)
+    _wait(lambda: pillar.get_status()["motion_active"])
+    pillar.halt()
+    _wait(lambda: pillar.get_status()["phase"] == PillarPhase.IDLE.value)
+    assert pillar.get_status()["position_m"] > -0.44
+
+
+def test_halting_a_lift_at_rest_does_nothing(pillar: PillarConnection) -> None:
+    _home(pillar)
+    pillar.halt()
+    assert pillar.get_status()["phase"] == PillarPhase.IDLE.value

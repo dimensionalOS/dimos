@@ -14,10 +14,9 @@
 
 """The FlowBase's own odometry as the base's pose, for a stack without a lidar.
 
-``alfred-full`` gets ``odom -> base_link`` from Point-LIO and relays it to the coordinator's
-base adapter as ``start_pose``. ``alfred-manipulation`` runs no lidar: this relay turns
-AlfredHighLevel's ``wheel_odometry`` into the same ``start_pose`` and puts ``odom -> base_link``
-on tf, so a whole-body plan's base segment has a pose to track and the Controller a fixed frame.
+``alfred-navigation`` gets ``odom -> base_link`` from Point-LIO and relays it to the coordinator
+as ``start_pose``. ``alfred-base`` runs no lidar: this relay turns AlfredHighLevel's
+``wheel_odometry`` into the same ``start_pose`` and puts ``odom -> base_link`` on tf, so a whole-body plan's base segment has a pose to track and the Controller a fixed frame.
 """
 
 from __future__ import annotations

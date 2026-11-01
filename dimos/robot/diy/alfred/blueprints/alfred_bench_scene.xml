@@ -5,7 +5,7 @@
   base_link mocap body follows the mock base's odometry, carrying the camera along. The robot
   itself is not here (the arms are kinematic mocks), so it neither occludes nor collides.
 
-  camera_front_link and camera_front are alfred_v1.urdf's chain (AlfredMountTf's
+  camera_front_link and camera_front are alfred_v1.urdf's chain (UrdfManager's
   base_link -> camera_front_link, then the D455's colour optical frame turned a half turn about
   its axis, as rotate_180 publishes it), in MuJoCo's camera axes (x right, y up, looking along
   -z). fovy is the D455 colour imager's at 848x480 (fy 426.0 px). test_alfred_manipulation_sim

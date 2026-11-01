@@ -41,10 +41,13 @@ from pydantic import Field, FiniteFloat
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
+from dimos.control.contract.convert import twist_from_values, twist_to_values
+from dimos.control.contract.limits import BASE_NAME
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.drive_trains.flowbase import portal_compat
+from dimos.hardware.drive_trains.flowbase.config import FLOWBASE_MAX_LINEAR_CMD_M_S
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -61,13 +64,28 @@ logger = setup_logger()
 
 # these combined need to be less than DEFAULT_THREAD_JOIN_TIMEOUT so the teardown join outlasts them.
 STOP_COMMAND_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 2
+FLOWBASE_MAX_TURN_CMD_RAD_S = 3.0
+MOVE_VELOCITY_PERIOD_S = 0.1  # a teleop stream's rate: inside the velocity task's timeout
 CONNECTION_CLOSE_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 4
 
 
-class AlfredHighLevelConfig(ModuleConfig):
+def flowbase_range() -> Twist:
+    """The fastest the FlowBase may be told to go: the firmware's cap on translation. It states
+    none on turning, so this one is only wide enough to leave teleop as it was."""
+    return Twist(
+        linear=Vector3(FLOWBASE_MAX_LINEAR_CMD_M_S, FLOWBASE_MAX_LINEAR_CMD_M_S, 0.0),
+        angular=Vector3(0.0, 0.0, FLOWBASE_MAX_TURN_CMD_RAD_S),
+    )
+
+
+class AlfredHighLevelConfig(ConnectionConfig):
+    source: str = "flowbase"
+    base_range: Twist | None = Field(default_factory=flowbase_range)
+    # A stack with a coordinator commands every tick and can run the default 0.1 s; a navigation
+    # stack's MovementManager streams far slower than that.
+    deadman_timeout_s: float = 0.2
     address: str = DEFAULT_ADDRESS
-    cmd_vel_timeout: float = 0.2
-    wheel_odometry_hz: FiniteFloat = Field(50.0, gt=0.0)
+    wheel_odometry_hz: FiniteFloat = Field(default=50.0, gt=0.0)
     wheel_odom_frame_id: str = "wheel_odom"
     base_frame_id: str = "base_link"
     # The controller's odometry counts from when its own driver started, not from when this
@@ -76,18 +94,30 @@ class AlfredHighLevelConfig(ModuleConfig):
     rebase_odometry: bool = True
 
 
-class AlfredHighLevel(Module):
+class AlfredHighLevel(ConnectionModule):
+    """The FlowBase over Portal. Its only writer: speeds arrive on ``cmd_vel``, and the deadman
+    zeroes them when the stream stops."""
+
     cmd_vel: In[Twist]
+    # Where move_velocity drives from: into whatever arbitrates the base, so a hold stops it too.
+    tele_cmd_vel: Out[Twist]
     wheel_odometry: Out[Odometry]
     config: AlfredHighLevelConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._client: portal.Client | None = None
-        self._stop_task: asyncio.Task[None] | None = None
         self._odometry_task: asyncio.Task[None] | None = None
+        self._send_task: asyncio.Task[None] | None = None
+        self._drive_task: asyncio.Task[None] | None = None
+        self._velocity = (0.0, 0.0, 0.0)
+        self._velocity_ready = asyncio.Event()
         self._last_velocities = [0.0, 0.0, 0.0]
         self._odometry_stop = asyncio.Event()
+
+    @property
+    def _base(self) -> str:
+        return f"{self.config.source}/{BASE_NAME}"
 
     async def main(self) -> AsyncGenerator[None, None]:
         # Only the running module needs the SDK; importing it at module scope would make
@@ -99,15 +129,18 @@ class AlfredHighLevel(Module):
         portal_compat.install()
         # Recreated each run so a restart binds it to the new event loop.
         self._odometry_stop = asyncio.Event()
+        self._velocity_ready = asyncio.Event()
         client = portal.Client(self.config.address)
         self._client = client
         logger.info(f"Connected to Alfred at {self.config.address}")
         self._odometry_task = asyncio.create_task(self._poll_wheel_odometry(client))
+        self._send_task = asyncio.create_task(self._send_velocities())
         try:
             yield
         finally:
-            if self._stop_task is not None and not self._stop_task.done():
-                self._stop_task.cancel()
+            self._send_task.cancel()
+            if self._drive_task is not None:
+                self._drive_task.cancel()
             # Stop before draining: portal matches replies by request number, so a
             # wedged poll cannot delay the stop.
             stopper = threading.Thread(target=_stop_and_close, args=(client,), daemon=True)
@@ -128,45 +161,35 @@ class AlfredHighLevel(Module):
                 self._client = None
             logger.info("Alfred high-level connection stopped")
 
+    def connect(self) -> None:
+        """The Portal client opens in ``main``, on the module's event loop."""
+
+    def write(self, values: dict[str, float]) -> None:
+        twist = twist_from_values(values, self._base)
+        self._request_velocity((twist.linear.x, twist.linear.y, twist.angular.z))
+
+    def halt(self) -> None:
+        self._request_velocity((0.0, 0.0, 0.0))
+
+    def _request_velocity(self, velocity: tuple[float, float, float]) -> None:
+        self._velocity = velocity
+        self._on_loop(self._velocity_ready.set)
+
     async def handle_cmd_vel(self, msg: Twist) -> None:
-        await self.move(msg)
+        self.command(twist_to_values(msg, self._base))
 
-    @rpc
-    async def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        """Send a Twist as a holonomic velocity command.
-
-        With ``duration > 0`` the command runs for that many seconds before
-        auto-stop. With ``duration == 0`` each call rearms a ``cmd_vel_timeout``
-        watchdog; if the stream stalls, the platform stops automatically.
-        """
-        if self._client is None:
-            logger.warning("Alfred not connected; ignoring move")
-            return False
-
-        vx, vy, wz = twist.linear.x, twist.linear.y, twist.angular.z
-
-        if self._stop_task is not None and not self._stop_task.done():
-            self._stop_task.cancel()
-
-        # Send before scheduling the watchdog — otherwise it could fire first.
-        if not await self._send_velocity(vx, -vy, -wz):
-            return False
-
-        self._last_velocities = [vx, vy, wz]
-        timeout = duration if duration > 0 else self.config.cmd_vel_timeout
-        self._stop_task = asyncio.create_task(self._auto_stop_movement(timeout))
-        return True
-
-    async def _auto_stop_movement(self, delay: float) -> None:
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            return
-        try:
-            if await self._send_velocity(0.0, 0.0, 0.0):
-                self._last_velocities = [0.0, 0.0, 0.0]
-        except Exception as e:
-            logger.error(f"Auto-stop failed: {e}")
+    async def _send_velocities(self) -> None:
+        """Send the newest velocity, never a backlog of them, and a stop only when it is news:
+        a coordinator tells a base at rest 0 every tick, and Portal is a round trip to the Pi."""
+        while True:
+            await self._velocity_ready.wait()
+            self._velocity_ready.clear()
+            velocity = self._velocity
+            if not any(velocity) and not any(self._last_velocities):
+                continue
+            vx, vy, wz = velocity
+            if await self._send_velocity(vx, -vy, -wz):
+                self._last_velocities = [vx, vy, wz]
 
     @rpc
     async def get_state(self) -> str:
@@ -181,8 +204,20 @@ class AlfredHighLevel(Module):
     ) -> str:
         """Move the Alfred at the given velocity for ``duration`` seconds."""
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
-        await self.move(twist, duration=duration)
+        if self._drive_task is not None:
+            self._drive_task.cancel()
+        self._drive_task = asyncio.create_task(self._drive_for(twist, duration))
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
+
+    async def _drive_for(self, twist: Twist, duration: float) -> None:
+        """Keep a teleop stream going for ``duration`` seconds, then stop it."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + duration
+        self.tele_cmd_vel.publish(twist)
+        while loop.time() < deadline:
+            await asyncio.sleep(MOVE_VELOCITY_PERIOD_S)
+            self.tele_cmd_vel.publish(twist)
+        self.tele_cmd_vel.publish(Twist())
 
     async def _send_velocity(self, vx: float, vy: float, wz: float) -> bool:
         """Send a raw velocity (already in Alfred frame) via Portal RPC."""

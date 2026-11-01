@@ -6,41 +6,85 @@ its Controller is the UI.
 
 ## Blueprints
 
+The bench stacks are layers, each one the last plus one thing, so bring them up in this order:
+
+| Blueprint | What it adds |
+| --- | --- |
+| `alfred-base` | The FlowBase, the pillar and both arms on one coordinator, the mast D455, wheel odometry, and `UrdfManager` putting the whole robot on tf. Drive from the Controller; nothing plans. |
+| `alfred-perception` | `PerceptionLocalize` on the D455 (`localize`, in 3D, in `odom`) and an MCP server on :9990. Needs CUDA, and refuses to start without it. |
+| `alfred-manipulation` | Mobile manipulation: the whole-body planner, the obstacle map (self filter, voxel map, crop, carve), PickAndPlace with GraspGenX, the operator handoff, and an agent when `OPENAI_API_KEY` is set. |
+| `alfred-manipulation-heuristic` | The same with one top-down grasp per object and no second environment. |
+| `alfred-manipulation-sim` | The same layers with all of the hardware simulated ([below](#rehearsing-in-simulation)). |
+
+And beside them:
+
 | Blueprint | What runs |
 | --- | --- |
-| `alfred-full` | Mid-360 navigation on the coordinator's holonomic follower, the pillar and both arms planned on that coordinator. The demo stack. |
-| `alfred-full-perception` | `alfred-full` plus the D455: an obstacle map for the arm planner and 2 Hz detections. |
+| `alfred-navigation` | Mid-360 navigation on the coordinator's holonomic follower, teleop, the lift parked, no arms. |
 | `alfred-nav` | Navigation alone, on the native trajectory follower and MovementManager. |
 | `alfred-mls-nav`, `alfred-mls-nav-lidar` | dimSLAM variants (D455 odometry). |
 | `alfred-keyboard-teleop` | Driving only. |
 | `alfred-pillar` | The lift alone, for homing and bench tests. |
 | `alfred-sim` | Mock base, lift and arms planned in viser; no robot. |
-| `alfred-manipulation-sim` | The bench stack with all of its hardware simulated, for rehearsing through Desktop ([below](#rehearsing-in-simulation)). |
 
 ```bash
 uv sync --extra alfred --extra manipulation          # pyserial for the pillar, the planner's deps
 
-dimos run alfred-full                                                # arms mocked, pillar real
-OPENARM_LEFT_CAN=can2 OPENARM_RIGHT_CAN=can3 dimos run alfred-full   # real arms; `dimos hardware can setup` first
+dimos run alfred-base                                                # arms mocked, the rest real
+OPENARM_LEFT_CAN=can2 OPENARM_RIGHT_CAN=can3 dimos run alfred-base   # real arms; `dimos hardware can setup` first
+dimos run alfred-perception
+dimos mcp call localize -a 'objects=can,tape'
 ```
 
 Everything rides the default transport (zenoh), which is what Desktop reads: open the Controller
 while a blueprint runs, drive on `tele_cmd_vel`, and plan the arms from its arm view (install the
 Controller's planner hook once, from its panel, and restart the blueprint).
 
-## Two stacks for one Orin
+## How commands reach the robot
 
-The Orin NX overloads with everything on. Run one stack at a time and switch:
+Every command goes through the coordinator. It arbitrates its tasks each tick and sends each robot
+its complete command:
+
+| Robot | How | Ports |
+| --- | --- | --- |
+| FlowBase | `AlfredHighLevel`, a `ConnectionModule` | `flowbase_cmd_vel` out, `flowbase_odom` in |
+| Pillar | `PillarConnection`, a `ConnectionModule` | `pillar_position_command` out, `pillar_joint_state` in |
+| OpenArms | the `openarm_damiao` adapter, in the coordinator's process | none: the CAN bus runs on its tick |
+
+A coordinator drives adapters and connection modules together; one robot is on one or the other.
+The connection modules' deadmans are what stop the robot when commands do: an e-stopped coordinator
+sends nothing more, and the base stops within 0.1 s (2.3 cm from 0.3 m/s told, in the sim).
+
+- **The base at rest** is told 0 every tick. `AlfredHighLevel` passes that to the Pi only when it is
+  news, so a parked base costs no Portal traffic.
+- **The lift at rest** is told its height every tick, and `PillarConnection` acts only on a height
+  that changed. That is what lets `home` and `set_position` go round the coordinator. They are
+  refused while an operator holds the robot, since nothing would take the move back.
+- **`move_velocity`** publishes on `tele_cmd_vel`, so it is arbitrated and held like any teleop.
+
+## Who owns what on tf
+
+`UrdfManager` poses the robot from the coordinator's joint state, at 10 Hz (localize takes a pose
+only with every edge within 0.12 s of a frame): the mounts, the lift and the arms, so no planner has
+to run for the Controller to draw them. `alfred-manipulation` swaps it for
+`UrdfManagerPointClearing`, the same module with the self filter in it. Wheel odometry owns
+`odom -> base_link`. The D455's driver owns its imagers: with `rotate_180` its optical frames are
+half a turn from the URDF's, so `ALFRED_TF_MODEL` leaves them out.
+
+The navigation stacks keep Point-LIO's tree instead: it owns the lidar's parent edge, so
+`AlfredMountTf` hangs the robot under `mid360_link` and `UrdfManager` only serves the XML and meshes.
+
+## One stack at a time
+
+The Orin NX overloads with everything on, so bench and driving are separate stacks:
 
 | Stack | Runs | Does not run |
 |-------|------|--------------|
-| `alfred-manipulation` | arms, lift, whole-body planner, D455 (obstacle map, scene registration, the pick pipeline with the top-down heuristic grasps), teleop, wheel odometry | lidar, Point-LIO, nav planners, follower, Rerun |
-| `alfred-manipulation-graspgenx` | the same, GraspGenX proposing grasps in its own environment (first start syncs it, ~5 min) | — |
+| `alfred-manipulation` | arms, lift, whole-body planner, D455 (obstacle map, localize), the pick pipeline, teleop, wheel odometry | lidar, Point-LIO, nav planners, follower, Rerun |
 | `alfred-navigation` | Mid-360, Point-LIO, voxel map, planners, follower, teleop, the lift (parked) | arms' CAN, planner, camera, Rerun |
-| `alfred-full-perception` | everything, Rerun included (capped at 256 MB: its default quarter of RAM OOM-killed the bench stack once) | — |
 
-Neither split stack runs the Rerun bridge: the Desktop reads zenoh itself, and the bridge's
-late-viewer buffer is what ran the 16 GB Orin out of memory.
+Neither runs the Rerun bridge: the Desktop reads zenoh itself, and the bridge's late-viewer buffer
+is what ran the 16 GB Orin out of memory.
 
 The Manipulation app's **Stack** card switches them (stop, then launch); the Launcher does the
 same. After every start the lift must be homed before it moves (**Home the lift** in the app,
@@ -50,15 +94,15 @@ same. After every start the lift must be homed before it moves (**Home the lift*
 
 `alfred-manipulation-sim` is the bench stack with every piece of hardware simulated, for
 rehearsing a demo through Desktop's Manipulation app and Controller on a laptop. The modules and
-the wiring are `alfred-manipulation`'s (one `alfred_bench_modules`, hardware swapped):
+the wiring are `alfred-manipulation`'s, layer by layer, with the hardware swapped (`AlfredHardware`):
 
 | On the robot | In the sim |
 | --- | --- |
 | OpenArms on CAN | the mock adapter, from the ready pose; `OPENARM_*_CAN` are ignored, no CAN is opened. Open and Close work. |
-| The pillar's Nano on serial | `PillarConnection(device_path="sim")`: the firmware's protocol emulated in-process (`pillar_emulator.py`): ready, home (~3 s from parking), `set_position` ramps at 40 mm/s, `stop_motion` ramps down, `get_status`. |
-| FlowBase over Portal (`AlfredHighLevel`) | the coordinator's mock twist base, moving through Alfred's measured plant (yaw 2.85x, translation 0.77x), so plans run on the same command gains; `CoordinatorBaseOdometry` reads it back as wheel odometry for the same `WheelOdometryRelay` (`odom -> base_link`, `/flowbase/odom`). |
+| The pillar's Nano on serial | the same `PillarConnection` with `device_path="sim"`: the firmware's protocol emulated in-process (`pillar_emulator.py`): ready, home (~3 s from parking), `set_position` ramps at 40 mm/s, `stop_motion` ramps down, `get_status`. |
+| FlowBase over Portal (`AlfredHighLevel`) | `SimFlowBase`, a connection module on the same ports, moving through Alfred's measured plant (yaw 2.85x, translation 0.77x), so plans run on the same command gains; the same `WheelOdometryRelay` turns its `wheel_odometry` into `odom -> base_link` and `flowbase_odom`. |
 | The mast D455 | `MujocoSimModule` rendering `blueprints/alfred_bench_scene.xml` from the URDF's camera pose: the same streams, names and frames, 848x480 at 15 Hz, a cloud at 5 Hz. The scene's `base_link` follows the base's odometry, so the picture moves when the robot drives. |
-| OWLv2 + EdgeTAM, GraspGenX (CUDA) | what the laptop has: CUDA runs the robot's set; Apple's MPS runs OWLv2 + EdgeTAM with the heuristic grasp; a CPU runs OWLv2 alone (no masks) with the heuristic grasp. Renders score lower than real pictures, so the detector threshold is 0.1, not 0.3. |
+| SigLIP + OWLv2 + EdgeTAM, GraspGenX (CUDA) | what the laptop has: CUDA runs the robot's set; Apple's MPS runs localize with the heuristic grasp; a CPU runs it with no masks, slowly (SigLIP embeds a frame in seconds), with the heuristic grasp. Renders score lower than real pictures, so localize accepts 0.1, not 0.3. |
 
 **Never run it on the robot's network while the robot's stack runs.** Zenoh finds peers on the
 LAN and this coordinator answers to the same RPC names as the real one: a sim on the office
@@ -98,7 +142,7 @@ environment and weights).
   `/tele_cmd_vel` once (done on this robot:
   `dimos-desktop run dim-controller patch-settings` with `lv.drive.wheeled`).
 - **Navigate**: right-click the 3D view → **Go here**. That publishes `clicked_point`, which
-  the MLS planner listens on directly (no MovementManager in alfred-full). Click on floor the
+  the MLS planner listens on directly (no MovementManager in alfred-navigation). Click on floor the
   Mid-360 can see; the robot's own cell is in its blind zone.
 - **Stop navigating**: the action bar's **Nav: stop** button
   (`python -m dimos.robot.diy.alfred.tools.tool_nav stop`) publishes the nav stack's cancel, a
@@ -145,7 +189,8 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   face nearly at the bench edge), or let GraspGenX propose a side grasp. The pick refuses an
   out-of-reach object at once and says by how much.
 - **Objects are kept in `odom`,** like the map, so they stay where they are when the base
-  drives; scan again only if the objects themselves moved. The pick re-expresses an object's
+  drives; scan again only if the objects themselves moved. A scan is localize over the last 3 s
+  of the feed, read afresh, so a picked object does not answer from where it stood. The pick re-expresses an object's
   cloud in its planning frame (`base_link`) through tf before it asks for grasps.
 - **"Let the base drive"** gives the planner `moving_base` as an auxiliary group: the pregrasp
   may then be a base move plus an arm move, executed together; the descent and lift stay the
@@ -194,9 +239,10 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
 
 The FlowBase is three virtual joints (`flowbase/vx|vy|wz`) on one `ControlCoordinator`. Teleop
 (priority 20), a whole-body plan's base segment (15, a relative motion from wherever the base is)
-and the navigation follower (10) are ordinary joint claims on them. The coordinator's base adapter publishes the arbitrated twist on
-`/flowbase/cmd_vel`; `AlfredHighLevel` reads that and stays the only FlowBase writer. The adapter
-reads the base pose back off `/flowbase/odom`, which `StartRelay` fills from tf.
+and the navigation follower (10) are ordinary joint claims on them. The coordinator sends the
+arbitrated twist out on `flowbase_cmd_vel`; `AlfredHighLevel` reads that and stays the only FlowBase
+writer. The joints read back the base's pose from `flowbase_odom`, which `WheelOdometryRelay` fills
+(`StartRelay` from tf in `alfred-navigation`).
 
 The follower is `holonomic_pose_follower` on Alfred's measured plant model,
 `alfred_posedomain.json`, characterized on the real FlowBase (`mb/alfred-locomanip` has the autotune
@@ -242,5 +288,4 @@ The robot description is the LFS archive `alfred_description`: `alfred_v1.urdf` 
 and `alfred_v2.urdf` (eight steer/drive caster joints, drawn but not driven), built from the Onshape
 CAD by the bundled `build_alfred_urdf.py`; its README has the frame table. `alfred_model.py` wraps
 it with the coordinator joint names. `pillar/lift` is zero at the top limit switch, positive up,
-range -0.500 .. -0.002 m, the same convention as the firmware. `AlfredMountTf` publishes the mount
-tree re-rooted at `mid360_link`, since Point-LIO owns the lidar's parent edge.
+range -0.500 .. -0.002 m, the same convention as the firmware.

@@ -100,7 +100,7 @@ def _half_height(model: mujoco.MjModel, geom: int) -> float:
 # The urdf is LFS data, so these run where it is pulled (like test_alfred.py).
 @pytest.mark.self_hosted
 def test_the_scene_camera_sits_where_the_urdf_puts_the_d455() -> None:
-    """AlfredMountTf's base_link -> camera_front_link, then the URDF's colour optical frame
+    """The mount tree's base_link -> camera_front_link, then the URDF's colour optical frame
     turned a half turn about its axis (rotate_180): MuJoCo's camera is that frame, in its own
     axes (x right, y up, looking along -z)."""
     edges = {(t.frame_id, t.child_frame_id): t for t in mount_transforms("base_link")}

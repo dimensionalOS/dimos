@@ -16,8 +16,9 @@
 
 One module owning every pillar-specific detail: the serial port, firmware
 commands, framing, units, limits, homing state and command pacing. The control
-coordinator reaches it through the generic ``transport_lcm`` whole-body adapter
-using one linear joint, ``pillar/lift``, expressed in metres.
+coordinator drives it through its ports as a connection module: one linear joint,
+``pillar/lift``, expressed in metres, told its position on ``position_command``
+and read back on ``joint_state``.
 
 The wire protocol is the ``pillar_driver`` host interface. Every line the board
 emits falls in exactly one bucket, which is what lets the reader be a
@@ -60,13 +61,14 @@ from pydantic import Field
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
+from dimos.control.contract.convert import joint_state_to_values
+from dimos.control.contract.keys import SEPARATOR, Interface
+from dimos.control.contract.limits import Limits
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -131,7 +133,11 @@ def _is_motion_line(line: str) -> bool:
     return line.split(" ", 1)[0].lower() in {"move", "jog", "steps", "revs"}
 
 
-class PillarConnectionConfig(ModuleConfig):
+class PillarConnectionConfig(ConnectionConfig):
+    source: str = PILLAR_HARDWARE_ID
+    # The coordinator tells the lift its height every tick. A brake holds it, so a pause costs
+    # nothing, and a leadscrew's ramped stop is no faster for being asked sooner.
+    deadman_timeout_s: float = 0.2
     device_path: str | None = None
     baud_rate: int = Field(default=PILLAR_BAUD_RATE, gt=0)
     serial_timeout_s: float = Field(default=0.05, gt=0.0)
@@ -149,16 +155,20 @@ class PillarConnectionConfig(ModuleConfig):
     home_timeout_s: float = Field(default=75.0, gt=0.0)
 
 
-class PillarConnection(Module):
-    """Alfred's pillar, bridged through generic whole-body streams."""
+class PillarConnection(ConnectionModule):
+    """Alfred's pillar, one joint behind the control coordinator."""
 
     config: PillarConnectionConfig
 
-    motor_command: In[MotorCommandArray]
-    motor_states: Out[JointState]
+    position_command: In[JointState]
+    joint_state: Out[JointState]
+    # While an operator holds the robot, the skills that move the lift are refused.
+    operator_hold_status: In[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._operator_hold = False
+        self._coordinator_target_m: float | None = None
         self._state_lock = threading.RLock()
         self._state_changed = threading.Condition(self._state_lock)
         self._write_lock = threading.Lock()
@@ -172,7 +182,7 @@ class PillarConnection(Module):
     def _reset_state(self) -> None:
         """Every field the firmware can invalidate, in one place."""
         with self._state_lock:
-            self._connected = False
+            self._port_open = False
             self._disconnecting = False
             self._session_ready = False
             self._ready_at = math.inf
@@ -195,23 +205,23 @@ class PillarConnection(Module):
 
     # ------------------------------------------------------------------ life cycle
 
-    @rpc
-    def start(self) -> None:
-        self._connect()
-        try:
-            super().start()
-        except Exception:
-            self._disconnect()
-            raise
+    @property
+    def limits(self) -> dict[str, Limits]:
+        """The firmware's soft limits, which are the URDF's: a lift needs no robot model."""
+        return {
+            f"{PILLAR_LIFT_JOINT}{SEPARATOR}{Interface.POSITION.value}": Limits(
+                PILLAR_MIN_POSITION_M, PILLAR_MAX_POSITION_M
+            )
+        }
 
     @rpc
     def stop(self) -> None:
-        self._disconnect()
         super().stop()
+        self._disconnect()
 
-    def _connect(self) -> None:
+    def connect(self) -> None:
         with self._state_lock:
-            if self._connected:
+            if self._port_open:
                 return
 
         device_path = self.config.device_path or PILLAR_DEFAULT_DEVICE_PATH
@@ -220,7 +230,7 @@ class PillarConnection(Module):
         with self._state_lock:
             self._reset_state()
             self._serial = port
-            self._connected = True
+            self._port_open = True
             # Opening the port pulls DTR and resets the board. Anything sent
             # before the reset finishes is lost, so session setup waits.
             self._ready_at = now + self.config.boot_wait_s
@@ -267,7 +277,7 @@ class PillarConnection(Module):
             if self._disconnecting:
                 return
             port = self._serial
-            was_connected = self._connected
+            was_connected = self._port_open
             self._disconnecting = True
             motion_active = was_connected and self._motion_active
             self._pending_target_m = None
@@ -314,14 +324,21 @@ class PillarConnection(Module):
 
     # ------------------------------------------------------------------ streams and rpc
 
-    async def handle_motor_command(self, msg: MotorCommandArray) -> None:
-        if msg.num_joints != 1 or len(msg.q) != 1:
-            logger.warning(f"Expected one pillar motor command, got {msg.num_joints}")
-            return
-        target = msg.q[0]
-        # An operator hold repeats the height it froze every tick. Sent to an idle rail
-        # each is a move with nothing to do and a move_done to lose.
+    async def handle_position_command(self, msg: JointState) -> None:
+        self.command(joint_state_to_values(msg, (Interface.POSITION,)))
+
+    async def handle_operator_hold_status(self, msg: Bool) -> None:
+        self._operator_hold = bool(msg.data)
+
+    def write(self, values: dict[str, float]) -> None:
+        target = values[f"{PILLAR_LIFT_JOINT}{SEPARATOR}{Interface.POSITION.value}"]
         with self._state_lock:
+            # The coordinator repeats the height it holds every tick. Passed on, each repeat
+            # would take back a home or a jog in progress, and to an idle rail it is a move with
+            # nothing to do and a move_done to lose. So only a height that changed is a command.
+            if target == self._coordinator_target_m:
+                return
+            self._coordinator_target_m = target
             position = self._position_m
             if (
                 not self._motion_active
@@ -331,12 +348,24 @@ class PillarConnection(Module):
                 return
         self._set_target(target)
 
+    def halt(self) -> None:
+        """The coordinator went quiet (an e-stop, or it died), so whatever is moving the lift
+        stops. On its own thread: the stop waits for the firmware's reply, and this runs on the
+        event loop."""
+        with self._state_lock:
+            moving = self._motion_active
+        if moving:
+            Thread(target=self.stop_motion, name="alfred-pillar-halt", daemon=True).start()
+
     @skill(uses=[CAP_MOVEMENT])
     def home(self) -> bool:
         """Start homing. Returns once the firmware has *accepted* the command."""
+        if self._operator_hold:
+            logger.warning("Pillar will not home during an operator hold")
+            return False
         now = time.monotonic()
         with self._state_lock:
-            if not self._connected or self._disconnecting or not self._session_ready:
+            if not self._port_open or self._disconnecting or not self._session_ready:
                 logger.warning("Pillar is not ready to home")
                 return False
             if self._homing or self._motion_active:
@@ -372,7 +401,7 @@ class PillarConnection(Module):
         """Request the firmware's ramped stop and drop any queued target."""
         now = time.monotonic()
         with self._state_lock:
-            if not self._connected or self._disconnecting:
+            if not self._port_open or self._disconnecting:
                 return False
             self._pending_target_m = None
             self._active_target_m = None
@@ -390,6 +419,9 @@ class PillarConnection(Module):
     @skill(uses=[CAP_MOVEMENT])
     def set_position(self, position_m: float) -> bool:
         """Accept an absolute target in metres. Latest target wins."""
+        if self._operator_hold:
+            logger.warning("Pillar will not move during an operator hold")
+            return False
         return self._set_target(position_m)
 
     def _set_target(self, position_m: float) -> bool:
@@ -405,7 +437,7 @@ class PillarConnection(Module):
 
         with self._state_lock:
             if (
-                not self._connected
+                not self._port_open
                 or self._disconnecting
                 or not self._session_ready
                 or not self._homed
@@ -423,8 +455,8 @@ class PillarConnection(Module):
         """Current connection, homing, position, and fault status."""
         with self._state_lock:
             return {
-                "connected": self._connected,
-                "ready": self._connected and self._session_ready,
+                "connected": self._port_open,
+                "ready": self._port_open and self._session_ready,
                 "phase": self._phase.value,
                 "homed": self._homed,
                 "position_m": self._position_m,
@@ -533,7 +565,7 @@ class PillarConnection(Module):
         # draw and plan against, and set_position enforces the rest. Withholding it
         # would drop pillar/lift from merged state and take both arms with it.
         try:
-            self.motor_states.publish(
+            self.joint_state.publish(
                 JointState(
                     ts=time.time(),
                     frame_id=PILLAR_HARDWARE_ID,
@@ -698,7 +730,7 @@ class PillarConnection(Module):
         with self._state_lock:
             if (
                 self._session_ready
-                or not self._connected
+                or not self._port_open
                 or self._disconnecting
                 or now < self._ready_at
             ):
@@ -728,7 +760,7 @@ class PillarConnection(Module):
             target = self._pending_target_m
             if (
                 target is None
-                or not self._connected
+                or not self._port_open
                 or self._disconnecting
                 or self._stop_event.is_set()
                 or not self._session_ready
@@ -766,7 +798,7 @@ class PillarConnection(Module):
     def _check_deadlines(self, now: float) -> None:
         faults: list[str] = []
         with self._state_lock:
-            if not self._connected or self._disconnecting:
+            if not self._port_open or self._disconnecting:
                 return
 
             if self._homing and now >= self._home_deadline:
@@ -831,7 +863,7 @@ class PillarConnection(Module):
             with self._state_lock:
                 port = self._serial
                 if (
-                    not self._connected
+                    not self._port_open
                     or port is None
                     or (self._disconnecting and not allow_disconnecting)
                 ):
@@ -892,7 +924,7 @@ class PillarConnection(Module):
     def _wait_for_motion_end(self, timeout_s: float) -> bool:
         with self._state_changed:
             return self._state_changed.wait_for(
-                lambda: not self._motion_active or not self._connected,
+                lambda: not self._motion_active or not self._port_open,
                 timeout=max(0.0, timeout_s),
             )
 
@@ -901,20 +933,8 @@ class PillarConnection(Module):
             self._fault = message
             self._phase = PillarPhase.FAULT
             if disconnected:
-                self._connected = False
+                self._port_open = False
             self._state_changed.notify_all()
         if disconnected:
             self._abandon_pending_replies()
         logger.error(f"Alfred pillar fault: {message}")
-
-
-def pillar_hardware() -> HardwareComponent:
-    """Build Alfred's one-joint pillar component using the generic adapter."""
-    return HardwareComponent(
-        hardware_id=PILLAR_HARDWARE_ID,
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=[PILLAR_LIFT_JOINT],
-        adapter_type="transport_lcm",
-        auto_enable=False,
-        wb_config=WholeBodyConfig(kp=(0.0,), kd=(0.0,)),
-    )
