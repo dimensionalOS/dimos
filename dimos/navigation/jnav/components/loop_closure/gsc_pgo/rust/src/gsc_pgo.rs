@@ -427,11 +427,6 @@ pub struct Config {
     /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
     /// passes the other gates is committed, and repeats of a kept closure count again.
     pub closure_uninformative_gate: bool,
-    /// When true, the uninformative gate rejects only a repeat: a candidate whose source and target each lie within
-    /// closure_search_radius of the two ends of a kept closure. A good fit between ends the graph already knows well
-    /// otherwise still commits (gir2 lost right loops at pressure 0 to the gate). When false, every closure the graph is
-    /// surer of than ICP is rejected.
-    pub closure_uninformative_only_repeats: bool,
     /// The odometry's drift as a random walk in the motion itself, so it does not depend on how far apart keyframes
     /// are: per noise source (xy translation, z translation, yaw, roll/pitch tilt), the standard deviation it adds per
     /// square root of metres travelled (m/√m for translation, rad/√m for rotation) and per square root of radians
@@ -595,7 +590,6 @@ impl Default for Config {
             closure_gnc_inlier_probability: 0.95,
             closure_informative_by_graph_covariance: true,
             closure_uninformative_gate: true,
-            closure_uninformative_only_repeats: true,
             odometry_error_estimate_xy_per_sqrt_m: 3.91e-4,
             odometry_error_estimate_xy_per_sqrt_rad: 6.35e-3,
             odometry_error_estimate_z_per_sqrt_m: 6.42e-4,
@@ -790,19 +784,6 @@ fn rejected(
 }
 
 impl ClosureSearch {
-    /// Whether a kept closure joins keyframes within closure_search_radius of `source` and `target` (either way round).
-    fn repeats_kept(&self, source: usize, target: usize) -> bool {
-        let near = |a: usize, b: usize| {
-            mat3::norm(&mat3::sub(
-                &self.key_poses[a].translation_global,
-                &self.key_poses[b].translation_global,
-            )) <= self.config.closure_search_radius
-        };
-        self.kept_closures.iter().any(|l| {
-            (near(source, l.from) && near(target, l.to))
-                || (near(source, l.to) && near(target, l.from))
-        })
-    }
     /// The ICP half of a closure search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
     pub fn run(mut self) -> ClosureSearchResult {
         let retry = (
@@ -1040,11 +1021,7 @@ impl ClosureSearch {
         // the closure's translation variance as the graph will take it: its inliers' mean squared distance
         // (`IcpResult::inlier_mean_square`)
         let closure_variance = icp.inlier_mean_square();
-        if self.config.closure_uninformative_gate
-            && closure_variance >= known
-            && (!self.config.closure_uninformative_only_repeats
-                || self.repeats_kept(cur_idx, target_idx))
-        {
+        if self.config.closure_uninformative_gate && closure_variance >= known {
             return rejected(diag, "uninformative", timing);
         }
         if self.config.closure_sharpness_half > 0.0 {
