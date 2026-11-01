@@ -848,35 +848,7 @@ impl ClosureSearch {
         // the closure's translation variance as the graph will take it: its inliers' mean squared distance
         // (`IcpResult::inlier_mean_square`)
         let closure_variance = icp.inlier_mean_square();
-        // a closure is uninformative only if it also agrees with the graph: one that disagrees beyond the graph's own
-        // spread of its two ends plus its fit's (chi-square, 3 DOF, at `closure_gnc_inlier_probability`) says the
-        // odometry's noise is understated, the evidence the learner needs, however
-        // tight the graph claims to be. The pull is how far ICP moved the source keyframe, in world axes
-        let pull = {
-            let at = &self.key_poses[cur_idx].translation_global;
-            mat3::sub(
-                &mat3::add(&mat3::mat_vec(&icp.rotation, at), &icp.translation),
-                at,
-            )
-        };
-        let spread: Mat3 = std::array::from_fn(|i| {
-            std::array::from_fn(|j| {
-                let graph = if by_graph {
-                    widen * diag.innovation_covariance[i][j]
-                } else if i == j {
-                    known
-                } else {
-                    0.0
-                };
-                graph + if i == j { closure_variance } else { 0.0 }
-            })
-        });
-        let disagrees = mat3::inverse(&spread).is_some_and(|information| {
-            let whitened = mat3::mat_vec(&information, &pull);
-            (0..3).map(|k| pull[k] * whitened[k]).sum::<f64>()
-                > crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability)
-        });
-        if self.config.closure_uninformative_gate && closure_variance >= known && !disagrees {
+        if self.config.closure_uninformative_gate && closure_variance >= known {
             return rejected(diag, "uninformative", timing);
         }
         if self.config.closure_sharpness_half > 0.0 {
