@@ -25,3 +25,6 @@ mod region_viz;
 mod smoother;
 mod surfaces;
 pub mod voxel;
+
+pub use nodes::wall_distances;
+pub use surfaces::surface_cells;
