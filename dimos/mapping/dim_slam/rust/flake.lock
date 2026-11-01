@@ -55,18 +55,20 @@
     "cu-vslam-rs": {
       "inputs": {
         "flake-utils": [
+          "dimslam",
           "flake-utils"
         ],
         "nixpkgs": [
+          "dimslam",
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1788061359,
-        "narHash": "sha256-nO9tQNKxCvvoeRhy5/BwB6sl9E4dUK+tXCif5uofTxQ=",
+        "lastModified": 1793377877,
+        "narHash": "sha256-dBqq71w8icHiXjRd1QsKm0vQIUpq7E1eISihAQgR0dQ=",
         "owner": "jeff-hykin",
         "repo": "cu_vslam_rs",
-        "rev": "6b0a6bd05be61eed33e3d2ee351398a7dcd3b654",
+        "rev": "8a3b3a9c0d75536f653c67c163b802de7a265fab",
         "type": "github"
       },
       "original": {
@@ -93,6 +95,34 @@
       "original": {
         "owner": "numtide",
         "repo": "devshell",
+        "type": "github"
+      }
+    },
+    "dimslam": {
+      "inputs": {
+        "crate2nix": [
+          "crate2nix"
+        ],
+        "cu-vslam-rs": "cu-vslam-rs",
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793378513,
+        "narHash": "sha256-AT6jHxULJAlgR8t+6CtzO/XgZh4hTfpKj4kc9NZIrWQ=",
+        "owner": "dimensionalOS",
+        "repo": "dimSLAM",
+        "rev": "21af7d6b96974bfca6a94b390e2511cda0e93eac",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dimensionalOS",
+        "ref": "v0.4.4",
+        "repo": "dimSLAM",
         "type": "github"
       }
     },
@@ -314,7 +344,7 @@
     "root": {
       "inputs": {
         "crate2nix": "crate2nix",
-        "cu-vslam-rs": "cu-vslam-rs",
+        "dimslam": "dimslam",
         "flake-utils": "flake-utils",
         "nix-filter": "nix-filter",
         "nixpkgs": "nixpkgs_2"
