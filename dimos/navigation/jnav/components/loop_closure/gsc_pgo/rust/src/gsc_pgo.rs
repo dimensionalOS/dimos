@@ -915,13 +915,6 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // no alignment of two voxelized scans fits tighter than the spread of a surface's voxel centroids between them
-        // (two independent offsets within a voxel of the submap resolution r: variance r^2 / 6 along the normal), so a
-        // graph surer than that makes the closure uninformative whatever ICP returns: it is not aligned at all
-        let closure_variance_floor = self.config.submap_resolution.powi(2) / 6.0;
-        if self.config.closure_uninformative_gate && closure_variance_floor >= known {
-            return rejected(diag, "uninformative", timing);
-        }
         // a candidate whose least yank ICP could leave still needs more evidence than any stack of scans could give is
         // rejected unaligned: ICP pairs points only within its match distance, so it moves the source from the seed (the
         // target's position) by about that much at most; the closure's own variance is at most the fitness limit squared;
