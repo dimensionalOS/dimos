@@ -186,11 +186,11 @@ struct Args {
     landmark_sightings: Option<PathBuf>,
     /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
     until_s: f64,
-    /// `--solve-delay-fraction <fraction>`: a lockstep replay adopts each solve once the map has grown by this fraction of
-    /// its free keyframes (at least one), waiting for it if needed, so it gives the same graph on any machine (a solve's
-    /// cost grows with the map, so the delay does). 0.02 (was 0.01, about a Jetson's solve time): at 0.01 the replay waited
-    /// on huge's solves and ran slower than real on an unloaded Mac. A stand-in until GSC's deterministic mode, which
-    /// schedules every non-O(scan) job by an estimate of its cost.
+    /// `--solve-schedule estimate|fraction`: when a lockstep replay adopts each solve. `estimate` (the default): GSC's
+    /// deterministic mode, held until its estimated cost in scans after dispatch (`solve_hold_enabled`), waiting for it
+    /// only if it overshoots. `fraction`: the old stand-in, kept so old runs reproduce: once the map has grown by
+    /// `--solve-delay-fraction` (0.02) of its free keyframes (at least one), waiting for it if needed.
+    solve_by_fraction: bool,
     solve_delay_fraction: f64,
 }
 
@@ -305,6 +305,7 @@ fn parse_args() -> Result<Args, String> {
     let mut icp_cache = None;
     let mut until_s = f64::INFINITY;
     let mut solve_delay_fraction = 0.02;
+    let mut solve_by_fraction = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -320,6 +321,17 @@ fn parse_args() -> Result<Args, String> {
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
             "--until-s" => until_s = value()?.parse().map_err(|e| format!("{e}"))?,
+            "--solve-schedule" => {
+                solve_by_fraction = match value()?.as_str() {
+                    "estimate" => false,
+                    "fraction" => true,
+                    other => {
+                        return Err(format!(
+                            "--solve-schedule {other}: not estimate or fraction"
+                        ))
+                    }
+                }
+            }
             "--solve-delay-fraction" => {
                 solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
             }
@@ -355,6 +367,7 @@ fn parse_args() -> Result<Args, String> {
         landmark_sightings,
         icp_cache,
         until_s,
+        solve_by_fraction,
         solve_delay_fraction,
     })
 }
@@ -797,6 +810,10 @@ fn run() -> Result<(), String> {
             }
             pgo.search_for_closure_pairs();
             recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
+                if !args.solve_by_fraction {
+                    pgo.wait_for_due_solve();
+                    return;
+                }
                 match pgo.solve_started() {
                     Some((keyframes, free))
                         if pgo.key_poses().len()
@@ -954,7 +971,7 @@ fn run() -> Result<(), String> {
         parts.join(", "),
     );
     eprintln!(
-        "pgo-eval: solver thread {} solves, median {:.2}s, max {:.2}s; lag median {:.0} keyframes / {:.1}s, max {} keyframes / {:.1}s; this replay waited {:.1}s for solves",
+        "pgo-eval: solver thread {} solves, median {:.2}s, max {:.2}s; lag median {:.0} keyframes / {:.1}s, max {} keyframes / {:.1}s; {} overshot their estimate; this replay waited {:.1}s for solves",
         speed.solves,
         speed.solve_median_s,
         speed.solve_max_s,
@@ -962,6 +979,7 @@ fn run() -> Result<(), String> {
         speed.lag_median_s,
         speed.lag_max_keyframes,
         speed.lag_max_s,
+        speed.solve_overshoots,
         speed.replay_solve_wait_s,
     );
     eprintln!(
@@ -1038,6 +1056,8 @@ struct Speed {
     lag_max_keyframes: usize,
     lag_median_s: f64,
     lag_max_s: f64,
+    /// Solves slower than the data their estimate spanned (`GscPgo::solve_overshoots`).
+    solve_overshoots: usize,
     replay_solve_wait_s: f64,
     replay_wall: Pace,
 }
@@ -1090,6 +1110,7 @@ impl Speed {
             lag_max_keyframes: lag_keyframes.iter().copied().max().unwrap_or(0),
             lag_median_s: median(lag_s.clone()),
             lag_max_s: lag_s.iter().copied().fold(f64::NAN, f64::max),
+            solve_overshoots: pgo.solve_overshoots(),
             replay_solve_wait_s,
             replay_wall: Pace::of(replay_wall_s, data_s),
         }

@@ -125,6 +125,14 @@ class PGOConfig(NativeModuleConfig):
     graph_change_heat_threshold: float = 30.0
     graph_change_heat_floor: float = 20.0
     graph_change_heat_decay: float = 0.995
+    # Deterministic solve schedule: a finished solve is held until scale * keyframes^keyframe_power *
+    # max(speed, speed_floor)^speed_power scans after its dispatch (an upper bound on its cost); one still running then is
+    # an overshoot, logged and adopted as it finishes. Provisional coefficients from the huge (Mid-360, Mac) solve fit
+    solve_hold_enabled: bool = True
+    solve_estimate_scale: float = 0.12
+    solve_estimate_keyframe_power: float = 1.016
+    solve_estimate_speed_power: float = -0.052
+    solve_estimate_speed_floor_mps: float = 0.05
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
