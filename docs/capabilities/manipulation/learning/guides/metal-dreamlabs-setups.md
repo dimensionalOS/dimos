@@ -15,8 +15,11 @@ See the [single-arm hardware guide](/docs/capabilities/manipulation/makermods_me
 
 Camera roles are `overhead`, `wrist_l`, and `wrist_r`. Each setup sends exactly its
 configured views. Missing views are not replaced with duplicate or blank images.
-The pinned SDK accepts these layouts in offline transport tests; remote checkpoint
-support and task success still require live validation.
+The public `dreamlabs/dream-1-beta` checkpoint requires all three views: `overhead`,
+`wrist_l`, and `wrist_r`. A live two-wrist preview was rejected for missing
+`video.overhead`. Use the three-camera dual-arm rollout for this checkpoint. The
+other layouts remain available for collection and compatible custom checkpoints;
+offline SDK transport tests do not establish remote checkpoint support.
 
 Single Metal uses the right protocol slot and right Quest controller. Dual-arm
 controllers operate their corresponding arms. Controller grip takeover stops
@@ -95,6 +98,26 @@ station blueprint for dual mount changes so all model consumers receive identica
 geometry.
 
 ## Preview before execution
+
+For the public checkpoint, start the three-camera dual-arm blueprint with three
+distinct camera devices:
+
+```bash
+dimos run dreamlabs-dual-makermods-metal-eef-3cam \
+  --ControlCoordinator.left-can-port LEFT_CAN_SELECTOR \
+  --ControlCoordinator.right-can-port RIGHT_CAN_SELECTOR \
+  --OverheadCamera.device /dev/v4l/by-id/OVERHEAD \
+  --LeftWristCamera.device /dev/v4l/by-id/LEFT_WRIST \
+  --RightWristCamera.device /dev/v4l/by-id/RIGHT_WRIST \
+  --policy.policy-path dreamlabs/dream-1-beta \
+  --policy.task 'pick up the object'
+```
+
+On macOS, replace camera paths with OpenCV device indices. Recheck the views after
+reconnecting USB devices: indices can change and ffmpeg's device order can differ.
+The overhead camera must show the shared workspace. A laptop camera facing the
+operator does not provide that view. This command starts physical hardware;
+omit both CAN selectors to use mock actuators.
 
 Rollout blueprints start idle. `dimos imitation control` starts Dreamlabs in
 preview mode. For explicit control, use these RPCs in `dimos shell`:
