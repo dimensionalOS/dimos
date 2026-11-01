@@ -41,7 +41,7 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
     nerf_speed: float = 1.0
     # Seconds of wall-clock time the robot may go without progress before it is
     # considered stuck. Raise it when the simulator runs slower than real time.
-    stuck_time_window: float = 8.0
+    stuck_time_window: float = Field(default=8.0, gt=0)
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):

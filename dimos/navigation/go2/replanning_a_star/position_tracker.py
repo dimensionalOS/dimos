@@ -35,10 +35,13 @@ class PositionTracker:
     _size: int
 
     def __init__(self, time_window: float, threshold: float) -> None:
+        if time_window <= 0:
+            raise ValueError(f"time_window must be positive, got {time_window}")
         self._lock = RLock()
         self._time_window = time_window
         self._threshold = threshold
-        self._max_points = int(_max_points_per_second * self._time_window)
+        # Always keep room for at least one point, even for sub-millisecond windows.
+        self._max_points = max(1, int(_max_points_per_second * self._time_window))
         self.reset_data()
 
     def reset_data(self) -> None:
