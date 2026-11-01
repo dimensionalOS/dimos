@@ -86,6 +86,32 @@ pub struct Solution {
     /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
     /// redundancy; None if the graph could not be factored.
     pub odometry_error_estimate_evidence: Option<[(f64, f64); 6]>,
+    /// How GNC reached this solution, only when `GSC_SOLVE_LOG` is set (`solve_log_path`).
+    pub trace: Option<SolveTrace>,
+}
+
+/// GNC's path to a solution, for the solve log.
+#[derive(Clone)]
+pub struct SolveTrace {
+    pub gnc_iterations: usize,
+    /// The mu of GNC's last iteration (NaN when nothing exceeded its cutoff, so GNC never ran).
+    pub gnc_mu: f64,
+    /// "under_cutoff" (GNC never ran), "converged" (every weight settled at 0 or 1), "cost_change" (the weighted cost
+    /// stopped changing first) or "max_iterations".
+    pub gnc_stop: &'static str,
+    /// Per closure, GNC's final weight before rounding at 0.5.
+    pub gnc_weights: Vec<f64>,
+    /// Cost (sum of squared whitened residuals) as [odometry, closures, priors and sightings]: at the starting estimate
+    /// with every closure in at its own variance, and at the solution with its kept, Huber-weighted closures.
+    pub initial_cost: [f64; 3],
+    pub final_cost: [f64; 3],
+}
+
+/// `GSC_SOLVE_LOG=<path>`: one JSON line per adopted solve (`GscPgo::apply_solve`); read once, unset costs nothing.
+pub fn solve_log_path() -> Option<&'static std::path::Path> {
+    static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::var_os("GSC_SOLVE_LOG").map(std::path::PathBuf::from))
+        .as_deref()
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -224,6 +250,22 @@ pub(crate) fn solve_core(
     };
     let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
     let mut sighting_weights = vec![1.0; sightings.len()];
+    let tracing = solve_log_path().is_some();
+    let initial_cost = if tracing {
+        cost_parts(
+            &state,
+            odometry,
+            closures,
+            &vec![1.0; closures.len()],
+            unary,
+            &unary_weights,
+            sightings,
+            &sighting_weights,
+        )
+    } else {
+        [f64::NAN; 3]
+    };
+    let (mut gnc_iterations, mut gnc_mu, mut gnc_stop) = (0, f64::NAN, "under_cutoff");
     let mut held = vec![false; closures.len()];
     for (h, &c) in held.iter_mut().zip(&config.committed) {
         *h |= c;
@@ -268,7 +310,10 @@ pub(crate) fn solve_core(
             }
         };
         let mut previous_cost = f64::INFINITY;
+        gnc_stop = "max_iterations";
         for _ in 0..100 {
+            gnc_iterations += 1;
+            gnc_mu = mu;
             for ((w, &r), &held) in weights.iter_mut().zip(&r2).zip(&held) {
                 if held {
                     continue;
@@ -307,13 +352,13 @@ pub(crate) fn solve_core(
                 sightings,
                 &sighting_weights,
             );
-            if weights
+            let settled = weights
                 .iter()
                 .chain(&unary_weights)
                 .chain(&sighting_weights)
-                .all(|&w| !(1e-4..=1.0 - 1e-4).contains(&w))
-                || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost
-            {
+                .all(|&w| !(1e-4..=1.0 - 1e-4).contains(&w));
+            if settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost {
+                gnc_stop = if settled { "converged" } else { "cost_change" };
                 break;
             }
             previous_cost = weighted_cost;
@@ -324,6 +369,7 @@ pub(crate) fn solve_core(
         .iter()
         .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
         .collect();
+    let gnc_weights = if tracing { weights } else { Vec::new() };
     let unary_kept: Vec<f64> = unary_weights
         .iter()
         .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
@@ -443,7 +489,25 @@ pub(crate) fn solve_core(
     } else {
         None
     };
+    let trace = tracing.then(|| SolveTrace {
+        gnc_iterations,
+        gnc_mu,
+        gnc_stop,
+        gnc_weights,
+        initial_cost,
+        final_cost: cost_parts(
+            &state,
+            odometry,
+            closures,
+            &huber,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+        ),
+    });
     Solution {
+        trace,
         odometry_error_estimate_evidence,
         rotations: state.rotation,
         positions: state.position,
@@ -1014,6 +1078,34 @@ pub(crate) fn linearize_between(
         }
     }
     (residual, jf, jt)
+}
+
+/// `cost`, split as [odometry, closures, priors and sightings].
+#[allow(clippy::too_many_arguments)]
+fn cost_parts(
+    state: &State,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+) -> [f64; 3] {
+    [
+        cost(state, odometry, &[], &[], &[], &[], &[], &[]),
+        cost(state, &[], closures, closure_weights, &[], &[], &[], &[]),
+        cost(
+            state,
+            &[],
+            &[],
+            &[],
+            unary,
+            unary_weights,
+            sightings,
+            sighting_weights,
+        ),
+    ]
 }
 
 fn cost(

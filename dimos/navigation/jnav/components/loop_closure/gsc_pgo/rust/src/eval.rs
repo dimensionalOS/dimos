@@ -496,6 +496,12 @@ fn advance_latest<'a>(odoms: &'a [OdomRow], ts: f64, cursor: &mut usize) -> Opti
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
+    // every adopted solve's record (`solve_log_path`) goes next to the output unless GSC_SOLVE_LOG names a file
+    if std::env::var_os("GSC_SOLVE_LOG").is_none() {
+        let path = args.output.with_file_name("solve.jsonl");
+        let _ = std::fs::remove_file(&path);
+        std::env::set_var("GSC_SOLVE_LOG", path);
+    }
 
     let connection =
         Connection::open_with_flags(&args.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
