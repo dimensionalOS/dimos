@@ -15,6 +15,7 @@
 """Shared rollout behavior without network inference or robot hardware."""
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import time
 from typing import Any
@@ -244,6 +245,79 @@ def test_stale_or_skewed_inputs_cannot_preflight(rollout: tuple[Any, Any, Any]) 
     provide_observation(module, ts=time.time() - 2)
     assert module.preflight_rollout()["policy_ready"] is False
     backend.predict.assert_not_called()
+
+
+def test_transient_skew_waits_for_aligned_inputs_without_inference(rollout, mocker):
+    module, backend, control = rollout
+    stamp = time.time()
+    provide_observation(module, ts=stamp - 0.2)
+    module._on_joint_state(JointState(ts=stamp, name=["joint"], position=[0.0]))
+    attempted = Event()
+    snapshot = module._snapshot_observation
+
+    def capture(now):
+        try:
+            return snapshot(now)
+        finally:
+            attempted.set()
+
+    mocker.patch.object(module, "_snapshot_observation", side_effect=capture)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(module._wait_for_observation)
+        assert attempted.wait(timeout=1)
+        assert not result.done()
+        provide_observation(module)
+        images, state, _ = result.result(timeout=1)
+    assert set(images) == {"observation.images.wrist"}
+    np.testing.assert_array_equal(state, [0.0])
+    backend.predict.assert_not_called()
+    backend.observe.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+def test_persistent_skew_still_times_out(rollout, mocker):
+    module, backend, control = rollout
+    stamp = time.time()
+    provide_observation(module, ts=stamp - 0.2)
+    module._on_joint_state(JointState(ts=stamp, name=["joint"], position=[0.0]))
+    mocker.patch.object(policy_runtime.time, "monotonic", side_effect=[0.0, 0.6])
+    with pytest.raises(RuntimeError, match="timestamp skew"):
+        module._wait_for_observation()
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+def test_stop_interrupts_waiting_for_aligned_observations(rollout, mocker):
+    module, backend, control = rollout
+    stamp = time.time()
+    provide_observation(module, ts=stamp - 0.2)
+    module._on_joint_state(JointState(ts=stamp, name=["joint"], position=[0.0]))
+    waiting = Event()
+    wait = module._observation_changed.wait
+
+    def observed_wait(timeout):
+        waiting.set()
+        return wait(timeout)
+
+    mocker.patch.object(module._observation_changed, "wait", side_effect=observed_wait)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(module._wait_for_observation)
+        assert waiting.wait(timeout=1)
+        module.stop_rollout()
+        assert result.result(timeout=1) is None
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+def test_stale_inputs_are_not_retried(rollout, mocker):
+    module, backend, control = rollout
+    provide_observation(module, ts=time.time() - 2)
+    wait = mocker.spy(module._observation_changed, "wait")
+    with pytest.raises(RuntimeError, match="stale"):
+        module._wait_for_observation()
+    wait.assert_not_called()
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
 
 
 def test_manual_takeover_stops_an_accepted_chunk(rollout: tuple[Any, Any, Any]) -> None:

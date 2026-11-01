@@ -44,6 +44,10 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class _ObservationSkewError(RuntimeError):
+    """Fresh asynchronous inputs have not yet formed a synchronized observation."""
+
+
 class _PolicyRuntime(PolicyModule):
     """One rollout controller for local joint policies and remote joint/EEF policies."""
 
@@ -288,7 +292,7 @@ class _PolicyRuntime(PolicyModule):
         ):
             raise RuntimeError("observation is stale or has an invalid timestamp")
         if max(stamps) - min(stamps) > self.config.max_observation_skew_s:
-            raise RuntimeError("camera/state timestamp skew exceeds configured tolerance")
+            raise _ObservationSkewError("camera/state timestamp skew exceeds configured tolerance")
         if len(state.name) != len(state.position) or len(set(state.name)) != len(state.name):
             raise RuntimeError("joint state names must be unique and match its position count")
         positions = dict(zip(state.name, state.position, strict=True))
@@ -299,6 +303,20 @@ class _PolicyRuntime(PolicyModule):
         if not np.all(np.isfinite(vector)):
             raise RuntimeError("joint state contains non-finite positions")
         return images, vector, min(stamps)
+
+    def _wait_for_observation(self) -> tuple[Images, NDArray[np.float32], float] | None:
+        """Wait briefly for fresh camera/state alignment without relaxing validation."""
+        deadline = time.monotonic() + self.config.max_observation_age_s
+        with self._observation_changed:
+            while not self._stop_event.is_set():
+                try:
+                    return self._snapshot_observation(time.time())
+                except _ObservationSkewError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise
+                    self._observation_changed.wait(timeout=remaining)
+        return None
 
     def _load_policy(self) -> PolicyBackend:
         if self.config.backend == "dreamlabs":
@@ -312,8 +330,11 @@ class _PolicyRuntime(PolicyModule):
         last_stamp = float("-inf")
         try:
             while not self._stop_event.is_set():
+                observation = self._wait_for_observation()
+                if observation is None:
+                    break
+                images, state, stamp = observation
                 with self._lock:
-                    images, state, stamp = self._snapshot_observation(time.time())
                     task = self.config.task
                 if stamp > last_stamp:
                     policy.observe(images, state, task=task, timestamp=stamp)
@@ -353,14 +374,20 @@ class _PolicyRuntime(PolicyModule):
                         or self._observation_count >= policy.observations_required
                     )
             while not self._stop_event.is_set():
+                observation = self._wait_for_observation()
+                if observation is None:
+                    break
+                images, state, state_ts = observation
                 with self._lock:
-                    images, state, state_ts = self._snapshot_observation(time.time())
                     task = self.config.task
                 chunk = policy.predict(images, state, task=task)
+                observation = self._wait_for_observation()
+                if observation is None:
+                    break
+                _, anchor, _ = observation
                 with self._lock:
                     if self._stop_event.is_set():
                         break
-                    _, anchor, _ = self._snapshot_observation(time.time())
                     assert self._latest_joint_state is not None
                     state_ts = self._latest_joint_state.ts
                 trajectory = self._prepare_trajectory(chunk, anchor, policy)
