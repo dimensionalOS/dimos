@@ -676,6 +676,9 @@ pub struct GscPgo {
     pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
+    /// Per finished solve (adopted or not): the keyframes it was dispatched over, its newest keyframe's time, and the
+    /// seconds it took on its thread.
+    pub(crate) solve_records: Vec<(usize, f64, f64)>,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
@@ -721,6 +724,15 @@ pub(crate) struct TimingStats {
     pub(crate) degeneracy_s: f64,
     pub(crate) extended_icp_s: f64,
     pub(crate) solve_s: f64,
+    /// `add_key_pose` without the pressure check: drop-reseen, aggregation, voxelizing, the keyframe and its scan-context
+    /// descriptor.
+    pub(crate) scan_s: f64,
+    /// The loop-overlap pressure checks (`pressure_check_frequency`).
+    pub(crate) pressure_s: f64,
+    /// `propose_closure` and `begin_closure_search`, the scan-context lookup (`scan_context_s`) included.
+    pub(crate) propose_s: f64,
+    /// `ClosureSearch::run` (its ICP, gates and extension), debug dumps left out.
+    pub(crate) search_s: f64,
 }
 
 /// A keyframe through stages 1 and 2, waiting for the search thread: its candidate target, the
@@ -763,6 +775,8 @@ pub struct ClosureSearch {
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Seconds spent writing debug dumps (`closure_icp_dump_dir`), taken out of the stage timings.
     pub(crate) debug_io_s: std::cell::Cell<f64>,
+    /// Every debug dump's seconds in this search (`closure_icp_dump_dir`), left out of `TimingStats::search_s`.
+    pub(crate) dump_s: Arc<std::sync::Mutex<f64>>,
     /// The keyframes' mean scan reach (m), which spaces an extension's separate source clouds.
     pub(crate) mean_reach: f64,
 }
@@ -800,7 +814,10 @@ impl ClosureSearch {
             std::mem::take(&mut self.alternatives),
             self.tries,
         );
+        let (started, dumps) = (std::time::Instant::now(), self.dump_s.clone());
         let mut result = self.search();
+        result.timing.search_s =
+            started.elapsed().as_secs_f64() - *dumps.lock().expect("dump seconds");
         result.retry = Some(retry);
         result
     }
@@ -991,6 +1008,7 @@ impl ClosureSearch {
         }));
         timing.icp_s += t0.elapsed().as_secs_f64();
         if !self.config.closure_icp_dump_dir.is_empty() && cache.is_none() {
+            let dump_started = std::time::Instant::now();
             let (source_cloud, target_cloud, _) = clouds();
             dump_icp(
                 &self.config.closure_icp_dump_dir,
@@ -1002,6 +1020,7 @@ impl ClosureSearch {
                 &icp,
                 "",
             );
+            *self.dump_s.lock().expect("dump seconds") += dump_started.elapsed().as_secs_f64();
         }
         diag.icp_converged = icp.converged;
         diag.icp_iterations = icp.iterations;
@@ -1353,9 +1372,13 @@ impl GscPgo {
     }
 
     /// Cumulative wall seconds per stage: scan context, submaps, ICP, degeneracy, extended ICP, pose-graph solves.
-    pub fn stage_seconds(&self) -> [(&'static str, f64); 6] {
+    pub fn stage_seconds(&self) -> [(&'static str, f64); 10] {
         let t = &self.timing;
         [
+            ("scan", t.scan_s),
+            ("pressure", t.pressure_s),
+            ("propose", t.propose_s),
+            ("search", t.search_s),
             ("scan_context", t.scan_context_s),
             ("submap", t.submap_s),
             ("icp", t.icp_s),
@@ -1363,6 +1386,10 @@ impl GscPgo {
             ("extended_icp", t.extended_icp_s),
             ("solve", t.solve_s),
         ]
+    }
+    /// Per finished solve: the keyframes it was dispatched over, its newest keyframe's time, and its seconds.
+    pub fn solve_records(&self) -> &[(usize, f64, f64)] {
+        &self.solve_records
     }
     pub fn closure_diagnostics(&self) -> &[ClosureCandidateDiag] {
         &self.closure_diagnostics
@@ -1447,6 +1474,7 @@ impl GscPgo {
     /// Add `cloud_with_pose` as a keyframe if it moved far enough from the last one (returns whether it did); every
     /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
+        let started = std::time::Instant::now();
         let due = self.is_key_pose(&cloud_with_pose.pose);
         let cloud = if self.config.drop_reseen_points {
             self.drop_reseen(cloud_with_pose)
@@ -1462,6 +1490,8 @@ impl GscPgo {
             self.insert_keyframe(&cloud_with_pose.pose, cloud);
         }
         self.scans_seen += 1;
+        let checked = std::time::Instant::now();
+        self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
         if frequency > 0
             && self.scans_seen.is_multiple_of(frequency)
@@ -1472,6 +1502,7 @@ impl GscPgo {
                 self.pressure = Some((self.scans_seen, overlap));
             }
         }
+        self.timing.pressure_s += checked.elapsed().as_secs_f64();
         keyframe
     }
     /// `auto_aggregate_cloud_size`: add the scan to the gathered points; a due keyframe is made once they reach the minimum,
@@ -1538,6 +1569,11 @@ impl GscPgo {
     /// proposal if its scan-context match beats the one already waiting (the loser is recorded as
     /// "outranked"), so a busy search thread still gets the most promising keyframe it missed.
     pub fn propose_closure(&mut self) {
+        let started = std::time::Instant::now();
+        self.propose();
+        self.timing.propose_s += started.elapsed().as_secs_f64();
+    }
+    fn propose(&mut self) {
         // nothing to close onto until a keyframe exists whose submap leaves out this one's scan
         if self.key_poses.is_empty() || self.newest_closure_target() == 0 {
             return;
@@ -1619,6 +1655,12 @@ impl GscPgo {
     /// Take the waiting proposal as a `ClosureSearch` (stages 3 and 4) to run on any thread and hand to
     /// `finish_closure_search`.
     pub fn begin_closure_search(&mut self) -> Option<ClosureSearch> {
+        let started = std::time::Instant::now();
+        let search = self.begin();
+        self.timing.propose_s += started.elapsed().as_secs_f64();
+        search
+    }
+    fn begin(&mut self) -> Option<ClosureSearch> {
         let ClosureProposal {
             diag,
             target_idx,
@@ -1701,6 +1743,7 @@ impl GscPgo {
             icp_cache: self.icp_cache.clone(),
             keyframe_clouds: self.keyframe_clouds.clone(),
             debug_io_s: std::cell::Cell::new(0.0),
+            dump_s: Arc::new(std::sync::Mutex::new(0.0)),
             mean_reach: if self.keyframe_reach.1 > 0 {
                 self.keyframe_reach.0 / self.keyframe_reach.1 as f64
             } else {
@@ -1729,6 +1772,7 @@ impl GscPgo {
         self.timing.icp_s += timing.icp_s;
         self.timing.degeneracy_s += timing.degeneracy_s;
         self.timing.extended_icp_s += timing.extended_icp_s;
+        self.timing.search_s += timing.search_s;
         let Some((rotation_offset, translation_offset, score)) = accepted else {
             if let Some((ranked, alternatives, tries)) = retry {
                 self.retry_alternative(&diag, ranked, alternatives, tries);

@@ -423,6 +423,7 @@ impl ClosureSearch {
                     );
                     self.debug_io_s
                         .set(self.debug_io_s.get() + t0.elapsed().as_secs_f64());
+                    *self.dump_s.lock().expect("dump seconds") += t0.elapsed().as_secs_f64();
                 }
                 let mut v = vec![source.len() as f64];
                 v.extend(crate::icp_cache::encode_icp(&icp));
