@@ -175,6 +175,9 @@ pub struct ClosureCandidateDiag {
     pub extended_inliers: usize,
     pub extended_fitness: f64,
     pub extended_confidence: f64,
+    /// The extension's confidence ratio per cloud (evidence over the bar, yank units), the single scan's first; the
+    /// candidate's score is their median.
+    pub cloud_ratios: Vec<f64>,
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
     pub extended_sharpness: f64,
@@ -230,6 +233,7 @@ impl ClosureCandidateDiag {
             extended_inliers: 0,
             extended_fitness: f64::NAN,
             extended_confidence: f64::NAN,
+            cloud_ratios: Vec::new(),
             sharpness: f64::NAN,
             extended_sharpness: f64::NAN,
             likelihood_ratio: f64::NAN,
@@ -368,6 +372,9 @@ pub struct Config {
     pub barely_pass_uncertainty_range: f64,
     /// How much the pressure keeps the uncertainty range wide: its narrowing is stretched by 1 / (1 - pressure)^this.
     pub decisive_pressure_rate: f64,
+    /// The odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach: small
+    /// enough that each still lands inside the target submap's coverage.
+    pub extension_cloud_spacing: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -549,6 +556,7 @@ impl Default for Config {
             barely_fail_uncertainty_range: 0.8,
             barely_pass_uncertainty_range: 1.05,
             decisive_pressure_rate: 1.0,
+            extension_cloud_spacing: 0.25,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -715,6 +723,8 @@ pub struct ClosureSearch {
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Seconds spent writing debug dumps (`closure_icp_dump_dir`), taken out of the stage timings.
     pub(crate) debug_io_s: std::cell::Cell<f64>,
+    /// The keyframes' mean scan reach (m), which spaces an extension's separate source clouds.
+    pub(crate) mean_reach: f64,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
@@ -1632,6 +1642,11 @@ impl GscPgo {
             icp_cache: self.icp_cache.clone(),
             keyframe_clouds: self.keyframe_clouds.clone(),
             debug_io_s: std::cell::Cell::new(0.0),
+            mean_reach: if self.keyframe_reach.1 > 0 {
+                self.keyframe_reach.0 / self.keyframe_reach.1 as f64
+            } else {
+                self.config.closure_search_radius
+            },
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
