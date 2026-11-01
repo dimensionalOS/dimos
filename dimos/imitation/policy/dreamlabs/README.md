@@ -81,7 +81,8 @@ Provide `DreamlabsBackendConfig(mode="eef", model=..., arms=...)` to the shared
 base, target frame, normalized gripper joint, and `sdk_tcp_frame` in the same
 model. The SDK TCP must be rigidly connected to the execution target; it may be
 the target itself. Define tool geometry with `RobotModel.with_fixed_frame`, as
-the standard Metal model does for `grasp_frame`. No separate TCP JSON is needed
+the standard Metal model does for `grasp_frame` and the distinct `dreamlabs_tcp`
+protocol frame (135 mm along `link6` +X, RPY `(pi/2, 0, pi/2)`). No separate TCP JSON is needed
 for that standard model. Existing explicit `target_to_sdk_xyz` and
 `target_to_sdk_xyzw` transforms remain supported instead of a named SDK frame;
 specifying both forms is rejected. The arm base must be fixed relative to the model root.

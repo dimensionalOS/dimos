@@ -69,11 +69,19 @@ not a manufacturer-specified or physically calibrated TCP. X spans pad width, Y 
 the jaw opening axis, and +Z points out of the gripper. The dual model prefixes it
 as `left_grasp_frame` and `right_grasp_frame`.
 
-Planning, teleop, EEF tracking, and policy FK share these model frames. The standard
-Metal Dreamlabs configuration explicitly names the same grasp frame as its
-`sdk_tcp_frame`; no separate TCP JSON file or numeric calibration override is
-required. Inference reports and consumes this chosen tool frame in arm-base-local
-coordinates. No YAM tool offset or axis rotation is substituted for Metal.
+Planning, teleop, EEF tracking, and policy FK share one model. The protocol uses
+its separate `dreamlabs_tcp` fixed link: 135 mm along vendor `link6` +X, with
+RPY `(pi/2, 0, pi/2)`. This matches the deployed
+[MakerMods playground policy worker](https://playground.makermods.ai/assets/policy-worker-DxdwLh8C.js)
+and Dreamlabs Metal convention: tool Z along the fingers, X across the jaws.
+The dual model prefixes the link by side. It is the `sdk_tcp_frame`; execution
+still targets `grasp_frame` through the fixed transform between them. Observations
+use arm-base-local protocol poses, and returned poses are converted back to the
+execution frame. No separate TCP JSON is needed for the standard tool.
+The protocol frame defines compatibility with that model; it is not a physical
+station calibration. Compared with `grasp_frame`, its position differs by 20.8 mm
+and its orientation by 90 degrees. Reusing the grasp frame directly for the
+protocol would change both the model's pose anchors and action interpretation.
 
 For a different tool, define its TCP with a fixed model link and configure
 `DreamlabsArmConfig.sdk_tcp_frame`. It must be rigidly connected to `target_frame`;

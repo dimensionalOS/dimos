@@ -14,6 +14,8 @@
 
 """Station composition checks; no adapters, cameras, or remote clients are started."""
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -32,6 +34,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.protocol.encode.cbor import decode, encode
+from dimos.robot.manipulators.dual_makermods_metal.model import dual_metal_model_config
 from dimos.robot.manipulators.makermods_metal.learning import build_metal_learning
 from dimos.spec.utils import spec_annotation_compliance
 
@@ -134,7 +137,7 @@ def test_standard_station_declares_model_tcp_without_loading_assets(dual, roles,
         a.kwargs["model"] for a in blueprint.blueprints if a.module is ManipulationModule
     )
     for side, arm in policy["dreamlabs"].arms.items():
-        assert arm.sdk_tcp_frame == arm.target_frame
+        assert arm.sdk_tcp_frame == (f"{side}_dreamlabs_tcp" if dual else "dreamlabs_tcp")
         assert arm.target_frame == (f"{side}_grasp_frame" if dual else "grasp_frame")
         assert arm.target_frame in {group.tip_link for group in planner.planning_groups}
         assert arm.target_to_sdk_xyz is None
@@ -151,7 +154,57 @@ def test_model_tcp_mapping_survives_worker_cbor_round_trip(dual, roles):
     restored = decode(encode(config))
     assert restored.arms == config.arms
     assert encode(restored.model) == encode(config.model)
-    assert all(arm.sdk_tcp_frame == arm.target_frame for arm in restored.arms.values())
+    assert all(arm.sdk_tcp_frame.endswith("dreamlabs_tcp") for arm in restored.arms.values())
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("dual", [False, True])
+def test_protocol_tcp_matches_deployed_playground_fk_in_each_arm_base(dual):
+    model = (
+        dual_metal_model_config(
+            left_xyz=(-0.1, 0.42, 0.07),
+            right_xyz=(0.2, -0.37, 0.11),
+            left_rpy=(0.1, -0.2, 0.4),
+            right_rpy=(-0.2, 0.1, -0.3),
+        )
+        if dual
+        else None
+    )
+    blueprint = build_metal_learning(dual=dual, collection=False, model=model)
+    config = next(
+        a.kwargs["dreamlabs"] for a in blueprint.blueprints if issubclass(a.module, PolicyModule)
+    )
+    fk = DreamlabsKinematics(config)
+    fixture = json.loads((Path(__file__).parent / "fixtures/playground_metal_fk.json").read_text())
+    for vector in fixture["vectors"]:
+        positions = {
+            name: value
+            for arm in config.arms.values()
+            for name, value in zip(arm.joint_names, vector["q"], strict=True)
+        }
+        positions.update({arm.gripper_joint: 0.5 for arm in config.arms.values()})
+        observation = fk.observation(positions, "test")
+        for side, arm in config.arms.items():
+            np.testing.assert_allclose(
+                observation[f"state.{side}_eef_xyz"], vector["xyz"], atol=1e-7
+            )
+            np.testing.assert_allclose(
+                observation[f"state.{side}_eef_rot6"], vector["rot6"], atol=1e-7
+            )
+            protocol_pose = np.eye(4)
+            protocol_pose[:3, 3] = vector["xyz"]
+            rot6 = np.asarray(vector["rot6"])
+            protocol_pose[:3, :3] = np.column_stack(
+                (rot6[:3], rot6[3:], np.cross(rot6[:3], rot6[3:]))
+            )
+            pose = fk.canonical_pose(side, protocol_pose)
+            expected = fk.to_pose(fk.root_pose(arm.target_frame, positions))
+            np.testing.assert_allclose(
+                [pose.x, pose.y, pose.z], [expected.x, expected.y, expected.z], atol=1e-8
+            )
+            np.testing.assert_allclose(
+                pose.orientation.to_numpy(), expected.orientation.to_numpy(), atol=1e-12
+            )
 
 
 @pytest.mark.self_hosted

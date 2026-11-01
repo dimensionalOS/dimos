@@ -51,7 +51,10 @@ from dimos.robot.manipulators.makermods_metal.config import (
     metal_hardware,
 )
 from dimos.robot.manipulators.makermods_metal.coordinator import MetalCoordinator
-from dimos.robot.manipulators.makermods_metal.model import make_metal_model_config
+from dimos.robot.manipulators.makermods_metal.model import (
+    METAL_DREAMLABS_TCP_FRAME,
+    make_metal_model_config,
+)
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 ToolTransform = tuple[tuple[float, float, float], tuple[float, float, float, float]]
@@ -97,7 +100,7 @@ def build_metal_learning(
     arms = {}
     for side in sides:
         transform = (tcp_transforms or {}).get(side)
-        sdk_tcp_frame = targets[side]
+        sdk_tcp_frame = f"{side}_{METAL_DREAMLABS_TCP_FRAME}" if dual else METAL_DREAMLABS_TCP_FRAME
         if transform is not None:
             xyz, quat = transform
             if not all(math.isfinite(v) for v in (*xyz, *quat)) or not math.isclose(

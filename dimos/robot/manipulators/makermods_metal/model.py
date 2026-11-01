@@ -14,6 +14,8 @@
 
 """Planning model for the six-axis MakerMods Metal arm."""
 
+import math
+
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.makermods_metal.config import (
@@ -29,6 +31,12 @@ from dimos.robot.manipulators.makermods_metal.config import (
 # not a vendor-specified or physically calibrated TCP.
 METAL_GRASP_FRAME = "grasp_frame"
 METAL_GRASP_XYZ = (0.0, 0.0, 0.08)
+# Dreamlabs/playground protocol frame, expressed directly in vendor link6.
+# Z points along the fingers, X across the jaws, Y completes the right-handed frame.
+# Source: playground.makermods.ai/assets/policy-worker-DxdwLh8C.js (Metal model).
+METAL_DREAMLABS_TCP_FRAME = "dreamlabs_tcp"
+METAL_DREAMLABS_TCP_XYZ = (0.135, 0.0, 0.0)
+METAL_DREAMLABS_TCP_RPY = (math.pi / 2, 0.0, math.pi / 2)
 
 
 def make_metal_model_config() -> RobotModelConfig:
@@ -36,6 +44,12 @@ def make_metal_model_config() -> RobotModelConfig:
     return RobotModelConfig(
         model=METAL_MODEL.with_subtree_rooted_at("base_link")
         .with_fixed_frame(METAL_GRASP_FRAME, "gripper_base", xyz=METAL_GRASP_XYZ)
+        .with_fixed_frame(
+            METAL_DREAMLABS_TCP_FRAME,
+            "link6",
+            xyz=METAL_DREAMLABS_TCP_XYZ,
+            rpy=METAL_DREAMLABS_TCP_RPY,
+        )
         .with_renamed_joints({"gripper_base": "gripper_mount_joint"})
         .with_default_joint_acceleration_limit(1.0),
         joint_names=list(METAL_ARM_JOINTS),

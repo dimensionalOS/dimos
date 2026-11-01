@@ -128,7 +128,10 @@ official `gripper_base` +Z axis. It defines the rounded midpoint of the standard
 finger-pad contact regions in the pinned vendor meshes; it is a dimOS model TCP,
 not a vendor-specified or physically calibrated point. Its axes match
 `gripper_base`: X spans pad width, Y is the jaw opening axis, and +Z points out
-of the gripper. Planning, teleop, EEF execution, and Dreamlabs use this same frame.
+of the gripper. Planning, teleop, and EEF execution target this frame. Dreamlabs
+uses the model's distinct `dreamlabs_tcp` protocol link, 135 mm along `link6` +X
+with RPY `(pi/2, 0, pi/2)`, matching the MakerMods playground's Metal convention.
+The policy converts poses between these rigidly connected frames in both directions.
 No separate TCP JSON is required for the standard tool. The planner fixes the
 finger joints and does not visualize their opening.
 A renamed fixed mount joint avoids a joint/link frame-name collision
