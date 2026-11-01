@@ -541,7 +541,7 @@ class TickLoop:
                     logger.error(f"Failed to send a command to {name}: {e}")
 
     def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:
-        """Log once that a robot has never reported, naming its silent ports and the likely cause.
+        """Report a pending initial handshake once, without treating calibration as a fault.
 
         Nothing is logged until ten reading timeouts after start, nor for a
         robot that reported and then went quiet: its connection module's
@@ -554,15 +554,21 @@ class TickLoop:
             return
         self._silence_logged.add(name)
         ports = ", ".join(f"{name}_{kind}" for kind in silent)
-        theirs = ", ".join(silent)
-        onto = "it" if len(silent) == 1 else "them"
-        logger.error(
-            f"robot {name!r} has not reported on {ports}; is the connection module's {theirs} "
-            f"remapped onto {onto}?"
-        )
+        logger.info("Waiting for initial connection readings", source=name, ports=ports)
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
-        """Publish aggregated JointState for external consumers."""
+        """Publish an aggregate only after every connection's initial readings are complete."""
+        if any(source.unreported() for source in self._connections.values()):
+            return
+        reported = (
+            snapshot.joint_positions.keys()
+            | snapshot.joint_velocities.keys()
+            | snapshot.joint_efforts.keys()
+        )
+        if any(
+            not reported.issuperset(source.joint_names) for source in self._connections.values()
+        ):
+            return
         names = list(snapshot.joint_positions.keys())
         msg = JointState(
             ts=snapshot.timestamp,

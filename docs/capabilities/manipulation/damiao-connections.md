@@ -14,6 +14,7 @@ From the checkout of [PR #4960](https://github.com/dimensionalOS/dimos/pull/4960
 gh pr checkout 4960
 uv run pytest dimos/robot/manipulators/common/test_damiao_connection.py \
     dimos/robot/manipulators/common/test_damiao_native.py \
+    dimos/robot/manipulators/common/test_damiao_startup.py \
     dimos/robot/manipulators/common/test_damiao_model.py
 ```
 
@@ -60,6 +61,12 @@ For YAM or OpenArm, use `app.OpenYamConnection` or `app.OpenArmConnection`.
 The connection status must report `connected=True`, with no error or rejection.
 The coordinator must return 7 coordinates for Metal/YAM, or 16 for OpenArm.
 Mock mode echoes commanded positions. It does not simulate dynamics or contact.
+
+A connection reports ready only after calibration, feedback validation, command
+subscription, and reader startup succeed. Its ready log names the actual connection
+class; `arm` is the deployed joint namespace. The coordinator waits for all initial
+connection readings before publishing aggregate state, so calibration does not send
+empty state frames to the planner.
 
 For the mock Metal, test its gripper:
 
