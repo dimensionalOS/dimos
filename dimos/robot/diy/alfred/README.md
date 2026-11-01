@@ -112,23 +112,28 @@ safe.
 The scene is a bench (top 1.06 m, front edge 0.45 m out, 1.0 x 1.6 m) with a soda can, a small
 cardboard box, a cucumber and a tennis ball just beyond 0.61 m, where the camera's view of the
 bench top begins, and a bottle 0.80 m out. A top-down grasp reaches about 0.58 m from
-`base_link`, as on the robot: scan, then drive ~15 cm toward the bench (the objects stay put in
-`odom`) or tick **Let the base drive**, then pick. The bottle stays out of reach, for the pick's
+`base_link`, as on the robot: drive ~15 cm toward the bench (the objects stay put in `odom`) or
+tick **Let the base drive**, then pick. The bottle stays out of reach, for the pick's
 reach message. Nothing moves in the scene but the camera, so a picked object stays on the bench,
 and the arms move in the Controller's view, not in the picture.
 
 On a laptop (macOS on Apple Silicon, or Linux x86_64 with or without NVIDIA):
 
 ```bash
-git checkout mb/feat/alfred-full-stack
+git checkout mustafa/integration/hybrid-teleop-alfred
 uv sync --inexact --extra manipulation                              # Linux
 uv sync --inexact --extra manipulation --no-install-package drake  # macOS, only if uv finds no drake wheel for your Python: the sim plans on RoboPlan
 git lfs pull --include="data/.lfs/alfred_description.tar.gz,data/.lfs/models_edgetam.tar.gz"
 .venv/bin/python -m dimos.robot.diy.alfred.tools.tool_render_bench --out /tmp/bench  # one frame, checked
 ```
 
-Then point Desktop at the checkout, install the Controller and the Manipulation app, and press
-**Simulation** in the Stack card (`dimos run alfred-manipulation-sim` from a shell). MuJoCo needs
+Then point Desktop at the checkout (`dimos.dir` in `~/.dimos/config.yaml`), install the Controller,
+and put the Manipulation app on its branch (`dimos-desktop install
+https://github.com/dimensionalOS/dim-manipulation --ref mb/feat/any-arm`, or `dimos-desktop checkout
+dim-manipulation mb/feat/any-arm` if it is installed). Press **Simulation** in the Stack card
+(`dimos run alfred-manipulation-sim` from a shell, which needs no Desktop). Desktop's dimos gateway
+has to speak CBOR, 8.4.0 or newer; an older one cannot reach this branch. On a Jetson, `echo 3.10 >
+.python-version` before the sync: that interpreter is what gets JetPack's CUDA torch. MuJoCo needs
 nothing set on macOS (it renders through CGL). On Linux with no display (Desktop started as a
 service) the stack sets `MUJOCO_GL=egl` itself, which works with NVIDIA's driver or Mesa's; with
 neither EGL nor a display, put `MUJOCO_GL=osmesa` in the checkout's `.env` (`libosmesa6`). The
@@ -178,8 +183,9 @@ plan leaves them: a restart no longer drops the arms.
 
 ## Picking from the bench
 
-**Scan**, pick an object, pick an arm (or `auto`: the nearer one), **Pick**. What the pick
-pipeline does: one grasp per object (the heuristic's is top-down, GraspGenX's are ranked and
+The Scan card lists what localize sees, live, for the words in its field (the stack's own list
+until you type others). Click an object, pick an arm (or `auto`: the nearer one), **Pick**. What the
+pick pipeline does: one grasp per object (the heuristic's is top-down, GraspGenX's are ranked and
 angled), a pregrasp 10 cm above it through the planner, a straight descent, close, lift.
 
 - **Reach is the limit, not the map.** Shoulder to wrist is 0.44 m with the arm straight, the
@@ -189,8 +195,9 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   face nearly at the bench edge), or let GraspGenX propose a side grasp. The pick refuses an
   out-of-reach object at once and says by how much.
 - **Objects are kept in `odom`,** like the map, so they stay where they are when the base
-  drives; scan again only if the objects themselves moved. A scan is localize over the last 3 s
-  of the feed, read afresh, so a picked object does not answer from where it stood. The pick re-expresses an object's
+  drives. The list reads the newest frame about every 2.5 s, so a nudged object is picked from
+  where it is now; one moved past 8 cm is a new row. An agent's `scan_objects` is localize over the
+  last 3 s of the feed, read afresh. The pick re-expresses an object's
   cloud in its planning frame (`base_link`) through tf before it asks for grasps.
 - **"Let the base drive"** gives the planner `moving_base` as an auxiliary group: the pregrasp
   may then be a base move plus an arm move, executed together; the descent and lift stay the
