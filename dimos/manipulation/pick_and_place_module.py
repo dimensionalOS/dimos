@@ -266,7 +266,8 @@ class PickAndPlaceModule(Module):
         pads or hit the scene.
 
         Args:
-            object_id: Exact object ID returned by the latest scan_objects call.
+            object_id: Exact object ID returned by the latest scan_objects call, or one
+                the scene publishes live.
             planning_group: Gripper-capable pose group; omitted, the arm nearest the object.
             auxiliary_groups: Planning groups the planner may also move to reach the
                 pre-grasp pose. Pass ["moving_base"] when the object is beyond the
@@ -282,13 +283,14 @@ class PickAndPlaceModule(Module):
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_selection()
-        if object_id not in self._objects:
+        # The scene decides: a live scene has objects no scan_objects call named.
+        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+        if pointcloud is None and object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
             return SkillResult(
                 f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
                 "Use scan_objects to refresh the list."
             )
-        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
         if pointcloud is None:
             return SkillResult(
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."

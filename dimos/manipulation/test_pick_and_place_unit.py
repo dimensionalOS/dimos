@@ -297,6 +297,8 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
 
 
 def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    scene.get_object_pointcloud_by_object_id.return_value = None
     module._selected_grasp = PoseStamped(frame_id="world")
 
     result = module.pick_object("missing")
@@ -306,6 +308,28 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
         "Use scan_objects to refresh the list."
     )
     assert module._selected_grasp is None
+
+
+def test_a_pick_takes_an_id_only_a_live_scene_knows(module: PickAndPlaceModule) -> None:
+    """A watching scene lists objects no scan_objects call named."""
+    scene: Any = module._scene
+    module._objects = {}
+
+    result = module.pick_object("watched-1")
+
+    scene.get_object_pointcloud_by_object_id.assert_called_once_with("watched-1")
+    assert "latest scan" not in result.message
+
+
+def test_a_scanned_object_the_scene_lost_says_so(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    scene.get_object_pointcloud_by_object_id.return_value = None
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == (
+        "Object cup-1 has no point cloud in the latest scan. Use scan_objects again."
+    )
 
 
 def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) -> None:
