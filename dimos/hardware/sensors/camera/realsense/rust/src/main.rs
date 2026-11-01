@@ -1172,38 +1172,53 @@ fn stream_rates(context: &Context, cfg: &Config, kind: Rs2StreamKind) -> BTreeSe
 
 /// The newest frameset the capture thread has not taken yet. A newer one
 /// replaces it, as wait_for_frames keeps only the latest; the freshness gate
-/// counts what was skipped.
+/// counts what was skipped. `closed` lives under the same lock as the slot, so
+/// a callback cannot slip a frameset in after `close` has drained it.
 #[derive(Default)]
 struct LatestFrames {
-    slot: Mutex<Option<CompositeFrame>>,
+    slot: Mutex<Slot>,
     ready: Condvar,
-    closed: AtomicBool,
+}
+
+#[derive(Default)]
+struct Slot {
+    frames: Option<CompositeFrame>,
+    closed: bool,
 }
 
 impl LatestFrames {
     fn put(&self, frames: CompositeFrame) {
-        if self.closed.load(Ordering::Relaxed) {
-            return; // dropping releases it
-        }
-        let older = self.slot.lock().unwrap().replace(frames);
-        self.ready.notify_one();
-        drop(older); // released outside the lock
+        let released = {
+            let mut slot = self.slot.lock().unwrap();
+            if slot.closed {
+                Some(frames)
+            } else {
+                let older = slot.frames.replace(frames);
+                self.ready.notify_one();
+                older
+            }
+        };
+        drop(released); // released outside the lock
     }
 
     fn take(&self, timeout: Duration) -> Option<CompositeFrame> {
         let slot = self.slot.lock().unwrap();
         let (mut slot, _) = self
             .ready
-            .wait_timeout_while(slot, timeout, |s| s.is_none())
+            .wait_timeout_while(slot, timeout, |s| s.frames.is_none() && !s.closed)
             .unwrap();
-        slot.take()
+        slot.frames.take()
     }
 
     /// Releases the waiting frameset and every later one.
     fn close(&self) {
-        self.closed.store(true, Ordering::Relaxed);
-        let waiting = self.slot.lock().unwrap().take();
-        drop(waiting);
+        let waiting = {
+            let mut slot = self.slot.lock().unwrap();
+            slot.closed = true;
+            slot.frames.take()
+        };
+        self.ready.notify_all();
+        drop(waiting); // released outside the lock
     }
 }
 
