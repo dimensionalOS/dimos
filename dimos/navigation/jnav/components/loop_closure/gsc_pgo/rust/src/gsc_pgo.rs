@@ -628,8 +628,11 @@ pub struct GscPgo {
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
     pub(crate) learned_odometry_error_estimate_ln_dispatched: [f64; 4],
     pub(crate) odometry_error_estimate_rescale: bool,
-    /// The next solve also measures the learned odometry error estimate's evidence (only `finish`'s last solve does).
+    /// The next solve also measures the learned odometry error estimate's evidence: requested after a solve keeps a loop
+    /// longer (in keyframes between its ends) than any kept before, `learned_evidence_gap`, and by `finish`.
     pub(crate) learned_evidence_requested: bool,
+    pub(crate) learned_evidence_gap: usize,
+    pub(crate) learned_evidence_measured: bool,
     /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
     /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
     pub(crate) odometry_error_estimate_rescaled: bool,
@@ -894,19 +897,14 @@ impl ClosureSearch {
             .iter()
             .flatten()
             .all(|v| v.is_finite());
-        // at the upper bound: scaled by the most any component's bound exceeds its estimate
-        let widen = (0..4)
-            .map(|c| gate_error_estimate[c] / diag.learned_odometry_error_estimate[c])
-            .fold(1.0, f64::max);
         let known = if by_graph {
             // the graph's own covariance of the two ends' relative position (its heading swing and the solved
             // closures included): the closure adds something only where it is surer than the graph in some direction.
             // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            widen
-                * mat3::jacobi_eigen(diag.innovation_covariance)
-                    .0
-                    .into_iter()
-                    .fold(0.0, f64::max)
+            mat3::jacobi_eigen(diag.innovation_covariance)
+                .0
+                .into_iter()
+                .fold(0.0, f64::max)
         } else {
             self.kept_closures
                 .iter()
