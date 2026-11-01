@@ -120,11 +120,12 @@ pub fn encode_icp(icp: &IcpResult) -> Vec<f64> {
     v
 }
 
-/// `encode_icp` with the iterations and stop reason after it (`decode_icp` reads either).
+/// `encode_icp` with the iterations, stop reason and target points after it (`decode_icp` reads either).
 pub fn encode_icp_logged(icp: &IcpResult) -> Vec<f64> {
     let mut v = encode_icp(icp);
     v.push(icp.iterations as f64);
     v.push(icp.stop.code() as f64);
+    v.push(icp.target_points as f64);
     v
 }
 
@@ -135,6 +136,7 @@ pub fn decode_icp(v: &[f64]) -> IcpResult {
         translation: [v[10], v[11], v[12]],
         fitness: v[13],
         overlap: v[14],
+        target_points: v.get(17).map_or(0, |&n| n as usize),
         // entries cached before these were logged read as 0 iterations, stop by `converged`
         iterations: v.get(15).map_or(0, |&n| n as u32),
         stop: v.get(16).map_or(
