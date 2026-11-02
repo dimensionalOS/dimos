@@ -595,6 +595,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "dimos-module",
+ "fast-reform",
  "lcm-msgs",
  "rayon",
  "serde",
@@ -721,6 +722,14 @@ checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
  "parking",
  "pin-project-lite",
+]
+
+[[package]]
+name = "fast-reform"
+version = "0.2.0"
+source = "git+https://github.com/jeff-hykin/fast-reform?rev=94164be#94164bee142f56940a696a57efd47c8097d2b2f1"
+dependencies = [
+ "rayon",
 ]
 
 [[package]]

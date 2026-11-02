@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
@@ -32,7 +32,7 @@ use crate::columns::{
 use crate::dijkstra::RepairWindow;
 use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
 use crate::nodes::{
-    apply_wall_safe_penalty_region, place_nodes, place_nodes_region, relocate_dead_nodes,
+    apply_wall_safe_penalty_region, place_nodes, place_nodes_region, relocate_nodes,
     wall_distances_region, PlacementParams, HOLE_SPAN_CELLS,
 };
 use crate::planner;
@@ -221,6 +221,32 @@ pub struct Planner {
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
     last_result: Option<((f32, f32, f32), bool)>,
+    // When each voxel landed, for a warp that tells overlapping passes apart.
+    // Off unless asked for.
+    voxel_times: Option<VoxelTimes>,
+}
+
+/// Seconds since `epoch` at which each voxel was added, and the clock edits
+/// are stamped with.
+pub(crate) struct VoxelTimes {
+    epoch: Option<f64>,
+    now: f32,
+    by_key: AHashMap<VoxelKey, f32>,
+}
+
+impl VoxelTimes {
+    fn stamp(&mut self, t: f64) {
+        let epoch = *self.epoch.get_or_insert(t);
+        self.now = (t - epoch) as f32;
+    }
+
+    /// Absolute time of a voxel, NaN when unknown.
+    fn get(&self, k: &VoxelKey) -> f64 {
+        match (self.by_key.get(k), self.epoch) {
+            (Some(&t), Some(epoch)) => epoch + t as f64,
+            _ => f64::NAN,
+        }
+    }
 }
 
 impl Planner {
@@ -232,6 +258,23 @@ impl Planner {
             by_col: ColumnIz::default(),
             last_path: None,
             last_result: None,
+            voxel_times: None,
+        }
+    }
+
+    /// Record when each voxel lands, for warps. Costs a map entry per voxel.
+    pub fn track_voxel_times(&mut self) {
+        self.voxel_times.get_or_insert_with(|| VoxelTimes {
+            epoch: None,
+            now: 0.0,
+            by_key: AHashMap::new(),
+        });
+    }
+
+    /// The time, in seconds, the next edits are stamped with.
+    pub fn set_clock(&mut self, t: f64) {
+        if let Some(times) = &mut self.voxel_times {
+            times.stamp(t);
         }
     }
 
@@ -239,25 +282,30 @@ impl Planner {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
-            let clearance = config.headroom_cells();
-
             self.voxel_map.clear();
             for &p in points {
                 self.voxel_map.insert(voxelize(p, voxel_size));
             }
-
-            let mut surface: Vec<VoxelKey> = Vec::new();
-            extract_surfaces(
-                &self.voxel_map,
-                clearance,
-                config.closing_passes(),
-                &mut self.by_col,
-                &mut surface,
-            );
-            build_surface_lookup(&surface, &mut self.graph.surface_lookup);
-
-            self.rebuild_graph(config);
+            if let Some(times) = &mut self.voxel_times {
+                let now = times.now;
+                times.by_key = self.voxel_map.iter().map(|&k| (k, now)).collect();
+            }
+            self.rebuild_from_voxels(config);
         });
+    }
+
+    /// Re-derive surfaces, cells, nodes and edges from the whole voxel map.
+    fn rebuild_from_voxels(&mut self, config: &Config) {
+        let mut surface: Vec<VoxelKey> = Vec::new();
+        extract_surfaces(
+            &self.voxel_map,
+            config.headroom_cells(),
+            config.closing_passes(),
+            &mut self.by_col,
+            &mut surface,
+        );
+        build_surface_lookup(&surface, &mut self.graph.surface_lookup);
+        self.rebuild_graph(config);
     }
 
     /// Update planner artifacts within a local region instead of rebuilding
@@ -323,7 +371,7 @@ impl Planner {
             let (cells_added, cells_removed) = (added.len(), removed.len());
 
             let stage = Instant::now();
-            self.rebuild_region_graph(added, removed, &edits, window_steps, config);
+            self.rebuild_region_graph(added, removed, &edits, &[], window_steps, config);
             debug_throttled!(
                 DEBUG_LOG_PERIOD,
                 diff_ms,
@@ -342,22 +390,40 @@ impl Planner {
 
     /// Patch changed cells, then repair nodes and edges around the change.
     /// A voxel edit can change a wall scan without changing any surface cell,
-    /// so the repair runs for the edits too.
+    /// so the repair runs for the edits too. `moves` are nodes, by list index,
+    /// to carry to a target cell, as a warp does.
     fn rebuild_region_graph(
         &mut self,
         added: Vec<VoxelKey>,
         removed: Vec<VoxelKey>,
         edits: &VoxelEdits,
+        moves: &[(usize, VoxelKey)],
         window_steps: i32,
         config: &Config,
     ) {
         let step = config.step_cells();
+        // A moving node's coordinate, while its cell id still resolves.
+        let mut relocations: Vec<(usize, VoxelKey, VoxelKey)> = moves
+            .iter()
+            .map(|&(ni, target)| {
+                let cell = self.graph.nodes[ni].cell_id;
+                (ni, self.graph.cells.coord(cell), target)
+            })
+            .collect();
         let patch = self.patch_cells(&added, &removed);
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
-        if seeds.is_empty() && edits.is_empty() {
+        if seeds.is_empty() && edits.is_empty() && moves.is_empty() {
             return;
         }
+        let moving: AHashSet<usize> = moves.iter().map(|&(ni, _)| ni).collect();
+        relocations.extend(
+            patch
+                .dead_nodes
+                .iter()
+                .filter(|(ni, _)| !moving.contains(ni))
+                .map(|&(ni, coord)| (ni, coord, coord)),
+        );
 
         let affected = self.changed_neighborhood(&seeds, step);
         let graph = &mut self.graph;
@@ -369,14 +435,20 @@ impl Planner {
             step,
         );
         let params = config.placement_params();
-        let mut gone_nodes = relocate_dead_nodes(
+        let mut gone_nodes = relocate_nodes(
             &graph.cells,
             &graph.surface_lookup,
             &mut graph.nodes,
-            &patch.dead_nodes,
+            &relocations,
             &params,
         );
-        let window_cells = self.node_window(edits, &affected, window_steps, config);
+        // A moved node's region and edges change around both its ends.
+        let mut roots = affected;
+        for &(_, from, to) in &relocations[..moves.len()] {
+            roots.extend(graph.cells.id(from));
+            roots.extend(graph.cells.id(to));
+        }
+        let window_cells = self.node_window(edits, &roots, window_steps, config);
         if window_cells.is_empty() && patch.removed.is_empty() && gone_nodes.is_empty() {
             return;
         }
@@ -481,9 +553,13 @@ impl Planner {
                 local
             })
             .collect();
+        self.apply_column_edits(&edits)
+    }
 
+    /// Apply per-column voxel removals and additions to the map.
+    fn apply_column_edits(&mut self, edits: &[ColumnEdit]) -> VoxelEdits {
         let mut voxel_edits = VoxelEdits::default();
-        for edit in &edits {
+        for edit in edits {
             let (ix, iy) = edit.col;
             let was_empty = self.by_col.get(edit.col).is_none();
             for &iz in &edit.removed {
@@ -493,6 +569,14 @@ impl Planner {
             for &iz in &edit.added {
                 self.voxel_map.insert((ix, iy, iz));
                 self.by_col.add((ix, iy, iz));
+            }
+            if let Some(times) = &mut self.voxel_times {
+                for &iz in &edit.removed {
+                    times.by_key.remove(&(ix, iy, iz));
+                }
+                for &iz in &edit.added {
+                    times.by_key.insert((ix, iy, iz), times.now);
+                }
             }
             if was_empty != self.by_col.get(edit.col).is_none() {
                 voxel_edits.flipped.push(edit.col);
@@ -842,6 +926,9 @@ fn bfs_ball(
     }
     ball
 }
+
+mod warp;
+pub use warp::WarpReport;
 
 #[cfg(test)]
 mod region_tests;

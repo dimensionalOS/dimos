@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "mls_planner"
 path = "src/main.rs"
 
+[[bin]]
+name = "mls_reform_planner"
+path = "src/reform_main.rs"
+
 # Bake registry entry, cross-checked at compile time by the module macro.
 # threads = 2 so the handle loop keeps dispatching while the planning worker
 # runs block_in_place.
@@ -36,6 +40,29 @@ nodes = "sensor_msgs.PointCloud2"
 node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
 
+# The MLS planner that warps itself through each loop closure in place.
+[package.metadata.dimos.module.mls_reform_planner]
+path = "dimos_mls_planner::reform_module::MlsReformPlanner"
+python = "dimos.navigation.global_planner.mls_planner.mls_reform_planner_native:MLSReformPlannerNative"
+threads = 2
+
+[package.metadata.dimos.module.mls_reform_planner.inputs]
+global_map = "sensor_msgs.PointCloud2"
+local_map = "sensor_msgs.PointCloud2"
+region_bounds = "geometry_msgs.PoseStamped"
+seed_map = "sensor_msgs.PointCloud2"
+seed_bounds = "geometry_msgs.PoseStamped"
+goal = "geometry_msgs.PointStamped"
+pose_graph = "sensor_msgs.PointCloud2"
+loop_closure_event = "sensor_msgs.PointCloud2"
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.mls_reform_planner.outputs]
+surface_map = "sensor_msgs.PointCloud2"
+nodes = "sensor_msgs.PointCloud2"
+node_edges = "nav_msgs.LineSegments3D"
+path = "nav_msgs.Path"
+
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
@@ -47,6 +74,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
 smallvec = "1"
+# Warps the map through a pose-graph correction (mls_reform_planner).
+fast-reform = { git = "https://github.com/jeff-hykin/fast-reform", rev = "94164be" }
 
 [workspace]
 members = ["py"]

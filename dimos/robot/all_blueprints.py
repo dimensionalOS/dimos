@@ -304,6 +304,7 @@ all_modules = {
     "mid360-realsense-recorder": "dimos.robot.assembly.mid360_realsense_30.Mid360RealsenseRecorder",
     "mid360-realsense-static-tf": "dimos.robot.assembly.mid360_realsense_30.Mid360RealsenseStaticTf",
     "mls-planner-native": "dimos.navigation.global_planner.mls_planner.mls_planner_native.MLSPlannerNative",
+    "mls-reform-planner-native": "dimos.navigation.global_planner.mls_planner.mls_reform_planner_native.MLSReformPlannerNative",
     "mock-b1-connection-module": "dimos.robot.unitree.b1.connection.MockB1ConnectionModule",
     "module-a": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleA",
     "module-b": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleB",

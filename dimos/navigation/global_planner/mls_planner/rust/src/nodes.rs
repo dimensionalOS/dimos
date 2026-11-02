@@ -214,6 +214,7 @@ impl Nodes {
 /// Move each dead node to a live neighbor cell, or drop it when none is
 /// free or the move would crowd another node. Returns the ids the dead nodes
 /// gave up, so their edges can go.
+#[cfg(test)]
 pub fn relocate_dead_nodes(
     cells: &SurfaceCells,
     lookup: &SurfaceLookup,
@@ -221,18 +222,35 @@ pub fn relocate_dead_nodes(
     dead_nodes: &[(usize, VoxelKey)],
     params: &PlacementParams,
 ) -> Vec<NodeId> {
-    let mut gone: Vec<NodeId> = Vec::with_capacity(dead_nodes.len());
+    let moves: Vec<(usize, VoxelKey, VoxelKey)> = dead_nodes
+        .iter()
+        .map(|&(ni, coord)| (ni, coord, coord))
+        .collect();
+    relocate_nodes(cells, lookup, nodes, &moves, params)
+}
+
+/// relocate_dead_nodes for nodes given as (list index, the coordinate they
+/// sit at, the coordinate to move them to). A node moves to a free live cell
+/// next to its target, or is dropped.
+pub fn relocate_nodes(
+    cells: &SurfaceCells,
+    lookup: &SurfaceLookup,
+    nodes: &mut Nodes,
+    moves: &[(usize, VoxelKey, VoxelKey)],
+    params: &PlacementParams,
+) -> Vec<NodeId> {
+    let mut gone: Vec<NodeId> = Vec::with_capacity(moves.len());
     let step = params.step_cells;
     let crowd_m = RELOCATION_CROWDING_FRAC * params.node_spacing_m;
-    // Dead nodes leave the index before any relocates. The old id is what
+    // Moving nodes leave the index before any relocates. The old id is what
     // the edges still reference.
-    for &(ni, coord) in dead_nodes {
+    for &(ni, coord, _) in moves {
         let old = nodes.list[ni].cell_id;
         gone.push(old);
         nodes.unindex(params, old, coord);
     }
     let mut unplaced: Vec<usize> = Vec::new();
-    for &(ni, (ix, iy, iz)) in dead_nodes {
+    for &(ni, _, (ix, iy, iz)) in moves {
         let mut best: Option<(i32, CellId, VoxelKey)> = None;
         for (dx, dy) in [(0_i32, 0_i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
             let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {

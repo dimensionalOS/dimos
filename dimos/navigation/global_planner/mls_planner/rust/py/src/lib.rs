@@ -19,12 +19,19 @@ use pyo3::prelude::*;
 use validator::Validate;
 
 use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
+use dimos_mls_planner::reform::{
+    decode_loop_closure_event, decode_pose_graph, record_cloud, ReformParams, ReformState,
+    LOOP_EVENT_FIELDS, POSE_GRAPH_FIELDS,
+};
 use dimos_mls_planner::voxel::{surface_point_xyz, VoxelKey};
+use pyo3::types::PyDict;
 
 #[pyclass]
 pub struct MLSPlanner {
     config: Config,
     planner: Planner,
+    voxel_times: bool,
+    reform: ReformState,
 }
 
 /// Extract a (N, 3) float32 numpy array into xyz tuples, dropping any row with
@@ -52,6 +59,16 @@ fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<(f32, f32, f32)>> {
         .collect())
 }
 
+fn check_records(records: &[u8], size: usize) -> PyResult<()> {
+    if !records.len().is_multiple_of(size) {
+        return Err(PyValueError::new_err(format!(
+            "{} bytes is not a whole number of {size}-byte records",
+            records.len()
+        )));
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl MLSPlanner {
     #[new]
@@ -69,6 +86,7 @@ impl MLSPlanner {
         step_threshold_m = 0.16,
         step_penalty_weight = 4.0,
         worker_threads = 4,
+        voxel_times = false,
     ))]
     fn new(
         voxel_size: f32,
@@ -82,6 +100,7 @@ impl MLSPlanner {
         step_threshold_m: f32,
         step_penalty_weight: f32,
         worker_threads: u32,
+        voxel_times: bool,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
@@ -109,21 +128,37 @@ impl MLSPlanner {
         config
             .validate()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let mut planner = Planner::new(config.worker_threads);
+        if voxel_times {
+            planner.track_voxel_times();
+        }
         Ok(Self {
-            planner: Planner::new(config.worker_threads),
+            planner,
             config,
+            voxel_times,
+            reform: ReformState::default(),
         })
     }
 
-    fn update_global_map(&mut self, py: Python<'_>, points: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// `stamp` (s) is when the points were seen, kept per voxel with voxel_times.
+    #[pyo3(signature = (points, stamp = None))]
+    fn update_global_map(
+        &mut self,
+        py: Python<'_>,
+        points: &Bound<'_, PyAny>,
+        stamp: Option<f64>,
+    ) -> PyResult<()> {
         let pts = extract_points(points)?;
+        if let Some(t) = stamp {
+            self.planner.set_clock(t);
+        }
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_global_map(&pts, config));
         Ok(())
     }
 
-    #[pyo3(signature = (points, origin, radius, z_min, z_max, sensor_z))]
+    #[pyo3(signature = (points, origin, radius, z_min, z_max, sensor_z, stamp = None))]
     #[allow(clippy::too_many_arguments)]
     fn update_region(
         &mut self,
@@ -134,8 +169,12 @@ impl MLSPlanner {
         z_min: f32,
         z_max: f32,
         sensor_z: f32,
+        stamp: Option<f64>,
     ) -> PyResult<()> {
         let pts = extract_points(points)?;
+        if let Some(t) = stamp {
+            self.planner.set_clock(t);
+        }
         let bounds = RegionBounds {
             origin_x: origin.0,
             origin_y: origin.1,
@@ -302,6 +341,77 @@ impl MLSPlanner {
 
     fn clear(&mut self) {
         self.planner = Planner::new(self.config.worker_threads);
+        if self.voxel_times {
+            self.planner.track_voxel_times();
+        }
+        self.reform = ReformState::default();
+    }
+
+    /// Take keyframes from raw pose_graph records (40 bytes each). Keyframes
+    /// already known keep the pose the map holds them at.
+    fn add_keyframes(&mut self, records: Vec<u8>) -> PyResult<usize> {
+        check_records(&records, 40)?;
+        let msg = record_cloud(POSE_GRAPH_FIELDS, records);
+        let records = decode_pose_graph(&msg).map_err(|e| PyValueError::new_err(e.0))?;
+        self.reform.add_keyframes(&records);
+        Ok(self.reform.len())
+    }
+
+    /// Warp the planner through raw loop_closure_event records (68 bytes
+    /// each). `held` points warp along and come back in the result. Returns
+    /// None when no keyframe moved past min_shift_m, else a dict of what the
+    /// warp did and cost.
+    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, rebuild_fraction = 1.0))]
+    #[allow(clippy::too_many_arguments)]
+    fn apply_loop_closure<'py>(
+        &mut self,
+        py: Python<'py>,
+        records: Vec<u8>,
+        held: Vec<(f32, f32, f32)>,
+        blend_sigma_m: f64,
+        blend_time_sigma_s: f64,
+        min_shift_m: f64,
+        rebuild_fraction: f64,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        check_records(&records, 68)?;
+        let msg = record_cloud(LOOP_EVENT_FIELDS, records);
+        let moved = decode_loop_closure_event(&msg).map_err(|e| PyValueError::new_err(e.0))?;
+        let params = ReformParams {
+            blend_sigma_m,
+            blend_time_sigma_s,
+            min_shift_m,
+            rebuild_fraction,
+        };
+        let started = std::time::Instant::now();
+        let Some(warp) = self.reform.closure(&moved, &params) else {
+            return Ok(None);
+        };
+        let build_ms = started.elapsed().as_secs_f64() * 1e3;
+        let mut held = held;
+        let config = &self.config;
+        let planner = &mut self.planner;
+        let report = py.allow_threads(|| planner.apply_warp(&warp, &mut held, config));
+        let out = PyDict::new(py);
+        out.set_item("build_ms", build_ms)?;
+        out.set_item("warp_ms", report.warp_ms)?;
+        out.set_item("voxel_ms", report.voxel_ms)?;
+        out.set_item("surface_ms", report.surface_ms)?;
+        out.set_item("graph_ms", report.graph_ms)?;
+        out.set_item("voxels_warped", report.voxels_warped)?;
+        out.set_item("voxels_moved", report.voxels_moved)?;
+        out.set_item("voxels_added", report.voxels_added)?;
+        out.set_item("voxels_removed", report.voxels_removed)?;
+        out.set_item("surface_added", report.surface_added)?;
+        out.set_item("surface_removed", report.surface_removed)?;
+        out.set_item("nodes_moved", report.nodes_moved)?;
+        out.set_item("nodes", report.nodes)?;
+        out.set_item("rebuilt", report.rebuilt)?;
+        out.set_item("keyframes", warp.keyframes())?;
+        out.set_item("keyframes_moved", warp.moved_keyframes())?;
+        out.set_item("sigma", warp.sigma())?;
+        out.set_item("time_sigma", warp.time_sigma())?;
+        out.set_item("held", held)?;
+        Ok(Some(out))
     }
 
     fn __repr__(&self) -> String {

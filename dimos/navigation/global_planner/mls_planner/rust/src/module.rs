@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::mls_planner::{ms_since, Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
+use crate::reform::Warp;
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
 use dimos_module::time::now;
@@ -35,7 +36,7 @@ type Xyz = (f32, f32, f32);
 type Xyzi = (f32, f32, f32, f32);
 
 /// State shared between the handle loop and the worker.
-type Shared<T> = Arc<Mutex<Option<T>>>;
+pub(crate) type Shared<T> = Arc<Mutex<Option<T>>>;
 
 /// A map input handed from the handle loop to the worker, its points already
 /// extracted so the worker only mutates the graph. Only the newest is kept,
@@ -48,6 +49,7 @@ enum MapUpdate {
     },
     Global {
         points: Vec<Xyz>,
+        stamp: f64,
     },
 }
 
@@ -264,50 +266,69 @@ pub struct MlsPlanner {
     #[config]
     config: Config,
 
-    // Held on the handle loop until stamps match, then handed off paired.
-    pending_local: Option<PointCloud2>,
-    pending_bounds: Option<PoseStamped>,
-    pending_seeds: SeedPairs,
-
-    // Written by the handle loop, read by the worker, so the loop never blocks
-    // on map processing. Seed regions queue in arrival order.
-    pending: Shared<MapUpdate>,
-    seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
-    active_goal: Shared<Xyz>,
-    goal_changed: Arc<AtomicBool>,
-    wake: Arc<Notify>,
-
-    worker: Option<tokio::task::JoinHandle<()>>,
-    viz_publisher: Option<tokio::task::JoinHandle<()>>,
+    intake: Intake,
+    tasks: WorkerTasks,
 }
 
 impl MlsPlanner {
     async fn spawn_worker(&mut self) {
-        let (viz_tx, viz_rx) = mpsc::channel(VIZ_QUEUE_CAPACITY);
-        let publisher = VizPublisher {
-            batches: viz_rx,
-            voxel_size: self.config.voxel_size,
-            frame: self.config.world_frame.clone(),
+        let outputs = WorkerOutputs {
             surface_map: self.surface_map.clone(),
             nodes: self.nodes.clone(),
             node_edges: self.node_edges.clone(),
-        };
-        self.viz_publisher = Some(tokio::spawn(publisher.run()));
-        let worker = Worker {
-            pending: Arc::clone(&self.pending),
-            seed_regions: Arc::clone(&self.seed_regions),
-            active_goal: Arc::clone(&self.active_goal),
-            goal_changed: Arc::clone(&self.goal_changed),
-            wake: Arc::clone(&self.wake),
-            tf: self.tf.clone(),
-            config: self.config.clone(),
-            viz: viz_tx,
             path: self.path.clone(),
         };
-        self.worker = Some(tokio::spawn(worker.run()));
+        self.tasks = self
+            .intake
+            .spawn(self.tf.clone(), self.config.clone(), outputs, false);
     }
 
     async fn stop_worker(&mut self) {
+        self.tasks.stop();
+    }
+
+    async fn on_global_map(&mut self, msg: PointCloud2) {
+        self.intake.global_map(msg);
+    }
+
+    async fn on_local_map(&mut self, msg: PointCloud2) {
+        self.intake.local_map(msg);
+    }
+
+    async fn on_region_bounds(&mut self, msg: PoseStamped) {
+        self.intake.region_bounds(msg);
+    }
+
+    async fn on_seed_map(&mut self, msg: PointCloud2) {
+        self.intake.seed_map(msg);
+    }
+
+    async fn on_seed_bounds(&mut self, msg: PoseStamped) {
+        self.intake.seed_bounds(msg);
+    }
+
+    async fn on_goal(&mut self, msg: PointStamped) {
+        self.intake.goal(msg);
+    }
+}
+
+/// The outputs the worker and its viz publisher write.
+pub(crate) struct WorkerOutputs {
+    pub(crate) surface_map: Output<PointCloud2>,
+    pub(crate) nodes: Output<PointCloud2>,
+    pub(crate) node_edges: Output<Path>,
+    pub(crate) path: Output<Path>,
+}
+
+/// The worker and viz publisher tasks a module runs.
+#[derive(Default)]
+pub(crate) struct WorkerTasks {
+    worker: Option<tokio::task::JoinHandle<()>>,
+    viz_publisher: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl WorkerTasks {
+    pub(crate) fn stop(&mut self) {
         if let Some(handle) = self.worker.take() {
             handle.abort();
         }
@@ -315,33 +336,98 @@ impl MlsPlanner {
             handle.abort();
         }
     }
+}
 
-    async fn on_global_map(&mut self, msg: PointCloud2) {
-        if let Some(points) = cloud_points(&msg, "global_map") {
-            self.hand_off(MapUpdate::Global { points });
+/// The handle loop's side of a planner module: inputs held until they pair,
+/// and the handoffs to the worker, so the loop never blocks on map work.
+#[derive(Default)]
+pub(crate) struct Intake {
+    // Held on the handle loop until stamps match, then handed off paired.
+    pending_local: Option<PointCloud2>,
+    pending_bounds: Option<PoseStamped>,
+    pending_seeds: SeedPairs,
+
+    // Written by the handle loop, read by the worker. Seed regions and warps
+    // queue in arrival order, since every one must land.
+    pending: Shared<MapUpdate>,
+    seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
+    warps: Arc<Mutex<VecDeque<Warp>>>,
+    active_goal: Shared<Xyz>,
+    goal_changed: Arc<AtomicBool>,
+    wake: Arc<Notify>,
+}
+
+impl Intake {
+    /// Start the worker and its viz publisher. `track_voxel_times` keeps when
+    /// each voxel landed, which warps read.
+    pub(crate) fn spawn(
+        &self,
+        tf: Tf,
+        config: Config,
+        outputs: WorkerOutputs,
+        track_voxel_times: bool,
+    ) -> WorkerTasks {
+        let (viz_tx, viz_rx) = mpsc::channel(VIZ_QUEUE_CAPACITY);
+        let publisher = VizPublisher {
+            batches: viz_rx,
+            voxel_size: config.voxel_size,
+            frame: config.world_frame.clone(),
+            surface_map: outputs.surface_map,
+            nodes: outputs.nodes,
+            node_edges: outputs.node_edges,
+        };
+        let worker = Worker {
+            pending: Arc::clone(&self.pending),
+            seed_regions: Arc::clone(&self.seed_regions),
+            warps: Arc::clone(&self.warps),
+            active_goal: Arc::clone(&self.active_goal),
+            goal_changed: Arc::clone(&self.goal_changed),
+            wake: Arc::clone(&self.wake),
+            tf,
+            config,
+            viz: viz_tx,
+            path: outputs.path,
+            track_voxel_times,
+        };
+        WorkerTasks {
+            viz_publisher: Some(tokio::spawn(publisher.run())),
+            worker: Some(tokio::spawn(worker.run())),
         }
     }
 
-    async fn on_local_map(&mut self, msg: PointCloud2) {
+    pub(crate) fn global_map(&mut self, msg: PointCloud2) {
+        if let Some(points) = cloud_points(&msg, "global_map") {
+            let stamp = seconds(&msg.header.stamp);
+            self.hand_off(MapUpdate::Global { points, stamp });
+        }
+    }
+
+    pub(crate) fn local_map(&mut self, msg: PointCloud2) {
         self.pending_local = Some(msg);
         self.try_pair();
     }
 
-    async fn on_region_bounds(&mut self, msg: PoseStamped) {
+    pub(crate) fn region_bounds(&mut self, msg: PoseStamped) {
         self.pending_bounds = Some(msg);
         self.try_pair();
     }
 
-    async fn on_seed_map(&mut self, msg: PointCloud2) {
+    pub(crate) fn seed_map(&mut self, msg: PointCloud2) {
         if let Some(region) = self.pending_seeds.pair_cloud(msg) {
             self.queue_seed(region);
         }
     }
 
-    async fn on_seed_bounds(&mut self, msg: PoseStamped) {
+    pub(crate) fn seed_bounds(&mut self, msg: PoseStamped) {
         if let Some(region) = self.pending_seeds.pair_bounds(msg) {
             self.queue_seed(region);
         }
+    }
+
+    /// Queue a warp of the whole graph, applied before any other work.
+    pub(crate) fn queue_warp(&self, warp: Warp) {
+        self.warps.lock().expect("warp mutex").push_back(warp);
+        self.wake.notify_one();
     }
 
     /// Hand off the local map and bounds once their stamps match.
@@ -391,11 +477,15 @@ impl MlsPlanner {
     }
 
     /// Set or cancel the active goal from a click, then wake the worker.
-    async fn on_goal(&mut self, msg: PointStamped) {
+    pub(crate) fn goal(&mut self, msg: PointStamped) {
         *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.point);
         self.goal_changed.store(true, Ordering::SeqCst);
         self.wake.notify_one();
     }
+}
+
+fn seconds(t: &Time) -> f64 {
+    t.sec as f64 + t.nsec as f64 * 1e-9
 }
 
 /// True when bounds and a local cloud are both present with matching stamps.
@@ -419,6 +509,7 @@ fn goal_position(p: &Point) -> Option<Xyz> {
 struct Worker {
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
+    warps: Arc<Mutex<VecDeque<Warp>>>,
     active_goal: Shared<Xyz>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
@@ -426,6 +517,7 @@ struct Worker {
     config: Config,
     viz: mpsc::Sender<VizBatch>,
     path: Output<Path>,
+    track_voxel_times: bool,
 }
 
 /// Builds and publishes viz messages from the worker's ticks, so the worker
@@ -466,6 +558,9 @@ impl VizPublisher {
 impl Worker {
     async fn run(self) {
         let mut planner = Planner::new(self.config.worker_threads);
+        if self.track_voxel_times {
+            planner.track_voxel_times();
+        }
         let mut last_path_at: Option<Instant> = None;
         let mut last_viz_at: Option<Instant> = None;
         let mut viz = RegionViz::new(
@@ -476,6 +571,16 @@ impl Worker {
         let mut seed_progress = SeedProgress::default();
         let mut path_out = false;
         loop {
+            // A warp moves the frame everything else is in, so it goes first.
+            let warp = self.warps.lock().expect("warp mutex").pop_front();
+            if let Some(warp) = warp {
+                tokio::task::block_in_place(|| self.apply_warp(&mut planner, &warp, &mut viz));
+                self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
+                    .await;
+                self.maybe_replan(&mut planner, false, &mut last_path_at, &mut path_out)
+                    .await;
+                continue;
+            }
             let goal_changed = self.goal_changed.swap(false, Ordering::SeqCst);
             let update = self.pending.lock().expect("pending mutex").take();
             if update.is_some() || goal_changed {
@@ -527,6 +632,35 @@ impl Worker {
                 self.wake.notified().await;
             }
         }
+    }
+
+    /// Carry the graph and the active goal through a warp.
+    fn apply_warp(&self, planner: &mut Planner, warp: &Warp, viz: &mut RegionViz) {
+        let started = Instant::now();
+        // The lock is not held through the warp, so a click lands meanwhile.
+        // A goal set during the warp is already in the new frame and stays.
+        let before = *self.active_goal.lock().expect("goal mutex");
+        let mut held: Vec<Xyz> = before.iter().copied().collect();
+        let report = planner.apply_warp(warp, &mut held, &self.config);
+        let mut goal = self.active_goal.lock().expect("goal mutex");
+        if *goal == before {
+            *goal = held.first().copied();
+        }
+        drop(goal);
+        viz.mark_all();
+        info!(
+            total_ms = ms_since(started),
+            warp_ms = report.warp_ms,
+            voxel_ms = report.voxel_ms,
+            surface_ms = report.surface_ms,
+            graph_ms = report.graph_ms,
+            keyframes_moved = warp.moved_keyframes(),
+            voxels_warped = report.voxels_warped,
+            voxels_moved = report.voxels_moved,
+            nodes_moved = report.nodes_moved,
+            rebuilt = report.rebuilt,
+            "Loop closure applied in place."
+        );
     }
 
     /// Live work has kept seed regions queued and unapplied for too long.
@@ -622,6 +756,7 @@ impl Worker {
                     return false;
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
+                planner.set_clock(seconds(&bounds.header.stamp));
                 let process_start = Instant::now();
                 if let Some(window) = planner.update_region(&points, &region, &self.config) {
                     viz.mark_window(window);
@@ -635,10 +770,11 @@ impl Worker {
                 );
                 true
             }
-            MapUpdate::Global { points } => {
+            MapUpdate::Global { points, stamp } => {
                 if points.is_empty() {
                     return false;
                 }
+                planner.set_clock(stamp);
                 planner.update_global_map(&points, &self.config);
                 viz.mark_all();
                 debug!(global_map_points = points.len(), "global_map processed");
@@ -651,6 +787,7 @@ impl Worker {
     /// premap's own, so no sensor ceiling applies.
     fn ingest_seed(&self, planner: &mut Planner, seed: QueuedSeed, viz: &mut RegionViz) {
         let region = region_bounds(&seed.bounds);
+        planner.set_clock(seconds(&seed.bounds.header.stamp));
         if let Some(window) = planner.update_seed_region(&seed.points, &region, &self.config) {
             viz.mark_window(window);
         }

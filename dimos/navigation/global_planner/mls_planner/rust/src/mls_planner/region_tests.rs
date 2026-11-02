@@ -72,7 +72,7 @@ fn clearance_map(p: &Planner, cfg: &Config) -> BTreeMap<VoxelKey, u32> {
 const PATH_LEN_RATIO: f32 = 1.6;
 const PATH_LEN_SLACK_M: f32 = 0.5;
 
-fn test_config() -> Config {
+pub(super) fn test_config() -> Config {
     Config {
         world_frame: String::new(),
         base_frame: String::new(),
@@ -213,11 +213,11 @@ fn world_points() -> Vec<(f32, f32, f32)> {
     pts
 }
 
-fn surface_set(p: &Planner) -> BTreeSet<VoxelKey> {
+pub(super) fn surface_set(p: &Planner) -> BTreeSet<VoxelKey> {
     p.surface().collect()
 }
 
-fn voxel_set(p: &Planner) -> BTreeSet<VoxelKey> {
+pub(super) fn voxel_set(p: &Planner) -> BTreeSet<VoxelKey> {
     p.voxel_map.iter().copied().collect()
 }
 
@@ -525,7 +525,7 @@ fn region_update_ignores_points_outside_bounds() {
 
 /// Floor 8m x 8m with a wall at x=4m that only a gap at y in [3.5, 4.5]
 /// passes through, so crossing the wall is a non-trivial route.
-fn big_world() -> Vec<(f32, f32, f32)> {
+pub(super) fn big_world() -> Vec<(f32, f32, f32)> {
     let vs = 0.1_f32;
     let half = vs * 0.5;
     let mut pts = Vec::new();
@@ -556,7 +556,7 @@ fn slice(all: &[(f32, f32, f32)], b: &RegionBounds, vs: f32) -> Vec<(f32, f32, f
         .collect()
 }
 
-fn path_len(w: &[(f32, f32, f32)]) -> f32 {
+pub(super) fn path_len(w: &[(f32, f32, f32)]) -> f32 {
     w.windows(2)
         .map(|p| {
             let dx = p[1].0 - p[0].0;
@@ -575,7 +575,7 @@ const PLAN_PAIRS: [(Pose, Pose); 4] = [
     ((7.5, 0.5, 0.05), (7.5, 7.5, 0.05)),
 ];
 
-fn assert_plans_equivalent(full: &Planner, region: &Planner, cfg: &Config) {
+pub(super) fn assert_plans_equivalent(full: &Planner, region: &Planner, cfg: &Config) {
     for (s, g) in PLAN_PAIRS {
         let pf = full.plan(s, g, cfg);
         let pr = region.plan(s, g, cfg);
@@ -1343,7 +1343,7 @@ fn flicker_between_nodes_does_not_seed_more_nodes() {
 /// Every labeled cell's cached chain walks live, adjacent cells back to the
 /// node it is labeled with, and no cell a labeled neighbor can step into is
 /// left unreached.
-fn assert_chains_reach_their_nodes(p: &Planner) {
+pub(super) fn assert_chains_reach_their_nodes(p: &Planner) {
     let g = p.graph();
     for id in g.cells.ids() {
         let i = id as usize;
