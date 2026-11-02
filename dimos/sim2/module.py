@@ -17,7 +17,11 @@
 class Go2Sim(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("go2", ...)}
+        return {"simulated": SimulatedRobot("go2", "base")}
+
+A robot's model and its sensors' mounts come from the robot_description a UrdfManager shares (any SharedConfigModule
+gets it): the robot of that URDF's name loads its model in the format the engine reads, and each sensor sits at its
+frame_id in that URDF.
 """
 
 from pathlib import Path
@@ -28,7 +32,7 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.shared_config import ConfigSenders, SharedConfigModule
-from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, validate
+from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
 
 
 class SimulationConfig(ModuleConfig):
@@ -39,15 +43,24 @@ class Simulation(SharedConfigModule):
     """Engine-agnostic: an engine subclasses this and builds its world from self.simulated."""
 
     config: SimulationConfig
+    # The robot_description format this engine loads a robot model from.
+    model_format = "mjcf"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Each sender's "simulated" value, keyed by its instance name.
         self.simulated: dict[str, Simulated] = {}
+        # Each robot_description (a UrdfManager's), keyed by its robot's name.
+        self.robot_descriptions: dict[str, dict[str, Any]] = {}
 
     def config_receive(self, config_senders: ConfigSenders) -> None:
         simulated: dict[str, Simulated] = {}
+        robot_descriptions: dict[str, dict[str, Any]] = {}
         for name, config in config_senders:
+            if set(config) == {"robot_description"}:
+                robot = config["robot_description"]
+                robot_descriptions[robot["name"]] = robot
+                continue
             description = config.get("simulated")
             if set(config) != {"simulated"} or not isinstance(description, Simulated):
                 raise TypeError(
@@ -55,7 +68,9 @@ class Simulation(SharedConfigModule):
                     f" {{'simulated': SimulatedRobot | SimulatedSensor}}, not {config!r}"
                 )
             simulated[name] = description
-        self.simulated = simulated
+        self.robot_descriptions = robot_descriptions
+        resolved = resolve(simulated.values(), robot_descriptions, self.model_format)
+        self.simulated = dict(zip(simulated, resolved, strict=True))
 
     @rpc
     def build(self) -> None:
@@ -69,7 +84,7 @@ class Simulation(SharedConfigModule):
         return {
             "robots": sorted(d.robot_id for d in values if isinstance(d, SimulatedRobot)),
             "sensors": sorted(
-                f"{d.robot_id or 'world'}/{d.name}"
+                f"{d.robot_id or 'world'}/{d.frame_id}"
                 for d in values
                 if isinstance(d, SimulatedSensor)
             ),
