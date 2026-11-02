@@ -43,10 +43,12 @@ fn main() {
     let config: Config = serde_json::from_value(config_json).unwrap();
     let bytes = std::fs::read(run.join("a.kf")).unwrap();
     let values: Vec<f64> = bytes
-        .chunks_exact(8)
-        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|c| f64::from_le_bytes(*c))
         .collect();
-    let records: Vec<&[f64]> = values.chunks_exact(15).collect();
+    let records: Vec<&[f64]> = values.as_chunks::<15>().0.iter().map(|r| r.as_slice()).collect();
     let mut closures: Vec<Closure> = json["committed_closure_edges"]
         .as_array()
         .unwrap()

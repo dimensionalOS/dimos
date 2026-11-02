@@ -24,11 +24,16 @@ use dimos_gsc_pgo::pointcloud::KdTree;
 use std::time::Instant;
 
 /// A dump's source and target clouds, its initial guess and whether that guess is the real one.
-fn read_dump(bytes: &[u8]) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, (Mat3, Vec3), bool) {
+type Dump = (Vec<[f32; 3]>, Vec<[f32; 3]>, (Mat3, Vec3), bool);
+
+/// Reads a dump (see `Dump`).
+fn read_dump(bytes: &[u8]) -> Dump {
     let ns = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
     let nt = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
     let points: Vec<[f32; 3]> = bytes[8..8 + 12 * (ns + nt)]
-        .chunks_exact(12)
+        .as_chunks::<12>()
+        .0
+        .iter()
         .map(|c| [0, 4, 8].map(|i| f32::from_le_bytes(c[i..i + 4].try_into().unwrap())))
         .collect();
     let tail = &bytes[8 + 12 * (ns + nt)..];

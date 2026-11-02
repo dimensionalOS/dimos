@@ -40,11 +40,15 @@ fn main() {
     // a.kf: ts, raw (x y z qx qy qz qw), corrected (same), f64 each
     let bytes = std::fs::read(run.join("a.kf")).unwrap();
     let values: Vec<f64> = bytes
-        .chunks_exact(8)
-        .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|c| f64::from_le_bytes(*c))
         .collect();
     let poses: Vec<(Mat3, [f64; 3])> = values
-        .chunks_exact(15)
+        .as_chunks::<15>()
+        .0
+        .iter()
         .map(|r| {
             (
                 mat3::mat_from_quat(&[r[7], r[4], r[5], r[6]]),
@@ -116,7 +120,7 @@ fn main() {
     println!("kept {kept} / {}", closures.len());
     // the same records as a.kf (ts, raw x y z qx qy qz qw, corrected likewise), the corrected pose the solve's
     let mut out = Vec::new();
-    for (k, record) in values.chunks_exact(15).enumerate() {
+    for (k, record) in values.as_chunks::<15>().0.iter().enumerate() {
         let q = mat3::quat_from_mat(&solution.rotations[k]);
         let corrected = [
             solution.positions[k][0],

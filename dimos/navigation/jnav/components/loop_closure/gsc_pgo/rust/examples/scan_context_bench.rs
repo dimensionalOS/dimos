@@ -49,7 +49,9 @@ impl Noise {
 fn keyframe_poses(run: &std::path::Path) -> Vec<(mat3::Mat3, mat3::Vec3)> {
     let bytes = std::fs::read(run.join("a.kf")).expect("read a.kf");
     bytes
-        .chunks_exact(15 * 8)
+        .as_chunks::<{ 15 * 8 }>()
+        .0
+        .iter()
         .map(|record| {
             let f = |i: usize| f64::from_le_bytes(record[8 * i..8 * i + 8].try_into().unwrap());
             (
@@ -85,7 +87,9 @@ fn real_descriptors(run: &std::path::Path, limit: usize) -> (Vec<Descriptor>, Co
         let ns = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
         let back = mat3::transpose(&rotation);
         let body: Vec<[f32; 3]> = bytes[8..8 + 12 * ns]
-            .chunks_exact(12)
+            .as_chunks::<12>()
+            .0
+            .iter()
             .map(|c| {
                 let p = [0, 4, 8].map(|i| f32::from_le_bytes(c[i..i + 4].try_into().unwrap()) as f64);
                 mat3::mat_vec(&back, &mat3::sub(&p, &translation)).map(|v| v as f32)

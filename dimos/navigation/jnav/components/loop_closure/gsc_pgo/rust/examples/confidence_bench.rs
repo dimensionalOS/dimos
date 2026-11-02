@@ -57,7 +57,9 @@ fn main() {
     let hard = args.get(5).is_some_and(|m| m == "hard");
     let bytes = std::fs::read(path).unwrap();
     let raw: Vec<[f32; 3]> = bytes
-        .chunks_exact(12)
+        .as_chunks::<12>()
+        .0
+        .iter()
         .map(|c| [0, 4, 8].map(|o| f32::from_le_bytes(c[o..o + 4].try_into().unwrap())))
         .collect();
     let map = voxel_downsample(&raw, 0.05);
