@@ -26,10 +26,10 @@ mod tests;
 use chunk_map::{chunk_of, ChunkCursor, ChunkRef, HealthyVoxel};
 pub use chunk_map::{ChunkKey, ChunkMap, CHUNK_EDGE};
 
-#[cfg(test)]
-use normals::fit_normal;
+pub use normals::Plane;
 use normals::{
-    mark_stale, pooled_normal, resolve_deferred, should_spare, NormalFit, NORMAL_MIN_POINTS,
+    mark_stale, pooled_normal, resolve_deferred, should_spare, surface_normal, NormalFit,
+    NORMAL_MIN_POINTS,
 };
 
 pub type VoxelKey = (i32, i32, i32);
@@ -487,15 +487,28 @@ impl Voxel {
         }
     }
 
-    /// Fit a normal from this voxel's own points alone, ignoring neighbors.
-    #[cfg(test)]
-    fn self_normal(&self) -> Option<(Vector3<f32>, f32)> {
-        if self.num_pts < NORMAL_MIN_POINTS {
+    /// The most level plane through this voxel's points and those of the voxel
+    /// below, which a surface on their shared face splits its points across.
+    fn surface_plane(&self, below: Option<&Voxel>, voxel_size: f32) -> Option<Plane> {
+        let (mut n, mut sum, mut m2) = (self.num_pts as f32, self.sum, self.m2);
+        if let Some(b) = below {
+            // Shift the lower voxel's center-relative moments up to this center.
+            let d = Vector3::new(0.0, 0.0, -voxel_size);
+            let nb = b.num_pts as f32;
+            n += nb;
+            sum += b.sum + d * nb;
+            m2 += b.m2 + b.sum * d.transpose() + d * b.sum.transpose() + d * d.transpose() * nb;
+        }
+        if n < NORMAL_MIN_POINTS as f32 {
             return None;
         }
-        let n = self.num_pts as f32;
-        let mean = self.sum / n;
-        fit_normal(self.m2 / n - mean * mean.transpose())
+        let mean = sum / n;
+        let normal = surface_normal(&(m2 / n - mean * mean.transpose()));
+        let up = if normal.z < 0.0 { -normal } else { normal };
+        Some(Plane {
+            normal: up,
+            offset: up.dot(&mean),
+        })
     }
 }
 
@@ -729,8 +742,8 @@ fn chunks_in_bounds<'a>(
 }
 
 /// Scan `chunks` in parallel, one output buffer per rayon split, and flatten
-/// the buffers in chunk order. `scan` appends a chunk's points to the buffer.
-fn par_scan_chunks<F>(chunks: &[ChunkRef], extra_points: usize, scan: F) -> Vec<f32>
+/// the buffers in chunk order. `scan` appends a chunk's floats to the buffer.
+fn par_scan_chunks<F>(chunks: &[ChunkRef], extra_floats: usize, scan: F) -> Vec<f32>
 where
     F: Fn(ChunkRef, &mut Vec<f32>) + Sync,
 {
@@ -742,7 +755,7 @@ where
         })
         .collect();
     let total: usize = parts.iter().map(Vec::len).sum();
-    let mut out = Vec::with_capacity(total + 3 * extra_points);
+    let mut out = Vec::with_capacity(total + extra_floats);
     for part in parts {
         out.extend(part);
     }
@@ -754,18 +767,18 @@ fn voxel_supported(support: u8, support_min: i32) -> bool {
 }
 
 /// Scan the healthy voxels of every chunk overlapping `bounds` (all chunks
-/// when `None`) in parallel. `emit` gets each voxel and whether its whole
-/// chunk is inside the cylinder.
+/// when `None`) in parallel. `emit` gets each voxel, its chunk, and whether
+/// the whole chunk is inside the cylinder.
 fn scan_chunks<F>(
     map: &VoxelMap,
     voxel_size: f32,
     bounds: Option<&LocalBounds>,
-    points_per_voxel: usize,
-    extra_points: usize,
+    floats_per_voxel: usize,
+    extra_floats: usize,
     emit: F,
 ) -> Vec<f32>
 where
-    F: Fn(HealthyVoxel, bool, &mut Vec<f32>) + Sync,
+    F: Fn(HealthyVoxel, ChunkRef, bool, &mut Vec<f32>) + Sync,
 {
     let chunk_edge = CHUNK_EDGE as f32 * voxel_size;
     let chunks: Vec<ChunkRef> = match bounds {
@@ -776,7 +789,7 @@ where
             .filter(|c| c.healthy_len() > 0)
             .collect(),
     };
-    par_scan_chunks(&chunks, extra_points, |chunk, part| {
+    par_scan_chunks(&chunks, extra_floats, |chunk, part| {
         let chunk_inside = match bounds {
             Some(b) => {
                 let (min, max) = cell_box(chunk.key, chunk_edge);
@@ -787,9 +800,9 @@ where
             }
             None => true,
         };
-        part.reserve(3 * points_per_voxel * chunk.healthy_len());
+        part.reserve(floats_per_voxel * chunk.healthy_len());
         for hv in chunk.healthy() {
-            emit(hv, chunk_inside, part);
+            emit(hv, chunk, chunk_inside, part);
         }
     })
 }
@@ -840,9 +853,9 @@ fn emit_points_impl(
         map,
         voxel_size,
         bounds,
-        1,
-        live.len(),
-        |hv, chunk_inside, part| {
+        3,
+        3 * live.len(),
+        |hv, _, chunk_inside, part| {
             if gated && !voxel_supported(hv.support, map.support_min) {
                 return;
             }
@@ -866,6 +879,55 @@ fn emit_points_impl(
     out
 }
 
+/// Floats per emitted surface voxel: the center, then the plane's normal and
+/// offset, NaN where the voxel has no plane or is covered.
+pub const SURFACE_STRIDE: usize = 7;
+
+/// `emit_points` (or `emit_points_ungated` without `gated`) with each voxel's
+/// surface plane after its center, SURFACE_STRIDE floats a voxel. A covered
+/// voxel, one with an emittable healthy voxel right above it, in bounds or
+/// not, gets NaN.
+pub fn emit_surfaces(
+    map: &VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+    gated: bool,
+) -> Vec<f32> {
+    let emittable = |support| !gated || voxel_supported(support, map.support_min);
+    let mut out = scan_chunks(
+        map,
+        voxel_size,
+        bounds,
+        SURFACE_STRIDE,
+        SURFACE_STRIDE * live.len(),
+        |hv, chunk, chunk_inside, part| {
+            if !emittable(hv.support) {
+                return;
+            }
+            let (x, y, z) = voxel_center(hv.key, voxel_size);
+            if !(chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z))) {
+                return;
+            }
+            let plane = chunk
+                .surface(&hv)
+                .filter(|_| !map.voxels.healthy_above(chunk, &hv).is_some_and(emittable));
+            let [nx, ny, nz, offset] = plane.map_or([f32::NAN; 4], |p| {
+                [p.normal.x, p.normal.y, p.normal.z, p.offset]
+            });
+            part.extend_from_slice(&[x, y, z, nx, ny, nz, offset]);
+        },
+    );
+    // This frame's hits not yet healthy carry no plane until they settle.
+    for &key in live.iter() {
+        let (x, y, z) = voxel_center(key, voxel_size);
+        if !map.voxels.is_healthy(&key) && bounds.is_none_or(|b| b.contains(x, y, z)) {
+            out.extend_from_slice(&[x, y, z, f32::NAN, f32::NAN, f32::NAN, f32::NAN]);
+        }
+    }
+    out
+}
+
 /// Points for a fine emitted cloud, flat (x, y, z) triples: observed fine
 /// cells inside healthy voxels clearing the map's support gate, within `bounds`,
 /// plus this frame's `live_fine` cells whose voxel is not yet healthy. No bounds
@@ -884,9 +946,9 @@ pub fn emit_points_fine(
         map,
         voxel_size,
         bounds,
-        4,
-        live_fine.len(),
-        |hv, chunk_inside, part| {
+        3 * 4,
+        3 * live_fine.len(),
+        |hv, _, chunk_inside, part| {
             if !voxel_supported(hv.support, map.support_min) {
                 return;
             }
@@ -1041,10 +1103,47 @@ pub fn update_map(
     }
 
     mark_stale(map, &changed, &removed);
+    refit_surfaces(map, &changed, &removed, cfg.voxel_size);
 
     FrameHits {
         coarse: hits,
         fine: fine_live,
+    }
+}
+
+/// Refit the surface plane of each voxel whose own or lower neighbor's moments
+/// reached a refit milestone, `changed`, or right above a removal.
+fn refit_surfaces(
+    map: &mut VoxelMap,
+    changed: &AHashSet<VoxelKey>,
+    removed: &[VoxelKey],
+    voxel_size: f32,
+) {
+    let above = |&(x, y, z): &VoxelKey| (x, y, z + 1);
+    // Each voxel once: a changed one, or the one above a changed or removed voxel unless changed itself.
+    let dirty: Vec<VoxelKey> = changed
+        .iter()
+        .copied()
+        .chain(
+            changed
+                .iter()
+                .chain(removed)
+                .map(above)
+                .filter(|k| !changed.contains(k)),
+        )
+        .collect();
+    let fits: Vec<(VoxelKey, Option<Plane>)> = dirty
+        .par_iter()
+        .filter_map(|&key @ (x, y, z)| {
+            let voxel = map.voxels.get(&key)?;
+            Some((
+                key,
+                voxel.surface_plane(map.voxels.get(&(x, y, z - 1)), voxel_size),
+            ))
+        })
+        .collect();
+    for (key, plane) in fits {
+        map.voxels.set_surface(&key, plane);
     }
 }
 
@@ -1220,6 +1319,7 @@ pub fn seed_tile(
         map.accumulate((x, y, z), cfg.voxel_size, fine);
     }
     mark_stale(map, &created, &[]);
+    refit_surfaces(map, &created, &[], cfg.voxel_size);
     created
 }
 

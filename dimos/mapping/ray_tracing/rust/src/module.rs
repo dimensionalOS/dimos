@@ -19,7 +19,7 @@ use crate::mapper::{register, Mapper, Pose};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
-    SeedRegion,
+    SeedRegion, SURFACE_STRIDE,
 };
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{
@@ -413,17 +413,17 @@ impl Worker {
         let mapper = &mut state.mapper;
         let emit_fine = self.config.emit_fine;
         let process_start = Instant::now();
-        let (region, global_points, local_points, fine_points) =
+        let (region, global_surfaces, local_surfaces, fine_points) =
             tokio::task::block_in_place(|| {
                 mapper.add_frame(points, tf_to_pose(&tf_pose));
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
                 let cylinder = region.map(|c| c.bounds());
-                let global_points = mapper.global_due().then(|| mapper.global_points());
-                let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
+                let global_surfaces = mapper.global_due().then(|| mapper.global_surfaces());
+                let local_surfaces = cylinder.as_ref().map(|cyl| mapper.local_surfaces(cyl));
                 let fine_points = emit_fine
                     .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
                     .flatten();
-                (region, global_points, local_points, fine_points)
+                (region, global_surfaces, local_surfaces, fine_points)
             });
         let process_ms = process_start.elapsed().as_secs_f64() * 1e3;
         let wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3;
@@ -441,12 +441,12 @@ impl Worker {
             publish_bounds(&self.region_bounds, &bounds_msg).await;
         }
 
-        if let Some(points) = global_points {
-            let global = points_to_cloud(&points, out_frame_id, stamp.clone());
+        if let Some(surfaces) = global_surfaces {
+            let global = surfaces_to_cloud(&surfaces, out_frame_id, stamp.clone());
             publish_cloud(&self.global_map, &global).await;
         }
-        if let Some(points) = local_points {
-            let local = points_to_cloud(&points, out_frame_id, stamp.clone());
+        if let Some(surfaces) = local_surfaces {
+            let local = surfaces_to_cloud(&surfaces, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map, &local).await;
         }
         if let Some(points) = fine_points {
@@ -571,9 +571,9 @@ impl Worker {
         seq: i32,
         stamp: &Time,
     ) {
-        let points = tokio::task::block_in_place(|| mapper.local_points(&cylinder.bounds()));
+        let surfaces = tokio::task::block_in_place(|| mapper.local_surfaces(&cylinder.bounds()));
         let (bounds_msg, cloud) =
-            seed_region_messages(cylinder, &points, seq, &self.config.world_frame, stamp);
+            seed_region_messages(cylinder, &surfaces, seq, &self.config.world_frame, stamp);
         publish_bounds(&self.seed_bounds, &bounds_msg).await;
         publish_cloud(&self.seed_map, &cloud).await;
     }
@@ -583,14 +583,14 @@ impl Worker {
 /// with the region number in their header seq.
 fn seed_region_messages(
     cylinder: &Cylinder,
-    points: &[f32],
+    surfaces: &[f32],
     seq: i32,
     frame_id: &str,
     stamp: &Time,
 ) -> (PoseStamped, PointCloud2) {
     let mut bounds = bounds_to_pose(cylinder, frame_id, stamp.clone());
     bounds.header.seq = seq;
-    let mut cloud = points_to_cloud(points, frame_id, stamp.clone());
+    let mut cloud = surfaces_to_cloud(surfaces, frame_id, stamp.clone());
     cloud.header.seq = seq;
     (bounds, cloud)
 }
@@ -711,21 +711,22 @@ fn tf_to_pose(t: &Transform) -> Pose {
     }
 }
 
-fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
-    data.extend_from_slice(&x.to_le_bytes());
-    data.extend_from_slice(&y.to_le_bytes());
-    data.extend_from_slice(&z.to_le_bytes());
-    data.extend_from_slice(&0.0_f32.to_le_bytes());
-    *n += 1;
-}
+/// local_map's float32 fields: the voxel center, then its plane (see
+/// `Plane`), NaN where the voxel has none.
+const SURFACE_FIELDS: [&str; SURFACE_STRIDE] = [
+    "x",
+    "y",
+    "z",
+    "normal_x",
+    "normal_y",
+    "normal_z",
+    "plane_offset",
+];
 
-fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {
-    let make_field = |name: &str, off: i32| PointField {
-        name: name.into(),
-        offset: off,
-        datatype: PointField::FLOAT32 as u8,
-        count: 1,
-    };
+/// The cloud's own fields, all float32 and packed in order.
+fn make_cloud(data: Vec<u8>, fields: &[&str], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let point_step = 4 * fields.len() as i32;
+    let n = data.len() as i32 / point_step;
     PointCloud2 {
         header: Header {
             seq: 0,
@@ -734,15 +735,19 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
         },
         height: 1,
         width: n,
-        fields: vec![
-            make_field("x", 0),
-            make_field("y", 4),
-            make_field("z", 8),
-            make_field("intensity", 12),
-        ],
+        fields: fields
+            .iter()
+            .zip((0..).step_by(4))
+            .map(|(name, offset)| PointField {
+                name: (*name).into(),
+                offset,
+                datatype: PointField::FLOAT32 as u8,
+                count: 1,
+            })
+            .collect(),
         is_bigendian: false,
-        point_step: 16,
-        row_step: 16 * n,
+        point_step,
+        row_step: point_step * n,
         data,
         is_dense: true,
     }
@@ -751,11 +756,18 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
 /// Pack flat (x, y, z) triples into an LCM cloud message.
 fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     let mut data = Vec::with_capacity((points.len() / 3) * 16);
-    let mut n: i32 = 0;
     for p in points.as_chunks::<3>().0 {
-        write_point(&mut data, &mut n, p[0], p[1], p[2]);
+        for v in [p[0], p[1], p[2], 0.0] {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
     }
-    make_cloud(data, n, frame_id, stamp)
+    make_cloud(data, &["x", "y", "z", "intensity"], frame_id, stamp)
+}
+
+/// Pack `Mapper::local_surfaces` output into an LCM cloud message.
+pub fn surfaces_to_cloud(surfaces: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+    let data = surfaces.iter().flat_map(|v| v.to_le_bytes()).collect();
+    make_cloud(data, &SURFACE_FIELDS, frame_id, stamp)
 }
 
 async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
@@ -979,8 +991,13 @@ mod tests {
         let stamp = Time { sec: 7, nsec: 9 };
         for (index, region) in part.regions.iter().enumerate() {
             let seq = index as i32 + 1;
-            let (bounds, cloud) =
-                seed_region_messages(&region.cylinder, &[1.5, 1.5, 0.5], seq, "odom", &stamp);
+            let (bounds, cloud) = seed_region_messages(
+                &region.cylinder,
+                &[1.5, 1.5, 0.5, 0.0, 0.0, 1.0, 0.0],
+                seq,
+                "odom",
+                &stamp,
+            );
             assert_eq!((bounds.header.seq, cloud.header.seq), (seq, seq));
             assert_eq!(bounds.header.stamp, stamp);
             assert_eq!(cloud.header.stamp, stamp);
