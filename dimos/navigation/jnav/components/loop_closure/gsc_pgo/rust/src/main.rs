@@ -109,6 +109,7 @@ config! {
     solve_estimate_rejected_power: f64,
     solve_estimate_speed_power: f64,
     solve_estimate_speed_floor_mps: f64,
+    solve_speed_window_poses: usize,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
