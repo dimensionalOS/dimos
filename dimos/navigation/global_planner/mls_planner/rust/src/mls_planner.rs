@@ -30,7 +30,9 @@ use crate::columns::{
     diff_column, ColumnBuckets, ColumnEdit, ColumnIz, ColumnMask, ColumnWindow, VoxelEdits,
 };
 use crate::dijkstra::RepairWindow;
-use crate::edges::{build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph};
+use crate::edges::{
+    build_node_edges, build_node_edges_region, edges_to_segments, relink_failed, PlannerGraph,
+};
 use crate::nodes::{
     apply_wall_safe_penalty_region, place_nodes, place_nodes_region, relocate_nodes,
     wall_distances_region, PlacementParams, HOLE_SPAN_CELLS,
@@ -625,7 +627,7 @@ impl Planner {
             &window_cells,
             &mut graph.node_scratch,
         );
-        build_node_edges_region(
+        let failed = build_node_edges_region(
             &graph.cells,
             &graph.nodes,
             &window,
@@ -634,6 +636,27 @@ impl Planner {
             &mut graph.cell_state,
             &mut graph.node_edges,
         );
+        drop(window);
+        if !failed.is_empty() {
+            let stage = Instant::now();
+            let report = relink_failed(
+                &graph.cells,
+                &graph.nodes,
+                &failed,
+                &mut graph.cell_state,
+                &mut graph.node_edges,
+                &mut graph.cluster_index,
+                &mut graph.node_scratch.seen,
+            );
+            tracing::debug!(
+                pairs = report.pairs,
+                cells = report.cells,
+                unlinked = report.unlinked,
+                failed_again = report.failed_again,
+                ms = ms_since(stage),
+                "relinked node pairs whose corridor walk failed"
+            );
+        }
     }
 
     /// Apply the surface cell changes to the cell store.

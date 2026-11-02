@@ -276,7 +276,7 @@ impl NodeEdges {
     }
 
     /// Drop the edges of gone nodes, and re-price the touched corridors or
-    /// drop the ones that broke. Returns a node of every broken corridor.
+    /// drop the ones that broke. Returns both nodes of every broken corridor.
     fn reprice_or_drop(
         &mut self,
         cells: &SurfaceCells,
@@ -306,7 +306,8 @@ impl NodeEdges {
                 Some(cost) => self.edges[i as usize].cost = cost,
                 None => {
                     if !doomed {
-                        broken.push(self.edges[i as usize].a);
+                        let e = &self.edges[i as usize];
+                        broken.extend([e.a, e.b]);
                     }
                     self.swap_remove(cells, i);
                 }
@@ -317,12 +318,14 @@ impl NodeEdges {
 
     /// Take the fresh crossings in: a new node pair gets its edge, and a
     /// known pair switches corridor only when the new one is clearly cheaper.
+    /// Returns the new pairs whose corridor walk failed on stale labels.
     fn adopt_crossings(
         &mut self,
         cells: &SurfaceCells,
         state: &DijkstraState,
         mut crossings: Vec<NodeEdge>,
-    ) {
+    ) -> Vec<NodeEdge> {
+        let mut failed: Vec<NodeEdge> = Vec::new();
         crossings.sort_unstable_by_key(|e| (e.a, e.b));
         for mut e in crossings {
             match self.between(e.a, e.b) {
@@ -337,10 +340,13 @@ impl NodeEdges {
                 None => {
                     if capture_priced(cells, state, &mut e) {
                         self.push(cells, e);
+                    } else {
+                        failed.push(e);
                     }
                 }
             }
         }
+        failed
     }
 
     fn drop_adj(adj: &mut AHashMap<NodeId, Vec<NodeEdgeIdx>>, node: NodeId, i: NodeEdgeIdx) {
@@ -444,6 +450,8 @@ pub fn build_node_edges(
 }
 
 /// Repair the node edges inside a window to match what a full build gives.
+/// Returns the crossings of new node pairs whose corridor walk failed, for
+/// relink_failed once the window is released.
 pub fn build_node_edges_region(
     cells: &SurfaceCells,
     nodes: &Nodes,
@@ -452,11 +460,11 @@ pub fn build_node_edges_region(
     gone: &[NodeId],
     state: &mut DijkstraState,
     out: &mut NodeEdges,
-) {
+) -> Vec<NodeEdge> {
     if nodes.is_empty() {
         state.reset(cells.slot_capacity());
         out.clear();
-        return;
+        return Vec::new();
     }
     let reattached = relabel_window(cells, nodes, window, state);
     // A gone id that is live again was reused by a new node, which needs the
@@ -468,7 +476,109 @@ pub fn build_node_edges_region(
         .into_values()
         .filter(|e| nodes.has(e.a) && nodes.has(e.b))
         .collect();
-    out.adopt_crossings(cells, state, crossings);
+    out.adopt_crossings(cells, state, crossings)
+}
+
+/// Re-label the regions of both nodes of every failed crossing, then take
+/// their crossings in again. A corridor walk fails when a cached chain outside
+/// the last window still runs over a hop the update cut, and dropping the pair
+/// would leave two touching regions unlinked until something edits there.
+pub fn relink_failed(
+    cells: &SurfaceCells,
+    nodes: &Nodes,
+    failed: &[NodeEdge],
+    state: &mut DijkstraState,
+    out: &mut NodeEdges,
+    cluster_index: &mut ClusterIndex,
+    seen: &mut Vec<bool>,
+) -> RelinkReport {
+    let pairs: AHashSet<(NodeId, NodeId)> = failed
+        .iter()
+        .filter(|e| nodes.has(e.a) && nodes.has(e.b) && out.between(e.a, e.b).is_none())
+        .map(|e| (e.a, e.b))
+        .collect();
+    if pairs.is_empty() {
+        return RelinkReport::default();
+    }
+    let owners: AHashSet<NodeId> = pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+    let roots = failed
+        .iter()
+        .filter(|e| pairs.contains(&(e.a, e.b)))
+        .flat_map(|e| [e.a, e.b, e.boundary_u, e.boundary_v]);
+    let window_cells = owned_cells(cells, state, &owners, roots);
+    let window = RepairWindow::new(cells, &window_cells, cluster_index, seen);
+    let reattached = relabel_window(cells, nodes, &window, state);
+    let mut scan: Vec<CellId> = window_cells.clone();
+    scan.extend(
+        reattached
+            .iter()
+            .copied()
+            .filter(|&c| !window.index().in_window(c)),
+    );
+    let crossings: Vec<NodeEdge> = boundary_edge_map(cells, state, &scan)
+        .into_values()
+        .filter(|e| nodes.has(e.a) && nodes.has(e.b))
+        .collect();
+    let still = out.adopt_crossings(cells, state, crossings);
+    let unlinked = pairs
+        .iter()
+        .filter(|&&(a, b)| out.between(a, b).is_none())
+        .count();
+    RelinkReport {
+        pairs: pairs.len(),
+        cells: window_cells.len(),
+        unlinked,
+        failed_again: still.len(),
+    }
+}
+
+/// What relink_failed did, for the region update's log.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RelinkReport {
+    /// Node pairs whose corridor walk had failed.
+    pub pairs: usize,
+    /// Cells re-labeled.
+    pub cells: usize,
+    /// Of those pairs, the ones still without an edge (their regions no longer touch, or the walk failed again).
+    pub unlinked: usize,
+    /// New crossings whose corridor walk failed even after the re-label.
+    pub failed_again: usize,
+}
+
+/// Every cell labeled with one of `owners` that a walk over such cells reaches
+/// from `roots`, plus the roots and the cells on their cached chains.
+fn owned_cells(
+    cells: &SurfaceCells,
+    state: &DijkstraState,
+    owners: &AHashSet<NodeId>,
+    roots: impl Iterator<Item = CellId>,
+) -> Vec<CellId> {
+    let owned = |c: CellId| {
+        state.dist[c as usize].is_finite() && owners.contains(&state.source[c as usize])
+    };
+    let mut seen: AHashSet<CellId> = AHashSet::new();
+    let mut stack: Vec<CellId> = Vec::new();
+    for r in roots {
+        // The chain a failed walk followed, as far as it stays on live cells.
+        for c in walk_preds(state, r) {
+            if !cells.is_live(c) {
+                break;
+            }
+            if seen.insert(c) {
+                stack.push(c);
+            }
+        }
+    }
+    let mut out: Vec<CellId> = Vec::new();
+    while let Some(u) = stack.pop() {
+        out.push(u);
+        for e in cells.neighbors(u) {
+            if owned(e.dest) && seen.insert(e.dest) {
+                stack.push(e.dest);
+            }
+        }
+    }
+    out
 }
 
 /// Re-label the window from the nodes in and around it, then the cells
@@ -883,7 +993,18 @@ mod tests {
             ..
         } = pg;
         let repair = RepairWindow::new(cells, window, cluster_index, &mut node_scratch.seen);
-        build_node_edges_region(cells, nodes, &repair, removed, gone, cell_state, node_edges);
+        let failed =
+            build_node_edges_region(cells, nodes, &repair, removed, gone, cell_state, node_edges);
+        drop(repair);
+        relink_failed(
+            cells,
+            nodes,
+            &failed,
+            cell_state,
+            node_edges,
+            cluster_index,
+            &mut node_scratch.seen,
+        );
         assert_indexed(cells, node_edges);
     }
 
@@ -949,6 +1070,89 @@ mod tests {
         let edge = &pg.node_edges.edges[i as usize];
         assert!(!edge.chain.contains(&broken));
         assert!(corridor_cost(&pg.cells, edge).is_some());
+    }
+
+    #[test]
+    fn pair_whose_corridor_walk_meets_a_cut_hop_gets_relinked() {
+        // An open floor with two nodes far apart, as corridor_broken_away_from_the_boundary_gets_its_edge_back.
+        let floor: Vec<VoxelKey> = (0..30)
+            .flat_map(|x| (0..11).map(move |y| (x, y, 0)))
+            .collect();
+        let mut pg = setup(&floor, &[(2, 5, 0), (27, 5, 0)]);
+        let (a, b) = (
+            pg.cells.id((2, 5, 0)).unwrap(),
+            pg.cells.id((27, 5, 0)).unwrap(),
+        );
+        // A corridor cell near the first node dies inside a small window.
+        let chain = pg.node_edges.edges[0].chain.clone();
+        let broken = chain[4];
+        let removed = pg.cells.remove(broken).unwrap();
+        let window: Vec<CellId> = floor
+            .iter()
+            .filter(|c| (c.0 - broken.0).abs() + (c.1 - broken.1).abs() <= 4)
+            .filter_map(|&c| pg.cells.id(c))
+            .collect();
+        // Far outside the window, an update elsewhere cut one hop on the
+        // second node's cached chain, as a re-keyed cell's rebuilt adjacency does.
+        let k = chain.len() - 4;
+        let (u, v) = (
+            pg.cells.id(chain[k]).unwrap(),
+            pg.cells.id(chain[k + 1]).unwrap(),
+        );
+        for (from, to) in [(u, v), (v, u)] {
+            let kept: Vec<_> = pg
+                .cells
+                .neighbors(from)
+                .iter()
+                .filter(|e| e.dest != to)
+                .copied()
+                .collect();
+            pg.cells.set_edges(from, &kept);
+        }
+
+        let PlannerGraph {
+            cells,
+            nodes,
+            node_edges,
+            cell_state,
+            node_scratch,
+            cluster_index,
+            ..
+        } = &mut pg;
+        let repair = RepairWindow::new(cells, &window, cluster_index, &mut node_scratch.seen);
+        let failed = build_node_edges_region(
+            cells,
+            nodes,
+            &repair,
+            &[removed],
+            &[],
+            cell_state,
+            node_edges,
+        );
+        drop(repair);
+        assert!(
+            node_edges.between(a, b).is_none(),
+            "the walk over the stale chain fails, so the window repair alone drops the pair"
+        );
+        assert!(failed.iter().any(|e| (e.a, e.b) == (a.min(b), a.max(b))));
+
+        let report = relink_failed(
+            cells,
+            nodes,
+            &failed,
+            cell_state,
+            node_edges,
+            cluster_index,
+            &mut node_scratch.seen,
+        );
+        assert_eq!((report.pairs, report.unlinked), (1, 0));
+        let i = node_edges
+            .between(a, b)
+            .expect("the regions still touch, so the pair is linked again");
+        let edge = &node_edges.edges[i as usize];
+        assert!(corridor_cost(cells, edge).is_some());
+        assert!(!edge.chain.contains(&broken));
+        assert_indexed(cells, node_edges);
     }
 
     #[test]

@@ -518,7 +518,8 @@ pub enum Frontier<'a> {
 const MAX_CHAIN: usize = 4096;
 
 /// The live source a cell's cached chain reaches without entering the window.
-/// None when the chain enters the window, hits a dead cell or ends elsewhere.
+/// None when the chain enters the window, hits a dead cell, steps between
+/// cells that are no longer neighbors or ends elsewhere.
 pub fn chain_source(
     cells: &SurfaceCells,
     state: &DijkstraState,
@@ -538,6 +539,10 @@ pub fn chain_source(
         let pred = state.pred[i];
         if pred == NO_CELL {
             return is_source(cur).then_some(cur);
+        }
+        // A region update that rebuilt adjacency can leave a cached hop the graph no longer has.
+        if !cells.neighbors(cur).iter().any(|e| e.dest == pred) {
+            return None;
         }
         cur = pred;
     }
