@@ -20,6 +20,7 @@ import asyncio
 from pathlib import Path
 from threading import RLock
 import time
+from typing import Any
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -27,6 +28,7 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.shared_config import SharedConfigModule, shared_config
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -45,6 +47,8 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 class UrdfManagerConfig(ModuleConfig):
     model: RobotModel
+    # The same robot in other formats, by format name (e.g. {"mjcf": path}), for receivers that load their own.
+    formats: dict[str, Path] = Field(default_factory=dict)
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -81,6 +85,15 @@ class UrdfManager(Module):
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
+
+    @shared_config(SharedConfigModule)
+    def robot_description(self) -> dict[str, Any]:
+        """The URDF (with every frame this manager poses) and its other formats, for any module that wants the robot."""
+        name = ET.fromstring(self._description.xml).get("name", "")
+        formats = {kind: str(path) for kind, path in self.config.formats.items()}
+        return {
+            "robot_description": {"name": name, "urdf": self._description.xml, "formats": formats}
+        }
 
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
