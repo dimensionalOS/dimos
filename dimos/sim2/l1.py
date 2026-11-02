@@ -32,9 +32,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import L1_MOUNT, L1_XYZ
 from dimos.sim2.module import Simulation, SimulationSpec
-from dimos.sim2.spec import Mount, SimulatedSensor
+from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, rotation_matrix
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.sensors.mid360.lidar import Raycaster
@@ -45,10 +44,10 @@ _KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 
 class SimL1Config(ModuleConfig):
-    name: str = "l1"
-    robot_id: str = "go2"
-    mount: Mount = Mount("base", L1_XYZ, tuple(math.radians(a) for a in L1_MOUNT))  # type: ignore[arg-type]
-    frame_id: str | None = "world"
+    # The L1's frame, as the robot's URDF names it: where it sits.
+    frame_id: str | None = "utlidar_lidar"
+    # The rolling map is published in this frame.
+    map_frame_id: str = "world"
     period: float = 0.13
     points_per_second: float = 21_600.0
     max_range: float = 30.0
@@ -67,24 +66,30 @@ class SimL1(Module):
 
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        config = self.config
-        return {"simulated": SimulatedSensor(config.name, "lidar", config.mount, config.robot_id)}
+        return {"simulated": SimulatedSensor("lidar", self.frame_id)}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_change)
-        view = open_view(self._simulation.describe())
+        description = self._simulation.describe()
+        sensor = next(
+            d
+            for d in description["simulated"]
+            if isinstance(d, SimulatedSensor) and d.frame_id == self.frame_id
+        )
+        view = open_view(description)
         self._mapping = asyncio.create_task(
-            self._map(view, view.raycaster(self.config.geom_groups))
+            self._map(view, view.raycaster(self.config.geom_groups), sensor)
         )
         yield
 
-    async def _map(self, view: WorldView, raycaster: Raycaster) -> None:
+    async def _map(self, view: WorldView, raycaster: Raycaster, sensor: SimulatedSensor) -> None:
         config = self.config
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
-        site = f"{config.robot_id}/{config.name}"
-        center_body = f"{config.robot_id}/{config.mount.body}"
+        site = f"{sensor.robot_id}/{sensor.frame_id}"
+        # The map is centred on the body the L1 is fixed to.
+        center_body = f"{sensor.robot_id}/{sensor.body}"
         cells = np.zeros(0, dtype=np.int64)
         # Every period of sim time, so the map keeps its rate per sim second at any speed.
         async for _ in self._world.ticks(1 / config.period):
@@ -97,7 +102,9 @@ class SimL1(Module):
             cells = self._crop(cells, view.pose(center_body)[0])
             self.lidar.publish(
                 PointCloud2.from_numpy(
-                    (self._indices(cells) + 0.5) * config.cell, self.frame_id, self._world.stamp()
+                    (self._indices(cells) + 0.5) * config.cell,
+                    config.map_frame_id,
+                    self._world.stamp(),
                 )
             )
 
