@@ -23,7 +23,7 @@
 //! than `closure_search_radius` (the position search would find it otherwise).
 
 use crate::big_picture_fit::odometry_edges;
-use crate::gsc_pgo::{Config, GscPgo, KeyPoseWithCloud};
+use crate::gsc_pgo::{CommittedClosure, Config, GscPgo, KeyPoseWithCloud};
 use crate::mat3::{self, add_mat, det, skew, sub_mat, Mat3, Vec3};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -189,23 +189,102 @@ pub(crate) fn could_be_same_place(
     quadratic_inverse(&covariance, &mat3::sub(&p_to, &p_from)) <= cutoff
 }
 
+/// What the loop-overlap pressure reads: the keyframes, the config, the keyframes' reach sum and count, the odometry error
+/// estimate, the newest applied solve's tip and relative covariances, and the committed closures.
+pub(crate) struct OverlapInputs<'a> {
+    pub(crate) key_poses: &'a [KeyPoseWithCloud],
+    pub(crate) config: &'a Config,
+    pub(crate) keyframe_reach: (f64, usize),
+    pub(crate) error_estimate: [f64; 4],
+    pub(crate) solved_relative_covariance: Option<(usize, &'a [Mat3])>,
+    pub(crate) committed_closures: &'a [CommittedClosure],
+}
+
+/// `OverlapInputs` owned, a snapshot a pressure job takes at its dispatch (`pressure_let_enabled`).
+#[derive(Clone)]
+pub(crate) struct OverlapSnapshot {
+    key_poses: Vec<KeyPoseWithCloud>,
+    config: Config,
+    keyframe_reach: (f64, usize),
+    error_estimate: [f64; 4],
+    solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
+    committed_closures: Vec<CommittedClosure>,
+}
+
+impl OverlapSnapshot {
+    pub(crate) fn inputs(&self) -> OverlapInputs<'_> {
+        OverlapInputs {
+            key_poses: &self.key_poses,
+            config: &self.config,
+            keyframe_reach: self.keyframe_reach,
+            error_estimate: self.error_estimate,
+            solved_relative_covariance: self
+                .solved_relative_covariance
+                .as_ref()
+                .map(|(tip, covariance)| (*tip, covariance.as_slice())),
+            committed_closures: &self.committed_closures,
+        }
+    }
+    /// The keyframes and committed closures it holds (what a pressure job's cost grows with).
+    pub(crate) fn size(&self) -> (usize, usize) {
+        (self.key_poses.len(), self.committed_closures.len())
+    }
+}
+
 impl GscPgo {
+    /// What the loop-overlap pressure reads, borrowed.
+    pub(crate) fn overlap_inputs(&self) -> OverlapInputs<'_> {
+        OverlapInputs {
+            key_poses: &self.key_poses,
+            config: &self.config,
+            keyframe_reach: self.keyframe_reach,
+            error_estimate: self.odometry_error_estimate(),
+            solved_relative_covariance: self
+                .solved_relative_covariance
+                .as_ref()
+                .map(|(tip, covariance)| (*tip, covariance.as_slice())),
+            committed_closures: &self.committed_closures,
+        }
+    }
+    /// What the loop-overlap pressure reads, copied (`pressure_let_enabled`).
+    pub(crate) fn overlap_snapshot(&self) -> OverlapSnapshot {
+        OverlapSnapshot {
+            key_poses: self.key_poses.clone(),
+            config: self.config.clone(),
+            keyframe_reach: self.keyframe_reach,
+            error_estimate: self.odometry_error_estimate(),
+            solved_relative_covariance: self.solved_relative_covariance.clone(),
+            committed_closures: self.committed_closures.clone(),
+        }
+    }
+    /// See `OverlapInputs::overlap_model`.
+    pub(crate) fn overlap_model(&self, reference: usize) -> Option<OverlapModel<'_>> {
+        let inputs = self.overlap_inputs();
+        inputs.overlap_model(reference)
+    }
+    /// See `OverlapInputs::loop_overlap`.
+    pub fn loop_overlap(&self) -> Option<LoopOverlap> {
+        self.overlap_inputs().loop_overlap()
+    }
+}
+
+impl<'a> OverlapInputs<'a> {
+    /// `GscPgo::newest_closure_target`: the newest keyframe a closure can target from the newest one.
+    fn newest_closure_target(&self) -> usize {
+        (self.key_poses.len() - 1).saturating_sub(self.config.target_half_range(1) + 1)
+    }
     /// The uncertainty of each earlier keyframe as seen from keyframe `reference`, and the scans' reach; None until a
     /// keyframe's scan has given a reach (the mean of the keyframes' reaches).
-    pub(crate) fn overlap_model(&self, reference: usize) -> Option<OverlapModel<'_>> {
+    pub(crate) fn overlap_model(&self, reference: usize) -> Option<OverlapModel<'a>> {
         let (reach_sum, reach_count) = self.keyframe_reach;
         let sensor_range = reach_sum / reach_count.max(1) as f64;
         if sensor_range <= 0.0 || reference == 0 || reference >= self.key_poses.len() {
             return None;
         }
         let newest = self.key_poses[reference].translation_global;
-        let sums = odometry_error_estimate_sums(
-            &self.key_poses,
-            &self.config,
-            self.odometry_error_estimate(),
-        );
-        let (solved_tip, solved) = match &self.solved_relative_covariance {
-            Some((tip, covariance)) if *tip <= reference => (*tip, covariance.as_slice()),
+        let sums = odometry_error_estimate_sums(self.key_poses, self.config, self.error_estimate);
+        let (solved_tip, solved) = match self.solved_relative_covariance {
+            Some((tip, covariance)) if tip <= reference => (tip, covariance),
             _ => (0, &[] as &[Mat3]),
         };
         // a solved keyframe: the solve's tip as seen from it, plus the odometry chain from the tip to the reference, swung
@@ -217,7 +296,7 @@ impl GscPgo {
             &self.key_poses[solved_tip].translation_global,
         ));
         Some(OverlapModel {
-            key_poses: &self.key_poses,
+            key_poses: self.key_poses,
             sums,
             solved,
             solved_tip,
@@ -231,7 +310,7 @@ impl GscPgo {
     }
 
     /// See `LoopOverlap`; None until a keyframe's scan has given a sensor range.
-    pub fn loop_overlap(&self) -> Option<LoopOverlap> {
+    pub(crate) fn loop_overlap(&self) -> Option<LoopOverlap> {
         let model = self.overlap_model(self.key_poses.len().checked_sub(1)?)?;
         let mut overlap = LoopOverlap::default();
         let mut none_overlap = 1.0;

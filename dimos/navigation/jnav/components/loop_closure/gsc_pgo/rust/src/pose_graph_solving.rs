@@ -30,7 +30,9 @@ use crate::mat3::{self, Mat3, Vec3};
 /// first `closures_dispatched` committed closures, adopted once it finishes and its hold has passed (`GscPgo::update`)
 /// or when waited for (`GscPgo::wait_for_due_solve`, `GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
-    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
+    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>, Option<ChangeScan>)>,
+    /// The adopted solves at dispatch (`GscPgo::adopted_solves`): the accepted graph its thread measured its change against.
+    pub(crate) graph_version: u64,
     pub(crate) keyframes: usize,
     pub(crate) schedule: SolveSchedule,
     /// What the solve was handed, only when `GSC_SOLVE_LOG` is set.
@@ -164,12 +166,20 @@ impl GscPgo {
         let speed = self
             .recent_speed()
             .max(config.solve_estimate_speed_floor_mps);
+        // the graph change heat's cost on the solve's thread, in scans
+        let period = self.scan_period_s();
+        let change_cost = if config.graph_change_heat_enabled && period > 0.0 {
+            config.solve_estimate_change_cost_s_per_keyframe * keyframes as f64 / period
+        } else {
+            0.0
+        };
         (config.solve_estimate_scale
             * (keyframes as f64).powf(config.solve_estimate_keyframe_power)
             * (1.0 + closures).powf(config.solve_estimate_closure_power)
             * (1.0 + rejected).powf(config.solve_estimate_rejected_power)
-            * speed.powf(config.solve_estimate_speed_power))
-        .ceil() as usize
+            * speed.powf(config.solve_estimate_speed_power)
+            + change_cost)
+            .ceil() as usize
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
     pub fn solve_started(&self) -> Option<(usize, usize)> {
@@ -403,6 +413,16 @@ impl GscPgo {
         };
         let solved = self.solved.clone();
         let closures_before = self.closures_dispatched;
+        // the accepted graph and the odometry as of now, for the graph change heat's cost on the solve's thread
+        let change_inputs = config.graph_change_heat_enabled.then(|| {
+            (
+                config.clone(),
+                self.key_poses
+                    .iter()
+                    .map(|k| (k.rotation_local, k.translation_local, k.rotation_global, k.translation_global))
+                    .collect::<Vec<_>>(),
+            )
+        });
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
@@ -429,10 +449,26 @@ impl GscPgo {
                     )
                 };
                 let seconds = started.elapsed().as_secs_f64();
+                let change = change_inputs.map(|(config, poses)| {
+                    let started = std::time::Instant::now();
+                    let mut scan = ChangeScan::default();
+                    for (k, &(rotation_local, translation_local, rotation_global, translation_global)) in
+                        poses.iter().enumerate()
+                    {
+                        scan.step(
+                            &config,
+                            (&rotation_local, &translation_local),
+                            (&rotation_global, &translation_global),
+                            (solution.rotations[k], solution.positions[k]),
+                        );
+                    }
+                    scan.seconds = started.elapsed().as_secs_f64();
+                    scan
+                });
                 if let Some(solved) = solved {
                     solved();
                 }
-                (solution, seconds, landmark_ids)
+                (solution, seconds, landmark_ids, change)
             })
             .expect("spawn pose graph thread");
         // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
@@ -455,6 +491,7 @@ impl GscPgo {
         });
         self.solving = Some(Solving {
             handle,
+            graph_version: self.adopted_solves,
             keyframes: n,
             schedule: SolveSchedule {
                 dispatch_scan: self.scans_seen,
@@ -473,8 +510,10 @@ impl GscPgo {
         let Some(solving) = self.solving.take() else {
             return false;
         };
-        let (solution, seconds, landmark_ids) =
+        let joined = std::time::Instant::now();
+        let (solution, seconds, landmark_ids, change) =
             solving.handle.join().expect("pose graph solve panicked");
+        self.solve_join_wait_s += joined.elapsed().as_secs_f64();
         // a solve waited for was finished at the scan it was waited at; one slower than the data its estimate spanned (a
         // replay outrunning real time waits on others too) overshot: the estimate was not an upper bound
         let schedule = SolveSchedule {
@@ -522,6 +561,8 @@ impl GscPgo {
         }
         let finished = FinishedSolve {
             solution,
+            change,
+            graph_version: solving.graph_version,
             seconds,
             landmark_ids,
             keyframes: solving.keyframes,
@@ -554,15 +595,17 @@ impl GscPgo {
         heat: Option<(f64, f64, f64)>,
     ) -> bool {
         let FinishedSolve {
-            solution,
+            mut solution,
             seconds,
             landmark_ids,
             keyframes,
             schedule,
             dispatched,
             arrived_keyframes,
+            ..
         } = finished;
         self.graph_version += 1;
+        self.adopted_solves += 1;
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
                 .into_iter()
@@ -596,8 +639,9 @@ impl GscPgo {
         } else {
             Vec::new()
         };
+        // moved, not copied: the solve's covariances are not read after this
         self.solved_relative_covariance =
-            Some((n - 1, solution.relative_position_covariance.clone()))
+            Some((n - 1, std::mem::take(&mut solution.relative_position_covariance)))
                 .filter(|(_, covariance)| covariance.len() == n);
         for (key_pose, (rotation, position)) in self.key_poses[..n]
             .iter_mut()
@@ -853,6 +897,10 @@ impl GscPgo {
 /// A finished solve's result and what it was dispatched over, waiting to be adopted (`graph_change_heat_enabled`).
 pub(crate) struct FinishedSolve {
     solution: Solution,
+    /// The graph change over its solved keyframes against the accepted graph at dispatch (`graph_change_heat_enabled`),
+    /// measured on the solve's thread, and that graph's version.
+    change: Option<ChangeScan>,
+    graph_version: u64,
     seconds: f64,
     landmark_ids: Vec<u64>,
     keyframes: usize,
@@ -902,7 +950,7 @@ impl GscPgo {
         let Some(waiting) = self.pending_solve.take() else {
             return false;
         };
-        let cost = self.graph_change_cost(&waiting.solution, waiting.keyframes);
+        let cost = self.graph_change_cost_of(&waiting);
         self.heat = heat + cost;
         self.heat_keyframes = keyframes;
         self.adopt_solution(waiting, Some((heat, cost, self.heat)))
@@ -913,6 +961,36 @@ impl GscPgo {
     /// z and yaw combined; 1 m of travel at least), curbed (`curbed_yank`, drift range `closure_yank_drift_range`),
     /// above `graph_change_heat_floor`.
     fn graph_change_cost(&self, solution: &Solution, solved: usize) -> f64 {
+        let mut scan = ChangeScan::default();
+        for (k, key_pose) in self.key_poses[..solved].iter().enumerate() {
+            scan.step(
+                &self.config,
+                (&key_pose.rotation_local, &key_pose.translation_local),
+                (&key_pose.rotation_global, &key_pose.translation_global),
+                (solution.rotations[k], solution.positions[k]),
+            );
+        }
+        self.finish_graph_change_cost(scan, solution, solved)
+    }
+    /// The graph change heat's cost of adopting `finished`: its solved keyframes' part measured on its thread against the
+    /// accepted graph at dispatch, which is the accepted graph now unless a solve was adopted since (a held one released
+    /// while it ran: then all of it here), then the keyframes made since it started, riding its newest's correction.
+    fn graph_change_cost_of(&mut self, finished: &FinishedSolve) -> f64 {
+        match &finished.change {
+            Some(scan) if finished.graph_version == self.adopted_solves => {
+                self.change_cost_calls.push((finished.keyframes, scan.seconds));
+                self.finish_graph_change_cost(scan.clone(), &finished.solution, finished.keyframes)
+            }
+            _ => {
+                self.graph_change_cost_recomputed += 1;
+                self.graph_change_cost(&finished.solution, finished.keyframes)
+            }
+        }
+    }
+    /// `scan` (over the first `solved` keyframes) carried on over the keyframes since, riding the solution's newest
+    /// keyframe's correction, and its cost: curbed (`curbed_yank`, drift range `closure_yank_drift_range`), above
+    /// `graph_change_heat_floor`.
+    fn finish_graph_change_cost(&self, mut scan: ChangeScan, solution: &Solution, solved: usize) -> f64 {
         let config = &self.config;
         let newest = &self.key_poses[solved - 1];
         let ride_rotation = mat3::mat_mul(
@@ -923,58 +1001,21 @@ impl GscPgo {
             &solution.positions[solved - 1],
             &mat3::mat_vec(&ride_rotation, &newest.translation_local),
         );
-        let yaw = |r: &Mat3| r[1][0].atan2(r[0][0]);
-        let (mut travelled, mut turned, mut largest) = (0.0, 0.0, 0.0f64);
-        for (k, key_pose) in self.key_poses.iter().enumerate() {
-            if k > 0 {
-                let before = &self.key_poses[k - 1];
-                travelled += mat3::norm(&mat3::sub(
-                    &key_pose.translation_local,
-                    &before.translation_local,
-                ));
-                turned += mat3::angular_distance(&key_pose.rotation_local, &before.rotation_local);
-            }
-            let spread = |per_sqrt_m: f64, per_sqrt_rad: f64| {
-                (per_sqrt_m * per_sqrt_m * (travelled + 1.0) + per_sqrt_rad * per_sqrt_rad * turned)
-                    .sqrt()
-            };
-            let (rotation, position) = if k < solved {
-                (solution.rotations[k], solution.positions[k])
-            } else {
+        for key_pose in &self.key_poses[solved..] {
+            scan.step(
+                config,
+                (&key_pose.rotation_local, &key_pose.translation_local),
+                (&key_pose.rotation_global, &key_pose.translation_global),
                 (
                     mat3::mat_mul(&ride_rotation, &key_pose.rotation_local),
                     mat3::add(
                         &mat3::mat_vec(&ride_rotation, &key_pose.translation_local),
                         &ride_translation,
                     ),
-                )
-            };
-            let moved = mat3::sub(&position, &key_pose.translation_global);
-            let turn = (yaw(&rotation) - yaw(&key_pose.rotation_global) + std::f64::consts::PI)
-                .rem_euclid(std::f64::consts::TAU)
-                - std::f64::consts::PI;
-            let z = ((moved[0].hypot(moved[1])
-                / spread(
-                    config.odometry_error_estimate_xy_per_sqrt_m,
-                    config.odometry_error_estimate_xy_per_sqrt_rad,
-                ))
-            .powi(2)
-                + (moved[2]
-                    / spread(
-                        config.odometry_error_estimate_z_per_sqrt_m,
-                        config.odometry_error_estimate_z_per_sqrt_rad,
-                    ))
-                .powi(2)
-                + (turn
-                    / spread(
-                        config.odometry_error_estimate_yaw_per_sqrt_m,
-                        config.odometry_error_estimate_yaw_per_sqrt_rad,
-                    ))
-                .powi(2))
-            .sqrt();
-            largest = largest.max(z);
+                ),
+            );
         }
-        (curbed_yank(largest, config.closure_yank_drift_range) - config.graph_change_heat_floor)
+        (curbed_yank(scan.largest, config.closure_yank_drift_range) - config.graph_change_heat_floor)
             .max(0.0)
     }
     /// A `GSC_SOLVE_LOG` line for a solve the graph change heat held or superseded, with the heat then.
@@ -1031,5 +1072,64 @@ fn append_solve_log(line: &str) {
     {
         use std::io::Write;
         let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// The graph change heat's scan along the keyframes in order (`GscPgo::graph_change_cost`): the path travelled and
+/// turned so far by the odometry (from the start), the previous keyframe's odometry pose, and the largest keyframe move
+/// from the accepted graph to the new one so far, in standard deviations of the stated odometry error accumulated along
+/// the path (xy, z and yaw combined; 1 m of travel at least); and the seconds a solve's thread spent on its part.
+#[derive(Clone, Default)]
+pub(crate) struct ChangeScan {
+    travelled: f64,
+    turned: f64,
+    previous_local: Option<(Mat3, Vec3)>,
+    largest: f64,
+    seconds: f64,
+}
+
+impl ChangeScan {
+    /// The next keyframe: its odometry pose, its accepted pose and its new one.
+    fn step(
+        &mut self,
+        config: &crate::gsc_pgo::Config,
+        (rotation_local, translation_local): (&Mat3, &Vec3),
+        (rotation_global, translation_global): (&Mat3, &Vec3),
+        (rotation, position): (Mat3, Vec3),
+    ) {
+        if let Some((before_rotation, before_translation)) = &self.previous_local {
+            self.travelled += mat3::norm(&mat3::sub(translation_local, before_translation));
+            self.turned += mat3::angular_distance(rotation_local, before_rotation);
+        }
+        self.previous_local = Some((*rotation_local, *translation_local));
+        let (travelled, turned) = (self.travelled, self.turned);
+        let spread = |per_sqrt_m: f64, per_sqrt_rad: f64| {
+            (per_sqrt_m * per_sqrt_m * (travelled + 1.0) + per_sqrt_rad * per_sqrt_rad * turned).sqrt()
+        };
+        let yaw = |r: &Mat3| r[1][0].atan2(r[0][0]);
+        let moved = mat3::sub(&position, translation_global);
+        let turn = (yaw(&rotation) - yaw(rotation_global) + std::f64::consts::PI)
+            .rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        let z = ((moved[0].hypot(moved[1])
+            / spread(
+                config.odometry_error_estimate_xy_per_sqrt_m,
+                config.odometry_error_estimate_xy_per_sqrt_rad,
+            ))
+        .powi(2)
+            + (moved[2]
+                / spread(
+                    config.odometry_error_estimate_z_per_sqrt_m,
+                    config.odometry_error_estimate_z_per_sqrt_rad,
+                ))
+            .powi(2)
+            + (turn
+                / spread(
+                    config.odometry_error_estimate_yaw_per_sqrt_m,
+                    config.odometry_error_estimate_yaw_per_sqrt_rad,
+                ))
+            .powi(2))
+        .sqrt();
+        self.largest = self.largest.max(z);
     }
 }

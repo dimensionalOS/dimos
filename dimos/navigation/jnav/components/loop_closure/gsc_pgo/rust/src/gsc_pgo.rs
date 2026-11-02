@@ -515,6 +515,11 @@ pub struct Config {
     pub solve_estimate_rejected_power: f64,
     pub solve_estimate_speed_power: f64,
     pub solve_estimate_speed_floor_mps: f64,
+    /// The solve's thread also measures the graph change heat's cost of its solution against the accepted graph at
+    /// dispatch: `solve_estimate_change_cost_s_per_keyframe` x keyframes more seconds, counted in scans by the scan
+    /// period (`scan_period_window`) and added to the estimate (the largest of small L1's, gir1's and huge L1's Mac
+    /// 99th percentiles of its seconds per keyframe).
+    pub solve_estimate_change_cost_s_per_keyframe: f64,
     /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
     /// once `estimate` scans have passed since its dispatch and the data time since has reached the estimate's seconds (an
     /// early scan cannot end a hold before the data time its estimate spans), an upper bound on its cost fixed before
@@ -695,6 +700,16 @@ pub struct Config {
     pub odometry_error_estimate_evidence_core: bool,
     /// Recompute the loop-overlap pressure (`loop_overlap`) on every this-many-th scan, reusing it in between; 0 = never.
     pub pressure_check_frequency: usize,
+    /// The pressure off the scan thread (`pressure_schedule`): a job on one worker, started with a snapshot of its inputs
+    /// when the worker is free (the newest request pending meanwhile), landing at its dispatch + `pressure_estimate_s` +
+    /// `pressure_estimate_per_keyframe_s` x keyframes + `pressure_estimate_per_closure_s` x committed closures (seconds,
+    /// counted in scans as the closure searches' estimates). Off: computed inline on the scan thread. The coefficients
+    /// are the cheapest nonnegative ones bounding every Mac pressure computation of small L1, gir1 and huge L1 but each
+    /// recording's hardest 1% (re-chosen over 3 refits), 99% of each one's under it.
+    pub pressure_let_enabled: bool,
+    pub pressure_estimate_s: f64,
+    pub pressure_estimate_per_keyframe_s: f64,
+    pub pressure_estimate_per_closure_s: f64,
     /// `soft_pressure` (display only, the same probability without the cliff): 50% where log10 of the loop hazard
     /// (unresolved_loop_probability = 1 - e^-hazard) is this, and 0% this many decades below it (log-compressed).
     pub soft_pressure_half_log10_hazard: f64,
@@ -742,6 +757,12 @@ impl Config {
             if count == 0 {
                 return Err(format!("{name} must be >= 1"));
             }
+        }
+        if !(self.pressure_estimate_s >= 0.0
+            && self.pressure_estimate_per_keyframe_s >= 0.0
+            && self.pressure_estimate_per_closure_s >= 0.0)
+        {
+            return Err("pressure_estimate_* must be >= 0".into());
         }
         if !(self.verification_estimate_overhead_s >= 0.0 && self.verification_estimate_round_s >= 0.0) {
             return Err("verification_estimate_* must be >= 0".into());
@@ -797,11 +818,12 @@ impl Default for Config {
             solve_estimate_rejected_power: 0.558,
             solve_estimate_speed_power: 0.0,
             solve_estimate_speed_floor_mps: 0.05,
+            solve_estimate_change_cost_s_per_keyframe: 2.56e-7,
             closure_search_hold_enabled: true,
             scan_period_window: 50,
             closure_search_let_enabled: true,
             closure_search_workers: 2,
-            closure_search_two_stage: true,
+            closure_search_two_stage: false,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
@@ -855,6 +877,10 @@ impl Default for Config {
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,
             pressure_check_frequency: 5,
+            pressure_let_enabled: true,
+            pressure_estimate_s: 1.21e-5,
+            pressure_estimate_per_keyframe_s: 1.355e-7,
+            pressure_estimate_per_closure_s: 1.957e-7,
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
         }
@@ -950,6 +976,24 @@ pub struct GscPgo {
     /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
     pub(crate) graph_version: u64,
     pub(crate) pressure_version: Option<u64>,
+    /// The pressure job running or held (`pressure_let_enabled`), whether a newer one is pending, its worker, each
+    /// pressure computation's keyframes, closures and seconds, the jobs that overshot, whether the running one is late,
+    /// and whether a lockstep replay waits for due jobs (`set_wait_for_due_jobs`).
+    pub(crate) pressure_job: Option<crate::pressure_schedule::PressureJob>,
+    /// The graph change heat's cost per adopted solve measured on its solve's thread (keyframes, seconds), and the solves
+    /// whose cost was recomputed here because a solve was adopted while they ran.
+    pub(crate) change_cost_calls: Vec<(usize, f64)>,
+    /// Seconds the scan thread blocked joining finished-or-waited-for solves (a lockstep replay's wait, not work).
+    pub(crate) solve_join_wait_s: f64,
+    pub(crate) graph_change_cost_recomputed: usize,
+    /// Solves adopted so far: the accepted graph's version (keyframes added since only ride it).
+    pub(crate) adopted_solves: u64,
+    pub(crate) pressure_requested: bool,
+    pub(crate) pressure_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) pressure_calls: Vec<(usize, usize, f64)>,
+    pub(crate) pressure_overshoots: usize,
+    pub(crate) pressure_late: bool,
+    pub(crate) wait_for_due_jobs: bool,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
     /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
@@ -1970,12 +2014,19 @@ impl GscPgo {
         let checked = std::time::Instant::now();
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
-        if frequency > 0
-            && self.scans_seen.is_multiple_of(frequency)
-            && self.pressure_version != Some(self.graph_version)
-        {
+        let check_due = frequency > 0 && self.scans_seen.is_multiple_of(frequency);
+        if self.config.pressure_let_enabled {
+            self.step_pressure(check_due);
+        } else if check_due && self.pressure_version != Some(self.graph_version) {
             self.pressure_version = Some(self.graph_version);
-            if let Some(overlap) = self.loop_overlap() {
+            let started = std::time::Instant::now();
+            let overlap = self.loop_overlap();
+            self.pressure_calls.push((
+                self.key_poses.len(),
+                self.committed_closures.len(),
+                started.elapsed().as_secs_f64(),
+            ));
+            if let Some(overlap) = overlap {
                 self.pressure = Some((self.scans_seen, overlap));
             }
         }

@@ -130,6 +130,15 @@ struct EvalOutput {
     keyframe_scan_thread_ms: Vec<f32>,
     /// Per keyframe, ms in `update` (adopting a finished solve, waiting for it when due, and starting the next).
     keyframe_gnc_ms: Vec<f32>,
+    /// Per scan, ms of the scan thread's own work (add_key_pose, and on a keyframe its closure search and solve steps),
+    /// the lockstep replay's waits on due jobs left out.
+    scan_thread_ms: Vec<f32>,
+    /// Per pressure computation (inline, or as a job: `pressure_let_enabled`): keyframes, committed closures, seconds.
+    pressure_calls: Vec<(usize, usize, f64)>,
+    /// Per adopted solve, the graph change heat cost's part on the solve's thread: keyframes, seconds; and the solves
+    /// whose cost the scan thread recomputed (a solve adopted while they ran).
+    change_cost_calls: Vec<(usize, f64)>,
+    change_cost_recomputed: usize,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
     /// How much faster than real each part of the module runs (`Speed`).
@@ -604,6 +613,8 @@ fn run() -> Result<(), String> {
         pgo_config.closure_icp_dump_dir.clear();
     }
     let mut pgo = GscPgo::new(pgo_config);
+    // a lockstep replay waits for a due job that has not finished (live, it lands late)
+    pgo.set_wait_for_due_jobs(!args.live);
     // the ICP cache: recorded, or loaded to answer from
     let icp_cache = match &args.icp_cache {
         Some((mode, path)) => {
@@ -924,6 +935,10 @@ fn run() -> Result<(), String> {
         scan_latency_ms,
         keyframe_scan_thread_ms: recorder.keyframe_scan_thread_ms,
         keyframe_gnc_ms: recorder.keyframe_gnc_ms,
+        scan_thread_ms: recorder.scan_thread_ms,
+        pressure_calls: pgo.pressure_calls().to_vec(),
+        change_cost_calls: pgo.change_cost_calls().0.to_vec(),
+        change_cost_recomputed: pgo.change_cost_calls().1,
         stage_seconds: pgo
             .stage_seconds()
             .iter()
@@ -968,6 +983,25 @@ fn run() -> Result<(), String> {
         speed.solve_overshoots,
         speed.replay_solve_wait_s,
     );
+    eprintln!(
+        "pgo-eval: pressure: {} computations, {} overshot their estimate; graph change cost: {} measured on the solve's thread, {} recomputed on the scan thread",
+        pgo.pressure_calls().len(),
+        pgo.pressure_overshoots(),
+        pgo.change_cost_calls().0.len(),
+        pgo.change_cost_calls().1,
+    );
+    {
+        let mut ms: Vec<f32> = output.scan_thread_ms.clone();
+        ms.sort_by(f32::total_cmp);
+        let at = |q: f64| ms.get(((ms.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(f32::NAN);
+        eprintln!(
+            "pgo-eval: scan thread work per scan (waits left out): median {:.3} ms, p99 {:.3} ms, max {:.1} ms over {} scans",
+            at(0.5),
+            at(0.99),
+            ms.last().copied().unwrap_or(f32::NAN),
+            ms.len()
+        );
+    }
     eprintln!(
         "pgo-eval: closure searches: {} overshot their estimate ({} verifications); the buffers dropped {} scan-context candidates and {} matches waiting for verification; this replay waited {:.1}s for searches",
         pgo.closure_search_overshoots(),
@@ -1122,6 +1156,9 @@ struct Recorder {
     keyframe_scan_thread_ms: Vec<f32>,
     keyframe_gnc_ms: Vec<f32>,
     loop_overlap: Vec<(f64, LoopOverlap, usize)>,
+    /// Per scan, ms of the scan thread's own work (`Output::scan_thread_ms`), and the waits when this scan began.
+    scan_thread_ms: Vec<f32>,
+    step_waits_s: f64,
 }
 
 impl Recorder {
@@ -1142,12 +1179,19 @@ impl Recorder {
             keyframe_scan_thread_ms: Vec::new(),
             keyframe_gnc_ms: Vec::new(),
             loop_overlap: Vec::new(),
+            scan_thread_ms: Vec::new(),
+            step_waits_s: 0.0,
         })
     }
 
     /// `add_key_pose`, keeping each new pressure; returns whether the scan became a keyframe.
     fn add_scan(&mut self, pgo: &mut GscPgo, cloud_with_pose: &CloudWithPose, ts: f64) -> bool {
+        let (started, waits) = (Instant::now(), pgo.thread_waits_s());
         let keyframe = pgo.add_key_pose(cloud_with_pose);
+        self.step_waits_s = waits;
+        self.scan_thread_ms.push(
+            ((started.elapsed().as_secs_f64() - (pgo.thread_waits_s() - waits)) * 1e3) as f32,
+        );
         if let Some((scan, overlap)) = pgo.pressure() {
             if self
                 .loop_overlap
@@ -1181,6 +1225,11 @@ impl Recorder {
         solve(pgo);
         self.keyframe_gnc_ms
             .push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
+        // this keyframe's scan: its add_key_pose, closure search and solve steps, the waits left out
+        if let Some(last) = self.scan_thread_ms.last_mut() {
+            *last = ((step_started.elapsed().as_secs_f64() - (pgo.thread_waits_s() - self.step_waits_s))
+                * 1e3) as f32;
+        }
         self.dump(pgo, had_closure, ts)
     }
 

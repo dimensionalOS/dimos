@@ -79,7 +79,7 @@ impl SearchProgress {
     }
 }
 
-type Work = Box<dyn FnOnce() + Send>;
+pub(crate) type Work = Box<dyn FnOnce() + Send>;
 
 /// Threads that take work in the order it was sent.
 pub struct SearchPool {
@@ -88,7 +88,7 @@ pub struct SearchPool {
 }
 
 impl SearchPool {
-    fn new(workers: usize, name: &str) -> SearchPool {
+    pub(crate) fn new(workers: usize, name: &str) -> SearchPool {
         let (jobs, queue) = channel::<Work>();
         let queue: Arc<Mutex<Receiver<Work>>> = Arc::new(Mutex::new(queue));
         let workers = (0..workers.max(1))
@@ -111,7 +111,7 @@ impl SearchPool {
             _workers: workers,
         }
     }
-    fn send(&self, work: Work) {
+    pub(crate) fn send(&self, work: Work) {
         self.jobs.send(work).expect("closure search workers stopped");
     }
 }
@@ -591,14 +591,14 @@ impl GscPgo {
         (seconds, source_points, target_points)
     }
     /// The newest advancing scan's recorded time (`advancing_scans`; -inf before any).
-    fn newest_scan_time(&self) -> f64 {
+    pub(crate) fn newest_scan_time(&self) -> f64 {
         self.recent_scan_times
             .back()
             .copied()
             .unwrap_or(f64::NEG_INFINITY)
     }
     /// The median of the newest `scan_period_window` scan periods by recorded time (NaN before two scans).
-    fn scan_period_s(&self) -> f64 {
+    pub(crate) fn scan_period_s(&self) -> f64 {
         let mut periods: Vec<f64> = self
             .recent_scan_times
             .iter()

@@ -109,6 +109,7 @@ config! {
     solve_estimate_rejected_power: f64,
     solve_estimate_speed_power: f64,
     solve_estimate_speed_floor_mps: f64,
+    solve_estimate_change_cost_s_per_keyframe: f64,
     closure_search_hold_enabled: bool,
     scan_period_window: usize,
     closure_search_let_enabled: bool,
@@ -166,6 +167,10 @@ config! {
     learned_odometry_error_estimate_from_closures: bool,
     odometry_error_estimate_evidence_core: bool,
     pressure_check_frequency: usize,
+    pressure_let_enabled: bool,
+    pressure_estimate_s: f64,
+    pressure_estimate_per_keyframe_s: f64,
+    pressure_estimate_per_closure_s: f64,
     soft_pressure_half_log10_hazard: f64,
     soft_pressure_decades: f64,
 }
