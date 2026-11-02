@@ -124,6 +124,9 @@ struct EvalOutput {
     odoms_used: usize,
     data_duration_s: f64,
     runtime_s: f64,
+    /// Seconds `finish` took after the last scan (the run's closing solves; a live module has no such step).
+    finish_s: f64,
+    /// Data seconds per replay second up to the last scan, `finish` left out.
     realtime_factor: f64,
     /// `--live` replay (else lockstep), the scans it dropped from a full queue, and each processed scan's ms from arriving
     /// to done (queue wait + processing).
@@ -872,6 +875,7 @@ fn run() -> Result<(), String> {
         })?;
     }
     let finish_started = Instant::now();
+    let replay_s = (finish_started - started).as_secs_f64();
     pgo.finish();
     let finish_s = finish_started.elapsed().as_secs_f64();
     let overshoots = pgo.overshoot_report();
@@ -907,8 +911,8 @@ fn run() -> Result<(), String> {
         ));
     };
     let data_duration_s = last_ts - first_ts;
-    let realtime_factor = if runtime_s > 0.0 {
-        data_duration_s / runtime_s
+    let realtime_factor = if replay_s > 0.0 {
+        data_duration_s / replay_s
     } else {
         f64::INFINITY
     };
@@ -984,6 +988,7 @@ fn run() -> Result<(), String> {
         odoms_used: odoms.len(),
         data_duration_s,
         runtime_s,
+        finish_s,
         realtime_factor,
         live: args.live,
         scans_dropped,
@@ -1106,13 +1111,14 @@ fn run() -> Result<(), String> {
         pgo.closure_search_wait_s(),
     );
     eprintln!(
-        "pgo-eval: {} scans, {} keyframes, {} closures, {:.1}s data in {:.2}s replay wall time ({:.1}x realtime) -> {:?}",
+        "pgo-eval: {} scans, {} keyframes, {} closures, {:.1}s data in {:.2}s replay wall time ({:.1}x realtime; then {:.1}s in finish) -> {:?}",
         scans_processed,
         output.keyframes,
         output.closures,
         output.data_duration_s,
-        output.runtime_s,
+        replay_s,
         output.realtime_factor,
+        output.finish_s,
         args.output,
     );
     // where the time went: each stage's wall seconds, and the single ICPs run (candidates that reached ICP) and their cost
