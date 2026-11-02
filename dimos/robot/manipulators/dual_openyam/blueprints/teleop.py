@@ -20,7 +20,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.robot.manipulators.common.damiao_blueprint import (
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     connect_damiao,
 )

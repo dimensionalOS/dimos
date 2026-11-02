@@ -24,8 +24,8 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.manipulators.common._damiao_test_helpers import mock_connection_rig
-from dimos.robot.manipulators.common.damiao_blueprint import DamiaoTeleopCoordinator
+from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
+from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoTeleopCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     _dual_openyam_webxr_tasks,
     teleop_webxr_dual_openyam,

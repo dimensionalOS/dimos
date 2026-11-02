@@ -21,7 +21,7 @@ from can_motor_control import damiao
 from pydantic import model_validator
 from typing_extensions import Self
 
-from dimos.robot.manipulators.common.damiao_connection import (
+from dimos.robot.manipulators.damiao.damiao_connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
 )

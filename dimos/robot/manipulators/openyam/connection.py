@@ -23,7 +23,7 @@ from pydantic import model_validator
 from typing_extensions import Self
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.common.damiao_connection import (
+from dimos.robot.manipulators.damiao.damiao_connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
 )

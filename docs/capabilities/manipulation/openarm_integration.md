@@ -102,13 +102,13 @@ firmware behavior or confirm that every motor supplied fresh feedback.
 | `dimos/robot/manipulators/openarm/connection.py` | native motor declarations, gains, CAN selection, and direct connection |
 | `dimos/robot/manipulators/openarm/config.py` | pinned model, canonical joints and planning configuration |
 | `dimos/robot/manipulators/openarm/blueprints/` | connection, coordinator, planner, and WebXR compositions |
-| `dimos/robot/manipulators/common/damiao_connection.py` | shared native lifecycle |
+| `dimos/robot/manipulators/damiao/damiao_connection.py` | shared native lifecycle |
 
 ## Validation
 
 ```bash
 uv run pytest dimos/robot/manipulators/openarm \
-    dimos/robot/manipulators/common/test_damiao_connection.py \
+    dimos/robot/manipulators/damiao/test_damiao_connection.py \
     dimos/control/test_coordinator_connections.py
 ```
 

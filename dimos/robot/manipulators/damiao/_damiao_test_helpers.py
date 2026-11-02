@@ -29,7 +29,7 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.common.damiao_connection import DamiaoConnection
+from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
 from dimos.utils.testing.waiting import wait_until
 
 T = TypeVar("T")

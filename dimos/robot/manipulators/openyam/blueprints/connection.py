@@ -15,7 +15,7 @@
 
 """OpenYAM trajectory and normalized-gripper connection control."""
 
-from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
+from dimos.robot.manipulators.damiao.damiao_blueprint import damiao_connection_control
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 openyam_connection_control = damiao_connection_control(OpenYamConnection).remappings([])

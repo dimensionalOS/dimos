@@ -25,19 +25,19 @@ from typing_extensions import Self
 from dimos.control._control_test_helpers import fake_arm_model
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.manipulators.common import damiao_connection as common
-from dimos.robot.manipulators.common._damiao_native_test_helpers import (
+from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     Builder,
     FakeArm,
     FakeGripper,
     FakeRobot,
     LocalTransport,
 )
-from dimos.robot.manipulators.common.damiao_connection import (
+from dimos.robot.manipulators.damiao.damiao_connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
 )
-from dimos.robot.manipulators.common.damiao_model import PhysicalModel
+from dimos.robot.manipulators.damiao.damiao_model import PhysicalModel
 from dimos.utils.testing.waiting import wait_until
 
 

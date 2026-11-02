@@ -14,7 +14,7 @@
 
 """OpenArm trajectories and normalized grippers through a connection module."""
 
-from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
+from dimos.robot.manipulators.damiao.damiao_blueprint import damiao_connection_control
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
 openarm_connection_control = damiao_connection_control(OpenArmConnection).remappings([])

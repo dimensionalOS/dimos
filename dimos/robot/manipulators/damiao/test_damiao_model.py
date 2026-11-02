@@ -24,7 +24,7 @@ import pinocchio
 import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.robot.manipulators.common import damiao_connection as common
+from dimos.robot.manipulators.damiao import damiao_connection as common
 
 
 def test_control_and_planning_namespace_are_lazy_consistent_and_portable(connection_class, mocker):

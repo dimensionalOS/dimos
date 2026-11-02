@@ -21,7 +21,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.robot.manipulators.common.damiao_blueprint import (
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     connect_damiao,
 )

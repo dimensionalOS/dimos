@@ -42,7 +42,7 @@ from dimos.core.stream import In, Out
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import JointDescription, RobotModel
-from dimos.robot.manipulators.common.damiao_model import PhysicalModel
+from dimos.robot.manipulators.damiao.damiao_model import PhysicalModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
