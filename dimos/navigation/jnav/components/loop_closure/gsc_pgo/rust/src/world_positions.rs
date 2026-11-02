@@ -39,6 +39,7 @@ pub struct PositionPrior {
 /// its priors are carried into the primary frame through it for one solve of everything (a two-stage estimate: the
 /// alignments are not refined jointly with the graph). The map -> frame alignments are
 /// read back at keyframe 0, and the solution is returned in map coordinates.
+#[allow(clippy::too_many_arguments)]
 pub fn solve_with_priors(
     rotations: &[Mat3],
     positions: &[Vec3],

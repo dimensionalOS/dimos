@@ -391,16 +391,7 @@ impl crate::gsc_pgo::GscPgo {
     /// when missing) and the ring-key distances (top k in order), which the closure search reuses to count look-alike
     /// places, and every top-k keyframe under the threshold other than the accepted one, closest first (distance,
     /// index, sector shift).
-    pub(crate) fn search_by_scan_context(
-        &self,
-    ) -> (
-        Option<usize>,
-        i32,
-        f32,
-        f32,
-        Vec<(f32, usize)>,
-        Vec<(f32, usize, i32)>,
-    ) {
+    pub(crate) fn search_by_scan_context(&self) -> ScanContextMatch {
         let (mut best_dist, mut second_dist) = (2.0f32, 2.0f32);
         let Some(query) = self
             .scan_context_descriptors
@@ -442,3 +433,7 @@ impl crate::gsc_pgo::GscPgo {
         (best, best_shift, best_dist, second_dist, ranked, matches)
     }
 }
+
+/// `search_by_scan_context`'s result: the accepted candidate, its sector shift, the closest and 2nd-closest cosine
+/// distances, the ring-key distances (top k) and the other top-k keyframes under the threshold.
+pub(crate) type ScanContextMatch = (Option<usize>, i32, f32, f32, Vec<(f32, usize)>, Vec<(f32, usize, i32)>);

@@ -30,9 +30,12 @@ use std::sync::{Arc, OnceLock};
 const CHUNK: usize = 1024;
 const CHUNKS: usize = 1 << 15;
 
+/// One arena chunk of `CHUNK` slots.
+type Chunk<T> = Box<[OnceLock<T>]>;
+
 /// A chunked arena, each slot set once; readers only read slots below a length they were handed.
 struct Arena<T> {
-    chunks: Box<[OnceLock<Box<[OnceLock<T>]>>]>,
+    chunks: Box<[OnceLock<Chunk<T>>]>,
 }
 
 impl<T> Arena<T> {

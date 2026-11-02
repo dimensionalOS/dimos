@@ -562,7 +562,7 @@ impl GscPgo {
         }
         suggested
     }
-    pub fn runtime_profile(&self) -> Vec<(&'static str, f64, usize, Vec<(&'static str, f64)>)> {
+    pub fn runtime_profile(&self) -> Vec<RuntimeProfileRow> {
         let percentile = |mut values: Vec<f64>| -> f64 {
             values.retain(|v| v.is_finite());
             if values.is_empty() {
@@ -572,7 +572,7 @@ impl GscPgo {
             values[((values.len() - 1) as f64 * 0.99).round() as usize]
         };
         let c = &self.config;
-        let groups: [(&'static str, &[&'static str], Vec<(&'static str, f64)>); 6] = [
+        let groups: [ProfileGroup; 6] = [
             ("fast_match", &["search", "fast_match"], vec![
                 ("fast_match_scans_fixed_overhead", c.deterministic_config.fast_match_scans_fixed_overhead),
                 ("fast_match_scans_per_keyframe", c.deterministic_config.fast_match_scans_per_keyframe),
@@ -626,3 +626,8 @@ pub(crate) fn hold_scans(estimate_raw_scans: f64, _config: &crate::gsc_pgo::Conf
         1
     }
 }
+
+/// One `runtime_profile` row: a job kind, its 99th-percentile seconds, its count and its estimate's terms.
+pub type RuntimeProfileRow = (&'static str, f64, usize, Vec<(&'static str, f64)>);
+/// A `runtime_profile` job kind, the timing keys it sums and its estimate's terms.
+type ProfileGroup = (&'static str, &'static [&'static str], Vec<(&'static str, f64)>);

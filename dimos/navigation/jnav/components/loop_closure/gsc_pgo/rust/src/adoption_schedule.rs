@@ -219,7 +219,7 @@ impl GscPgo {
         }
         let mut done = job.slot.done.lock().expect("adoption slot");
         if done.is_none() {
-            if !(deterministic && wait) && !now {
+            if !(now || (deterministic && wait)) {
                 return None;
             }
             let started = std::time::Instant::now();
