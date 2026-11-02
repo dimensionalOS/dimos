@@ -1413,9 +1413,21 @@ fn find_misses_along_ray(
 
     let (mut x, mut y, mut z) = origin_voxel;
 
-    let step_x = dx.signum() as i32;
-    let step_y = dy.signum() as i32;
-    let step_z = dz.signum() as i32;
+    // Not f32::signum: it gives ±1 for ±0.0, which stepped an axis the ray never moves along
+    // and, from an origin exactly on a voxel boundary, made its crossing time 0/0 = NaN, so the
+    // walk never ended.
+    let step_of = |d: f32| -> i32 {
+        if d > 0.0 {
+            1
+        } else if d < 0.0 {
+            -1
+        } else {
+            0
+        }
+    };
+    let step_x = step_of(dx);
+    let step_y = step_of(dy);
+    let step_z = step_of(dz);
 
     let t_max_init = |p: f32, d: f32, vox: i32, step: i32| -> f32 {
         if step == 0 {
