@@ -80,10 +80,14 @@ fn erfc(x: f64) -> f64 {
 /// rotation noise in world axes, with the rotation noise also as A S(q)^T and S(q) A S(q)^T, q the keyframe the step
 /// turns at. The lever-arm sum over steps j..t of S(a - q) A S(a - q)^T then expands into these, for any newest
 /// position a, in O(1).
-pub(crate) fn odometry_noise_sums(key_poses: &[KeyPoseWithCloud], config: &Config) -> Vec<Sums> {
+pub(crate) fn odometry_noise_sums(
+    key_poses: &[KeyPoseWithCloud],
+    config: &Config,
+    noise: [f64; 4],
+) -> Vec<Sums> {
     let zero = [[0.0; 3]; 3];
     let mut sums = vec![[zero; 4]];
-    for edge in odometry_edges(key_poses, config) {
+    for edge in odometry_edges(key_poses, config, noise) {
         let (from, to) = (&key_poses[edge.from], &key_poses[edge.to]);
         let world = |rotation: &Mat3, variances: [f64; 3]| -> Mat3 {
             let scaled: Mat3 =
@@ -191,7 +195,7 @@ impl GscPgo {
             return None;
         }
         let newest = self.key_poses[reference].translation_global;
-        let sums = odometry_noise_sums(&self.key_poses, &self.config);
+        let sums = odometry_noise_sums(&self.key_poses, &self.config, self.odometry_noise());
         let (solved_tip, solved) = match &self.solved_relative_covariance {
             Some((tip, covariance)) if *tip <= reference => (*tip, covariance.as_slice()),
             _ => (0, &[] as &[Mat3]),

@@ -29,6 +29,7 @@ use std::thread::JoinHandle;
 
 use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, Config, GscPgo, KeyPoseWithCloud};
 use crate::mat3::{self, Mat3, Vec3};
+pub use crate::world_positions::{solve_with_priors, PositionPrior};
 
 /// A relative-pose measurement from keyframe `from` to keyframe `to`, in `from`'s body frame
 /// (R_to = R_from * rotation, p_to = p_from + R_from * translation), with variances for the rotation
@@ -72,6 +73,10 @@ pub struct Solution {
     /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
+    /// Variance-component evidence on the odometry noise from the solved graph (`odometry_noise_evidence`): per source
+    /// (xy, z, yaw, roll/pitch), the sum of its odometry residuals squared and whitened, and its redundancy; None if the
+    /// graph could not be factored.
+    pub odometry_noise_evidence: Option<[(f64, f64); 4]>,
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -94,18 +99,6 @@ pub fn solve(
         &[],
         config,
     )
-}
-
-/// A measured position, in fixed world frame `frame` (GPS after projection to a local east-north-up frame, a total
-/// station, motion capture, ...; one id per coordinate system), of a sensor mounted at `lever` in keyframe `keyframe`'s
-/// body frame (an antenna's offset from the body origin, from tf), with its covariance (m²).
-#[derive(Clone, Copy, Debug)]
-pub struct PositionPrior {
-    pub keyframe: usize,
-    pub frame: u32,
-    pub lever: Vec3,
-    pub world: Vec3,
-    pub covariance: Mat3,
 }
 
 /// A landmark seen from keyframe `keyframe`: where it was in the keyframe's body frame (a camera's bearing with a rough
@@ -152,265 +145,11 @@ struct Sighting {
 /// A position prior placed in the solve frame: keyframe `keyframe`'s sensor at `lever` (body frame) should be at
 /// `position`, with information (inverse covariance) `information`.
 #[derive(Clone, Copy, Debug)]
-struct Unary {
-    keyframe: usize,
-    lever: Vec3,
-    position: Vec3,
-    information: Mat3,
-}
-
-/// `solve` with absolute position priors, in any number of world frames (each gravity-aligned, each differing from the
-/// map by an unknown rotation about the vertical and a translation). A frame is used once its priors pin its heading
-/// (horizontal spread more than twice their noise). The frame with the most usable priors is primary: a first fit of
-/// it (weighted Procrustes of the prior-free solution onto its priors) moves the graph into it, every keyframe is freed
-/// (the priors, not keyframe 0, fix where the map sits) and the priors are unary factors, GNC-weighted like closures
-/// (3-DoF chi-square cutoff). Every other frame's primary -> frame alignment is fitted to the primary-only solution and
-/// its priors are carried into the primary frame through it for one solve of everything (a two-stage estimate: the
-/// alignments are not refined jointly with the graph). The map -> frame alignments are
-/// read back at keyframe 0, and the solution is returned in map coordinates.
-pub fn solve_with_priors(
-    rotations: &[Mat3],
-    positions: &[Vec3],
-    free: &[bool],
-    odometry: &[Edge],
-    closures: &[Edge],
-    priors: &[PositionPrior],
-    sightings: &[LandmarkSighting],
-    config: &SolveConfig,
-) -> Solution {
-    let mut solution = solve_core(
-        rotations,
-        positions,
-        free,
-        odometry,
-        closures,
-        &[],
-        sightings,
-        config,
-    );
-    let mut frames: Vec<u32> = priors.iter().map(|p| p.frame).collect();
-    frames.sort_unstable();
-    frames.dedup();
-    let of = |frame: u32| -> Vec<usize> {
-        (0..priors.len())
-            .filter(|&i| priors[i].frame == frame)
-            .collect()
-    };
-    // the sensors' positions in a solution, so a mount offset from the body origin is fitted where it was measured
-    let fit = |solution: &Solution, ids: &[usize], weights: &[f64]| {
-        let chosen: Vec<PositionPrior> = ids.iter().map(|&i| priors[i]).collect();
-        let w: Vec<f64> = ids.iter().map(|&i| weights[i]).collect();
-        let sensors: Vec<Vec3> = chosen
-            .iter()
-            .map(|p| {
-                mat3::add(
-                    &solution.positions[p.keyframe],
-                    &mat3::mat_vec(&solution.rotations[p.keyframe], &p.lever),
-                )
-            })
-            .collect();
-        align_priors(&sensors, &chosen, &w)
-    };
-    let ones = vec![1.0; priors.len()];
-    // map -> frame, for every frame its priors make observable
-    let first: Vec<(u32, (f64, Vec3))> = frames
-        .iter()
-        .filter_map(|&f| Some((f, fit(&solution, &of(f), &ones)?)))
-        .collect();
-    let Some(&(primary, (yaw, translation))) = first.iter().max_by_key(|(f, _)| of(*f).len())
-    else {
-        solution.prior_weights = vec![0.0; priors.len()];
-        return solution;
-    };
-    let turn = mat3::rot_z(yaw);
-    let world_rotations: Vec<Mat3> = solution
-        .rotations
-        .iter()
-        .map(|r| mat3::mat_mul(&turn, r))
-        .collect();
-    let world_positions: Vec<Vec3> = solution
-        .positions
-        .iter()
-        .map(|p| mat3::add(&mat3::mat_vec(&turn, p), &translation))
-        .collect();
-    // primary -> frame for the others: compose the first fits
-    let mut relative: Vec<(u32, (f64, Vec3))> = first
-        .iter()
-        .filter(|(f, _)| *f != primary)
-        .map(|&(f, (y, t))| {
-            let r = y - yaw;
-            (
-                f,
-                (
-                    r,
-                    mat3::sub(&t, &mat3::mat_vec(&mat3::rot_z(r), &translation)),
-                ),
-            )
-        })
-        .collect();
-    let all_free = vec![true; free.len()];
-    // the priors of the frames in `frames` as unary factors in the primary frame (others through their alignment)
-    let unary_of = |frames: &dyn Fn(u32) -> bool,
-                    relative: &[(u32, (f64, Vec3))]|
-     -> (Vec<usize>, Vec<Unary>) {
-        let mut used = Vec::new();
-        let mut unary = Vec::new();
-        for (i, p) in priors.iter().enumerate() {
-            if !frames(p.frame) {
-                continue;
-            }
-            let (position, covariance) = if p.frame == primary {
-                (p.world, p.covariance)
-            } else if let Some((_, (r, t))) = relative.iter().find(|(f, _)| *f == p.frame) {
-                let back = mat3::rot_z(-r);
-                (
-                    mat3::mat_vec(&back, &mat3::sub(&p.world, t)),
-                    mat3::mat_mul(
-                        &back,
-                        &mat3::mat_mul(&p.covariance, &mat3::transpose(&back)),
-                    ),
-                )
-            } else {
-                continue;
-            };
-            used.push(i);
-            unary.push(Unary {
-                keyframe: p.keyframe,
-                lever: p.lever,
-                position,
-                information: mat3::inverse(&covariance).unwrap_or([[0.0; 3]; 3]),
-            });
-        }
-        (used, unary)
-    };
-    let mut weights = vec![0.0; priors.len()];
-    // stage 1: the primary frame alone; each other frame's primary -> frame alignment is fitted to that solution, so a
-    // frame's own (possibly much tighter) priors cannot hold the graph where a wrong first guess put it
-    let (used, unary) = unary_of(&|f| f == primary, &relative);
-    let primary_only = solve_core(
-        &world_rotations,
-        &world_positions,
-        &all_free,
-        odometry,
-        closures,
-        &unary,
-        sightings,
-        config,
-    );
-    for (&i, &w) in used.iter().zip(&primary_only.prior_weights) {
-        weights[i] = w;
-    }
-    for (f, alignment) in relative.iter_mut() {
-        let ids = of(*f);
-        if let Some(refit) = fit(&primary_only, &ids, &ones) {
-            *alignment = refit;
-        }
-    }
-    // stage 2: every frame together
-    let (used, unary) = unary_of(&|_| true, &relative);
-    let world = solve_core(
-        &primary_only.rotations,
-        &primary_only.positions,
-        &all_free,
-        odometry,
-        closures,
-        &unary,
-        sightings,
-        config,
-    );
-    for (&i, &w) in used.iter().zip(&world.prior_weights) {
-        weights[i] = w;
-    }
-    // map -> primary: keyframe 0's map pose (held in the map) onto its solved pose in the primary frame
-    // a turn about the vertical (the frames are gravity-aligned), so it stays exactly a rotation however many solves it
-    // passes through
-    let turned = mat3::mat_mul(&world.rotations[0], &mat3::transpose(&rotations[0]));
-    let align_rotation = mat3::rot_z(turned[1][0].atan2(turned[0][0]));
-    let align_translation = mat3::sub(
-        &world.positions[0],
-        &mat3::mat_vec(&align_rotation, &positions[0]),
-    );
-    let back = mat3::transpose(&align_rotation);
-    let mut solution = world;
-    solution.rotations = solution
-        .rotations
-        .iter()
-        .map(|r| mat3::mat_mul(&back, r))
-        .collect();
-    solution.positions = solution
-        .positions
-        .iter()
-        .map(|p| mat3::mat_vec(&back, &mat3::sub(p, &align_translation)))
-        .collect();
-    solution.landmarks = solution
-        .landmarks
-        .iter()
-        .map(|p| mat3::mat_vec(&back, &mat3::sub(p, &align_translation)))
-        .collect();
-    let primary_yaw = align_rotation[1][0].atan2(align_rotation[0][0]);
-    solution.world_alignment = std::iter::once((primary, primary_yaw, align_translation))
-        .chain(relative.iter().map(|&(f, (r, t))| {
-            // map -> frame = (primary -> frame) after (map -> primary)
-            (
-                f,
-                primary_yaw + r,
-                mat3::add(&mat3::mat_vec(&mat3::rot_z(r), &align_translation), &t),
-            )
-        }))
-        .collect();
-    solution.prior_weights = weights;
-    solution
-}
-
-/// The map -> world alignment (yaw about z, translation) that best puts the kept priors' keyframes on their world
-/// positions, each weighted by its inverse horizontal variance; None until their horizontal spread exceeds twice their
-/// typical noise (heading unobservable).
-fn align_priors(points: &[Vec3], priors: &[PositionPrior], weights: &[f64]) -> Option<(f64, Vec3)> {
-    // `points[i]` is where the current solution has prior i's sensor
-    let used: Vec<(Vec3, &PositionPrior, f64)> = priors
-        .iter()
-        .zip(points)
-        .zip(weights)
-        .filter(|(_, &w)| w >= 0.5)
-        .map(|((p, &point), _)| {
-            (
-                point,
-                p,
-                2.0 / (p.covariance[0][0] + p.covariance[1][1]).max(f64::EPSILON),
-            )
-        })
-        .collect();
-    if used.len() < 2 {
-        return None;
-    }
-    let total: f64 = used.iter().map(|(_, _, w)| w).sum();
-    let mean = |f: &dyn Fn(&Vec3, &PositionPrior) -> Vec3| {
-        used.iter().fold([0.0; 3], |m, (point, p, w)| {
-            let v = f(point, p);
-            [
-                m[0] + w * v[0] / total,
-                m[1] + w * v[1] / total,
-                m[2] + w * v[2] / total,
-            ]
-        })
-    };
-    let map_mean = mean(&|point, _| *point);
-    let world_mean = mean(&|_, p| p.world);
-    let (mut sxx, mut sxy, mut spread, mut noise) = (0.0, 0.0, 0.0, 0.0);
-    for (point, p, w) in &used {
-        let m = mat3::sub(point, &map_mean);
-        let g = mat3::sub(&p.world, &world_mean);
-        sxx += w * (m[0] * g[0] + m[1] * g[1]);
-        sxy += w * (m[0] * g[1] - m[1] * g[0]);
-        spread += w * (g[0] * g[0] + g[1] * g[1]) / total;
-        noise += w * (p.covariance[0][0] + p.covariance[1][1]) / total;
-    }
-    if spread <= 4.0 * noise {
-        return None;
-    }
-    let yaw = sxy.atan2(sxx);
-    let rotated = mat3::mat_vec(&mat3::rot_z(yaw), &map_mean);
-    Some((yaw, mat3::sub(&world_mean, &rotated)))
+pub(crate) struct Unary {
+    pub(crate) keyframe: usize,
+    pub(crate) lever: Vec3,
+    pub(crate) position: Vec3,
+    pub(crate) information: Mat3,
 }
 
 fn unary_residual(u: &Unary, state: &State) -> Vec3 {
@@ -443,7 +182,7 @@ fn sighting_whitened(s: &Sighting, state: &State) -> f64 {
     r[0] * ir[0] + r[1] * ir[1] + r[2] * ir[2]
 }
 
-fn solve_core(
+pub(crate) fn solve_core(
     rotations: &[Mat3],
     positions: &[Vec3],
     free: &[bool],
@@ -679,7 +418,19 @@ fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
+    let odometry_noise_evidence = odometry_noise_evidence(
+        &state,
+        &pattern,
+        odometry,
+        closures,
+        &huber,
+        unary,
+        &unary_kept,
+        sightings,
+        &sighting_kept,
+    );
     Solution {
+        odometry_noise_evidence,
         rotations: state.rotation,
         positions: state.position,
         closure_weights: kept,
@@ -690,6 +441,116 @@ fn solve_core(
         error,
         relative_position_covariance,
     }
+}
+
+/// The noise source (xy, z, yaw, roll/pitch) of each component of an odometry edge's residual [rotation x, y, z,
+/// translation x, y, z].
+const RESIDUAL_SOURCE: [usize; 6] = [3, 3, 2, 0, 0, 1];
+
+/// Variance-component evidence on the odometry noise from the solved graph (Förstner's estimator): for each noise source,
+/// how far the solve had to bend its parts of the odometry edges (their residuals squared, whitened by the variances
+/// the solve used) and how many independent checks the graph gave it, its redundancy r_c = n_c - tr(N^-1 N_c) (n_c its
+/// residual count; N the solve's information matrix, N_c the source's own share of it). A source's variance times
+/// sum / r_c is the variance that explains the residuals. The odometry alone determines the graph exactly (a chain),
+/// so n_c = tr(N_odo^-1 N_c) and r_c = tr((N_odo^-1 - N^-1) N_c): the difference has rank at most the kept constraints',
+/// so Hutchinson's estimator (the mean of z^T (N_odo^-1 - N^-1) N_c z over fixed random +-1 vectors z, two solves each)
+/// is accurate to a few percent of r_c, and exactly 0 with nothing kept. None if a matrix cannot be factored.
+#[allow(clippy::too_many_arguments)]
+fn odometry_noise_evidence(
+    state: &State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+) -> Option<[(f64, f64); 4]> {
+    let size = pattern.size;
+    let factor = |cw: &[f64], uw: &[f64], sw: &[f64]| {
+        let (mut values, _, diagonal) = normal_equations(
+            state, pattern, odometry, closures, cw, unary, uw, sightings, sw,
+        );
+        values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
+        let hessian =
+            SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values)
+                .ok()?;
+        Llt::try_new_with_symbolic(pattern.llt.clone(), hessian.as_ref(), Side::Lower).ok()
+    };
+    let full = factor(closure_weights, unary_weights, sighting_weights)?;
+    // the odometry alone: everything else at weight 0 (keeping the pattern's fill order)
+    let odometry_only = factor(
+        &vec![0.0; closures.len()],
+        &vec![0.0; unary.len()],
+        &vec![0.0; sightings.len()],
+    )?;
+    let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
+        odometry.iter().map(|e| linearize(e, state)).collect();
+    let mut evidence = [(0.0, 0.0); 4];
+    for (e, (r, _, _)) in odometry.iter().zip(&linear) {
+        for k in 0..6 {
+            evidence[RESIDUAL_SOURCE[k]].0 += r[k] * r[k] / e.variances[k];
+        }
+    }
+    // a deterministic +-1 sequence (the trace is an expectation over any such sequence)
+    let sign = |probe: usize, i: usize| {
+        let x = ((probe * 7919 + i * 104729) as f64 * 12.9898).sin() * 43758.5453;
+        if x.rem_euclid(1.0) < 0.5 {
+            -1.0
+        } else {
+            1.0
+        }
+    };
+    // r_c = tr(K_c D K_c^T) with K_c the source's whitened odometry rows (N_c = K_c^T K_c) and D = N_odo^-1 - N^-1:
+    // symmetric, eigenvalues in [0, 1], rank at most the kept constraints', so +-1 probes over those rows estimate it
+    // to about sqrt(2 r_c / probes)
+    const PROBES: usize = 32;
+    for source in 0..4 {
+        let rows: Vec<(usize, usize)> = (0..odometry.len())
+            .flat_map(|e| (0..6).map(move |k| (e, k)))
+            .filter(|&(_, k)| RESIDUAL_SOURCE[k] == source)
+            .collect();
+        for probe in 0..PROBES {
+            // u = K_c^T w
+            let mut u = Mat::<f64>::zeros(size, 1);
+            for (index, &(e, k)) in rows.iter().enumerate() {
+                let edge = &odometry[e];
+                let weight = sign(probe * 4 + source, index) / edge.variances[k].sqrt();
+                let (_, jf, jt) = &linear[e];
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for i in 0..6 {
+                            u[(6 * slot + i, 0)] += j[k][i] * weight;
+                        }
+                    }
+                }
+            }
+            let mut through_odometry = u.clone();
+            odometry_only.solve_in_place_with_conj(Conj::No, through_odometry.as_mut());
+            let mut through_full = u;
+            full.solve_in_place_with_conj(Conj::No, through_full.as_mut());
+            // w^T K_c y with y = D u
+            let mut estimate = 0.0;
+            for (index, &(e, k)) in rows.iter().enumerate() {
+                let edge = &odometry[e];
+                let weight = sign(probe * 4 + source, index) / edge.variances[k].sqrt();
+                let (_, jf, jt) = &linear[e];
+                let mut jy = 0.0;
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for i in 0..6 {
+                            let at = 6 * slot + i;
+                            jy += j[k][i] * (through_odometry[(at, 0)] - through_full[(at, 0)]);
+                        }
+                    }
+                }
+                estimate += weight * jy;
+            }
+            evidence[source].1 += estimate / PROBES as f64;
+        }
+    }
+    Some(evidence)
 }
 
 /// The largest set of closures that pairwise agree (PCM): two closures agree when keyframe A.to's position predicted
@@ -1456,6 +1317,7 @@ impl GscPgo {
         self.committed_closures.len() > self.closures_dispatched
             || self.world_positions.len() > self.world_positions_dispatched
             || self.landmark_sightings.len() > self.landmark_sightings_dispatched
+            || self.odometry_noise_rescale
     }
     /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
     /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
@@ -1583,7 +1445,7 @@ impl GscPgo {
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let closures = closure_edges(self.committed_closures.iter());
+        let closures = closure_edges(self.committed_closures.iter(), self.closure_noise_scale());
         // keyframe 0 pins the map; the rest start from the odometry, riding its correction
         let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
         let pinned = &self.key_poses[0];
@@ -1606,7 +1468,7 @@ impl GscPgo {
             ));
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
-        let odometry = odometry_edges(&self.key_poses, config);
+        let odometry = odometry_edges(&self.key_poses, config, self.odometry_noise());
         let priors = self.position_priors();
         let (sightings, landmark_ids) = self.sightings();
         let solve_config = SolveConfig {
@@ -1614,7 +1476,7 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
             pcm_odometry_translation_variance: if config.closure_pcm {
-                config.odom_trans_xy_var
+                mean_step_variances(&self.key_poses, config)[0] * self.odometry_noise()[0]
             } else {
                 0.0
             },
@@ -1652,9 +1514,17 @@ impl GscPgo {
                 (solution, seconds, landmark_ids)
             })
             .expect("spawn pose graph thread");
+        // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
+        self.odometry_noise_rescaled = self.odometry_noise_rescale
+            && self.committed_closures.len() == self.closures_dispatched
+            && self.world_positions.len() == self.world_positions_dispatched
+            && self.landmark_sightings.len() == self.landmark_sightings_dispatched;
         self.closures_dispatched = self.committed_closures.len();
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
+        self.odometry_noise_ln_dispatched = self.odometry_noise_ln;
+        self.closure_noise_ln_scale_dispatched = self.closure_noise_ln_scale;
+        self.odometry_noise_rescale = false;
         self.solving = Some(Solving {
             handle,
             keyframes: n,
@@ -1742,19 +1612,72 @@ impl GscPgo {
             }
         }
         self.graph_error = solution.error;
+        self.update_odometry_noise_scale(solution.odometry_noise_evidence);
         true
     }
 }
 
 /// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
-pub(crate) fn odometry_edges(key_poses: &[KeyPoseWithCloud], config: &Config) -> Vec<Edge> {
-    let (tilt, yaw) = (config.odom_rot_roll_pitch_var, config.odom_rot_yaw_var);
-    let (xy, z) = (config.odom_trans_xy_var, config.odom_trans_z_var);
+/// The reported odometry variance of one keyframe step from `from` to `to` (xy, z, yaw, roll/pitch): the per-keyframe
+/// constants, or with `odom_noise_per_motion` the per-metre rates times the distance travelled plus the per-radian rates
+/// times the angle turned.
+pub(crate) fn step_variances(
+    config: &Config,
+    from: &KeyPoseWithCloud,
+    to: &KeyPoseWithCloud,
+) -> [f64; 4] {
+    if !config.odom_noise_per_motion {
+        return [
+            config.odom_trans_xy_var,
+            config.odom_trans_z_var,
+            config.odom_rot_yaw_var,
+            config.odom_rot_roll_pitch_var,
+        ];
+    }
+    let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
+    let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
+    [
+        config.odom_xy_var_per_m * distance + config.odom_xy_var_per_rad * turn,
+        config.odom_z_var_per_m * distance + config.odom_z_var_per_rad * turn,
+        config.odom_yaw_var_per_m * distance + config.odom_yaw_var_per_rad * turn,
+        config.odom_tilt_var_per_m * distance + config.odom_tilt_var_per_rad * turn,
+    ]
+}
+
+/// The mean of `step_variances` over the odometry so far (the per-keyframe constants before two keyframes).
+pub(crate) fn mean_step_variances(key_poses: &[KeyPoseWithCloud], config: &Config) -> [f64; 4] {
+    if !config.odom_noise_per_motion || key_poses.len() < 2 {
+        return [
+            config.odom_trans_xy_var,
+            config.odom_trans_z_var,
+            config.odom_rot_yaw_var,
+            config.odom_rot_roll_pitch_var,
+        ];
+    }
+    let mut sum = [0.0; 4];
+    for pair in key_poses.windows(2) {
+        let step = step_variances(config, &pair[0], &pair[1]);
+        for c in 0..4 {
+            sum[c] += step[c];
+        }
+    }
+    sum.map(|s| s / (key_poses.len() - 1) as f64)
+}
+
+/// The odometry as pose-graph edges, each step's reported variances (`step_variances`) times `noise` (xy, z, yaw,
+/// roll/pitch ratios).
+pub(crate) fn odometry_edges(
+    key_poses: &[KeyPoseWithCloud],
+    config: &Config,
+    noise: [f64; 4],
+) -> Vec<Edge> {
     key_poses
         .windows(2)
         .enumerate()
         .map(|(i, pair)| {
             let back = mat3::transpose(&pair[0].rotation_local);
+            let step = step_variances(config, &pair[0], &pair[1]);
+            let [xy, z, yaw, tilt]: [f64; 4] = std::array::from_fn(|c| step[c] * noise[c]);
             Edge {
                 from: i,
                 to: i + 1,
@@ -1769,15 +1692,19 @@ pub(crate) fn odometry_edges(key_poses: &[KeyPoseWithCloud], config: &Config) ->
         .collect()
 }
 
-/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness.
-pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClosure>) -> Vec<Edge> {
+/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness times `scale`
+/// (`GscPgo::closure_noise_scale`).
+pub(crate) fn closure_edges<'a>(
+    closures: impl Iterator<Item = &'a CommittedClosure>,
+    scale: f64,
+) -> Vec<Edge> {
     closures
         .map(|l| Edge {
             from: l.target_id,
             to: l.source_id,
             rotation: l.rotation_offset,
             translation: l.translation_offset,
-            variances: [l.score.max(1e-6); 6],
+            variances: [l.score.max(1e-6) * scale; 6],
         })
         .collect()
 }

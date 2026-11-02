@@ -113,6 +113,12 @@ class PGOConfig(NativeModuleConfig):
     closure_rank_by_information: bool = False
     # True: measure the yank scale from closures the solve kept instead of every ICP-scored candidate
     closure_yank_scale_from_kept: bool = False
+    # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
+    odometry_noise_from_closures: bool = False
+    # True: scale a closure's ICP-fitness variance the same way, fitted jointly with the odometry's
+    closure_noise_from_closures: bool = False
+    # True: yank_z = the closure's innovation in standard deviations of its predicted spread (both noise scales)
+    closure_yank_gate_principled: bool = False
     closure_overlap_score: bool = False
     closure_overlap_sigma_m: float = 0.03
     closure_overlap_reach_m: float = 0.5
@@ -142,6 +148,24 @@ class PGOConfig(NativeModuleConfig):
     odom_rot_yaw_var: float = 3e-6
     odom_trans_xy_var: float = 1e-4
     odom_trans_z_var: float = 1e-4
+    # True: odometry noise per unit of motion (rate per metre travelled + rate per radian turned, per source) instead of per keyframe
+    odom_noise_per_motion: bool = False
+    # True: a closure is uninformative only where the graph's own covariance of its ends is surer than ICP in every direction
+    closure_informative_by_graph_covariance: bool = False
+    # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
+    odom_xy_var_per_m: float = 1.53e-7
+    odom_xy_var_per_rad: float = 4.03e-5
+    odom_z_var_per_m: float = 4.12e-7
+    odom_z_var_per_rad: float = 1.49e-5
+    odom_yaw_var_per_m: float = 1e-12
+    odom_yaw_var_per_rad: float = 7.5e-5
+    odom_tilt_var_per_m: float = 4.78e-7
+    odom_tilt_var_per_rad: float = 1.09e-5
+    # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
+    odom_noise_prior_ln_sd_xy: float = 2.4
+    odom_noise_prior_ln_sd_z: float = 1.6
+    odom_noise_prior_ln_sd_yaw: float = 2.4
+    odom_noise_prior_ln_sd_tilt: float = 1.6
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale

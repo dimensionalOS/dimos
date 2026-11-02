@@ -22,7 +22,7 @@ use crate::connection_fit::{
     self, dump_icp, icp, IcpParams, IcpResult, OverlapScore, OverlapScoreParams,
 };
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
-use crate::mat3::{self, Vec3};
+use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
 
 impl ClosureSearch {
@@ -39,7 +39,25 @@ impl ClosureSearch {
             .max(1.0)
             .sqrt();
         diag.yank_drift_scale = drift;
-        if self.scored_yanks.is_empty() {
+        let predicted = self.config.closure_yank_gate_principled.then(|| {
+            let p = &diag.innovation_covariance;
+            let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
+            let covariance: Mat3 = std::array::from_fn(|i| {
+                std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
+            });
+            covariance
+        });
+        if let Some(covariance) = predicted {
+            // the innovation against its predicted spread (the graph's, both noise scales applied, plus the closure's)
+            let v = diag.innovation;
+            diag.yank_z = match mat3::inverse(&covariance) {
+                Some(inverse) if v.iter().all(|x| x.is_finite()) => {
+                    let iv = mat3::mat_vec(&inverse, &v);
+                    (v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]).max(0.0).sqrt()
+                }
+                _ => f64::INFINITY,
+            };
+        } else if self.scored_yanks.is_empty() {
             // no yank scale yet: nothing vouches for this yank, so no confidence clears it (it only seeds the scale)
             diag.yank_z = f64::INFINITY;
         } else {
