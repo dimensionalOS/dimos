@@ -49,6 +49,7 @@ def test_capture_choice_does_not_change_physics_trajectory(pair):
     np.testing.assert_allclose(
         [run["trajectory_checksum"] for run in runs], runs[0]["trajectory_checksum"], rtol=0, atol=0
     )
+    assert len({run["trajectory_sha256"] for run in runs}) == 1
     assert all(run["peak_contacts"] > 0 for run in runs)
 
 

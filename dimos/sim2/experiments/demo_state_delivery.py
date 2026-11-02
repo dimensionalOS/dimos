@@ -174,6 +174,7 @@ def delivery_run(
     repeat: int,
     fraction: float = 0.01,
     work_ms: float = 0,
+    bandwidth_mbps: float = 0,
 ) -> dict[str, Any]:
     pair.reset()
     pipeline = Pipeline(pair, kind)
@@ -243,6 +244,10 @@ def delivery_run(
             start = time.perf_counter_ns()
             payload = pipeline.encode(pipeline.capture())
             encoded = time.perf_counter_ns()
+            if bandwidth_mbps:
+                # Controlled store-and-forward link model, NOT an actual WAN
+                # measurement. Charge payload serialization time before release.
+                pause.wait(len(payload) / (bandwidth_mbps * 125_000))
             bus.publish(topic, HEADER.pack(seq, start, expected) + payload)
             sent = time.perf_counter_ns()
             total_bytes += len(payload)
@@ -271,6 +276,7 @@ def delivery_run(
         "repeat": repeat,
         "fraction": fraction,
         "consumer_work_ms": work_ms,
+        "synthetic_bandwidth_mbps": bandwidth_mbps,
         "frames": frames,
         "publication_seconds": publish_seconds,
         "drained_seconds": finished,
@@ -295,6 +301,7 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=2)
     parser.add_argument("--fraction", type=float, default=0.01)
     parser.add_argument("--consumer-work-ms", type=float, default=0)
+    parser.add_argument("--bandwidth-mbps", type=float, default=0)
     args = parser.parse_args()
     directory = OUTPUT / args.name
     directory.mkdir(parents=True, exist_ok=False)
@@ -318,6 +325,7 @@ def main() -> None:
                             repeat,
                             args.fraction,
                             args.consumer_work_ms,
+                            args.bandwidth_mbps,
                         )
                         record["delivery"].append(result)
                         record["power_end"] = command("pmset", "-g", "batt")

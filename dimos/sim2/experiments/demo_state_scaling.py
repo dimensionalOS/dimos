@@ -127,6 +127,10 @@ def provenance() -> dict[str, Any]:
         "world_msgs": LCM_SHA,
         "harness_commit": command("git", "-C", str(ROOT), "rev-parse", "HEAD"),
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "harness_files": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(Path(__file__).parent.glob("*.py"))
+        },
     }
 
 
@@ -546,6 +550,7 @@ def physical_run(
     cpu_before = time.process_time()
     began = time.perf_counter()
     checksum = 0.0
+    trajectory = hashlib.sha256()
     for i in range(frames):
         t0 = time.perf_counter_ns()
         for _ in range(steps_per_sample):
@@ -568,6 +573,8 @@ def physical_run(
         timings["distribution_us"].append((t2 - t1) / 1000)
         timings["cycle_us"].append((t2 - t0) / 1000)
         checksum += float(np.sum(data.qpos))
+        trajectory.update(data.qpos.tobytes())
+        trajectory.update(data.qvel.tobytes())
     wall = time.perf_counter() - began
     return {
         "kind": kind,
@@ -583,6 +590,7 @@ def physical_run(
         "peak_contacts": maximum_contact,
         "state_error": state_error,
         "trajectory_checksum": checksum,
+        "trajectory_sha256": trajectory.hexdigest(),
         "metrics": {k: summary(v) for k, v in timings.items()},
     }
 

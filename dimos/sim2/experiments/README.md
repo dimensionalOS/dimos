@@ -59,6 +59,10 @@ production patch. The current DimOS generic codec is **CBOR, not pickle**.
   1 / 4 readers, 50 / 200 Hz requested publication, repeated trials. No renderer.
   Matching reliable/block QoS and a decoded-baseline handshake are used in every
   arm. Report achieved rates and loss rather than assuming the requested rate.
+- Supplemental link model: charge payload serialization time at 10 / 100 Mbps
+  before sending through the same actual local transport. This is a synthetic
+  serial store-and-forward model, not measured WAN performance, bandwidth
+  shaping, latency, packet loss, or pipelined transfer.
 
 All extraction arms share exactly the same compiled model and MjData. Each
 backend is constructed normally. A startup-only Python profile hook retains
@@ -87,6 +91,14 @@ No dedicated isolated machine: record Mac power, versions and load. Confirm AC
 power before the primary sweep. Run heavy experiments serially, not concurrently.
 Bootstrap intervals, if displayed, resample trial summaries, not individual frames.
 
+The primary run started just before the initial harness commit
+`6d989a8476`. Its recorded file SHA-256 identifies that exact extraction harness;
+the recorded HEAD still names the parent. A later validation run adds a SHA-256
+over every sampled native qpos/qvel array, strengthening the original scalar
+trajectory checksum without changing the timed kernels. Subsequent provenance
+also hashes every experiment Python file. Report generation and light editing
+were allowed during sweeps; this was not an isolated benchmark host.
+
 ## Setup and reproduction
 
 Run from this branch's repository root using an environment with the same
@@ -102,10 +114,13 @@ git clone --branch jeff/feat/sim2_world https://github.com/dimensionalOS/dimos-l
   outputs/state-scaling/deps/dimos-lcm
 git -C outputs/state-scaling/deps/dimos-lcm checkout 7d3f7cf2611fbb8c911f3fcd99fa14a370381eb5
 
-python -m pytest dimos/sim2/experiments/test_state_scaling.py \
-  --import-mode=importlib --no-cov --junitxml=outputs/state-scaling/correctness.xml
+python -m pytest dimos/sim2/experiments/test_state_scaling.py dimos/sim2/test_eval.py \
+  --import-mode=importlib --no-cov -o addopts='' \
+  --junitxml=outputs/state-scaling/correctness.xml
 python -m dimos.sim2.experiments.demo_state_scaling --name primary --physics
-python -m dimos.sim2.experiments.demo_state_scaling --name articulations \
+python -m dimos.sim2.experiments.demo_state_scaling --name articulations-8 \
+  --props 32 --robots 8 --fractions .01 --physics
+python -m dimos.sim2.experiments.demo_state_scaling --name articulations-32 \
   --props 32 --robots 32 --fractions .01 --physics
 python -m dimos.sim2.experiments.demo_state_delivery --name delivery
 ```
