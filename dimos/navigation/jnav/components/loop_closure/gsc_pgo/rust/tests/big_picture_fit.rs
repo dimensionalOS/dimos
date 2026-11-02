@@ -102,7 +102,7 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
 /// between them: each step's translation noise, plus each step's rotation noise swinging the newest keyframe by its lever
 /// arm. The solver's Takahashi readout must give the same.
 #[test]
-fn relative_covariance_of_a_chain_is_its_odometry_noise() {
+fn relative_covariance_of_a_chain_is_its_odometry_error_estimate() {
     let (translation_variance, rotation_variances) = (1e-4, [1e-6, 1e-6, 3e-6]);
     let n = 30;
     let (mut rotations, mut positions) = (Vec::new(), Vec::new());

@@ -54,8 +54,8 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_max_fitness_m: float = 0.3872983346207417
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
     closure_icp_point_to_plane: bool = True
-    # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud
-    drop_reseen_points: bool = False
+    # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud (on by default)
+    drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
     auto_aggregate_cloud_size: int = 2000
     closure_submap_half_range: int = 5
@@ -89,7 +89,7 @@ class PGOConfig(NativeModuleConfig):
     # A closure's match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) must clear
     # 1 - exp(-z^2/2k^2), z = how hard it yanks the graph (per sqrt keyframe gap) in robust std devs of the yanks scored so far; this is k
     closure_yank_gate_width: float = 1.0
-    # How many times the stated odometry drift (sd) the true drift may be; the yank gate averages over it (1 = trust it)
+    # How many times the stated odometry error estimate (sd) the true drift may be; the yank gate averages over it (1 = trust it)
     closure_yank_drift_range: float = 100.0
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
@@ -113,9 +113,9 @@ class PGOConfig(NativeModuleConfig):
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
     closure_likelihood_visibility: bool = True
     # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
-    odometry_noise_from_closures: bool = True
+    learned_odometry_error_estimate_from_closures: bool = True
     # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
-    odometry_noise_evidence_core: bool = True
+    odometry_error_estimate_evidence_core: bool = True
     # Closure-verification ICP: iteration cap and correspondence gate (m).
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0
@@ -137,21 +137,21 @@ class PGOConfig(NativeModuleConfig):
     # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. Defaults: Mid-360 +
     # FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning). After each solve
     # that keeps loops, debug_log (kind "odometry_drift") gives the values the run measured, to start the next run from.
-    odom_xy_drift_per_sqrt_m: float = 3.91e-4
-    odom_xy_drift_per_sqrt_rad: float = 6.35e-3
-    odom_z_drift_per_sqrt_m: float = 6.42e-4
-    odom_z_drift_per_sqrt_rad: float = 3.86e-3
-    odom_yaw_drift_per_sqrt_m: float = 1e-6
-    odom_yaw_drift_per_sqrt_rad: float = 8.66e-3
-    odom_tilt_drift_per_sqrt_m: float = 6.91e-4
-    odom_tilt_drift_per_sqrt_rad: float = 3.3e-3
+    odometry_error_estimate_xy_per_sqrt_m: float = 3.91e-4
+    odometry_error_estimate_xy_per_sqrt_rad: float = 6.35e-3
+    odometry_error_estimate_z_per_sqrt_m: float = 6.42e-4
+    odometry_error_estimate_z_per_sqrt_rad: float = 3.86e-3
+    odometry_error_estimate_yaw_per_sqrt_m: float = 1e-6
+    odometry_error_estimate_yaw_per_sqrt_rad: float = 8.66e-3
+    odometry_error_estimate_tilt_per_sqrt_m: float = 6.91e-4
+    odometry_error_estimate_tilt_per_sqrt_rad: float = 3.3e-3
     # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
-    odom_noise_prior_ln_sd_xy: float = 1.72
-    odom_noise_prior_ln_sd_z: float = 2.05
-    odom_noise_prior_ln_sd_yaw: float = 1.15
-    odom_noise_prior_ln_sd_tilt: float = 0.96
-    # how many closed loops' worth of evidence the stated drift counts as for the learner (its plasticity); 0 = the closures alone, inf = never learned (the config's drift is used)
-    odom_error_stiffness: float = 10.0
+    learned_odometry_error_estimate_prior_ln_sd_xy: float = 1.72
+    learned_odometry_error_estimate_prior_ln_sd_z: float = 2.05
+    learned_odometry_error_estimate_prior_ln_sd_yaw: float = 1.15
+    learned_odometry_error_estimate_prior_ln_sd_tilt: float = 0.96
+    # how many closed loops' worth of evidence the stated odometry error estimate counts as for the learner (its plasticity); 0 = the closures alone, inf = never learned (the config's drift is used)
+    learned_odometry_error_estimate_stiffness: float = 10.0
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale

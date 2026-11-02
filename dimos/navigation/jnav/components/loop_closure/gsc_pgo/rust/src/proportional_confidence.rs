@@ -363,11 +363,11 @@ impl ClosureSearch {
     }
 }
 
-/// The evidence a yank of `z` standard deviations (at the stated odometry drift) costs when the drift's true scale is
+/// The evidence a yank of `z` standard deviations (at the stated odometry error estimate) costs when the drift's true scale is
 /// unknown: -ln of the jump's likelihood averaged over a drift standard deviation from 1 to `drift_range` times the stated
 /// (log-uniform), against a jump of 0. A 3-dof jump at scale s is N(z / s) with density s^-3; at `drift_range` 1 this is
-/// z^2 / 2, the stated drift alone. Larger ranges let a big jump cost about 3 ln z instead of z^2 / 2, so the match
-/// evidence and GNC decide it rather than the stated drift.
+/// z^2 / 2, the stated odometry error estimate alone. Larger ranges let a big jump cost about 3 ln z instead of z^2 / 2, so the match
+/// evidence and GNC decide it rather than the stated odometry error estimate.
 pub(crate) fn yank_evidence(z: f64, drift_range: f64) -> f64 {
     let range = drift_range.max(1.0);
     if range <= 1.0 || !z.is_finite() {
@@ -391,7 +391,7 @@ pub(crate) fn yank_evidence(z: f64, drift_range: f64) -> f64 {
 mod yank_evidence_tests {
     use super::yank_evidence;
 
-    /// Trusting the stated drift exactly prices a yank as z^2 / 2; an unknown drift up to 100x prices a 79-sigma jump
+    /// Trusting the stated odometry error estimate exactly prices a yank as z^2 / 2; an unknown drift up to 100x prices a 79-sigma jump
     /// (huge's missed return to the start) at a dozen nats, and leaves no yank more expensive than z^2 / 2.
     #[test]
     fn a_wide_drift_range_caps_large_yanks() {

@@ -21,7 +21,7 @@
 //! `loop_overlap`). Their variances are separate components (Helmert / Förstner variance component estimation), since
 //! translation and heading noise grow differently with a stretch's length (linearly, and about cubically) and are
 //! misreported by different factors; a single scale on the reported noise cannot fit both. The reported noise is the
-//! prior: held to by its measured spread across recordings (`odom_noise_prior_ln_sd_*`), or else by one closure's worth
+//! prior: held to by its measured spread across recordings (`learned_odometry_error_estimate_prior_ln_sd_*`), or else by one closure's worth
 //! of information (a unit-information prior, Kass & Wasserman 1995), so a few closures barely move it.
 
 use crate::gsc_pgo::{Config, KeyPoseWithCloud};
@@ -33,7 +33,7 @@ pub const COMPONENTS: usize = 4;
 /// information on a component's ln variance is half that, which is the weight of its unit-information prior.
 const AXES: [f64; COMPONENTS] = [2.0, 1.0, 2.0, 1.0];
 
-/// One kept closure's evidence on the odometry noise.
+/// One kept closure's evidence on the odometry error estimate.
 #[derive(Clone, Copy, Debug)]
 pub struct Innovation {
     /// The closure's measurement minus the raw odometry: the source's position in the target's frame (m).

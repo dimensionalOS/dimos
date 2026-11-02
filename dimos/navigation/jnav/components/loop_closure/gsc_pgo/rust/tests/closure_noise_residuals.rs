@@ -14,7 +14,7 @@
 
 //! Odometry reported at its true noise, closures reported 30x looser than theirs in translation and 300x in rotation: learning the odometry alone from the
 //! residuals calls it too good (the solve put the loops' misfit on the loose closures), learning both groups together
-//! gives each back (`Solution::odometry_noise_evidence`, entry 4 = the closures).
+//! gives each back (`Solution::odometry_error_estimate_evidence`, entry 4 = the closures).
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
@@ -125,7 +125,7 @@ fn helmert(with_closures: bool) -> (f64, f64, f64, f64) {
     let mut scale = [1.0_f64; 4];
     for iteration in 0..15 {
         let solution = solve(&rotations, &positions, &free, &odometry, &closures, &config);
-        let Some(evidence) = solution.odometry_noise_evidence else {
+        let Some(evidence) = solution.odometry_error_estimate_evidence else {
             panic!("not factored at iteration {iteration}, scales {scale:?}");
         };
         for (group, (source, rows)) in [(0, [3, 4].as_slice()), (2, [2].as_slice())]

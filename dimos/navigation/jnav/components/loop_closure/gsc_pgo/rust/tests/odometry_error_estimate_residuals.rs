@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The odometry noise from a solved graph's residuals (`Solution::odometry_noise_evidence`): odometry whose translation
+//! The odometry error estimate from a solved graph's residuals (`Solution::odometry_error_estimate_evidence`): odometry whose translation
 //! noise is reported 25x too high and heading noise 7x too low, closed by exact loops; the evidence gives each back.
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
@@ -102,7 +102,7 @@ fn residuals_measure_translation_and_heading_noise_apart() {
     let mut evidence = [(0.0, 0.0); 6];
     for _ in 0..20 {
         let solution = solve(&rotations, &positions, &free, &odometry, &closures, &config);
-        evidence = solution.odometry_noise_evidence.expect("factored");
+        evidence = solution.odometry_error_estimate_evidence.expect("factored");
         for (source, ks) in [(0, [3, 4].as_slice()), (2, [2].as_slice())] {
             let ratio = evidence[source].0 / evidence[source].1;
             scale[source] *= ratio;

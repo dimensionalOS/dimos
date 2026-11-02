@@ -168,7 +168,10 @@ fn world_positions_pull_a_drifting_path_onto_the_world() {
         })
         .fold(0.0, f64::max);
     eprintln!("dead-reckoned end off {drifted_end:.1} m; with world positions worst keyframe off {worst:.2} m");
-    assert!(drifted_end > 3.0, "the odometry drifts ({drifted_end} m)");
+    assert!(
+        drifted_end > 3.0,
+        "the odometry error estimates ({drifted_end} m)"
+    );
     assert!(
         worst < drifted_end / 2.0,
         "every keyframe much closer to the truth than the odometry (worst {worst} m)"
