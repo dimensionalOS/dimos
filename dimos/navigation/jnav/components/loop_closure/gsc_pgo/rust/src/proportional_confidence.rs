@@ -39,20 +39,14 @@ impl ClosureSearch {
             .max(1.0)
             .sqrt();
         diag.yank_drift_scale = drift;
-        let predicted = (self.config.closure_yank_gate_principled
-            || self.config.closure_yank_at_stated_drift)
-            .then(|| {
-                let p = if self.config.closure_yank_at_stated_drift {
-                    &diag.stated_innovation_covariance
-                } else {
-                    &diag.innovation_covariance
-                };
-                let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
-                let covariance: Mat3 = std::array::from_fn(|i| {
-                    std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
-                });
-                covariance
+        let predicted = self.config.closure_yank_gate_principled.then(|| {
+            let p = &diag.innovation_covariance;
+            let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
+            let covariance: Mat3 = std::array::from_fn(|i| {
+                std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
             });
+            covariance
+        });
         if let Some(covariance) = predicted {
             // the innovation against its predicted spread (the graph's, both noise scales applied, plus the closure's)
             let v = diag.innovation;

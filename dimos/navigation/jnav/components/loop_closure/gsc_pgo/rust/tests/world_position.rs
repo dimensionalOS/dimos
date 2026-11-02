@@ -116,11 +116,12 @@ fn config() -> SolveConfig {
         gnc_variance_scale: 1.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
-        pcm_odometry_translation_variance: 0.0,
+        pcm: false,
         gnc_overtrust_check: false,
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
+        evidence_core: false,
     }
 }
 

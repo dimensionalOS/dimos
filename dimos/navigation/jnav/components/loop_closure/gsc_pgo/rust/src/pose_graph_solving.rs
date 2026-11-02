@@ -18,8 +18,8 @@
 use std::thread::JoinHandle;
 
 use crate::big_picture_fit::{
-    closure_edges, mean_step_variances, odometry_edges, solve, solve_with_priors, GravityPrior,
-    LandmarkSighting, PositionPrior, Solution, SolveConfig,
+    closure_edges, odometry_edges, solve, solve_with_priors, GravityPrior, LandmarkSighting,
+    PositionPrior, Solution, SolveConfig,
 };
 use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
@@ -262,11 +262,7 @@ impl GscPgo {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
-            pcm_odometry_translation_variance: if config.closure_pcm {
-                mean_step_variances(&self.key_poses, config)[0] * solve_noise[0]
-            } else {
-                0.0
-            },
+            pcm: config.closure_pcm,
             gnc_overtrust_check: config.closure_gnc_overtrust_check,
             // overtrusted only beyond the learner's upper bound: its solve noise is the lower bound, low on purpose
             overtrust_noise_headroom: if config.odometry_noise_from_closures {
@@ -296,6 +292,7 @@ impl GscPgo {
                 }
                 None => Vec::new(),
             },
+            evidence_core: config.odometry_noise_evidence_core,
             committed: if config.closure_commitments {
                 self.committed_closures
                     .iter()

@@ -93,11 +93,12 @@ fn residuals_measure_translation_and_heading_noise_apart() {
         gnc_variance_scale: 1.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
-        pcm_odometry_translation_variance: 0.0,
+        pcm: false,
         gnc_overtrust_check: false,
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
         committed: Vec::new(),
+        evidence_core: false,
     };
     // Helmert's iteration: rescale each source by its ratio and solve again until the ratios settle at 1
     let mut odometry = odometry;

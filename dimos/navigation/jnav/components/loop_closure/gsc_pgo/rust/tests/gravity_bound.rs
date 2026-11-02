@@ -85,11 +85,12 @@ fn verdict(closure: Edge, gravity_variance: Option<f64>) -> f64 {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
-            pcm_odometry_translation_variance: 0.0,
+            pcm: false,
             gnc_overtrust_check: false,
             overtrust_noise_headroom: [1.0; 4],
             gravity,
             committed: Vec::new(),
+            evidence_core: false,
         },
     );
     solution.closure_weights[0]
@@ -173,11 +174,12 @@ fn the_noise_evidence_ignores_the_gravity_factors() {
                 gnc_variance_scale: 10.0,
                 gnc_inlier_probability: 0.95,
                 huber_k: 0.0,
-                pcm_odometry_translation_variance: 0.0,
+                pcm: false,
                 gnc_overtrust_check: false,
                 overtrust_noise_headroom: [1.0; 4],
                 gravity,
                 committed: Vec::new(),
+                evidence_core: false,
             },
         );
         assert_eq!(solution.closure_weights, vec![1.0]);
