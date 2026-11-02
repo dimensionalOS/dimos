@@ -516,25 +516,25 @@ pub struct DeterministicConfig {
 
 impl Default for DeterministicConfig {
     fn default() -> DeterministicConfig {
-        // fitted on an M-series Mac over nine maps' deterministic runs, at most 1% overshoots per kind; a Jetson's come
-        // from the R1 battery
+        // the R1 Jetson's (gsc_stable_0.0.3 fast mode at 1x under MLS + raytracer load): each key's largest suggested
+        // value over nine maps, solve powers from the Mac fit; a faster machine replays a Jetson run with these
         DeterministicConfig {
-            fast_match_scans_fixed_overhead: 0.0,
-            fast_match_scans_per_keyframe: 0.0,
-            fast_match_scans_per_point: 6.267625912919913e-5,
-            fast_match_scans_per_source_point: 1.2675975476838928e-4,
-            verification_scans_fixed_overhead: 1.0,
-            verification_scans_per_round: 0.0,
-            verification_scans_per_round_point: 5.2425117558172026e-5,
-            solve_scans_scale: 3.73753890537353e-5,
+            fast_match_scans_fixed_overhead: 1.3885433563125162,
+            fast_match_scans_per_keyframe: 1.448251991030438e-07,
+            fast_match_scans_per_point: 7.970467536600849e-05,
+            fast_match_scans_per_source_point: 0.00019838511484150277,
+            verification_scans_fixed_overhead: 5.036066465159226,
+            verification_scans_per_round: 0.7489339387672495,
+            verification_scans_per_round_point: 6.563647896724165e-05,
+            solve_scans_scale: 9.097483642429608e-05,
             solve_keyframe_power: 2.017,
             solve_closure_power: -0.215,
             solve_rejected_power: 0.558,
-            debounce_scans_per_keyframe: 2.364076069775802e-6,
-            merge_scans_per_keyframe: 1.1181807013703922e-7,
-            pressure_scans_fixed_overhead: 2.1110070286537613e-4,
-            pressure_scans_per_keyframe: 2.3639789453106166e-6,
-            pressure_scans_per_closure: 3.414248557913563e-6,
+            debounce_scans_per_keyframe: 6.093487031356368e-06,
+            merge_scans_per_keyframe: 2.56e-06,
+            pressure_scans_fixed_overhead: 0.0007777038336858567,
+            pressure_scans_per_keyframe: 8.708997476399469e-06,
+            pressure_scans_per_closure: 1.2578234731596874e-05,
         }
     }
 }
