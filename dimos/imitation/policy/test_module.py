@@ -42,6 +42,7 @@ def test_contract_imports_without_runtime_dependencies() -> None:
         "get_last_action_response",
         "get_last_preview",
         "set_task",
+        "set_policy_path",
         "preflight_rollout",
         "rollout_status",
         "start_rollout",

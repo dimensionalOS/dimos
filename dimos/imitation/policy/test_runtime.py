@@ -425,3 +425,146 @@ def test_reset_failure_requires_new_preflight(rollout):
     assert "session reset refused" in status["last_error"]
     backend.close.assert_called_once_with()
     assert module.start_rollout()["active"] is False
+
+
+@pytest.mark.parametrize("dispatch", [False, True])
+def test_one_chunk_is_enforced_in_runtime(rollout, dispatch):
+    module, backend, control = rollout
+    control.status.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=dispatch, max_chunks=1)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    status = module.rollout_status()
+    assert status["chunks_received"] == 1
+    assert status["chunks_accepted"] == int(dispatch)
+    assert status["chunks_completed"] == int(dispatch)
+    assert backend.predict.call_count == 1
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_invalid_chunk_limit_never_starts_inference(rollout, limit):
+    module, backend, control = rollout
+    module.preflight_rollout()
+    status = module.start_rollout(max_chunks=limit)
+    assert "positive integer" in status["last_error"]
+    backend.predict.assert_not_called()
+    control.execute.assert_not_called()
+
+
+def capacity_error(reason="pool_warming", retryable=True):
+    error = RuntimeError("Cloud has no live serve")
+    error.reason = reason
+    error.code = "DA-2000"
+    error.retryable = retryable
+    error.retry_after_s = 60
+    return error
+
+
+@pytest.mark.parametrize("reason", ["pool_warming", "rate_limited"])
+def test_cloud_retry_recovers_to_one_preview_without_moving(rollout, mocker, reason):
+    module, backend, control = rollout
+    backend.predict.side_effect = [capacity_error(reason), np.array([[0.1]], dtype=np.float32)]
+
+    def retry_wait(delay):
+        provide_observation(module)
+        return False
+
+    mocker.patch.object(module._stop_event, "wait", side_effect=retry_wait)
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    status = module.rollout_status()
+    assert status["phase"] == "preview ready"
+    assert status["chunks_received"] == 1
+    assert status["chunks_accepted"] == 0
+    assert status["execution_requires_restart"] is True
+    assert backend.predict.call_count == 2
+    control.execute.assert_not_called()
+    control.eef_execute.assert_not_called()
+
+
+def test_stop_interrupts_warming_and_prevents_retry(rollout):
+    module, backend, control = rollout
+    backend.predict.side_effect = capacity_error()
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: module.rollout_status()["phase"] == "warming", timeout=1)
+    assert module.rollout_status()["retry_in_s"] > 0
+    status = module.stop_rollout()
+    assert status["busy"] is False
+    assert backend.predict.call_count == 1
+    control.eef_execute.assert_not_called()
+
+
+def test_nonretryable_cloud_failure_stops_with_structured_error(rollout):
+    module, backend, control = rollout
+    backend.predict.side_effect = capacity_error(retryable=False)
+    module.preflight_rollout()
+    module.start_rollout(max_chunks=1)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    status = module.rollout_status()
+    assert status["phase"] == "error"
+    assert status["error_info"]["code"] == "DA-2000"
+    assert status["error_info"]["retryable"] is False
+    assert backend.predict.call_count == 1
+
+
+def test_model_edit_invalidates_preview_and_requires_new_preflight(rollout):
+    module, backend, control = rollout
+    module.preflight_rollout()
+    module.start_rollout(max_chunks=1)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    assert module.get_last_preview() is not None
+    status = module.set_policy_path("dreamlabs/dream-1-beta-flash")
+    assert status["policy_path"] == "dreamlabs/dream-1-beta-flash"
+    assert status["policy_ready"] is False
+    assert module.get_last_preview() is None
+    backend.close.assert_called_once_with()
+    assert "preflight has not passed" in module.start_rollout()["last_error"]
+
+
+def test_model_cannot_change_while_trajectory_is_running(rollout):
+    module, backend, control = rollout
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: module.rollout_status()["chunks_accepted"] == 1, timeout=1)
+    with pytest.raises(RuntimeError, match="wait until busy=False"):
+        module.set_policy_path("other-model")
+    assert module.rollout_status()["policy_path"] == "dreamlabs/dream-1-beta"
+
+
+def test_preview_summary_measures_first_target_and_largest_displacement():
+    trajectory = EefTrajectory(
+        [
+            EefTrajectoryPoint(
+                0,
+                {
+                    "tool": PoseStamped(
+                        frame_id="world", position=[0, 0, 0], orientation=[0, 0, 0, 1]
+                    )
+                },
+                {"gripper": 0.2},
+            ),
+            EefTrajectoryPoint(
+                0.05,
+                {
+                    "tool": PoseStamped(
+                        frame_id="world", position=[0.03, 0, 0], orientation=[0, 0, 0, 1]
+                    )
+                },
+                {"gripper": 0.8},
+            ),
+            EefTrajectoryPoint(
+                0.1,
+                {
+                    "tool": PoseStamped(
+                        frame_id="world", position=[0.06, 0, 0], orientation=[0, 0, 1, 0]
+                    )
+                },
+                {"gripper": 0.5},
+            ),
+        ]
+    )
+    summary = policy_runtime.summarize_preview(trajectory)
+    assert "first 30.0mm / 0.0deg; max 6.0cm / 180.0deg" in summary
+    assert "gripper: 0.20..0.80" in summary

@@ -159,7 +159,7 @@ uv run dimos run dual-makermods-metal-planner-coordinator
 ```
 
 Open [Viser](http://127.0.0.1:8095). Select either planning group to manipulate
-its pose target. ManipulationModule's `plan_to_joints` and
+its pose target and independent gripper. ManipulationModule's `plan_to_joints` and
 `plan_to_poses` accept both group IDs for a synchronized bimanual plan. Planning
 speed scale defaults to 0.2. Each arm contributes six angular joints and one
 normalized gripper; finger geometry remains fixed in the planning model.
@@ -170,8 +170,9 @@ The model creates its base in memory with `RobotModel.from_root_link`, then call
 `with_attached_model` twice to weld copies of the pinned official Metal URDF
 described above.
 Links, joints, material names, and references are prefixed `left_` / `right_`.
-The root is `dual_metal_base`, with tips `left_gripper_base` and
-`right_gripper_base`. Meshes and kinematics come from the official model.
+The root is `dual_metal_base`, with tips `left_grasp_frame` and
+`right_grasp_frame`. Each grasp frame uses the single-arm model TCP described
+above. Meshes and kinematics come from the official model.
 
 MakerMods publishes a **90 x 90 mm, four M5 screw** base mounting pattern and
 612.5 mm working radius on its [Metal product page](https://www.makermods.ai/metal-arm).
@@ -207,12 +208,11 @@ own URDF. Importing the blueprint does not load the arm assets.
 ### Gripper task bindings
 
 Both normalized gripper tasks and their separate input streams remain available
-on the ControlCoordinator. This layer does not bind them to ManipulationModule
-planning groups or enable the Viser gripper controls. Per-group bindings belong
-to [PR #4747](https://github.com/dimensionalOS/dimos/pull/4747), which introduces
-`ManipulationModuleConfig.gripper_tasks`. After that API lands, the bindings are
-`left_arm` to `left_arm_gripper` and `right_arm` to `right_arm_gripper`.
-The model and planning configuration carry no deployment-specific gripper mapping.
+on the ControlCoordinator. `RobotModelConfig.gripper_hardware_ids` maps
+`left_arm` and `right_arm` planning groups to the matching hardware IDs.
+ManipulationModule routes each group's gripper controls to `left_arm_gripper`
+or `right_arm_gripper`. A command without a selected group does not move either
+gripper.
 
 ### Physical CAN setup
 
@@ -236,7 +236,7 @@ macOS selectors are bare unique gs_usb USB serials. Partial, empty, and duplicat
 selectors are rejected rather than selecting one real and one mock arm.
 Current ratio defaults to 0.1 on each gripper. Selecting physical hardware
 activates both arms and calibrates both grippers; stopping removes torque.
-Gravity compensation remains disabled as in the single-arm stack.
+Both physical arms use the shared adapter's URDF-based gravity compensation.
 
 Without physical selectors both components are in-memory mocks. Physical dual-arm
 commissioning was not performed as part of this integration.

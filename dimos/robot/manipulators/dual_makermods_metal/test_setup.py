@@ -185,4 +185,3 @@ def test_gripper_mapping_rejects_unknown_planning_groups() -> None:
     config = dual_metal_model_config()
     with pytest.raises(ValueError, match="declared groups"):
         type(config)(**{**dict(config), "gripper_hardware_ids": {"missing_arm": "left_arm"}})
-

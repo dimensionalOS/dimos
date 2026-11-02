@@ -127,13 +127,32 @@ The overhead camera must show the shared workspace. A laptop camera facing the
 operator does not provide that view. This command starts physical hardware;
 omit both CAN selectors to use mock actuators.
 
-Rollout blueprints start idle. `dimos imitation control` starts Dreamlabs in
-preview mode. For explicit control, use these RPCs in `dimos shell`:
+Rollout blueprints start idle. In another terminal, run `dimos imitation control`.
+Edit the model checkpoint or task prompt and select **Apply model / task** (or press
+Enter). Editing requires an idle, fully drained rollout and clears the old preview.
+
+- **Preview once** uploads observations and requests one chunk, without motion.
+- **Execute 1 chunk** takes fresh observations, infers and executes one chunk, then stops.
+- **Execute continuous** keeps inferring and executing until stopped or a fault occurs.
+- **Stop rollout** / **F8** cancels owned policy work. Wait for `busy=False` before
+  another operation. Detach leaves the stack running; Stop is not an emergency stop.
+
+The panel displays cloud retry countdowns, input presence, chunk counters, and EEF
+first-target / maximum displacement from the measured chunk anchor. These target
+deltas are not measured tracking errors or a collision check. Disabled timing or
+endpoint checks are shown explicitly; with endpoint checks off, Finished only means
+the trajectory elapsed.
+
+Retryable cloud warming or rate limiting switches execution to **one preview**.
+Once the service recovers, inspect it and press Execute again; waiting never retains
+permission to start moving later. Other failures stop rollout without automatic retry.
+
+Equivalent RPCs in `dimos shell`:
 
 ```python
 policy = app.get_module("policy")
 policy.preflight_rollout()  # Local validation, no inference.
-policy.start_rollout()      # Remote inference and upload, preview only.
+policy.start_rollout(dispatch_actions=False, max_chunks=1)  # Upload and preview.
 policy.get_last_preview()
 policy.stop_rollout()
 ```

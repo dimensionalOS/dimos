@@ -58,8 +58,9 @@ uv run dimos run dual-makermods-metal-planner-coordinator \
   --right-base-xyz '[0, -0.25, 0]'
 ```
 
-The combined model is cached by its content and mount transforms. Importing the
-blueprint does not download or generate assets.
+The model uses `RobotModel.from_root_link` and `with_attached_model` to compose
+both arms in memory. It does not generate a combined URDF file or a separate
+model cache. Importing the blueprint does not download assets.
 
 ## Physical CAN setup
 
@@ -83,7 +84,7 @@ macOS selectors are bare unique gs_usb USB serials. Partial, empty, and duplicat
 selectors are rejected rather than selecting one real and one mock arm.
 Current ratio defaults to 0.1 on each gripper. Selecting physical hardware
 activates both arms and calibrates both grippers; stopping removes torque.
-Gravity compensation remains disabled as in the single-arm stack.
+Both physical arms use the shared adapter's URDF-based gravity compensation.
 
 Without physical selectors both components are in-memory mocks. Physical dual-arm
 commissioning was not performed as part of this integration.

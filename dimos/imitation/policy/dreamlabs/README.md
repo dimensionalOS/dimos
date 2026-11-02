@@ -31,20 +31,25 @@ Neither blueprint starts rollout automatically.
 
 ## Preflight and preview
 
-Attach the operator panel with `dimos imitation control`. **Start preview** runs
-inference without dispatching actions. **Execute on robot** explicitly enables
-trajectory dispatch. Both actions run preflight first; **Stop policy** stops
-either mode. The panel shows PREVIEW or EXECUTE and blocks restarting while a
-stopped rollout is still DRAINING. Preview uploads images and state just like
-execution.
+Run `dimos imitation control` in another terminal for task/model editing,
+**Preview once**, **Execute 1 chunk**, **Execute continuous**, and **Stop rollout**
+(**F8**). Apply edits while idle; Apply does not infer or move. Starting either
+preview or execution preflights local inputs first. Every start uses new observations
+and inference, rather than replaying a displayed preview. The panel shows phase,
+retry countdown, input presence, chunk counters, EEF target deltas and disabled checks.
 
+Cloud warming/rate-limit refusals marked retryable by the SDK are retried using its
+retry delay (at least one second). A cloud retry revokes dispatch and recovers into a
+single preview: press Execute again after inspecting it. Other errors, including
+hardware faults, are not automatically retried. Stop interrupts retry waits and
+invalidates pending replies.
 
-Attach with `dimos shell` and use the policy module's RPCs:
+Alternatively, attach with `dimos shell` and use the policy module's RPCs:
 
 ```python
 policy = app.get_module("policy")
 policy.preflight_rollout()
-policy.start_rollout()  # Remote inference and image/state upload, preview only.
+policy.start_rollout(dispatch_actions=False, max_chunks=1)  # Upload and preview.
 policy.rollout_status()
 policy.get_last_preview()
 policy.get_last_action_response()
@@ -67,7 +72,7 @@ start rollout while a request is active or draining.
 Actuator dispatch is a separate opt-in:
 
 ```python
-policy.start_rollout(dispatch_actions=True)
+policy.start_rollout(dispatch_actions=True, max_chunks=1)  # One chunk; omit limit for continuous.
 ```
 
 Physical dispatch through this integrated backend requires separate station
