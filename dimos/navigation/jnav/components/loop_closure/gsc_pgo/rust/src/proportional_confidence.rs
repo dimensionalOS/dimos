@@ -346,9 +346,11 @@ impl ClosureSearch {
         if max_clouds < 2 || target_ids.is_empty() || clouds.is_empty() {
             return accept(first_ratio);
         }
+        // the single fit already placed every cloud, so a cloud's fit only refines it: pairs out to the single fit's
+        // 10 m let a cloud that half overlaps the target pull its unseen half onto other structure (huge: 4-6 m, 8-25 deg off)
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
-            max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
+            max_correspondence_distance: self.config.closure_icp_inlier_distance_m,
             inlier_squared_distance: self.config.closure_inlier_squared_distance(),
             point_to_plane: self.config.closure_icp_point_to_plane,
         };
@@ -564,13 +566,10 @@ mod uncertainty_range_tests {
         let config = crate::gsc_pgo::Config::default();
         // 5 clouds: the single scan and 4 more, so 4 rounds
         let calm = UncertaintyRange::new(&config, 5, 0.0);
-        assert_eq!(
-            calm.at(0),
-            (
-                config.barely_fail_uncertainty_range,
-                config.barely_pass_uncertainty_range
-            )
-        );
+        // 1 - (1 - low) is low only to rounding
+        let (low, high) = calm.at(0);
+        assert!((low - config.barely_fail_uncertainty_range).abs() < 1e-12);
+        assert!((high - config.barely_pass_uncertainty_range).abs() < 1e-12);
         assert_eq!(calm.at(4), (1.0, 1.0));
         let pressed = UncertaintyRange::new(&config, 5, 0.5);
         let half = 1.0 + (config.barely_pass_uncertainty_range - 1.0) / 2.0;

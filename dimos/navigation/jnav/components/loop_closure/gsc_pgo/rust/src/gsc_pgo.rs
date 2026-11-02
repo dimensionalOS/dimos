@@ -92,7 +92,8 @@ pub struct CommittedClosure {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "native", derive(serde::Serialize))]
 pub struct ClosureCandidateDiag {
-    /// "accepted", "outranked" (a better proposal took the search thread), or the gate that rejected it:
+    /// "accepted", "outranked" (a better proposal took the search thread), "stale" (still waiting for the busy search
+    /// thread when a newer keyframe arrived), or the gate that rejected it:
     /// "low_occupancy", "no_candidate", "degeneracy_reject", "icp_reject", "uninformative", "yank_confidence_reject".
     pub outcome: &'static str,
     pub source_id: usize,
@@ -490,8 +491,9 @@ pub struct Config {
     /// (the new surface it covers).
     pub closure_likelihood_confidence: bool,
     /// When true, a keyframe whose search is rejected tries its next scan-context match (other places under the match
-    /// threshold, closest first), up to 1 + ceil(1 / (1 - pressure)) tries per keyframe (2 at no pressure), at most
-    /// scan_context_top_k; a newer keyframe's better match still outranks a waiting retry.
+    /// threshold, closest first), up to 1 + floor(sqrt(min(ceil(1 / (1 - pressure)), scan_context_top_k - 1))) tries per
+    /// keyframe (3 at pressure 0.8, 4 at 0.9 and above with top_k 10); a newer keyframe's better match still outranks a
+    /// waiting retry.
     pub closure_alternative_places: bool,
     /// Alternative places are tried only at or above this pressure; below it a keyframe tries only its best match.
     /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
@@ -575,7 +577,7 @@ impl Default for Config {
             closure_yank_pre_check: false,
             closure_extension_stop_when_flat: true,
             closure_extension_stop_on_swing: true,
-            barely_fail_uncertainty_range: 0.8,
+            barely_fail_uncertainty_range: 0.05,
             barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
             extension_cloud_spacing: 0.25,
@@ -1532,6 +1534,16 @@ impl GscPgo {
             return;
         }
         let cur_idx = self.key_poses.len() - 1;
+        // a proposal still waiting from an older keyframe (the search thread was busy) is dropped, not queued: the
+        // newest keyframe's search replaces it
+        if let Some(stale) = self
+            .waiting_proposal
+            .take_if(|waiting| waiting.diag.source_id < cur_idx)
+        {
+            let mut diag = stale.diag;
+            diag.outcome = "stale";
+            self.record_search(diag);
+        }
         let current = &self.key_poses[cur_idx];
         let mut diag = ClosureCandidateDiag::new(cur_idx, current.time, current.translation_global);
 
@@ -1719,8 +1731,8 @@ impl GscPgo {
         self.record_search(diag);
         self.commit_closure(source, target, rotation_offset, translation_offset, score);
     }
-    /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 + ceil(1 /
-    /// (1 - pressure)), at most scan_context_top_k (`closure_alternative_places`).
+    /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 +
+    /// floor(sqrt(min(ceil(1 / (1 - pressure)), scan_context_top_k - 1))) (`closure_alternative_places`).
     fn retry_alternative(
         &mut self,
         rejected: &ClosureCandidateDiag,
@@ -1735,8 +1747,12 @@ impl GscPgo {
         {
             return;
         }
-        let allowed = (1.0 + (1.0 / (1.0 - rejected.pressure).max(f64::EPSILON)).ceil())
-            .min(self.scan_context_config.candidate_top_k as f64) as usize;
+        // the extra tries grow with pressure as before, but under a square root: retries far down the match list
+        // rarely close (small Mid-360: 1 accept in 419 tries past the second)
+        let extra = (1.0 / (1.0 - rejected.pressure).max(f64::EPSILON))
+            .ceil()
+            .min(self.scan_context_config.candidate_top_k.saturating_sub(1) as f64);
+        let allowed = 1 + extra.sqrt().floor() as usize;
         if tries >= allowed {
             return;
         }
