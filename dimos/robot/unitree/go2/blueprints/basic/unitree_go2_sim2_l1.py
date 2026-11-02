@@ -42,7 +42,10 @@ unitree_go2_sim2_l1 = autoconnect(
     Go2Sim.blueprint(),
     UrdfManager.blueprint(
         model=GO2_SIM_MODEL.with_fixed_frame(
-            L1_FRAME, "base_link", xyz=L1_XYZ, rpy=tuple(math.radians(a) for a in L1_MOUNT)
+            L1_FRAME,
+            "base_link",
+            xyz=L1_XYZ,
+            rpy=(math.radians(L1_MOUNT[0]), math.radians(L1_MOUNT[1]), math.radians(L1_MOUNT[2])),
         )
         .with_fixed_frame(CAMERA_FRAME, "base_link", xyz=CAMERA_XYZ)
         .with_fixed_frame(CAMERA_OPTICAL_FRAME, CAMERA_FRAME, rpy=OPTICAL_RPY),
