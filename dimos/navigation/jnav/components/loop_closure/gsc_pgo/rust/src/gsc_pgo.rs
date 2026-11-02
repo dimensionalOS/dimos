@@ -348,6 +348,10 @@ pub struct Config {
     /// Yank is measured per sqrt(keyframe gap), since odometry drift is a random walk (on huge_loop this ranks
     /// closures that help above closures that hurt at AUC 0.82 vs 0.70).
     pub closure_yank_gate_width: f64,
+    /// How many times the stated odometry drift (standard deviation) the true drift may be, unknown within that range
+    /// (`proportional_confidence::yank_evidence`): a candidate's yank is priced averaged over it, so a large jump costs
+    /// about 3 ln z of evidence instead of z^2 / 2 and GNC judges it. 1 = the stated drift is trusted exactly.
+    pub closure_yank_drift_range: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -536,6 +540,7 @@ impl Default for Config {
             closure_min_occupancy: 80,
             closure_min_degeneracy: 0.05,
             closure_yank_gate_width: 1.0,
+            closure_yank_drift_range: 100.0,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -572,7 +577,7 @@ impl Default for Config {
             closure_alternative_places: true,
             closure_pcm: false,
             closure_gnc_overtrust_check: false,
-            odometry_gravity_bound: true,
+            odometry_gravity_bound: false,
             closure_commitments: true,
             closure_inlier_distance_from_odometry: false,
             closure_hessian_observability: false,

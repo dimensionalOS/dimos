@@ -89,6 +89,8 @@ class PGOConfig(NativeModuleConfig):
     # A closure's match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) must clear
     # 1 - exp(-z^2/2k^2), z = how hard it yanks the graph (per sqrt keyframe gap) in robust std devs of the yanks scored so far; this is k
     closure_yank_gate_width: float = 1.0
+    # How many times the stated odometry drift (sd) the true drift may be; the yank gate averages over it (1 = trust it)
+    closure_yank_drift_range: float = 100.0
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
@@ -113,7 +115,7 @@ class PGOConfig(NativeModuleConfig):
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
     closure_gnc_overtrust_check: bool = False
     # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
-    odometry_gravity_bound: bool = True
+    odometry_gravity_bound: bool = False
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
     closure_commitments: bool = True
     # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_icp_inlier_distance_m
