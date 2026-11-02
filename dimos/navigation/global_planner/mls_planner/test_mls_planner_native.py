@@ -29,8 +29,9 @@ from pytest_mock import MockerFixture
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.spec import position_goal
 
-_GOAL = PoseStamped(1.0, 0.0, 0.0, ts=1000.25)
+_GOAL = position_goal(1.0, 0.0, 0.0, "odom", ts=1000.25)
 
 
 class _GoalTransport(Transport[PoseStamped]):
@@ -135,7 +136,7 @@ def test_a_report_that_does_not_end_the_goal_is_ignored(rig: _Rig, report: GoalS
 
 
 def test_a_report_for_a_go_to_already_replaced_leaves_the_new_one_alone(rig: _Rig) -> None:
-    newer = PoseStamped(2.0, 0.0, 0.0, ts=1001.0)
+    newer = position_goal(2.0, 0.0, 0.0, "odom", ts=1001.0)
     rig.module._goal = newer
 
     rig.module._finish("Reached the target", cancel=False, ended=_GOAL)
@@ -154,6 +155,28 @@ def test_go_to_sends_the_point_at_the_height_of_the_floor_under_the_robot(rig: _
     assert (point.x, point.y, point.z) == pytest.approx((4.0, 2.0, 1.2))
     assert point.frame_id == "odom"
     assert point.orientation.is_zero()
+
+
+@pytest.mark.parametrize("degrees", [90.0, 0.0])
+def test_go_to_with_degrees_sends_the_heading(rig: _Rig, degrees: float) -> None:
+    rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 1.5))
+
+    _result(rig.module.go_to(4.0, 2.0, degrees=degrees))
+
+    (goal,) = rig.sent
+    assert not goal.orientation.is_zero()
+    assert goal.yaw == pytest.approx(math.radians(degrees))
+
+
+def test_a_heading_goal_reports_how_far_off_the_heading_it_stopped(rig: _Rig) -> None:
+    rig.pose.return_value = PoseStamped(position=(1.0, 3.0, 0.0))
+    _result(rig.module.go_to(1.0, 3.0, degrees=90.0))
+
+    assert _result(rig.module.stop_navigation()) == "Stopped."
+
+    assert rig.updates() == [
+        "Canceled; robot at (1.00, 3.00), 0.00 m from the target, 90 degrees off its heading."
+    ]
 
 
 def test_go_to_sends_nothing_without_a_pose(rig: _Rig) -> None:

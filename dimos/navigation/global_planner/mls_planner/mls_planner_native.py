@@ -28,12 +28,15 @@ from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.spec import cancel_goal, position_goal
+from dimos.utils.trigonometry import angle_diff
 
 # Seconds a go_to waits for the robot pose to show up on tf.
 POSE_WAIT_S = 0.5
@@ -156,7 +159,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         )
 
     @skill(uses=[CAP_MOVEMENT], lifecycle="background")
-    async def go_to(self, x: float, y: float) -> str:
+    async def go_to(self, x: float, y: float, degrees: float | None = None) -> str:
         """Start driving to a point in the world frame and return immediately.
 
         Replaces any goal under way. A tool update reports where the robot is and how far
@@ -165,6 +168,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         Args:
             x: target x in meters, world frame.
             y: target y in meters, world frame.
+            degrees: heading to face there, world frame, 0 = +x and 90 = +y. Omit for any.
         """
         pose = self._pose(wait_s=POSE_WAIT_S)
         # Close the old go_to's stream first so start_tool opens a new one for this call.
@@ -177,7 +181,13 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
 
         # The planner picks the surface nearest the goal's z, so send the floor height under the robot.
         floor_z = pose.z - self.config.start_z_offset_m
-        goal = position_goal(x, y, floor_z, self.config.world_frame)
+        if degrees is None:
+            goal = position_goal(x, y, floor_z, self.config.world_frame)
+        else:
+            facing = Quaternion.from_euler(Vector3(0.0, 0.0, math.radians(degrees)))
+            goal = PoseStamped(
+                frame_id=self.config.world_frame, position=[x, y, floor_z], orientation=facing
+            )
         with self._goal_lock:
             self._goal = goal
         self.goal.transport.publish(goal)
@@ -198,6 +208,9 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         else:
             distance = math.dist((goal.x, goal.y), (pose.x, pose.y))
             where = f"robot at ({pose.x:.2f}, {pose.y:.2f}), {distance:.2f} m from the target"
+            if not goal.orientation.is_zero():
+                off = math.degrees(abs(angle_diff(goal.yaw, pose.yaw)))
+                where += f", {off:.0f} degrees off its heading"
         self.tool_update("go_to", f"{outcome}; {where}.")
         self.stop_tool("go_to")
         if cancel:
