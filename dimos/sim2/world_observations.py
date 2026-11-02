@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The world as sim2 sends it: a WorldChange per frame, of only what changed (world_msgs, from dimos-lcm).
+"""The world as sim2 sends it: a WorldObservations per frame, of only what changed (world_msgs, from dimos-lcm).
 
 A backend writes its frames with a WorldWriter, saying itself what changed; every other module keeps a
 WorldMirror, which applies each frame it gets. There is no catching up: a missed frame is missed, so the
@@ -27,7 +27,7 @@ from threading import RLock
 from typing import Any
 
 import cbor2
-from dimos_lcm.world_msgs import Change, WorldChange
+from dimos_lcm.world_msgs import Observation, WorldObservations
 import numpy as np
 from numpy.typing import NDArray
 
@@ -67,11 +67,11 @@ def _blob(data: bytes) -> bytes:
     return struct.pack(">i", len(data)) + data
 
 
-def _change(
+def _observation(
     kind: int, entity: int, updates: Sequence[tuple[int, bytes]] = (), head: bytes = b""
-) -> Change:
+) -> Observation:
     data = head + b"".join(payload for _, payload in updates)
-    return Change(
+    return Observation(
         type=kind,
         entity_id=entity,
         update_types_length=len(updates),
@@ -83,27 +83,27 @@ def _change(
 
 # Each update type's payload: the LCM encoding, without fingerprint, of its world_msgs struct.
 def pose_update(pose: Sequence[float]) -> tuple[int, bytes]:
-    return Change.WORLD_POSE_SET, _POSE.pack(*pose)
+    return Observation.WORLD_POSE_SET, _POSE.pack(*pose)
 
 
 def velocity_update(velocity: Sequence[float]) -> tuple[int, bytes]:
-    return Change.WORLD_VELOCITY_SET, _VELOCITY.pack(*velocity)
+    return Observation.WORLD_VELOCITY_SET, _VELOCITY.pack(*velocity)
 
 
 def tag_update(tag: str, on: bool = True) -> tuple[int, bytes]:
-    return (Change.ADDED_TAG if on else Change.REMOVED_TAG), _string(tag)
+    return (Observation.ADDED_TAG if on else Observation.REMOVED_TAG), _string(tag)
 
 
 def cbor_update(key: str, value: Any) -> tuple[int, bytes]:
-    return Change.CBOR_KEY_SET, _string(key) + _blob(cbor2.dumps(value))
+    return Observation.CBOR_KEY_SET, _string(key) + _blob(cbor2.dumps(value))
 
 
 def cbor_remove(key: str) -> tuple[int, bytes]:
-    return Change.CBOR_KEY_REMOVE, _string(key)
+    return Observation.CBOR_KEY_REMOVE, _string(key)
 
 
 def event_update(event: int, cbor: Any = None) -> tuple[int, bytes]:
-    return Change.EVENT, struct.pack(">q", event) + _blob(
+    return Observation.EVENT, struct.pack(">q", event) + _blob(
         b"" if cbor is None else cbor2.dumps(cbor)
     )
 
@@ -111,13 +111,13 @@ def event_update(event: int, cbor: Any = None) -> tuple[int, bytes]:
 def connection_update(other: int, cbor: Any = None) -> tuple[int, bytes]:
     """A joint relationship to other, or (with cbor) any other relationship."""
     kind = 0 if cbor is None else 1
-    return Change.ENTITY_CONNECTION_ADDED, struct.pack(">qb", other, kind) + _blob(
+    return Observation.ENTITY_CONNECTION_ADDED, struct.pack(">qb", other, kind) + _blob(
         b"" if cbor is None else cbor2.dumps(cbor)
     )
 
 
 def disconnection_update(other: int) -> tuple[int, bytes]:
-    return Change.ENTITY_CONNECTION_REMOVED, struct.pack(">q", other)
+    return Observation.ENTITY_CONNECTION_REMOVED, struct.pack(">q", other)
 
 
 def joint_positions(values: NDArray[np.float64]) -> bytes:
@@ -130,26 +130,26 @@ def joint_targets(values: NDArray[np.float64]) -> bytes:
     return np.ascontiguousarray(values, dtype=_JOINT_POSITION).tobytes()
 
 
-def add_entity(entity: int, path: str, updates: Sequence[tuple[int, bytes]] = ()) -> Change:
-    return _change(Change.ADD_ENTITY, entity, updates, _string(path))
+def add_entity(entity: int, path: str, updates: Sequence[tuple[int, bytes]] = ()) -> Observation:
+    return _observation(Observation.ADD_ENTITY, entity, updates, _string(path))
 
 
-def delete_entity(entity: int) -> Change:
-    return _change(Change.DELETE_ENTITY, entity)
+def delete_entity(entity: int) -> Observation:
+    return _observation(Observation.DELETE_ENTITY, entity)
 
 
-def entity_update(entity: int, *updates: tuple[int, bytes]) -> Change:
-    return _change(Change.ENTITY_UPDATE, entity, updates)
+def entity_update(entity: int, *updates: tuple[int, bytes]) -> Observation:
+    return _observation(Observation.ENTITY_UPDATE, entity, updates)
 
 
-def group_set(group: int, members: Sequence[int]) -> Change:
-    return _change(
-        Change.GROUP_SET, group, (), struct.pack(f">i{len(members)}q", len(members), *members)
+def group_set(group: int, members: Sequence[int]) -> Observation:
+    return _observation(
+        Observation.GROUP_SET, group, (), struct.pack(f">i{len(members)}q", len(members), *members)
     )
 
 
-def group_update(group: int, update: int, payloads: bytes) -> Change:
-    return _change(Change.GROUP_UPDATE, group, ((update, payloads),))
+def group_update(group: int, update: int, payloads: bytes) -> Observation:
+    return _observation(Observation.GROUP_UPDATE, group, ((update, payloads),))
 
 
 class WorldWriter:
@@ -162,7 +162,7 @@ class WorldWriter:
         self.joint_groups: dict[int, tuple[str, tuple[str, ...]]] = {}
         self._joint_groups_by_robot: dict[str, int] = {}
         self._next = _FIRST_ID
-        self._changes: list[Change] = []
+        self._observations: list[Observation] = []
         self.frame = 0
 
     def _assign(self, path: str) -> int:
@@ -173,16 +173,16 @@ class WorldWriter:
 
     def add(self, path: str, *updates: tuple[int, bytes]) -> int:
         entity = self._assign(path)
-        self._changes.append(add_entity(entity, path, updates))
+        self._observations.append(add_entity(entity, path, updates))
         return entity
 
     def remove(self, path: str) -> None:
         entity = self.ids.pop(path)
         del self.paths[entity]
-        self._changes.append(delete_entity(entity))
+        self._observations.append(delete_entity(entity))
 
     def update(self, path: str, *updates: tuple[int, bytes]) -> None:
-        self._changes.append(entity_update(self.ids[path], *updates))
+        self._observations.append(entity_update(self.ids[path], *updates))
 
     def event(self, path: str, event: str, cbor: Any = None) -> None:
         self.update(path, event_update(self.ids[event], cbor))
@@ -196,23 +196,23 @@ class WorldWriter:
         group = self.add(f"{robot}/joints")
         self.joint_groups[group] = (robot, tuple(names))
         self._joint_groups_by_robot[robot] = group
-        self._changes.append(group_set(group, members))
+        self._observations.append(group_set(group, members))
 
     def joints(self, robot: str, values: NDArray[np.float64]) -> None:
         """Each of the robot's joints' position, velocity and effort, a row each in add_joints' order."""
         group = self._joint_groups_by_robot[robot]
-        self._changes.append(
-            group_update(group, Change.JOINT_POSITION_SET, joint_positions(values))
+        self._observations.append(
+            group_update(group, Observation.JOINT_POSITION_SET, joint_positions(values))
         )
 
-    def end_frame(self, sim_time: float) -> WorldChange:
+    def end_frame(self, sim_time: float) -> WorldObservations:
         self.frame += 1
-        changes, self._changes = self._changes, []
-        return WorldChange(
+        observations, self._observations = self._observations, []
+        return WorldObservations(
             ts=round(sim_time * 1e9),
             frame=self.frame,
-            changes_length=len(changes),
-            changes=changes,
+            observations_length=len(observations),
+            observations=observations,
         )
 
 
@@ -256,37 +256,37 @@ class _Reader:
 
 # The fixed-size payloads, by update type.
 _SIZES = {
-    Change.WORLD_POSE_SET: 56,
-    Change.WORLD_VELOCITY_SET: 48,
-    Change.MESH_SET: 8,
-    Change.JOINT_POSITION_SET: 24,
-    Change.JOINT_TARGET_SET: 40,
-    Change.ENTITY_CONNECTION_REMOVED: 8,
+    Observation.WORLD_POSE_SET: 56,
+    Observation.WORLD_VELOCITY_SET: 48,
+    Observation.MESH_SET: 8,
+    Observation.JOINT_POSITION_SET: 24,
+    Observation.JOINT_TARGET_SET: 40,
+    Observation.ENTITY_CONNECTION_REMOVED: 8,
 }
 
 
 def read_update(update: int, reader: _Reader) -> Any:
     """One update's payload, decoded."""
-    if update in (Change.ADDED_TAG, Change.REMOVED_TAG, Change.CBOR_KEY_REMOVE):
+    if update in (Observation.ADDED_TAG, Observation.REMOVED_TAG, Observation.CBOR_KEY_REMOVE):
         return reader.string()
-    if update == Change.CBOR_KEY_SET:
+    if update == Observation.CBOR_KEY_SET:
         key = reader.string()
         return key, cbor2.loads(reader.blob())
-    if update == Change.EVENT:
+    if update == Observation.EVENT:
         (event,) = reader.take(">q")
         blob = reader.blob()
         return event, cbor2.loads(blob) if blob else None
-    if update == Change.ENTITY_CONNECTION_ADDED:
+    if update == Observation.ENTITY_CONNECTION_ADDED:
         other, kind = reader.take(">qb")
         blob = reader.blob()
         return other, cbor2.loads(blob) if kind == 1 else None
-    if update == Change.CUSTOM_UPDATE:
+    if update == Observation.CUSTOM_UPDATE:
         return reader.blob()
-    if update == Change.ENTITY_CONNECTION_REMOVED:
+    if update == Observation.ENTITY_CONNECTION_REMOVED:
         return reader.take(">q")[0]
-    if update == Change.MESH_SET:
+    if update == Observation.MESH_SET:
         return reader.take(">q")[0]
-    if update == Change.WRENCH:
+    if update == Observation.WRENCH:
         (frame,) = reader.take(">q")
         return frame, np.array(reader.take(">10d"))
     size = _SIZES[update]
@@ -295,29 +295,29 @@ def read_update(update: int, reader: _Reader) -> Any:
     return values
 
 
-def read_change(change: Change) -> tuple[str | None, list[tuple[int, Any]]]:
+def read_observation(observation: Observation) -> tuple[str | None, list[tuple[int, Any]]]:
     """An entity change's path (for add_entity) and its updates, decoded."""
-    reader = _Reader(bytes(change.data))
-    path = reader.string() if change.type == Change.ADD_ENTITY else None
-    return path, [(update, read_update(update, reader)) for update in change.update_types]
+    reader = _Reader(bytes(observation.data))
+    path = reader.string() if observation.type == Observation.ADD_ENTITY else None
+    return path, [(update, read_update(update, reader)) for update in observation.update_types]
 
 
-def read_group(change: Change) -> list[int]:
-    (count,) = struct.unpack_from(">i", change.data)
-    return list(struct.unpack_from(f">{count}q", change.data, 4))
+def read_group(observation: Observation) -> list[int]:
+    (count,) = struct.unpack_from(">i", observation.data)
+    return list(struct.unpack_from(f">{count}q", observation.data, 4))
 
 
-def read_group_payloads(change: Change) -> tuple[int, NDArray[np.float64]]:
+def read_group_payloads(observation: Observation) -> tuple[int, NDArray[np.float64]]:
     """A group_update of fixed-size payloads: its update type and a row per member."""
-    update = change.update_types[0]
+    update = observation.update_types[0]
     width = _SIZES[update] // 8
-    return update, np.frombuffer(bytes(change.data), _JOINT_POSITION).astype(np.float64).reshape(
-        -1, width
-    )
+    return update, np.frombuffer(bytes(observation.data), _JOINT_POSITION).astype(
+        np.float64
+    ).reshape(-1, width)
 
 
 class WorldMirror:
-    """The world as the WorldChanges this module got say it is.
+    """The world as the WorldObservations this module got say it is.
 
     subscribe applies every frame on the thread that receives it, never dropping one for being busy;
     read under lock. Work paced by sim time awaits reached().
@@ -342,11 +342,11 @@ class WorldMirror:
         """Called on the receiving thread after each frame is applied."""
         self._listeners.append(listener)
 
-    def apply(self, message: WorldChange) -> None:
+    def apply(self, message: WorldObservations) -> None:
         with self.lock:
             self.events = []
-            for change in message.changes:
-                self._apply(change)
+            for observation in message.observations:
+                self._apply(observation)
             rewound = message.ts / 1e9 < self.time
             self.frame, self.time = message.frame, message.ts / 1e9
             # A reset rewinds the world: every waiter wakes and looks again.
@@ -357,59 +357,59 @@ class WorldMirror:
         for listener in self._listeners:
             listener(self)
 
-    def _apply(self, change: Change) -> None:
-        kind = change.type
-        if kind == Change.DELETE_ENTITY:
-            entity = self.entities.pop(change.entity_id, None)
+    def _apply(self, observation: Observation) -> None:
+        kind = observation.type
+        if kind == Observation.DELETE_ENTITY:
+            entity = self.entities.pop(observation.entity_id, None)
             if entity is not None:
                 self.ids.pop(entity.path, None)
             return
-        if kind == Change.GROUP_SET:
-            self.groups[change.entity_id] = read_group(change)
+        if kind == Observation.GROUP_SET:
+            self.groups[observation.entity_id] = read_group(observation)
             return
-        if kind == Change.GROUP_UPDATE:
-            update, rows = read_group_payloads(change)
-            for member, row in zip(self.groups.get(change.entity_id, ()), rows, strict=False):
+        if kind == Observation.GROUP_UPDATE:
+            update, rows = read_group_payloads(observation)
+            for member, row in zip(self.groups.get(observation.entity_id, ()), rows, strict=False):
                 if member in self.entities:
                     self._set(self.entities[member], member, update, row)
             return
-        if kind not in (Change.ADD_ENTITY, Change.ENTITY_UPDATE):
+        if kind not in (Observation.ADD_ENTITY, Observation.ENTITY_UPDATE):
             return
-        path, updates = read_change(change)
+        path, updates = read_observation(observation)
         if path is not None:
-            self.entities[change.entity_id] = Entity(path)
-            self.ids[path] = change.entity_id
-        entity = self.entities.get(change.entity_id)
+            self.entities[observation.entity_id] = Entity(path)
+            self.ids[path] = observation.entity_id
+        entity = self.entities.get(observation.entity_id)
         if entity is None:
             return
         for update, value in updates:
-            self._set(entity, change.entity_id, update, value)
+            self._set(entity, observation.entity_id, update, value)
 
     def _set(self, entity: Entity, entity_id: int, update: int, value: Any) -> None:
-        if update == Change.WORLD_POSE_SET:
+        if update == Observation.WORLD_POSE_SET:
             entity.pose = value
-        elif update == Change.WORLD_VELOCITY_SET:
+        elif update == Observation.WORLD_VELOCITY_SET:
             entity.velocity = value
-        elif update == Change.JOINT_POSITION_SET:
+        elif update == Observation.JOINT_POSITION_SET:
             entity.joint = value
-        elif update == Change.ADDED_TAG:
+        elif update == Observation.ADDED_TAG:
             entity.tags.add(value)
-        elif update == Change.REMOVED_TAG:
+        elif update == Observation.REMOVED_TAG:
             entity.tags.discard(value)
-        elif update == Change.CBOR_KEY_SET:
+        elif update == Observation.CBOR_KEY_SET:
             entity.cbor[value[0]] = value[1]
-        elif update == Change.CBOR_KEY_REMOVE:
+        elif update == Observation.CBOR_KEY_REMOVE:
             entity.cbor.pop(value, None)
-        elif update == Change.EVENT:
+        elif update == Observation.EVENT:
             self.events.append((entity_id, *value))
-        elif update == Change.ENTITY_CONNECTION_ADDED:
+        elif update == Observation.ENTITY_CONNECTION_ADDED:
             entity.connections[value[0]] = value[1]
-        elif update == Change.ENTITY_CONNECTION_REMOVED:
+        elif update == Observation.ENTITY_CONNECTION_REMOVED:
             if value == 0:
                 entity.connections.clear()
             else:
                 entity.connections.pop(value, None)
-        elif update == Change.MESH_SET:
+        elif update == Observation.MESH_SET:
             entity.mesh = value
 
     def entity(self, path: str) -> Entity | None:

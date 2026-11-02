@@ -20,7 +20,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from dimos_lcm.world_msgs import WorldAction, WorldChange
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
@@ -32,7 +32,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.actions import SetVelocity, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 
 
 class SimKinematicBaseConfig(ModuleConfig):
@@ -49,7 +49,7 @@ class SimKinematicBaseConfig(ModuleConfig):
 class SimKinematicBase(Module):
     config: SimKinematicBaseConfig
     cmd_vel: In[Twist]
-    world_change: In[WorldChange]
+    world_observations: In[WorldObservations]
     actions: Out[WorldAction]
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
@@ -69,7 +69,7 @@ class SimKinematicBase(Module):
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
-        self._world.subscribe(self.world_change)
+        self._world.subscribe(self.world_observations)
         self._reporting = asyncio.create_task(self._report())
         yield
 

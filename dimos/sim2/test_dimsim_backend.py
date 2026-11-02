@@ -31,7 +31,7 @@ from dimos.sim2.actions import (
 from dimos.sim2.dimsim_backend import DimsimBackend
 from dimos.sim2.module import SimulationConfig
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world_change import EVENTS, OBJECT, WorldMirror
+from dimos.sim2.world_observations import EVENTS, OBJECT, WorldMirror
 
 
 @pytest.fixture

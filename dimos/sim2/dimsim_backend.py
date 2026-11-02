@@ -16,7 +16,7 @@
 
 The scene is the same MJCF file the MuJoCo backend takes, read into dimos.scene_data.v1 bodies. A robot is
 DimSim's kind of robot: a kinematic base the size of its model, moved by SetVelocity, sliding along static
-geometry and pushing dynamic bodies. Each frame is a WorldChange of what Rapier moved (its sleeping bodies did not);
+geometry and pushing dynamic bodies. Each frame is a WorldObservations of what Rapier moved (its sleeping bodies did not);
 sensors draw the world from it, and actions it cannot do (joints) it refuses.
 """
 
@@ -29,7 +29,7 @@ from threading import Lock
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos_lcm.world_msgs import WorldChange
+from dimos_lcm.world_msgs import WorldObservations
 import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -52,7 +52,7 @@ from dimos.sim2.backend import Publisher
 from dimos.sim2.mujoco_backend import scene_bodies
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.world import _assets, keyframe
-from dimos.sim2.world_change import (
+from dimos.sim2.world_observations import (
     EPOCH,
     OBJECT,
     PAUSED,
@@ -80,7 +80,7 @@ class DimsimBackend:
     ) -> None:
         self._config = config
         self._scene = config.scene or Path(__file__).with_name("logistics.xml")
-        # Sensors are drawn from world_change by their own views, not by the physics.
+        # Sensors are drawn from world_observations by their own views, not by the physics.
         self._robots = [d for d in simulated.values() if isinstance(d, SimulatedRobot)]
         for robot in self._robots:
             if robot.servos or robot.control_period is not None:
@@ -170,7 +170,7 @@ class DimsimBackend:
                         self._version += 1
             self._pending.extend(actions)
 
-    async def run(self, world_change: Publisher) -> None:
+    async def run(self, world_observations: Publisher) -> None:
         started = time.monotonic()
         sim_time = 0.0
         while True:
@@ -189,11 +189,11 @@ class DimsimBackend:
                 state = await asyncio.to_thread(self._call, {"op": "step", "steps": steps})
                 sim_time = state["time"]
                 self._publish(state)
-                if not world_change.busy:
-                    world_change.offer(self.frame())
+                if not world_observations.busy:
+                    world_observations.offer(self.frame())
             await asyncio.sleep(0.002)
 
-    def step(self, steps: int = 1) -> WorldChange:
+    def step(self, steps: int = 1) -> WorldObservations:
         """Apply what is pending and advance, without the real-time loop (tests, offline use)."""
         self._apply_pending()
         self._publish(self._call({"op": "step", "steps": steps}))
@@ -300,7 +300,7 @@ class DimsimBackend:
         with self._lock:
             self._moved.update(state["entities"])
 
-    def frame(self) -> WorldChange:
+    def frame(self) -> WorldObservations:
         """What Rapier moved since the last frame, entities added and removed, and refusals."""
         world = self.world
         if not self._added:

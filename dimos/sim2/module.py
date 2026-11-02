@@ -29,7 +29,7 @@ import tempfile
 from threading import Event, Thread
 from typing import Any, Protocol
 
-from dimos_lcm.world_msgs import Change, WorldAction, WorldChange
+from dimos_lcm.world_msgs import Observation, WorldAction, WorldObservations
 from pydantic import Field
 
 from dimos.core.core import rpc
@@ -45,7 +45,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.actions import Remove, Spawn, read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
-from dimos.sim2.world_change import OBJECT, WorldMirror
+from dimos.sim2.world_observations import OBJECT, WorldMirror
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -69,13 +69,13 @@ class SimulationConfig(ModuleConfig):
 
 
 class Simulation(SharedConfigModule):
-    """Publishes the world on world_change and acts on actions, through whichever backend config names.
+    """Publishes the world on world_observations and acts on actions, through whichever backend config names.
 
     It steps only once every module has started: a module that misses a frame never gets it.
     """
 
     config: SimulationConfig
-    world_change: Out[WorldChange]
+    world_observations: Out[WorldObservations]
     actions: In[WorldAction]
     # world -> each movable object, named as the object (scene_data's movers follow these).
     tf: Out[TFMessage]
@@ -151,15 +151,15 @@ class Simulation(SharedConfigModule):
             scene = await asyncio.to_thread(self._backend.scene_data)
             self.scene_data.publish(String(scene))
 
-    def _publish(self, change: WorldChange) -> None:
-        self.world_change.publish(change)
-        self._mirror.apply(change)
+    def _publish(self, frame: WorldObservations) -> None:
+        self.world_observations.publish(frame)
+        self._mirror.apply(frame)
         # Only the objects this frame moved: the backend sends a resting one's pose only when it moves.
         moved = {
             c.entity_id
-            for c in change.changes
-            if c.type in (Change.ADD_ENTITY, Change.ENTITY_UPDATE)
-            and Change.WORLD_POSE_SET in c.update_types
+            for c in frame.observations
+            if c.type in (Observation.ADD_ENTITY, Observation.ENTITY_UPDATE)
+            and Observation.WORLD_POSE_SET in c.update_types
         }
         objects = [
             entity
@@ -243,19 +243,19 @@ class _LatestPublisher:
 
     def __init__(self, publish: Any) -> None:
         self._publish = publish
-        self._pending: WorldChange | None = None
+        self._pending: WorldObservations | None = None
         self._wake = Event()
         self._closed = False
-        self._thread = Thread(target=self._loop, name="world_change", daemon=True)
+        self._thread = Thread(target=self._loop, name="world_observations", daemon=True)
         self._thread.start()
 
     @property
     def busy(self) -> bool:
         return self._wake.is_set()
 
-    def offer(self, change: WorldChange) -> None:
+    def offer(self, frame: WorldObservations) -> None:
         if not self.busy:
-            self._pending = change
+            self._pending = frame
             self._wake.set()
 
     def close(self) -> None:
