@@ -108,12 +108,55 @@ class PGOConfig(NativeModuleConfig):
     closure_extension_stop_on_swing: bool = True
     # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail
     # reject, extend the match in between (barely_fail < 1 < barely_pass)
-    barely_fail_uncertainty_range: float = 0.8
+    barely_fail_uncertainty_range: float = 0.05
     barely_pass_uncertainty_range: float = 3.0
     # The uncertainty range narrows over the extension's steps, slowed by 1 / (1 - pressure)^this
     decisive_pressure_rate: float = 1.0
     # Odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach
     extension_cloud_spacing: float = 0.25
+    # Compounding agreement sensitivity: the yank gate scores an extension by its median cloud ratio times
+    # exp(sensitivity (1 - min(d, 5)^2)) per step, d = how far that step's alignment is from the one before it at the
+    # source keyframe, in inlier distances (0 = plain median)
+    compounding_agreement_sensitivity: float = 1.5
+    # Graph change heat: a finished solve is adopted only while the heat <= threshold; adopting adds the curbed yank of the
+    # largest keyframe move it makes (stated odometry error sigmas along the path) above the floor; the heat decays by
+    # decay per keyframe; a solve finishing while hot waits (a newer one replaces it), always adopted at the run's end
+    graph_change_heat_enabled: bool = True
+    graph_change_heat_threshold: float = 30.0
+    graph_change_heat_floor: float = 20.0
+    graph_change_heat_decay: float = 0.995
+    # Deterministic solve schedule: a finished solve is held until scale * keyframes^keyframe_power *
+    # (1 + closures)^closure_power * (1 + rejected)^rejected_power * max(speed, speed_floor)^speed_power scans after its
+    # dispatch (an upper bound on its cost; rejected = closures the newest adopted solve rejected); one still running
+    # then is an overshoot, logged and adopted as it finishes. A 99th-percentile fit of Mac solves over six recordings
+    solve_hold_enabled: bool = True
+    solve_estimate_scale: float = 3.843e-5
+    solve_estimate_keyframe_power: float = 2.017
+    solve_estimate_closure_power: float = -0.215
+    solve_estimate_rejected_power: float = 0.558
+    solve_estimate_speed_power: float = 0.0
+    solve_estimate_speed_floor_mps: float = 0.05
+    # Deterministic closure-search schedule: a search's result lands only once its estimated cost in scans has passed since
+    # its dispatch and the data time since has reached its seconds (the search thread takes no other until then): at
+    # dispatch the lookup bench curve + build, degeneracy, single ICP (at max iterations) and gates terms below, then the
+    # extension's overhead as it starts and one cloud's bound before each round (seconds, turned into scans by the median
+    # recent scan period). One joint upper-bound fit of whole Mac searches over six recordings (>= 99% of each one's
+    # searches under; it put no weight on the single ICP's term, which the build term's points carry)
+    closure_search_hold_enabled: bool = True
+    # Logical execution time: each keyframe's search is its own job (snapshot at its keyframe, lands at its own estimate),
+    # run on this many worker threads in dispatch order; off = one held search at a time, later proposals going stale
+    closure_search_let_enabled: bool = True
+    closure_search_workers: int = 2
+    closure_search_estimate_lookup_s: float = 610e-6
+    closure_search_estimate_lookup_per_keyframe_s: float = 5.7e-9
+    closure_search_estimate_build_per_point_s: float = 3.137e-6
+    closure_search_estimate_degeneracy_per_point_s: float = 7.808e-6
+    closure_search_estimate_icp_s: float = 0.0
+    closure_search_estimate_gates_s: float = 0.05404
+    closure_search_estimate_extension_overhead_s: float = 0.1322
+    closure_search_estimate_extension_cloud_s: float = 0.08830
+    # The body's recent speed (solve estimate, closure diagnostics): median over the newest this many distinct-pose steps
+    solve_speed_window_poses: int = 500
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
@@ -126,11 +169,9 @@ class PGOConfig(NativeModuleConfig):
     # True: a closure's evidence is its likelihood ratio (mean log ratio per point: aligned half-normal of a width measured
     # from the clouds vs uniform out to the ICP match distance), in place of scan-context x ICP x degeneracy
     closure_likelihood_confidence: bool = True
-    # True: a keyframe whose closure search is rejected tries its next scan-context match, up to 1 + ceil(1/(1 - pressure))
-    # tries (2 at no pressure), at most scan_context_top_k
+    # True: a keyframe whose closure search is rejected tries its next scan-context match, up to
+    # 1 + floor(sqrt(min(ceil(1/(1 - pressure)), scan_context_top_k - 1))) tries (3 at pressure 0.8, 4 from 0.9 with top_k 10)
     closure_alternative_places: bool = True
-    # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
-    closure_commitments: bool = True
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
     closure_likelihood_visibility: bool = True
     # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
@@ -175,7 +216,7 @@ class PGOConfig(NativeModuleConfig):
     learned_odometry_error_estimate_stiffness: float = 10.0
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
-    # this the oldest scans are dropped, so a stall can't leave the module seconds stale
+    # this every queued scan but the newest is dropped, so a stall can't leave the module stale
     max_scan_queue: int = 5
     # threads closure search and solves may use, leaving the other cores to the nav stack (0 = every core)
     worker_threads: int = 2

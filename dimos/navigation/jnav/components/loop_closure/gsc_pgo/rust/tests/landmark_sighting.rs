@@ -124,7 +124,6 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         gnc_variance_scale: 1.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
-        committed: Vec::new(),
         evidence_core: false,
         learned_evidence: true,
     };
@@ -230,7 +229,6 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         gnc_variance_scale: 1.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
-        committed: Vec::new(),
         evidence_core: false,
         learned_evidence: true,
     };

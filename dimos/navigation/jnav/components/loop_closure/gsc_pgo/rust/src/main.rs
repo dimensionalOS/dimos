@@ -66,7 +66,7 @@ config! {
     body_frame: String,
     // where each pose graph snapshot's keyframes go, for offline checks; empty for never
     dump_path: String,
-    // bounded scan FIFO depth (<= 0 = unbounded)
+    // bounded scan FIFO depth for spikes; overflow drops all but the newest scan (<= 0 = unbounded)
     max_scan_queue: i32,
     // threads closure search and solves may use, leaving the other cores to the rest of the robot (0 = every core)
     worker_threads: usize,
@@ -97,6 +97,30 @@ config! {
     barely_pass_uncertainty_range: f64,
     decisive_pressure_rate: f64,
     extension_cloud_spacing: f64,
+    compounding_agreement_sensitivity: f64,
+    graph_change_heat_enabled: bool,
+    graph_change_heat_threshold: f64,
+    graph_change_heat_floor: f64,
+    graph_change_heat_decay: f64,
+    solve_hold_enabled: bool,
+    solve_estimate_scale: f64,
+    solve_estimate_keyframe_power: f64,
+    solve_estimate_closure_power: f64,
+    solve_estimate_rejected_power: f64,
+    solve_estimate_speed_power: f64,
+    solve_estimate_speed_floor_mps: f64,
+    closure_search_hold_enabled: bool,
+    closure_search_let_enabled: bool,
+    closure_search_workers: usize,
+    closure_search_estimate_lookup_s: f64,
+    closure_search_estimate_lookup_per_keyframe_s: f64,
+    closure_search_estimate_build_per_point_s: f64,
+    closure_search_estimate_degeneracy_per_point_s: f64,
+    closure_search_estimate_icp_s: f64,
+    closure_search_estimate_gates_s: f64,
+    closure_search_estimate_extension_overhead_s: f64,
+    closure_search_estimate_extension_cloud_s: f64,
+    solve_speed_window_poses: usize,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
@@ -130,7 +154,6 @@ config! {
     closure_sharpness_nudge_deg: f64,
     closure_likelihood_confidence: bool,
     closure_alternative_places: bool,
-    closure_commitments: bool,
     closure_likelihood_visibility: bool,
     learned_odometry_error_estimate_from_closures: bool,
     odometry_error_estimate_evidence_core: bool,
@@ -473,8 +496,11 @@ impl GscPgoModule {
             pose,
         });
         let cap = self.config.max_scan_queue;
-        while cap > 0 && state.cloud_buffer.len() as i32 > cap {
-            state.cloud_buffer.pop_front(); // drop oldest stale scan
+        if cap > 0 && state.cloud_buffer.len() as i32 > cap {
+            // the queue only absorbs spikes: once it overflows, keep just the newest scan so latency stays low
+            let newest = state.cloud_buffer.pop_back();
+            state.cloud_buffer.clear();
+            state.cloud_buffer.extend(newest);
         }
         drop(state);
         self.wake.notify_one();
@@ -544,16 +570,12 @@ impl Worker {
         let mut closures_logged = 0usize;
         // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
-        // The closure search running in the background, if any.
-        let mut closure_search: Option<
-            std::thread::JoinHandle<dimos_gsc_pgo::gsc_pgo::ClosureSearchResult>,
-        > = None;
 
         while !self.stop.load(Ordering::Relaxed) {
-            // adopt a finished solve now, scans or not
+            // adopt a finished solve now, scans or not, once its hold has passed (`solve_hold_enabled`; else each scan's update)
             let solve_finished =
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
-            if solve_finished && pgo.wait_for_solve() {
+            if solve_finished && pgo.update() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
                 self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
                 self.log_solve(&pgo, last_time);
@@ -636,28 +658,11 @@ impl Worker {
             }
 
             heard.add_new(pgo.key_poses());
-            // A closure search that finished in the background lands now, so its closure joins this keyframe's update.
-            if closure_search
-                .as_ref()
-                .is_some_and(|search| search.is_finished())
-            {
-                let search = closure_search.take().expect("checked above");
-                pgo.finish_closure_search(search.join().expect("closure search thread panicked"));
-            }
-            // Stages 1-2 run here on every keyframe; the best waiting proposal goes to the search thread when it is
-            // free and no scans are waiting.
-            pgo.propose_closure();
+            // A closure search that finished in the background lands now (once its estimate has passed,
+            // `closure_search_hold_enabled`), so its closure joins this keyframe's update; stages 1-2 run here on every
+            // keyframe, and the best waiting proposal goes to the search thread when it is free and no scans are waiting.
             let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
-            if !behind && closure_search.is_none() {
-                if let Some(search) = pgo.begin_closure_search() {
-                    closure_search = Some(
-                        std::thread::Builder::new()
-                            .name("gsc-closure-search".into())
-                            .spawn(move || search.run())
-                            .expect("spawn closure search thread"),
-                    );
-                }
-            }
+            pgo.step_closure_search(false, !behind);
             // a finished solve moves the keyframes
             let moved = pgo.update();
             self.publish_pose_changes(&pgo, &mut heard, moved, cur_time, &frame_id);
@@ -683,7 +688,7 @@ impl Worker {
                 serde_json::json!({
                     "keyframes": pgo.key_poses().len(),
                     "scan_queue": scan_queue,
-                    "closure_search_running": closure_search.is_some(),
+                    "closure_search_running": pgo.closure_search_running(),
                     "solve_running": pgo.solve_started().is_some(),
                     "stage_seconds": pgo.stage_seconds().iter().map(|(k, v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<_, _>>(),
                 }),

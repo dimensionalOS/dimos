@@ -15,7 +15,7 @@
 //! Re-solve a finished pgo-eval run's pose graph offline: its raw keyframe poses (`a.kf`) and committed closures
 //! (`a.json`) through `big_picture_fit::solve` at a chosen odometry error estimate, so a solve-side change
 //! can be judged in seconds instead of a replay. Writes the solved keyframes in a.kf's format and prints the kept count.
-//! usage: resolve <run dir> <out.bin> [odometry error estimate factor, 1] [config overlay json, e.g. '{"closure_commitments":false}']
+//! usage: resolve <run dir> <out.bin> [odometry error estimate factor, 1] [config overlay json, e.g. '{"closure_gnc_var_scale":4}']
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3};
@@ -94,7 +94,6 @@ fn main() {
         gnc_variance_scale: config.closure_gnc_var_scale,
         gnc_inlier_probability: config.closure_gnc_inlier_probability,
         huber_k: config.closure_robust_huber_k,
-        committed: Vec::new(),
         evidence_core: false,
         learned_evidence: true,
     };

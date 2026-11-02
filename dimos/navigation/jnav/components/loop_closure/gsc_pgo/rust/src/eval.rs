@@ -54,7 +54,7 @@ use memory2::{for_each_scan, read_odometry, OdomRow, Rigid};
 struct EvalConfig {
     #[serde(flatten)]
     pgo: PgoConfig,
-    /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue; <= 0 = unbounded).
+    /// `--live`: once more than this many scans wait, all but the newest are dropped (the module's max_scan_queue; <= 0 = unbounded).
     max_scan_queue: i32,
     /// Multiplies every stated odometry_error_estimate_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
     #[serde(alias = "odom_drift_scale")]
@@ -132,6 +132,8 @@ struct EvalOutput {
     keyframe_gnc_ms: Vec<f32>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
+    /// How much faster than real each part of the module runs (`Speed`).
+    speed: Speed,
     /// Each loop-overlap pressure recompute (every pressure_check_frequency-th scan): the scan's time, the pressure and the
     /// scan count (the module's debug_log numbers).
     loop_overlap: Vec<(f64, LoopOverlap, usize)>,
@@ -171,7 +173,7 @@ struct Args {
     /// Multiplies every odometry position, for an odometry that reads distance short or long (Go2 leg odometry ~0.76).
     odom_scale: f64,
     /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
-    /// max_scan_queue (oldest dropped when full), and the closure search and solves run in the background.
+    /// max_scan_queue (all but the newest dropped when it overflows), and the closure search and solves run in the background.
     live: bool,
     /// World-frame position fixes to feed as the scans reach their times (`GscPgo::add_coordinate_factor`), a CSV with one
     /// fix per line: time, frame id, x, y, z, the 3x3 covariance row-major (m²), the sensor's offset in the body frame
@@ -184,6 +186,12 @@ struct Args {
     landmark_sightings: Option<PathBuf>,
     /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
     until_s: f64,
+    /// `--solve-schedule estimate|fraction`: when a lockstep replay adopts each solve. `estimate` (the default): GSC's
+    /// deterministic mode, held until its estimated cost in scans after dispatch (`solve_hold_enabled`), waiting for it
+    /// only if it overshoots. `fraction`: the old stand-in, kept so old runs reproduce: once the map has grown by
+    /// `--solve-delay-fraction` (0.02) of its free keyframes (at least one), waiting for it if needed.
+    solve_by_fraction: bool,
+    solve_delay_fraction: f64,
 }
 
 /// The sightings of a `--landmark-sightings` file, in time order.
@@ -296,6 +304,8 @@ fn parse_args() -> Result<Args, String> {
     let mut landmark_sightings = None;
     let mut icp_cache = None;
     let mut until_s = f64::INFINITY;
+    let mut solve_delay_fraction = 0.02;
+    let mut solve_by_fraction = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -311,6 +321,20 @@ fn parse_args() -> Result<Args, String> {
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
             "--until-s" => until_s = value()?.parse().map_err(|e| format!("{e}"))?,
+            "--solve-schedule" => {
+                solve_by_fraction = match value()?.as_str() {
+                    "estimate" => false,
+                    "fraction" => true,
+                    other => {
+                        return Err(format!(
+                            "--solve-schedule {other}: not estimate or fraction"
+                        ))
+                    }
+                }
+            }
+            "--solve-delay-fraction" => {
+                solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
+            }
             "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
             "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
             "--icp-cache-record" => {
@@ -343,6 +367,8 @@ fn parse_args() -> Result<Args, String> {
         landmark_sightings,
         icp_cache,
         until_s,
+        solve_by_fraction,
+        solve_delay_fraction,
     })
 }
 
@@ -661,7 +687,7 @@ fn run() -> Result<(), String> {
         Ok(Some((cloud_with_pose, latest.ts)))
     };
     if args.live {
-        // as the module runs: scans arrive at their recorded times into a queue of max_scan_queue (oldest dropped when
+        // as the module runs: scans arrive at their recorded times into a queue of max_scan_queue (all but the newest dropped when
         // full), the closure search runs on its own thread and only starts while no scans wait, solves adopt when done
         let queue = std::sync::Mutex::new((std::collections::VecDeque::new(), false));
         let arrived = std::sync::Condvar::new();
@@ -695,9 +721,12 @@ fn run() -> Result<(), String> {
                         }
                         let mut queued = queue.lock().expect("queue");
                         queued.0.push_back((cloud_with_pose, ts, Instant::now()));
-                        while live_queue > 0 && queued.0.len() > live_queue as usize {
-                            queued.0.pop_front();
-                            scans_dropped += 1;
+                        if live_queue > 0 && queued.0.len() > live_queue as usize {
+                            // overflow keeps only the newest scan, as the module does
+                            scans_dropped += queued.0.len() - 1;
+                            let newest = queued.0.pop_back();
+                            queued.0.clear();
+                            queued.0.extend(newest);
                         }
                         drop(queued);
                         arrived.notify_one();
@@ -706,7 +735,6 @@ fn run() -> Result<(), String> {
                 queue.lock().expect("queue").1 = true;
                 arrived.notify_all();
             });
-            let mut closure_search: Option<std::thread::ScopedJoinHandle<'_, _>> = None;
             loop {
                 let (cloud_with_pose, ts, arrived_at) = {
                     let mut queued = queue.lock().expect("queue");
@@ -715,11 +743,7 @@ fn run() -> Result<(), String> {
                             break next;
                         }
                         if queued.1 {
-                            if let Some(search) = closure_search.take() {
-                                pgo.finish_closure_search(
-                                    search.join().expect("closure search thread panicked"),
-                                );
-                            }
+                            pgo.land_remaining_closure_search();
                             return Ok(());
                         }
                         queued = arrived.wait(queued).expect("queue");
@@ -727,22 +751,10 @@ fn run() -> Result<(), String> {
                 };
                 let step_started = Instant::now();
                 if recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
-                    if closure_search
-                        .as_ref()
-                        .is_some_and(|search| search.is_finished())
-                    {
-                        let search = closure_search.take().expect("checked above");
-                        pgo.finish_closure_search(
-                            search.join().expect("closure search thread panicked"),
-                        );
-                    }
-                    pgo.propose_closure();
+                    // a finished search lands (once its estimate has passed), this keyframe's match is proposed, and the
+                    // best waiting one starts when the search thread is free and no scans are waiting
                     let behind = !queue.lock().expect("queue").0.is_empty();
-                    if !behind && closure_search.is_none() {
-                        if let Some(search) = pgo.begin_closure_search() {
-                            closure_search = Some(scope.spawn(move || search.run()));
-                        }
-                    }
+                    pgo.step_closure_search(false, !behind);
                     recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
                         pgo.update();
                     })?;
@@ -784,11 +796,15 @@ fn run() -> Result<(), String> {
             }
             pgo.search_for_closure_pairs();
             recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
+                if !args.solve_by_fraction {
+                    pgo.wait_for_due_solve();
+                    return;
+                }
                 match pgo.solve_started() {
                     Some((keyframes, free))
                         if pgo.key_poses().len()
                             < keyframes
-                                + ((free as f64 * SOLVE_DELAY_FRACTION).ceil() as usize).max(1) => {
+                                + ((free as f64 * args.solve_delay_fraction).ceil() as usize).max(1) => {
                     }
                     Some(_) => {
                         pgo.wait_for_solve();
@@ -801,7 +817,9 @@ fn run() -> Result<(), String> {
             Ok(())
         })?;
     }
+    let finish_started = Instant::now();
     pgo.finish();
+    let finish_s = finish_started.elapsed().as_secs_f64();
     let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
     recorder.dump(&pgo, false, ts)?;
     if let Some(path) = &args.event_dump {
@@ -866,6 +884,19 @@ fn run() -> Result<(), String> {
         }
         None => (0, 0),
     };
+    // lockstep waits for every due solve on the keyframe thread, and for the last ones in `finish`; live they run on
+    // their own thread
+    let replay_solve_wait_s = if args.live {
+        finish_s
+    } else {
+        recorder
+            .keyframe_gnc_ms
+            .iter()
+            .map(|&ms| ms as f64 / 1e3)
+            .sum::<f64>()
+            + finish_s
+    };
+    let speed = Speed::new(&pgo, data_duration_s, runtime_s, replay_solve_wait_s);
     let (odometry_drift, odometry_drift_measured) = pgo.odometry_error_estimate_for_next_run();
     let output = EvalOutput {
         odometry_drift,
@@ -898,6 +929,7 @@ fn run() -> Result<(), String> {
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
             .collect(),
+        speed,
         loop_overlap: recorder.loop_overlap,
         gate_counts,
         closure_diagnostics,
@@ -908,8 +940,41 @@ fn run() -> Result<(), String> {
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
     std::fs::write(&args.output, json).map_err(|e| format!("write {:?}: {e}", args.output))?;
 
+    let speed = &output.speed;
+    let parts: Vec<String> = speed
+        .search_parts
+        .iter()
+        .map(|(part, seconds)| format!("{part} {seconds:.1}s"))
+        .collect();
     eprintln!(
-        "pgo-eval: {} scans, {} keyframes, {} closures, {:.1}s data in {:.2}s wall ({:.1}x realtime) -> {:?}",
+        "pgo-eval: keyframe thread {:.1}x real ({:.1}s): scan work {:.1}x ({:.1}s), closure search {:.1}x ({:.1}s: {})",
+        speed.keyframe_thread.x_real,
+        speed.keyframe_thread.seconds,
+        speed.scan.x_real,
+        speed.scan.seconds,
+        speed.search.x_real,
+        speed.search.seconds,
+        parts.join(", "),
+    );
+    eprintln!(
+        "pgo-eval: solver thread {} solves, median {:.2}s, max {:.2}s; lag median {:.0} keyframes / {:.1}s, max {} keyframes / {:.1}s; {} overshot their estimate; this replay waited {:.1}s for solves",
+        speed.solves,
+        speed.solve_median_s,
+        speed.solve_max_s,
+        speed.lag_median_keyframes,
+        speed.lag_median_s,
+        speed.lag_max_keyframes,
+        speed.lag_max_s,
+        speed.solve_overshoots,
+        speed.replay_solve_wait_s,
+    );
+    eprintln!(
+        "pgo-eval: closure searches: {} overshot their estimate; this replay waited {:.1}s for searches",
+        pgo.closure_search_overshoots(),
+        pgo.closure_search_wait_s(),
+    );
+    eprintln!(
+        "pgo-eval: {} scans, {} keyframes, {} closures, {:.1}s data in {:.2}s replay wall time ({:.1}x realtime) -> {:?}",
         scans_processed,
         output.keyframes,
         output.closures,
@@ -940,10 +1005,108 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free keyframes (at least
-/// one), waiting for it if needed, so it gives the same graph on any machine; a solve's cost grows with the map, so the
-/// delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac solve at 5k keyframes is ~0.5%).
-const SOLVE_DELAY_FRACTION: f64 = 0.01;
+
+/// Seconds and how many times faster than real (data seconds / seconds) one part of the work runs.
+#[derive(Serialize)]
+struct Pace {
+    seconds: f64,
+    x_real: f64,
+}
+
+impl Pace {
+    fn of(seconds: f64, data_s: f64) -> Pace {
+        Pace {
+            seconds,
+            x_real: if seconds > 0.0 {
+                data_s / seconds
+            } else {
+                f64::INFINITY
+            },
+        }
+    }
+}
+
+/// The module's speed by thread. The keyframe thread does the per-scan work (`scan`: drop-reseen, aggregation,
+/// voxelizing, the keyframe and its scan-context descriptor, plus the degeneracy check) and the closure search (`search`:
+/// the scan-context lookup, proposals, the loop-overlap pressure, ICP and extension); `keyframe_thread` is both, the
+/// headline, never counting a solve. The solver is its own thread live: its solves' seconds, and each solve's lag, the
+/// keyframes and data seconds from its dispatch to the first keyframe that arrives after it would have finished live.
+/// `replay_solve_wait_s` is what this deterministic replay spent waiting for solves (not a cost live).
+#[derive(Serialize)]
+struct Speed {
+    scan: Pace,
+    search: Pace,
+    keyframe_thread: Pace,
+    /// The search's parts in seconds: scan-context lookup, the rest of proposing, pressure checks, single ICP, extension
+    /// and everything else a search does (submaps, gates, likelihoods).
+    search_parts: BTreeMap<String, f64>,
+    solves: usize,
+    solve_median_s: f64,
+    solve_max_s: f64,
+    lag_median_keyframes: f64,
+    lag_max_keyframes: usize,
+    lag_median_s: f64,
+    lag_max_s: f64,
+    /// Solves slower than the data their estimate spanned (`GscPgo::solve_overshoots`).
+    solve_overshoots: usize,
+    replay_solve_wait_s: f64,
+    replay_wall: Pace,
+}
+
+/// The median of `values` (NaN when empty).
+fn median(mut values: Vec<f64>) -> f64 {
+    values.sort_by(f64::total_cmp);
+    match values.len() {
+        0 => f64::NAN,
+        n if n % 2 == 1 => values[n / 2],
+        n => (values[n / 2 - 1] + values[n / 2]) / 2.0,
+    }
+}
+
+impl Speed {
+    fn new(pgo: &GscPgo, data_s: f64, replay_wall_s: f64, replay_solve_wait_s: f64) -> Speed {
+        let stage: BTreeMap<&str, f64> = pgo.stage_seconds().into_iter().collect();
+        let at = |name: &str| stage.get(name).copied().unwrap_or(0.0);
+        let scan = at("scan") + at("degeneracy");
+        let search = at("propose") + at("pressure") + at("search") - at("degeneracy");
+        let search_parts = BTreeMap::from([
+            ("lookup".to_string(), at("scan_context")),
+            ("proposals".to_string(), at("propose") - at("scan_context")),
+            ("pressure".to_string(), at("pressure")),
+            ("icp".to_string(), at("icp")),
+            ("extension".to_string(), at("extended_icp")),
+            (
+                "other".to_string(),
+                at("search") - at("icp") - at("extended_icp") - at("degeneracy"),
+            ),
+        ]);
+        let times: Vec<f64> = pgo.key_poses().iter().map(|k| k.time).collect();
+        let (mut lag_keyframes, mut lag_s) = (Vec::new(), Vec::new());
+        for &(keyframes, dispatched_at, seconds) in pgo.solve_records() {
+            let done = dispatched_at + seconds;
+            let first = times.partition_point(|&t| t < done);
+            lag_keyframes.push(first.saturating_sub(keyframes - 1));
+            lag_s.push(times.get(first).map_or(seconds, |&t| t - dispatched_at));
+        }
+        let solve_s: Vec<f64> = pgo.solve_records().iter().map(|r| r.2).collect();
+        Speed {
+            scan: Pace::of(scan, data_s),
+            search: Pace::of(search, data_s),
+            keyframe_thread: Pace::of(scan + search, data_s),
+            search_parts,
+            solves: solve_s.len(),
+            solve_median_s: median(solve_s.clone()),
+            solve_max_s: solve_s.iter().copied().fold(f64::NAN, f64::max),
+            lag_median_keyframes: median(lag_keyframes.iter().map(|&k| k as f64).collect()),
+            lag_max_keyframes: lag_keyframes.iter().copied().max().unwrap_or(0),
+            lag_median_s: median(lag_s.clone()),
+            lag_max_s: lag_s.iter().copied().fold(f64::NAN, f64::max),
+            solve_overshoots: pgo.solve_overshoots(),
+            replay_solve_wait_s,
+            replay_wall: Pace::of(replay_wall_s, data_s),
+        }
+    }
+}
 
 /// What both replays record per scan and keyframe: the loop-overlap pressures, per-keyframe timings and closures, and
 /// with `--event-dump` every keyframe pose change as the module publishes it (`<path>.closures`) and the closure-edge

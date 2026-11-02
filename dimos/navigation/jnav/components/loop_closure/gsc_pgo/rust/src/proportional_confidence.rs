@@ -346,9 +346,11 @@ impl ClosureSearch {
         if max_clouds < 2 || target_ids.is_empty() || clouds.is_empty() {
             return accept(first_ratio);
         }
+        // the single fit already placed every cloud, so a cloud's fit only refines it: pairs out to the single fit's
+        // 10 m let a cloud that half overlaps the target pull its unseen half onto other structure (huge: 4-6 m, 8-25 deg off)
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
-            max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
+            max_correspondence_distance: self.config.closure_icp_inlier_distance_m,
             inlier_squared_distance: self.config.closure_inlier_squared_distance(),
             point_to_plane: self.config.closure_icp_point_to_plane,
         };
@@ -361,8 +363,20 @@ impl ClosureSearch {
         target.add(self, &target_ids, true);
         let range = UncertaintyRange::new(&self.config, clouds.len() + 1, diag.pressure);
         let mut ratios = vec![first_ratio];
+        // the string of alignments, first fit then each cloud's, and how well consecutive ones agree at the source
+        let source_position = positions[cur_idx];
+        let mut previous = (first.rotation, first.translation);
+        let mut multiplier = 1.0;
         let mut found: Option<Option<IcpResult>> = None;
+        diag.extension_clouds_planned = clouds.len();
         for (step, &j) in clouds.iter().enumerate() {
+            // the deterministic schedule counts this round's estimate before it starts
+            if let Some(progress) = &self.progress {
+                progress.round_started();
+            }
+            // each round's seconds, debug dumps left out
+            let round_started = std::time::Instant::now();
+            let dumped_before = *self.dump_s.lock().expect("dump seconds");
             let step = step + 1;
             // the target submap's range around target_idx for this many source clouds, then the keyframes near where
             // this cloud lands
@@ -417,6 +431,7 @@ impl ClosureSearch {
                     );
                     self.debug_io_s
                         .set(self.debug_io_s.get() + t0.elapsed().as_secs_f64());
+                    *self.dump_s.lock().expect("dump seconds") += t0.elapsed().as_secs_f64();
                 }
                 let mut v = vec![source.len() as f64];
                 v.extend(crate::icp_cache::encode_icp(&icp));
@@ -442,6 +457,33 @@ impl ClosureSearch {
             let bar = required(evidence, diag);
             ratios.push(if bar > 0.0 { evidence / bar } else { f64::INFINITY });
             let median = median_ratio(&ratios);
+            let at = |(rotation, translation): (Mat3, Vec3)| {
+                mat3::add(&mat3::mat_vec(&rotation, &source_position), &translation)
+            };
+            let shift = mat3::norm(&mat3::sub(
+                &at((icp.rotation, icp.translation)),
+                &at(previous),
+            ));
+            let turn = mat3::angular_distance(&previous.0, &icp.rotation);
+            let apart = (shift.powi(2) + (self.mean_reach * turn).powi(2)).sqrt()
+                / self.config.closure_icp_inlier_distance_m;
+            // a cloud that would not fit counts as the farthest
+            let apart = if apart.is_finite() {
+                apart.min(5.0)
+            } else {
+                5.0
+            };
+            multiplier *=
+                (self.config.compounding_agreement_sensitivity * (1.0 - apart.powi(2))).exp();
+            previous = (icp.rotation, icp.translation);
+            diag.cloud_agreement.push(apart);
+            diag.agreement_multiplier = multiplier;
+            diag.extension_clouds_used = step;
+            diag.cost_extension_rounds_s.push(
+                round_started.elapsed().as_secs_f64()
+                    - (*self.dump_s.lock().expect("dump seconds") - dumped_before),
+            );
+            let score = median * multiplier;
             diag.cloud_ratios = ratios.clone();
             diag.extended_keyframes = ratios.len();
             diag.extended_source_points = round[0] as usize;
@@ -450,9 +492,9 @@ impl ClosureSearch {
             diag.extended_likelihood_ratio = round[16];
             diag.extended_confidence = 1.0 - (-median * bar.max(0.0)).exp();
             let (low, high) = range.at(step);
-            let verdict = if median >= high {
+            let verdict = if score >= high {
                 Some(Some(first.clone()))
-            } else if median <= low {
+            } else if score <= low {
                 Some(None)
             } else {
                 None
@@ -466,7 +508,7 @@ impl ClosureSearch {
         }
         match found {
             Some(verdict) => verdict,
-            None => accept(median_ratio(&ratios)),
+            None => accept(median_ratio(&ratios) * multiplier),
         }
     }
 }
@@ -564,13 +606,10 @@ mod uncertainty_range_tests {
         let config = crate::gsc_pgo::Config::default();
         // 5 clouds: the single scan and 4 more, so 4 rounds
         let calm = UncertaintyRange::new(&config, 5, 0.0);
-        assert_eq!(
-            calm.at(0),
-            (
-                config.barely_fail_uncertainty_range,
-                config.barely_pass_uncertainty_range
-            )
-        );
+        // 1 - (1 - low) is low only to rounding
+        let (low, high) = calm.at(0);
+        assert!((low - config.barely_fail_uncertainty_range).abs() < 1e-12);
+        assert!((high - config.barely_pass_uncertainty_range).abs() < 1e-12);
         assert_eq!(calm.at(4), (1.0, 1.0));
         let pressed = UncertaintyRange::new(&config, 5, 0.5);
         let half = 1.0 + (config.barely_pass_uncertainty_range - 1.0) / 2.0;

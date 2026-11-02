@@ -79,6 +79,8 @@ pub struct IcpResult {
     /// Iterations run, and why it stopped.
     pub iterations: u32,
     pub stop: IcpStop,
+    /// The target points ICP paired against (the thinned target in `icp_thinned`; 0 from a cache entry made before it).
+    pub target_points: usize,
     /// The transform that moves the source onto the target.
     pub rotation: Mat3,
     pub translation: Vec3,
@@ -243,6 +245,7 @@ pub fn icp_with_early_stop(
         converged,
         iterations,
         stop,
+        target_points: target.len(),
         rotation,
         translation,
         fitness,
