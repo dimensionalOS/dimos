@@ -25,15 +25,13 @@ from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.sim2.module import Simulation, SimulationSpec
-from dimos.sim2.spec import Mount, SimulatedSensor
-from dimos.sim2.view import WorldView, open_view
+from dimos.sim2.spec import SimulatedSensor
+from dimos.sim2.view import WorldView, open_view, sensor_frame
 from dimos.sim2.world_change import WorldMirror
 
 
 class SimCameraConfig(ModuleConfig):
-    name: str = "camera"
-    mount: Mount = Mount("world")
-    robot_id: str | None = None
+    # Its optical frame (z forward, x right, y down), as a robot's URDF or the scene names it: where it sits.
     frame_id: str | None = "camera_optical"
     width: int = 640
     height: int = 480
@@ -49,24 +47,21 @@ class SimCamera(Module):
 
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        config = self.config
-        return {
-            "simulated": SimulatedSensor(
-                config.name, "camera", config.mount, config.robot_id, config.fovy
-            )
-        }
+        return {"simulated": SimulatedSensor("camera", self.frame_id, self.config.fovy)}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_change)
-        view = open_view(self._simulation.describe())
-        self._capturing = asyncio.create_task(self._capture(view))
+        description = self._simulation.describe()
+        view = open_view(description)
+        self._capturing = asyncio.create_task(
+            self._capture(view, sensor_frame(description, self.frame_id))
+        )
         yield
         self._capturing.cancel()
         view.close()
 
-    async def _capture(self, view: WorldView) -> None:
-        camera = f"{self.config.robot_id or 'world'}/{self.config.name}"
+    async def _capture(self, view: WorldView, camera: str) -> None:
         # rate_hz of sim time, so a world slower or faster than real gets as many frames per sim second.
         async for _ in self._world.ticks(self.config.rate_hz):
             view.update(self._world)

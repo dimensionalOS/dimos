@@ -156,6 +156,8 @@ def _mesh_data(model: mujoco.MjModel, mesh: int) -> dict[str, str]:
 
 
 class MujocoBackend:
+    model_format = "mjcf"
+
     def __init__(
         self, config: "SimulationConfig", simulated: Mapping[str, Simulated], directory: Path
     ) -> None:

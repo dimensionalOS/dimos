@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_change and sending joint commands."""
+"""A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_change and sending joint commands.
+
+Its model comes from the robot_description of the same name: a UrdfManager with GO2_SIM_MODEL (the URDF of GO2_MJCF,
+plus any sensor frames) and formats={"mjcf": GO2_MJCF}.
+"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -28,23 +32,30 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
+from dimos.sim2.utils.mjcf_to_urdf import MjcfUrdf
 from dimos.sim2.view import rotation_matrix
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
+
+GO2_ROBOT_ID = "go2"
+GO2_MJCF = LfsPath("go2_sim/unitree_go2/go2.xml")
+# The MJCF's base body is the URDF's base_link, the frame odometry moves.
+GO2_SIM_MODEL = RobotModel.from_file(MjcfUrdf(GO2_MJCF, GO2_ROBOT_ID, "base_link"))
 
 
 class Go2SimConfig(ModuleConfig):
-    robot_id: str = "go2"
+    robot_id: str = GO2_ROBOT_ID
     xyz: tuple[float, float, float] = (0.0, 0.0, 0.35)
     policy: Path | None = None
     odom_frame_id: str = "world"
@@ -77,7 +88,6 @@ class Go2Sim(Module):
         return {
             "simulated": SimulatedRobot(
                 config.robot_id,
-                get_data("go2_sim") / "unitree_go2" / "go2.xml",
                 "base",
                 xyz=config.xyz,
                 control_period=CONTROL_DT,
@@ -159,5 +169,5 @@ class Go2Sim(Module):
             position=position.tolist(),
             orientation=[x, y, z, w],
         )
-        self.tf.publish(TFMessage(*GO2Connection._odom_to_tf(odom)))
+        self.tf.publish(TFMessage(Transform.from_pose("base_link", odom)))
         self.odom.publish(odom)

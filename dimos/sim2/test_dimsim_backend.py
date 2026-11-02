@@ -83,7 +83,7 @@ class _Stepped:
 @pytest.fixture
 def backend(scene, robot_model, tmp_path):
     backend = DimsimBackend(
-        SimulationConfig(scene=scene), {"bot": SimulatedRobot("bot", robot_model, "base")}, tmp_path
+        SimulationConfig(scene=scene), {"bot": SimulatedRobot("bot", "base", robot_model)}, tmp_path
     )
     yield _Stepped(backend)
     backend.close()

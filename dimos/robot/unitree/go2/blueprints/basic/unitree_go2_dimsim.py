@@ -17,34 +17,24 @@
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_sim2_l1 import (
-    _GO2_DESCRIPTION,
-    Go2UrdfRoot,
+    CAMERA_OPTICAL_FRAME,
+    GO2_L1_MODEL,
+    L1_FRAME,
 )
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import CAMERA_XYZ, OPTICAL_RPY
+from dimos.robot.unitree.go2.sim2 import GO2_MJCF, GO2_ROBOT_ID
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.kinematic_base import SimKinematicBase
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.module import Simulation
-from dimos.sim2.spec import Mount
-from dimos.utils.data import get_data
 
 unitree_go2_dimsim = autoconnect(
     Simulation.blueprint(
         backend="dimsim", scene=Path(__file__).parents[5] / "sim2" / "logistics_props.xml"
     ),
-    SimKinematicBase.blueprint(
-        robot_id="go2", model=get_data("go2_sim") / "unitree_go2" / "go2.xml", root_body="base"
-    ),
-    Go2UrdfRoot.blueprint(),
-    UrdfManager.blueprint(
-        model=RobotModel.from_file(
-            _GO2_DESCRIPTION / "urdf" / "go2_description.urdf",
-            package_paths={"go2_description": _GO2_DESCRIPTION},
-        )
-    ),
-    SimL1.blueprint(),
-    SimCamera.blueprint(robot_id="go2", mount=Mount("base", CAMERA_XYZ, OPTICAL_RPY)),
+    SimKinematicBase.blueprint(robot_id=GO2_ROBOT_ID, root_body="base"),
+    UrdfManager.blueprint(model=GO2_L1_MODEL, formats={"mjcf": GO2_MJCF}),
+    SimL1.blueprint(frame_id=L1_FRAME),
+    SimCamera.blueprint(frame_id=CAMERA_OPTICAL_FRAME),
 ).global_config(n_workers=6, robot_model="unitree_go2")

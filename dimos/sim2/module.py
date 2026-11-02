@@ -17,7 +17,11 @@
 class Go2Sim(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("go2", ...)}
+        return {"simulated": SimulatedRobot("go2", "base")}
+
+A robot's model and its sensors' mounts come from the robot_description a UrdfManager shares (any SharedConfigModule
+gets it): the robot of that URDF's name loads its model in the format the engine reads, and each sensor sits at its
+frame_id in that URDF.
 """
 
 import asyncio
@@ -42,7 +46,7 @@ from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.actions import Remove, Spawn, read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
-from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, validate
+from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
 from dimos.sim2.world_change import OBJECT, WorldMirror
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
@@ -95,10 +99,17 @@ class Simulation(SharedConfigModule):
         self._all_started = Event()
         # Each sender's "simulated" value, keyed by its instance name.
         self.simulated: dict[str, Simulated] = {}
+        # Each robot_description (a UrdfManager's), keyed by its robot's name.
+        self.robot_descriptions: dict[str, dict[str, Any]] = {}
 
     def config_receive(self, config_senders: ConfigSenders) -> None:
         simulated: dict[str, Simulated] = {}
+        robot_descriptions: dict[str, dict[str, Any]] = {}
         for name, config in config_senders:
+            if set(config) == {"robot_description"}:
+                robot = config["robot_description"]
+                robot_descriptions[robot["name"]] = robot
+                continue
             description = config.get("simulated")
             if set(config) != {"simulated"} or not isinstance(description, Simulated):
                 raise TypeError(
@@ -106,7 +117,12 @@ class Simulation(SharedConfigModule):
                     f" {{'simulated': SimulatedRobot | SimulatedSensor}}, not {config!r}"
                 )
             simulated[name] = description
-        self.simulated = simulated
+        self.robot_descriptions = robot_descriptions
+        if self.config.backend not in BACKENDS:
+            raise ValueError(f"unknown backend {self.config.backend!r}; one of {sorted(BACKENDS)}")
+        model_format = load_backend(self.config.backend).model_format
+        resolved = resolve(simulated.values(), robot_descriptions, model_format)
+        self.simulated = dict(zip(simulated, resolved, strict=True))
 
     @rpc
     def build(self) -> None:
@@ -218,7 +234,7 @@ class Simulation(SharedConfigModule):
             "simulated": list(values),
             "robots": sorted(d.robot_id for d in values if isinstance(d, SimulatedRobot)),
             "sensors": sorted(
-                f"{d.robot_id or 'world'}/{d.name}"
+                f"{d.robot_id or 'world'}/{d.frame_id}"
                 for d in values
                 if isinstance(d, SimulatedSensor)
             ),

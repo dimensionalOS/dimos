@@ -14,50 +14,44 @@
 
 """unitree-go2-basic in sim2: the walking Go2, its head L1 and front camera, its URDF posed for viewers."""
 
+import math
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import CAMERA_XYZ, OPTICAL_RPY
-from dimos.robot.unitree.go2.sim2 import Go2Sim
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
+    CAMERA_XYZ,
+    L1_MOUNT,
+    L1_XYZ,
+    OPTICAL_RPY,
+)
+from dimos.robot.unitree.go2.sim2 import GO2_MJCF, GO2_SIM_MODEL, Go2Sim
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.module import Simulation
-from dimos.sim2.spec import Mount
 from dimos.visualization.vis_module import vis_module
 
-_GO2_DESCRIPTION = (
-    RobotDescriptionSource(
-        url="https://github.com/unitreerobotics/unitree_ros",
-        ref="38a9b00ecbff0b70e85a7627eb9c65db9a2341f7",
+L1_FRAME = "utlidar_lidar"
+CAMERA_FRAME = "front_camera"
+CAMERA_OPTICAL_FRAME = "camera_optical"
+# The Go2 and its L1 and camera frames.
+GO2_L1_MODEL = (
+    GO2_SIM_MODEL.with_fixed_frame(
+        L1_FRAME, "base_link", xyz=L1_XYZ, rpy=tuple(math.radians(a) for a in L1_MOUNT)
     )
-    / "robots"
-    / "go2_description"
+    .with_fixed_frame(CAMERA_FRAME, "base_link", xyz=CAMERA_XYZ)
+    .with_fixed_frame(CAMERA_OPTICAL_FRAME, CAMERA_FRAME, rpy=OPTICAL_RPY)
 )
-
-
-class Go2UrdfRoot(StaticTfPublisher):
-    """base_link -> base, the root link of Unitree's go2_description URDF."""
-
-    def transforms(self) -> list[Transform]:
-        return [Transform(frame_id="base_link", child_frame_id="base")]
-
 
 unitree_go2_sim2_l1 = autoconnect(
     Simulation.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     Go2Sim.blueprint(),
-    Go2UrdfRoot.blueprint(),
     UrdfManager.blueprint(
-        model=RobotModel.from_file(
-            _GO2_DESCRIPTION / "urdf" / "go2_description.urdf",
-            package_paths={"go2_description": _GO2_DESCRIPTION},
-        )
+        model=GO2_L1_MODEL,
+        formats={"mjcf": GO2_MJCF},
     ).remappings([(UrdfManager, "coordinator_joint_state", "joint_state")]),
-    SimL1.blueprint(),
-    SimCamera.blueprint(robot_id="go2", mount=Mount("base", CAMERA_XYZ, OPTICAL_RPY)),
+    SimL1.blueprint(frame_id=L1_FRAME),
+    SimCamera.blueprint(frame_id=CAMERA_OPTICAL_FRAME),
 ).global_config(n_workers=6, robot_model="unitree_go2")
