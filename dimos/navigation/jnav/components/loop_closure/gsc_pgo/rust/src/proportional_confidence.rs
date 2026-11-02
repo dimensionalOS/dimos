@@ -370,6 +370,10 @@ impl ClosureSearch {
         let mut found: Option<Option<IcpResult>> = None;
         diag.extension_clouds_planned = clouds.len();
         for (step, &j) in clouds.iter().enumerate() {
+            // the deterministic schedule counts this round's estimate before it starts
+            if let Some(progress) = &self.progress {
+                progress.round_started();
+            }
             // each round's seconds, debug dumps left out
             let round_started = std::time::Instant::now();
             let dumped_before = *self.dump_s.lock().expect("dump seconds");

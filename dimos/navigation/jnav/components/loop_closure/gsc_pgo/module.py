@@ -136,6 +136,23 @@ class PGOConfig(NativeModuleConfig):
     solve_estimate_rejected_power: float = 0.558
     solve_estimate_speed_power: float = 0.0
     solve_estimate_speed_floor_mps: float = 0.05
+    # Deterministic closure-search schedule: a search's result lands only once its estimated cost in scans has passed since
+    # its dispatch and the data time since has reached its seconds (the search thread takes no other until then): at
+    # dispatch the lookup bench curve + build, degeneracy, single ICP (at max iterations) and gates terms below, then the
+    # extension's overhead as it starts and one cloud's bound before each round (seconds, turned into scans by the median
+    # recent scan period). One joint upper-bound fit of whole Mac searches over six recordings (>= 99% of each one's
+    # searches under; it put no weight on the single ICP's term, which the build term's points carry)
+    closure_search_hold_enabled: bool = True
+    closure_search_estimate_lookup_s: float = 610e-6
+    closure_search_estimate_lookup_per_keyframe_s: float = 5.7e-9
+    closure_search_estimate_build_per_point_s: float = 3.137e-6
+    closure_search_estimate_degeneracy_per_point_s: float = 7.808e-6
+    closure_search_estimate_icp_s: float = 0.0
+    closure_search_estimate_gates_s: float = 0.05404
+    closure_search_estimate_extension_overhead_s: float = 0.1322
+    closure_search_estimate_extension_cloud_s: float = 0.08830
+    # The body's recent speed (solve estimate, closure diagnostics): median over the newest this many distinct-pose steps
+    solve_speed_window_poses: int = 500
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off

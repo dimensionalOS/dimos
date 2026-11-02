@@ -109,6 +109,16 @@ config! {
     solve_estimate_rejected_power: f64,
     solve_estimate_speed_power: f64,
     solve_estimate_speed_floor_mps: f64,
+    closure_search_hold_enabled: bool,
+    closure_search_estimate_lookup_s: f64,
+    closure_search_estimate_lookup_per_keyframe_s: f64,
+    closure_search_estimate_build_per_point_s: f64,
+    closure_search_estimate_degeneracy_per_point_s: f64,
+    closure_search_estimate_icp_s: f64,
+    closure_search_estimate_gates_s: f64,
+    closure_search_estimate_extension_overhead_s: f64,
+    closure_search_estimate_extension_cloud_s: f64,
+    solve_speed_window_poses: usize,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
@@ -555,10 +565,6 @@ impl Worker {
         let mut closures_logged = 0usize;
         // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
-        // The closure search running in the background, if any.
-        let mut closure_search: Option<
-            std::thread::JoinHandle<dimos_gsc_pgo::gsc_pgo::ClosureSearchResult>,
-        > = None;
 
         while !self.stop.load(Ordering::Relaxed) {
             // adopt a finished solve now, scans or not, once its hold has passed (`solve_hold_enabled`; else each scan's update)
@@ -647,28 +653,11 @@ impl Worker {
             }
 
             heard.add_new(pgo.key_poses());
-            // A closure search that finished in the background lands now, so its closure joins this keyframe's update.
-            if closure_search
-                .as_ref()
-                .is_some_and(|search| search.is_finished())
-            {
-                let search = closure_search.take().expect("checked above");
-                pgo.finish_closure_search(search.join().expect("closure search thread panicked"));
-            }
-            // Stages 1-2 run here on every keyframe; the best waiting proposal goes to the search thread when it is
-            // free and no scans are waiting.
-            pgo.propose_closure();
+            // A closure search that finished in the background lands now (once its estimate has passed,
+            // `closure_search_hold_enabled`), so its closure joins this keyframe's update; stages 1-2 run here on every
+            // keyframe, and the best waiting proposal goes to the search thread when it is free and no scans are waiting.
             let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
-            if !behind && closure_search.is_none() {
-                if let Some(search) = pgo.begin_closure_search() {
-                    closure_search = Some(
-                        std::thread::Builder::new()
-                            .name("gsc-closure-search".into())
-                            .spawn(move || search.run())
-                            .expect("spawn closure search thread"),
-                    );
-                }
-            }
+            pgo.step_closure_search(false, !behind);
             // a finished solve moves the keyframes
             let moved = pgo.update();
             self.publish_pose_changes(&pgo, &mut heard, moved, cur_time, &frame_id);
@@ -694,7 +683,7 @@ impl Worker {
                 serde_json::json!({
                     "keyframes": pgo.key_poses().len(),
                     "scan_queue": scan_queue,
-                    "closure_search_running": closure_search.is_some(),
+                    "closure_search_running": pgo.closure_search_running(),
                     "solve_running": pgo.solve_started().is_some(),
                     "stage_seconds": pgo.stage_seconds().iter().map(|(k, v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<_, _>>(),
                 }),

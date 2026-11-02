@@ -331,6 +331,8 @@ impl GscPgo {
     /// Wait for the running solve, and solve again until every closure is in; then measure the learned odometry error
     /// estimate once (`learned_odometry_error_estimate_from_closures`). Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
+        // a closure search still running when the data ends lands now (`closure_search_hold_enabled`)
+        self.land_remaining_closure_search();
         let mut moved = self.settle();
         // the learned odometry error estimate, for the next run's config: measured here from the final kept loops (one more
         // solve of the same graph with the evidence on), and during the run only after a solve keeps a longer loop

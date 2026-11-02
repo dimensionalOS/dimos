@@ -26,6 +26,7 @@
 //! behind the default `native` feature.
 
 pub mod big_picture_fit;
+pub mod closure_search_schedule;
 pub mod connection_fit;
 pub mod gsc_pgo;
 pub mod icp_cache;
