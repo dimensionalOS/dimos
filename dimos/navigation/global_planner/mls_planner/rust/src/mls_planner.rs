@@ -977,6 +977,15 @@ impl Planner {
     ) -> Vec<(f32, f32, f32)> {
         self.rebin_for_plan(start, goal, config);
         let mut waypoints = self.replan_keys(start, goal, config);
+        // No route while a warp left cells off their keys: the re-keyed discs around the
+        // start and goal may sit apart from their unmoved surroundings, so re-key everything
+        // still displaced and plan again (once per warp: after it nothing is displaced).
+        if waypoints.is_empty() && self.voxel_times.is_some() {
+            let pool = Arc::clone(&self.pool);
+            if pool.install(|| self.rebin_all_displaced(config)) {
+                waypoints = self.replan_keys(start, goal, config);
+            }
+        }
         // A route through cells a warp moved without re-keying: re-key along it and plan again,
         // so the route's geometry reads one consistent grid.
         for _ in 0..PLAN_REBIN_PASSES {

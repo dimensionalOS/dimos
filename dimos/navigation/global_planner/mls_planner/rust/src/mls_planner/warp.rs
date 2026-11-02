@@ -171,10 +171,38 @@ impl Planner {
         self.rebin_around(&[at], radius_m, config);
     }
 
+    /// Re-key every voxel and surface cell a warp left off its key, all at once. A
+    /// disc re-keyed alone sits as far from the cells just outside it, in key space,
+    /// as the warp moved them, so a warp wider than the disc cuts every link across
+    /// its edge; re-keying all of them together keeps each neighbor beside its
+    /// neighbor. Returns whether anything was displaced.
+    pub(crate) fn rebin_all_displaced(&mut self, config: &Config) -> bool {
+        let half = 0.5 * config.voxel_size;
+        let displaced = |o: &[f32; 3]| o.iter().any(|v| v.abs() > half);
+        let voxels: AHashSet<VoxelKey> = match &self.voxel_times {
+            Some(times) => times
+                .residual
+                .iter()
+                .filter(|(_, r)| displaced(r))
+                .map(|(k, _)| *k)
+                .collect(),
+            None => AHashSet::new(),
+        };
+        let cells = &self.graph.cells;
+        let ids: AHashSet<CellId> = cells
+            .ids()
+            .filter(|&id| displaced(&cells.offset(id)))
+            .collect();
+        if voxels.is_empty() && ids.is_empty() {
+            return false;
+        }
+        self.rebin_candidates(voxels, ids, |_| true, config);
+        true
+    }
+
     /// rebin_near around every one of `centers`.
     pub(crate) fn rebin_around(&mut self, centers: &[(f32, f32)], radius_m: f32, config: &Config) {
         let vs = config.voxel_size;
-        let half = 0.5 * vs;
         let r2 = radius_m * radius_m;
         let bin = |x: f32, y: f32| ((x / radius_m).floor() as i32, (y / radius_m).floor() as i32);
         let mut by_bin: AHashMap<(i32, i32), Vec<(f32, f32)>> = AHashMap::new();
@@ -192,9 +220,6 @@ impl Planner {
                 })
             })
         };
-        let center = |k: VoxelKey| [k.0, k.1, k.2].map(|v| (v as f32 + 0.5) * vs);
-        let displaced = |o: &[f32; 3]| o.iter().any(|v| v.abs() > half);
-
         if self.displaced.is_none() {
             self.displaced = Some(self.index_displaced(radius_m, vs));
         }
@@ -203,6 +228,22 @@ impl Planner {
             .as_ref()
             .expect("built above")
             .near(centers, radius_m);
+        self.rebin_candidates(voxel_candidates, cell_candidates, near, config);
+    }
+
+    /// Re-key the given voxels and cells a warp left off their keys whose point or key
+    /// center `keep` accepts (see rebin_near).
+    fn rebin_candidates(
+        &mut self,
+        voxel_candidates: AHashSet<VoxelKey>,
+        cell_candidates: AHashSet<CellId>,
+        near: impl Fn([f32; 3]) -> bool,
+        config: &Config,
+    ) {
+        let vs = config.voxel_size;
+        let half = 0.5 * vs;
+        let center = |k: VoxelKey| [k.0, k.1, k.2].map(|v| (v as f32 + 0.5) * vs);
+        let displaced = |o: &[f32; 3]| o.iter().any(|v| v.abs() > half);
         let moving: Vec<(VoxelKey, [f32; 3])> = match &self.voxel_times {
             Some(times) => voxel_candidates
                 .into_iter()

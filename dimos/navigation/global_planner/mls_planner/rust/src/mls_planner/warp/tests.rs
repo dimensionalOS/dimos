@@ -539,3 +539,38 @@ fn warp_bench() {
     let report = p.apply_warp(&warp, &mut [], &cfg);
     println!("{report:?}");
 }
+
+/// A closure that moves the map farther than the plan's re-key reach (a lap closure's
+/// tens of meters): re-keying only discs around the start and goal leaves their cells
+/// keys apart from the cells just outside, and drops movers that land on keys cells
+/// still waiting to move hold, so the warped planner had no route that a rebuild of
+/// the moved map has (huge_l1 at 8:02, a 19 m closure). It must plan like the rebuild.
+#[test]
+fn a_shift_beyond_the_rebin_reach_keeps_the_route() {
+    let cfg = test_config();
+    let all = big_world();
+    let mut p = Planner::new(cfg.worker_threads);
+    p.track_voxel_times();
+    p.update_global_map(&all, &cfg);
+    let (start, goal) = ((0.5, 0.5, 0.05), (0.5, 7.5, 0.05));
+    assert!(!p.replan(start, goal, &cfg).is_empty());
+    let mut held = [goal];
+    // farther than the map is wide, so no stale key lies where the moved cells land
+    p.apply_warp(&warp_of(shift(20.0, 0.0), |_| true), &mut held, &cfg);
+    let (start, goal) = ((20.5, 0.5, 0.05), held[0]);
+    let rebuilt = built(&cfg, &shifted(&all, 20.0, 0.0));
+    let fresh = rebuilt
+        .plan(start, goal, &cfg)
+        .expect("the moved map has a route");
+    let warped = p.replan(start, goal, &cfg);
+    assert!(
+        !warped.is_empty(),
+        "the warped planner lost the route a rebuild has"
+    );
+    assert!(
+        path_len(&warped) < path_len(&fresh) + 1.0,
+        "warped route {} m vs rebuilt {} m",
+        path_len(&warped),
+        path_len(&fresh)
+    );
+}
