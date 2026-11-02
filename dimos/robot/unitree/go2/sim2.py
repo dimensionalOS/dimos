@@ -14,8 +14,8 @@
 
 """A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_change and sending joint commands.
 
-Its model comes from the robot_description of the same name: a UrdfManager with GO2_SIM_MODEL (the URDF of GO2_MJCF,
-plus any sensor frames) and formats={"mjcf": GO2_MJCF}.
+Go2Sim.mjcf is the Go2's MJCF with the rig's sensor frames as sites: a sensor names one (Go2Sim.lidar_mount_frame, ...)
+as its frame_id, and UrdfManager.blueprint(model=mjcf_to_urdf(Go2Sim.mjcf)) poses the same frames on tf.
 """
 
 import asyncio
@@ -36,26 +36,28 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
+    CAMERA_XYZ,
+    L1_MOUNT,
+    L1_XYZ,
+    MID360_PITCH_DOWN,
+    MID360_XYZ,
+    OPTICAL_RPY,
+)
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
+from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.view import rotation_matrix
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
 from dimos.utils.data import get_data
 
-GO2_ROBOT_ID = "go2"
-GO2_MJCF = get_data("go2_sim") / "unitree_go2" / "go2.xml"
-# The MJCF's base body is the URDF's base_link, the frame odometry moves.
-GO2_SIM_MODEL = RobotModel.from_file(mjcf_to_urdf(GO2_MJCF, GO2_ROBOT_ID, "base_link"))
-
 
 class Go2SimConfig(ModuleConfig):
-    robot_id: str = GO2_ROBOT_ID
+    robot_id: str = "go2"
     xyz: tuple[float, float, float] = (0.0, 0.0, 0.35)
     policy: Path | None = None
     odom_frame_id: str = "world"
@@ -64,6 +66,24 @@ class Go2SimConfig(ModuleConfig):
 
 
 class Go2Sim(Module):
+    # The real rig's frames (go2_mid360_static_transforms), on the MJCF's base body.
+    mjcf = mjcf_with_frames(
+        get_data("go2_sim") / "unitree_go2" / "go2.xml",
+        {
+            "utlidar_lidar": (
+                "base",
+                L1_XYZ,
+                (math.radians(L1_MOUNT[0]), math.radians(L1_MOUNT[1]), math.radians(L1_MOUNT[2])),
+            ),
+            "front_camera": ("base", CAMERA_XYZ, (0.0, 0.0, 0.0)),
+            "mid360_link": ("front_camera", MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
+            "camera_optical": ("front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
+        },
+    )
+    l1_mount_frame = "utlidar_lidar"
+    lidar_mount_frame = "mid360_link"
+    camera_mount_frame = "camera_optical"
+
     config: Go2SimConfig
     cmd_vel: In[Twist]
     world_change: In[WorldChange]
@@ -88,6 +108,7 @@ class Go2Sim(Module):
         return {
             "simulated": SimulatedRobot(
                 config.robot_id,
+                self.mjcf,
                 "base",
                 xyz=config.xyz,
                 control_period=CONTROL_DT,

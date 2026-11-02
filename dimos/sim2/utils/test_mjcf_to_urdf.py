@@ -20,10 +20,10 @@ from numpy.typing import NDArray
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.unitree.g1.sim2 import G1_MJCF
+from dimos.robot.unitree.g1.sim2 import G1Sim
+from dimos.robot.unitree.go2.sim2 import Go2Sim
+from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
-from dimos.utils.data import get_data
 
 _ARM = """
 <mujoco model="arm">
@@ -49,10 +49,10 @@ _ARM = """
 
 
 def assert_urdf_matches_mujoco(mjcf: Path, tmp_path: Path, configurations: int = 5) -> None:
-    """Every body's pose relative to the root, from the URDF and from MuJoCo, at random joint positions."""
+    """Every body's and named site's pose relative to the root, from the URDF and from MuJoCo, at random joint positions."""
     model = mujoco.MjModel.from_xml_path(str(mjcf))
     data = mujoco.MjData(model)
-    description = RobotModel.from_file(mjcf_to_urdf(mjcf, out_dir=tmp_path)).load()
+    description = mjcf_to_urdf(mjcf, out_dir=tmp_path).load()
     joints = {joint.child_link: joint for joint in description.joints}
     root = next(b for b in range(1, model.nbody) if model.body_parentid[b] == 0)
     random = np.random.default_rng(0)
@@ -68,12 +68,18 @@ def assert_urdf_matches_mujoco(mjcf: Path, tmp_path: Path, configurations: int =
             positions[model.joint(joint).name] = value
         mujoco.mj_kinematics(model, data)
         world_from_root = _pose(data.xpos[root], data.xquat[root])
-        for body in range(1, model.nbody):
-            expected = np.linalg.inv(world_from_root) @ _pose(data.xpos[body], data.xquat[body])
-            actual = _root_from(description.root_link, model.body(body).name, joints, positions)
-            assert np.linalg.norm(actual[:3, 3] - expected[:3, 3]) < 1e-3, model.body(body).name
+        frames = [(model.body(b).name, data.xpos[b], data.xmat[b]) for b in range(1, model.nbody)]
+        frames += [
+            (model.site(i).name, data.site_xpos[i], data.site_xmat[i]) for i in range(model.nsite)
+        ]
+        for name, xpos, xmat in frames:
+            world = np.eye(4)
+            world[:3, :3], world[:3, 3] = xmat.reshape(3, 3), xpos
+            expected = np.linalg.inv(world_from_root) @ world
+            actual = _root_from(description.root_link, name, joints, positions)
+            assert np.linalg.norm(actual[:3, 3] - expected[:3, 3]) < 1e-3, name
             angle = Rotation.from_matrix(actual[:3, :3].T @ expected[:3, :3]).magnitude()
-            assert np.degrees(angle) < 0.1, model.body(body).name
+            assert np.degrees(angle) < 0.1, name
 
 
 def _root_from(
@@ -100,12 +106,27 @@ def test_bodies_joints_and_offset_pivots_match(tmp_path: Path) -> None:
     assert_urdf_matches_mujoco(mjcf, tmp_path)
 
 
+def test_frames_added_to_the_mjcf_are_sites_there_and_links_in_its_urdf(tmp_path: Path) -> None:
+    mjcf = tmp_path / "arm.xml"
+    mjcf.write_text(_ARM)
+    framed = mjcf_with_frames(
+        mjcf,
+        {
+            "camera": ("lower", (0.1, 0.0, 0.2), (0.0, 0.5, 0.0)),
+            "camera_optical": ("camera", (0.0, 0.0, 0.0), (-np.pi / 2, 0.0, -np.pi / 2)),
+        },
+        out_dir=tmp_path,
+    )
+    model = mujoco.MjModel.from_xml_path(str(framed))
+    assert model.body(model.site("camera_optical").bodyid).name == "lower"
+    # Both frames' poses, through the joints, match between the MJCF and its URDF.
+    assert_urdf_matches_mujoco(framed, tmp_path)
+
+
 def test_root_rename_and_meshes(tmp_path: Path) -> None:
     mjcf = tmp_path / "arm.xml"
     mjcf.write_text(_ARM)
-    description = RobotModel.from_file(
-        mjcf_to_urdf(mjcf, root_link="base_link", out_dir=tmp_path)
-    ).load()
+    description = mjcf_to_urdf(mjcf, root_link="base_link", out_dir=tmp_path).load()
     assert description.root_link == "base_link"
     assert 'robot name="arm"' in description.xml
     assert {j.name for j in description.joints} >= {"shoulder", "elbow", "slide"}
@@ -132,9 +153,9 @@ def test_ball_joints_are_refused(tmp_path: Path) -> None:
         mjcf_to_urdf(mjcf, out_dir=tmp_path)
 
 
-def test_the_go2_urdf_matches_its_mjcf(tmp_path: Path) -> None:
-    assert_urdf_matches_mujoco(get_data("go2_sim") / "unitree_go2" / "go2.xml", tmp_path, 20)
+def test_the_go2_urdf_matches_its_mjcf_and_its_sensor_frames(tmp_path: Path) -> None:
+    assert_urdf_matches_mujoco(Go2Sim.mjcf, tmp_path, 20)
 
 
-def test_the_g1_urdf_matches_its_mjcf(tmp_path: Path) -> None:
-    assert_urdf_matches_mujoco(G1_MJCF, tmp_path, 20)
+def test_the_g1_urdf_matches_its_mjcf_and_its_sensor_frames(tmp_path: Path) -> None:
+    assert_urdf_matches_mujoco(G1Sim.mjcf, tmp_path, 20)
