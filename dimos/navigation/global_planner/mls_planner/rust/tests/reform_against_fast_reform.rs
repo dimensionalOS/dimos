@@ -77,7 +77,7 @@ fn the_tiled_warp_matches_fast_reform_over_every_keyframe() {
         blend_sigma_m: 0.0,
         blend_time_sigma_s: 5.0,
         min_shift_m: 0.04,
-        rebuild_fraction: 1.0,
+        thin_cell_m: -1.0,
     };
     let mut state = ReformState::default();
     let mut worst = 0.0_f64;

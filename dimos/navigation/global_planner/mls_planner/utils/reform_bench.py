@@ -277,7 +277,6 @@ def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> 
                     held,
                     blend_time_sigma_s=MODULE_DEFAULTS.reform_blend_time_sigma_s,
                     min_shift_m=MODULE_DEFAULTS.reform_min_shift_m,
-                    rebuild_fraction=MODULE_DEFAULTS.reform_rebuild_fraction,
                 )
                 if result is not None:
                     held = result.pop("held")

@@ -665,19 +665,15 @@ impl Worker {
         warn!(
             total_ms = ms_since(started),
             warp_ms = report.warp_ms,
-            voxel_ms = report.voxel_ms,
-            surface_ms = report.surface_ms,
-            graph_ms = report.graph_ms,
+            move_ms = report.move_ms,
             keyframes = warp.keyframes(),
             keyframes_moved = warp.moved_keyframes(),
+            keyframes_blended = warp.blended_keyframes(),
             median_shift_m,
             max_shift_m,
             voxels_warped = report.voxels_warped,
-            voxels_moved = report.voxels_moved,
-            nodes_moved = report.nodes_moved,
+            cells_warped = report.cells_warped,
             nodes = report.nodes,
-            rigid_voxels = report.rigid_voxels,
-            decision = if report.rebuilt { "rebuild" } else { "repair" },
             "Loop closure applied in place."
         );
         if let Some((from, to)) = report.worst_implausible {

@@ -82,7 +82,7 @@ def test_a_loop_closure_moves_the_graph_and_the_held_goal() -> None:
     )
     assert result is not None
     assert result["keyframes_moved"] == len(kfs)
-    assert result["voxels_moved"] == result["voxels_warped"] > 0
+    assert result["voxels_warped"] == planner.voxel_count() > 0
     np.testing.assert_allclose(result["held"][0], (3.0, 2.4, 0.2), atol=1e-4)
 
     rebuilt = make_planner()

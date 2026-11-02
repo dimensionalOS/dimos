@@ -217,7 +217,7 @@ impl MLSPlanner {
 
     fn surface_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let voxel_size = self.config.voxel_size;
-        let surface: Vec<VoxelKey> = self.planner.surface().collect();
+        let surface: Vec<VoxelKey> = self.planner.placed_surface(voxel_size).collect();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(surface.len() * 3);
             for (ix, iy, iz) in surface {
@@ -295,12 +295,17 @@ impl MLSPlanner {
 
     /// Returns `(W, 3)` float32 waypoints or `None` if no full path exists.
     fn plan<'py>(
-        &self,
+        &mut self,
         py: Python<'py>,
         start: (f32, f32, f32),
         goal: (f32, f32, f32),
     ) -> Option<Bound<'py, PyArray2<f32>>> {
-        let waypoints = py.allow_threads(|| self.planner.plan(start, goal, &self.config))?;
+        let config = &self.config;
+        let planner = &mut self.planner;
+        let waypoints = py.allow_threads(|| {
+            planner.rebin_for_plan(start, goal, config);
+            planner.plan(start, goal, config)
+        })?;
         let mut flat: Vec<f32> = Vec::with_capacity(waypoints.len() * 3);
         for (x, y, z) in waypoints {
             flat.push(x);
@@ -323,7 +328,7 @@ impl MLSPlanner {
     fn voxel_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let vs = self.config.voxel_size;
         let half = vs * 0.5;
-        let keys: Vec<(i32, i32, i32)> = self.planner.voxel_keys().collect();
+        let keys: Vec<(i32, i32, i32)> = self.planner.placed_voxels(vs).collect();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(keys.len() * 3);
             for (kx, ky, kz) in keys {
@@ -361,7 +366,7 @@ impl MLSPlanner {
     /// each). `held` points warp along and come back in the result. Returns
     /// None when no keyframe moved past min_shift_m, else a dict of what the
     /// warp did and cost.
-    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, rebuild_fraction = 1.0))]
+    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, thin_cell_m = 0.0))]
     #[allow(clippy::too_many_arguments)]
     fn apply_loop_closure<'py>(
         &mut self,
@@ -371,7 +376,7 @@ impl MLSPlanner {
         blend_sigma_m: f64,
         blend_time_sigma_s: f64,
         min_shift_m: f64,
-        rebuild_fraction: f64,
+        thin_cell_m: f64,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
         check_records(&records, 68)?;
         let msg = record_cloud(LOOP_EVENT_FIELDS, records);
@@ -380,7 +385,7 @@ impl MLSPlanner {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
-            rebuild_fraction,
+            thin_cell_m,
         };
         let started = std::time::Instant::now();
         let Some(warp) = self.reform.closure(&moved, &params) else {
@@ -394,20 +399,13 @@ impl MLSPlanner {
         let out = PyDict::new(py);
         out.set_item("build_ms", build_ms)?;
         out.set_item("warp_ms", report.warp_ms)?;
-        out.set_item("voxel_ms", report.voxel_ms)?;
-        out.set_item("surface_ms", report.surface_ms)?;
-        out.set_item("graph_ms", report.graph_ms)?;
+        out.set_item("move_ms", report.move_ms)?;
         out.set_item("voxels_warped", report.voxels_warped)?;
-        out.set_item("voxels_moved", report.voxels_moved)?;
-        out.set_item("voxels_added", report.voxels_added)?;
-        out.set_item("voxels_removed", report.voxels_removed)?;
-        out.set_item("surface_added", report.surface_added)?;
-        out.set_item("surface_removed", report.surface_removed)?;
-        out.set_item("nodes_moved", report.nodes_moved)?;
+        out.set_item("cells_warped", report.cells_warped)?;
         out.set_item("nodes", report.nodes)?;
-        out.set_item("rebuilt", report.rebuilt)?;
         out.set_item("keyframes", warp.keyframes())?;
         out.set_item("keyframes_moved", warp.moved_keyframes())?;
+        out.set_item("keyframes_blended", warp.blended_keyframes())?;
         out.set_item("sigma", warp.sigma())?;
         out.set_item("time_sigma", warp.time_sigma())?;
         out.set_item("held", held)?;

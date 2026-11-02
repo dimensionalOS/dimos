@@ -129,6 +129,9 @@ impl CoordIndex {
 #[derive(Default)]
 pub struct SurfaceCells {
     coord: Vec<VoxelKey>,
+    /// Per slot: where a warp moved the cell's point off its key's surface
+    /// point. Outside the local area a cell moves without being re-keyed.
+    offset: Vec<[f32; 3]>,
     /// Every cell's outgoing edges in one buffer, a cell's at its span. A full
     /// build lays them out in id order; an edit that grows a cell's list moves it
     /// to the end, and the buffer compacts once the stranded edges outweigh the live.
@@ -183,6 +186,7 @@ impl SurfaceCells {
     /// Clear all vecs but keep allocated capacity.
     pub fn clear(&mut self) {
         self.coord.clear();
+        self.offset.clear();
         self.by_coord.clear();
         self.free.clear();
         self.coord_ordered = true;
@@ -240,6 +244,7 @@ impl SurfaceCells {
         }
         let id = if let Some(free_id) = self.free.pop() {
             self.coord[free_id as usize] = k;
+            self.offset[free_id as usize] = [0.0; 3];
             self.coord_ordered = false;
             free_id
         } else {
@@ -252,6 +257,7 @@ impl SurfaceCells {
                 self.coord_ordered = false;
             }
             self.coord.push(k);
+            self.offset.push([0.0; 3]);
             self.spans.push((self.flat.len() as u32, 0));
             id
         };
@@ -280,6 +286,7 @@ impl SurfaceCells {
             self.spans[dest as usize].1 = kept as u32;
         }
         self.coord[id as usize] = TOMBSTONE;
+        self.offset[id as usize] = [0.0; 3];
         self.free.push(id);
         Some(id)
     }
@@ -294,6 +301,58 @@ impl SurfaceCells {
     #[inline]
     pub fn coord(&self, id: CellId) -> VoxelKey {
         self.coord[id as usize]
+    }
+
+    /// How far a warp moved a cell's point off its key's surface point.
+    #[inline]
+    pub fn offset(&self, id: CellId) -> [f32; 3] {
+        self.offset[id as usize]
+    }
+
+    /// The key a cell's point sits in now.
+    pub fn placed(&self, id: CellId, voxel_size: f32) -> VoxelKey {
+        let (ix, iy, iz) = self.coord(id);
+        let o = self.offset(id);
+        crate::voxel::voxelize(
+            (
+                (ix as f32 + 0.5) * voxel_size + o[0],
+                (iy as f32 + 0.5) * voxel_size + o[1],
+                (iz as f32 + 0.5) * voxel_size + o[2],
+            ),
+            voxel_size,
+        )
+    }
+
+    /// Move cells' points by `deltas`, keeping their keys.
+    pub fn shift(&mut self, ids: &[CellId], deltas: &[[f32; 3]]) {
+        for (&id, d) in ids.iter().zip(deltas) {
+            let o = &mut self.offset[id as usize];
+            for a in 0..3 {
+                o[a] += d[a];
+            }
+        }
+    }
+
+    /// Re-key cells, each to a free key, keeping their ids and edges; the
+    /// offset left is what the new key does not account for.
+    pub fn rekey(&mut self, moves: &[(CellId, VoxelKey)], voxel_size: f32) {
+        for &(id, _) in moves {
+            self.by_coord.remove(&self.coord[id as usize]);
+        }
+        for &(id, to) in moves {
+            let from = self.coord[id as usize];
+            let o = &mut self.offset[id as usize];
+            o[0] -= (to.0 - from.0) as f32 * voxel_size;
+            o[1] -= (to.1 - from.1) as f32 * voxel_size;
+            o[2] -= (to.2 - from.2) as f32 * voxel_size;
+            self.coord[id as usize] = to;
+            let previous = self.by_coord.get(&to);
+            debug_assert!(previous.is_none(), "rekey into a taken key");
+            self.by_coord.insert(to, id);
+        }
+        if !moves.is_empty() {
+            self.coord_ordered = false;
+        }
     }
 
     #[inline]
@@ -399,6 +458,7 @@ pub fn build_surface_cells(
     }
     // Ids in coordinate order, indexed in parallel.
     cells.spans.resize(cells.coord.len(), (0, 0));
+    cells.offset.resize(cells.coord.len(), [0.0; 3]);
     cells.by_coord.fill(&cells.coord);
 
     // Count each cell's edges, lay the spans out in id order, then fill every

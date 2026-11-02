@@ -168,6 +168,29 @@ impl Nodes {
         }
     }
 
+    /// Re-bin every node by its cell's key, after cells were re-keyed.
+    pub(crate) fn rebin(&mut self, cells: &SurfaceCells, params: &PlacementParams) {
+        self.bins.clear();
+        for n in &self.list {
+            if n.cell_id != NO_CELL {
+                let bin = bin_of(cells.coord(n.cell_id), params);
+                self.bins.entry(bin).or_default().push(n.cell_id);
+            }
+        }
+    }
+
+    /// Set each node's point to its cell's, after a warp moved the cells.
+    pub(crate) fn follow_cells(&mut self, cells: &SurfaceCells, voxel_size: f32) {
+        for n in &mut self.list {
+            if n.cell_id != NO_CELL {
+                let (ix, iy, iz) = cells.coord(n.cell_id);
+                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+                let o = cells.offset(n.cell_id);
+                n.pos = (x + o[0], y + o[1], z + o[2]);
+            }
+        }
+    }
+
     pub(crate) fn push(&mut self, cells: &SurfaceCells, params: &PlacementParams, node: NodeData) {
         self.list.push(node);
         self.index(cells, params, self.list.len() - 1);

@@ -163,6 +163,12 @@ pub(crate) const DEBUG_LOG_PERIOD: Duration = Duration::from_secs(5);
 /// Cells a repair window reaches past the band it must keep exact.
 const WINDOW_SLACK_CELLS: i32 = 2;
 
+/// How far around its start, goal and route a plan re-keys cells a warp moved.
+const PLAN_REBIN_M: f32 = 3.0;
+
+/// Re-key-and-replan rounds before a plan settles for the route it has.
+const PLAN_REBIN_PASSES: usize = 3;
+
 pub(crate) fn ms_since(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1e3
 }
@@ -304,20 +310,42 @@ impl Planner {
     pub fn dump_centers(&self, voxel_size: f32) -> (Vec<f32>, Vec<f32>) {
         let half = voxel_size * 0.5;
         let voxels = self
-            .voxel_map
-            .iter()
-            .flat_map(|&(x, y, z)| [x, y, z].map(|k| k as f32 * voxel_size + half))
+            .placed_voxels(voxel_size)
+            .flat_map(|(x, y, z)| [x, y, z].map(|k| k as f32 * voxel_size + half))
             .collect();
         let surface = self
-            .graph
-            .cells
-            .live_coords()
+            .placed_surface(voxel_size)
             .flat_map(|(ix, iy, iz)| {
                 let (x, y, z) = crate::voxel::surface_point_xyz(ix, iy, iz, voxel_size);
                 [x, y, z]
             })
             .collect();
         (voxels, surface)
+    }
+
+    /// Each voxel's key where its point sits, which a warp can move off its own key.
+    pub fn placed_voxels(&self, voxel_size: f32) -> impl Iterator<Item = VoxelKey> + '_ {
+        self.voxel_map.iter().map(move |&k| {
+            let r = self
+                .voxel_times
+                .as_ref()
+                .and_then(|t| t.residual.get(&k).copied())
+                .unwrap_or([0.0; 3]);
+            voxelize(
+                (
+                    (k.0 as f32 + 0.5) * voxel_size + r[0],
+                    (k.1 as f32 + 0.5) * voxel_size + r[1],
+                    (k.2 as f32 + 0.5) * voxel_size + r[2],
+                ),
+                voxel_size,
+            )
+        })
+    }
+
+    /// Each surface cell's key where its point sits.
+    pub fn placed_surface(&self, voxel_size: f32) -> impl Iterator<Item = VoxelKey> + '_ {
+        let cells = &self.graph.cells;
+        cells.ids().map(move |id| cells.placed(id, voxel_size))
     }
 
     pub fn sizes(&self) -> PlannerSizes {
@@ -446,6 +474,15 @@ impl Planner {
             let clearance = config.headroom_cells();
             let pad = (2 * config.closing_passes()) as i32;
 
+            // Re-key what a warp moved out of its keys before the region's data meets it.
+            if self.voxel_times.is_some() {
+                let margin = config.buffer_window_cells() as f32 * voxel_size;
+                self.rebin_near(
+                    (bounds.origin_x, bounds.origin_y),
+                    bounds.radius + margin,
+                    config,
+                );
+            }
             let stage = Instant::now();
             let edits = self.replace_region_voxels(local_points, bounds, voxel_size);
             let diff_ms = ms_since(stage);
@@ -854,12 +891,79 @@ impl Planner {
         if self.graph.nodes.is_empty() {
             return None;
         }
-        planner::plan(&self.graph, start, goal, config).map(|(wp, _)| wp)
+        planner::plan(&self.graph, start, goal, config)
+            .map(|(wp, cells)| self.placed_waypoints(wp, &cells, config.voxel_size))
+    }
+
+    /// Re-key the cells a warp moved around the start and the goal, so a plan
+    /// finds them where they are. The rest of the route is planned over the
+    /// keys the cells kept and placed by their offsets.
+    pub fn rebin_for_plan(
+        &mut self,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+        config: &Config,
+    ) {
+        if self.voxel_times.is_none() {
+            return;
+        }
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            self.rebin_near((start.0, start.1), PLAN_REBIN_M, config);
+            self.rebin_near((goal.0, goal.1), PLAN_REBIN_M, config);
+        });
+    }
+
+    /// Where the cached route's cells that a warp moved off their keys sit, in the ground plane.
+    fn displaced_path_points(&self, voxel_size: f32) -> Vec<(f32, f32)> {
+        let Some((_, path)) = &self.last_path else {
+            return Vec::new();
+        };
+        let cells = &self.graph.cells;
+        path.iter()
+            .filter_map(|&k| cells.id(k))
+            .filter(|&id| cells.placed(id, voxel_size) != cells.coord(id))
+            .map(|id| {
+                let (ix, iy, _) = cells.coord(id);
+                let o = cells.offset(id);
+                (
+                    (ix as f32 + 0.5) * voxel_size + o[0],
+                    (iy as f32 + 0.5) * voxel_size + o[1],
+                )
+            })
+            .collect()
     }
 
     /// Plan to the goal, or follow the cached path as far as it is still safe.
     /// Returns the waypoints, empty when nothing ahead is traversable (stop).
     pub fn plan_or_truncate(
+        &mut self,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+        config: &Config,
+    ) -> Vec<(f32, f32, f32)> {
+        self.rebin_for_plan(start, goal, config);
+        let mut waypoints = self.plan_or_truncate_keys(start, goal, config);
+        // A route through cells a warp moved without re-keying: re-key along it and plan again,
+        // so the route's geometry reads one consistent grid.
+        for _ in 0..PLAN_REBIN_PASSES {
+            let displaced = self.displaced_path_points(config.voxel_size);
+            if displaced.is_empty() {
+                break;
+            }
+            let pool = Arc::clone(&self.pool);
+            pool.install(|| self.rebin_around(&displaced, PLAN_REBIN_M, config));
+            waypoints = self.plan_or_truncate_keys(start, goal, config);
+        }
+        let path = self
+            .last_path
+            .as_ref()
+            .map(|(_, cells)| cells.clone())
+            .unwrap_or_default();
+        self.placed_waypoints(waypoints, &path, config.voxel_size)
+    }
+
+    fn plan_or_truncate_keys(
         &mut self,
         start: (f32, f32, f32),
         goal: (f32, f32, f32),

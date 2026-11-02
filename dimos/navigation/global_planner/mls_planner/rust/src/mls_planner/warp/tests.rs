@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use super::super::region_tests::{
-    assert_chains_reach_their_nodes, assert_plans_equivalent, big_world, path_len, surface_set,
-    test_config, voxel_set,
+    assert_chains_reach_their_nodes, big_world, path_len, surface_set, test_config, voxel_set,
 };
 use super::*;
+use std::collections::BTreeSet;
+
 use crate::reform::{KeyframeRecord, MovedRecord, Pose, ReformParams, ReformState};
 use fast_reform::{Quat, Vec3};
 
@@ -39,20 +40,12 @@ fn params() -> ReformParams {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 0.0,
         min_shift_m: 0.02,
-        rebuild_fraction: 1.0,
+        thin_cell_m: -1.0,
     }
 }
 
 /// A warp that applies `correction` to the keyframes `pick` keeps.
 fn warp_of(correction: Pose, pick: impl Fn(&KeyframeRecord) -> bool) -> Warp {
-    warp_with(correction, pick, params())
-}
-
-fn warp_with(
-    correction: Pose,
-    pick: impl Fn(&KeyframeRecord) -> bool,
-    params: ReformParams,
-) -> Warp {
     let kfs = keyframes();
     let mut state = ReformState::default();
     state.add_keyframes(&kfs);
@@ -64,7 +57,7 @@ fn warp_with(
             delta: correction,
         })
         .collect();
-    state.closure(&moved, &params).expect("keyframes moved")
+    state.closure(&moved, &params()).expect("keyframes moved")
 }
 
 fn shift(x: f64, y: f64) -> Pose {
@@ -74,37 +67,52 @@ fn shift(x: f64, y: f64) -> Pose {
     }
 }
 
-fn centers(p: &Planner, vs: f32) -> Vec<(f32, f32, f32)> {
-    p.voxel_keys()
-        .map(|(x, y, z)| {
-            (
-                (x as f32 + 0.5) * vs,
-                (y as f32 + 0.5) * vs,
-                (z as f32 + 0.5) * vs,
-            )
-        })
-        .collect()
+fn placed_voxels(p: &Planner, vs: f32) -> BTreeSet<VoxelKey> {
+    p.placed_voxels(vs).collect()
+}
+
+fn placed_surface(p: &Planner, vs: f32) -> BTreeSet<VoxelKey> {
+    p.placed_surface(vs).collect()
+}
+
+fn built(cfg: &Config, points: &[(f32, f32, f32)]) -> Planner {
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(points, cfg);
+    p
+}
+
+fn shifted(points: &[(f32, f32, f32)], dx: f32, dy: f32) -> Vec<(f32, f32, f32)> {
+    points.iter().map(|p| (p.0 + dx, p.1 + dy, p.2)).collect()
 }
 
 #[test]
-fn a_rigid_shift_of_everything_matches_a_rebuild_of_the_shifted_map() {
+fn a_rigid_shift_places_everything_where_a_rebuild_of_the_shifted_map_has_it() {
     let cfg = test_config();
+    let vs = cfg.voxel_size;
     let all = big_world();
-    let mut warped = Planner::new(cfg.worker_threads);
-    warped.update_global_map(&all, &cfg);
-    let nodes_before = warped.graph().nodes.len();
-    let voxels = warped.voxel_count();
+    let mut warped = built(&cfg, &all);
+    let (cells, edges, nodes) = (
+        warped.graph().cells.live_len(),
+        warped.graph().cells.edge_count(),
+        warped.graph().nodes.len(),
+    );
+    let surface_keys = surface_set(&warped);
 
-    let warp = warp_of(shift(0.8, 0.3), |_| true);
-    let report = warped.apply_warp(&warp, &mut [], &cfg);
-    assert_eq!(report.voxels_moved, voxels);
-    assert!(report.nodes_moved * 2 > nodes_before, "{report:?}");
-
-    let moved: Vec<(f32, f32, f32)> = all.iter().map(|p| (p.0 + 0.8, p.1 + 0.3, p.2)).collect();
-    let mut rebuilt = Planner::new(cfg.worker_threads);
-    rebuilt.update_global_map(&moved, &cfg);
-    assert_eq!(voxel_set(&warped), voxel_set(&rebuilt));
-    assert_eq!(surface_set(&warped), surface_set(&rebuilt));
+    let report = warped.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut [], &cfg);
+    assert_eq!(report.voxels_warped, warped.voxel_count());
+    let rebuilt = built(&cfg, &shifted(&all, 0.8, 0.3));
+    assert_eq!(placed_voxels(&warped, vs), voxel_set(&rebuilt));
+    assert_eq!(placed_surface(&warped, vs), surface_set(&rebuilt));
+    // In place: the cells keep their keys, edges and nodes.
+    assert_eq!(surface_set(&warped), surface_keys);
+    assert_eq!(
+        (
+            warped.graph().cells.live_len(),
+            warped.graph().cells.edge_count(),
+            warped.graph().nodes.len()
+        ),
+        (cells, edges, nodes)
+    );
     assert_chains_reach_their_nodes(&warped);
 
     // Every pair moves with the map.
@@ -113,56 +121,57 @@ fn a_rigid_shift_of_everything_matches_a_rebuild_of_the_shifted_map() {
         ((1.3, 7.8, 0.05), (8.3, 0.8, 0.05)),
     ];
     for (s, g) in pairs {
-        let a = warped.plan(s, g, &cfg).expect("warped plans");
+        let a = warped.plan_or_truncate(s, g, &cfg);
+        assert!(!a.is_empty(), "warped plans");
         let b = rebuilt.plan(s, g, &cfg).expect("rebuilt plans");
         let (la, lb) = (path_len(&a), path_len(&b));
         assert!((la - lb).abs() <= 0.1 * lb + 0.3, "{la} vs {lb}");
+        let end = a.last().unwrap();
+        assert!((end.0 - g.0).hypot(end.1 - g.1) < 0.3, "{end:?} vs {g:?}");
     }
 }
 
 #[test]
-fn a_partial_bend_matches_a_rebuild_of_the_same_voxels() {
+fn a_region_update_rebins_only_what_it_reaches() {
     let cfg = test_config();
+    let vs = cfg.voxel_size;
     let all = big_world();
-    let mut warped = Planner::new(cfg.worker_threads);
-    warped.update_global_map(&all, &cfg);
-
-    // The far half turns 2 degrees about the gap and slides 13 cm.
-    let yaw = 2f64.to_radians();
-    let rotation = Quat::new(0.0, 0.0, (yaw / 2.0).sin(), (yaw / 2.0).cos());
-    let about = Vec3::new(4.0, 4.0, 0.0);
-    let turned = rotation.rotate(about);
-    let bend = Pose {
-        rotation,
-        translation: Vec3::new(about.x - turned.x, about.y - turned.y + 0.13, 0.0),
-    };
-    let warp = warp_of(bend, |k| k.pose.translation.x > 4.0);
-    let report = warped.apply_warp(&warp, &mut [], &cfg);
-    assert!(
-        report.voxels_moved > 0 && report.voxels_moved < warped.voxel_count(),
-        "{report:?}"
-    );
-
-    let mut rebuilt = Planner::new(cfg.worker_threads);
-    rebuilt.update_global_map(&centers(&warped, cfg.voxel_size), &cfg);
-    assert_eq!(surface_set(&warped), surface_set(&rebuilt));
-    assert_chains_reach_their_nodes(&warped);
-    assert_plans_equivalent(&rebuilt, &warped, &cfg);
+    let mut p = built(&cfg, &all);
+    let keys = surface_set(&p);
+    p.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut [], &cfg);
+    let placed = placed_surface(&p, vs);
+    p.rebin_near((2.0, 2.0), 1.5, &cfg);
+    // Where it sits is unchanged; near (2, 2) the keys now say so, far off they do not.
+    assert_eq!(placed_surface(&p, vs), placed);
+    let key_of = |x: f32, y: f32| ((x / vs).floor() as i32, (y / vs).floor() as i32);
+    let (nx, ny) = key_of(2.0, 2.0);
+    let near_cell = placed
+        .iter()
+        .find(|k| (k.0, k.1) == (nx, ny))
+        .copied()
+        .unwrap();
+    assert!(surface_set(&p).contains(&near_cell));
+    let (fx, fy) = key_of(7.0, 7.0);
+    let far_old = keys
+        .iter()
+        .find(|k| (k.0, k.1) == (fx, fy))
+        .copied()
+        .unwrap();
+    assert!(surface_set(&p).contains(&far_old));
+    assert_chains_reach_their_nodes(&p);
 }
 
 #[test]
 fn the_goal_and_the_cached_path_move_with_the_map() {
     let cfg = test_config();
     let all = big_world();
-    let mut p = Planner::new(cfg.worker_threads);
-    p.update_global_map(&all, &cfg);
+    let mut p = built(&cfg, &all);
     let (start, goal) = ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05));
     assert!(!p.plan_or_truncate(start, goal, &cfg).is_empty());
     let cached: Vec<VoxelKey> = p.last_path.as_ref().unwrap().1.clone();
 
-    let warp = warp_of(shift(0.8, 0.3), |_| true);
     let mut held = [goal];
-    p.apply_warp(&warp, &mut held, &cfg);
+    p.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut held, &cfg);
     let moved_goal = (goal.0 + 0.8, goal.1 + 0.3, goal.2);
     assert!((held[0].0 - moved_goal.0).abs() < 1e-4 && (held[0].1 - moved_goal.1).abs() < 1e-4);
     let (cached_goal, cells) = p.last_path.as_ref().unwrap();
@@ -170,78 +179,38 @@ fn the_goal_and_the_cached_path_move_with_the_map() {
         *cached_goal, held[0],
         "the cached goal must still match the held one"
     );
-    let want: Vec<VoxelKey> = cached.iter().map(|c| (c.0 + 8, c.1 + 3, c.2)).collect();
-    assert_eq!(*cells, want);
+    assert_eq!(*cells, cached, "the cached cells keep their keys");
 }
 
 #[test]
-fn a_shift_under_half_a_voxel_leaves_the_graph_alone() {
+fn a_shift_under_half_a_voxel_keeps_every_key() {
     let cfg = test_config();
     let all = big_world();
-    let mut p = Planner::new(cfg.worker_threads);
-    p.update_global_map(&all, &cfg);
-    let surface = surface_set(&p);
+    let mut p = built(&cfg, &all);
+    let (surface, voxels) = (surface_set(&p), voxel_set(&p));
     let nodes: Vec<_> = p.graph().nodes.iter().map(|n| n.pos).collect();
-
-    let report = p.apply_warp(&warp_of(shift(0.03, 0.0), |_| true), &mut [], &cfg);
-    assert_eq!(
-        (report.voxels_moved, report.nodes_moved),
-        (0, 0),
-        "{report:?}"
-    );
-    assert_eq!(surface_set(&p), surface);
+    p.apply_warp(&warp_of(shift(0.03, 0.0), |_| true), &mut [], &cfg);
+    assert_eq!(placed_surface(&p, cfg.voxel_size), surface);
+    assert_eq!(placed_voxels(&p, cfg.voxel_size), voxels);
     let after: Vec<_> = p.graph().nodes.iter().map(|n| n.pos).collect();
-    assert_eq!(after, nodes);
+    for (a, b) in after.iter().zip(&nodes) {
+        assert!((a.0 - b.0 - 0.03).abs() < 1e-4, "{a:?} vs {b:?}");
+    }
 }
 
 #[test]
-fn voxel_times_follow_the_voxels_through_a_warp() {
+fn voxel_times_stay_with_their_voxels_through_a_warp() {
     let cfg = test_config();
     let all = big_world();
     let mut p = Planner::new(cfg.worker_threads);
     p.track_voxel_times();
     p.set_clock(10.0);
     p.update_global_map(&all, &cfg);
-    let warp = warp_of(shift(0.8, 0.3), |_| true);
-    p.apply_warp(&warp, &mut [], &cfg);
+    p.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut [], &cfg);
+    p.rebin_near((4.0, 4.0), 100.0, &cfg);
     let times = p.voxel_times.as_ref().unwrap();
     assert_eq!(times.by_key.len(), p.voxel_count());
     assert!(p.voxel_keys().all(|k| times.get(&k) == 10.0));
-}
-
-#[test]
-fn a_warp_that_moves_most_of_the_map_rebuilds_and_matches_a_rebuild() {
-    let cfg = test_config();
-    let all = big_world();
-    let mut warped = Planner::new(cfg.worker_threads);
-    warped.update_global_map(&all, &cfg);
-    let (start, goal) = ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05));
-    assert!(!warped.plan_or_truncate(start, goal, &cfg).is_empty());
-
-    let rebuild = ReformParams {
-        rebuild_fraction: 0.25,
-        ..params()
-    };
-    let mut held = [goal];
-    let report = warped.apply_warp(
-        &warp_with(shift(0.8, 0.3), |_| true, rebuild),
-        &mut held,
-        &cfg,
-    );
-    assert!(report.rebuilt, "{report:?}");
-    assert!((held[0].0 - 8.3).abs() < 1e-4 && (held[0].1 - 7.8).abs() < 1e-4);
-    assert_eq!(warped.last_path.as_ref().unwrap().0, held[0]);
-
-    let moved: Vec<(f32, f32, f32)> = all.iter().map(|p| (p.0 + 0.8, p.1 + 0.3, p.2)).collect();
-    let mut rebuilt = Planner::new(cfg.worker_threads);
-    rebuilt.update_global_map(&moved, &cfg);
-    assert_eq!(voxel_set(&warped), voxel_set(&rebuilt));
-    assert_eq!(surface_set(&warped), surface_set(&rebuilt));
-    assert_eq!(node_count(&warped), node_count(&rebuilt));
-}
-
-fn node_count(p: &Planner) -> usize {
-    p.graph().nodes.len()
 }
 
 #[test]
@@ -249,23 +218,16 @@ fn shifts_smaller_than_a_voxel_add_up_over_warps() {
     let cfg = test_config();
     let vs = cfg.voxel_size;
     let all = big_world();
-    let mut p = Planner::new(cfg.worker_threads);
-    p.track_voxel_times();
-    p.update_global_map(&all, &cfg);
+    let mut p = built(&cfg, &all);
     let before = voxel_set(&p);
     // A third of a voxel keeps every voxel where it is; the second third takes
     // them past the edge, one voxel over, as a rebuild of the shifted map has them.
     let third = vs as f64 / 3.0 + 1e-4;
     p.apply_warp(&warp_of(shift(third, 0.0), |_| true), &mut [], &cfg);
-    assert_eq!(voxel_set(&p), before);
+    assert_eq!(placed_voxels(&p, vs), before);
     p.apply_warp(&warp_of(shift(third, 0.0), |_| true), &mut [], &cfg);
-    let shifted: Vec<(f32, f32, f32)> = all
-        .iter()
-        .map(|q| (q.0 + 2.0 * third as f32, q.1, q.2))
-        .collect();
-    let mut rebuilt = Planner::new(cfg.worker_threads);
-    rebuilt.update_global_map(&shifted, &cfg);
-    assert_eq!(voxel_set(&p), voxel_set(&rebuilt));
+    let rebuilt = built(&cfg, &shifted(&all, 2.0 * third as f32, 0.0));
+    assert_eq!(placed_voxels(&p, vs), voxel_set(&rebuilt));
 }
 
 /// The stages of a full rebuild on a real map: MLS_REBUILD_BENCH=<planner .voxels dump>
@@ -435,8 +397,55 @@ fn warp_bench() {
     let threads = std::env::var("MLS_BENCH_THREADS").map_or(8, |t| t.parse().unwrap());
     let mut p = Planner::new(threads);
     p.track_voxel_times();
-    p.set_clock(keyframes.last().unwrap().0);
+    p.set_clock(keyframes[0].0);
     p.update_global_map(&points, &cfg);
+    // Each voxel stamped as live stamps it: about when the drive passed it, here the
+    // time of its nearest keyframe (1 m grid lookup, widened until one is found).
+    let mut grid: AHashMap<(i32, i32), Vec<usize>> = AHashMap::new();
+    for (k, (_, pose, _)) in keyframes.iter().enumerate() {
+        let t = pose.translation;
+        grid.entry((t.x.floor() as i32, t.y.floor() as i32))
+            .or_default()
+            .push(k);
+    }
+    let nearest_time = |(x, y, z): (f32, f32, f32)| {
+        let (cx, cy) = (x.floor() as i32, y.floor() as i32);
+        for r in 0..200 {
+            let mut best: Option<(f64, f64)> = None;
+            for dx in -r..=r {
+                for dy in -r..=r {
+                    for &k in grid.get(&(cx + dx, cy + dy)).into_iter().flatten() {
+                        let t = keyframes[k].1.translation;
+                        let d = (t.x - x as f64).powi(2)
+                            + (t.y - y as f64).powi(2)
+                            + (t.z - z as f64).powi(2);
+                        if best.is_none_or(|(bd, _)| d < bd) {
+                            best = Some((d, keyframes[k].0));
+                        }
+                    }
+                }
+            }
+            if let Some((_, ts)) = best {
+                return ts;
+            }
+        }
+        keyframes[0].0
+    };
+    let times = p.voxel_times.as_mut().unwrap();
+    let epoch = times.epoch.unwrap();
+    let stamped: Vec<(VoxelKey, f32)> = times
+        .by_key
+        .keys()
+        .map(|&k| {
+            let c = (
+                (k.0 as f32 + 0.5) * 0.08,
+                (k.1 as f32 + 0.5) * 0.08,
+                (k.2 as f32 + 0.5) * 0.08,
+            );
+            (k, (nearest_time(c) - epoch) as f32)
+        })
+        .collect();
+    times.by_key.extend(stamped);
     let records: Vec<KeyframeRecord> = keyframes
         .iter()
         .enumerate()
@@ -463,7 +472,7 @@ fn warp_bench() {
         blend_sigma_m: 0.0,
         blend_time_sigma_s: 5.0,
         min_shift_m: 0.04,
-        rebuild_fraction: 0.25,
+        thin_cell_m: -1.0,
     };
     let warp = state
         .closure(&moved, &params)
