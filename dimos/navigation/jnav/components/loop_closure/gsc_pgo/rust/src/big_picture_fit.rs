@@ -58,6 +58,9 @@ pub struct SolveConfig {
     pub committed: Vec<bool>,
     /// The noise evidence reads only the kept closures' PCM core (`odometry_error_estimate_evidence_core`).
     pub evidence_core: bool,
+    /// Compute that evidence at all (a polishing solve and Hutchinson traces each solve); it only feeds the learned
+    /// odometry error estimate, which is only logged.
+    pub learned_evidence: bool,
 }
 
 pub struct Solution {
@@ -380,7 +383,9 @@ pub(crate) fn solve_core(
     .unwrap_or_default();
     // only the kept closures' mutually consistent core (the largest set that agree pairwise around their cycles, PCM)
     // speaks for the noise: a kept closure the others contradict would otherwise read as odometry error estimate and widen it
-    let evidence_weights: Vec<f64> = if config.evidence_core {
+    let evidence_weights: Vec<f64> = if !config.learned_evidence {
+        Vec::new()
+    } else if config.evidence_core {
         let kept_closures: Vec<(usize, Edge)> = closures
             .iter()
             .zip(&huber)
@@ -401,38 +406,43 @@ pub(crate) fn solve_core(
         huber.clone()
     };
     // the evidence reads the solve of what it weighs (the odometry at its noise, the core's closures), and only at
-    // that solve's minimum: residuals a solve stopped short of removing are no one's noise
-    let mut evidence_state = state.clone();
-    let converged = levenberg_marquardt_steps(
-        &mut evidence_state,
-        &pattern,
-        odometry,
-        closures,
-        &evidence_weights,
-        unary,
-        &unary_kept,
-        sightings,
-        &sighting_kept,
-        1e-5,
-        // a bound on time only: from the solve's state this is near its minimum, but a flat direction can creep
-        1000,
-        true,
-    );
-    let odometry_error_estimate_evidence = converged
-        .then(|| {
-            odometry_error_estimate_evidence(
-                &evidence_state,
-                &pattern,
-                odometry,
-                closures,
-                &evidence_weights,
-                unary,
-                &unary_kept,
-                sightings,
-                &sighting_kept,
-            )
-        })
-        .flatten();
+    // that solve's minimum: residuals a solve stopped short of removing are no one's noise (only when `learned_evidence`)
+    let odometry_error_estimate_evidence = if config.learned_evidence {
+        let mut evidence_state = state.clone();
+        let converged = levenberg_marquardt_steps(
+            &mut evidence_state,
+            &pattern,
+            odometry,
+            closures,
+            &evidence_weights,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+            1e-5,
+            // a bound on time only: from the solve's state this is near its minimum, but a flat direction can creep
+            1000,
+            true,
+        );
+        let odometry_error_estimate_evidence = converged
+            .then(|| {
+                odometry_error_estimate_evidence(
+                    &evidence_state,
+                    &pattern,
+                    odometry,
+                    closures,
+                    &evidence_weights,
+                    unary,
+                    &unary_kept,
+                    sightings,
+                    &sighting_kept,
+                )
+            })
+            .flatten();
+        odometry_error_estimate_evidence
+    } else {
+        None
+    };
     Solution {
         odometry_error_estimate_evidence,
         rotations: state.rotation,

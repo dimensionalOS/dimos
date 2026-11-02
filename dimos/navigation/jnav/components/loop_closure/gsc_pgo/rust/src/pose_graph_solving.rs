@@ -209,8 +209,24 @@ impl GscPgo {
             .collect();
         (sightings, ids)
     }
-    /// Wait for the running solve, and solve again until every closure is in. Returns whether keyframes moved.
+    /// Wait for the running solve, and solve again until every closure is in; then measure the learned odometry error
+    /// estimate once (`learned_odometry_error_estimate_from_closures`). Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
+        let mut moved = self.settle();
+        // the learned odometry error estimate, for the next run's config: measured once, here, from the final kept loops
+        // (one more solve of the same graph with the evidence on), never in a solve during the run
+        if self.config.learned_odometry_error_estimate_from_closures
+            && self.committed_closures.iter().any(|c| c.gnc_weight > 0.5)
+        {
+            self.learned_evidence_requested = true;
+            self.odometry_error_estimate_rescale = true;
+            moved |= self.settle();
+            self.learned_evidence_requested = false;
+        }
+        moved
+    }
+    /// Adopt solves until every closure, position and sighting has been through one.
+    fn settle(&mut self) -> bool {
         let mut moved = false;
         loop {
             moved |= self.apply_solve();
@@ -257,6 +273,9 @@ impl GscPgo {
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
             evidence_core: config.odometry_error_estimate_evidence_core,
+            // the learned estimate's evidence only in `finish`'s last solve
+            learned_evidence: config.learned_odometry_error_estimate_from_closures
+                && self.learned_evidence_requested,
             committed: if config.closure_commitments {
                 self.committed_closures
                     .iter()

@@ -123,7 +123,6 @@ config! {
     scan_context_top_k: i32,
     scan_context_match_threshold: f64,
     scan_context_lidar_height_m: f64,
-    closure_ground_clearance_m: f64,
     closure_sharpness_half: f64,
     closure_sharpness_nudge_m: f64,
     closure_sharpness_nudge_deg: f64,
@@ -688,6 +687,10 @@ impl Worker {
                 }),
             );
         }
+        // stopping: settle the graph and report the odometry error estimate its kept loops measured, once
+        pgo.finish();
+        let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+        self.log_odometry_drift(&pgo, last_time);
     }
 
     /// One debug_log line: `fields` plus its `kind` and `ts`, as JSON.
@@ -732,8 +735,17 @@ impl Worker {
                 "world_alignment": pgo.world_alignment().iter().map(|(f, yaw, t)| serde_json::json!([f, yaw, t])).collect::<Vec<_>>(),
             }),
         );
-        // once loops are kept, the odometry error estimate they measure, as the config inputs for the next run (`kind`
-        // "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift
+    }
+
+    /// The odometry error estimate the kept loops measured, as the config inputs for the next run (`kind`
+    /// "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift. Measured once,
+    /// when the module stops (`GscPgo::finish`).
+    fn log_odometry_drift(&self, pgo: &GscPgo, ts: f64) {
+        let kept = pgo
+            .committed_closures()
+            .iter()
+            .filter(|c| c.gnc_weight > 0.5)
+            .count();
         if kept > 0 {
             let (drift, measured) = pgo.odometry_error_estimate_for_next_run();
             let mut fields = serde_json::Map::new();

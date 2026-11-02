@@ -22,7 +22,7 @@ use std::sync::Arc;
 use crate::big_picture_fit::{closure_edges, Edge};
 use crate::connection_fit::{dump_icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
-use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
+use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
 use crate::pose_graph_solving::Solving;
 use crate::similarity_discovery;
 use crate::uniqueness;
@@ -452,9 +452,6 @@ pub struct Config {
     pub scan_context_top_k: i32,
     pub scan_context_match_threshold: f64,
     pub scan_context_lidar_height_m: f64,
-    /// Closure ICP and its scores leave out points this far (m) above each cloud's floor and lower (`above_floor`);
-    /// 0 keeps every point.
-    pub closure_ground_clearance_m: f64,
     /// When above 0, a closure's ICP factor is its sharpness s (`connection_fit::sharpness`) as s / (s + this), and an
     /// extended stack is scored the same way from its own sharpness, each round started from the single-scan alignment;
     /// 0 keeps the fitness factor and the inlier-count evidence of extended ICP.
@@ -580,7 +577,6 @@ impl Default for Config {
             scan_context_top_k: 10,
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
-            closure_ground_clearance_m: 0.0,
             closure_sharpness_half: 0.0,
             closure_sharpness_nudge_m: 1.0,
             closure_sharpness_nudge_deg: 5.0,
@@ -614,6 +610,8 @@ pub struct GscPgo {
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
     pub(crate) learned_odometry_error_estimate_ln_dispatched: [f64; 4],
     pub(crate) odometry_error_estimate_rescale: bool,
+    /// The next solve also measures the learned odometry error estimate's evidence (only `finish`'s last solve does).
+    pub(crate) learned_evidence_requested: bool,
     /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
     /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
     pub(crate) odometry_error_estimate_rescaled: bool,
@@ -762,25 +760,19 @@ impl ClosureSearch {
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
-        let clearance = self.config.closure_ground_clearance_m;
         // the source scan, the target submap and its tree, built only when a computation needs them (never when every
         // result comes from the ICP cache)
         // the source scan alone (all the degeneracy gate reads), built apart from the target and its tree
         let source_cell = std::cell::OnceCell::new();
         let source_cloud = || -> &PointCloud {
-            source_cell.get_or_init(|| {
-                above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance)
-            })
+            source_cell.get_or_init(|| self.stacked_cloud(std::iter::once(cur_idx)))
         };
         let clouds_cell = std::cell::OnceCell::new();
         let clouds = || -> &(PointCloud, PointCloud, KdTree) {
             clouds_cell.get_or_init(|| {
-                let target_cloud = above_floor(
-                    &self.stacked_cloud(
-                        target_idx.saturating_sub(half_range)
-                            ..=(target_idx + half_range).min(self.key_poses.len() - 1),
-                    ),
-                    clearance,
+                let target_cloud = self.stacked_cloud(
+                    target_idx.saturating_sub(half_range)
+                        ..=(target_idx + half_range).min(self.key_poses.len() - 1),
                 );
                 let target_tree = KdTree::build(&target_cloud);
                 (source_cloud().clone(), target_cloud, target_tree)
@@ -792,13 +784,21 @@ impl ClosureSearch {
         // the thinned target and the early stop change the single ICP's result too, so they are part of the key
         let key_suffix = format!(
             "{}{}{}",
-            if self.config.closure_icp_point_to_plane { ":pl" } else { "" },
+            if self.config.closure_icp_point_to_plane {
+                ":pl"
+            } else {
+                ""
+            },
             if self.config.closure_icp_target_resolution_m > 0.0 {
                 format!(":t{}", self.config.closure_icp_target_resolution_m)
             } else {
                 String::new()
             },
-            if self.config.closure_icp_early_stop { ":es" } else { "" },
+            if self.config.closure_icp_early_stop {
+                ":es"
+            } else {
+                ""
+            },
         );
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
