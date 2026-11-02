@@ -32,10 +32,10 @@ from dimos.robot.manipulators.seeedstudio.joints import (
     SEEEDSTUDIO_GRIPPER_JOINT,
 )
 
-# Measured on the arm: the gripper motor travels about 5.8 rad between its
-# stops, and opening moves it toward more negative positions. Calibration
-# drives past the full stroke so it reaches both stops from any start.
-GRIPPER_CALIBRATION_TRAVEL_RAD = 6.5
+# Measured on the arm: the gripper motor travels 6.39 rad between its stops,
+# and opening moves it toward more negative positions. Calibration drives
+# past the full stroke so it reaches both stops from any start.
+GRIPPER_CALIBRATION_TRAVEL_RAD = 7.0
 GRIPPER_CURRENT = 0.15
 
 
