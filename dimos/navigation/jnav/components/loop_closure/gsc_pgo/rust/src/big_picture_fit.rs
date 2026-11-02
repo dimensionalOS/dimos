@@ -52,10 +52,6 @@ pub struct SolveConfig {
     pub gnc_inlier_probability: f64,
     /// Huber threshold on a kept closure's whitened residual; 0 = plain least squares.
     pub huber_k: f64,
-    /// Per closure: true where the previous adopted solve kept it, so GNC holds it in (as PCM's consistent set) instead
-    /// of re-deciding it cold; empty for none. A committed loop is dropped only by a verdict that contradicts it
-    /// (`closure_commitments`, decided by the caller).
-    pub committed: Vec<bool>,
     /// The noise evidence reads only the kept closures' PCM core (`odometry_error_estimate_evidence_core`).
     pub evidence_core: bool,
     /// Compute that evidence at all (a polishing solve and Hutchinson traces each solve); it only feeds the learned
@@ -82,6 +78,8 @@ pub struct Solution {
     /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
+    /// Whether GNC's last Levenberg-Marquardt pass reached a minimum.
+    pub converged: bool,
     /// Variance-component evidence on the odometry error estimate from the solved graph (`odometry_error_estimate_evidence`): per source
     /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
     /// redundancy; None if the graph could not be factored.
@@ -266,11 +264,8 @@ pub(crate) fn solve_core(
         [f64::NAN; 3]
     };
     let (mut gnc_iterations, mut gnc_mu, mut gnc_stop) = (0, f64::NAN, "under_cutoff");
-    let mut held = vec![false; closures.len()];
-    for (h, &c) in held.iter_mut().zip(&config.committed) {
-        *h |= c;
-    }
-    levenberg_marquardt(
+    // whether the newest Levenberg-Marquardt pass of GNC (or of its start, when GNC never runs) reached a minimum
+    let mut converged = levenberg_marquardt(
         &mut state,
         &pattern,
         odometry,
@@ -314,10 +309,7 @@ pub(crate) fn solve_core(
         for _ in 0..100 {
             gnc_iterations += 1;
             gnc_mu = mu;
-            for ((w, &r), &held) in weights.iter_mut().zip(&r2).zip(&held) {
-                if held {
-                    continue;
-                }
+            for (w, &r) in weights.iter_mut().zip(&r2) {
                 *w = tls(r, threshold, mu);
             }
             for (w, &r) in unary_weights.iter_mut().zip(&u2) {
@@ -326,7 +318,7 @@ pub(crate) fn solve_core(
             for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
                 *w = tls(r, 1.0, mu);
             }
-            levenberg_marquardt(
+            converged = levenberg_marquardt(
                 &mut state,
                 &pattern,
                 odometry,
@@ -521,6 +513,7 @@ pub(crate) fn solve_core(
         sighting_weights: sighting_kept,
         error,
         relative_position_covariance,
+        converged,
     }
 }
 

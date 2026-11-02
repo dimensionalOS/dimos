@@ -19,7 +19,7 @@ use std::thread::JoinHandle;
 
 use crate::big_picture_fit::{
     closure_edges, odometry_edges, solve, solve_log_path, solve_with_priors, LandmarkSighting,
-    PositionPrior, Solution, SolveConfig, SolveTrace,
+    PositionPrior, Solution, SolveConfig,
 };
 use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
@@ -30,7 +30,7 @@ use crate::mat3::{self, Mat3, Vec3};
 /// first `closures_dispatched` committed closures, adopted once it finishes (`GscPgo::update`) or when waited for
 /// (`GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
-    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>, Option<SolveChoice>)>,
+    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
     pub(crate) keyframes: usize,
     /// What the solve was handed, only when `GSC_SOLVE_LOG` is set.
     pub(crate) dispatched: Option<SolveDispatch>,
@@ -43,15 +43,6 @@ pub(crate) struct SolveDispatch {
     /// Closures in this solve, and in the solve before it (the rest are new to this one).
     closures: usize,
     closures_before: usize,
-    committed: Vec<bool>,
-}
-
-/// Which of the held and cold solves was adopted and why, for the solve log.
-pub(crate) struct SolveChoice {
-    chosen: &'static str,
-    reason: &'static str,
-    held: (usize, usize, SolveTrace),
-    cold: Option<(usize, usize, SolveTrace)>,
 }
 
 fn wall_time() -> f64 {
@@ -60,14 +51,10 @@ fn wall_time() -> f64 {
         .map_or(f64::NAN, |d| d.as_secs_f64())
 }
 
-/// FNV-1a over the committed closures' indices and ends, to diff a live solve's input against an offline one.
-fn committed_hash(committed: &[bool], closures: &[CommittedClosure]) -> u64 {
+/// FNV-1a over the first `count` closures' indices and ends, to diff a live solve's input against an offline one.
+fn closures_hash(count: usize, closures: &[CommittedClosure]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
-    for (index, closure) in closures
-        .iter()
-        .enumerate()
-        .filter(|&(i, _)| committed.get(i) == Some(&true))
-    {
+    for (index, closure) in closures.iter().enumerate().take(count) {
         for value in [
             index as u64,
             closure.source_id as u64,
@@ -295,8 +282,8 @@ impl GscPgo {
             self.dispatch_solve();
         }
     }
-    /// Start a solve of every committed closure from the odometry (GNC must start from the dead-reckoned chain,
-    /// not an estimate earlier closures already bent).
+    /// Start one solve of every committed closure from the odometry, judging each closure afresh (GNC must start from the
+    /// dead-reckoned chain, not an estimate earlier closures already bent).
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
@@ -335,104 +322,39 @@ impl GscPgo {
             // the learned estimate's evidence only in `finish`'s last solve
             learned_evidence: config.learned_odometry_error_estimate_from_closures
                 && self.learned_evidence_requested,
-            committed: if config.closure_commitments {
-                self.committed_closures
-                    .iter()
-                    .map(|c| c.gnc_weight > 0.5)
-                    .collect()
-            } else {
-                Vec::new()
-            },
         };
         let solved = self.solved.clone();
         let closures_before = self.closures_dispatched;
-        let committed_handed_in = if solve_log_path().is_some() {
-            solve_config.committed.clone()
-        } else {
-            Vec::new()
-        };
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let run = |solve_config: &SolveConfig| {
-                    if priors.is_empty() && sightings.is_empty() {
-                        solve(
-                            &rotations,
-                            &positions,
-                            &free,
-                            &odometry,
-                            &closures,
-                            solve_config,
-                        )
-                    } else {
-                        solve_with_priors(
-                            &rotations,
-                            &positions,
-                            &free,
-                            &odometry,
-                            &closures,
-                            &priors,
-                            &sightings,
-                            solve_config,
-                        )
-                    }
-                };
-                let held = run(&solve_config);
-                // per solve: closures kept, committed closures it rejects, and its GNC trace (only when logging)
-                let summary = |s: &Solution| {
-                    s.trace.clone().map(|trace| {
-                        let kept = s.closure_weights.iter().filter(|&&w| w > 0.5).count();
-                        let dropped = solve_config
-                            .committed
-                            .iter()
-                            .zip(&s.closure_weights)
-                            .filter(|(&c, &w)| c && w < 0.5)
-                            .count();
-                        (kept, dropped, trace)
-                    })
-                };
-                let mut choice = summary(&held).map(|held| SolveChoice {
-                    chosen: "held",
-                    reason: "no_commitments",
-                    held,
-                    cold: None,
-                });
-                // the committed closures stand unless a cold solve finds a larger group that rejects one of them
-                let solution = if solve_config.committed.iter().any(|&c| c) {
-                    let cold = run(&SolveConfig {
-                        committed: Vec::new(),
-                        ..solve_config.clone()
-                    });
-                    let count =
-                        |s: &Solution| s.closure_weights.iter().filter(|&&w| w > 0.5).count();
-                    let contradicts = solve_config
-                        .committed
-                        .iter()
-                        .zip(&cold.closure_weights)
-                        .any(|(&c, &w)| c && w < 0.5);
-                    let larger = count(&cold) > count(&held);
-                    if let Some(choice) = &mut choice {
-                        choice.cold = summary(&cold);
-                        (choice.chosen, choice.reason) = match (larger, contradicts) {
-                            (true, true) => ("cold", "cold_larger_and_rejects_committed"),
-                            (_, false) => ("held", "cold_keeps_every_committed"),
-                            (false, true) => ("held", "cold_rejects_committed_but_not_larger"),
-                        };
-                    }
-                    if larger && contradicts {
-                        cold
-                    } else {
-                        held
-                    }
+                let solution = if priors.is_empty() && sightings.is_empty() {
+                    solve(
+                        &rotations,
+                        &positions,
+                        &free,
+                        &odometry,
+                        &closures,
+                        &solve_config,
+                    )
                 } else {
-                    held
+                    solve_with_priors(
+                        &rotations,
+                        &positions,
+                        &free,
+                        &odometry,
+                        &closures,
+                        &priors,
+                        &sightings,
+                        &solve_config,
+                    )
                 };
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(solved) = solved {
                     solved();
                 }
-                (solution, seconds, landmark_ids, choice)
+                (solution, seconds, landmark_ids)
             })
             .expect("spawn pose graph thread");
         // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
@@ -452,7 +374,6 @@ impl GscPgo {
             wall_time: wall_time(),
             closures: self.closures_dispatched,
             closures_before,
-            committed: committed_handed_in,
         });
         self.solving = Some(Solving {
             handle,
@@ -466,8 +387,26 @@ impl GscPgo {
         let Some(solving) = self.solving.take() else {
             return false;
         };
-        let (solution, seconds, landmark_ids, choice) =
+        let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
+        self.timing.solve_s += seconds;
+        // a solve that stalled short of a minimum would bend the map wrong: the map keeps the previous solve (a real loop
+        // closure can raise the cost a hundredfold, so the cost itself is no test)
+        let previous = self.graph_error;
+        if !solution.converged {
+            let reason = "lm_not_converged";
+            if let Some(dispatched) = &solving.dispatched {
+                self.log_rejected_solve(
+                    solving.keyframes,
+                    dispatched,
+                    &solution,
+                    reason,
+                    previous,
+                    seconds,
+                );
+            }
+            return false;
+        }
         self.graph_version += 1;
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
@@ -476,7 +415,6 @@ impl GscPgo {
                 .map(|(id, (&r, &p))| (id, r, p))
                 .collect();
         }
-        self.timing.solve_s += seconds;
         if !solution.world_alignment.is_empty() {
             self.world_alignment = solution.world_alignment.clone();
         }
@@ -573,13 +511,12 @@ impl GscPgo {
             }
         }
         self.graph_error = solution.error;
-        if let (Some(dispatched), Some(choice), Some((largest_move_keyframe, largest_move))) =
-            (&solving.dispatched, &choice, largest_move)
+        if let (Some(dispatched), Some((largest_move_keyframe, largest_move))) =
+            (&solving.dispatched, largest_move)
         {
             self.log_solve(
                 n,
                 dispatched,
-                choice,
                 &solution,
                 &previous_kept,
                 largest_move_keyframe,
@@ -643,7 +580,6 @@ impl GscPgo {
         &self,
         n: usize,
         dispatched: &SolveDispatch,
-        choice: &SolveChoice,
         solution: &Solution,
         previous_kept: &[bool],
         largest_move_keyframe: usize,
@@ -651,25 +587,10 @@ impl GscPgo {
         seconds: f64,
     ) {
         use std::fmt::Write as _;
-        let Some(path) = solve_log_path() else {
+        let Some(trace) = &solution.trace else {
             return;
         };
-        let trace = |(kept, committed_rejected, t): &(usize, usize, SolveTrace)| {
-            format!(
-                "{{\"kept\":{kept},\"committed_rejected\":{committed_rejected},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}]}}",
-                t.gnc_iterations,
-                json_number(t.gnc_mu),
-                t.gnc_stop,
-                t.initial_cost.map(json_number).join(","),
-                t.final_cost.map(json_number).join(","),
-            )
-        };
-        let adopted = if choice.chosen == "cold" {
-            choice.cold.as_ref().unwrap_or(&choice.held)
-        } else {
-            &choice.held
-        };
-        let weights = &adopted.2.gnc_weights;
+        let weights = &trace.gnc_weights;
         // final GNC weights in [0, 1e-4), [1e-4, .25), [.25, .5), [.5, .75), [.75, 1 - 1e-4), [1 - 1e-4, 1]
         let mut histogram = [0usize; 6];
         for &w in weights {
@@ -698,9 +619,49 @@ impl GscPgo {
                 );
             }
         }
-        let committed = dispatched.committed.iter().filter(|&&c| c).count();
         let line = format!(
-            "{{\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"closures\":{},\"closures_new\":{},\"committed\":{committed},\"committed_hash\":\"{:016x}\",\"committed_below_half\":{},\"chosen\":\"{}\",\"reason\":\"{}\",\"held\":{},\"cold\":{},\"weight_histogram\":{:?},\"largest_move_m\":{},\"largest_move_keyframe\":{largest_move_keyframe},\"changed\":[{changed}]}}\n",
+            "{{{},\"weight_histogram\":{:?},\"largest_move_m\":{},\"largest_move_keyframe\":{largest_move_keyframe},\"changed\":[{changed}]}}\n",
+            self.solve_fields(n, dispatched, solution, seconds),
+            histogram,
+            json_number(largest_move),
+        );
+        append_solve_log(&line);
+    }
+    /// A `GSC_SOLVE_LOG` line for a solve that was not adopted (its last Levenberg-Marquardt pass did not converge), with
+    /// why and the previous adopted solve's final cost.
+    fn log_rejected_solve(
+        &self,
+        n: usize,
+        dispatched: &SolveDispatch,
+        solution: &Solution,
+        reason: &str,
+        previous_error: f64,
+        seconds: f64,
+    ) {
+        let line = format!(
+            "{{\"rejected_solve\":\"{reason}\",{},\"error\":{},\"previous_error\":{}}}\n",
+            self.solve_fields(n, dispatched, solution, seconds),
+            json_number(solution.error),
+            json_number(previous_error),
+        );
+        append_solve_log(&line);
+    }
+    /// The solve log fields every line has: when it was dispatched and finished, its closures, and its GNC's path.
+    fn solve_fields(
+        &self,
+        n: usize,
+        dispatched: &SolveDispatch,
+        solution: &Solution,
+        seconds: f64,
+    ) -> String {
+        let kept = solution
+            .closure_weights
+            .iter()
+            .filter(|&&w| w > 0.5)
+            .count();
+        let trace = solution.trace.as_ref();
+        format!(
+            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}]",
             n,
             json_number(dispatched.keyframe_time),
             json_number(dispatched.wall_time),
@@ -710,22 +671,28 @@ impl GscPgo {
             json_number(seconds),
             dispatched.closures,
             dispatched.closures - dispatched.closures_before.min(dispatched.closures),
-            committed_hash(&dispatched.committed, &self.committed_closures),
-            adopted.1,
-            choice.chosen,
-            choice.reason,
-            trace(&choice.held),
-            choice.cold.as_ref().map_or("null".into(), trace),
-            histogram,
-            json_number(largest_move),
-        );
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
-            use std::io::Write;
-            let _ = file.write_all(line.as_bytes());
-        }
+            closures_hash(dispatched.closures, &self.committed_closures),
+            solution.converged,
+            trace.map_or(0, |t| t.gnc_iterations),
+            json_number(trace.map_or(f64::NAN, |t| t.gnc_mu)),
+            trace.map_or("", |t| t.gnc_stop),
+            trace.map_or([f64::NAN; 3], |t| t.initial_cost).map(json_number).join(","),
+            trace.map_or([f64::NAN; 3], |t| t.final_cost).map(json_number).join(","),
+        )
+    }
+}
+
+/// Append one line to the `GSC_SOLVE_LOG` file.
+fn append_solve_log(line: &str) {
+    let Some(path) = solve_log_path() else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
     }
 }

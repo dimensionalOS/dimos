@@ -513,11 +513,6 @@ pub struct Config {
     /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
     /// loops; huge: 12,012 of 16,867 for 69 right and 150 wrong).
     pub closure_alternative_places_min_pressure: f64,
-    /// When true, a closure the previous solve kept is a commitment: each solve holds the committed closures in, and
-    /// drops them only when a cold solve (every closure re-decided) keeps more closures and rejects some committed one,
-    /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
-    /// by newer wrong closures) no longer drops it (huge overtrust: 24 kept, 0, 24, 0).
-    pub closure_commitments: bool,
     /// With `closure_likelihood_confidence`: score only the source points the target can speak to, those within ICP's
     /// inlier distance of it or in space a target scan looked through (`connection_fit::likelihood_ratio_visible`);
     /// a point no target scan saw counts for nothing instead of as a misfit.
@@ -630,7 +625,6 @@ impl Default for Config {
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
             closure_alternative_places_min_pressure: 0.8,
-            closure_commitments: true,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,
