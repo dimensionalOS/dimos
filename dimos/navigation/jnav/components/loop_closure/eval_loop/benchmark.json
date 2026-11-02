@@ -1,0 +1,363 @@
+{
+  "about": "The standard GSC loop-closure benchmark (Jeff, 2026-10-28). main: every change is judged on all of these; do_no_harm: recordings with no real loop error to fix, where a change must not make the map worse; extra: spot checks. Each recording names the db it replays (local path today; cloud name once uploaded), the odometry + lidar streams, the pgo-eval mount args, and its ground truth with how it was validated. status: ready = runs and scores today; no_gt = runs, scored by AprilTag spread only; todo = stream/db not located or not yet built.",
+  "mid360_mount_args": [
+    "--lidar-tf",
+    "0,0,0,0,0,0,1",
+    "--body-tf",
+    "0,0,0,0,-0.374607,0,0.927184"
+  ],
+  "level_mid360_mount_args": [
+    "--lidar-tf",
+    "0,0,0,0,0,0,1",
+    "--body-tf",
+    "0,0,0,0,0,0,1"
+  ],
+  "recordings": [
+    {
+      "name": "small_l1",
+      "tier": "main",
+      "odometry": "go2_odometry",
+      "lidar": "l1_cloud",
+      "mount": null,
+      "db": "~/.cache/dimos/eval_loop/cd84b786a09c41c8a5435a02534a4355.db",
+      "gt": {
+        "stream": "fastlio_odometry_corrected",
+        "against": "go2_odometry"
+      },
+      "status": "ready"
+    },
+    {
+      "name": "small_fastlio",
+      "tier": "main",
+      "odometry": "fastlio_odometry",
+      "lidar": "fastlio_lidar",
+      "mount": "mid360",
+      "db": "~/.cache/dimos/eval_loop/cd84b786a09c41c8a5435a02534a4355.db",
+      "gt": {
+        "stream": "fastlio_odometry_corrected"
+      },
+      "status": "ready"
+    },
+    {
+      "name": "huge_fastlio",
+      "tier": "main",
+      "odometry": "fastlio_odometry",
+      "lidar": "fastlio_lidar",
+      "mount": "mid360",
+      "db": "~/.cache/dimos/eval_loop/dbf5283feeb446d49f065a100985a78e.db",
+      "gt": {
+        "plan": "AprilTag map from the realsense huge loop (2026-06-04_12-57pm-PST__huge_loop_realsense, Point-LIO corrected; tag 17 rides on the go2 and is excluded); score = this run's tag sightings vs that map after a rigid fit. Realsense sightings of tag 17 give the go2's own position as a second check.",
+        "current": "fastlio_odometry_corrected (unvalidated)"
+      },
+      "status": "no_gt"
+    },
+    {
+      "name": "huge_pointlio",
+      "tier": "main",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "mid360",
+      "db": "~/.cache/dimos/eval_loop/dbf5283feeb446d49f065a100985a78e.db",
+      "gt": {
+        "plan": "same realsense tag map as huge_fastlio"
+      },
+      "status": "no_gt"
+    },
+    {
+      "name": "huge_l1",
+      "tier": "main",
+      "odometry": "go2_odometry",
+      "lidar": "l1_cloud",
+      "mount": null,
+      "db": "~/.cache/dimos/eval_loop/dbf5283feeb446d49f065a100985a78e.db",
+      "gt": {
+        "plan": "same realsense tag map as huge_fastlio"
+      },
+      "status": "no_gt"
+    },
+    {
+      "name": "gir1_pointlio",
+      "tier": "main",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "mid360",
+      "db": "~/datasets/mid360_recordings/2026-06-01_6-05pm-PST__gir_stairs1/mem2.db",
+      "gt": {
+        "tf": [
+          "map",
+          "odom"
+        ]
+      },
+      "status": "ready"
+    },
+    {
+      "name": "gir1_l1",
+      "tier": "main",
+      "odometry": "go2_odometry",
+      "lidar": "l1_cloud",
+      "mount": null,
+      "db": "~/datasets/mid360_recordings/2026-06-01_6-05pm-PST__gir_stairs1/mem2.db",
+      "gt": {
+        "tf": [
+          "map",
+          "odom"
+        ],
+        "note": "map->odom is the Mid-360 SLAM correction; validate for the go2 frame"
+      },
+      "status": "todo"
+    },
+    {
+      "name": "gir2_pointlio",
+      "tier": "main",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "mid360",
+      "db": "~/datasets/mid360_recordings/2026-06-02_10-03pm-PST__gir_stairs2/mem2.db",
+      "gt": {
+        "tf": [
+          "map",
+          "odom"
+        ]
+      },
+      "status": "ready"
+    },
+    {
+      "name": "gir2_l1",
+      "tier": "main",
+      "odometry": "go2_odometry",
+      "lidar": "l1_cloud",
+      "mount": null,
+      "db": "~/datasets/mid360_recordings/2026-06-02_10-03pm-PST__gir_stairs2/mem2.db",
+      "gt": {
+        "tf": [
+          "map",
+          "odom"
+        ],
+        "note": "validate for the go2 frame"
+      },
+      "status": "todo"
+    },
+    {
+      "name": "gir_park_pointlio",
+      "tier": "main",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "mid360",
+      "db": "~/datasets/mid360_recordings/2026-06-02_11-12pm-PST__gir_park1/mem2.db",
+      "gt": null,
+      "status": "no_gt"
+    },
+    {
+      "name": "gir_park_l1",
+      "tier": "main",
+      "odometry": "go2_odometry",
+      "lidar": "l1_cloud",
+      "mount": null,
+      "db": "~/datasets/mid360_recordings/2026-06-02_11-12pm-PST__gir_park1/mem2.db",
+      "gt": null,
+      "status": "no_gt"
+    },
+    {
+      "name": "china_drifty_pointlio",
+      "tier": "main",
+      "odometry": "pointlio_odometry_drifty",
+      "lidar": "pointlio_lidar_drifty",
+      "mount": "mid360",
+      "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
+      },
+      "status": "ready",
+      "note": "Point-LIO replay with real drift (35.3 cm tag spread); copied from LFS data/.lfs/china_office.db.tar.gz"
+    },
+    {
+      "name": "office555",
+      "tier": "main",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "level_mid360",
+      "db": "~/.cache/dimos/eval_loop/office_555_loop1.db",
+      "gt": {
+        "tf": [
+          "world",
+          "odom"
+        ]
+      },
+      "status": "ready"
+    },
+    {
+      "name": "athens_pointlio",
+      "tier": "main",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "level_mid360",
+      "db": "~/repos/dimos/data/mid360_athens_stairs.db",
+      "gt": {
+        "tf": [
+          "world",
+          "odom"
+        ]
+      },
+      "status": "ready"
+    },
+    {
+      "name": "hotel_jog",
+      "tier": "main",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "TODO",
+      "db": "~/datasets/d455/hotel_jog/main.db",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      },
+      "status": "no_gt"
+    },
+    {
+      "name": "grassy_field",
+      "tier": "do_no_harm",
+      "odometry": "go2_odometry",
+      "lidar": "l1_cloud",
+      "mount": null,
+      "db": "~/datasets/mid360_recordings/2026-06-01_05-32pm-PST__grassy_field/mem2.db",
+      "gt": {
+        "note": "unknown for now: uncorrectable, no proxy"
+      },
+      "status": "no_gt"
+    },
+    {
+      "name": "hotel_slow",
+      "tier": "do_no_harm",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "TODO",
+      "db": "~/datasets/d455/hotel_slow/main.db",
+      "gt": {
+        "proxy": "hotel_regular's corrected trajectory (same place); align and compare tag/map positions",
+        "note": "uncorrectable with current tooling"
+      },
+      "status": "no_gt"
+    },
+    {
+      "name": "sf_office1_pointlio",
+      "tier": "extra",
+      "db": "~/datasets/d455/sf_office1 (main.db TODO)",
+      "status": "todo"
+    },
+    {
+      "name": "sf_office1_2_pointlio",
+      "tier": "extra",
+      "db": "~/datasets/d455/sf_office1_2/main.db",
+      "status": "no_gt",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      }
+    },
+    {
+      "name": "hk_village",
+      "tier": "extra",
+      "odometry": "go2_odometry",
+      "lidar": "l1_cloud",
+      "mount": null,
+      "db": "~/.dimos/recordings/hk_village_tf/hk_village{1..6}.db",
+      "gt": {
+        "stream": "go2_odometry_corrected"
+      },
+      "status": "ready"
+    },
+    {
+      "name": "roscon",
+      "tier": "extra",
+      "db": "~/datasets/roscon (roscon_jpeg.db / roscon_setup.mcap)",
+      "status": "todo"
+    },
+    {
+      "name": "airbnb",
+      "tier": "extra",
+      "db": "CudaLaptop:~/datasets/d435/airbnb.db",
+      "status": "todo"
+    },
+    {
+      "name": "office555_extra",
+      "tier": "extra",
+      "note": "same as main office555"
+    },
+    {
+      "name": "china_cpu_bound_pointlio",
+      "tier": "extra",
+      "odometry": "pointlio_odometry_cpu_bound",
+      "lidar": "pointlio_lidar_cpu_bound",
+      "mount": "mid360",
+      "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
+      },
+      "status": "ready"
+    },
+    {
+      "name": "china_perfect_pointlio",
+      "tier": "extra",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "mid360",
+      "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
+      },
+      "status": "ready",
+      "note": "raw already matches the correction (1.6 cm); scores how much a PGO hurts a near-perfect odometry"
+    },
+    {
+      "name": "china_fastlio",
+      "tier": "extra",
+      "odometry": "fastlio_odometry",
+      "lidar": "fastlio_lidar",
+      "mount": "mid360",
+      "db": "~/datasets/mid360_recordings/2026-06-12_03-26am-PST__china_office1/mem2.db",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "tags": "raw_april_tags",
+        "validated": "tag spread 1.6 cm (same as raw pointlio_odometry); all china streams share one clock and the mid360_link pose, so this corrects every variant",
+        "built_by": "make_gt_mid360.py on pointlio_odometry: tags (mount = tf mid360_link->camera_optical, sightings at their own time) + ICP stitching (sensor-frame scans)"
+      },
+      "note": "its fastlio diverged (77x110 m vs 35x58 m)",
+      "status": "ready"
+    },
+    {
+      "name": "hotel_regular",
+      "tier": "extra",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "TODO",
+      "db": "~/datasets/d455/hotel_normal/main.db",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      },
+      "status": "no_gt"
+    }
+  ],
+  "todo": [
+    "auto-configure the fitness metric (no inlier distance / scan range config)",
+    "best odometry error correction we can get (over/under-start sweep: learner must beat both starts)",
+    "standardize + upload the datasets (canonical dbs, dimos cloud upload; check with Jeff before uploading)",
+    "recalibrate everything after those changes: huge_l1 and small_l1 must loop-close"
+  ],
+  "requirements": [
+    "each recording has a corrected odometry to score against, validated (AprilTag spread through the correct camera mount, and lidar map consistency)",
+    "lidar scans in the sensor frame, not world (audit 2026-10-28: all current lidar streams are: l1_link / mid360_link / livox_frame)",
+    "only the MAIN tier must be fully standardized (validated corrected odometry, sensor-frame lidar) and uploaded to the dimos cloud (eventually MCAP/CDR); ask Jeff before uploading"
+  ]
+}
