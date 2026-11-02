@@ -328,6 +328,8 @@ pub struct Config {
     pub scan_context_top_k: i32,
     pub scan_context_match_threshold: f64,
     pub scan_context_lidar_height_m: f64,
+    /// Recompute the loop-overlap pressure (`loop_overlap`) on every this-many-th scan, reusing it in between; 0 = never.
+    pub pressure_check_frequency: usize,
 }
 
 impl Default for Config {
@@ -360,6 +362,7 @@ impl Default for Config {
             scan_context_top_k: 10,
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
+            pressure_check_frequency: 5,
         }
     }
 }
@@ -379,6 +382,13 @@ pub struct GscPgo {
     pub(crate) closures_dispatched: usize,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
+    /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
+    pub(crate) scans_seen: usize,
+    pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
+    /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
+    pub(crate) keyframe_reach: (f64, usize),
+    /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
+    pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
     pub(crate) scan_context_descriptors: Vec<similarity_discovery::Descriptor>,
     pub(crate) scan_context_ring_keys: Vec<similarity_discovery::RingKey>,
     pub(crate) rotation_offset: Mat3,
@@ -712,12 +722,25 @@ impl GscPgo {
     }
     /// Insert a keyframe if the pose clears the keyframe gate; returns
     /// whether it was added.
+    /// Add `cloud_with_pose` as a keyframe if it moved far enough from the last one (returns whether it did); every
+    /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
-        if !self.is_key_pose(&cloud_with_pose.pose) {
-            return false;
+        let keyframe = self.is_key_pose(&cloud_with_pose.pose);
+        if keyframe {
+            self.insert_keyframe(&cloud_with_pose.pose, cloud_with_pose.cloud.clone());
         }
-        self.insert_keyframe(&cloud_with_pose.pose, cloud_with_pose.cloud.clone());
-        true
+        self.scans_seen += 1;
+        let frequency = self.config.pressure_check_frequency;
+        if frequency > 0 && self.scans_seen.is_multiple_of(frequency) {
+            if let Some(overlap) = self.loop_overlap() {
+                self.pressure = Some((self.scans_seen, overlap));
+            }
+        }
+        keyframe
+    }
+    /// The newest loop-overlap pressure and the scan count it was computed at (see `pressure_check_frequency`).
+    pub fn pressure(&self) -> Option<(usize, crate::loop_overlap::LoopOverlap)> {
+        self.pressure
     }
     pub fn key_poses(&self) -> &[KeyPoseWithCloud] {
         &self.key_poses
@@ -892,6 +915,14 @@ impl GscPgo {
             ))),
             _ => cloud.clone(),
         };
+        // how far this keyframe's scan reaches, for loop_overlap's sensor range
+        if let Some(stored) = &stored {
+            let reach = similarity_discovery::auto_max_range(stored);
+            if reach > 0.0 {
+                self.keyframe_reach.0 += reach;
+                self.keyframe_reach.1 += 1;
+            }
+        }
         self.key_poses.push(KeyPoseWithCloud {
             time: pose.second,
             rotation_local: pose.rotation,

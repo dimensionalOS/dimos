@@ -20,7 +20,7 @@
 //! - A worker thread, woken by the callbacks, feeds scans into GscPgo oldest-first and publishes:
 //!   corrected_odometry (offset-corrected pose), tf (the map->odom correction), pose_graph (a
 //!   packed record per keyframe), loop_closure_event (a packed record per keyframe a solve moved),
-//!   closure_edges (each closure candidate's lifecycle). Closure
+//!   closure_edges (each closure candidate's lifecycle), debug_log (JSON debugging numbers). Closure
 //!   searches and pose-graph solves run on their own threads; publishes hop back onto the tokio
 //!   runtime via a captured Handle.
 
@@ -36,6 +36,7 @@ use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
+use lcm_msgs::std_msgs;
 use lcm_msgs::tf2_msgs::TFMessage;
 
 mod utils;
@@ -105,6 +106,7 @@ config! {
     scan_context_top_k: i32,
     scan_context_match_threshold: f64,
     scan_context_lidar_height_m: f64,
+    pressure_check_frequency: usize,
 }
 
 // ---- shared state ---------------------------------------------------------------
@@ -161,6 +163,11 @@ struct GscPgoModule {
     #[output(encode = PointCloud2::encode)]
     closure_edges: Output<PointCloud2>,
 
+    // Debugging numbers as JSON lines, one per pressure recompute (every pressure_check_frequency-th scan): {"ts", "unresolved_loop_probability", "expected_overlaps",
+    // "most_likely_keyframe", "most_likely_probability"} (see gsc_pgo::loop_overlap).
+    #[output(encode = std_msgs::String::encode)]
+    debug_log: Output<std_msgs::String>,
+
     #[config]
     config: Config,
 
@@ -186,6 +193,7 @@ impl GscPgoModule {
             pose_graph: self.pose_graph.clone(),
             loop_closure_event: self.loop_closure_event.clone(),
             closure_edges: self.closure_edges.clone(),
+            debug_log: self.debug_log.clone(),
             tf: self.tf.clone(),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::clone(&stop),
@@ -276,6 +284,7 @@ struct Worker {
     pose_graph: Output<PointCloud2>,
     loop_closure_event: Output<PointCloud2>,
     closure_edges: Output<PointCloud2>,
+    debug_log: Output<std_msgs::String>,
     rt: tokio::runtime::Handle,
     stop: Arc<AtomicBool>,
     wake: Arc<Condvar>,
@@ -325,6 +334,8 @@ impl Worker {
 
         // Each keyframe's pose as fast-reform consumers last heard it.
         let mut published: Vec<(Mat3, Vec3)> = Vec::new();
+        // The scan count of the last loop-overlap pressure sent on debug_log.
+        let mut pressure_sent = 0usize;
         // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
         // Search diagnostics already written to <dump_path>.closures.jsonl.
@@ -363,7 +374,20 @@ impl Worker {
 
             let cur_time = cloud_with_pose.pose.second;
 
-            if !pgo.add_key_pose(&cloud_with_pose) {
+            let keyframe = pgo.add_key_pose(&cloud_with_pose);
+            // the loop-overlap pressure, each time it is recomputed (every pressure_check_frequency-th scan)
+            if let Some((scan, overlap)) = pgo.pressure() {
+                if scan != pressure_sent {
+                    pressure_sent = scan;
+                    let mut line = serde_json::to_value(overlap).unwrap_or_default();
+                    line["ts"] = cur_time.into();
+                    let msg = std_msgs::String {
+                        data: line.to_string(),
+                    };
+                    self.publish(&self.debug_log, &msg, "debug_log");
+                }
+            }
+            if !keyframe {
                 // Not a keyframe — still broadcast the corrected odom + TF.
                 self.publish_corrected(
                     &pgo,

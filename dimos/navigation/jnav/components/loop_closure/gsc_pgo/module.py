@@ -23,6 +23,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -69,6 +70,8 @@ class PGOConfig(NativeModuleConfig):
     scan_context_top_k: int = 10
     scan_context_match_threshold: float = 0.4
     scan_context_lidar_height_m: float = 2.0
+    # recompute the loop-overlap pressure (debug_log unresolved_loop_probability) every this-many-th scan; 0 = never
+    pressure_check_frequency: int = 5
 
     # A closure's match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) must clear
     # 1 - exp(-z^2/2k^2), z = how hard it yanks the graph (per sqrt keyframe gap) in robust std devs of the yanks scored so far; this is k
@@ -125,6 +128,9 @@ class GscPGO(NativeModule):
     # each closure candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
     # with both keyframes' current positions and a confidence, for drawing closure edges
     closure_edges: Out[PointCloud2]
+    # debugging numbers as JSON lines, one per pressure recompute (pressure_check_frequency): ts, unresolved_loop_probability (chance the newest scan
+    # overlaps an earlier stretch of the path no closure has tied it to), expected_overlaps, most_likely_keyframe/_probability
+    debug_log: Out[String]
 
     @rpc
     def stop(self) -> None:
