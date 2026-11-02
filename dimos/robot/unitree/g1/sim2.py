@@ -38,14 +38,14 @@ from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.utils.mjcf_to_urdf import MjcfUrdf
+from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.sim2.view import WorldView, open_view
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.mujoco.menagerie import menagerie_path
 
 G1_ROBOT_ID = "g1"
 G1_MJCF = menagerie_path() / "unitree_g1" / "g1.xml"
-G1_SIM_MODEL = RobotModel.from_file(MjcfUrdf(G1_MJCF, G1_ROBOT_ID))
+G1_SIM_MODEL = RobotModel.from_file(mjcf_to_urdf(G1_MJCF, G1_ROBOT_ID))
 
 # Where it starts: pelvis height, and per joint (Menagerie's order, which is the motors' order) the pose it stands in
 # and the PD gains that hold it there until the first motor_command.

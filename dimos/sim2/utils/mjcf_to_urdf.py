@@ -21,9 +21,7 @@ Meshes are written out as compiled (MuJoCo recenters them), so the URDF needs no
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
-import os
 from pathlib import Path
 import tempfile
 import xml.etree.ElementTree as ET
@@ -59,18 +57,6 @@ def mjcf_to_urdf(
         partial.write_text(xml)
         partial.replace(urdf)
     return urdf
-
-
-@dataclass(frozen=True)
-class MjcfUrdf(os.PathLike[str]):
-    """mjcf_to_urdf's URDF, made only when first opened: a RobotModel source that costs nothing to declare."""
-
-    mjcf: os.PathLike[str] | str
-    name: str | None = None
-    root_link: str | None = None
-
-    def __fspath__(self) -> str:
-        return str(mjcf_to_urdf(Path(os.fspath(self.mjcf)), self.name, self.root_link))
 
 
 def _urdf(model: mujoco.MjModel, name: str, root_link: str | None, directory: Path) -> str:
