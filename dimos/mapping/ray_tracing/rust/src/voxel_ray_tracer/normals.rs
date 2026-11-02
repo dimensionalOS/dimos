@@ -44,6 +44,10 @@ const EIGEN_DEGENERATE: f32 = 1e-12;
 pub struct Plane {
     pub normal: Vector3<f32>,
     pub offset: f32,
+    /// RMS distance of the fit's points from the plane.
+    pub spread: f32,
+    /// Whether the fit's points pin the plane down, so its spread is evidence: more than three, not along one line.
+    pub determined: bool,
 }
 
 /// A voxel's cached pooled fit. Stale until a clearing ray needs it.
@@ -187,18 +191,21 @@ fn classify(eig: &Sym3Eigen) -> Option<(Vector3<f32>, f32)> {
 
 /// The normal of the most level plane through points with this covariance:
 /// a plane's own, the most level one through a line, else level, since
-/// lidar noise reads a small patch of floor as scattered.
-pub(super) fn surface_normal(cov: &Matrix3<f32>) -> Vector3<f32> {
+/// lidar noise reads a small patch of floor as scattered. Paired with whether
+/// the points chose it, rather than a line or a single spot leaving it open.
+pub(super) fn surface_normal(cov: &Matrix3<f32>) -> (Vector3<f32>, bool) {
     let eig = sym3_eigen(cov);
     match shape(&eig) {
-        Shape::Planar => eig.smallest,
+        Shape::Planar => (eig.smallest, true),
         Shape::Linear => {
             let line = eig.largest();
-            (Vector3::z() - line * line.z)
+            let normal = (Vector3::z() - line * line.z)
                 .try_normalize(f32::EPSILON)
-                .unwrap_or_else(|| any_perpendicular(line))
+                .unwrap_or_else(|| any_perpendicular(line));
+            (normal, false)
         }
-        Shape::Degenerate | Shape::Scattered => Vector3::z(),
+        Shape::Scattered => (Vector3::z(), true),
+        Shape::Degenerate => (Vector3::z(), false),
     }
 }
 

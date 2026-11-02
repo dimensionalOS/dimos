@@ -308,6 +308,8 @@ mod tests {
             max_health: 1,
             graze_cos: 0.5,
             graze_recent_frames: u32::MAX,
+            thin_surface_m: 0.0,
+            thin_graze_cos: 0.0,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,

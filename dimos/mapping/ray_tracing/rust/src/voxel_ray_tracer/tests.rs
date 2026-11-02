@@ -24,7 +24,7 @@ fn test_rng(mut state: u64) -> impl FnMut() -> u64 + Copy {
     }
 }
 
-fn basic_config() -> Config {
+pub(super) fn basic_config() -> Config {
     Config {
         voxel_size: 1.0,
         fine_divisor: 0,
@@ -37,6 +37,8 @@ fn basic_config() -> Config {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -148,6 +150,8 @@ fn find_misses_along_ray_hits_correct_voxels() {
         graze_cos: 0.5,
         map_frame: 0,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         fine_divisor: None,
     };
     let mut walk = RayWalk::default();
@@ -358,6 +362,8 @@ fn ground_clipping_single_ray() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -518,6 +524,8 @@ fn stair_clipping_ray_fan() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -604,6 +612,8 @@ fn landing_floor_ray_fan() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -678,6 +688,8 @@ fn landing_grazed_from_below() {
         max_health: 1,
         graze_cos,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -828,6 +840,8 @@ fn grazing_ray_spares_planar_floor() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -1361,6 +1375,8 @@ fn milestone_gated_normals_match_full_refit() {
         grace_depth: 0.2,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -1487,6 +1503,8 @@ fn new_voxel_is_fit_before_grazing_ray() {
         grace_depth: 0.2,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surface_m: 0.0,
+        thin_graze_cos: 0.0,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -2089,7 +2107,7 @@ fn regions_group_chunks_by_center_and_never_split_a_chunk() {
 
 /// A healthy map of the points, each voxel created as its first point lands,
 /// with its surface planes fit.
-fn map_of_points(points: &[(f32, f32, f32)], voxel_size: f32) -> VoxelMap {
+pub(super) fn map_of_points(points: &[(f32, f32, f32)], voxel_size: f32) -> VoxelMap {
     let mut map = VoxelMap::with_support_min(0);
     for &p in points {
         let key = world_to_voxel(p.0, p.1, p.2, 1.0 / voxel_size);

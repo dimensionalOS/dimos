@@ -519,14 +519,17 @@ impl<'a> ChunkCursor<'a> {
         }
     }
 
+    /// The voxel at `key` with its surface plane.
     #[inline]
-    pub fn get(&mut self, key: VoxelKey) -> Option<&'a Voxel> {
+    pub fn get(&mut self, key: VoxelKey) -> Option<(&'a Voxel, Option<Plane>)> {
         let ck = chunk_of(key);
         if self.key != Some(ck) {
             self.key = Some(ck);
             self.chunk = self.map.chunks.get(&ck);
         }
-        self.chunk?.get(key)
+        let chunk = self.chunk?;
+        let i = chunk.index(slot_of(key))?;
+        Some((&chunk.voxels[i], chunk.surfaces[i]))
     }
 }
 
@@ -726,7 +729,7 @@ mod tests {
         for x in -20..20 {
             let key = (x, 1, -1);
             assert_eq!(
-                cursor.get(key).map(|v| v.health),
+                cursor.get(key).map(|(v, _)| v.health),
                 map.get(&key).map(|v| v.health)
             );
         }

@@ -59,6 +59,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     graze_cos: float = 0.7
     # Spare a grazing miss only on a voxel hit within this many frames, so what nothing sees any more clears; 2**32 - 1 spares always.
     graze_recent_frames: int = 2**32 - 1
+    # A voxel whose plane fits its points within this RMS distance (m), and whose own points' mean lies that close to it, is a thin surface, cleared only by a ray crossing that plane; zero turns it off.
+    thin_surface_m: float = 0.03
+    # A ray crossing a thin surface is spared when abs of its dot with the plane's normal is below this, instead of graze_cos.
+    thin_graze_cos: float = 0.26
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4

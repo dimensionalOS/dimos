@@ -22,6 +22,8 @@ mod chunk_map;
 mod normals;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod thin_surface_tests;
 
 use chunk_map::{chunk_of, ChunkCursor, ChunkRef, HealthyVoxel};
 pub use chunk_map::{ChunkKey, ChunkMap, CHUNK_EDGE};
@@ -93,6 +95,12 @@ pub struct Config {
     pub graze_cos: f32,
     /// Spare a grazing miss only on a voxel hit within this many frames, so a surface nothing sees any more clears; u32::MAX spares always.
     pub graze_recent_frames: u32,
+    /// A voxel whose plane fits its points within this RMS distance (m), and whose own points' mean lies that close to it, is a thin surface, which a ray clears only by crossing that plane; zero turns it off.
+    #[validate(range(min = 0.0))]
+    pub thin_surface_m: f32,
+    /// A ray crossing a thin surface is spared when abs of its dot with the plane's normal is below this, instead of graze_cos.
+    #[validate(range(min = 0.0, max = 1.0))]
+    pub thin_graze_cos: f32,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
     /// emits all. Higher drops isolated returns. The global map is unfiltered.
     #[validate(range(min = 0))]
@@ -503,11 +511,14 @@ impl Voxel {
             return None;
         }
         let mean = sum / n;
-        let normal = surface_normal(&(m2 / n - mean * mean.transpose()));
+        let cov = m2 / n - mean * mean.transpose();
+        let (normal, chosen) = surface_normal(&cov);
         let up = if normal.z < 0.0 { -normal } else { normal };
         Some(Plane {
             normal: up,
             offset: up.dot(&mean),
+            spread: up.dot(&(cov * up)).max(0.0).sqrt(),
+            determined: chosen && n > NORMAL_MIN_POINTS as f32,
         })
     }
 }
@@ -1049,6 +1060,8 @@ pub fn update_map(
         graze_cos: cfg.graze_cos,
         map_frame: map.frame,
         graze_recent_frames: cfg.graze_recent_frames,
+        thin_surface_m: cfg.thin_surface_m,
+        thin_graze_cos: cfg.thin_graze_cos,
         fine_divisor: fine,
     };
     let step = cfg.ray_subsample as usize;
@@ -1447,6 +1460,8 @@ struct RayFrame<'a> {
     /// This frame's number, and how recent a hit keeps a voxel's grazing protection.
     map_frame: u32,
     graze_recent_frames: u32,
+    thin_surface_m: f32,
+    thin_graze_cos: f32,
     fine_divisor: Option<i32>,
 }
 
@@ -1472,6 +1487,8 @@ fn find_misses_along_ray(
         graze_cos,
         map_frame,
         graze_recent_frames,
+        thin_surface_m,
+        thin_graze_cos,
         fine_divisor,
     } = *frame;
     if origin_voxel == endpoint {
@@ -1584,9 +1601,26 @@ fn find_misses_along_ray(
             continue;
         }
 
-        if let Some(c) = cursor.get((x, y, z)) {
+        if let Some((c, surface)) = cursor.get((x, y, z)) {
             if hits.contains(&(x, y, z)) {
                 continue;
+            }
+            let t_exit = tx.min(ty).min(tz);
+            // The fit must be tight, and this voxel's own points must lie on it, not only those below.
+            let thin = surface.filter(|p| {
+                p.spread < thin_surface_m
+                    && p.determined
+                    && (p.normal.dot(&(c.sum / c.num_pts as f32)) - p.offset).abs() < thin_surface_m
+            });
+            // A ray that stays on one side of a thin surface passes beside it, not through it.
+            if let Some(plane) = thin {
+                let side = |t: f32| {
+                    let p = Vector3::new(ox + t * dx - cx, oy + t * dy - cy, oz + t * dz - cz);
+                    plane.normal.dot(&p) - plane.offset
+                };
+                if side(t_enter) * side(t_exit) > 0.0 {
+                    continue;
+                }
             }
             // A ray through unobserved fine cells contradicts nothing.
             if let Some(divisor) = fine_divisor {
@@ -1595,7 +1629,7 @@ fn find_misses_along_ray(
                         origin,
                         (dx, dy, dz),
                         t_enter,
-                        tx.min(ty).min(tz),
+                        t_exit,
                         (x, y, z),
                         divisor,
                         voxel_size,
@@ -1608,6 +1642,13 @@ fn find_misses_along_ray(
             // Nothing has seen this voxel lately: no surface there to protect from a grazing ray.
             if map_frame.wrapping_sub(c.last_hit) > graze_recent_frames {
                 walk.misses.insert((x, y, z));
+                continue;
+            }
+            // A thin surface's own plane alone decides whether a crossing ray grazes it.
+            if let Some(plane) = thin {
+                if !should_spare(Some(plane.normal), ray_unit, thin_graze_cos) {
+                    walk.misses.insert((x, y, z));
+                }
                 continue;
             }
             match c.normal {
