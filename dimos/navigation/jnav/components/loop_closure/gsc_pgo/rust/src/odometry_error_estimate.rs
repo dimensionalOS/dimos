@@ -24,7 +24,8 @@
 //! prior: held to by its measured spread across recordings (`learned_odometry_error_estimate_prior_ln_sd_*`), or else by one closure's worth
 //! of information (a unit-information prior, Kass & Wasserman 1995), so a few closures barely move it.
 
-use crate::gsc_pgo::{Config, KeyPoseWithCloud};
+use crate::store::KeyFrames;
+use crate::gsc_pgo::Config;
 use crate::mat3::{self, Mat3, Vec3};
 
 /// The noise components in order: xy translation, z translation, yaw, roll/pitch (per keyframe step, m² or rad²).
@@ -48,7 +49,7 @@ pub struct Innovation {
 /// A closure's innovation against the raw odometry from keyframe `target` to `source`, given the source's measured
 /// position in the target's frame.
 pub fn innovation(
-    key_poses: &[KeyPoseWithCloud],
+    key_poses: &KeyFrames,
     config: &Config,
     target: usize,
     source: usize,
@@ -56,8 +57,8 @@ pub fn innovation(
     fitness: f64,
 ) -> Innovation {
     let (from, to) = (target.min(source), target.max(source));
-    let rotation = |k: usize| key_poses[k].rotation_local;
-    let position = |k: usize| key_poses[k].translation_local;
+    let rotation = |k: usize| key_poses.fixed(k).rotation_local;
+    let position = |k: usize| key_poses.fixed(k).translation_local;
     let to_target = mat3::transpose(&rotation(target));
     let raw = mat3::mat_vec(&to_target, &mat3::sub(&position(source), &position(target)));
     let outer = |m: &Mat3, column: usize| -> Mat3 {
@@ -74,7 +75,7 @@ pub fn innovation(
             &mat3::sub(&position(far), &position(k)),
         ));
         let swing = mat3::mat_mul(&lever, &mat3::mat_mul(&to_target, &rotation(k)));
-        let step = crate::big_picture_fit::step_variances(config, &key_poses[k - 1], &key_poses[k]);
+        let step = crate::big_picture_fit::step_variances(config, &key_poses.get(k - 1), &key_poses.get(k));
         let add = |piece: &mut Mat3, m: Mat3, variance: f64| {
             *piece = mat3::add_mat(piece, &m.map(|row| row.map(|v| v * variance)))
         };

@@ -343,7 +343,7 @@ impl LookAlikes {
         &mut self,
         limit: f64,
         query: &Descriptor,
-        descriptors: &[Arc<Descriptor>],
+        descriptors: &crate::store::Appended<Arc<Descriptor>>,
         match_threshold: f64,
         same_place: impl Fn(usize, usize) -> bool,
     ) -> usize {
@@ -378,9 +378,8 @@ impl crate::gsc_pgo::GscPgo {
     /// by distance), returning the nearest that is far enough back.
     pub(crate) fn search_by_position(&self) -> Option<usize> {
         let here = self.key_poses.last().unwrap().translation_global;
-        self.key_poses[..self.newest_closure_target()]
-            .iter()
-            .map(|k| mat3::norm(&mat3::sub(&k.translation_global, &here)))
+        (0..self.newest_closure_target())
+            .map(|k| mat3::norm(&mat3::sub(&self.key_poses.position(k), &here)))
             .enumerate()
             .filter(|&(_, d)| d <= self.config.closure_search_radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))

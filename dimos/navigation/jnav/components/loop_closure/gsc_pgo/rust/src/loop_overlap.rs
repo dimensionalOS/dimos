@@ -22,8 +22,9 @@
 //! uncertainty with a sensor-range blob, and the part of it that is unresolved is weighted by the chance j is off by more
 //! than `closure_search_radius` (the position search would find it otherwise).
 
+use crate::store::KeyFrames;
 use crate::big_picture_fit::odometry_edges;
-use crate::gsc_pgo::{CommittedClosure, Config, GscPgo, KeyPoseWithCloud};
+use crate::gsc_pgo::{Config, GscPgo};
 use crate::mat3::{self, add_mat, det, skew, sub_mat, Mat3, Vec3};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -85,14 +86,14 @@ fn erfc(x: f64) -> f64 {
 /// turns at. The lever-arm sum over steps j..t of S(a - q) A S(a - q)^T then expands into these, for any newest
 /// position a, in O(1).
 pub(crate) fn odometry_error_estimate_sums(
-    key_poses: &[KeyPoseWithCloud],
+    key_poses: &KeyFrames,
     config: &Config,
     noise: [f64; 4],
 ) -> Vec<Sums> {
     let zero = [[0.0; 3]; 3];
     let mut sums = vec![[zero; 4]];
     for edge in odometry_edges(key_poses, config, noise) {
-        let (from, to) = (&key_poses[edge.from], &key_poses[edge.to]);
+        let (from, to) = (&key_poses.get(edge.from), &key_poses.get(edge.to));
         let world = |rotation: &Mat3, variances: [f64; 3]| -> Mat3 {
             let scaled: Mat3 =
                 std::array::from_fn(|i| std::array::from_fn(|j| rotation[i][j] * variances[j]));
@@ -166,7 +167,7 @@ pub(crate) fn chi2_inverse(p: f64, cdf: impl Fn(f64) -> f64) -> f64 {
 /// them could have drifted plus `radius` (the position search's reach), within the `cutoff` squared Mahalanobis
 /// distance. Two visits of one spot in a drifted graph sit far apart in position yet within that drift.
 pub(crate) fn could_be_same_place(
-    key_poses: &[KeyPoseWithCloud],
+    key_poses: &KeyFrames,
     sums: &[Sums],
     a: usize,
     b: usize,
@@ -175,8 +176,8 @@ pub(crate) fn could_be_same_place(
 ) -> bool {
     let (from, to) = (a.min(b), a.max(b));
     let (p_from, p_to) = (
-        key_poses[from].translation_global,
-        key_poses[to].translation_global,
+        key_poses.position(from),
+        key_poses.position(to),
     );
     let covariance = add_mat(
         &odometry_covariance(sums, from, to, &p_to),
@@ -192,23 +193,23 @@ pub(crate) fn could_be_same_place(
 /// What the loop-overlap pressure reads: the keyframes, the config, the keyframes' reach sum and count, the odometry error
 /// estimate, the newest applied solve's tip and relative covariances, and the committed closures.
 pub(crate) struct OverlapInputs<'a> {
-    pub(crate) key_poses: &'a [KeyPoseWithCloud],
+    pub(crate) key_poses: &'a KeyFrames,
     pub(crate) config: &'a Config,
     pub(crate) keyframe_reach: (f64, usize),
     pub(crate) error_estimate: [f64; 4],
     pub(crate) solved_relative_covariance: Option<(usize, &'a [Mat3])>,
-    pub(crate) committed_closures: &'a [CommittedClosure],
+    pub(crate) committed_closures: &'a crate::store::Closures,
 }
 
 /// `OverlapInputs` owned, a snapshot a pressure job takes at its dispatch (`pressure_let_enabled`).
 #[derive(Clone)]
 pub(crate) struct OverlapSnapshot {
-    key_poses: Vec<KeyPoseWithCloud>,
+    key_poses: KeyFrames,
     config: Config,
     keyframe_reach: (f64, usize),
     error_estimate: [f64; 4],
-    solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
-    committed_closures: Vec<CommittedClosure>,
+    solved_relative_covariance: Option<(usize, std::sync::Arc<Vec<Mat3>>)>,
+    committed_closures: crate::store::Closures,
 }
 
 impl OverlapSnapshot {
@@ -246,7 +247,8 @@ impl GscPgo {
             committed_closures: &self.committed_closures,
         }
     }
-    /// What the loop-overlap pressure reads, copied (`pressure_let_enabled`).
+    /// What the loop-overlap pressure reads, as an O(1) snapshot (`pressure_let_enabled`): shared handles, no copies of
+    /// the keyframes, closures or covariances.
     pub(crate) fn overlap_snapshot(&self) -> OverlapSnapshot {
         OverlapSnapshot {
             key_poses: self.key_poses.clone(),
@@ -256,11 +258,6 @@ impl GscPgo {
             solved_relative_covariance: self.solved_relative_covariance.clone(),
             committed_closures: self.committed_closures.clone(),
         }
-    }
-    /// See `OverlapInputs::overlap_model`.
-    pub(crate) fn overlap_model(&self, reference: usize) -> Option<OverlapModel<'_>> {
-        let inputs = self.overlap_inputs();
-        inputs.overlap_model(reference)
     }
     /// See `OverlapInputs::loop_overlap`.
     pub fn loop_overlap(&self) -> Option<LoopOverlap> {
@@ -281,7 +278,7 @@ impl<'a> OverlapInputs<'a> {
         if sensor_range <= 0.0 || reference == 0 || reference >= self.key_poses.len() {
             return None;
         }
-        let newest = self.key_poses[reference].translation_global;
+        let newest = self.key_poses.position(reference);
         let sums = odometry_error_estimate_sums(self.key_poses, self.config, self.error_estimate);
         let (solved_tip, solved) = match self.solved_relative_covariance {
             Some((tip, covariance)) if tip <= reference => (tip, covariance),
@@ -293,7 +290,7 @@ impl<'a> OverlapInputs<'a> {
         let since_solve = odometry_covariance(&sums, solved_tip, reference, &newest);
         let tip_lever = skew(&mat3::sub(
             &newest,
-            &self.key_poses[solved_tip].translation_global,
+            &self.key_poses.position(solved_tip),
         ));
         Some(OverlapModel {
             key_poses: self.key_poses,
@@ -325,8 +322,8 @@ impl<'a> OverlapInputs<'a> {
         for k in (0..self.key_poses.len().saturating_sub(1)).rev() {
             path_from[k] = path_from[k + 1]
                 + mat3::norm(&mat3::sub(
-                    &self.key_poses[k + 1].translation_global,
-                    &self.key_poses[k].translation_global,
+                    &self.key_poses.position(k + 1),
+                    &self.key_poses.position(k),
                 ));
         }
         let closed_places: Vec<Vec3> = self
@@ -339,10 +336,10 @@ impl<'a> OverlapInputs<'a> {
                     .get(recent)
                     .is_some_and(|&d| d <= model.sensor_range)
             })
-            .map(|(_, earlier)| self.key_poses[earlier].translation_global)
+            .map(|(_, earlier)| self.key_poses.position(earlier))
             .collect();
         for j in 0..self.newest_closure_target() {
-            let position = self.key_poses[j].translation_global;
+            let position = self.key_poses.position(j);
             // keyframes closer than a sensor range along the path see the same place: count one of them
             if last_counted
                 .is_some_and(|p| mat3::norm(&mat3::sub(&p, &position)) < model.sensor_range)
@@ -406,7 +403,7 @@ pub fn soft_pressure(probability: f64, log10_hazard: f64, half_log10: f64, decad
 
 /// Each earlier keyframe's position uncertainty as seen from a reference keyframe (see `GscPgo::overlap_model`).
 pub(crate) struct OverlapModel<'a> {
-    key_poses: &'a [KeyPoseWithCloud],
+    key_poses: &'a KeyFrames,
     sums: Vec<Sums>,
     solved: &'a [Mat3],
     solved_tip: usize,
@@ -446,7 +443,7 @@ impl OverlapModel<'_> {
             &covariance,
             &[[radius, 0.0, 0.0], [0.0, radius, 0.0], [0.0, 0.0, radius]],
         );
-        let offset = mat3::sub(&self.key_poses[j].translation_global, &self.newest);
+        let offset = mat3::sub(&self.key_poses.position(j), &self.newest);
         ((radius.powi(3) / det(&blurred)).sqrt()
             * (-0.5 * quadratic_inverse(&blurred, &offset)).exp())
         .clamp(0.0, 1.0)
@@ -458,7 +455,7 @@ impl OverlapModel<'_> {
             &covariance,
             &[[sensor, 0.0, 0.0], [0.0, sensor, 0.0], [0.0, 0.0, sensor]],
         );
-        let offset = mat3::sub(&self.key_poses[j].translation_global, &self.newest);
+        let offset = mat3::sub(&self.key_poses.position(j), &self.newest);
         let ln_probability = 0.5 * (sensor.powi(3) / det(&blurred)).ln()
             - 0.5 * quadratic_inverse(&blurred, &offset);
         let probability = ((sensor.powi(3) / det(&blurred)).sqrt()
