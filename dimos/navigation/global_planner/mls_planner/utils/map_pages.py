@@ -56,19 +56,19 @@ STYLE = """
 :root {
   --ground: #eef1f3; --panel: #ffffff; --ink: #1b2329; --muted: #5d6b76;
   --rule: #d5dde3; --voxel: #8fa3b5; --plane: #d9912b; --path: #1f8a7c; --blocked: #c4453a;
-  --scene: #f7f9fa;
+  --scene: #f7f9fa; --truth: #7a4fd6;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --ground: #12171b; --panel: #1a2127; --ink: #e3e9ed; --muted: #95a3ad;
     --rule: #2c363e; --voxel: #5f7385; --plane: #e8a54a; --path: #3cc0ad; --blocked: #e2685c;
-    --scene: #161c21; color-scheme: dark;
+    --scene: #161c21; --truth: #a98bff; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --ground: #12171b; --panel: #1a2127; --ink: #e3e9ed; --muted: #95a3ad;
   --rule: #2c363e; --voxel: #5f7385; --plane: #e8a54a; --path: #3cc0ad; --blocked: #e2685c;
-  --scene: #161c21; color-scheme: dark;
+  --scene: #161c21; --truth: #a98bff; color-scheme: dark;
 }
 body { background: var(--ground); color: var(--ink); font: 15px/1.55 "IBM Plex Sans", system-ui, sans-serif;
   padding-inline: 16px; padding-block: 24px 48px; }
@@ -141,6 +141,25 @@ function boxes(view, centers, size, color, opacity, scaleZ, normals) {
   view.scene.add(mesh);
   return mesh;
 }
+// The true surface as a sheet across the corridor: each column's plane at its height and slope, joined by risers.
+function sheet(view, surface, v, y0, y1, color) {
+  const positions = [];
+  const quad = (a, b, c, d) => positions.push(...a, ...b, ...c, ...a, ...c, ...d);
+  const at = (ix, x) => surface[ix][0] + surface[ix][1] * (x - (ix + 0.5) * v);
+  surface.forEach((_, ix) => {
+    const x0 = ix * v, x1 = x0 + v;
+    quad([x0, y0, at(ix, x0)], [x1, y0, at(ix, x1)], [x1, y1, at(ix, x1)], [x0, y1, at(ix, x0)]);
+    if (ix + 1 < surface.length) {
+      const za = at(ix, x1), zb = at(ix + 1, x1);
+      quad([x1, y0, za], [x1, y0, zb], [x1, y1, zb], [x1, y1, za]);
+    }
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshLambertMaterial({color, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false});
+  view.scene.add(new THREE.Mesh(geo, mat));
+}
 function line(view, points, color, width) {
   const geo = new THREE.BufferGeometry().setFromPoints(points.map(p => new THREE.Vector3(p[0], p[1], p[2])));
   view.scene.add(new THREE.Line(geo, new THREE.LineBasicMaterial({color, linewidth: width || 1})));
@@ -155,15 +174,13 @@ for (const [i, s] of SCENES.entries()) {
   const hi = s.voxels.reduce((a, p) => [Math.max(a[0], p[0]), Math.max(a[1], p[1]), Math.max(a[2], p[2])], [-1e9, -1e9, -1e9]);
   const center = new THREE.Vector3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
   const radius = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 + v;
-  const y = (lo[1] + hi[1]) / 2;
-  const truth = s.surface.map((z, ix) => [(ix + 0.5) * v, y, z + 0.002]);
   for (const mode of ['whole_voxels', 'planes']) {
     const view = makeView(document.getElementById(`v${i}-${mode}`), center, radius);
     boxes(view, flat, v * 0.96, token('--voxel'), 0.28);
     // Each surface cell as a thin tile at the height the planner read.
     const tiles = s[mode].cells.flat();
     boxes(view, tiles, v * 0.92, token('--plane'), 1, 0.08);
-    line(view, truth, token('--ink'));
+    sheet(view, s.surface, v, lo[1] - v / 2, hi[1] + v / 2, token('--truth'));
     if (s[mode].path) {
       line(view, s[mode].path.map(p => [p[0], p[1], p[2] + 0.03]), token('--path'), 3);
     }
@@ -248,7 +265,7 @@ def scenes(scenes_json: Path, out: Path) -> None:
         "tracer now fits each voxel. Drag to orbit, scroll to zoom.</p>"
         '<div class="legend"><span style="--c: var(--voxel)">occupied voxel</span>'
         '<span style="--c: var(--plane)">surface the planner read</span>'
-        '<span style="--c: var(--ink)">true surface</span>'
+        '<span style="--c: var(--truth)">true surface</span>'
         '<span style="--c: var(--path)">planned path</span></div>' + "".join(sections)
     )
     out.write_text(page("Voxel Problem Scenes", body, data, SCENES_JS))

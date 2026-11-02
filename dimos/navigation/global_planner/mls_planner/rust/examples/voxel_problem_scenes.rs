@@ -63,7 +63,7 @@ fn main() {
                 "voxel_size": VOXEL,
                 "step_threshold_m": scene.step_threshold_m,
                 "voxels": points.iter().map(|&((x, y, z), _)| [x, y, z]).collect::<Vec<_>>(),
-                "surface": (0..LENGTH).map(|ix| (scene.surface)(ix).0).collect::<Vec<_>>(),
+                "surface": (0..LENGTH).map(|ix| (scene.surface)(ix)).collect::<Vec<_>>(),
                 "whole_voxels": whole,
                 "planes": planes,
             })
