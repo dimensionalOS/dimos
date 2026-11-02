@@ -523,6 +523,9 @@ pub struct Config {
     pub closure_search_estimate_gates_s: f64,
     pub closure_search_estimate_extension_overhead_s: f64,
     pub closure_search_estimate_extension_cloud_s: f64,
+    /// The body's recent speed (`recent_speed`: the solve estimate's speed, each closure diagnostic's) is the median over
+    /// the newest this many steps between distinct odometry poses.
+    pub solve_speed_window_poses: usize,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -741,6 +744,7 @@ impl Default for Config {
             closure_search_estimate_gates_s: 0.05404,
             closure_search_estimate_extension_overhead_s: 0.1322,
             closure_search_estimate_extension_cloud_s: 0.08830,
+            solve_speed_window_poses: 500,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -834,7 +838,8 @@ pub struct GscPgo {
     pub(crate) heat: f64,
     pub(crate) heat_keyframes: usize,
     pub(crate) pending_solve: Option<crate::pose_graph_solving::FinishedSolve>,
-    /// The newest 51 distinct odometry poses' times and positions (odometry frame), for the body's recent speed.
+    /// The newest `solve_speed_window_poses` + 1 distinct odometry poses' times and positions (odometry frame), for the
+    /// body's recent speed.
     pub(crate) recent_motion: std::collections::VecDeque<(f64, Vec3)>,
     /// Solves slower than the data their estimate spanned (`solve_hold_enabled`), and the newest scan's recorded time.
     pub(crate) solve_overshoots: usize,
@@ -1683,7 +1688,7 @@ impl GscPgo {
             .back()
             .is_none_or(|last| last.1 != pose.translation)
         {
-            if self.recent_motion.len() > 50 {
+            if self.recent_motion.len() > self.config.solve_speed_window_poses {
                 self.recent_motion.pop_front();
             }
             self.recent_motion
@@ -1783,8 +1788,8 @@ impl GscPgo {
         self.reseen_previous = placed.into_iter().collect();
         Some(Arc::new(fresh))
     }
-    /// The body's speed (m/s): the median over the newest 50 steps between distinct odometry poses, by their recorded
-    /// times (NaN before two).
+    /// The body's speed (m/s): the median over the newest `solve_speed_window_poses` steps between distinct odometry
+    /// poses, by their recorded times (NaN before two).
     pub(crate) fn recent_speed(&self) -> f64 {
         let mut speeds: Vec<f64> = self
             .recent_motion

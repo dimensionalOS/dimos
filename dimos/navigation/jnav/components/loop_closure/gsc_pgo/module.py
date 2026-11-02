@@ -151,6 +151,8 @@ class PGOConfig(NativeModuleConfig):
     closure_search_estimate_gates_s: float = 0.05404
     closure_search_estimate_extension_overhead_s: float = 0.1322
     closure_search_estimate_extension_cloud_s: float = 0.08830
+    # The body's recent speed (solve estimate, closure diagnostics): median over the newest this many distinct-pose steps
+    solve_speed_window_poses: int = 500
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off

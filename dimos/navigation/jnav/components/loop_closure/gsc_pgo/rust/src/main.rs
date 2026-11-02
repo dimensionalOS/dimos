@@ -118,6 +118,7 @@ config! {
     closure_search_estimate_gates_s: f64,
     closure_search_estimate_extension_overhead_s: f64,
     closure_search_estimate_extension_cloud_s: f64,
+    solve_speed_window_poses: usize,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
