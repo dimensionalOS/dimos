@@ -77,7 +77,7 @@ validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
 smallvec = "1"
 # Warps the map through a pose-graph correction (mls_reform_planner).
-fast-reform = { git = "https://github.com/jeff-hykin/fast-reform", rev = "94164be" }
+fast-reform = "0.2.1"
 
 [workspace]
 members = ["py"]

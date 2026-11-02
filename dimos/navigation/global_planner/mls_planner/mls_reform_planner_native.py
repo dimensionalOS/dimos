@@ -39,8 +39,9 @@ class MLSReformPlannerNativeConfig(MLSPlannerNativeConfig):
     reform_min_shift_m: float = 0.04
     # A warp blends one keyframe per cell of this size (and of the time width in
     # time), m: the one nearest the cell's center. 0 picks the blend width,
-    # negative blends every keyframe.
-    reform_thin_cell_m: float = 0.0
+    # negative blends every keyframe. Off: fast-reform's far-anchor cutoff alone
+    # keeps a small_loop_go2 closure under 500 ms p90.
+    reform_thin_cell_m: float = -1.0
     # Where to write the module's map state every 10 s for offline checks, empty for never.
     dump_path: str = ""
 

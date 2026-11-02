@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The tiled, time-windowed warp against plain fast-reform over every
+//! The warp (fast-reform with its far-anchor cutoff) against brute-force fast-reform over every
 //! keyframe, on real closures from `pgo-eval --event-dump`.
 //!
 //! MLS_REFORM_EVENTS=<events.bin> cargo test --release --test reform_against_fast_reform -- --ignored --nocapture
 
 use dimos_mls_planner::reform::{KeyframeRecord, MovedRecord, Pose, ReformParams, ReformState};
-use fast_reform::{warp_positions, Quat, Vec3};
+use fast_reform::{warp_positions_brute_force, Quat, Vec3};
 
 const RECORD: usize = 96;
 
@@ -70,7 +70,7 @@ fn closures(raw: &[u8]) -> Vec<(Vec<KeyframeRecord>, Vec<MovedRecord>)> {
 
 #[test]
 #[ignore = "needs MLS_REFORM_EVENTS, a pgo-eval --event-dump file"]
-fn the_tiled_warp_matches_fast_reform_over_every_keyframe() {
+fn the_warp_matches_brute_force_fast_reform_over_every_keyframe() {
     let path = std::env::var("MLS_REFORM_EVENTS").expect("MLS_REFORM_EVENTS");
     let raw = std::fs::read(path).unwrap();
     let params = ReformParams {
@@ -105,10 +105,13 @@ fn the_tiled_warp_matches_fast_reform_over_every_keyframe() {
             ]);
             times.push(kf.ts + (i % 4) as f64);
         }
-        let tiled = warp.apply(&points, &times);
-        let reference =
-            warp_positions(&points, Some(&times), &warp.graph_delta().to_blend_arrays());
-        let mut errors: Vec<f64> = tiled
+        let warped = warp.apply(&points, &times);
+        let reference = warp_positions_brute_force(
+            &points,
+            Some(&times),
+            &warp.graph_delta().to_blend_arrays(),
+        );
+        let mut errors: Vec<f64> = warped
             .iter()
             .zip(&reference)
             .map(|(a, b)| {
@@ -126,7 +129,7 @@ fn the_tiled_warp_matches_fast_reform_over_every_keyframe() {
         let max = *errors.last().unwrap();
         println!(
             "closure {k}: {} keyframes moved, sigma {:.2} m, points {}, max move {:.3} m, \
-             tiled vs full: p99 {:.4} m, max {:.4} m",
+             warp vs brute force: p99 {:.4} m, max {:.4} m",
             warp.moved_keyframes(),
             warp.sigma(),
             points.len(),
@@ -140,6 +143,6 @@ fn the_tiled_warp_matches_fast_reform_over_every_keyframe() {
     assert!(checked > 0, "no big closure in the dump");
     assert!(
         worst < 0.02,
-        "the tiled warp is {worst} m off fast-reform at p99"
+        "the warp is {worst} m off brute-force fast-reform at p99"
     );
 }
