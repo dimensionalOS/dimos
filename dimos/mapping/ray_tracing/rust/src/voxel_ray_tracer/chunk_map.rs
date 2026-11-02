@@ -454,6 +454,34 @@ impl ChunkMap {
         self.chunks().flat_map(|c| c.iter())
     }
 
+    /// Every voxel, mutable, in parallel, each with its place in `iter` order.
+    pub fn par_for_each_mut(&mut self, f: impl Fn(usize, VoxelKey, &mut Voxel) + Sync) {
+        let mut chunks: Vec<(ChunkKey, &mut Chunk)> =
+            self.chunks.iter_mut().map(|(k, c)| (*k, c)).collect();
+        let mut starts = Vec::with_capacity(chunks.len());
+        let mut at = 0;
+        for (_, chunk) in &chunks {
+            starts.push(at);
+            at += chunk.voxels.len();
+        }
+        chunks
+            .par_iter_mut()
+            .zip(starts)
+            .for_each(|((ck, chunk), start)| {
+                let Chunk {
+                    occupied, voxels, ..
+                } = &mut **chunk;
+                for (i, (slot, v)) in occupied.ones().zip(voxels.iter_mut()).enumerate() {
+                    f(start + i, key_of(*ck, slot), v);
+                }
+            });
+    }
+
+    /// Every chunk key.
+    pub fn chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.chunks.keys().copied()
+    }
+
     #[cfg(test)]
     pub fn keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
         self.iter().map(|(k, _)| k)

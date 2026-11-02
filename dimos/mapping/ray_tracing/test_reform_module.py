@@ -33,7 +33,6 @@ def test_the_module_declares_the_closure_inputs() -> None:
         "reform_blend_sigma_m",
         "reform_blend_time_sigma_s",
         "reform_min_shift_m",
-        "reform_rebuild_fraction",
     } <= set(config.to_config_dict())
 
 

@@ -67,6 +67,28 @@ fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     )
 }
 
+/// The key a voxel's points sit in. A warp moves a voxel's points without
+/// re-keying it outside the local area, so this can differ from its own key.
+#[inline]
+pub(crate) fn placed_key(key: VoxelKey, voxel: &Voxel, voxel_size: f32) -> VoxelKey {
+    if voxel.num_pts == 0 {
+        return key;
+    }
+    let mean = voxel.sum / voxel.num_pts as f32;
+    let half = 0.5 * voxel_size;
+    if mean.x.abs() <= half && mean.y.abs() <= half && mean.z.abs() <= half {
+        return key;
+    }
+    let (x, y, z) = voxel_center(key, voxel_size);
+    world_to_voxel(x + mean.x, y + mean.y, z + mean.z, 1.0 / voxel_size)
+}
+
+/// Center of the voxel where a voxel's points sit.
+#[inline]
+fn placed_center(key: VoxelKey, voxel: &Voxel, voxel_size: f32) -> (f32, f32, f32) {
+    voxel_center(placed_key(key, voxel, voxel_size), voxel_size)
+}
+
 #[native_config]
 #[validate(schema(function = "validate_config"))]
 #[derive(Clone)]
@@ -442,6 +464,9 @@ pub struct Voxel {
     normal: NormalFit,
     /// The map frame this voxel was last hit (or seeded) in.
     last_hit: u32,
+    /// When the voxel first landed, seconds past the mapper's epoch; NaN when
+    /// untracked. Travels with the voxel through warps.
+    pub(crate) time: f32,
 }
 
 impl Default for Voxel {
@@ -455,6 +480,7 @@ impl Default for Voxel {
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
             last_hit: 0,
+            time: f32::NAN,
         }
     }
 }
@@ -807,7 +833,7 @@ pub fn chunk_points(map: &VoxelMap, voxel_size: f32, chunks: &[ChunkKey]) -> Vec
         part.reserve(3 * chunk.healthy_len());
         for hv in chunk.healthy() {
             if voxel_supported(hv.support, map.support_min) {
-                let (x, y, z) = voxel_center(hv.key, voxel_size);
+                let (x, y, z) = placed_center(hv.key, hv.voxel, voxel_size);
                 part.extend_from_slice(&[x, y, z]);
             }
         }
@@ -848,7 +874,7 @@ fn emit_points_impl(
             if gated && !voxel_supported(hv.support, map.support_min) {
                 return;
             }
-            let (x, y, z) = voxel_center(hv.key, voxel_size);
+            let (x, y, z) = placed_center(hv.key, hv.voxel, voxel_size);
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
             }

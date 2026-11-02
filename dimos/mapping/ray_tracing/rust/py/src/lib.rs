@@ -249,7 +249,8 @@ impl VoxelRayMapper {
     /// Warp the map through raw loop_closure_event records (68 bytes each), as
     /// reform_ray_tracing does. None when no keyframe moved past min_shift_m,
     /// else a dict of what the warp did and cost.
-    #[pyo3(signature = (records, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, rebuild_fraction = 1.0))]
+    #[pyo3(signature = (records, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, thin_cell_m = 0.0))]
+    #[allow(clippy::too_many_arguments)]
     fn apply_loop_closure<'py>(
         &mut self,
         py: Python<'py>,
@@ -257,7 +258,7 @@ impl VoxelRayMapper {
         blend_sigma_m: f64,
         blend_time_sigma_s: f64,
         min_shift_m: f64,
-        rebuild_fraction: f64,
+        thin_cell_m: f64,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
         if !records.len().is_multiple_of(68) {
             return Err(PyValueError::new_err(
@@ -270,7 +271,7 @@ impl VoxelRayMapper {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
-            rebuild_fraction,
+            thin_cell_m,
         };
         let Some(warp) = self.reform.closure(&moved, &params) else {
             return Ok(None);
@@ -279,11 +280,11 @@ impl VoxelRayMapper {
         let report = py.allow_threads(|| mapper.apply_warp(&warp));
         let out = PyDict::new(py);
         out.set_item("voxels_warped", report.voxels_warped)?;
-        out.set_item("voxels_moved", report.voxels_moved)?;
-        out.set_item("rebuilt", report.rebuilt)?;
+        out.set_item("voxels_rebinned", report.voxels_rebinned)?;
         out.set_item("warp_ms", report.warp_ms)?;
         out.set_item("voxel_ms", report.voxel_ms)?;
         out.set_item("keyframes_moved", warp.moved_keyframes())?;
+        out.set_item("keyframes_blended", warp.blended_keyframes())?;
         Ok(Some(out))
     }
 
@@ -462,9 +463,73 @@ impl VoxelRayMapper {
     }
 }
 
+/// One closure's fast-reform warp on its own, for scoring a map against a rebuild
+/// placed by the same blend.
+#[pyclass]
+struct ReformWarp {
+    warp: dimos_voxel_ray_tracing::reform::Warp,
+}
+
+#[pymethods]
+impl ReformWarp {
+    /// The warp that takes keyframes from their pose_graph records (40 bytes
+    /// each) to the post poses of loop_closure_event records (68 bytes each).
+    #[new]
+    #[pyo3(signature = (keyframes, closure, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.0))]
+    fn new(
+        keyframes: Vec<u8>,
+        closure: Vec<u8>,
+        blend_sigma_m: f64,
+        blend_time_sigma_s: f64,
+        min_shift_m: f64,
+    ) -> PyResult<Self> {
+        if !keyframes.len().is_multiple_of(40) || !closure.len().is_multiple_of(68) {
+            return Err(PyValueError::new_err(
+                "pose_graph records are 40 bytes, loop_closure_event records 68",
+            ));
+        }
+        let keyframes = decode_pose_graph(&record_cloud(POSE_GRAPH_FIELDS, keyframes))
+            .map_err(|e| PyValueError::new_err(e.0))?;
+        let moved = decode_loop_closure_event(&record_cloud(LOOP_EVENT_FIELDS, closure))
+            .map_err(|e| PyValueError::new_err(e.0))?;
+        let mut state = ReformState::default();
+        state.add_keyframes(&keyframes);
+        let params = ReformParams {
+            blend_sigma_m,
+            blend_time_sigma_s,
+            min_shift_m,
+            thin_cell_m: -1.0,
+        };
+        let warp = state
+            .closure(&moved, &params)
+            .ok_or_else(|| PyValueError::new_err("no keyframe moved past min_shift_m"))?;
+        Ok(Self { warp })
+    }
+
+    /// Warp (N, 3) float32 points all observed at time t.
+    fn apply<'py>(
+        &self,
+        py: Python<'py>,
+        points: PyReadonlyArray2<'py, f32>,
+        t: f64,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let flat: Vec<[f32; 3]> = points
+            .as_array()
+            .rows()
+            .into_iter()
+            .map(|r| [r[0], r[1], r[2]])
+            .collect();
+        let times = vec![t; flat.len()];
+        let warp = &self.warp;
+        let out = py.allow_threads(|| warp.apply(&flat, &times));
+        Ok(flat_to_array(py, out.into_iter().flatten().collect()))
+    }
+}
+
 #[pymodule(name = "dimos_voxel_ray_tracing")]
 fn dimos_voxel_ray_tracing_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxelRayMapper>()?;
     m.add_class::<SeededRegion>()?;
+    m.add_class::<ReformWarp>()?;
     Ok(())
 }

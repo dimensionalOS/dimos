@@ -33,16 +33,6 @@ use rayon::prelude::*;
 /// Gaussian widths past which an anchor's weight counts as nothing.
 const REACH_SIGMAS: f64 = 3.0;
 
-/// An anchor whose blend exponent is this far above a point's least weighs under
-/// e^-12 (6e-6) of it, so it is left out of that point's blend.
-const BLEND_CUTOFF: f64 = 12.0;
-
-/// The farthest a tile searches for anchors that could matter to its points.
-const MAX_SEARCH_RINGS: i32 = 64;
-
-/// Tiles searched outward for an anchor around a tile that has none near.
-const MAX_FALLBACK_RINGS: i32 = 16;
-
 /// A keyframe pose: world-frame rotation and translation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
@@ -314,9 +304,10 @@ pub struct ReformParams {
     /// A keyframe whose correction moves its surroundings less than this
     /// waits for a later closure.
     pub min_shift_m: f64,
-    /// Past this fraction of the map's voxels moving, the map is rebuilt
-    /// from the warped voxels rather than repaired around them all.
-    pub rebuild_fraction: f64,
+    /// A warp blends one keyframe per cell of this size in space (and of the
+    /// time width in time), m: the one nearest the cell's center. 0 picks the
+    /// blend width; negative blends every keyframe.
+    pub thin_cell_m: f64,
 }
 
 /// A keyframe as the map holds it.
@@ -396,6 +387,7 @@ impl ReformState {
             .applied
             .iter()
             .map(|(id, a)| Anchor {
+                id: *id,
                 position: a.pose.translation,
                 ts: a.ts,
                 correction: corrections.get(id).copied().unwrap_or(Pose::IDENTITY),
@@ -406,9 +398,21 @@ impl ReformState {
             let a = self.applied.get_mut(id).expect("inserted above");
             a.pose = correction.compose(&a.pose);
         }
-        let mut warp = Warp::new(anchors, sigma, time_sigma, reach);
-        warp.rebuild_fraction = params.rebuild_fraction;
-        Some(warp)
+        let cell = if params.thin_cell_m == 0.0 {
+            sigma
+        } else {
+            params.thin_cell_m.max(0.0)
+        };
+        let blended = thinned(&anchors, cell, time_sigma);
+        let blend = graph_delta(&blended, sigma, time_sigma).to_blend_arrays();
+        Some(Warp::new(
+            anchors,
+            blended.len(),
+            blend,
+            sigma,
+            time_sigma,
+            reach,
+        ))
     }
 }
 
@@ -500,62 +504,91 @@ fn mean_interval(times: impl Iterator<Item = f64>) -> f64 {
 
 #[derive(Clone, Copy, Debug)]
 struct Anchor {
+    id: u32,
     position: Vec3,
     ts: f64,
     correction: Pose,
     moved: bool,
 }
 
-/// Square tiles of `reach` meters in the ground plane.
-pub type Tile = (i32, i32);
+/// One anchor per cell of `cell` meters and `time_sigma` seconds, the one
+/// nearest the cell's center; every anchor when `cell` is 0.
+fn thinned(anchors: &[Anchor], cell: f64, time_sigma: f64) -> Vec<Anchor> {
+    if cell <= 0.0 {
+        return anchors.to_vec();
+    }
+    let at = |v: f64, w: f64| (v / w).floor() as i64;
+    let off = |v: f64, w: f64| (v / w - (v / w).floor() - 0.5).powi(2);
+    let mut best: AHashMap<[i64; 4], (f64, usize)> = AHashMap::new();
+    for (i, a) in anchors.iter().enumerate() {
+        let p = a.position;
+        let key = [
+            at(p.x, cell),
+            at(p.y, cell),
+            at(p.z, cell),
+            at(a.ts, time_sigma),
+        ];
+        let d = off(p.x, cell) + off(p.y, cell) + off(p.z, cell) + off(a.ts, time_sigma);
+        let e = best.entry(key).or_insert((d, i));
+        if (d, a.id) < (e.0, anchors[e.1].id) {
+            *e = (d, i);
+        }
+    }
+    let mut kept: Vec<usize> = best.into_values().map(|(_, i)| i).collect();
+    kept.sort_unstable_by_key(|&i| anchors[i].id);
+    kept.into_iter().map(|i| anchors[i]).collect()
+}
+
+fn graph_delta(anchors: &[Anchor], sigma: f64, time_sigma: f64) -> fast_reform::GraphDelta3D {
+    fast_reform::GraphDelta3D {
+        nodes: anchors
+            .iter()
+            .map(|a| fast_reform::Node {
+                id: a.id as u64,
+                ts: a.ts,
+                position: a.position,
+            })
+            .collect(),
+        transforms: anchors
+            .iter()
+            .map(|a| fast_reform::Transform {
+                translation: a.correction.translation,
+                rotation: a.correction.rotation,
+            })
+            .collect(),
+        blend_sigma: sigma,
+        blend_time_sigma: time_sigma,
+    }
+}
 
 /// One closure's warp: every keyframe as an anchor carrying its correction
-/// (identity for the unmoved), blended per point by fast-reform. Points only
-/// see the anchors within reach of their tile, and a tile with no moved
-/// anchor among them is the identity.
+/// (identity for the unmoved), blended per point by plain fast-reform.
 pub struct Warp {
     anchors: Vec<Anchor>,
-    by_tile: AHashMap<Tile, Vec<u32>>,
-    affected: AHashSet<Tile>,
+    blended: usize,
+    blend: fast_reform::graph::BlendDeltas,
     sigma: f64,
     time_sigma: f64,
     reach: f64,
-    rebuild_fraction: f64,
 }
 
 impl Warp {
-    fn new(anchors: Vec<Anchor>, sigma: f64, time_sigma: f64, reach: f64) -> Self {
-        let mut by_tile: AHashMap<Tile, Vec<u32>> = AHashMap::new();
-        for (i, a) in anchors.iter().enumerate() {
-            by_tile
-                .entry(tile_of(a.position.x, a.position.y, reach))
-                .or_default()
-                .push(i as u32);
-        }
-        let mut warp = Self {
+    fn new(
+        anchors: Vec<Anchor>,
+        blended: usize,
+        blend: fast_reform::graph::BlendDeltas,
+        sigma: f64,
+        time_sigma: f64,
+        reach: f64,
+    ) -> Self {
+        Self {
             anchors,
-            by_tile,
-            affected: AHashSet::new(),
+            blended,
+            blend,
             sigma,
             time_sigma,
             reach,
-            rebuild_fraction: 1.0,
-        };
-        // A moved anchor reaches the tiles around its own. A tile too far from
-        // every anchor falls back to its nearest ones, see affects_tile.
-        for a in warp.anchors.iter().filter(|a| a.moved) {
-            let (tx, ty) = tile_of(a.position.x, a.position.y, reach);
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    warp.affected.insert((tx + dx, ty + dy));
-                }
-            }
         }
-        warp
-    }
-
-    pub fn rebuild_fraction(&self) -> f64 {
-        self.rebuild_fraction
     }
 
     pub fn sigma(&self) -> f64 {
@@ -572,6 +605,11 @@ impl Warp {
 
     pub fn keyframes(&self) -> usize {
         self.anchors.len()
+    }
+
+    /// Keyframes the blend uses after fast-reform's thinning.
+    pub fn blended_keyframes(&self) -> usize {
+        self.blended
     }
 
     /// How far the moved keyframes' own positions move: (median, max) in meters.
@@ -596,7 +634,7 @@ impl Warp {
     }
 
     /// The farthest a warped point may sensibly land from where it was: the
-    /// largest keyframe shift plus a rotation's swing over a tile and its neighbors.
+    /// largest keyframe shift plus a rotation's swing over the blend's reach.
     pub fn max_plausible_move_m(&self) -> f64 {
         let (_, max_shift) = self.keyframe_shift_m();
         let max_angle = self
@@ -608,26 +646,20 @@ impl Warp {
         max_shift + max_angle * 3.0 * self.reach + self.reach
     }
 
-    /// The same correction as one fast-reform graph over every keyframe, with
-    /// no tiling or time windows, the reference the tiled warp approximates.
+    /// The correction as the one fast-reform graph the warp blends.
     pub fn graph_delta(&self) -> fast_reform::GraphDelta3D {
         fast_reform::GraphDelta3D {
-            nodes: self
-                .anchors
-                .iter()
-                .enumerate()
-                .map(|(i, a)| fast_reform::Node {
+            nodes: (0..self.blend.len())
+                .map(|i| fast_reform::Node {
                     id: i as u64,
-                    ts: a.ts,
-                    position: a.position,
+                    ts: self.blend.times[i],
+                    position: self.blend.positions[i],
                 })
                 .collect(),
-            transforms: self
-                .anchors
-                .iter()
-                .map(|a| fast_reform::Transform {
-                    translation: a.correction.translation,
-                    rotation: a.correction.rotation,
+            transforms: (0..self.blend.len())
+                .map(|i| fast_reform::Transform {
+                    translation: self.blend.translations[i],
+                    rotation: self.blend.rotations[i],
                 })
                 .collect(),
             blend_sigma: self.sigma,
@@ -635,292 +667,287 @@ impl Warp {
         }
     }
 
-    /// The tile a ground position falls in.
-    pub fn tile(&self, x: f32, y: f32) -> Tile {
-        tile_of(x as f64, y as f64, self.reach)
-    }
-
-    /// Whether the warp can move a point in this tile.
-    pub fn affects_tile(&self, _tile: Tile) -> bool {
-        // fast-reform's blend is normalized, so a point far from the drive still
-        // follows its least-distant anchors, which may have moved however far away
-        // they are. Which tiles a closure leaves in place only warp_tile can tell.
-        !self.affected.is_empty()
-    }
-
-    /// Whether the warp can move a point at this ground position.
-    pub fn affects(&self, x: f32, y: f32) -> bool {
-        self.affects_tile(self.tile(x, y))
-    }
-
-    /// Warp one tile's points, or None when no moved anchor matters to them.
-    /// fast-reform blends every anchor by exp(-E), E = d^2 / 2 sigma^2 + dt^2 /
-    /// 2 time_sigma^2, normalized; an anchor more than BLEND_CUTOFF above a
-    /// point's least E weighs under e^-BLEND_CUTOFF of it. So the tile blends,
-    /// against fast-reform itself, every anchor within that of some point's least,
-    /// searched out ring by ring until no farther anchor could be.
-    fn warp_tile(
-        &self,
-        tile: Tile,
-        ids: Vec<usize>,
-        points: &[[f32; 3]],
-        times: &[f64],
-    ) -> Option<(Vec<usize>, Vec<[f32; 3]>)> {
-        let inv_sigma = 1.0 / (2.0 * self.sigma * self.sigma);
-        let inv_time = 1.0 / (2.0 * self.time_sigma * self.time_sigma);
-        let exponent = |i: usize, a: &Anchor| {
-            let p = points[i];
-            let (dx, dy, dz) = (
-                p[0] as f64 - a.position.x,
-                p[1] as f64 - a.position.y,
-                p[2] as f64 - a.position.z,
-            );
-            let mut e = (dx * dx + dy * dy + dz * dz) * inv_sigma;
-            if times[i].is_finite() {
-                let dt = times[i] - a.ts;
-                e += dt * dt * inv_time;
-            }
-            e
-        };
-        let edge = self.reach;
-        let center = ((tile.0 as f64 + 0.5) * edge, (tile.1 as f64 + 0.5) * edge);
-        let mut rings = 1;
-        let mut candidates = self.anchors_within_rings(tile, rings);
-        while candidates.is_empty() && rings < MAX_FALLBACK_RINGS {
-            rings += 1;
-            candidates = self.anchors_within_rings(tile, rings);
+    /// Warp world points, each with the time it was observed, NaN for unknown
+    /// (which blends by distance alone), by fast-reform.
+    pub fn apply(&self, points: &[[f32; 3]], times: &[f64]) -> Vec<[f32; 3]> {
+        assert_eq!(points.len(), times.len());
+        if times.iter().all(|t| !t.is_nan()) {
+            return fast_reform::warp_positions(points, Some(times), &self.blend);
         }
-        let mut least: Vec<f64>;
-        loop {
-            candidates.sort_by(|&a, &b| {
-                self.anchors[a as usize]
-                    .ts
-                    .total_cmp(&self.anchors[b as usize].ts)
-            });
-            let ts: Vec<f64> = candidates
-                .iter()
-                .map(|&a| self.anchors[a as usize].ts)
-                .collect();
-            least = ids
-                .iter()
-                .map(|&i| self.least_exponent(i, &candidates, &ts, times, &exponent))
-                .collect();
-            // How far from the tile center an anchor could still matter to some point.
-            let needed = ids
-                .iter()
-                .zip(&least)
-                .map(|(&i, &e)| {
-                    let off =
-                        (points[i][0] as f64 - center.0).hypot(points[i][1] as f64 - center.1);
-                    off + self.sigma * (2.0 * (e + BLEND_CUTOFF)).sqrt()
-                })
-                .fold(0.0, f64::max);
-            let covered = (rings as f64 + 0.5) * edge;
-            if needed <= covered || rings >= MAX_SEARCH_RINGS {
-                break;
-            }
-            rings = ((needed / edge - 0.5).ceil() as i32).min(MAX_SEARCH_RINGS);
-            candidates = self.anchors_within_rings(tile, rings);
+        let (timed, untimed): (Vec<usize>, Vec<usize>) =
+            (0..points.len()).partition(|&i| !times[i].is_nan());
+        let gather = |ids: &[usize]| -> Vec<[f32; 3]> { ids.iter().map(|&i| points[i]).collect() };
+        let timed_times: Vec<f64> = timed.iter().map(|&i| times[i]).collect();
+        let mut out = points.to_vec();
+        let warped = fast_reform::warp_positions(&gather(&timed), Some(&timed_times), &self.blend);
+        for (i, p) in timed.into_iter().zip(warped) {
+            out[i] = p;
         }
-        // Each point blends the anchors within BLEND_CUTOFF of its least, which in
-        // time lie within a window the cutoff bounds, in fast-reform's index order.
-        let ts: Vec<f64> = candidates
-            .iter()
-            .map(|&a| self.anchors[a as usize].ts)
-            .collect();
-        let warped: Vec<Option<[f32; 3]>> = ids
-            .par_iter()
-            .zip(least.par_iter())
-            .map(|(&i, &e)| {
-                let bound = e + BLEND_CUTOFF;
-                let (lo, hi) = if times[i].is_finite() {
-                    let half = self.time_sigma * (2.0 * bound).sqrt();
-                    (
-                        ts.partition_point(|&t| t < times[i] - half),
-                        ts.partition_point(|&t| t <= times[i] + half),
-                    )
-                } else {
-                    (0, candidates.len())
-                };
-                let mut mine: Vec<(u32, f64)> = candidates[lo..hi]
-                    .iter()
-                    .map(|&a| (a, exponent(i, &self.anchors[a as usize])))
-                    .filter(|&(_, x)| x <= bound)
-                    .collect();
-                if !mine.iter().any(|&(a, _)| self.anchors[a as usize].moved) {
-                    return None;
-                }
-                mine.sort_unstable_by_key(|&(a, _)| a);
-                Some(self.blend_point(points[i], &mine))
-            })
-            .collect();
-        if warped.iter().all(Option::is_none) {
-            return None;
-        }
-        let out = ids
-            .iter()
-            .zip(warped)
-            .map(|(&i, w)| w.unwrap_or(points[i]))
-            .collect();
-        Some((ids, out))
-    }
-
-    /// fast-reform's blend (fast_reform::warp::blend_at) over a point's anchors with
-    /// their exponents, in anchor order: weights exp(-E) normalized, quaternions
-    /// nlerped with their sign aligned to the heaviest, and the heaviest anchor's
-    /// delta alone when every weight underflows. Anchors left out weigh under
-    /// e^-BLEND_CUTOFF of the heaviest, so this is fast-reform's result to that.
-    fn blend_point(&self, point: [f32; 3], anchors: &[(u32, f64)]) -> [f32; 3] {
-        let p = Vec3::new(point[0] as f64, point[1] as f64, point[2] as f64);
-        let weights: Vec<f64> = anchors.iter().map(|&(_, e)| (-e).exp()).collect();
-        let mut nearest = 0;
-        let mut nearest_weight = f64::NEG_INFINITY;
-        let mut weight_sum = 0.0;
-        for (k, &w) in weights.iter().enumerate() {
-            if w > nearest_weight {
-                nearest_weight = w;
-                nearest = k;
-            }
-            weight_sum += w;
-        }
-        let correction = |k: usize| self.anchors[anchors[k].0 as usize].correction;
-        // Like fast-reform, a NaN sum takes the fallback too.
-        let summed = matches!(
-            weight_sum.partial_cmp(&1e-12),
-            Some(std::cmp::Ordering::Greater)
-        );
-        let (rotation, translation) = if !summed {
-            let c = if nearest_weight > 0.0 {
-                correction(nearest)
-            } else {
-                // Every weight underflowed: fast-reform keeps its first anchor.
-                self.anchors[0].correction
-            };
-            (c.rotation, c.translation)
-        } else {
-            let reference = correction(nearest).rotation;
-            let (mut x, mut y, mut z, mut w) = (0.0, 0.0, 0.0, 0.0);
-            let mut translation = Vec3::new(0.0, 0.0, 0.0);
-            for (k, &weight) in weights.iter().enumerate() {
-                let weight = weight / weight_sum;
-                let c = correction(k);
-                let r = c.rotation;
-                let dot =
-                    r.x * reference.x + r.y * reference.y + r.z * reference.z + r.w * reference.w;
-                let signed = if dot < 0.0 { -weight } else { weight };
-                x += signed * r.x;
-                y += signed * r.y;
-                z += signed * r.z;
-                w += signed * r.w;
-                translation.x += weight * c.translation.x;
-                translation.y += weight * c.translation.y;
-                translation.z += weight * c.translation.z;
-            }
-            (Quat::new(x, y, z, w).normalized_or_identity(), translation)
-        };
-        let rotated = rotation.rotate(p);
-        [
-            (rotated.x + translation.x) as f32,
-            (rotated.y + translation.y) as f32,
-            (rotated.z + translation.z) as f32,
-        ]
-    }
-
-    /// A point's least blend exponent over `candidates`, sorted by time with their
-    /// times in `ts`: scanned outward from the point's time, stopping once the time
-    /// term alone passes the least found.
-    fn least_exponent(
-        &self,
-        i: usize,
-        candidates: &[u32],
-        ts: &[f64],
-        times: &[f64],
-        exponent: &impl Fn(usize, &Anchor) -> f64,
-    ) -> f64 {
-        let mut best = f64::INFINITY;
-        if !times[i].is_finite() {
-            for &a in candidates {
-                best = best.min(exponent(i, &self.anchors[a as usize]));
-            }
-            return best;
-        }
-        let inv_time = 1.0 / (2.0 * self.time_sigma * self.time_sigma);
-        let t = times[i];
-        let start = ts.partition_point(|&x| x < t);
-        let (mut down, mut up) = (start, start);
-        loop {
-            let below = (down > 0).then(|| (t - ts[down - 1]).powi(2) * inv_time);
-            let above = (up < ts.len()).then(|| (ts[up] - t).powi(2) * inv_time);
-            let take_below = match (below, above) {
-                (Some(b), Some(a)) => b <= a,
-                (Some(_), None) => true,
-                (None, Some(_)) => false,
-                (None, None) => break,
-            };
-            let (k, time_term) = if take_below {
-                (down - 1, below.unwrap_or(f64::INFINITY))
-            } else {
-                (up, above.unwrap_or(f64::INFINITY))
-            };
-            if time_term > best {
-                break;
-            }
-            best = best.min(exponent(i, &self.anchors[candidates[k] as usize]));
-            if take_below {
-                down -= 1;
-            } else {
-                up += 1;
-            }
-        }
-        best
-    }
-
-    /// Anchors in the tiles within `rings` of `tile` (1 is the 3x3 around it).
-    fn anchors_within_rings(&self, (tx, ty): Tile, rings: i32) -> Vec<u32> {
-        let mut out = Vec::new();
-        for dx in -rings..=rings {
-            for dy in -rings..=rings {
-                if let Some(ids) = self.by_tile.get(&(tx + dx, ty + dy)) {
-                    out.extend_from_slice(ids);
-                }
-            }
+        let warped = fast_reform::warp_positions(&gather(&untimed), None, &self.blend);
+        for (i, p) in untimed.into_iter().zip(warped) {
+            out[i] = p;
         }
         out
     }
-
-    /// Warp world points, each with the time it was observed, NaN for unknown
-    /// (which blends by distance alone). Unaffected points come back as is.
-    pub fn apply(&self, points: &[[f32; 3]], times: &[f64]) -> Vec<[f32; 3]> {
-        assert_eq!(points.len(), times.len());
-        let mut by_tile: AHashMap<Tile, Vec<usize>> = AHashMap::new();
-        for (i, p) in points.iter().enumerate() {
-            by_tile
-                .entry(tile_of(p[0] as f64, p[1] as f64, self.reach))
-                .or_default()
-                .push(i);
-        }
-        let groups: Vec<(Tile, Vec<usize>)> = by_tile.into_iter().collect();
-        let warped: Vec<(Vec<usize>, Vec<[f32; 3]>)> = groups
-            .into_par_iter()
-            .filter_map(|(tile, ids)| self.warp_tile(tile, ids, points, times))
-            .collect();
-        let mut result = points.to_vec();
-        for (order, out) in warped {
-            for (i, p) in order.into_iter().zip(out) {
-                result[i] = p;
-            }
-        }
-        result
-    }
 }
 
-fn tile_of(x: f64, y: f64, edge: f64) -> Tile {
-    ((x / edge).floor() as i32, (y / edge).floor() as i32)
+/// A voxel grid key.
+pub type Key = (i32, i32, i32);
+
+/// The voxels to re-key together with `seeds`: a voxel a warp moved off its key
+/// still holds that stale key until it is re-keyed, so a seed whose points now
+/// sit there takes it along, and so on down the chain. `placed(k)` is the key a
+/// displaced voxel's points sit in, None for a voxel in place or no voxel.
+pub fn with_chained(seeds: Vec<Key>, placed: impl Fn(&Key) -> Option<Key>) -> Vec<Key> {
+    let mut all: AHashSet<Key> = seeds.iter().copied().collect();
+    let mut out = seeds;
+    let mut at = 0;
+    while at < out.len() {
+        if let Some(to) = placed(&out[at]) {
+            if placed(&to).is_some() && all.insert(to) {
+                out.push(to);
+            }
+        }
+        at += 1;
+    }
+    out
+}
+
+fn key_of(p: &[f32; 3], voxel_size: f32) -> Key {
+    let inv = 1.0 / voxel_size;
+    (
+        (p[0] * inv).floor() as i32,
+        (p[1] * inv).floor() as i32,
+        (p[2] * inv).floor() as i32,
+    )
+}
+
+fn distance2_to_center(p: &[f32; 3], k: Key, voxel_size: f32) -> f32 {
+    let c = [k.0, k.1, k.2].map(|v| (v as f32 + 0.5) * voxel_size);
+    (p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2) + (p[2] - c[2]).powi(2)
+}
+
+fn neighbors(a: Key, b: Key) -> bool {
+    (a.0 - b.0).abs() <= 1 && (a.1 - b.1).abs() <= 1 && (a.2 - b.2).abs() <= 1
+}
+
+/// The key each warped voxel lands in. Re-quantizing a smoothly warped grid
+/// sends some neighbors to one key, which would merge them and thin the map a
+/// little at every closure; so where a voxel's key is taken by a former
+/// neighbor (another mover, or a voxel that stays: `stays(key)`), it takes the
+/// free key next to it nearest its point. Voxels that were apart before the
+/// warp and meet in one key are a surface the closure brings together, and merge.
+pub fn landing_keys(
+    from: &[Key],
+    warped: &[[f32; 3]],
+    voxel_size: f32,
+    stays: impl Fn(&Key) -> bool + Sync,
+) -> Vec<Key> {
+    let preferred: Vec<Key> = warped.par_iter().map(|p| key_of(p, voxel_size)).collect();
+    // Movers by the key they prefer, the nearest to its center first.
+    let mut order: Vec<(Key, f32, Key, usize)> = (0..from.len())
+        .into_par_iter()
+        .map(|i| {
+            let d = distance2_to_center(&warped[i], preferred[i], voxel_size);
+            (preferred[i], d, from[i], i)
+        })
+        .collect();
+    order.par_sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.total_cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    // A key's holder: a voxel that stays there, else the first mover to prefer it.
+    let displaced: Vec<usize> = (0..order.len())
+        .into_par_iter()
+        .filter_map(|n| {
+            let (key, _, mover_from, i) = order[n];
+            let first = n - order[..n].iter().rev().take_while(|o| o.0 == key).count();
+            let holder = if stays(&key) {
+                key
+            } else if first == n {
+                return None;
+            } else {
+                order[first].2
+            };
+            neighbors(holder, mover_from).then_some(i)
+        })
+        .collect();
+    let mut landed = preferred;
+    let preferred_keys: Vec<Key> = {
+        let mut keys: Vec<Key> = order.iter().map(|o| o.0).collect();
+        keys.dedup();
+        keys
+    };
+    let mut claimed: AHashSet<Key> = AHashSet::new();
+    let mut displaced = displaced;
+    displaced.par_sort_unstable_by_key(|&i| from[i]);
+    for i in displaced {
+        let at = landed[i];
+        let mut free: Option<(f32, Key)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let k = (at.0 + dx, at.1 + dy, at.2 + dz);
+                    if preferred_keys.binary_search(&k).is_ok() || claimed.contains(&k) || stays(&k)
+                    {
+                        continue;
+                    }
+                    let d = distance2_to_center(&warped[i], k, voxel_size);
+                    if free.is_none_or(|(best, _)| d < best) {
+                        free = Some((d, k));
+                    }
+                }
+            }
+        }
+        if let Some((_, k)) = free {
+            claimed.insert(k);
+            landed[i] = k;
+        }
+    }
+    landed
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rotated_grid_keeps_every_voxel() {
+        let vs = 0.1_f32;
+        let from: Vec<Key> = (0..40)
+            .flat_map(|x| (0..40).map(move |y| (x, y, 0)))
+            .collect();
+        let (s, c) = 0.3_f32.sin_cos();
+        let warped: Vec<[f32; 3]> = from
+            .iter()
+            .map(|k| {
+                let (x, y) = ((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
+                [c * x - s * y + 7.0, s * x + c * y - 3.0, 0.05]
+            })
+            .collect();
+        let plain: AHashSet<Key> = warped.iter().map(|p| key_of(p, vs)).collect();
+        assert!(
+            plain.len() < from.len() * 95 / 100,
+            "the plain re-quantization merges"
+        );
+        let landed = landing_keys(&from, &warped, vs, |_| false);
+        let unique: AHashSet<Key> = landed.iter().copied().collect();
+        assert_eq!(unique.len(), from.len());
+        for (p, k) in warped.iter().zip(&landed) {
+            assert!(distance2_to_center(p, *k, vs).sqrt() <= 1.5 * vs);
+        }
+    }
+
+    /// cargo test --release --lib landing_keys_bench -- --ignored --nocapture
+    #[test]
+    #[ignore = "a timing, not a check"]
+    fn landing_keys_bench() {
+        let vs = 0.08_f32;
+        let from: Vec<Key> = (0..400)
+            .flat_map(|x| (0..300).flat_map(move |y| (0..10).map(move |z| (x, y, z))))
+            .collect();
+        let (s, c) = 0.02_f32.sin_cos();
+        let warped: Vec<[f32; 3]> = from
+            .iter()
+            .map(|k| {
+                let (x, y) = ((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
+                [c * x - s * y + 0.13, s * x + c * y, (k.2 as f32 + 0.5) * vs]
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let landed = landing_keys(&from, &warped, vs, |_| false);
+        println!("{} voxels: {:?}", landed.len(), started.elapsed());
+    }
+
+    /// RT_THIN_BENCH=<gsc keyframes dump> cargo test --release --lib thinning_bench -- --ignored --nocapture
+    #[test]
+    #[ignore = "needs RT_THIN_BENCH, a gsc keyframes dump"]
+    fn thinning_bench() {
+        let raw = std::fs::read(std::env::var("RT_THIN_BENCH").unwrap()).unwrap();
+        let f: Vec<f64> = raw
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|b| f64::from_le_bytes(*b))
+            .collect();
+        let pose = |v: &[f64]| Pose {
+            translation: Vec3::new(v[0], v[1], v[2]),
+            rotation: Quat::new(v[3], v[4], v[5], v[6]).normalized_or_identity(),
+        };
+        let kfs: Vec<(KeyframeRecord, Pose)> = f
+            .as_chunks::<15>()
+            .0
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let raw = pose(&r[1..8]);
+                let corrected = pose(&r[8..15]);
+                (
+                    KeyframeRecord {
+                        id: i as u32,
+                        ts: r[0],
+                        pose: raw,
+                    },
+                    corrected.compose(&raw.inverse()),
+                )
+            })
+            .collect();
+        for cell in [-1.0, 0.0, 1.0, 2.0, 4.0] {
+            let mut state = ReformState::default();
+            state.add_keyframes(&kfs.iter().map(|k| k.0).collect::<Vec<_>>());
+            let params = ReformParams {
+                blend_sigma_m: 0.0,
+                blend_time_sigma_s: 5.0,
+                min_shift_m: 0.04,
+                thin_cell_m: cell,
+            };
+            // Half the drive corrected at once, then the rest: the second warm-starts.
+            for half in [kfs.len() / 2, 0] {
+                let moved: Vec<MovedRecord> = kfs[half..]
+                    .iter()
+                    .map(|(k, d)| MovedRecord {
+                        keyframe: KeyframeRecord {
+                            pose: state.applied[&k.id].pose,
+                            ..*k
+                        },
+                        delta: d.compose(&k.pose.compose(&state.applied[&k.id].pose.inverse())),
+                    })
+                    .collect();
+                let started = std::time::Instant::now();
+                let warp = state.closure(&moved, &params);
+                println!(
+                    "cell {cell}: {} keyframes -> {} blended (sigma {:.2} m, tau {:.2} s), {:?}",
+                    kfs.len(),
+                    warp.as_ref().map_or(0, |w| w.blended_keyframes()),
+                    warp.as_ref().map_or(0.0, |w| w.sigma()),
+                    warp.as_ref().map_or(0.0, |w| w.time_sigma()),
+                    started.elapsed()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn voxels_that_were_apart_still_merge() {
+        let vs = 0.1_f32;
+        let from = [(0, 0, 0), (50, 0, 0)];
+        let warped = [[0.05, 0.05, 0.05], [0.06, 0.05, 0.05]];
+        assert_eq!(
+            landing_keys(&from, &warped, vs, |_| false),
+            vec![(0, 0, 0); 2]
+        );
+        let stays = |k: &Key| *k == (0, 0, 0);
+        assert_eq!(
+            landing_keys(&from[1..], &warped[1..], vs, stays),
+            vec![(0, 0, 0)]
+        );
+        let neighbor = [(1, 0, 0)];
+        assert_ne!(
+            landing_keys(&neighbor, &warped[1..], vs, |k| *k == (0, 0, 0))[0],
+            (0, 0, 0)
+        );
+    }
 
     fn yaw(rad: f64) -> Quat {
         Quat::new(0.0, 0.0, (rad / 2.0).sin(), (rad / 2.0).cos())
@@ -967,7 +994,7 @@ mod tests {
             blend_sigma_m: 1.0,
             blend_time_sigma_s: 1.0,
             min_shift_m: 0.02,
-            rebuild_fraction: 1.0,
+            thin_cell_m: -1.0,
         }
     }
 
@@ -1047,7 +1074,6 @@ mod tests {
         assert!((out[0][1] - 0.8).abs() < 0.01, "{:?}", out[0]);
         assert!((out[1][1] - 0.3).abs() < 0.01, "{:?}", out[1]);
         assert_eq!(out[2], points[2]);
-        assert!(warp.affects(15.0, 0.0));
     }
 
     #[test]

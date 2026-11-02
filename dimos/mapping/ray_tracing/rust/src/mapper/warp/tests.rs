@@ -58,7 +58,11 @@ fn at(x: f64) -> Pose {
 /// A drive along x, one keyframe a meter and a second, each frame seeing the
 /// wall at y = 1.03 beside it, inside its voxels rather than on their edge.
 fn driven() -> (Mapper, ReformState) {
-    let mut mapper = Mapper::new(config());
+    driven_with(config())
+}
+
+fn driven_with(config: Config) -> (Mapper, ReformState) {
+    let mut mapper = Mapper::new(config);
     mapper.track_voxel_times();
     let mut state = ReformState::default();
     for i in 0..20 {
@@ -79,7 +83,7 @@ fn driven() -> (Mapper, ReformState) {
 }
 
 /// The second half of the drive pulled 0.5 m to +y.
-fn closure(state: &mut ReformState, rebuild_fraction: f64) -> Warp {
+fn closure(state: &mut ReformState) -> Warp {
     let shift = Pose {
         rotation: Quat::IDENTITY,
         translation: Vec3::new(0.0, 0.5, 0.0),
@@ -98,7 +102,7 @@ fn closure(state: &mut ReformState, rebuild_fraction: f64) -> Warp {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 1.0,
         min_shift_m: 0.04,
-        rebuild_fraction,
+        thin_cell_m: -1.0,
     };
     state
         .closure(&moved, &params)
@@ -118,8 +122,8 @@ fn has(mapper: &Mapper, x: f32, y: f32, z: f32) -> bool {
 fn a_closure_moves_the_wall_it_corrected_and_holds_the_rest() {
     let (mut mapper, mut state) = driven();
     assert!(has(&mapper, 15.05, 1.05, 0.05) && has(&mapper, 2.05, 1.05, 0.05));
-    let report = mapper.apply_warp(&closure(&mut state, 1.0));
-    assert!(report.voxels_moved > 0 && !report.rebuilt);
+    let report = mapper.apply_warp(&closure(&mut state));
+    assert!(report.voxels_rebinned > 0);
     assert!(
         has(&mapper, 15.05, 1.55, 0.05),
         "the corrected wall moved with its keyframes"
@@ -139,34 +143,37 @@ fn a_closure_moves_the_wall_it_corrected_and_holds_the_rest() {
 }
 
 #[test]
-fn a_rebuild_lands_the_same_voxels_as_a_repair() {
-    let (mut repaired, mut state) = driven();
-    let (mut rebuilt, mut state2) = driven();
-    let a = repaired.apply_warp(&closure(&mut state, 1.0));
-    let b = rebuilt.apply_warp(&closure(&mut state2, 0.0));
-    assert!(!a.rebuilt && b.rebuilt);
-    let keys = |m: &Mapper| {
-        let mut k: Vec<VoxelKey> = m.map().voxels.iter().map(|(k, _)| k).collect();
-        k.sort();
-        k
+fn far_voxels_move_in_place_and_rebin_when_the_local_area_reaches_them() {
+    let (mut mapper, mut state) = driven_with(Config {
+        max_range: 3.0,
+        ..config()
+    });
+    mapper.apply_warp(&closure(&mut state));
+    // The last frame was from x = 19, so the wall at x = 15 is past ray reach:
+    // it keeps its keys but is placed where the closure moved it.
+    assert!(has(&mapper, 15.05, 1.05, 0.05) && !has(&mapper, 15.05, 1.55, 0.05));
+    let placed = mapper.healthy_centers();
+    let at = |x: f32, y: f32| {
+        placed
+            .chunks(3)
+            .any(|p| (p[0] - x).abs() < 0.01 && (p[1] - y).abs() < 0.01 && p[2] < 0.1)
     };
-    assert_eq!(keys(&repaired), keys(&rebuilt));
-    assert_eq!(
-        repaired.map().healthy_count(),
-        rebuilt.map().healthy_count()
-    );
+    assert!(at(15.05, 1.55) && !at(15.05, 1.05));
+    // A frame from beside it re-keys it.
+    mapper.add_frame_world(Vec::new(), (15.0, 0.0, 0.1));
+    assert!(has(&mapper, 15.05, 1.55, 0.05) && !has(&mapper, 15.05, 1.05, 0.05));
 }
 
 #[test]
 fn voxels_land_where_plain_fast_reform_puts_them() {
     let (mut mapper, mut state) = driven();
-    let warp = closure(&mut state, 1.0);
+    let warp = closure(&mut state);
     let mut keys: Vec<VoxelKey> = mapper.map().voxels.iter().map(|(k, _)| k).collect();
     keys.sort();
     let times: Vec<f64> = keys.iter().map(|k| mapper.voxel_time(k)).collect();
     let means = mapper.map().voxel_means(&keys, VOXEL);
     let reference = warp_positions(&means, Some(&times), &warp.graph_delta().to_blend_arrays());
-    let expected = voxel_moves(&keys, &means, &reference, VOXEL);
+    let expected = voxel_moves(&keys, &means, &reference, VOXEL, |_| false);
     mapper.apply_warp(&warp);
     let landed = expected
         .iter()
@@ -209,7 +216,7 @@ fn shifts_smaller_than_a_voxel_add_up_over_closures() {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 1.0,
         min_shift_m: 0.02,
-        rebuild_fraction: 1.0,
+        thin_cell_m: -1.0,
     };
     // Each keyframe's pose before the nudge is where the last one left it.
     let nudge = |state: &mut ReformState, done: f64| {

@@ -17,12 +17,12 @@
 
 use std::time::Instant;
 
-use ahash::AHashMap;
 use rayon::prelude::*;
 
 use super::Mapper;
-use crate::reform::{Tile, Warp};
-use crate::voxel_ray_tracer::{voxel_moves, VoxelKey};
+use super::Point;
+use crate::reform::Warp;
+use crate::voxel_ray_tracer::{voxel_moves, ChunkMap, VoxelKey};
 
 /// A point's place before and after a warp.
 pub type Displacement = ([f32; 3], [f32; 3]);
@@ -30,12 +30,10 @@ pub type Displacement = ([f32; 3], [f32; 3]);
 /// What one warp did and what it cost.
 #[derive(Clone, Debug, Default)]
 pub struct WarpReport {
-    /// Voxels in tiles the warp reaches.
+    /// Voxels the warp moved in place.
     pub voxels_warped: usize,
-    /// Of those, the ones that landed in another voxel.
-    pub voxels_moved: usize,
-    /// Whether so much moved that the map was rebuilt instead of repaired.
-    pub rebuilt: bool,
+    /// Voxels re-keyed by their moved points, those in the local area.
+    pub voxels_rebinned: usize,
     pub warp_ms: f64,
     pub voxel_ms: f64,
     /// Voxels the warp sent somewhere non-finite or implausibly far, left in place.
@@ -77,7 +75,6 @@ fn hold_implausible(
 pub(super) struct VoxelTimes {
     epoch: Option<f64>,
     now: f32,
-    by_key: AHashMap<VoxelKey, f32>,
 }
 
 impl VoxelTimes {
@@ -87,22 +84,18 @@ impl VoxelTimes {
     }
 
     /// Stamp the voxels this frame hit that have no time yet.
-    pub(super) fn stamp_hits<'a>(&mut self, hits: impl IntoIterator<Item = &'a VoxelKey>) {
-        for &k in hits {
-            self.by_key.entry(k).or_insert(self.now);
+    pub(super) fn stamp_hits<'a>(
+        &self,
+        map: &mut ChunkMap,
+        hits: impl IntoIterator<Item = &'a VoxelKey>,
+    ) {
+        for k in hits {
+            if let Some(v) = map.get_mut(k) {
+                if v.time.is_nan() {
+                    v.time = self.now;
+                }
+            }
         }
-    }
-
-    /// Absolute time of a voxel, NaN when unknown.
-    fn get(&self, k: &VoxelKey) -> f64 {
-        match (self.by_key.get(k), self.epoch) {
-            (Some(&t), Some(epoch)) => epoch + t as f64,
-            _ => f64::NAN,
-        }
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.by_key.clear();
     }
 }
 
@@ -116,7 +109,13 @@ impl Mapper {
         (
             self.map.voxels.len(),
             self.map.voxels.chunk_count(),
-            self.voxel_times.as_ref().map_or(0, |t| t.by_key.len()),
+            self.voxel_times.as_ref().map_or(0, |_| {
+                self.map
+                    .voxels
+                    .iter()
+                    .filter(|(_, v)| !v.time.is_nan())
+                    .count()
+            }),
         )
     }
 
@@ -142,12 +141,18 @@ impl Mapper {
 
     /// Absolute time a voxel landed, NaN when untracked or unknown.
     pub fn voxel_time(&self, k: &VoxelKey) -> f64 {
-        self.voxel_times.as_ref().map_or(f64::NAN, |t| t.get(k))
+        match (
+            self.voxel_times.as_ref().and_then(|t| t.epoch),
+            self.map.voxels.get(k),
+        ) {
+            (Some(epoch), Some(v)) => epoch + v.time as f64,
+            _ => f64::NAN,
+        }
     }
 
-    /// Carry the map through a warp. When more than the warp's rebuild
-    /// fraction of the voxels land in another voxel, the map is rebuilt from
-    /// the warped voxels instead of repaired around each.
+    /// Carry the map through a warp: every voxel's points move in place by
+    /// fast-reform, keeping its key; only the voxels in the local area are
+    /// re-keyed by their moved points, the rest when the local area reaches them.
     pub fn apply_warp(&mut self, warp: &Warp) -> WarpReport {
         let pool = std::sync::Arc::clone(&self.pool);
         pool.install(|| self.apply_warp_in_pool(warp))
@@ -157,34 +162,12 @@ impl Mapper {
         let vs = self.config.voxel_size;
         let mut report = WarpReport::default();
         let stage = Instant::now();
-
-        // Which tiles the warp reaches, decided once per tile.
-        let chunks: Vec<_> = self.map.voxels.chunks().collect();
-        let mut tiles: Vec<Tile> = chunks
-            .par_iter()
-            .flat_map_iter(|c| c.iter().map(|(k, _)| tile_at(warp, k, vs)))
-            .collect();
-        tiles.par_sort_unstable();
-        tiles.dedup();
-        let reached: ahash::AHashSet<Tile> = tiles
-            .into_iter()
-            .filter(|&t| warp.affects_tile(t))
-            .collect();
-        let keys: Vec<VoxelKey> = chunks
-            .par_iter()
-            .flat_map_iter(|c| {
-                c.iter()
-                    .map(|(k, _)| k)
-                    .filter(|&k| reached.contains(&tile_at(warp, k, vs)))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        drop(chunks);
+        let keys: Vec<VoxelKey> = self.map.voxels.iter().map(|(k, _)| k).collect();
         report.voxels_warped = keys.len();
         if keys.is_empty() {
             return report;
         }
-        let times: Vec<f64> = keys.iter().map(|k| self.voxel_time(k)).collect();
+        let times: Vec<f64> = keys.par_iter().map(|k| self.voxel_time(k)).collect();
         let means = self.map.voxel_means(&keys, vs);
         let mut warped = warp.apply(&means, &times);
         (report.implausible, report.worst_implausible) =
@@ -192,40 +175,36 @@ impl Mapper {
         report.warp_ms = ms_since(stage);
 
         let stage = Instant::now();
-        let moves = voxel_moves(&keys, &means, &warped, vs);
-        report.voxels_moved = moves.par_iter().filter(|m| m.from != m.to).count();
-        report.rebuilt =
-            report.voxels_moved as f64 > warp.rebuild_fraction() * self.map.voxels.len() as f64;
-        if report.rebuilt {
-            self.map.rebuild_moved(&moves);
-        } else {
-            self.map.move_voxels(&moves);
-        }
-        if let Some(t) = &mut self.voxel_times {
-            let landed: Vec<(VoxelKey, Option<f32>)> = moves
-                .iter()
-                .filter(|m| m.from != m.to)
-                .map(|m| (m.to, t.by_key.remove(&m.from)))
-                .collect();
-            for (to, time) in landed {
-                if let Some(time) = time {
-                    t.by_key
-                        .entry(to)
-                        .and_modify(|e| *e = e.min(time))
-                        .or_insert(time);
-                }
-            }
-            // Drop times of voxels that are gone, so a key reused later starts fresh.
-            let map = &self.map.voxels;
-            t.by_key.retain(|k, _| map.contains_key(k));
-        }
+        let offsets: Vec<[f32; 3]> = means
+            .par_iter()
+            .zip(warped.par_iter())
+            .map(|(p, w)| [w[0] - p[0], w[1] - p[1], w[2] - p[2]])
+            .collect();
+        self.map.shift_in_place(&offsets);
+        report.voxels_rebinned = self.rebin_local(self.last_origin);
         report.voxel_ms = ms_since(stage);
         report
     }
-}
 
-fn tile_at(warp: &Warp, k: VoxelKey, vs: f32) -> Tile {
-    warp.tile((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs)
+    /// Re-key the voxels within ray reach of `origin` whose points a warp moved
+    /// out of their key, so rays meet them where they are.
+    pub(super) fn rebin_local(&mut self, origin: Point) -> usize {
+        let vs = self.config.voxel_size;
+        let near = self.map.displaced_near(origin, self.config.max_range, vs);
+        if near.is_empty() {
+            return 0;
+        }
+        let map = &self.map;
+        let keys = crate::reform::with_chained(near, |k| map.displaced(k, vs));
+        let means = self.map.voxel_means(&keys, vs);
+        let moving: ahash::AHashSet<VoxelKey> = keys.iter().copied().collect();
+        let voxels = &self.map.voxels;
+        let moves = voxel_moves(&keys, &means, &means, vs, |k| {
+            voxels.contains_key(k) && !moving.contains(k)
+        });
+        self.map.move_voxels(&moves);
+        keys.len()
+    }
 }
 
 #[cfg(test)]
