@@ -147,6 +147,17 @@ class PGOConfig(NativeModuleConfig):
     # run on this many worker threads in dispatch order; off = one held search at a time, later proposals going stale
     closure_search_let_enabled: bool = True
     closure_search_workers: int = 2
+    # Two-stage search: SC candidates and retries wait in a priority buffer (most similar first, least dropped when full)
+    # for fast_match_workers (cloud build, single ICP, gates); a match inside the uncertainty range waits in a priority
+    # buffer (highest single-scan confidence ratio first, lowest dropped) for verification_workers to extend it, held
+    # overhead + round bound per round (the round bound a constant for now: the largest Mac recording's p99 round, gir2)
+    closure_search_two_stage: bool = True
+    fast_match_workers: int = 2
+    sc_buffer_size: int = 4
+    verification_workers: int = 2
+    verification_buffer_slots: int = 2
+    verification_estimate_overhead_s: float = 0.0306
+    verification_estimate_round_s: float = 0.334
     closure_search_estimate_lookup_s: float = 610e-6
     closure_search_estimate_lookup_per_keyframe_s: float = 5.7e-9
     closure_search_estimate_build_per_point_s: float = 3.137e-6

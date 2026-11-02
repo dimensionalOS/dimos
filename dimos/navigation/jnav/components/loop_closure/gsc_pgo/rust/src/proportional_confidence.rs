@@ -488,6 +488,8 @@ impl ClosureSearch {
             diag.extended_keyframes = ratios.len();
             diag.extended_source_points = round[0] as usize;
             diag.extended_target_points = target.index.points().len();
+            diag.extension_rounds_source_points.push(round[0] as usize);
+            diag.extension_rounds_target_points.push(target.index.points().len());
             diag.extended_fitness = icp.fitness;
             diag.extended_likelihood_ratio = round[16];
             diag.extended_confidence = 1.0 - (-median * bar.max(0.0)).exp();

@@ -969,8 +969,11 @@ fn run() -> Result<(), String> {
         speed.replay_solve_wait_s,
     );
     eprintln!(
-        "pgo-eval: closure searches: {} overshot their estimate; this replay waited {:.1}s for searches",
+        "pgo-eval: closure searches: {} overshot their estimate ({} verifications); the buffers dropped {} scan-context candidates and {} matches waiting for verification; this replay waited {:.1}s for searches",
         pgo.closure_search_overshoots(),
+        pgo.verification_overshoots(),
+        pgo.buffer_drops().0,
+        pgo.buffer_drops().1,
         pgo.closure_search_wait_s(),
     );
     eprintln!(
