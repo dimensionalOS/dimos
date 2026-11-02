@@ -757,12 +757,22 @@ pub fn landing_keys(
             .then_with(|| a.1.total_cmp(&b.1))
             .then_with(|| a.2.cmp(&b.2))
     });
+    // Where each key's run of movers starts, so finding a key's first mover stays linear
+    // however many movers pile onto one key.
+    let mut run_start = vec![0usize; order.len()];
+    for n in 1..order.len() {
+        run_start[n] = if order[n].0 == order[n - 1].0 {
+            run_start[n - 1]
+        } else {
+            n
+        };
+    }
     // A key's holder: a voxel that stays there, else the first mover to prefer it.
     let displaced: Vec<usize> = (0..order.len())
         .into_par_iter()
         .filter_map(|n| {
             let (key, _, mover_from, i) = order[n];
-            let first = n - order[..n].iter().rev().take_while(|o| o.0 == key).count();
+            let first = run_start[n];
             let holder = if stays(&key) {
                 key
             } else if first == n {

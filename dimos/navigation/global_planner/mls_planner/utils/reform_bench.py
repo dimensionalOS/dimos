@@ -44,10 +44,12 @@ import itertools
 import json
 from pathlib import Path
 import resource
+import sys
 import time
 
 from dimos_mls_planner import MLSPlanner
 import numpy as np
+import psutil
 from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.sqlite import SqliteStore
@@ -164,10 +166,13 @@ def cpu_s() -> float:
 
 
 def rss_mb() -> float:
-    for line in Path("/proc/self/status").read_text().splitlines():
-        if line.startswith("VmRSS:"):
-            return float(line.split()[1]) / 1024
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20  # macOS: bytes
+    return psutil.Process().memory_info().rss / 2**20
+
+
+def peak_rss_mb() -> float:
+    # ru_maxrss is bytes on macOS, kilobytes on Linux.
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / 2**20 if sys.platform == "darwin" else peak / 2**10
 
 
 def timed(fn, *args, **kwargs):
@@ -293,7 +298,7 @@ def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> 
                 for k in keyframes[::500]:
                     goals.setdefault(int(k["id"]), tuple(map(float, k["post"][:3])))
                 # check the first warps that move a lot, spaced out
-                big = result is not None and result["voxels_moved"] >= CHECK_MIN_VOXELS
+                big = result is not None and result["voxels_warped"] >= CHECK_MIN_VOXELS
                 spaced = not checks or next_event - checks[-1]["closure"] >= CHECK_SPACING
                 if big and spaced and len(checks) < checks_wanted:
                     checks.append(
@@ -356,7 +361,7 @@ def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> 
         "goal_ids": sorted(goals),
         "checks": checks,
         "rss": rss,
-        "peak_rss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+        "peak_rss_mb": peak_rss_mb(),
     }
 
 
@@ -441,12 +446,12 @@ def report(replay_path: Path, ivan_path: Path | None) -> dict:
     out["gsc_reform_warp"]["stage_ms_median"] = (
         {
             k: round(float(np.median([r[k] for r in reform])), 1)
-            for k in ("build_ms", "warp_ms", "voxel_ms", "surface_ms", "graph_ms")
+            for k in ("build_ms", "warp_ms", "move_ms")
         }
         if reform
         else {}
     )
-    out["gsc_reform_warp"]["voxels_moved"] = stats([r["voxels_moved"] for r in reform])
+    out["gsc_reform_warp"]["voxels_warped"] = stats([r["voxels_warped"] for r in reform])
     out["gsc_reform_warp"]["keyframes_moved"] = stats([r["keyframes_moved"] for r in reform])
     errors = [e for row in run["goal_errors"] for e in row[1:]]
     out["held_goal_error_m"] = stats(errors)

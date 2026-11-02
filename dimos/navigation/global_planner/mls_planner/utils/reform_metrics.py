@@ -37,6 +37,7 @@ usage: reform_metrics.py run --db <recording.db> --name <name> --out <dir> [--no
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import json
 from pathlib import Path
 import signal
@@ -129,6 +130,7 @@ def run(db: Path, name: str, out: Path, closures: bool) -> None:
         "dimos",
         "run",
         BLUEPRINT,
+        "--build-native",
         "--replay",
         "--replay-db",
         str(db),
@@ -174,7 +176,9 @@ def run(db: Path, name: str, out: Path, closures: bool) -> None:
                 proc.kill()
     run_log = newest_run_log(launched)
     if run_log is not None:
-        files["jsonl"].write_bytes(run_log.read_bytes())
+        # The logger rotates main.jsonl into main.jsonl.N (higher N = older); keep all of it, oldest first.
+        rotated = sorted(run_log.parent.glob("main.jsonl.*"), key=lambda p: -int(p.suffix[1:]))
+        files["jsonl"].write_bytes(b"".join(p.read_bytes() for p in [*rotated, run_log]))
     print(f"{name} {mode}: exit {proc.returncode}, log {files['jsonl']}", flush=True)
 
 
@@ -350,6 +354,12 @@ def lockstep(
     keyframes: np.ndarray,
     closures: list[tuple[float, np.ndarray]] | None,
     blended: bool = False,
+    until_ts: float | None = None,
+    start_ts: float | None = None,
+    scan_stride: int = 1,
+    with_planner: bool = True,
+    on_scan: Callable[[float, np.ndarray, np.ndarray, VoxelRayMapper], None] | None = None,
+    on_closure: Callable[[float, np.ndarray, VoxelRayMapper], None] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """Every scan in order through the module code with no timing or drops.
 
@@ -359,7 +369,11 @@ def lockstep(
     scan is placed by its keyframe's FINAL correction and nothing is warped; with
     blended (B'), by fast-reform's blend of all the final corrections at its time.
     Returns the ray tracer's healthy voxel centers, the planner's surface and the
-    closure reports.
+    closure reports. For a fast look at one window: start_ts skips the scans before it (closures
+    before it only move the pose offset), until_ts stops after the scans up to then,
+    scan_stride keeps every Nth scan, with_planner False skips the planner. on_scan(ts, world
+    points, origin, tracer) sees each scan as placed; on_closure(ts, records, tracer) each
+    closure after it is applied (for exporting the replay).
     """
     from dimos.mapping.ray_tracing.reform_module import ReformRayTracingVoxelMapConfig
     from dimos.navigation.global_planner.mls_planner.mls_reform_planner_native import (
@@ -400,7 +414,10 @@ def lockstep(
         )
         start, span = odom_ts[0], max(odom_ts[-1] - odom_ts[0], 1e-9)
         next_report = 0.05
-        for obs in store.streams.lidar.order_by("ts"):
+        for scan_index, obs in enumerate(store.streams.lidar.order_by("ts")):
+            if until_ts is not None and obs.ts > until_ts:
+                break
+            in_window = start_ts is None or obs.ts >= start_ts
             if (obs.ts - start) / span >= next_report:
                 which = "A" if closures is not None else "B"
                 print(f"lockstep {which}: {next_report:.0%}", flush=True)
@@ -417,22 +434,33 @@ def lockstep(
                     poses[name] = records[name]
                 tracer.add_keyframes(poses.tobytes())
                 planner.add_keyframes(poses.tobytes())
+                warp = start_ts is None or closures[next_closure - 1][0] >= start_ts
                 common = dict(
                     blend_sigma_m=tracer_params.reform_blend_sigma_m,
                     blend_time_sigma_s=tracer_params.reform_blend_time_sigma_s,
                     min_shift_m=tracer_params.reform_min_shift_m,
                     thin_cell_m=tracer_params.reform_thin_cell_m,
                 )
-                t = tracer.apply_loop_closure(records.tobytes(), **common)
-                p = planner.apply_loop_closure(
-                    records.tobytes(),
-                    blend_sigma_m=planner_params.reform_blend_sigma_m,
-                    blend_time_sigma_s=planner_params.reform_blend_time_sigma_s,
-                    min_shift_m=planner_params.reform_min_shift_m,
-                    thin_cell_m=planner_params.reform_thin_cell_m,
+                closure_t0 = time.monotonic()
+                t = warp and tracer.apply_loop_closure(records.tobytes(), **common)
+                tracer_s = time.monotonic() - closure_t0
+                p = (
+                    warp
+                    and with_planner
+                    and planner.apply_loop_closure(
+                        records.tobytes(),
+                        blend_sigma_m=planner_params.reform_blend_sigma_m,
+                        blend_time_sigma_s=planner_params.reform_blend_time_sigma_s,
+                        min_shift_m=planner_params.reform_min_shift_m,
+                        thin_cell_m=planner_params.reform_thin_cell_m,
+                    )
                 )
+                if on_closure is not None:
+                    on_closure(closures[next_closure - 1][0], records, tracer)
                 reports.append(
                     {
+                        "ts": closures[next_closure - 1][0],
+                        "tracer_s": tracer_s,
                         "tracer": t and dict(t),
                         "planner": p and {k: v for k, v in p.items() if k != "held"},
                     }
@@ -445,6 +473,8 @@ def lockstep(
                 k = int(newest["id"])
                 rotation = post_rotation * raw_rotation[k].inv()
                 offset = (rotation, post_translation - rotation.apply(keyframes["raw"][k, :3]))
+            if scan_index % scan_stride or not in_window:
+                continue
             points = np.asarray(obs.data.points_f32(), np.float64)
             latest = int(np.searchsorted(odom_ts, obs.ts, side="right")) - 1
             if len(points) == 0 or latest < 0:
@@ -472,9 +502,14 @@ def lockstep(
                 origin = rotation.apply(t_near) + translation
             tracer.set_clock(obs.ts)
             tracer.add_frame_world(corrected, tuple(map(float, origin)))
+            if on_scan is not None:
+                on_scan(obs.ts, corrected, np.asarray(origin, np.float64), tracer)
             cx, cy, radius, z_min, z_max = tracer.take_local_bounds()
             local = tracer.local_map((cx, cy, float(origin[2])), radius, z_min, z_max)
-            planner.update_region(local, (cx, cy), radius, z_min, z_max, float(origin[2]), obs.ts)
+            if with_planner:
+                planner.update_region(
+                    local, (cx, cy), radius, z_min, z_max, float(origin[2]), obs.ts
+                )
     return (
         np.asarray(tracer.healthy_centers(), np.float32),
         np.asarray(planner.surface_map(), np.float32),
@@ -496,6 +531,9 @@ def lockstep_score(db: Path, name: str, out: Path) -> dict:
     a, a_surface, reports = lockstep(db, keyframes, closures)
     b, b_surface, _ = lockstep(db, keyframes, None)
     b_blend, b_blend_surface, _ = lockstep(db, keyframes, None, blended=True)
+    # Keep the clouds so a disagreement can be drawn without replaying.
+    for label, cloud in (("a", a), ("a_surface", a_surface), ("b", b), ("b_surface", b_surface)):
+        np.save(out / f"{name}.lockstep.{label}.npy", cloud)
     metrics = {
         "recording": name,
         "keyframes": len(keyframes),
@@ -524,9 +562,12 @@ def lockstep_score(db: Path, name: str, out: Path) -> dict:
 
 def agreement(rebuilt: np.ndarray, reformed: np.ndarray, voxel: float) -> dict[str, float]:
     """For each rebuilt voxel, the distance to the nearest reformed one: Euclidean,
-    and in grid steps (the 26 neighbors are one step away)."""
+    and in grid steps (the 26 neighbors are one step away). And the other way: the
+    share of reformed voxels with no rebuilt one within a step, e.g. a ghost wall a
+    closure left behind."""
     distances, _ = cKDTree(reformed).query(rebuilt, workers=2)
     steps, _ = cKDTree(reformed).query(rebuilt, p=np.inf, workers=2)
+    extra_steps, _ = cKDTree(rebuilt).query(reformed, p=np.inf, workers=2)
     return {
         "rebuilt": len(rebuilt),
         "reformed": len(reformed),
@@ -534,6 +575,7 @@ def agreement(rebuilt: np.ndarray, reformed: np.ndarray, voxel: float) -> dict[s
         "within_1_voxel": float(np.mean(distances <= voxel * 1.001)),
         "median_offset_steps": float(np.median(steps) / voxel),
         "within_1_step": float(np.mean(steps <= voxel * 1.001)),
+        "reformed_unbacked": float(np.mean(extra_steps > voxel * 1.001)),
     }
 
 
