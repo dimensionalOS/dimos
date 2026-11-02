@@ -1,6 +1,6 @@
-import type { FileRenderer } from "../../shared/render/render.ts";
-import type { HarnessEvent } from "../../shared/protocol/runtime/event.ts";
-import type { InputDraft } from "../inputs/gate.ts";
+import type { FileRenderer } from "#dimos/agents/shared/render/render.ts";
+import type { HarnessEvent } from "#dimos/agents/shared/protocol/runtime/event.ts";
+import type { InputDraft } from "#dimos/agents/harness/inputs/gate.ts";
 
 /** How an event reads to the model: its notice and data as text, and the files `notify` exported as images. */
 export class EventDrafts {

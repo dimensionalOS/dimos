@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
-import type { HarnessEvent } from "../../shared/protocol/runtime/event.ts";
-import type { InputDraft } from "../inputs/gate.ts";
+import type { HarnessEvent } from "#dimos/agents/shared/protocol/runtime/event.ts";
+import type { InputDraft } from "#dimos/agents/harness/inputs/gate.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { EventDrafts } from "./message.ts";
-import { EventIntake } from "./intake.ts";
-import { FileRenderer } from "../../shared/render/render.ts";
-import { WireError } from "../dimos/wire/base.ts";
+import { EventDrafts } from "#dimos/agents/harness/events/message.ts";
+import { EventIntake } from "#dimos/agents/harness/events/intake.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
+import { WireError } from "#dimos/agents/harness/dimos/wire/base.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { harnessEventDecoder } from "../dimos/wire/event.ts";
+import { harnessEventDecoder } from "#dimos/agents/harness/dimos/wire/event.ts";
 import { join } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { requestIdFor } from "../inputs/source.ts";
+import { requestIdFor } from "#dimos/agents/harness/inputs/source.ts";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
 

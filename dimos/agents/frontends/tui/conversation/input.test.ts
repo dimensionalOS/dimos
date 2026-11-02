@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ChatInput, PromptEditor } from "./input.ts";
+import { ChatInput, PromptEditor } from "#dimos/agents/frontends/tui/conversation/input.ts";
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { test } from "node:test";

@@ -1,7 +1,7 @@
 import type { ConversationId, Extension } from "@earendil-works/pi-durable";
-import type { InputGate } from "../inputs/gate.ts";
+import type { InputGate } from "#dimos/agents/harness/inputs/gate.ts";
 import { GenerationTask, ToolTask, defineExtension, hook } from "@earendil-works/pi-durable";
-import { baselineSection } from "./baseline.ts";
+import { baselineSection } from "#dimos/agents/harness/context/baseline.ts";
 
 type ContextExtensionOptions = {
   readonly inputs: InputGate;

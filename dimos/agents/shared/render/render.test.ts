@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import sharp from "sharp";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Sharp } from "sharp";
-import { FileRenderer } from "./render.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";

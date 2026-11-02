@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import type { Facts } from "../../shared/protocol/runtime/context.ts";
-import type { Observation } from "./facts.ts";
-import { applyChange, diffFacts, observedFacts } from "./facts.ts";
-import { changeMessage } from "./messages.ts";
+import type { Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
+import type { Observation } from "#dimos/agents/harness/context/facts.ts";
+import { applyChange, diffFacts, observedFacts } from "#dimos/agents/harness/context/facts.ts";
+import { changeMessage } from "#dimos/agents/harness/context/messages.ts";
 import { test } from "node:test";
 
 const GO2: Facts = {

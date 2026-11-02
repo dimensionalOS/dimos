@@ -1,6 +1,6 @@
-import { CONVERSATION_ACTIONS } from "./conversation.ts";
-import { GATEWAY_ACTIONS } from "./gateway.ts";
-import { LIFECYCLE_ACTIONS } from "./lifecycle.ts";
+import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
+import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
+import { LIFECYCLE_ACTIONS } from "#dimos/agents/shared/protocol/actions/lifecycle.ts";
 
 export const CATALOG = {
   conversation: CONVERSATION_ACTIONS,
