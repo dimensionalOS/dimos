@@ -26,7 +26,7 @@ pub use warp::WarpReport;
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
     global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
-    Cylinder, FrameHits, LocalBounds, VoxelMap,
+    Cylinder, FrameHits, LocalBounds, VoxelKey, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -55,6 +55,11 @@ pub struct Mapper {
     // When each voxel landed, for warps that tell overlapping passes apart.
     // Off unless asked for.
     voxel_times: Option<VoxelTimes>,
+    // The voxels a warp left off their keys, with where their points sit,
+    // re-keyed as frames come near them.
+    displaced: Vec<(VoxelKey, [f32; 3])>,
+    // How far the last frame's rays reached from its origin.
+    last_reach: f32,
 }
 
 impl Mapper {
@@ -71,6 +76,8 @@ impl Mapper {
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
             voxel_times: None,
+            displaced: Vec::new(),
+            last_reach: 0.0,
         }
     }
 
@@ -122,7 +129,10 @@ impl Mapper {
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
         let pool = Arc::clone(&self.pool);
         if self.voxel_times.is_some() {
-            pool.install(|| self.rebin_local(origin));
+            self.last_reach = pool.install(|| self.reach(&points, origin));
+            if !self.displaced.is_empty() {
+                pool.install(|| self.rebin_local(origin));
+            }
         }
         self.live = pool.install(|| update_map(&mut self.map, origin, &points, &self.config));
         if let Some(times) = &self.voxel_times {

@@ -22,7 +22,10 @@ use rayon::prelude::*;
 use super::Mapper;
 use super::Point;
 use crate::reform::Warp;
-use crate::voxel_ray_tracer::{voxel_moves, ChunkMap, VoxelKey};
+use crate::voxel_ray_tracer::{voxel_center, voxel_moves, world_to_voxel, ChunkMap, VoxelKey};
+
+/// Points and the times they were observed at.
+type PointsAndTimes = (Vec<[f32; 3]>, Vec<f64>);
 
 /// A point's place before and after a warp.
 pub type Displacement = ([f32; 3], [f32; 3]);
@@ -162,13 +165,23 @@ impl Mapper {
         let vs = self.config.voxel_size;
         let mut report = WarpReport::default();
         let stage = Instant::now();
-        let keys: Vec<VoxelKey> = self.map.voxels.iter().map(|(k, _)| k).collect();
+        // Each voxel's key, point and time in one pass, in the order shift_in_place takes.
+        let epoch = self.voxel_times.as_ref().and_then(|t| t.epoch);
+        let (keys, (means, times)): (Vec<VoxelKey>, PointsAndTimes) = self
+            .map
+            .voxels
+            .par_map(|k, v| {
+                let (x, y, z) = voxel_center(k, vs);
+                let m = v.mean_offset();
+                let t = epoch.map_or(f64::NAN, |e| e + v.time as f64);
+                (k, ([x + m.x, y + m.y, z + m.z], t))
+            })
+            .into_par_iter()
+            .unzip();
         report.voxels_warped = keys.len();
         if keys.is_empty() {
             return report;
         }
-        let times: Vec<f64> = keys.par_iter().map(|k| self.voxel_time(k)).collect();
-        let means = self.map.voxel_means(&keys, vs);
         let mut warped = warp.apply(&means, &times);
         (report.implausible, report.worst_implausible) =
             hold_implausible(&means, &mut warped, warp.max_plausible_move_m());
@@ -181,21 +194,51 @@ impl Mapper {
             .map(|(p, w)| [w[0] - p[0], w[1] - p[1], w[2] - p[2]])
             .collect();
         self.map.shift_in_place(&offsets);
+        let inv = 1.0 / vs;
+        self.displaced = keys
+            .par_iter()
+            .zip(warped.par_iter())
+            .filter(|(k, w)| world_to_voxel(w[0], w[1], w[2], inv) != **k)
+            .map(|(k, w)| (*k, *w))
+            .collect();
         report.voxels_rebinned = self.rebin_local(self.last_origin);
         report.voxel_ms = ms_since(stage);
         report
     }
 
-    /// Re-key the voxels within ray reach of `origin` whose points a warp moved
-    /// out of their key, so rays meet them where they are.
+    /// How far a frame's rays reach from its origin, carving included.
+    pub(super) fn reach(&self, points: &[Point], origin: Point) -> f32 {
+        let far = points
+            .par_iter()
+            .map(|p| (p.0 - origin.0).powi(2) + (p.1 - origin.1).powi(2) + (p.2 - origin.2).powi(2))
+            .reduce(|| 0.0, f32::max)
+            .sqrt();
+        far.min(self.config.max_range) + self.config.shadow_depth + 2.0 * self.config.voxel_size
+    }
+
+    /// Re-key the voxels a warp left off their keys whose key or points are within
+    /// ray reach of `origin`, so rays meet them where they are.
     pub(super) fn rebin_local(&mut self, origin: Point) -> usize {
         let vs = self.config.voxel_size;
-        let near = self.map.displaced_near(origin, self.config.max_range, vs);
-        if near.is_empty() {
+        let r2 = self.last_reach.max(vs).powi(2);
+        let near = |p: [f32; 3]| {
+            (p[0] - origin.0).powi(2) + (p[1] - origin.1).powi(2) + (p[2] - origin.2).powi(2) <= r2
+        };
+        let map = &self.map;
+        let seeds: Vec<VoxelKey> = self
+            .displaced
+            .par_iter()
+            .filter(|(k, p)| {
+                let (x, y, z) = voxel_center(*k, vs);
+                near(*p) || near([x, y, z])
+            })
+            .filter(|(k, _)| map.displaced(k, vs).is_some())
+            .map(|(k, _)| *k)
+            .collect();
+        if seeds.is_empty() {
             return 0;
         }
-        let map = &self.map;
-        let keys = crate::reform::with_chained(near, |k| map.displaced(k, vs));
+        let keys = crate::reform::with_chained(seeds, |k| map.displaced(k, vs));
         let means = self.map.voxel_means(&keys, vs);
         let moving: ahash::AHashSet<VoxelKey> = keys.iter().copied().collect();
         let voxels = &self.map.voxels;
@@ -203,6 +246,7 @@ impl Mapper {
             voxels.contains_key(k) && !moving.contains(k)
         });
         self.map.move_voxels(&moves);
+        self.displaced.retain(|(k, _)| !moving.contains(k));
         keys.len()
     }
 }

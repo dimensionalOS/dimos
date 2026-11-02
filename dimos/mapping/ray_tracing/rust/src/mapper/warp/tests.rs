@@ -109,30 +109,49 @@ fn closure(state: &mut ReformState) -> Warp {
         .expect("the closure moves past min_shift_m")
 }
 
-fn has(mapper: &Mapper, x: f32, y: f32, z: f32) -> bool {
-    let k = (
+fn key(x: f32, y: f32, z: f32) -> VoxelKey {
+    (
         (x / VOXEL).floor() as i32,
         (y / VOXEL).floor() as i32,
         (z / VOXEL).floor() as i32,
-    );
-    mapper.map().voxels.contains_key(&k)
+    )
+}
+
+/// Whether a voxel holds this key.
+fn has(mapper: &Mapper, x: f32, y: f32, z: f32) -> bool {
+    mapper.map().voxels.contains_key(&key(x, y, z))
+}
+
+/// The keys where the healthy voxels' points sit, re-keyed or not.
+fn placed(mapper: &Mapper) -> ahash::AHashSet<VoxelKey> {
+    mapper
+        .healthy_centers()
+        .chunks(3)
+        .map(|p| key(p[0], p[1], p[2]))
+        .collect()
+}
+
+fn sits(mapper: &Mapper, x: f32, y: f32, z: f32) -> bool {
+    placed(mapper).contains(&key(x, y, z))
 }
 
 #[test]
 fn a_closure_moves_the_wall_it_corrected_and_holds_the_rest() {
     let (mut mapper, mut state) = driven();
     assert!(has(&mapper, 15.05, 1.05, 0.05) && has(&mapper, 2.05, 1.05, 0.05));
-    let report = mapper.apply_warp(&closure(&mut state));
-    assert!(report.voxels_rebinned > 0);
+    mapper.apply_warp(&closure(&mut state));
     assert!(
-        has(&mapper, 15.05, 1.55, 0.05),
+        sits(&mapper, 15.05, 1.55, 0.05),
         "the corrected wall moved with its keyframes"
     );
-    assert!(!has(&mapper, 15.05, 1.05, 0.05), "and left its old place");
+    assert!(!sits(&mapper, 15.05, 1.05, 0.05), "and left its old place");
     assert!(
-        has(&mapper, 2.05, 1.05, 0.05),
+        sits(&mapper, 2.05, 1.05, 0.05),
         "the uncorrected wall stayed"
     );
+    // A frame from beside it re-keys it, and its time goes along.
+    mapper.add_frame_world(vec![(15.05, 1.55, 0.05)], (15.0, 0.0, 0.1));
+    assert!(has(&mapper, 15.05, 1.55, 0.05) && !has(&mapper, 15.05, 1.05, 0.05));
     // Times follow the voxels to their new keys.
     let k = (
         (15.05 / VOXEL).floor() as i32,
@@ -159,8 +178,8 @@ fn far_voxels_move_in_place_and_rebin_when_the_local_area_reaches_them() {
             .any(|p| (p[0] - x).abs() < 0.01 && (p[1] - y).abs() < 0.01 && p[2] < 0.1)
     };
     assert!(at(15.05, 1.55) && !at(15.05, 1.05));
-    // A frame from beside it re-keys it.
-    mapper.add_frame_world(Vec::new(), (15.0, 0.0, 0.1));
+    // A frame from beside it, its rays reaching the wall, re-keys it.
+    mapper.add_frame_world(vec![(15.05, 1.55, 0.05)], (15.0, 0.0, 0.1));
     assert!(has(&mapper, 15.05, 1.55, 0.05) && !has(&mapper, 15.05, 1.05, 0.05));
 }
 
@@ -175,10 +194,8 @@ fn voxels_land_where_plain_fast_reform_puts_them() {
     let reference = warp_positions(&means, Some(&times), &warp.graph_delta().to_blend_arrays());
     let expected = voxel_moves(&keys, &means, &reference, VOXEL, |_| false);
     mapper.apply_warp(&warp);
-    let landed = expected
-        .iter()
-        .filter(|m| mapper.map().voxels.contains_key(&m.to))
-        .count();
+    let placed = placed(&mapper);
+    let landed = expected.iter().filter(|m| placed.contains(&m.to)).count();
     assert!(
         landed as f64 >= 0.99 * expected.len() as f64,
         "{landed} of {} voxels are where fast-reform puts them",
@@ -243,7 +260,7 @@ fn shifts_smaller_than_a_voxel_add_up_over_closures() {
     };
     // 3 cm keeps the wall in its voxels; another 3 cm takes it past their edge.
     mapper.apply_warp(&nudge(&mut state, 0.0));
-    assert!(has(&mapper, 4.05, 1.05, 0.05) && !has(&mapper, 4.05, 1.15, 0.05));
+    assert!(sits(&mapper, 4.05, 1.05, 0.05) && !sits(&mapper, 4.05, 1.15, 0.05));
     mapper.apply_warp(&nudge(&mut state, 1.0));
-    assert!(has(&mapper, 4.05, 1.15, 0.05) && !has(&mapper, 4.05, 1.05, 0.05));
+    assert!(sits(&mapper, 4.05, 1.15, 0.05) && !sits(&mapper, 4.05, 1.05, 0.05));
 }

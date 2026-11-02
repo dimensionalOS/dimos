@@ -477,6 +477,22 @@ impl ChunkMap {
             });
     }
 
+    /// `f` of every voxel in `iter` order, in parallel.
+    pub fn par_map<T: Send>(&self, f: impl Fn(VoxelKey, &Voxel) -> T + Sync) -> Vec<T> {
+        let chunks: Vec<(ChunkKey, &Chunk)> = self.chunks.iter().map(|(k, c)| (*k, c)).collect();
+        chunks
+            .par_iter()
+            .flat_map_iter(|(ck, chunk)| {
+                chunk
+                    .occupied
+                    .ones()
+                    .zip(&chunk.voxels)
+                    .map(|(slot, v)| f(key_of(*ck, slot), v))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// Every chunk key.
     pub fn chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
         self.chunks.keys().copied()

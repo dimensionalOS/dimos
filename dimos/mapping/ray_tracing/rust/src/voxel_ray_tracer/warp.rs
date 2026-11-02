@@ -28,6 +28,15 @@ pub struct VoxelMove {
 }
 
 impl Voxel {
+    /// The voxel's points' mean, off its center.
+    pub(crate) fn mean_offset(&self) -> Vector3<f32> {
+        if self.num_pts > 0 {
+            self.sum / self.num_pts as f32
+        } else {
+            Vector3::zeros()
+        }
+    }
+
     /// Re-center the point moments by `offset`: each point moves with its
     /// voxel's center, which now sits `offset` from the new voxel's center.
     fn shift(&mut self, offset: Vector3<f32>) {
