@@ -47,7 +47,7 @@ logger = setup_logger()
 
 @attrs.frozen(slots=False)
 class EEFTwistTaskConfig(PoseTargetIKTaskConfig):
-    """Settings for the end-effector jog task.
+    """Configuration for command-relative end-effector twist control.
 
     Attributes:
         target_frames: The one robot frame (link name) the twists move.
@@ -66,7 +66,7 @@ class EEFTwistTaskConfig(PoseTargetIKTaskConfig):
 
 
 class EEFTwistTask(PoseTargetIKTask):
-    """Jog the arm's end effector with velocity commands (twists).
+    """Integrate twists into a Cartesian target solved by the shared IK core.
 
     Each tick the target pose moves by twist x tick time and the IK solver
     drives the joints after it. A zero twist stops the target where it is.
@@ -95,7 +95,7 @@ class EEFTwistTask(PoseTargetIKTask):
         self._last_twist_time = 0.0
         self._target_pose: PoseStamped | None = None
         self._estopped = False
-        # True while nobody is jogging; only ever True with command_timeout > 0.
+        # True while no twist is being followed; only ever True with command_timeout > 0.
         self._idle = config.command_timeout > 0.0
         super().__init__(name, config, solver=solver)
 
