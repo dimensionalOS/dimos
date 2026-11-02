@@ -39,18 +39,24 @@ impl ClosureSearch {
             .max(1.0)
             .sqrt();
         diag.yank_drift_scale = drift;
-        let predicted = self.config.closure_yank_gate_principled.then(|| {
-            let p = &diag.innovation_covariance;
-            let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
-            let covariance: Mat3 = std::array::from_fn(|i| {
-                std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
+        let predicted = (self.config.closure_yank_gate_principled
+            || self.config.closure_yank_at_stated_drift)
+            .then(|| {
+                let p = if self.config.closure_yank_at_stated_drift {
+                    &diag.stated_innovation_covariance
+                } else {
+                    &diag.innovation_covariance
+                };
+                let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
+                let covariance: Mat3 = std::array::from_fn(|i| {
+                    std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
+                });
+                covariance
             });
-            covariance
-        });
         if let Some(covariance) = predicted {
             // the innovation against its predicted spread (the graph's, both noise scales applied, plus the closure's)
             let v = diag.innovation;
-            diag.yank_z = match mat3::inverse(&covariance) {
+            diag.yank_stdevs = match mat3::inverse(&covariance) {
                 Some(inverse) if v.iter().all(|x| x.is_finite()) => {
                     let iv = mat3::mat_vec(&inverse, &v);
                     (v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]).max(0.0).sqrt()
@@ -59,12 +65,12 @@ impl ClosureSearch {
             };
         } else if self.scored_yanks.is_empty() {
             // no yank scale yet: nothing vouches for this yank, so no confidence clears it (it only seeds the scale)
-            diag.yank_z = f64::INFINITY;
+            diag.yank_stdevs = f64::INFINITY;
         } else {
             diag.sigma_rotation_deg = robust_scale(self.scored_yanks.iter().map(|y| y.0).collect());
             diag.sigma_translation_m =
                 robust_scale(self.scored_yanks.iter().map(|y| y.1).collect());
-            diag.yank_z = (diag.yank_rotation_deg / drift / diag.sigma_rotation_deg)
+            diag.yank_stdevs = (diag.yank_rotation_deg / drift / diag.sigma_rotation_deg)
                 .hypot(diag.yank_translation / drift / diag.sigma_translation_m);
         }
         let unit = |v: f64| {
@@ -190,7 +196,7 @@ impl ClosureSearch {
         } else {
             0.0
         };
-        diag.yank_z * diag.yank_z / (2.0 * width * width) + record
+        diag.yank_stdevs * diag.yank_stdevs / (2.0 * width * width) + record
     }
     /// Global-frame cloud of keyframes `ids` (body clouds moved by their global poses, in order), voxel-downsampled at the
     /// submap resolution.

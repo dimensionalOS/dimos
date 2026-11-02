@@ -114,8 +114,8 @@ pub struct ClosureCandidateDiag {
     pub scan_context_second: f32,
     pub lowe_ratio: f32,
     /// The search's inputs from the rest of the run: the loop-overlap pressure when it started (`GscPgo::pressure`, 0
-    /// before any), the share of judged closures with a similar yank_z that the solve kept ((kept + 1) / (judged + 2),
-    /// each weighted by e^(-(yank_z difference)^2 / 2)), the extension budget in
+    /// before any), the share of judged closures with a similar yank_stdevs that the solve kept ((kept + 1) / (judged + 2),
+    /// each weighted by e^(-(yank_stdevs difference)^2 / 2)), the extension budget in
     /// keyframes (closure_extended_icp_max_keyframes x (1 - (1 - pressure)(1 - target_overlap)), up to the next doubling step), and the separate places the scan matched as well as
     /// this target, counted only as far as the decision needed (0 when it was never counted).
     pub pressure: f64,
@@ -130,6 +130,9 @@ pub struct ClosureCandidateDiag {
     /// world axes (m), and the graph's covariance of that offset at the odometry noise in use (m²); NaN before ICP.
     pub innovation: Vec3,
     pub innovation_covariance: Mat3,
+    /// The odometry chain's covariance of that offset at the drift the config states, with nothing learned or measured
+    /// from candidates in it (`closure_yank_at_stated_drift`; m²); NaN before ICP.
+    pub stated_innovation_covariance: Mat3,
     /// The chance the source scan overlaps the target keyframe's (`OverlapModel::overlap`): what the extension budget
     /// scales with.
     pub target_overlap: f64,
@@ -159,13 +162,13 @@ pub struct ClosureCandidateDiag {
     /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
     /// yank_drift_scale = sqrt(keyframe gap);
     /// sigma_* = 1.4826 x the median yank / drift scale of the candidates ICP scored before it (NaN before any);
-    /// yank_z = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
+    /// yank_stdevs = hypot(yank_rotation_deg / drift / sigma_rotation_deg, yank_translation / drift / sigma_translation_m)
     /// (infinite before any, so the first candidate only seeds the scale); each factor is its metric normalized by its own gate and clamped to [0, 1];
-    /// confidence = their product; required_confidence = 1 - exp(-yank_z^2 / 2k^2), k = `closure_yank_gate_width`.
+    /// confidence = their product; required_confidence = 1 - exp(-yank_stdevs^2 / 2k^2), k = `closure_yank_gate_width`.
     pub yank_drift_scale: f64,
     pub sigma_rotation_deg: f64,
     pub sigma_translation_m: f64,
-    pub yank_z: f64,
+    pub yank_stdevs: f64,
     pub scan_context_factor: f64,
     pub icp_factor: f64,
     pub degeneracy_factor: f64,
@@ -218,6 +221,7 @@ impl ClosureCandidateDiag {
             closure_noise_scale: 1.0,
             innovation: [f64::NAN; 3],
             innovation_covariance: [[f64::NAN; 3]; 3],
+            stated_innovation_covariance: [[f64::NAN; 3]; 3],
             target_overlap: 0.0,
             keep_rate: f64::NAN,
             extension_budget: 0,
@@ -233,7 +237,7 @@ impl ClosureCandidateDiag {
             yank_drift_scale: f64::NAN,
             sigma_rotation_deg: f64::NAN,
             sigma_translation_m: f64::NAN,
-            yank_z: f64::NAN,
+            yank_stdevs: f64::NAN,
             scan_context_factor: f64::NAN,
             icp_factor: f64::NAN,
             degeneracy_factor: f64::NAN,
@@ -292,8 +296,8 @@ pub struct ClosureEdgeEvent {
     /// ICP fitness against the fitness its yank requires once ICP ran, then GNC's weight times that.
     pub confidence: f64,
     /// How hard the edge pulls the accepted pose graph, in robust standard deviations of the
-    /// yanks of closures committed so far (`ClosureCandidateDiag::yank_z`); NaN before ICP.
-    pub yank_z: f64,
+    /// yanks of closures committed so far (`ClosureCandidateDiag::yank_stdevs`); NaN before ICP.
+    pub yank_stdevs: f64,
 }
 
 /// Bytes per packed closure-edge record (`ClosureEdgeEvent::put_record`).
@@ -301,7 +305,7 @@ pub const CLOSURE_EDGE_RECORD_BYTES: usize = 52;
 
 impl ClosureEdgeEvent {
     /// Append this event as one packed record: both keyframes where they are now (x y z, then
-    /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_z f32, time f64.
+    /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_stdevs f32, time f64.
     pub fn put_record(&self, data: &mut Vec<u8>, key_poses: &[KeyPoseWithCloud]) {
         let at = |id: usize| {
             key_poses
@@ -315,7 +319,7 @@ impl ClosureEdgeEvent {
         data.extend_from_slice(&(self.target_id as u32).to_le_bytes());
         data.extend_from_slice(&(self.state as u32).to_le_bytes());
         data.extend_from_slice(&(self.confidence as f32).to_le_bytes());
-        data.extend_from_slice(&(self.yank_z as f32).to_le_bytes());
+        data.extend_from_slice(&(self.yank_stdevs as f32).to_le_bytes());
         data.extend_from_slice(&self.time.to_le_bytes());
     }
 }
@@ -338,7 +342,7 @@ pub struct Config {
     pub closure_min_occupancy: i32,
     /// Observability gate (Zhang 2016 / X-ICP degeneracy factor). 0 disables.
     pub closure_min_degeneracy: f64,
-    /// A closure's match confidence must clear 1 - exp(-yank_z^2 / 2k^2) (see `ClosureCandidateDiag`): a small yank
+    /// A closure's match confidence must clear 1 - exp(-yank_stdevs^2 / 2k^2) (see `ClosureCandidateDiag`): a small yank
     /// needs little confidence, a large one a near-perfect match. This is k, the sigmas of yank before that.
     /// Yank is measured per sqrt(keyframe gap), since odometry drift is a random walk (on huge_loop this ranks
     /// closures that help above closures that hurt at AUC 0.82 vs 0.70).
@@ -371,19 +375,9 @@ pub struct Config {
     /// Probability that a true inlier's residual falls under GNC's chi-squared
     /// cost threshold, in (0, 1). Lowering it tightens the test so GNC rejects more closures.
     pub closure_gnc_inlier_probability: f64,
-    /// Odometry drift per keyframe (variance; rad², m²); see module.py for where the defaults come from.
-    pub odom_rot_roll_pitch_var: f64,
-    pub odom_rot_yaw_var: f64,
-    pub odom_trans_xy_var: f64,
-    pub odom_trans_z_var: f64,
-    /// When true, the odometry's noise is per unit of motion instead of per keyframe: each keyframe step's variance is
-    /// a per-metre rate times the distance travelled plus a per-radian rate times the angle turned, for xy translation
-    /// (m²), z translation (m²), yaw (rad²) and roll/pitch (rad²), so it does not depend on how far apart keyframes are
-    /// (the per-keyframe variances above are then unused).
-    pub odom_noise_per_motion: bool,
     /// When true, a closure is uninformative only where the graph's own covariance of its two ends (heading swing and
     /// solved closures included) is surer than ICP in every direction, instead of the per-keyframe xy step times the
-    /// keyframe gap (always on with `odom_noise_per_motion`).
+    /// keyframe gap.
     pub closure_informative_by_graph_covariance: bool,
     /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
     /// passes the other gates is committed, and repeats of a kept closure count again.
@@ -403,16 +397,22 @@ pub struct Config {
     /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
     /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
     pub odometry_noise_solve_lower_bound: bool,
-    /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
-    /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
-    pub odom_xy_var_per_m: f64,
-    pub odom_xy_var_per_rad: f64,
-    pub odom_z_var_per_m: f64,
-    pub odom_z_var_per_rad: f64,
-    pub odom_yaw_var_per_m: f64,
-    pub odom_yaw_var_per_rad: f64,
-    pub odom_tilt_var_per_m: f64,
-    pub odom_tilt_var_per_rad: f64,
+    /// The odometry's drift as a random walk in the motion itself, so it does not depend on how far apart keyframes
+    /// are: per noise source (xy translation, z translation, yaw, roll/pitch tilt), the standard deviation it adds per
+    /// square root of metres travelled (m/√m for translation, rad/√m for rotation) and per square root of radians
+    /// turned (m/√rad, rad/√rad); a step's variance is the first squared times its distance plus the second squared
+    /// times its turn. Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five
+    /// recordings (small_mid, gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all
+    /// from turning. After each solve that keeps closures, the module logs the values these measure (debug_log kind
+    /// "odometry_drift"), to start the next run from.
+    pub odom_xy_drift_per_sqrt_m: f64,
+    pub odom_xy_drift_per_sqrt_rad: f64,
+    pub odom_z_drift_per_sqrt_m: f64,
+    pub odom_z_drift_per_sqrt_rad: f64,
+    pub odom_yaw_drift_per_sqrt_m: f64,
+    pub odom_yaw_drift_per_sqrt_rad: f64,
+    pub odom_tilt_drift_per_sqrt_m: f64,
+    pub odom_tilt_drift_per_sqrt_rad: f64,
     /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
     /// the next (xy, z, yaw, roll/pitch): the prior that `odometry_noise_from_closures` holds its estimate to. 0 = one
     /// closure's worth of information (a unit-information prior). Defaults: the spread of those five recordings around
@@ -490,10 +490,6 @@ pub struct Config {
     /// point with probability `closure_gnc_inlier_probability` (w^2 chi-square(1) quantile). The configured value holds
     /// until a keyframe has been measured.
     pub closure_inlier_distance_from_odometry: bool,
-    /// When true, a submap reaches as far as the sensor does instead of `closure_submap_half_range` keyframes each side:
-    /// as many keyframes as the keyframes' mean scan reach (`keyframe_reach`) spans at their mean spacing along the path,
-    /// at least the configured half range.
-    pub closure_submap_by_reach: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -518,10 +514,16 @@ pub struct Config {
     /// When true, a closure's variance (its ICP fitness) is scaled the same way, by the factor fitted jointly with the
     /// odometry's from the same innovations (short loops pin the closure's share, long loops the odometry's).
     pub closure_noise_from_closures: bool,
-    /// When true, yank_z is the closure's innovation in standard deviations of its predicted spread,
+    /// When true, yank_stdevs is the closure's innovation in standard deviations of its predicted spread,
     /// sqrt(v^T (s P + c fitness I)^-1 v) with both noise scales, instead of in robust spreads of earlier yanks; the gate
     /// asks for the evidence z^2 / 2 (the Gaussian log-likelihood ratio of that yank) as before.
     pub closure_yank_gate_principled: bool,
+    /// When true, yank_stdevs is the closure's yank in standard deviations of how far the odometry could have drifted
+    /// between its two ends at the drift the config states (the dead-reckoned chain's covariance, plus the closure's own
+    /// spread as `closure_yank_gate_principled` takes it), instead of in robust spreads of earlier candidates' yanks:
+    /// the candidates the gate judges, mostly wrong, no longer set its ruler (small_l1: a 2.4 m/sqrt(keyframe) ruler
+    /// passed 40-68 m yanks at about 1 standard deviation), and no learned loosening widens it.
+    pub closure_yank_at_stated_drift: bool,
     pub closure_overlap_score: bool,
     pub closure_overlap_sigma_m: f64,
     pub closure_overlap_reach_m: f64,
@@ -556,24 +558,19 @@ impl Default for Config {
             closure_icp_max_correspondence_m: 10.0,
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
-            odom_rot_roll_pitch_var: 1e-6,
-            odom_rot_yaw_var: 3e-6,
-            odom_trans_xy_var: 1e-4,
-            odom_trans_z_var: 1e-4,
-            odom_noise_per_motion: false,
             closure_informative_by_graph_covariance: false,
             closure_uninformative_gate: true,
             closure_uninformative_noise_upper_bound: false,
             closure_noise_from_residuals: false,
             odometry_noise_solve_lower_bound: false,
-            odom_xy_var_per_m: 1.53e-7,
-            odom_xy_var_per_rad: 4.03e-5,
-            odom_z_var_per_m: 4.12e-7,
-            odom_z_var_per_rad: 1.49e-5,
-            odom_yaw_var_per_m: 1e-12,
-            odom_yaw_var_per_rad: 7.5e-5,
-            odom_tilt_var_per_m: 4.78e-7,
-            odom_tilt_var_per_rad: 1.09e-5,
+            odom_xy_drift_per_sqrt_m: 3.91e-4,
+            odom_xy_drift_per_sqrt_rad: 6.35e-3,
+            odom_z_drift_per_sqrt_m: 6.42e-4,
+            odom_z_drift_per_sqrt_rad: 3.86e-3,
+            odom_yaw_drift_per_sqrt_m: 1e-6,
+            odom_yaw_drift_per_sqrt_rad: 8.66e-3,
+            odom_tilt_drift_per_sqrt_m: 6.91e-4,
+            odom_tilt_drift_per_sqrt_rad: 3.3e-3,
             odom_noise_prior_ln_sd_xy: 2.4,
             odom_noise_prior_ln_sd_z: 1.6,
             odom_noise_prior_ln_sd_yaw: 2.4,
@@ -597,7 +594,6 @@ impl Default for Config {
             odometry_gravity_bound: false,
             closure_commitments: false,
             closure_inlier_distance_from_odometry: false,
-            closure_submap_by_reach: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -606,6 +602,7 @@ impl Default for Config {
             odometry_noise_from_closures: false,
             closure_noise_from_closures: false,
             closure_yank_gate_principled: false,
+            closure_yank_at_stated_drift: false,
             closure_overlap_score: false,
             closure_overlap_sigma_m: 0.03,
             closure_overlap_reach_m: 0.5,
@@ -626,8 +623,8 @@ pub struct GscPgo {
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) key_poses: Vec<KeyPoseWithCloud>,
     pub(crate) committed_closures: Vec<CommittedClosure>,
-    /// Per committed closure: its yank_z and gate confidence, for its closure-edge events.
-    pub(crate) closure_yank_z: Vec<f64>,
+    /// Per committed closure: its yank_stdevs and gate confidence, for its closure-edge events.
+    pub(crate) closure_yank_stdevs: Vec<f64>,
     /// Per committed closure: its innovation against the raw odometry, for `odometry_noise_from_closures`.
     pub(crate) closure_innovations: Vec<crate::odometry_noise::Innovation>,
     /// Per pair of committed closures one submap apart at both ends (`closure_icp_covariance`): their disagreement in
@@ -676,8 +673,6 @@ pub struct GscPgo {
     pub(crate) keyframe_reach: (f64, usize),
     /// Each measured keyframe's right-alignment width against the keyframes before it (`closure_inlier_distance_from_odometry`).
     pub(crate) odometry_alignment_widths: Vec<f64>,
-    /// The keyframes' path length so far (`closure_submap_by_reach`).
-    pub(crate) keyframe_path_length: f64,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
     /// Shared, so a closure search can count look-alike places without copying them.
@@ -744,7 +739,7 @@ pub struct ClosureSearch {
     pub(crate) scan_context_descriptors: Vec<Arc<similarity_discovery::Descriptor>>,
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) ranked: Vec<(f32, usize)>,
-    /// Every closure the solve has judged: its yank_z when committed, and whether the solve kept it.
+    /// Every closure the solve has judged: its yank_stdevs when committed, and whether the solve kept it.
     pub(crate) judged_yanks: Vec<(f64, bool)>,
     pub(crate) alternatives: Vec<(f32, usize, i32)>,
     pub(crate) tries: usize,
@@ -821,13 +816,11 @@ impl ClosureSearch {
         // a cloud computation, through the ICP cache when there is one; a measured inlier distance changes every
         // fit, so it is part of the key
         let cache = self.icp_cache.clone();
-        let mut key_suffix = String::new();
-        if self.config.closure_inlier_distance_from_odometry {
-            key_suffix += &format!(":{:x}", self.config.closure_score_thresh.to_bits());
-        }
-        if self.config.closure_submap_by_reach {
-            key_suffix += &format!(":h{}", self.config.closure_submap_half_range);
-        }
+        let key_suffix = if self.config.closure_inlier_distance_from_odometry {
+            format!(":{:x}", self.config.closure_score_thresh.to_bits())
+        } else {
+            String::new()
+        };
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
                 Some(cache) => {
@@ -987,13 +980,11 @@ impl ClosureSearch {
         let gate_noise = diag.odometry_noise_gate;
         let odometry_step = self.mean_step_xy_variance * gate_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let by_graph = (self.config.odom_noise_per_motion
-            || self.config.closure_informative_by_graph_covariance)
-            && diag
-                .innovation_covariance
-                .iter()
-                .flatten()
-                .all(|v| v.is_finite());
+        let by_graph = diag
+            .innovation_covariance
+            .iter()
+            .flatten()
+            .all(|v| v.is_finite());
         // at the upper bound: scaled by the most any component's bound exceeds its estimate
         let widen = (0..4)
             .map(|c| gate_noise[c] / diag.odometry_noise[c])
@@ -1136,7 +1127,7 @@ impl ClosureSearch {
             self.judged_yanks
                 .iter()
                 .fold((0.0, 0.0), |(kept, judged), &(z, was_kept)| {
-                    let weight = (-0.5 * (z - diag.yank_z).powi(2)).exp();
+                    let weight = (-0.5 * (z - diag.yank_stdevs).powi(2)).exp();
                     (kept + weight * was_kept as u8 as f64, judged + weight)
                 });
         diag.keep_rate = (kept + 1.0) / (judged + 2.0);
@@ -1302,6 +1293,26 @@ impl GscPgo {
         })
     }
 
+    /// The odometry drift this run's learned noise implies, in the config's own units (`odom_*_drift_per_sqrt_m` and
+    /// `_per_sqrt_rad`, per source xy, z, yaw, tilt), to start the next run from; and per source whether the closures
+    /// measured it (an unmeasured source repeats the configured drift).
+    pub fn odometry_drift_for_next_run(&self) -> ([[f64; 2]; 4], [bool; 4]) {
+        let c = &self.config;
+        let stated = [
+            [c.odom_xy_drift_per_sqrt_m, c.odom_xy_drift_per_sqrt_rad],
+            [c.odom_z_drift_per_sqrt_m, c.odom_z_drift_per_sqrt_rad],
+            [c.odom_yaw_drift_per_sqrt_m, c.odom_yaw_drift_per_sqrt_rad],
+            [c.odom_tilt_drift_per_sqrt_m, c.odom_tilt_drift_per_sqrt_rad],
+        ];
+        let noise = self.odometry_noise();
+        let measured = std::array::from_fn(|k| self.odometry_noise_ln_sd[k].is_some());
+        // the learned noise scales each source's variances, so its drift (a standard deviation) by the square root
+        (
+            std::array::from_fn(|k| stated[k].map(|d| d * noise[k].sqrt())),
+            measured,
+        )
+    }
+
     pub(crate) fn odometry_noise_prior(&self) -> [f64; 4] {
         let c = &self.config;
         [
@@ -1371,7 +1382,7 @@ impl GscPgo {
         let Some(v_new) = newest.variances else {
             return;
         };
-        let half = self.submap_half_range().max(0) as usize;
+        let half = self.config.closure_submap_half_range.max(0) as usize;
         let local = |k: usize| {
             (
                 self.key_poses[k].rotation_local,
@@ -1619,7 +1630,7 @@ impl GscPgo {
         target_id: usize,
         state: ClosureEdgeState,
         confidence: f64,
-        yank_z: f64,
+        yank_stdevs: f64,
     ) {
         self.closure_edge_events.push(ClosureEdgeEvent {
             time: self.newest_keyframe_time(),
@@ -1627,7 +1638,7 @@ impl GscPgo {
             target_id,
             state,
             confidence: confidence.clamp(0.0, 1.0),
-            yank_z,
+            yank_stdevs,
         });
     }
     /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
@@ -1665,14 +1676,14 @@ impl GscPgo {
             };
             if outcome == ClosureEdgeState::Committed {
                 self.closure_fit_confidence.push(checked.clamp(0.0, 1.0));
-                self.closure_yank_z.push(diag.yank_z);
+                self.closure_yank_stdevs.push(diag.yank_stdevs);
                 let drift = diag.yank_drift_scale.max(f64::EPSILON);
                 self.closure_yanks.push((
                     diag.yank_rotation_deg / drift,
                     diag.yank_translation / drift,
                 ));
             }
-            self.push_edge(source, target, outcome, checked, diag.yank_z);
+            self.push_edge(source, target, outcome, checked, diag.yank_stdevs);
         }
         self.closure_diagnostics.push(diag);
     }
@@ -1911,6 +1922,17 @@ impl GscPgo {
         if let Some(model) = &model {
             diag.innovation_covariance = model.relative(target_idx);
         }
+        if self.config.closure_yank_at_stated_drift && diag.source_id < self.key_poses.len() {
+            let sums =
+                crate::loop_overlap::odometry_noise_sums(&self.key_poses, &self.config, [1.0; 4]);
+            let newest = self.key_poses[diag.source_id].translation_global;
+            diag.stated_innovation_covariance = crate::loop_overlap::odometry_covariance(
+                &sums,
+                target_idx,
+                diag.source_id,
+                &newest,
+            );
+        }
         // either reason makes extending worthwhile: a loop is likely somewhere unresolved (pressure), or this scan likely
         // overlaps this target
         let worth = 1.0 - (1.0 - diag.pressure) * (1.0 - diag.target_overlap);
@@ -1937,7 +1959,6 @@ impl GscPgo {
             key_poses: self.key_poses.clone(),
             config: Config {
                 closure_score_thresh: self.closure_inlier_squared_distance(),
-                closure_submap_half_range: self.submap_half_range(),
                 ..self.config.clone()
             },
             scored_yanks: self.yank_scale_sample(),
@@ -1965,7 +1986,7 @@ impl GscPgo {
             judged_yanks: self
                 .committed_closures
                 .iter()
-                .zip(&self.closure_yank_z)
+                .zip(&self.closure_yank_stdevs)
                 .filter(|(c, z)| !c.gnc_weight.is_nan() && z.is_finite())
                 .map(|(c, z)| (*z, c.gnc_weight > 0.5))
                 .collect(),
@@ -2084,7 +2105,6 @@ impl GscPgo {
             }
         }
         let measure = self.config.closure_inlier_distance_from_odometry;
-        let previous_position = self.key_poses.last().map(|k| k.translation_global);
         self.key_poses.push(KeyPoseWithCloud {
             time: pose.second,
             rotation_local: pose.rotation,
@@ -2097,12 +2117,6 @@ impl GscPgo {
             ),
         });
 
-        if let Some(previous) = previous_position {
-            self.keyframe_path_length += mat3::norm(&mat3::sub(
-                &self.key_poses.last().unwrap().translation_global,
-                &previous,
-            ));
-        }
         if measure {
             self.measure_odometry_alignment();
         }
@@ -2132,23 +2146,6 @@ impl GscPgo {
         self.scan_context_descriptors.push(Arc::new(descriptor));
     }
 
-    /// Keyframes each side of a submap's centre: `closure_submap_half_range`, or with `closure_submap_by_reach` as many
-    /// as the mean scan reach spans at the mean keyframe spacing (never fewer).
-    pub fn submap_half_range(&self) -> i32 {
-        let configured = self.config.closure_submap_half_range;
-        let (reach_sum, reach_count) = self.keyframe_reach;
-        let steps = self.key_poses.len().saturating_sub(1);
-        if !self.config.closure_submap_by_reach
-            || reach_count == 0
-            || steps == 0
-            || !(self.keyframe_path_length > 0.0)
-        {
-            return configured;
-        }
-        let spacing = self.keyframe_path_length / steps as f64;
-        let spanned = (reach_sum / reach_count as f64 / spacing).ceil();
-        (spanned.min(i32::MAX as f64) as i32).max(configured)
-    }
     /// The closure ICP's inlier distance squared: measured (`closure_inlier_distance_from_odometry`) once a keyframe has
     /// been, else `closure_score_thresh`.
     pub fn closure_inlier_squared_distance(&self) -> f64 {

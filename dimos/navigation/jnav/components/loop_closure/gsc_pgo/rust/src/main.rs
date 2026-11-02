@@ -87,24 +87,19 @@ config! {
     closure_icp_max_correspondence_m: f64,
     closure_gnc_var_scale: f64,
     closure_gnc_inlier_probability: f64,
-    odom_rot_roll_pitch_var: f64,
-    odom_rot_yaw_var: f64,
-    odom_trans_xy_var: f64,
-    odom_trans_z_var: f64,
-    odom_noise_per_motion: bool,
     closure_informative_by_graph_covariance: bool,
     closure_uninformative_gate: bool,
     closure_uninformative_noise_upper_bound: bool,
     closure_noise_from_residuals: bool,
     odometry_noise_solve_lower_bound: bool,
-    odom_xy_var_per_m: f64,
-    odom_xy_var_per_rad: f64,
-    odom_z_var_per_m: f64,
-    odom_z_var_per_rad: f64,
-    odom_yaw_var_per_m: f64,
-    odom_yaw_var_per_rad: f64,
-    odom_tilt_var_per_m: f64,
-    odom_tilt_var_per_rad: f64,
+    odom_xy_drift_per_sqrt_m: f64,
+    odom_xy_drift_per_sqrt_rad: f64,
+    odom_z_drift_per_sqrt_m: f64,
+    odom_z_drift_per_sqrt_rad: f64,
+    odom_yaw_drift_per_sqrt_m: f64,
+    odom_yaw_drift_per_sqrt_rad: f64,
+    odom_tilt_drift_per_sqrt_m: f64,
+    odom_tilt_drift_per_sqrt_rad: f64,
     odom_noise_prior_ln_sd_xy: f64,
     odom_noise_prior_ln_sd_z: f64,
     odom_noise_prior_ln_sd_yaw: f64,
@@ -128,7 +123,6 @@ config! {
     odometry_gravity_bound: bool,
     closure_commitments: bool,
     closure_inlier_distance_from_odometry: bool,
-    closure_submap_by_reach: bool,
     closure_hessian_observability: bool,
     closure_likelihood_visibility: bool,
     closure_likelihood_beam: bool,
@@ -137,6 +131,7 @@ config! {
     odometry_noise_from_closures: bool,
     closure_noise_from_closures: bool,
     closure_yank_gate_principled: bool,
+    closure_yank_at_stated_drift: bool,
     closure_overlap_score: bool,
     closure_overlap_sigma_m: f64,
     closure_overlap_reach_m: f64,
@@ -743,6 +738,24 @@ impl Worker {
                 "world_alignment": pgo.world_alignment().iter().map(|(f, yaw, t)| serde_json::json!([f, yaw, t])).collect::<Vec<_>>(),
             }),
         );
+        // once loops are kept, the odometry drift they measure, as the config inputs for the next run (`kind`
+        // "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift
+        if kept > 0 {
+            let (drift, measured) = pgo.odometry_drift_for_next_run();
+            let mut fields = serde_json::Map::new();
+            for (k, source) in ["xy", "z", "yaw", "tilt"].iter().enumerate() {
+                fields.insert(
+                    format!("odom_{source}_drift_per_sqrt_m"),
+                    drift[k][0].into(),
+                );
+                fields.insert(
+                    format!("odom_{source}_drift_per_sqrt_rad"),
+                    drift[k][1].into(),
+                );
+                fields.insert(format!("{source}_measured"), measured[k].into());
+            }
+            self.log("odometry_drift", ts, serde_json::Value::Object(fields));
+        }
     }
 
     /// Publish every keyframe's current pose (and dump them with `dump_path`).

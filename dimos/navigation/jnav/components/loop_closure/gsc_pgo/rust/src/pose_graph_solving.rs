@@ -440,12 +440,15 @@ impl GscPgo {
                 self.committed_closures[index].target_id,
             );
             // a closure committed directly (`commit_closure`, no search) has no search confidence or yank recorded
-            let (confidence, yank_z) = (
+            let (confidence, yank_stdevs) = (
                 self.closure_fit_confidence
                     .get(index)
                     .copied()
                     .unwrap_or(f64::NAN),
-                self.closure_yank_z.get(index).copied().unwrap_or(f64::NAN),
+                self.closure_yank_stdevs
+                    .get(index)
+                    .copied()
+                    .unwrap_or(f64::NAN),
             );
             if weight > 0.5 {
                 self.push_edge(
@@ -453,17 +456,17 @@ impl GscPgo {
                     target,
                     ClosureEdgeState::Accepted,
                     confidence,
-                    yank_z,
+                    yank_stdevs,
                 );
                 self.push_edge(
                     source,
                     target,
                     ClosureEdgeState::Applied,
                     confidence,
-                    yank_z,
+                    yank_stdevs,
                 );
             } else {
-                self.push_edge(source, target, ClosureEdgeState::Rejected, 0.0, yank_z);
+                self.push_edge(source, target, ClosureEdgeState::Rejected, 0.0, yank_stdevs);
             }
         }
         self.graph_error = solution.error;

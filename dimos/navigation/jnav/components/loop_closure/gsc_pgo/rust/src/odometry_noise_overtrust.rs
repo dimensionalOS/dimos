@@ -38,11 +38,15 @@ const TRUE_NOISE: [f64; 4] = [4e-5, 1e-8, 2e-4, 1e-8];
 /// solving after each. Returns the share of right closures kept and the learned yaw variance over the true one.
 fn run(reported_over_true: f64, overtrust_check: bool) -> (f64, f64) {
     let config = Config {
-        odom_trans_xy_var: TRUE_NOISE[0] * reported_over_true,
-        odom_trans_z_var: TRUE_NOISE[1] * reported_over_true,
-        odom_rot_yaw_var: TRUE_NOISE[2] * reported_over_true,
-        odom_rot_roll_pitch_var: TRUE_NOISE[3] * reported_over_true,
-        odom_noise_per_motion: false,
+        // a keyframe a metre: the per-keyframe noise is the per-metre drift squared
+        odom_xy_drift_per_sqrt_m: (TRUE_NOISE[0] * reported_over_true).sqrt(),
+        odom_z_drift_per_sqrt_m: (TRUE_NOISE[1] * reported_over_true).sqrt(),
+        odom_yaw_drift_per_sqrt_m: (TRUE_NOISE[2] * reported_over_true).sqrt(),
+        odom_tilt_drift_per_sqrt_m: (TRUE_NOISE[3] * reported_over_true).sqrt(),
+        odom_xy_drift_per_sqrt_rad: 0.0,
+        odom_z_drift_per_sqrt_rad: 0.0,
+        odom_yaw_drift_per_sqrt_rad: 0.0,
+        odom_tilt_drift_per_sqrt_rad: 0.0,
         odometry_noise_from_closures: true,
         closure_uninformative_noise_upper_bound: true,
         closure_noise_from_residuals: true,
@@ -106,7 +110,7 @@ fn run(reported_over_true: f64, overtrust_check: bool) -> (f64, f64) {
         }
         right.push(!wrong);
         pgo.closure_fit_confidence.push(1.0);
-        pgo.closure_yank_z.push(0.0);
+        pgo.closure_yank_stdevs.push(0.0);
         pgo.commit_closure(
             source,
             target,

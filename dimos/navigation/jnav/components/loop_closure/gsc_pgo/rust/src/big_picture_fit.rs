@@ -1682,42 +1682,35 @@ pub(crate) fn log(r: &Mat3) -> Vec3 {
     v.map(|x| x * scale)
 }
 
-/// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
-/// The reported odometry variance of one keyframe step from `from` to `to` (xy, z, yaw, roll/pitch): the per-keyframe
-/// constants, or with `odom_noise_per_motion` the per-metre rates times the distance travelled plus the per-radian rates
-/// times the angle turned.
-pub(crate) fn step_variances(
-    config: &Config,
-    from: &KeyPoseWithCloud,
-    to: &KeyPoseWithCloud,
-) -> [f64; 4] {
-    if !config.odom_noise_per_motion {
-        return [
-            config.odom_trans_xy_var,
-            config.odom_trans_z_var,
-            config.odom_rot_yaw_var,
-            config.odom_rot_roll_pitch_var,
-        ];
-    }
+/// The reported odometry variance of one keyframe step from `from` to `to` (xy, z, yaw, roll/pitch): each source's
+/// drift per square root of metre travelled, squared, times the distance, plus its drift per square root of radian
+/// turned, squared, times the angle.
+pub fn step_variances(config: &Config, from: &KeyPoseWithCloud, to: &KeyPoseWithCloud) -> [f64; 4] {
     let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
     let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
-    [
-        config.odom_xy_var_per_m * distance + config.odom_xy_var_per_rad * turn,
-        config.odom_z_var_per_m * distance + config.odom_z_var_per_rad * turn,
-        config.odom_yaw_var_per_m * distance + config.odom_yaw_var_per_rad * turn,
-        config.odom_tilt_var_per_m * distance + config.odom_tilt_var_per_rad * turn,
-    ]
+    motion_variances(config, distance, turn)
 }
 
-/// The mean of `step_variances` over the odometry so far (the per-keyframe constants before two keyframes).
+/// The reported odometry variance (xy, z, yaw, roll/pitch) of `distance` m travelled while turning `turn` rad.
+pub fn motion_variances(config: &Config, distance: f64, turn: f64) -> [f64; 4] {
+    let c = config;
+    [
+        (c.odom_xy_drift_per_sqrt_m, c.odom_xy_drift_per_sqrt_rad),
+        (c.odom_z_drift_per_sqrt_m, c.odom_z_drift_per_sqrt_rad),
+        (c.odom_yaw_drift_per_sqrt_m, c.odom_yaw_drift_per_sqrt_rad),
+        (c.odom_tilt_drift_per_sqrt_m, c.odom_tilt_drift_per_sqrt_rad),
+    ]
+    .map(|(per_m, per_rad)| per_m * per_m * distance + per_rad * per_rad * turn)
+}
+
+/// The mean of `step_variances` over the odometry so far (before two keyframes, a step of the keyframe thresholds).
 pub(crate) fn mean_step_variances(key_poses: &[KeyPoseWithCloud], config: &Config) -> [f64; 4] {
-    if !config.odom_noise_per_motion || key_poses.len() < 2 {
-        return [
-            config.odom_trans_xy_var,
-            config.odom_trans_z_var,
-            config.odom_rot_yaw_var,
-            config.odom_rot_roll_pitch_var,
-        ];
+    if key_poses.len() < 2 {
+        return motion_variances(
+            config,
+            config.keyframe_min_distance_meters,
+            config.keyframe_min_rotation_degrees.to_radians(),
+        );
     }
     let mut sum = [0.0; 4];
     for pair in key_poses.windows(2) {
