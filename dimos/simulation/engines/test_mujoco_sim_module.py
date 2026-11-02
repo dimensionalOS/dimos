@@ -20,6 +20,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import mujoco
 import numpy as np
 import pytest
 
@@ -418,3 +419,36 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         assert elapsed >= (len(frame_ts) - 1) / fps
     finally:
         module.stop()
+
+
+def _write_one_link_arm_xml(path: Path) -> None:
+    path.write_text(
+        """
+<mujoco>
+  <worldbody>
+    <body name="link" pos="0 0 1">
+      <joint name="joint1" type="hinge" axis="0 1 0"/>
+      <geom type="capsule" fromto="0 0 0 0.5 0 0" size="0.03" mass="2"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="joint1" joint="joint1" kp="50"/>
+  </actuator>
+</mujoco>
+"""
+    )
+
+
+@pytest.mark.parametrize("compensate", [False, True])
+def test_gravity_compensation_holds_the_commanded_pose(tmp_path: Path, compensate: bool) -> None:
+    robot_xml = tmp_path / "arm.xml"
+    _write_one_link_arm_xml(robot_xml)
+    engine = MujocoEngine(config_path=robot_xml, headless=True, gravity_compensation=compensate)
+    for _ in range(2000):
+        mujoco.mj_step(engine.model, engine.data)
+
+    sag = abs(float(engine.data.qpos[0]))
+    if compensate:
+        assert sag < 1e-3
+    else:
+        assert sag > 0.02
