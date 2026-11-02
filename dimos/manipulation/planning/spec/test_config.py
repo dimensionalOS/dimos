@@ -15,7 +15,6 @@
 from dataclasses import replace
 import json
 from pathlib import Path
-import pickle
 from typing import Any
 
 import pytest
@@ -23,6 +22,7 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import RobotModel
 
 
@@ -39,7 +39,7 @@ def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> Non
 
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
 
-    kwargs = pickle.loads(pickle.dumps(parsed.module_kwargs(ManipulationModule.name)))
+    kwargs = decode(encode(parsed.module_kwargs(ManipulationModule.name)))
     assert "_loaded" not in kwargs["model"]["model"]
     restored = RobotModelConfig(**kwargs["model"])
     assert restored.model.source_path == urdf

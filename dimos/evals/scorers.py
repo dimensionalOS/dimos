@@ -255,6 +255,19 @@ def hung_tool(outcome: Outcome) -> float:
     )
 
 
+def human(task: str) -> Callable[[Outcome], float]:
+    """The operator watched the run and says whether ``task`` succeeded: 1.0 for yes."""
+
+    def grade(outcome: Outcome) -> float:
+        answer = input(
+            f"\nTask: {task}\nAgent's final answer: {outcome.trajectory.final_answer!r}\n"
+            "Did the robot succeed by the end of the agent's run? [y/N] "
+        )
+        return 1.0 if answer.strip().lower().startswith("y") else 0.0
+
+    return grade
+
+
 def judge(rubric: str, *, model: str = "openai:gpt-5.6-luna") -> Callable[[str, str], float]:
     """LLM-as-judge with partial credit via openevals ``continuous=True``.
 
