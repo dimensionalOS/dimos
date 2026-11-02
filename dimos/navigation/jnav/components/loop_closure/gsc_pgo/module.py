@@ -216,7 +216,7 @@ class PGOConfig(NativeModuleConfig):
     learned_odometry_error_estimate_stiffness: float = 10.0
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
-    # this the oldest scans are dropped, so a stall can't leave the module seconds stale
+    # this every queued scan but the newest is dropped, so a stall can't leave the module stale
     max_scan_queue: int = 5
     # threads closure search and solves may use, leaving the other cores to the nav stack (0 = every core)
     worker_threads: int = 2
