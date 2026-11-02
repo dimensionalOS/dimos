@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An IMU at a mount, read from its own view of the world as world_change moves it."""
+"""An IMU at its frame, read from its own view of the world as world_change moves it."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -27,15 +27,13 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.module import Simulation, SimulationSpec
-from dimos.sim2.spec import Mount, SimulatedSensor
-from dimos.sim2.view import WorldView, open_view
+from dimos.sim2.spec import SimulatedSensor
+from dimos.sim2.view import WorldView, open_view, sensor_frame
 from dimos.sim2.world_change import WorldMirror
 
 
 class SimImuConfig(ModuleConfig):
-    name: str = "imu"
-    mount: Mount = Mount("world")
-    robot_id: str | None = None
+    # The IMU's frame, as a robot's URDF or the scene names it: where it sits.
     frame_id: str | None = "imu_link"
     rate_hz: float = 200.0
 
@@ -48,17 +46,18 @@ class SimImu(Module):
 
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        config = self.config
-        return {"simulated": SimulatedSensor(config.name, "imu", config.mount, config.robot_id)}
+        return {"simulated": SimulatedSensor("imu", self.frame_id)}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_change)
-        self._reading = asyncio.create_task(self._read(open_view(self._simulation.describe())))
+        description = self._simulation.describe()
+        self._reading = asyncio.create_task(
+            self._read(open_view(description), sensor_frame(description, self.frame_id))
+        )
         yield
 
-    async def _read(self, view: WorldView) -> None:
-        sensor = f"{self.config.robot_id or 'world'}/{self.config.name}"
+    async def _read(self, view: WorldView, sensor: str) -> None:
         # rate_hz of sim time: its readings difference velocities over sim time, so they hold at any speed.
         async for _ in self._world.ticks(self.config.rate_hz):
             view.update(self._world)
