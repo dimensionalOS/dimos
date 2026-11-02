@@ -105,8 +105,12 @@ def newest_run_log(since: float) -> Path | None:
 
 def native_processes() -> dict[str, psutil.Process]:
     found = {}
-    for proc in psutil.process_iter(["cmdline"]):
-        cmdline = " ".join(proc.info["cmdline"] or [])
+    for proc in psutil.process_iter():
+        # macOS can refuse or fail to read another process's cmdline; skip it.
+        try:
+            cmdline = " ".join(proc.cmdline())
+        except (psutil.Error, SystemError, OSError):
+            continue
         for name in NATIVE:
             if f"result/bin/{name}" in cmdline:
                 found[name] = proc
@@ -394,7 +398,13 @@ def lockstep(
             ),
             np.array([o.position.x, o.position.y, o.position.z]),
         )
+        start, span = odom_ts[0], max(odom_ts[-1] - odom_ts[0], 1e-9)
+        next_report = 0.05
         for obs in store.streams.lidar.order_by("ts"):
+            if (obs.ts - start) / span >= next_report:
+                which = "A" if closures is not None else "B"
+                print(f"lockstep {which}: {next_report:.0%}", flush=True)
+                next_report += 0.05
             while (
                 closures is not None
                 and next_closure < len(closures)
