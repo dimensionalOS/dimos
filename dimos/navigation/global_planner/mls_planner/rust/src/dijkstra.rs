@@ -580,7 +580,7 @@ impl<T: Ord> Ord for Scored<T> {
 mod tests {
     use super::*;
     use crate::adjacency::{
-        build_surface_cells, build_surface_lookup, SurfaceCells, SurfaceLookup,
+        build_surface_lookup, build_whole_voxel_cells, SurfaceCells, SurfaceLookup,
     };
     use crate::voxel::VoxelKey;
 
@@ -591,7 +591,7 @@ mod tests {
         let mut lookup = SurfaceLookup::new();
         build_surface_lookup(&cells, &mut lookup);
         let mut sc = SurfaceCells::default();
-        build_surface_cells(&mut sc, &lookup, 0.1, 2);
+        build_whole_voxel_cells(&mut sc, &lookup, 0.1, 2);
         sc
     }
 
@@ -688,7 +688,7 @@ mod tests {
 
     fn chain(n: i32) -> (SurfaceCells, Vec<CellId>) {
         let mut sc = SurfaceCells::default();
-        let ids: Vec<CellId> = (0..n).map(|i| sc.insert((i, 0, 0))).collect();
+        let ids: Vec<CellId> = (0..n).map(|i| sc.insert((i, 0, 0), (0.0, None))).collect();
         for i in 0..n - 1 {
             sc.add_edge(ids[i as usize], ids[(i + 1) as usize], 1.0);
             sc.add_edge(ids[(i + 1) as usize], ids[i as usize], 1.0);
@@ -737,10 +737,10 @@ mod tests {
     #[test]
     fn disconnected_cells_stay_unreachable() {
         let mut sc = SurfaceCells::default();
-        let a = sc.insert((0, 0, 0));
-        let b = sc.insert((1, 0, 0));
-        let c = sc.insert((2, 0, 0));
-        let d = sc.insert((3, 0, 0));
+        let a = sc.insert((0, 0, 0), (0.0, None));
+        let b = sc.insert((1, 0, 0), (0.0, None));
+        let c = sc.insert((2, 0, 0), (0.0, None));
+        let d = sc.insert((3, 0, 0), (0.0, None));
         sc.add_edge(a, b, 1.0);
         sc.add_edge(b, a, 1.0);
         sc.add_edge(c, d, 1.0);
@@ -756,9 +756,9 @@ mod tests {
     #[test]
     fn shorter_path_overrides_longer() {
         let mut sc = SurfaceCells::default();
-        let a = sc.insert((0, 0, 0));
-        let b = sc.insert((1, 0, 0));
-        let c = sc.insert((2, 0, 0));
+        let a = sc.insert((0, 0, 0), (0.0, None));
+        let b = sc.insert((1, 0, 0), (0.0, None));
+        let c = sc.insert((2, 0, 0), (0.0, None));
         sc.add_edge(a, b, 10.0);
         sc.add_edge(b, a, 10.0);
         sc.add_edge(a, c, 1.0);

@@ -48,6 +48,11 @@ validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
 smallvec = "1"
 
+[dev-dependencies]
+# The replay bench drives the ray tracer into the planner as their modules do.
+dimos-voxel-ray-tracing = { path = "../../../../mapping/ray_tracing/rust" }
+serde_json = "1"
+
 [workspace]
 members = ["py"]
 

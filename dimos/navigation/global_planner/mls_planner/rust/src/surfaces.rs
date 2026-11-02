@@ -16,71 +16,36 @@
 //! standable, then morphologically close per-z-level holes without bridging
 //! across walls.
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use rayon::prelude::*;
 
 use crate::bit_grid::BitGrid;
 use crate::columns::{ColumnIz, ColumnMask};
+use crate::terrain::Terrain;
 use crate::voxel::VoxelKey;
 
-/// A cell is standable if it has at least the robot's height of clear space
-/// above it.
-pub(crate) fn is_standable(
-    ix: i32,
-    iy: i32,
-    iz: i32,
-    by_col: &ColumnIz,
-    clearance_cells: i32,
-) -> bool {
-    let Some(zs) = by_col.get((ix, iy)) else {
-        return true;
-    };
-    let idx = zs.partition_point(|&z| z <= iz);
-    match zs.get(idx) {
-        Some(&next) => next - iz > clearance_cells,
-        None => true,
-    }
-}
-
-/// Extract standable cells from the voxelized global map, then close small
+/// Extract standable cells from the terrain's whole map, then close small
 /// holes.
-pub fn extract_surfaces(
-    voxel_map: &AHashSet<VoxelKey>,
-    clearance_cells: i32,
-    closing_passes: u32,
-    by_col: &mut ColumnIz,
-    out: &mut Vec<VoxelKey>,
-) {
+pub fn extract_surfaces(terrain: &Terrain, closing_passes: u32, out: &mut Vec<VoxelKey>) {
     out.clear();
-    by_col.clear();
-    if voxel_map.is_empty() {
-        return;
-    }
-    *by_col = ColumnIz::from_voxels(voxel_map.iter());
-
-    let standable: Vec<VoxelKey> = by_col
+    let standable: Vec<VoxelKey> = terrain
+        .by_col
         .par_columns()
         .fold(Vec::new, |mut local, ((ix, iy), zs)| {
-            standable_in_column(ix, iy, zs, clearance_cells, &mut local);
+            standable_in_column(ix, iy, zs, terrain, &mut local);
             local
         })
         .flatten_iter()
         .collect();
 
-    close_surface_holes(standable, by_col, closing_passes, clearance_cells, out);
+    close_surface_holes(standable, terrain, closing_passes, out);
 }
 
 /// Standable cells in one column: any cell with robot clearance above, plus
 /// the topmost cell.
-fn standable_in_column(
-    ix: i32,
-    iy: i32,
-    zs: &[i32],
-    clearance_cells: i32,
-    out: &mut Vec<VoxelKey>,
-) {
+fn standable_in_column(ix: i32, iy: i32, zs: &[i32], terrain: &Terrain, out: &mut Vec<VoxelKey>) {
     for w in zs.windows(2) {
-        if w[1] - w[0] > clearance_cells {
+        if terrain.clear_below((ix, iy, w[0]), w[1]) {
             out.push((ix, iy, w[0]));
         }
     }
@@ -90,10 +55,9 @@ fn standable_in_column(
 }
 
 /// Re-extract surface cells in the write mask, matching a full rebuild.
-/// by_col must already be current.
+/// The terrain must already be current.
 pub fn extract_surfaces_region(
-    by_col: &ColumnIz,
-    clearance_cells: i32,
+    terrain: &Terrain,
     closing_passes: u32,
     write: &ColumnMask,
 ) -> Vec<VoxelKey> {
@@ -106,8 +70,8 @@ pub fn extract_surfaces_region(
         .flat_map_iter(|row| {
             let mut local: Vec<VoxelKey> = Vec::new();
             for (ix, iy) in read.row_columns(row) {
-                if let Some(zs) = by_col.get((ix, iy)) {
-                    standable_in_column(ix, iy, zs, clearance_cells, &mut local);
+                if let Some(zs) = terrain.by_col.get((ix, iy)) {
+                    standable_in_column(ix, iy, zs, terrain, &mut local);
                 }
             }
             local
@@ -115,13 +79,7 @@ pub fn extract_surfaces_region(
         .collect();
 
     let mut closed: Vec<VoxelKey> = Vec::new();
-    close_surface_holes(
-        standable,
-        by_col,
-        closing_passes,
-        clearance_cells,
-        &mut closed,
-    );
+    close_surface_holes(standable, terrain, closing_passes, &mut closed);
     closed
         .into_iter()
         .filter(|&(ix, iy, _)| write.contains((ix, iy)))
@@ -131,9 +89,8 @@ pub fn extract_surfaces_region(
 /// Dilate then erode every xy slice to fill small holes.
 fn close_surface_holes(
     standable: Vec<VoxelKey>,
-    by_col: &ColumnIz,
+    terrain: &Terrain,
     closing_passes: u32,
-    clearance_cells: i32,
     out: &mut Vec<VoxelKey>,
 ) {
     if standable.is_empty() || closing_passes == 0 {
@@ -156,9 +113,9 @@ fn close_surface_holes(
         })
         .collect();
     out.par_extend(
-        tasks.par_iter().flat_map_iter(|(iz, xys)| {
-            close_at_z(xys, *iz, by_col, closing_passes, clearance_cells)
-        }),
+        tasks
+            .par_iter()
+            .flat_map_iter(|(iz, xys)| close_at_z(xys, *iz, terrain, closing_passes)),
     );
 }
 
@@ -224,9 +181,8 @@ fn has_support(by_col: &ColumnIz, ix: i32, iy: i32, iz: i32) -> bool {
 fn close_at_z(
     xys: &[(i32, i32)],
     iz: i32,
-    by_col: &ColumnIz,
+    terrain: &Terrain,
     closing_passes: u32,
-    clearance_cells: i32,
 ) -> Vec<VoxelKey> {
     let pad = closing_passes as i64;
     let mut min_x = i64::MAX;
@@ -267,10 +223,10 @@ fn close_at_z(
         else {
             continue;
         };
-        if !is_standable(ix, iy, iz, by_col, clearance_cells) {
+        if !terrain.standable((ix, iy, iz)) {
             continue;
         }
-        if !has_support(by_col, ix, iy, iz) {
+        if !has_support(terrain.by_col, ix, iy, iz) {
             continue;
         }
         out.push((ix, iy, iz));
@@ -282,15 +238,25 @@ fn close_at_z(
 mod tests {
     use super::*;
 
-    fn voxel_map(cells: &[VoxelKey]) -> AHashSet<VoxelKey> {
-        cells.iter().copied().collect()
-    }
+    use crate::terrain::PlaneMap;
 
+    const VOXEL: f32 = 0.1;
+
+    /// Surfaces of whole voxels for a robot `clearance` voxels tall.
     fn run(cells: &[VoxelKey], clearance: i32, closing: u32) -> Vec<VoxelKey> {
-        let map = voxel_map(cells);
-        let mut by_col = ColumnIz::default();
+        let by_col = ColumnIz::from_voxels(cells);
+        let planes = PlaneMap::new();
+        let terrain = Terrain {
+            by_col: &by_col,
+            planes: &planes,
+            voxel_size: VOXEL,
+            robot_height: clearance as f32 * VOXEL,
+            step_m: VOXEL,
+            noise_m: 0.0,
+            max_slope: 0.0,
+        };
         let mut out = Vec::new();
-        extract_surfaces(&map, clearance, closing, &mut by_col, &mut out);
+        extract_surfaces(&terrain, closing, &mut out);
         out
     }
 

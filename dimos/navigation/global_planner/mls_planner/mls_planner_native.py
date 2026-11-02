@@ -49,6 +49,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     wall_buffer_m: float = 0.75
     wall_buffer_weight: float = 100.0
     step_threshold_m: float = 0.16
+    # Steepest voxel plane, in degrees from level, a cell takes its height from.
+    max_surface_slope_deg: float = 45.0
+    # How far fit noise alone moves a plane's height; smaller moves and rises are ignored.
+    plane_noise_m: float = 0.01
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0

@@ -408,6 +408,19 @@ impl PlannerGraph {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// The surface cell of a column whose surface is nearest the world z.
+    pub fn surface_near(&self, col: (i32, i32), z: f32) -> Option<CellId> {
+        self.surface_lookup
+            .get(&col)?
+            .iter()
+            .filter_map(|&iz| self.cells.id((col.0, col.1, iz)))
+            .min_by(|&a, &b| {
+                (self.cells.z(a) - z)
+                    .abs()
+                    .total_cmp(&(self.cells.z(b) - z).abs())
+            })
+    }
 }
 
 /// Assemble the cheapest edges between neighboring source nodes from their
@@ -649,7 +662,7 @@ pub fn edges_to_segments(node_edges: &[NodeEdge]) -> Vec<(VoxelKey, VoxelKey, f3
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adjacency::{build_surface_cells, build_surface_lookup};
+    use crate::adjacency::{build_surface_lookup, build_whole_voxel_cells};
     use crate::nodes::{NodeData, PlacementParams};
     use crate::voxel::surface_point_xyz;
 
@@ -658,7 +671,7 @@ mod tests {
     fn setup(surface: &[VoxelKey], node_cells: &[VoxelKey]) -> PlannerGraph {
         let mut plg = PlannerGraph::new();
         build_surface_lookup(surface, &mut plg.surface_lookup);
-        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
+        build_whole_voxel_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
         let list = node_cells
             .iter()
             .map(|&c| {
@@ -681,8 +694,7 @@ mod tests {
 
     fn params() -> PlacementParams {
         PlacementParams {
-            clearance_cells: 2,
-            step_cells: 2,
+            step_m: 2.0 * VOXEL,
             voxel_size: VOXEL,
             node_spacing_m: 1.0,
             wall_clearance_m: 0.1,
@@ -728,7 +740,7 @@ mod tests {
         let surface: Vec<VoxelKey> = (0..6).map(|x| (x, 0, 0)).collect();
         let mut plg = PlannerGraph::new();
         build_surface_lookup(&surface, &mut plg.surface_lookup);
-        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
+        build_whole_voxel_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
 
         let c2 = plg.cells.id((2, 0, 0)).unwrap();
         let c3 = plg.cells.id((3, 0, 0)).unwrap();
