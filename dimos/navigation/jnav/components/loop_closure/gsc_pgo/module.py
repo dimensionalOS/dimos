@@ -89,6 +89,12 @@ class PGOConfig(NativeModuleConfig):
     scan_context_lidar_height_m: float = 2.0
     # recompute the loop-overlap pressure (debug_log unresolved_loop_probability) every this-many-th scan; 0 = never
     pressure_check_frequency: int = 5
+    # The pressure off the scan thread: a job on one worker (newest request pending), landing at dispatch + estimate
+    # (seconds: constant + per keyframe + per committed closure); off = inline on the scan thread
+    pressure_let_enabled: bool = True
+    pressure_estimate_s: float = 1.21e-5
+    pressure_estimate_per_keyframe_s: float = 1.355e-7
+    pressure_estimate_per_closure_s: float = 1.957e-7
     # soft_pressure (display only: the same probability without the cliff) is 50% where log10 of the loop hazard
     # (pressure = 1 - e^-hazard) is soft_pressure_half_log10_hazard, falling log-compressed to 0% soft_pressure_decades below
     soft_pressure_half_log10_hazard: float = -0.5
@@ -136,6 +142,8 @@ class PGOConfig(NativeModuleConfig):
     solve_estimate_rejected_power: float = 0.558
     solve_estimate_speed_power: float = 0.0
     solve_estimate_speed_floor_mps: float = 0.05
+    # The solve's thread also measures the graph change heat's cost: this many more seconds per keyframe in its estimate
+    solve_estimate_change_cost_s_per_keyframe: float = 2.56e-7
     # Deterministic closure-search schedule: a search's result lands only once its estimated cost in scans has passed since
     # its dispatch and the data time since has reached its seconds (the search thread takes no other until then): at
     # dispatch the lookup bench curve + build, degeneracy, single ICP (at max iterations) and gates terms below, then the
@@ -143,10 +151,23 @@ class PGOConfig(NativeModuleConfig):
     # recent scan period). One joint upper-bound fit of whole Mac searches over six recordings (>= 99% of each one's
     # searches under; it put no weight on the single ICP's term, which the build term's points carry)
     closure_search_hold_enabled: bool = True
+    # Closure-search estimates turn seconds into scans by the median of the newest this many scan periods
+    scan_period_window: int = 50
     # Logical execution time: each keyframe's search is its own job (snapshot at its keyframe, lands at its own estimate),
     # run on this many worker threads in dispatch order; off = one held search at a time, later proposals going stale
     closure_search_let_enabled: bool = True
     closure_search_workers: int = 2
+    # Two-stage search: SC candidates and retries wait in a priority buffer (most similar first, least dropped when full)
+    # for fast_match_workers (cloud build, single ICP, gates); a match inside the uncertainty range waits in a priority
+    # buffer (highest single-scan confidence ratio first, lowest dropped) for verification_workers to extend it, held
+    # overhead + round bound per round (the round bound a constant for now: the largest Mac recording's p99 round, gir2)
+    closure_search_two_stage: bool = False
+    fast_match_workers: int = 2
+    sc_buffer_size: int = 4
+    verification_workers: int = 2
+    verification_buffer_slots: int = 2
+    verification_estimate_overhead_s: float = 0.0306
+    verification_estimate_round_s: float = 0.334
     closure_search_estimate_lookup_s: float = 610e-6
     closure_search_estimate_lookup_per_keyframe_s: float = 5.7e-9
     closure_search_estimate_build_per_point_s: float = 3.137e-6

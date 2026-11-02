@@ -230,6 +230,16 @@ pub struct ClosureCandidateDiag {
     /// keyframes' summed before merging.
     pub dispatch_source_points: usize,
     pub dispatch_target_points: usize,
+    /// The two-stage search (`closure_search_two_stage`): the single scan's confidence ratio a match inside the
+    /// uncertainty range is ranked by in the verification buffer, and its verification job's schedule (as the fast
+    /// match's above); each extension round's separate source cloud and target points.
+    pub promise: f64,
+    pub verification_scan_index_dispatched: usize,
+    pub verification_estimate_s: f64,
+    pub verification_estimate_scans: usize,
+    pub verification_overshoot: bool,
+    pub extension_rounds_source_points: Vec<usize>,
+    pub extension_rounds_target_points: Vec<usize>,
     pub agreement_multiplier: f64,
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
@@ -319,6 +329,13 @@ impl ClosureCandidateDiag {
             search_overshoot: false,
             dispatch_source_points: 0,
             dispatch_target_points: 0,
+            promise: f64::NAN,
+            verification_scan_index_dispatched: 0,
+            verification_estimate_s: f64::NAN,
+            verification_estimate_scans: 0,
+            verification_overshoot: false,
+            extension_rounds_source_points: Vec::new(),
+            extension_rounds_target_points: Vec::new(),
             agreement_multiplier: 1.0,
             sharpness: f64::NAN,
             extended_sharpness: f64::NAN,
@@ -498,6 +515,11 @@ pub struct Config {
     pub solve_estimate_rejected_power: f64,
     pub solve_estimate_speed_power: f64,
     pub solve_estimate_speed_floor_mps: f64,
+    /// The solve's thread also measures the graph change heat's cost of its solution against the accepted graph at
+    /// dispatch: `solve_estimate_change_cost_s_per_keyframe` x keyframes more seconds, counted in scans by the scan
+    /// period (`scan_period_window`) and added to the estimate (the largest of small L1's, gir1's and huge L1's Mac
+    /// 99th percentiles of its seconds per keyframe).
+    pub solve_estimate_change_cost_s_per_keyframe: f64,
     /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
     /// once `estimate` scans have passed since its dispatch and the data time since has reached the estimate's seconds (an
     /// early scan cannot end a hold before the data time its estimate spans), an upper bound on its cost fixed before
@@ -508,13 +530,16 @@ pub struct Config {
     /// + `degeneracy_per_point_s * source` + `icp_s * source * log2(target) * closure_icp_max_iterations` + `gates_s`,
     /// the points the voxelized source keyframe's and the single target submap's keyframes' (before merging); the
     /// extension adds `extension_overhead_s` as it starts and `extension_cloud_s` before each cloud's round. Seconds are
-    /// turned into scans by the median of the newest 50 scan periods (recorded times), rounded up. The coefficients are
+    /// turned into scans by the median of the newest `scan_period_window` scan periods (recorded times), rounded up. The coefficients are
     /// one joint fit of the whole search's seconds over six recordings' Mac searches (huge, huge L1, gir1, gir2, small
     /// L1, small Mid-360) on the point counts it reads at dispatch (small L1's and gir1's logged, the others' merged
     /// counts scaled by those logs' median dispatch / merged ratio for their sensor, 1.69 L1, 1.49 Mid-360): the cheapest nonnegative ones (each recording's mean estimate summed) bounding every search
     /// but each recording's hardest 1% (re-chosen over 3 refits), so >= 99% of each recording's searches are under it;
     /// the fit put no weight on the single ICP's term (the build term's points carry it), `icp_s` 0.
     pub closure_search_hold_enabled: bool,
+    /// The scan period closure-search estimates turn seconds into scans by: the median of the newest this many periods
+    /// between advancing scans (recorded times).
+    pub scan_period_window: usize,
     /// Logical execution time for closure searches (with `closure_search_hold_enabled`): every keyframe's search is its own
     /// job, started (its graph snapshot taken) at the keyframe it is proposed and landing at its own dispatch + estimate,
     /// whatever other searches are doing, run on `closure_search_workers` threads first-dispatched first; results land in
@@ -522,6 +547,26 @@ pub struct Config {
     /// stale while it is held.
     pub closure_search_let_enabled: bool,
     pub closure_search_workers: usize,
+    /// The two-stage search (with `closure_search_let_enabled`; off = one job per search on `closure_search_workers`):
+    /// each keyframe's scan-context candidate and each retry alternative wait in a priority buffer of
+    /// `sc_buffer_size`, the most similar first (ties by arrival), the least similar dropped when it overflows; each of
+    /// `fast_match_workers` takes the best one as it frees (at its job's landing) for the fast match (cloud build,
+    /// single ICP, degeneracy and the gates, estimated as `closure_search_estimate_*` without the extension terms). A
+    /// clear pass or fail lands decided; a match inside the uncertainty range waits in a priority buffer of
+    /// `verification_buffer_slots`, the highest single-scan confidence ratio first (ties by dispatch), the lowest dropped
+    /// when it overflows, for one of `verification_workers` to run its extension rounds and yank verdict as it frees:
+    /// held `verification_estimate_overhead_s` + `verification_estimate_round_s` per round started, each round's bound
+    /// counted before it starts (one job reporting each round's tick). The round bound is a constant for now: the
+    /// largest of five Mac recordings' 99th percentile of a round's seconds (334 ms, gir2), until each round's logged
+    /// points (`extension_rounds_*_points`) can fit it per round; the overhead is the largest recording's 99th
+    /// percentile of the extension's seconds outside its rounds.
+    pub closure_search_two_stage: bool,
+    pub fast_match_workers: usize,
+    pub sc_buffer_size: usize,
+    pub verification_workers: usize,
+    pub verification_buffer_slots: usize,
+    pub verification_estimate_overhead_s: f64,
+    pub verification_estimate_round_s: f64,
     pub closure_search_estimate_lookup_s: f64,
     pub closure_search_estimate_lookup_per_keyframe_s: f64,
     pub closure_search_estimate_build_per_point_s: f64,
@@ -655,6 +700,16 @@ pub struct Config {
     pub odometry_error_estimate_evidence_core: bool,
     /// Recompute the loop-overlap pressure (`loop_overlap`) on every this-many-th scan, reusing it in between; 0 = never.
     pub pressure_check_frequency: usize,
+    /// The pressure off the scan thread (`pressure_schedule`): a job on one worker, started with a snapshot of its inputs
+    /// when the worker is free (the newest request pending meanwhile), landing at its dispatch + `pressure_estimate_s` +
+    /// `pressure_estimate_per_keyframe_s` x keyframes + `pressure_estimate_per_closure_s` x committed closures (seconds,
+    /// counted in scans as the closure searches' estimates). Off: computed inline on the scan thread. The coefficients
+    /// are the cheapest nonnegative ones bounding every Mac pressure computation of small L1, gir1 and huge L1 but each
+    /// recording's hardest 1% (re-chosen over 3 refits), 99% of each one's under it.
+    pub pressure_let_enabled: bool,
+    pub pressure_estimate_s: f64,
+    pub pressure_estimate_per_keyframe_s: f64,
+    pub pressure_estimate_per_closure_s: f64,
     /// `soft_pressure` (display only, the same probability without the cliff): 50% where log10 of the loop hazard
     /// (unresolved_loop_probability = 1 - e^-hazard) is this, and 0% this many decades below it (log-compressed).
     pub soft_pressure_half_log10_hazard: f64,
@@ -691,8 +746,26 @@ impl Config {
             ("closure_search_estimate_extension_overhead_s", self.closure_search_estimate_extension_overhead_s),
             ("closure_search_estimate_extension_cloud_s", self.closure_search_estimate_extension_cloud_s),
         ];
-        if self.closure_search_workers == 0 {
-            return Err("closure_search_workers must be >= 1".into());
+        for (name, count) in [
+            ("closure_search_workers", self.closure_search_workers),
+            ("scan_period_window", self.scan_period_window),
+            ("fast_match_workers", self.fast_match_workers),
+            ("sc_buffer_size", self.sc_buffer_size),
+            ("verification_workers", self.verification_workers),
+            ("verification_buffer_slots", self.verification_buffer_slots),
+        ] {
+            if count == 0 {
+                return Err(format!("{name} must be >= 1"));
+            }
+        }
+        if !(self.pressure_estimate_s >= 0.0
+            && self.pressure_estimate_per_keyframe_s >= 0.0
+            && self.pressure_estimate_per_closure_s >= 0.0)
+        {
+            return Err("pressure_estimate_* must be >= 0".into());
+        }
+        if !(self.verification_estimate_overhead_s >= 0.0 && self.verification_estimate_round_s >= 0.0) {
+            return Err("verification_estimate_* must be >= 0".into());
         }
         if let Some((name, value)) = estimates.iter().find(|(_, v)| !(*v >= 0.0)) {
             return Err(format!("{name} must be >= 0 (got {value})"));
@@ -745,9 +818,18 @@ impl Default for Config {
             solve_estimate_rejected_power: 0.558,
             solve_estimate_speed_power: 0.0,
             solve_estimate_speed_floor_mps: 0.05,
+            solve_estimate_change_cost_s_per_keyframe: 2.56e-7,
             closure_search_hold_enabled: true,
+            scan_period_window: 50,
             closure_search_let_enabled: true,
             closure_search_workers: 2,
+            closure_search_two_stage: false,
+            fast_match_workers: 2,
+            sc_buffer_size: 4,
+            verification_workers: 2,
+            verification_buffer_slots: 2,
+            verification_estimate_overhead_s: 0.0306,
+            verification_estimate_round_s: 0.334,
             closure_search_estimate_lookup_s: 610e-6,
             closure_search_estimate_lookup_per_keyframe_s: 5.7e-9,
             closure_search_estimate_build_per_point_s: 3.137e-6,
@@ -795,6 +877,10 @@ impl Default for Config {
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,
             pressure_check_frequency: 5,
+            pressure_let_enabled: true,
+            pressure_estimate_s: 1.21e-5,
+            pressure_estimate_per_keyframe_s: 1.355e-7,
+            pressure_estimate_per_closure_s: 1.957e-7,
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
         }
@@ -856,7 +942,8 @@ pub struct GscPgo {
     /// Solves slower than the data their estimate spanned (`solve_hold_enabled`), and the newest scan's recorded time.
     pub(crate) solve_overshoots: usize,
     pub(crate) scan_time: f64,
-    /// The newest 51 scans' recorded times, for the scan period closure-search estimates are counted in, and the scans
+    /// The newest `scan_period_window` + 1 scans' recorded times, for the scan period closure-search estimates are
+    /// counted in, and the scans
     /// whose recorded time advanced past every earlier one's, the count closure-search schedules run on (a scan repeating
     /// an earlier stamp spans no data time).
     pub(crate) recent_scan_times: std::collections::VecDeque<f64>,
@@ -870,6 +957,16 @@ pub struct GscPgo {
     pub(crate) search_scan_times: std::collections::VecDeque<f64>,
     pub(crate) search_scan_base: usize,
     pub(crate) search_pool: Option<crate::closure_search_schedule::SearchPool>,
+    /// The two-stage search (`closure_search_two_stage`): the candidates waiting for a fast-match worker (and their
+    /// arrival numbers), the matches waiting for verification (and their fast match's dispatch numbers), the
+    /// verification pool, and the counts its buffers dropped and its verification jobs overshot.
+    pub(crate) sc_buffer: Vec<(ClosureProposal, u64)>,
+    pub(crate) sc_arrivals: u64,
+    pub(crate) verification_buffer: Vec<(Box<PendingExtension>, u64)>,
+    pub(crate) verification_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) sc_dropped: usize,
+    pub(crate) verification_dropped: usize,
+    pub(crate) verification_overshoots: usize,
     pub(crate) closure_search_overshoots: usize,
     pub(crate) closure_search_wait_s: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
@@ -879,6 +976,24 @@ pub struct GscPgo {
     /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
     pub(crate) graph_version: u64,
     pub(crate) pressure_version: Option<u64>,
+    /// The pressure job running or held (`pressure_let_enabled`), whether a newer one is pending, its worker, each
+    /// pressure computation's keyframes, closures and seconds, the jobs that overshot, whether the running one is late,
+    /// and whether a lockstep replay waits for due jobs (`set_wait_for_due_jobs`).
+    pub(crate) pressure_job: Option<crate::pressure_schedule::PressureJob>,
+    /// The graph change heat's cost per adopted solve measured on its solve's thread (keyframes, seconds), and the solves
+    /// whose cost was recomputed here because a solve was adopted while they ran.
+    pub(crate) change_cost_calls: Vec<(usize, f64)>,
+    /// Seconds the scan thread blocked joining finished-or-waited-for solves (a lockstep replay's wait, not work).
+    pub(crate) solve_join_wait_s: f64,
+    pub(crate) graph_change_cost_recomputed: usize,
+    /// Solves adopted so far: the accepted graph's version (keyframes added since only ride it).
+    pub(crate) adopted_solves: u64,
+    pub(crate) pressure_requested: bool,
+    pub(crate) pressure_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) pressure_calls: Vec<(usize, usize, f64)>,
+    pub(crate) pressure_overshoots: usize,
+    pub(crate) pressure_late: bool,
+    pub(crate) wait_for_due_jobs: bool,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
     /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
@@ -986,6 +1101,118 @@ pub struct ClosureSearchResult {
     retry: Option<(Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize)>,
 }
 
+impl ClosureSearchResult {
+    /// The cost fields of its diagnostics, from its timing (seconds, NaN where a step did not run).
+    fn finalize_costs(&mut self) {
+        let (t, diag) = (&self.timing, &mut self.diag);
+        let ran = |seconds: f64, ran: bool| if ran { seconds } else { f64::NAN };
+        diag.cost_submap_s = t.submap_s;
+        diag.cost_degeneracy_s = t.degeneracy_s;
+        diag.cost_icp_s = ran(t.icp_s, !diag.icp_fitness.is_nan());
+        diag.cost_extension_s = ran(t.extended_icp_s, !diag.cost_extension_rounds_s.is_empty());
+        diag.cost_search_s = t.search_s;
+        diag.cost_gates_s = t.search_s - t.submap_s - t.degeneracy_s - t.icp_s - t.extended_icp_s;
+    }
+    /// A match the verification buffer dropped (`verification_buffer_slots`): a rejection, its alternatives still open.
+    pub(crate) fn dropped(pending: PendingExtension) -> ClosureSearchResult {
+        let mut result = rejected(pending.diag, "verification_dropped", pending.timing);
+        result.timing.search_s = pending.fast_s;
+        result.finalize_costs();
+        result.retry = pending.retry;
+        result
+    }
+}
+
+/// Where a search stands after its fast match: decided, or inside the uncertainty range and handed to the extension.
+pub enum SearchStage {
+    Done(ClosureSearchResult),
+    Extend(Box<PendingExtension>),
+}
+
+/// A match inside the uncertainty range, with what its extension needs: the search (its snapshot), the single fit and
+/// its confidence ratio (the verification buffer's promise), the source points, the look-alike count so far, the bar's
+/// base, the retry inputs and the fast match's seconds.
+pub struct PendingExtension {
+    pub(crate) search: ClosureSearch,
+    pub(crate) diag: ClosureCandidateDiag,
+    timing: TimingStats,
+    icp: crate::connection_fit::IcpResult,
+    pub(crate) ratio: f64,
+    source_points: usize,
+    look_alikes: similarity_discovery::LookAlikes,
+    error_estimate_sums: Option<Vec<crate::loop_overlap::Sums>>,
+    base: f64,
+    retry: Option<(Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize)>,
+    pub(crate) fast_s: f64,
+}
+
+impl PendingExtension {
+    /// The verification stage: the extension rounds and the yank verdict on them, the fast match's seconds included in
+    /// the result's.
+    pub(crate) fn run(mut self) -> ClosureSearchResult {
+        let retry = self.retry.take();
+        let fast_s = self.fast_s;
+        let dumps = self.search.dump_s.clone();
+        let dumped_before = *dumps.lock().expect("dump seconds");
+        let started = std::time::Instant::now();
+        let mut result = self.extend();
+        let dumped = *dumps.lock().expect("dump seconds") - dumped_before;
+        result.timing.search_s = fast_s + started.elapsed().as_secs_f64() - dumped;
+        result.finalize_costs();
+        result.retry = retry;
+        result
+    }
+    fn extend(self) -> ClosureSearchResult {
+        let PendingExtension {
+            search,
+            mut diag,
+            mut timing,
+            icp,
+            ratio,
+            source_points,
+            mut look_alikes,
+            mut error_estimate_sums,
+            base,
+            ..
+        } = self;
+        let (cur_idx, target_idx) = (diag.source_id, search.target_idx);
+        let key_suffix = search.icp_key_suffix();
+        let memo_alignment =
+            |tag: &str, at: usize, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
+                search.memo_alignment(&key_suffix, tag, at, compute)
+            };
+        let mut required = |evidence: f64, diag: &mut ClosureCandidateDiag| -> f64 {
+            search.bar_with_places(evidence, diag, &mut look_alikes, &mut error_estimate_sums, base)
+        };
+        let t0 = std::time::Instant::now();
+        let extended = search.extended_icp(
+            cur_idx,
+            target_idx,
+            source_points,
+            &icp,
+            ratio,
+            &mut diag,
+            &mut required,
+            &memo_alignment,
+        );
+        timing.extended_icp_s += t0.elapsed().as_secs_f64() - search.debug_io_s.take();
+        let Some(extended) = extended else {
+            return rejected(diag, "yank_confidence_reject", timing);
+        };
+        // the closure measurement comes from the extended alignment, which saw more of both places
+        let (rotation_offset, translation_offset) =
+            search.measured(&extended.rotation, &extended.translation);
+        let score = extended.inlier_mean_square();
+        diag.outcome = "accepted";
+        ClosureSearchResult {
+            diag,
+            accepted: Some((rotation_offset, translation_offset, score)),
+            timing,
+            retry: None,
+        }
+    }
+}
+
 /// A search that ended at the gate `outcome`.
 fn rejected(
     mut diag: ClosureCandidateDiag,
@@ -1003,28 +1230,161 @@ fn rejected(
 
 impl ClosureSearch {
     /// The ICP half of a closure search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
-    pub fn run(mut self) -> ClosureSearchResult {
+    pub fn run(self) -> ClosureSearchResult {
+        match self.run_stage() {
+            SearchStage::Done(result) => result,
+            SearchStage::Extend(pending) => pending.run(),
+        }
+    }
+    /// The fast match (`closure_search_two_stage`): everything up to the extension, which a match inside the uncertainty
+    /// range is handed on to (`SearchStage::Extend`); a clear pass or fail is decided here.
+    pub(crate) fn run_stage(mut self) -> SearchStage {
         let retry = (
             self.ranked.clone(),
             std::mem::take(&mut self.alternatives),
             self.tries,
         );
         let (started, dumps) = (std::time::Instant::now(), self.dump_s.clone());
-        let mut result = self.search();
-        result.timing.search_s =
-            started.elapsed().as_secs_f64() - *dumps.lock().expect("dump seconds");
-        let (t, diag) = (&result.timing, &mut result.diag);
-        let ran = |seconds: f64, ran: bool| if ran { seconds } else { f64::NAN };
-        diag.cost_submap_s = t.submap_s;
-        diag.cost_degeneracy_s = t.degeneracy_s;
-        diag.cost_icp_s = ran(t.icp_s, !diag.icp_fitness.is_nan());
-        diag.cost_extension_s = ran(t.extended_icp_s, !diag.cost_extension_rounds_s.is_empty());
-        diag.cost_search_s = t.search_s;
-        diag.cost_gates_s = t.search_s - t.submap_s - t.degeneracy_s - t.icp_s - t.extended_icp_s;
-        result.retry = Some(retry);
-        result
+        let stage = self.search_stage();
+        let seconds = started.elapsed().as_secs_f64() - *dumps.lock().expect("dump seconds");
+        match stage {
+            SearchStage::Done(mut result) => {
+                result.timing.search_s = seconds;
+                result.finalize_costs();
+                result.retry = Some(retry);
+                SearchStage::Done(result)
+            }
+            SearchStage::Extend(mut pending) => {
+                pending.fast_s = seconds;
+                pending.retry = Some(retry);
+                SearchStage::Extend(pending)
+            }
+        }
     }
-    fn search(self) -> ClosureSearchResult {
+    /// A cloud alignment through the ICP cache (`icp_cache`): stored as the source's pose relative to the target
+    /// (`relative_icp`), the computed value itself returned when it was computed here.
+    pub(crate) fn memo_alignment(
+        &self,
+        key_suffix: &str,
+        tag: &str,
+        at: usize,
+        compute: &mut dyn FnMut() -> Vec<f64>,
+    ) -> Vec<f64> {
+        let (cur_idx, target_idx) = (self.diag.source_id, self.target_idx);
+        let Some(cache) = &self.icp_cache else {
+            return compute();
+        };
+        let (source_pose, target_pose) = (
+            (
+                &self.key_poses[cur_idx].rotation_global,
+                &self.key_poses[cur_idx].translation_global,
+            ),
+            (
+                &self.key_poses[target_idx].rotation_global,
+                &self.key_poses[target_idx].translation_global,
+            ),
+        );
+        let mut computed = None;
+        let stored = cache.get_or(format!("{cur_idx}:{target_idx}:{tag}{key_suffix}"), || {
+            let value = compute();
+            let mut relative = value.clone();
+            crate::icp_cache::relative_icp(&mut relative[at..], source_pose, target_pose, true);
+            computed = Some(value);
+            relative
+        });
+        computed.unwrap_or_else(|| {
+            let mut value = stored;
+            crate::icp_cache::relative_icp(&mut value[at..], source_pose, target_pose, false);
+            value
+        })
+    }
+    /// The closure measurement an alignment gives: the source keyframe moved by it, in the target's frame.
+    pub(crate) fn measured(&self, rotation: &Mat3, translation: &Vec3) -> (Mat3, Vec3) {
+        let (source, target) = (
+            &self.key_poses[self.diag.source_id],
+            &self.key_poses[self.target_idx],
+        );
+        let closure_rotation_transpose = mat3::transpose(&target.rotation_global);
+        let moved = mat3::add(
+            &mat3::mat_vec(rotation, &source.translation_global),
+            translation,
+        );
+        (
+            mat3::mat_mul(
+                &closure_rotation_transpose,
+                &mat3::mat_mul(rotation, &source.rotation_global),
+            ),
+            mat3::mat_vec(
+                &closure_rotation_transpose,
+                &mat3::sub(&moved, &target.translation_global),
+            ),
+        )
+    }
+    /// The evidence a match needs (yank units): `base` plus ln of the look-alike places it fits as well as this one,
+    /// counted only as far as `evidence` makes the count matter (stage 4b).
+    pub(crate) fn bar_with_places(
+        &self,
+        evidence: f64,
+        diag: &mut ClosureCandidateDiag,
+        look_alikes: &mut similarity_discovery::LookAlikes,
+        error_estimate_sums: &mut Option<Vec<crate::loop_overlap::Sums>>,
+        base: f64,
+    ) -> f64 {
+        let cur_idx = diag.source_id;
+        let same_place_cutoff =
+            crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability);
+            if !diag.from_scan_context {
+                return base;
+            }
+            let sums = error_estimate_sums.get_or_insert_with(|| {
+                crate::loop_overlap::odometry_error_estimate_sums(
+                    &self.key_poses,
+                    &self.config,
+                    diag.learned_odometry_error_estimate,
+                )
+            });
+            let places = look_alikes.count_past(
+                (evidence - base).exp(),
+                &self.scan_context_descriptors[cur_idx],
+                &self.scan_context_descriptors,
+                self.scan_context_config.match_threshold,
+                |a, b| {
+                    crate::loop_overlap::could_be_same_place(
+                        &self.key_poses,
+                        sums,
+                        a,
+                        b,
+                        self.config.closure_search_radius,
+                        same_place_cutoff,
+                    )
+                },
+            );
+            diag.look_alike_places = places;
+            base + (places as f64).ln()
+    }
+    /// The ICP cache key suffix: what besides the pair changes a cloud computation's result.
+    pub(crate) fn icp_key_suffix(&self) -> String {
+        format!(
+            "{}{}{}",
+            if self.config.closure_icp_point_to_plane {
+                ":pl"
+            } else {
+                ""
+            },
+            if self.config.closure_icp_target_resolution_m > 0.0 {
+                format!(":t{}", self.config.closure_icp_target_resolution_m)
+            } else {
+                String::new()
+            },
+            if self.config.closure_icp_early_stop {
+                ":es"
+            } else {
+                ""
+            },
+        )
+    }
+
+    fn search_stage(self) -> SearchStage {
         let mut diag = self.diag.clone();
         let (cur_idx, target_idx) = (diag.source_id, self.target_idx);
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
@@ -1062,24 +1422,7 @@ impl ClosureSearch {
         // result from a point-to-point one, so it is part of the key
         let cache = self.icp_cache.clone();
         // the thinned target and the early stop change the single ICP's result too, so they are part of the key
-        let key_suffix = format!(
-            "{}{}{}",
-            if self.config.closure_icp_point_to_plane {
-                ":pl"
-            } else {
-                ""
-            },
-            if self.config.closure_icp_target_resolution_m > 0.0 {
-                format!(":t{}", self.config.closure_icp_target_resolution_m)
-            } else {
-                String::new()
-            },
-            if self.config.closure_icp_early_stop {
-                ":es"
-            } else {
-                ""
-            },
-        );
+        let key_suffix = self.icp_key_suffix();
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
                 Some(cache) => {
@@ -1088,38 +1431,9 @@ impl ClosureSearch {
                 None => compute(),
             }
         };
-        // an alignment through the cache: stored as the source's pose relative to the target (`relative_icp`), the
-        // computed value itself returned when it was computed here
-        let (source_pose, target_pose) = (
-            (
-                &self.key_poses[cur_idx].rotation_global,
-                &self.key_poses[cur_idx].translation_global,
-            ),
-            (
-                &self.key_poses[target_idx].rotation_global,
-                &self.key_poses[target_idx].translation_global,
-            ),
-        );
-        let memo_alignment = |tag: &str,
-                              at: usize,
-                              compute: &mut dyn FnMut() -> Vec<f64>|
-         -> Vec<f64> {
-            let Some(cache) = &cache else {
-                return compute();
-            };
-            let mut computed = None;
-            let stored = cache.get_or(format!("{cur_idx}:{target_idx}:{tag}{key_suffix}"), || {
-                let value = compute();
-                let mut relative = value.clone();
-                crate::icp_cache::relative_icp(&mut relative[at..], source_pose, target_pose, true);
-                computed = Some(value);
-                relative
-            });
-            computed.unwrap_or_else(|| {
-                let mut value = stored;
-                crate::icp_cache::relative_icp(&mut value[at..], source_pose, target_pose, false);
-                value
-            })
+        // an alignment through the cache (`memo_alignment`)
+        let memo_alignment = |tag: &str, at: usize, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
+            self.memo_alignment(&key_suffix, tag, at, compute)
         };
 
         // Observability gate: a planar/degenerate source scan leaves the alignment unconstrained in-plane, so fitness
@@ -1135,7 +1449,7 @@ impl ClosureSearch {
         })[0] as f32;
         timing.degeneracy_s += t0.elapsed().as_secs_f64() - (built_s.get() - built_before);
         if degenerate(diag.degeneracy_min) {
-            return rejected(diag, "degeneracy_reject", timing);
+            return SearchStage::Done(rejected(diag, "degeneracy_reject", timing));
         }
 
         // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
@@ -1194,7 +1508,7 @@ impl ClosureSearch {
                     self.config.closure_yank_drift_range,
                 );
                 if least_required > most_evidence {
-                    return rejected(diag, "yank_confidence_reject", timing);
+                    return SearchStage::Done(rejected(diag, "yank_confidence_reject", timing));
                 }
             }
         }
@@ -1263,13 +1577,13 @@ impl ClosureSearch {
         diag.icp_translation_norm = mat3::norm(&icp.translation);
 
         if !icp.converged || icp.fitness > self.config.closure_icp_max_fitness_m.powi(2) {
-            return rejected(diag, "icp_reject", timing);
+            return SearchStage::Done(rejected(diag, "icp_reject", timing));
         }
         // the closure's translation variance as the graph will take it: its inliers' mean squared distance
         // (`IcpResult::inlier_mean_square`)
         let closure_variance = icp.inlier_mean_square();
         if self.config.closure_uninformative_gate && closure_variance >= known {
-            return rejected(diag, "uninformative", timing);
+            return SearchStage::Done(rejected(diag, "uninformative", timing));
         }
         if self.config.closure_sharpness_half > 0.0 {
             diag.sharpness = memo("sharp", &mut || {
@@ -1293,27 +1607,10 @@ impl ClosureSearch {
         }
 
         // the closure's variance per axis: its inliers' mean squared distance, as LIO-SAM takes ICP's fitness score
-        let mut score = icp.inlier_mean_square();
-        let (source, target) = (&self.key_poses[cur_idx], &self.key_poses[target_idx]);
-        let closure_rotation_transpose = mat3::transpose(&target.rotation_global);
+        let score = icp.inlier_mean_square();
         // the closure measurement an alignment gives: the source keyframe moved by it, in the target's frame
-        let measured = |rotation: &Mat3, translation: &Vec3| {
-            let moved = mat3::add(
-                &mat3::mat_vec(rotation, &source.translation_global),
-                translation,
-            );
-            (
-                mat3::mat_mul(
-                    &closure_rotation_transpose,
-                    &mat3::mat_mul(rotation, &source.rotation_global),
-                ),
-                mat3::mat_vec(
-                    &closure_rotation_transpose,
-                    &mat3::sub(&moved, &target.translation_global),
-                ),
-            )
-        };
-        let (mut rotation_offset, mut translation_offset) =
+        let measured = |rotation: &Mat3, translation: &Vec3| self.measured(rotation, translation);
+        let (rotation_offset, translation_offset) =
             measured(&icp.rotation, &icp.translation);
 
         // Graph yank: how far this constraint pulls the source keyframe from the
@@ -1329,7 +1626,7 @@ impl ClosureSearch {
         diag.yank_rotation_deg =
             mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
         diag.innovation = mat3::mat_vec(
-            &target.rotation_global,
+            &self.key_poses[target_idx].rotation_global,
             &mat3::sub(&translation_offset, &current_relative_translation),
         );
 
@@ -1356,37 +1653,8 @@ impl ClosureSearch {
         let base = self.required_evidence(&diag);
         // two matching keyframes are one place if the odometry between them could have drifted that far apart
         let mut error_estimate_sums: Option<Vec<crate::loop_overlap::Sums>> = None;
-        let same_place_cutoff =
-            crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability);
         let mut required = |evidence: f64, diag: &mut ClosureCandidateDiag| -> f64 {
-            if !diag.from_scan_context {
-                return base;
-            }
-            let sums = error_estimate_sums.get_or_insert_with(|| {
-                crate::loop_overlap::odometry_error_estimate_sums(
-                    &self.key_poses,
-                    &self.config,
-                    diag.learned_odometry_error_estimate,
-                )
-            });
-            let places = look_alikes.count_past(
-                (evidence - base).exp(),
-                &self.scan_context_descriptors[cur_idx],
-                &self.scan_context_descriptors,
-                self.scan_context_config.match_threshold,
-                |a, b| {
-                    crate::loop_overlap::could_be_same_place(
-                        &self.key_poses,
-                        sums,
-                        a,
-                        b,
-                        self.config.closure_search_radius,
-                        same_place_cutoff,
-                    )
-                },
-            );
-            diag.look_alike_places = places;
-            base + (places as f64).ln()
+            self.bar_with_places(evidence, diag, &mut look_alikes, &mut error_estimate_sums, base)
         };
         let evidence = -(1.0 - diag.confidence).ln();
         let single_required = required(evidence, &mut diag);
@@ -1419,38 +1687,34 @@ impl ClosureSearch {
                 >= single_required;
         // outside the uncertainty range the single scan decides; inside it the match is extended until it does
         if ratio <= low || (ratio < 1.0 && !reachable) {
-            return rejected(diag, "yank_confidence_reject", timing);
+            return SearchStage::Done(rejected(diag, "yank_confidence_reject", timing));
         }
+        // inside the uncertainty range the extension decides (`PendingExtension::extend`, the verification stage)
         if ratio < high {
-            let t0 = std::time::Instant::now();
             let source_points = memo("srcn", &mut || vec![source_cloud().len() as f64])[0] as usize;
-            let extended = self.extended_icp(
-                cur_idx,
-                target_idx,
-                source_points,
-                &icp,
+            diag.promise = ratio;
+            return SearchStage::Extend(Box::new(PendingExtension {
+                search: self,
+                diag,
+                timing,
+                icp,
                 ratio,
-                &mut diag,
-                &mut required,
-                &memo_alignment,
-            );
-            timing.extended_icp_s += t0.elapsed().as_secs_f64() - self.debug_io_s.take();
-            let Some(extended) = extended else {
-                return rejected(diag, "yank_confidence_reject", timing);
-            };
-            // the closure measurement comes from the extended alignment, which saw more of both places
-            (rotation_offset, translation_offset) =
-                measured(&extended.rotation, &extended.translation);
-            score = extended.inlier_mean_square();
+                source_points,
+                look_alikes,
+                error_estimate_sums,
+                base,
+                retry: None,
+                fast_s: 0.0,
+            }));
         }
 
         diag.outcome = "accepted";
-        ClosureSearchResult {
+        SearchStage::Done(ClosureSearchResult {
             diag,
             accepted: Some((rotation_offset, translation_offset, score)),
             timing,
             retry: None,
-        }
+        })
     }
 }
 
@@ -1729,7 +1993,7 @@ impl GscPgo {
             .is_none_or(|newest| pose.second > *newest)
         {
             self.advancing_scans += 1;
-            if self.recent_scan_times.len() > 50 {
+            if self.recent_scan_times.len() > self.config.scan_period_window {
                 self.recent_scan_times.pop_front();
             }
             self.recent_scan_times.push_back(pose.second);
@@ -1750,12 +2014,19 @@ impl GscPgo {
         let checked = std::time::Instant::now();
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
-        if frequency > 0
-            && self.scans_seen.is_multiple_of(frequency)
-            && self.pressure_version != Some(self.graph_version)
-        {
+        let check_due = frequency > 0 && self.scans_seen.is_multiple_of(frequency);
+        if self.config.pressure_let_enabled {
+            self.step_pressure(check_due);
+        } else if check_due && self.pressure_version != Some(self.graph_version) {
             self.pressure_version = Some(self.graph_version);
-            if let Some(overlap) = self.loop_overlap() {
+            let started = std::time::Instant::now();
+            let overlap = self.loop_overlap();
+            self.pressure_calls.push((
+                self.key_poses.len(),
+                self.committed_closures.len(),
+                started.elapsed().as_secs_f64(),
+            ));
+            if let Some(overlap) = overlap {
                 self.pressure = Some((self.scans_seen, overlap));
             }
         }
