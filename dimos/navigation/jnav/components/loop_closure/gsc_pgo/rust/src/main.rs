@@ -105,9 +105,6 @@ config! {
     graph_change_heat_threshold: f64,
     graph_change_heat_floor: f64,
     graph_change_heat_decay: f64,
-    closure_search_let_enabled: bool,
-    closure_search_workers: usize,
-    closure_search_two_stage: bool,
     fast_match_workers: usize,
     sc_buffer_size: usize,
     verification_workers: usize,
@@ -757,11 +754,9 @@ impl Worker {
                 continue;
             }
 
-            // A closure search that finished in the background lands now (once its estimate has passed,
-            // `closure_search_hold_enabled`), so its closure joins this keyframe's update; stages 1-2 run here on every
-            // keyframe, and the best waiting proposal goes to the search thread when it is free and no scans are waiting.
-            let behind = !self.state.lock().expect("state").cloud_buffer.is_empty();
-            pgo.step_closure_search(false, !behind);
+            // the closure search's jobs that may land do (deterministic: their holds passed; fast: finished), so a closure
+            // joins this keyframe's update, and this keyframe's match joins the pipeline
+            pgo.step_closure_search(false);
             // a finished solve moves the keyframes
             let moved = pgo.update();
             // every keyframe's current pose and the pose changes since consumers last heard, published off this thread

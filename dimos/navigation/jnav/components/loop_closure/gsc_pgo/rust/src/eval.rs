@@ -807,10 +807,8 @@ fn run() -> Result<(), String> {
                 };
                 let step_started = Instant::now();
                 if recorder.add_scan(&mut pgo, &cloud_with_pose, ts) {
-                    // a finished search lands (once its estimate has passed), this keyframe's match is proposed, and the
-                    // best waiting one starts when the search thread is free and no scans are waiting
-                    let behind = !queue.lock().expect("queue").0.is_empty();
-                    pgo.step_closure_search(false, !behind);
+                    // the closure search's jobs that may land do, and this keyframe's match joins the pipeline
+                    pgo.step_closure_search(false);
                     recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
                         pgo.update();
                     })?;
