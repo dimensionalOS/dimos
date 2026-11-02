@@ -263,6 +263,10 @@ pub struct Planner {
     // When each voxel landed, for a warp that tells overlapping passes apart.
     // Off unless asked for.
     voxel_times: Option<VoxelTimes>,
+    // What the last warp left off its keys, bucketed by place, so a region update
+    // re-keys what is near it without scanning the whole map. Built on the first
+    // region update after a warp.
+    displaced: Option<warp::DisplacedIndex>,
 }
 
 /// Seconds since `epoch` at which each voxel was added, and the clock edits
@@ -371,6 +375,7 @@ impl Planner {
             last_path: None,
             last_result: None,
             voxel_times: None,
+            displaced: None,
         }
     }
 

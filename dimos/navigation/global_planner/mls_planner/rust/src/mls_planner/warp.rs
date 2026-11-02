@@ -154,6 +154,7 @@ impl Planner {
             let w = moved_held.last().expect("the path goal was queried last");
             *goal = (w[0], w[1], w[2]);
         }
+        self.displaced = None;
         report.voxels_warped = voxels.len();
         report.cells_warped = cells.len();
         report.nodes = self.graph.nodes.len();
@@ -194,14 +195,23 @@ impl Planner {
         let center = |k: VoxelKey| [k.0, k.1, k.2].map(|v| (v as f32 + 0.5) * vs);
         let displaced = |o: &[f32; 3]| o.iter().any(|v| v.abs() > half);
 
+        if self.displaced.is_none() {
+            self.displaced = Some(self.index_displaced(radius_m, vs));
+        }
+        let (voxel_candidates, cell_candidates) = self
+            .displaced
+            .as_ref()
+            .expect("built above")
+            .near(centers, radius_m);
         let moving: Vec<(VoxelKey, [f32; 3])> = match &self.voxel_times {
-            Some(times) => times
-                .residual
-                .iter()
-                .filter(|(_, r)| displaced(r))
-                .map(|(&k, r)| {
-                    let c = center(k);
-                    (k, [c[0] + r[0], c[1] + r[1], c[2] + r[2]])
+            Some(times) => voxel_candidates
+                .into_iter()
+                .filter_map(|k| {
+                    let r = times.residual.get(&k)?;
+                    displaced(r).then(|| {
+                        let c = center(k);
+                        (k, [c[0] + r[0], c[1] + r[1], c[2] + r[2]])
+                    })
                 })
                 .filter(|&(k, p)| near(p) || near(center(k)))
                 .collect(),
@@ -227,9 +237,9 @@ impl Planner {
         }
 
         let cells = &self.graph.cells;
-        let moving: Vec<(CellId, [f32; 3])> = cells
-            .ids()
-            .filter(|&id| displaced(&cells.offset(id)))
+        let moving: Vec<(CellId, [f32; 3])> = cell_candidates
+            .into_iter()
+            .filter(|&id| cells.is_live(id) && displaced(&cells.offset(id)))
             .map(|id| {
                 let c = center(cells.coord(id));
                 let o = cells.offset(id);
@@ -322,6 +332,42 @@ impl Planner {
             }
         }
         graph.nodes.rebin(&graph.cells, &config.placement_params());
+    }
+
+    /// Bucket every voxel and surface cell a warp left off its key, by its point and
+    /// by its key, in buckets `side_m` wide.
+    fn index_displaced(&self, side_m: f32, vs: f32) -> DisplacedIndex {
+        let half = 0.5 * vs;
+        let displaced = |o: &[f32; 3]| o.iter().any(|v| v.abs() > half);
+        let mut index = DisplacedIndex {
+            side_m,
+            voxels: AHashMap::new(),
+            cells: AHashMap::new(),
+        };
+        let center = |k: VoxelKey| [k.0, k.1, k.2].map(|v| (v as f32 + 0.5) * vs);
+        if let Some(times) = &self.voxel_times {
+            for (&k, r) in times.residual.iter().filter(|(_, r)| displaced(r)) {
+                let c = center(k);
+                let at = index.bucket(c[0], c[1]);
+                let to = index.bucket(c[0] + r[0], c[1] + r[1]);
+                index.voxels.entry(at).or_default().push(k);
+                if to != at {
+                    index.voxels.entry(to).or_default().push(k);
+                }
+            }
+        }
+        let cells = &self.graph.cells;
+        for id in cells.ids().filter(|&id| displaced(&cells.offset(id))) {
+            let c = center(cells.coord(id));
+            let o = cells.offset(id);
+            let at = index.bucket(c[0], c[1]);
+            let to = index.bucket(c[0] + o[0], c[1] + o[1]);
+            index.cells.entry(at).or_default().push(id);
+            if to != at {
+                index.cells.entry(to).or_default().push(id);
+            }
+        }
+        index
     }
 
     /// Move voxels to the keys their points landed in, with their times and
@@ -424,3 +470,47 @@ fn surface_key(p: &[f32; 3], vs: f32) -> VoxelKey {
 
 #[cfg(test)]
 mod tests;
+
+/// The voxels and surface cells a warp left off their keys, bucketed both by where
+/// their point now sits and by their key, so a region update finds the ones near it
+/// without scanning the map. Entries go stale as voxels are re-keyed or replaced;
+/// callers re-check each candidate.
+pub(crate) struct DisplacedIndex {
+    side_m: f32,
+    voxels: AHashMap<(i32, i32), Vec<VoxelKey>>,
+    cells: AHashMap<(i32, i32), Vec<CellId>>,
+}
+
+impl DisplacedIndex {
+    fn bucket(&self, x: f32, y: f32) -> (i32, i32) {
+        (
+            (x / self.side_m).floor() as i32,
+            (y / self.side_m).floor() as i32,
+        )
+    }
+
+    /// Every entry in the buckets a disc of `radius_m` around each center touches.
+    fn near(
+        &self,
+        centers: &[(f32, f32)],
+        radius_m: f32,
+    ) -> (AHashSet<VoxelKey>, AHashSet<CellId>) {
+        let reach = (radius_m / self.side_m).ceil() as i32;
+        let mut voxels = AHashSet::new();
+        let mut cells = AHashSet::new();
+        for &(x, y) in centers {
+            let (bx, by) = self.bucket(x, y);
+            for dx in -reach..=reach {
+                for dy in -reach..=reach {
+                    if let Some(keys) = self.voxels.get(&(bx + dx, by + dy)) {
+                        voxels.extend(keys.iter().copied());
+                    }
+                    if let Some(ids) = self.cells.get(&(bx + dx, by + dy)) {
+                        cells.extend(ids.iter().copied());
+                    }
+                }
+            }
+        }
+        (voxels, cells)
+    }
+}
