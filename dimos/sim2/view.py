@@ -26,6 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.sensors.mid360.lidar import Raycaster
 
@@ -35,7 +36,7 @@ Vector = NDArray[np.float64]
 
 
 class WorldView(Protocol):
-    """Frames are "<robot_id>/<name>" (or "world/<name>"): a body, or a sensor's mount."""
+    """Frames are "<robot_id>/<name>" (or "world/<name>"): a body, or a sensor's frame_id."""
 
     @property
     def time(self) -> float:
@@ -61,6 +62,16 @@ class WorldView(Protocol):
 
 def rotation_matrix(wxyz: Vector) -> Vector:
     return Rotation.from_quat(wxyz, scalar_first=True).as_matrix()
+
+
+def sensor_frame(description: Mapping[str, Any], frame_id: str) -> str:
+    """The view's name for the sensor at frame_id in the world Simulation.describe() returned."""
+    sensor = next(
+        d
+        for d in description["simulated"]
+        if isinstance(d, SimulatedSensor) and d.frame_id == frame_id
+    )
+    return f"{sensor.robot_id or 'world'}/{frame_id}"
 
 
 def open_view(description: Mapping[str, Any], renderer: str = "mujoco") -> WorldView:
