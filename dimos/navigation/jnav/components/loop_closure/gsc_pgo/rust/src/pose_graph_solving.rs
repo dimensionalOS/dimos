@@ -209,19 +209,22 @@ impl GscPgo {
             .collect();
         (sightings, ids)
     }
+    /// Whether the newest adopted solve measured the learned odometry error estimate (`learned_evidence_requested`).
+    pub fn learned_odometry_error_estimate_measured(&self) -> bool {
+        self.learned_evidence_measured
+    }
     /// Wait for the running solve, and solve again until every closure is in; then measure the learned odometry error
     /// estimate once (`learned_odometry_error_estimate_from_closures`). Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
         let mut moved = self.settle();
-        // the learned odometry error estimate, for the next run's config: measured once, here, from the final kept loops
-        // (one more solve of the same graph with the evidence on), never in a solve during the run
+        // the learned odometry error estimate, for the next run's config: measured here from the final kept loops (one more
+        // solve of the same graph with the evidence on), and during the run only after a solve keeps a longer loop
         if self.config.learned_odometry_error_estimate_from_closures
             && self.committed_closures.iter().any(|c| c.gnc_weight > 0.5)
         {
             self.learned_evidence_requested = true;
             self.odometry_error_estimate_rescale = true;
             moved |= self.settle();
-            self.learned_evidence_requested = false;
         }
         moved
     }
@@ -367,6 +370,7 @@ impl GscPgo {
         };
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
+        self.graph_version += 1;
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
                 .into_iter()
@@ -450,6 +454,23 @@ impl GscPgo {
         }
         self.graph_error = solution.error;
         self.update_learned_odometry_error_estimate(solution.odometry_error_estimate_evidence);
+        self.learned_evidence_measured = solution.odometry_error_estimate_evidence.is_some();
+        if self.learned_evidence_measured {
+            self.learned_evidence_requested = false;
+        }
+        // a loop longer than any kept before is new information on the odometry's error: measure the learned estimate
+        // with the next solve (logged only, never a decision)
+        let longest = self
+            .committed_closures
+            .iter()
+            .filter(|c| c.gnc_weight > 0.5)
+            .map(|c| c.source_id.abs_diff(c.target_id))
+            .max()
+            .unwrap_or(0);
+        if longest > self.learned_evidence_gap {
+            self.learned_evidence_gap = longest;
+            self.learned_evidence_requested = true;
+        }
         // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned odometry error estimate,
         // and the solve's evidence per source as [sum, redundancy]), for tracing the noise learner against ground truth offline
         if let Ok(path) = std::env::var("GSC_LEARN_LOG") {

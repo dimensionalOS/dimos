@@ -109,7 +109,7 @@ class PGOConfig(NativeModuleConfig):
     # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail
     # reject, extend the match in between (barely_fail < 1 < barely_pass)
     barely_fail_uncertainty_range: float = 0.8
-    barely_pass_uncertainty_range: float = 1.05
+    barely_pass_uncertainty_range: float = 3.0
     # The uncertainty range narrows over the extension's steps, slowed by 1 / (1 - pressure)^this
     decisive_pressure_rate: float = 1.0
     # Odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach

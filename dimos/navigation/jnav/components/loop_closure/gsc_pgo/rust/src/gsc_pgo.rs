@@ -564,7 +564,7 @@ impl Default for Config {
             closure_extension_stop_when_flat: true,
             closure_extension_stop_on_swing: true,
             barely_fail_uncertainty_range: 0.8,
-            barely_pass_uncertainty_range: 1.05,
+            barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
             extension_cloud_spacing: 0.25,
             closure_icp_dump_dir: String::new(),
@@ -628,8 +628,11 @@ pub struct GscPgo {
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
     pub(crate) learned_odometry_error_estimate_ln_dispatched: [f64; 4],
     pub(crate) odometry_error_estimate_rescale: bool,
-    /// The next solve also measures the learned odometry error estimate's evidence (only `finish`'s last solve does).
+    /// The next solve also measures the learned odometry error estimate's evidence: requested after a solve keeps a loop
+    /// longer (in keyframes between its ends) than any kept before, `learned_evidence_gap`, and by `finish`.
     pub(crate) learned_evidence_requested: bool,
+    pub(crate) learned_evidence_gap: usize,
+    pub(crate) learned_evidence_measured: bool,
     /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
     /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
     pub(crate) odometry_error_estimate_rescaled: bool,
@@ -653,6 +656,10 @@ pub struct GscPgo {
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
+    /// Bumped whenever a keyframe is added or a solve is adopted: what loop_overlap reads changes only then, so pressure
+    /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
+    pub(crate) graph_version: u64,
+    pub(crate) pressure_version: Option<u64>,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
     /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
@@ -890,19 +897,14 @@ impl ClosureSearch {
             .iter()
             .flatten()
             .all(|v| v.is_finite());
-        // at the upper bound: scaled by the most any component's bound exceeds its estimate
-        let widen = (0..4)
-            .map(|c| gate_error_estimate[c] / diag.learned_odometry_error_estimate[c])
-            .fold(1.0, f64::max);
         let known = if by_graph {
             // the graph's own covariance of the two ends' relative position (its heading swing and the solved
             // closures included): the closure adds something only where it is surer than the graph in some direction.
             // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            widen
-                * mat3::jacobi_eigen(diag.innovation_covariance)
-                    .0
-                    .into_iter()
-                    .fold(0.0, f64::max)
+            mat3::jacobi_eigen(diag.innovation_covariance)
+                .0
+                .into_iter()
+                .fold(0.0, f64::max)
         } else {
             self.kept_closures
                 .iter()
@@ -913,13 +915,6 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // no alignment of two voxelized scans fits tighter than the spread of a surface's voxel centroids between them
-        // (two independent offsets within a voxel of the submap resolution r: variance r^2 / 6 along the normal), so a
-        // graph surer than that makes the closure uninformative whatever ICP returns: it is not aligned at all
-        let closure_variance_floor = self.config.submap_resolution.powi(2) / 6.0;
-        if self.config.closure_uninformative_gate && closure_variance_floor >= known {
-            return rejected(diag, "uninformative", timing);
-        }
         // a candidate whose least yank ICP could leave still needs more evidence than any stack of scans could give is
         // rejected unaligned: ICP pairs points only within its match distance, so it moves the source from the seed (the
         // target's position) by about that much at most; the closure's own variance is at most the fitness limit squared;
@@ -1428,7 +1423,11 @@ impl GscPgo {
         }
         self.scans_seen += 1;
         let frequency = self.config.pressure_check_frequency;
-        if frequency > 0 && self.scans_seen.is_multiple_of(frequency) {
+        if frequency > 0
+            && self.scans_seen.is_multiple_of(frequency)
+            && self.pressure_version != Some(self.graph_version)
+        {
+            self.pressure_version = Some(self.graph_version);
             if let Some(overlap) = self.loop_overlap() {
                 self.pressure = Some((self.scans_seen, overlap));
             }
@@ -1738,6 +1737,7 @@ impl GscPgo {
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {
+        self.graph_version += 1;
         // every use of a keyframe's cloud (submaps, stacked clouds) voxelizes it at submap_resolution, so it is
         // stored that way: a dense scan (the Go2 L1's ~30k-point local map) would otherwise be kept whole
         let stored = match &cloud {

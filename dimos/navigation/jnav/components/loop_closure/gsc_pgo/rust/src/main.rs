@@ -720,6 +720,10 @@ impl Worker {
 
     /// An adopted solve on debug_log (`kind` "solve"): the closures it kept and judged, and the graph's error.
     fn log_solve(&self, pgo: &GscPgo, ts: f64) {
+        // a solve that measured the learned odometry error estimate (after a longer loop than any before) reports it
+        if pgo.learned_odometry_error_estimate_measured() {
+            self.log_odometry_drift(pgo, ts);
+        }
         let closures = pgo.committed_closures();
         let judged = closures.iter().filter(|c| !c.gnc_weight.is_nan()).count();
         let kept = closures.iter().filter(|c| c.gnc_weight > 0.5).count();
