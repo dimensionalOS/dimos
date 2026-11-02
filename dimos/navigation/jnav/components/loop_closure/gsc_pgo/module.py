@@ -54,10 +54,10 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_max_fitness_m: float = 0.3872983346207417
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
     closure_icp_point_to_plane: bool = True
-    # measure the lidar's per-point error from keyframes against the ones before them (logged, converges over time)
-    scan_noise_from_keyframes: bool = False
-    # in that measurement, drop points a scan re-sends from earlier scans (Go2 L1)
-    scan_noise_drop_reseen_points: bool = True
+    # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud
+    drop_reseen_points: bool = False
+    # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
+    auto_aggregate_cloud_size: int = 2000
     closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
@@ -102,46 +102,20 @@ class PGOConfig(NativeModuleConfig):
     closure_sharpness_half: float = 0.0
     closure_sharpness_nudge_m: float = 1.0
     closure_sharpness_nudge_deg: float = 5.0
-    # True: a closure's confidence is its overlap score (connection_fit::overlap_score: fit quality inside the box both
-    # clouds share, evidence growing with log2 of its points / coin_flip) instead of scan-context x ICP x degeneracy
     # True: a closure's evidence is its likelihood ratio (mean log ratio per point: aligned half-normal of a width measured
     # from the clouds vs uniform out to the ICP match distance), in place of scan-context x ICP x degeneracy
     closure_likelihood_confidence: bool = True
     # True: a keyframe whose closure search is rejected tries its next scan-context match, up to 1 + ceil(1/(1 - pressure))
     # tries (2 at no pressure), at most scan_context_top_k
     closure_alternative_places: bool = True
-    # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
-    closure_pcm: bool = False
-    # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
-    closure_gnc_overtrust_check: bool = False
-    # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
-    odometry_gravity_bound: bool = False
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
     closure_commitments: bool = True
-    # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_icp_inlier_distance_m
-    closure_inlier_distance_from_odometry: bool = False
-    # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
-    closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
     closure_likelihood_visibility: bool = True
-    # True (with visibility): count every source point a target scan could see (beam model), no inlier-distance gate
-    closure_likelihood_beam: bool = False
-    # True: try a keyframe's scan-context matches in order of how unsure the graph is of their relative position
-    closure_rank_by_information: bool = False
     # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
     odometry_noise_from_closures: bool = True
     # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
     odometry_noise_evidence_core: bool = True
-    # True: the noise is learned from kept loops' innovations vs raw odometry, each voting by its drift share of its expected misfit (short loops barely vote)
-    odometry_noise_from_loop_drift: bool = False
-    closure_overlap_score: bool = False
-    closure_overlap_sigma_m: float = 0.03
-    closure_overlap_reach_m: float = 0.5
-    closure_overlap_noise_sigmas: float = 3.0
-    closure_overlap_per_doubling: float = 2.7
-    closure_overlap_coin_flip: float = 350.0
-    # Score only points within the shared radius (noise_sigmas x sigma) of a shared point, not their whole bounding box
-    closure_overlap_local: bool = False
     # Closure-verification ICP: iteration cap and correspondence gate (m).
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0

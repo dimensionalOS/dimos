@@ -52,49 +52,12 @@ pub struct SolveConfig {
     pub gnc_inlier_probability: f64,
     /// Huber threshold on a kept closure's whitened residual; 0 = plain least squares.
     pub huber_k: f64,
-    /// Pairwise consistency (PCM, Mangelson 2018): the largest set of closures that all agree pairwise around the
-    /// cycles they close with the odometry is held in through GNC (`consistent_closures`).
-    pub pcm: bool,
-    /// When true, GNC also runs with the Geman-McClure surrogate (Black & Rangarajan 1996; Yang et al. 2020), which
-    /// starts at least squares rather than at TLS's odometry-dominated mu near 0, keeping a factor whose whitened
-    /// residual at its solution is under the chi-square cutoff. Its verdict replaces TLS's when its solution has the
-    /// lower truncated-least-squares cost (the objective both minimise: TLS's path missed it), or when the odometry
-    /// residuals of its solution reject the odometry's stated noise as too small (`odometry_overtrusted`: the model, not
-    /// the path, is wrong, and the kept closures' residuals then teach the noise learner the larger noise).
-    pub gnc_overtrust_check: bool,
-    /// Per odometry noise source (xy, z, yaw, roll/pitch): how many times larger the most noise the evidence still allows
-    /// is than the noise the odometry edges carry (1 when the solve uses the stated noise). The overtrust test asks
-    /// whether the residuals reject even that, since a learner's solve noise (its lower bound) is low by design.
-    pub overtrust_noise_headroom: [f64; 4],
-    /// The odometry's attitude against gravity as absolute factors, always in (`GravityPrior`); empty for none.
-    pub gravity: Vec<GravityPrior>,
     /// Per closure: true where the previous adopted solve kept it, so GNC holds it in (as PCM's consistent set) instead
     /// of re-deciding it cold; empty for none. A committed loop is dropped only by a verdict that contradicts it
     /// (`closure_commitments`, decided by the caller).
     pub committed: Vec<bool>,
-    /// The noise evidence reads only the kept closures' PCM core on every solve, not only on GM's verdict
-    /// (`odometry_noise_evidence_core`).
+    /// The noise evidence reads only the kept closures' PCM core (`odometry_noise_evidence_core`).
     pub evidence_core: bool,
-}
-
-/// A gravity-referenced odometry's tilt as an absolute factor: keyframe `keyframe`'s up direction in its own frame,
-/// R_k^T `up` (`up` the solve frame's), should be `body_up`, each axis at `variance` (rad²). Rotation about up is left
-/// free, so only roll/pitch are held: an IMU-aided odometry's tilt error is bounded by its accelerometer, not a random
-/// walk, so a chain of tilt steps cannot add up to a floor's height.
-#[derive(Clone, Copy, Debug)]
-pub struct GravityPrior {
-    pub keyframe: usize,
-    pub up: Vec3,
-    pub body_up: Vec3,
-    pub variance: f64,
-}
-
-/// R_k^T up - body_up.
-fn gravity_residual(g: &GravityPrior, state: &State) -> Vec3 {
-    mat3::sub(
-        &mat3::mat_vec(&mat3::transpose(&state.rotation[g.keyframe]), &g.up),
-        &g.body_up,
-    )
 }
 
 pub struct Solution {
@@ -227,23 +190,7 @@ pub(crate) fn solve_core(
         unary,
         sightings,
         &landmark_dims,
-        &config.gravity,
     );
-    // the noise evidence never sees the gravity factors: they are the raw odometry's own tilt, not a second measurement
-    // of it, so as redundancy they would vouch for the odometry's tilt steps with the steps' own data (the learner then
-    // collapses the tilt noise towards 0); it reads the odometry and closures alone, re-solved without them
-    let evidence_pattern = (!config.gravity.is_empty()).then(|| {
-        Pattern::new(
-            free,
-            odometry.iter().chain(closures),
-            unary,
-            sightings,
-            &landmark_dims,
-            &[],
-        )
-    });
-    let evidence_pattern = evidence_pattern.as_ref().unwrap_or(&pattern);
-
     // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
     // until each closure is clearly in or out. Odometry is always in.
     let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
@@ -274,11 +221,7 @@ pub(crate) fn solve_core(
     };
     let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
     let mut sighting_weights = vec![1.0; sightings.len()];
-    let mut held = if config.pcm {
-        consistent_closures(&scaled, odometry, config)
-    } else {
-        vec![false; closures.len()]
-    };
+    let mut held = vec![false; closures.len()];
     for (h, &c) in held.iter_mut().zip(&config.committed) {
         *h |= c;
     }
@@ -297,20 +240,6 @@ pub(crate) fn solve_core(
     let mut r2 = residual(&state);
     let mut u2 = unary_residuals(&state);
     let mut s2 = sighting_residuals(&state);
-    // the least-squares solve with every factor in: where GNC-GM starts (`gnc_overtrust_check`)
-    let least_squares = config.gnc_overtrust_check.then(|| {
-        (
-            State {
-                rotation: state.rotation.clone(),
-                position: state.position.clone(),
-                landmark: state.landmark.clone(),
-                landmark_rotation: state.landmark_rotation.clone(),
-            },
-            r2.clone(),
-            u2.clone(),
-            s2.clone(),
-        )
-    });
     if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
         // the gentlest start any factor kind that exceeds its own cutoff needs (a kind under its cutoff sets none)
         let start = |worst: f64, threshold: f64| {
@@ -367,7 +296,6 @@ pub(crate) fn solve_core(
             // stop like GTSAM's GncOptimizer: weights settled, or the weighted cost stopped changing
             let weighted_cost = cost(
                 &state,
-                &pattern.gravity,
                 odometry,
                 &scaled,
                 &weights,
@@ -387,198 +315,6 @@ pub(crate) fn solve_core(
             }
             previous_cost = weighted_cost;
             mu *= 1.4;
-        }
-    }
-    // TLS's convex start (mu near 0) weighs every closure at about cutoff x sqrt(mu) / residual against the always-in
-    // odometry, so how far the odometry is trusted decides its first steps: an overtrusted odometry takes the graph back
-    // before the closures are heard. GNC-GM starts at least squares instead (Black & Rangarajan 1996; Yang et al. 2020),
-    // and its verdict replaces TLS's only where the closures it keeps prove the odometry's noise understated
-    // only when TLS voted a closure out: with every one kept, GM has nothing to add
-    let least_squares = least_squares.filter(|_| weights.iter().any(|&w| w < 0.5));
-    let mut gm_taken = false;
-    if let Some((mut gm_state, mut r2, mut u2, mut s2)) = least_squares {
-        let max = |r: &[f64]| r.iter().copied().fold(0.0, f64::max);
-        // Remark 5: mu0 = 2 r_max^2 / cutoff over the residuals the least-squares solve leaves
-        let mut mu = [
-            2.0 * max(&r2) / threshold,
-            2.0 * max(&u2) / unary_threshold,
-            2.0 * max(&s2),
-        ]
-        .into_iter()
-        .fold(1.0, f64::max);
-        let gm = |r: f64, threshold: f64, mu: f64| (mu * threshold / (r + mu * threshold)).powi(2);
-        let (mut gm_weights, mut gm_unary, mut gm_sightings) = (
-            vec![1.0; closures.len()],
-            vec![1.0; unary.len()],
-            vec![1.0; sightings.len()],
-        );
-        loop {
-            for ((w, &r), &held) in gm_weights.iter_mut().zip(&r2).zip(&held) {
-                if !held {
-                    *w = gm(r, threshold, mu);
-                }
-            }
-            for (w, &r) in gm_unary.iter_mut().zip(&u2) {
-                *w = gm(r, unary_threshold, mu);
-            }
-            for (w, &r) in gm_sightings.iter_mut().zip(&s2) {
-                *w = gm(r, 1.0, mu);
-            }
-            levenberg_marquardt(
-                &mut gm_state,
-                &pattern,
-                odometry,
-                &scaled,
-                &gm_weights,
-                unary,
-                &gm_unary,
-                sightings,
-                &gm_sightings,
-                1e-5,
-            );
-            r2 = residual(&gm_state);
-            u2 = unary_residuals(&gm_state);
-            s2 = sighting_residuals(&gm_state);
-            if mu <= 1.0 {
-                break;
-            }
-            mu = (mu / 1.4).max(1.0);
-        }
-        // in or out by the chi-square test at the GM solution, as TLS's weights end
-        let classify = |r: f64, threshold: f64| if r < threshold { 1.0 } else { 0.0 };
-        for ((w, &r), &held) in gm_weights.iter_mut().zip(&r2).zip(&held) {
-            *w = if held { 1.0 } else { classify(r, threshold) };
-        }
-        for (w, &r) in gm_unary.iter_mut().zip(&u2) {
-            *w = classify(r, unary_threshold);
-        }
-        for (w, &r) in gm_sightings.iter_mut().zip(&s2) {
-            *w = classify(r, 1.0);
-        }
-        // the objective both GNCs minimise, truncated least squares, at each one's verdict: GM's path can find the lower
-        // minimum TLS's convex start missed (TLS voting out a consistent group from an odometry-dominated start)
-        let truncated_cost = |state: &State| {
-            let none = |n: usize| vec![0.0; n];
-            cost(
-                state,
-                &pattern.gravity,
-                odometry,
-                &scaled,
-                &none(closures.len()),
-                unary,
-                &none(unary.len()),
-                sightings,
-                &none(sightings.len()),
-            ) + residual(state)
-                .iter()
-                .map(|&r| r.min(threshold))
-                .sum::<f64>()
-                + unary_residuals(state)
-                    .iter()
-                    .map(|&r| r.min(unary_threshold))
-                    .sum::<f64>()
-                + sighting_residuals(state)
-                    .iter()
-                    .map(|&r| r.min(1.0))
-                    .sum::<f64>()
-        };
-        // each verdict's objective at its own least-squares solve (its kept closures in at weight 1, the rest out): the
-        // states GNC ends on still carry its last fractional weights, so comparing them flipped the verdict between
-        // solves on one consistent group (huge overtrust: 24 kept, 0, 24, as TLS's cost swung 45008 -> 6629)
-        let binary = |w: &[f64]| -> Vec<f64> {
-            w.iter()
-                .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
-                .collect()
-        };
-        let (tls_kept, tls_unary, tls_sightings) = (
-            binary(&weights),
-            binary(&unary_weights),
-            binary(&sighting_weights),
-        );
-        for (solve_state, (w, u, sw)) in [
-            (&mut state, (&tls_kept, &tls_unary, &tls_sightings)),
-            (&mut gm_state, (&gm_weights, &gm_unary, &gm_sightings)),
-        ] {
-            levenberg_marquardt(
-                solve_state,
-                &pattern,
-                odometry,
-                &scaled,
-                w,
-                unary,
-                u,
-                sightings,
-                sw,
-                1e-5,
-            );
-        }
-        (weights, unary_weights, sighting_weights) = (tls_kept, tls_unary, tls_sightings);
-        let lower = truncated_cost(&gm_state) < truncated_cost(&state);
-        // GM's verdict is new evidence that the odometry is overtrusted only where TLS's own verdict shows none: where
-        // TLS already keeps closures that bend the odometry past its noise (right or look-alike), the noise learner
-        // reads that from TLS's residuals, and swapping in GM's larger set would only add closures the evidence did
-        // not need (look-alike floors that agree with each other)
-        let overtrusted =
-            |state: &mut State, weights: &[f64], unary_w: &[f64], sighting_w: &[f64]| {
-                // the evidence's own re-solve, without the gravity factors, on a copy: the verdict's state keeps them
-                let mut without_gravity;
-                let state = if config.gravity.is_empty() {
-                    state
-                } else {
-                    without_gravity = state.clone();
-                    &mut without_gravity
-                };
-                odometry_overtrusted(
-                    state,
-                    evidence_pattern,
-                    odometry,
-                    closures,
-                    weights,
-                    unary,
-                    unary_w,
-                    sightings,
-                    sighting_w,
-                    config.gnc_inlier_probability,
-                    config.overtrust_noise_headroom,
-                )
-            };
-        let mut tls_state = State {
-            rotation: state.rotation.clone(),
-            position: state.position.clone(),
-            landmark: state.landmark.clone(),
-            landmark_rotation: state.landmark_rotation.clone(),
-        };
-        let (gm_over, tls_over) = (
-            overtrusted(&mut gm_state, &gm_weights, &gm_unary, &gm_sightings),
-            overtrusted(&mut tls_state, &weights, &unary_weights, &sighting_weights),
-        );
-        // `GSC_SOLVE_LOG=<path>`: per overtrust check, each verdict's kept closures and why one was taken
-        if let Ok(path) = std::env::var("GSC_SOLVE_LOG") {
-            use std::io::Write;
-            let kept =
-                |w: &[f64]| -> Vec<usize> { (0..w.len()).filter(|&i| w[i] >= 0.5).collect() };
-            let line = format!(
-                "{{\"closures\":{},\"tls\":{:?},\"gm\":{:?},\"tls_cost\":{},\"gm_cost\":{},\"gm_overtrusted\":{},\"tls_overtrusted\":{}}}\n",
-                closures.len(),
-                kept(&weights),
-                kept(&gm_weights),
-                truncated_cost(&state),
-                truncated_cost(&gm_state),
-                gm_over,
-                tls_over
-            );
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                let _ = file.write_all(line.as_bytes());
-            }
-        }
-        if lower || (gm_over && !tls_over) {
-            (state, weights, unary_weights, sighting_weights) =
-                (gm_state, gm_weights, gm_unary, gm_sightings);
-            gm_taken = true;
         }
     }
     let kept: Vec<f64> = weights
@@ -621,7 +357,6 @@ pub(crate) fn solve_core(
     let error = 0.5
         * cost(
             &state,
-            &pattern.gravity,
             odometry,
             closures,
             &huber,
@@ -643,10 +378,9 @@ pub(crate) fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
-    // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
-    // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the evidence reads the odometry at)
+    // only the kept closures' mutually consistent core (the largest set that agree pairwise around their cycles, PCM)
     // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
-    let evidence_weights: Vec<f64> = if gm_taken || config.evidence_core {
+    let evidence_weights: Vec<f64> = if config.evidence_core {
         let kept_closures: Vec<(usize, Edge)> = closures
             .iter()
             .zip(&huber)
@@ -666,12 +400,12 @@ pub(crate) fn solve_core(
     } else {
         huber.clone()
     };
-    // the evidence reads the solve of what it weighs (the odometry at its noise, the core's closures, no gravity
-    // factors), and only at that solve's minimum: residuals a solve stopped short of removing are no one's noise
+    // the evidence reads the solve of what it weighs (the odometry at its noise, the core's closures), and only at
+    // that solve's minimum: residuals a solve stopped short of removing are no one's noise
     let mut evidence_state = state.clone();
     let converged = levenberg_marquardt_steps(
         &mut evidence_state,
-        evidence_pattern,
+        &pattern,
         odometry,
         closures,
         &evidence_weights,
@@ -688,7 +422,7 @@ pub(crate) fn solve_core(
         .then(|| {
             odometry_noise_evidence(
                 &evidence_state,
-                evidence_pattern,
+                &pattern,
                 odometry,
                 closures,
                 &evidence_weights,
@@ -886,64 +620,6 @@ fn odometry_noise_evidence(
         }
     }
     Some(evidence)
-}
-
-/// Whether the odometry is overtrusted at `state` with these factors in: after a least-squares solve with them at their
-/// own variances, the odometry's whitened residuals squared over its redundancy (`odometry_noise_evidence`, its four
-/// noise sources pooled, each at its `headroom` x the edges' noise) exceed what that noise allows at `probability`, a chi-square with that many degrees of
-/// freedom (Wilson-Hilferty's cube-root normal approximation, as the redundancy is not a whole number).
-#[allow(clippy::too_many_arguments)]
-fn odometry_overtrusted(
-    state: &mut State,
-    pattern: &Pattern,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
-    probability: f64,
-    headroom: [f64; 4],
-) -> bool {
-    levenberg_marquardt(
-        state,
-        pattern,
-        odometry,
-        closures,
-        closure_weights,
-        unary,
-        unary_weights,
-        sightings,
-        sighting_weights,
-        1e-5,
-    );
-    let Some(evidence) = odometry_noise_evidence(
-        state,
-        pattern,
-        odometry,
-        closures,
-        closure_weights,
-        unary,
-        unary_weights,
-        sightings,
-        sighting_weights,
-    ) else {
-        return false;
-    };
-    // whitened at the largest noise still allowed, each source's sum shrinks by its headroom
-    let (sum, redundancy) = evidence[..4]
-        .iter()
-        .zip(headroom)
-        .fold((0.0, 0.0), |(s, r), (&(sc, rc), h)| {
-            (s + sc / h.max(1.0), r + rc)
-        });
-    if !(redundancy > 0.0 && sum.is_finite()) {
-        return false;
-    }
-    let z = landmarks::chi2_inverse(2.0 * probability - 1.0, 1).sqrt();
-    let spread = 2.0 / (9.0 * redundancy);
-    sum > redundancy * (1.0 - spread + z * spread.sqrt()).powi(3)
 }
 
 /// The largest set of closures that pairwise agree (PCM, Mangelson 2018): two closures agree when the cycle they close
@@ -1332,7 +1008,6 @@ pub(crate) fn linearize_between(
 
 fn cost(
     state: &State,
-    gravity: &[GravityPrior],
     odometry: &[Edge],
     closures: &[Edge],
     closure_weights: &[f64],
@@ -1341,15 +1016,11 @@ fn cost(
     sightings: &[Sighting],
     sighting_weights: &[f64],
 ) -> f64 {
-    gravity
+    sightings
         .iter()
-        .map(|g| mat3::norm(&gravity_residual(g, state)).powi(2) / g.variance)
+        .zip(sighting_weights)
+        .map(|(s, w)| w * s.whitened(state))
         .sum::<f64>()
-        + sightings
-            .iter()
-            .zip(sighting_weights)
-            .map(|(s, w)| w * s.whitened(state))
-            .sum::<f64>()
         + unary
             .iter()
             .zip(unary_weights)
@@ -1375,8 +1046,6 @@ struct Pattern {
     landmark_at: Vec<usize>,
     landmark_dims: Vec<usize>,
     size: usize,
-    /// The gravity factors (`SolveConfig::gravity`): never reweighted, so part of the problem's structure.
-    gravity: Vec<GravityPrior>,
     symbolic: SymbolicSparseColMat<usize>,
     order: Argsort<usize>,
     llt: SymbolicLlt<usize>,
@@ -1389,7 +1058,6 @@ impl Pattern {
         unary: &[Unary],
         sightings: &[Sighting],
         landmark_dims: &[usize],
-        gravity: &[GravityPrior],
     ) -> Pattern {
         let mut count = 0;
         let slot: Vec<Option<usize>> = free
@@ -1417,12 +1085,6 @@ impl Pattern {
                     .map(|(_, _, r, c)| Pair::new(r, c)),
             );
         }
-        // gravity factors after those (their keyframe's own block)
-        for g in gravity {
-            if let Some(a) = slot[g.keyframe] {
-                indices.extend(block_entries(a, a).map(|(_, _, r, c)| Pair::new(r, c)));
-            }
-        }
         // the damping diagonal last, so the matrix is never structurally singular
         indices.extend((0..size).map(|i| Pair::new(i, i)));
         let (symbolic, order) = SymbolicSparseColMat::try_new_from_indices(size, size, &indices)
@@ -1434,7 +1096,6 @@ impl Pattern {
             landmark_at,
             landmark_dims: landmark_dims.to_vec(),
             size,
-            gravity: gravity.to_vec(),
             symbolic,
             order,
             llt,
@@ -1520,7 +1181,6 @@ fn levenberg_marquardt_steps(
     let mut damping = 1e-6;
     let mut current = cost(
         state,
-        &pattern.gravity,
         odometry,
         closures,
         closure_weights,
@@ -1589,7 +1249,6 @@ fn levenberg_marquardt_steps(
             }
             let trial_cost = cost(
                 &trial,
-                &pattern.gravity,
                 odometry,
                 closures,
                 closure_weights,
@@ -1734,33 +1393,6 @@ fn normal_equations(
         }
         for i in 0..dims {
             gradient[at + i] -= pull(6 + i);
-        }
-    }
-    // gravity factors: residual R_k^T up - body_up; perturbing R_k by exp(d) about its own axes moves it by
-    // [R_k^T up]x d, so rotation about up itself (yaw) is untouched
-    for g in &pattern.gravity {
-        let Some(slot) = pattern.slot[g.keyframe] else {
-            continue;
-        };
-        let r = gravity_residual(g, state);
-        let jacobian = mat3::skew(&mat3::mat_vec(
-            &mat3::transpose(&state.rotation[g.keyframe]),
-            &g.up,
-        ));
-        let w = 1.0 / g.variance;
-        for (i, j, row, col) in block_entries(slot, slot) {
-            let v = if i < 3 && j < 3 {
-                w * (0..3).map(|m| jacobian[m][i] * jacobian[m][j]).sum::<f64>()
-            } else {
-                0.0
-            };
-            if row == col {
-                diagonal[row] += v;
-            }
-            values.push(v);
-        }
-        for i in 0..3 {
-            gradient[6 * slot + i] -= w * (0..3).map(|m| jacobian[m][i] * r[m]).sum::<f64>();
         }
     }
     (values, gradient, diagonal)
