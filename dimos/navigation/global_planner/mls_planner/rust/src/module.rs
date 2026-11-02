@@ -283,7 +283,7 @@ impl MlsPlanner {
         };
         self.tasks = self
             .intake
-            .spawn(self.tf.clone(), self.config.clone(), outputs, false);
+            .spawn(self.tf.clone(), self.config.clone(), outputs, false, None);
     }
 
     async fn stop_worker(&mut self) {
@@ -369,6 +369,7 @@ impl Intake {
         config: Config,
         outputs: WorkerOutputs,
         track_voxel_times: bool,
+        dump_path: Option<String>,
     ) -> WorkerTasks {
         let (viz_tx, viz_rx) = mpsc::channel(VIZ_QUEUE_CAPACITY);
         let publisher = VizPublisher {
@@ -391,6 +392,7 @@ impl Intake {
             viz: viz_tx,
             path: outputs.path,
             track_voxel_times,
+            dump_path,
         };
         WorkerTasks {
             viz_publisher: Some(tokio::spawn(publisher.run())),
@@ -521,6 +523,8 @@ struct Worker {
     viz: mpsc::Sender<VizBatch>,
     path: Output<Path>,
     track_voxel_times: bool,
+    // Where the map state goes every MEMORY_LOG_PERIOD, for offline checks.
+    dump_path: Option<String>,
 }
 
 /// Builds and publishes viz messages from the worker's ticks, so the worker
@@ -575,7 +579,7 @@ impl Worker {
         let mut path_out = false;
         let mut last_memory_log = Instant::now();
         loop {
-            if last_memory_log.elapsed() >= MEMORY_LOG_PERIOD {
+            if self.track_voxel_times && last_memory_log.elapsed() >= MEMORY_LOG_PERIOD {
                 last_memory_log = Instant::now();
                 self.log_memory(&planner);
             }
@@ -637,7 +641,8 @@ impl Worker {
                     seed_progress.finish();
                 }
             } else {
-                self.wake.notified().await;
+                // Wake at least once a period, so the memory log and dump keep up when idle.
+                let _ = tokio::time::timeout(MEMORY_LOG_PERIOD, self.wake.notified()).await;
             }
         }
     }
@@ -671,6 +676,7 @@ impl Worker {
             voxels_moved = report.voxels_moved,
             nodes_moved = report.nodes_moved,
             nodes = report.nodes,
+            rigid_voxels = report.rigid_voxels,
             decision = if report.rebuilt { "rebuild" } else { "repair" },
             "Loop closure applied in place."
         );
@@ -703,6 +709,14 @@ impl Worker {
             queued_seeds = self.seed_regions.lock().expect("seed mutex").len(),
             "Planner memory."
         );
+        if let Some(path) = &self.dump_path {
+            let (voxels, surface) = planner.dump_centers(self.config.voxel_size);
+            for (suffix, values) in [("voxels", voxels), ("surface", surface)] {
+                if let Err(e) = crate::rss::dump_f32(&format!("{path}.{suffix}"), &values) {
+                    warn!(error = %e, path, "Failed to dump the planner state.");
+                }
+            }
+        }
     }
 
     /// Live work has kept seed regions queued and unapplied for too long.

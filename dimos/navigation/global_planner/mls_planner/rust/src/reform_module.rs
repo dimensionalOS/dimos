@@ -83,6 +83,8 @@ pub struct ReformConfig {
     /// rebuilt from the warped voxels instead of repaired around them.
     #[validate(range(min = 0.0))]
     pub reform_rebuild_fraction: f64,
+    /// Where to write the voxels and surface (little-endian f32 xyz, `.voxels` / `.surface`) every 10 s, empty for never.
+    pub dump_path: String,
 }
 
 fn validate_wall_buffer(config: &ReformConfig) -> Result<(), ValidationError> {
@@ -188,9 +190,14 @@ impl MlsReformPlanner {
             node_edges: self.node_edges.clone(),
             path: self.path.clone(),
         };
-        self.tasks = self
-            .intake
-            .spawn(self.tf.clone(), self.config.planner(), outputs, true);
+        let dump_path = (!self.config.dump_path.is_empty()).then(|| self.config.dump_path.clone());
+        self.tasks = self.intake.spawn(
+            self.tf.clone(),
+            self.config.planner(),
+            outputs,
+            true,
+            dump_path,
+        );
     }
 
     async fn stop_worker(&mut self) {

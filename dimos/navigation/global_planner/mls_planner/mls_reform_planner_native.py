@@ -42,6 +42,8 @@ class MLSReformPlannerNativeConfig(MLSPlannerNativeConfig):
     # closure moves most of the map, and repairing nearly all of it costs ~3x a
     # rebuild (huge_loop_pointlio, reform_bench.py).
     reform_rebuild_fraction: float = 0.25
+    # Where to write the module's map state every 10 s for offline checks, empty for never.
+    dump_path: str = ""
 
 
 class MLSReformPlannerNative(MLSPlannerNative):

@@ -66,6 +66,11 @@ impl SurfaceCells {
         self.coord.len()
     }
 
+    /// Every live cell's voxel.
+    pub fn live_coords(&self) -> impl Iterator<Item = VoxelKey> + '_ {
+        self.by_coord.keys().copied()
+    }
+
     /// Live cells, excluding tombstones.
     pub fn live_len(&self) -> usize {
         self.by_coord.len()

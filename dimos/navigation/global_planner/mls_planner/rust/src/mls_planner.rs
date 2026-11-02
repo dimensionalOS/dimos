@@ -265,6 +265,9 @@ pub(crate) struct VoxelTimes {
     epoch: Option<f64>,
     now: f32,
     by_key: AHashMap<VoxelKey, f32>,
+    /// Where a warped voxel's point sits off its center, so the next warp moves
+    /// that point and a sub-voxel shift adds up instead of being lost. Absent is zero.
+    residual: AHashMap<VoxelKey, [f32; 3]>,
 }
 
 impl VoxelTimes {
@@ -297,6 +300,26 @@ pub struct PlannerSizes {
 }
 
 impl Planner {
+    /// Voxel centers and surface cell points, flat xyz triples, for offline checks.
+    pub fn dump_centers(&self, voxel_size: f32) -> (Vec<f32>, Vec<f32>) {
+        let half = voxel_size * 0.5;
+        let voxels = self
+            .voxel_map
+            .iter()
+            .flat_map(|&(x, y, z)| [x, y, z].map(|k| k as f32 * voxel_size + half))
+            .collect();
+        let surface = self
+            .graph
+            .cells
+            .live_coords()
+            .flat_map(|(ix, iy, iz)| {
+                let (x, y, z) = crate::voxel::surface_point_xyz(ix, iy, iz, voxel_size);
+                [x, y, z]
+            })
+            .collect();
+        (voxels, surface)
+    }
+
     pub fn sizes(&self) -> PlannerSizes {
         PlannerSizes {
             voxels: self.voxel_map.len(),
@@ -329,6 +352,7 @@ impl Planner {
             epoch: None,
             now: 0.0,
             by_key: AHashMap::new(),
+            residual: AHashMap::new(),
         });
     }
 
@@ -350,6 +374,7 @@ impl Planner {
             if let Some(times) = &mut self.voxel_times {
                 let now = times.now;
                 times.by_key = self.voxel_map.iter().map(|&k| (k, now)).collect();
+                times.residual.clear();
             }
             self.rebuild_from_voxels(config);
         });
@@ -648,11 +673,14 @@ impl Planner {
                 self.by_col.add((ix, iy, iz));
             }
             if let Some(times) = &mut self.voxel_times {
+                // Fresh data sits where it was observed, with no residual.
                 for &iz in &edit.removed {
                     times.by_key.remove(&(ix, iy, iz));
+                    times.residual.remove(&(ix, iy, iz));
                 }
                 for &iz in &edit.added {
                     times.by_key.insert((ix, iy, iz), times.now);
+                    times.residual.remove(&(ix, iy, iz));
                 }
             }
             if was_empty != self.by_col.get(edit.col).is_none() {
