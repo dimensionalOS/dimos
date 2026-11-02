@@ -32,8 +32,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import Simulation, SimulationSpec
-from dimos.sim2.spec import Mount, SimulatedSensor
-from dimos.sim2.view import WorldView, open_view, rotation_matrix
+from dimos.sim2.spec import SimulatedSensor
+from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.sensors.mid360.lidar import OcclusionMap, SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE, Mid360Pattern
@@ -41,9 +41,7 @@ from dimos.utils.data import get_data
 
 
 class LivoxSimConfig(ModuleConfig):
-    name: str = "lidar"
-    mount: Mount = Mount("world")
-    robot_id: str | None = None
+    # The lidar's frame, as a robot's URDF or the scene names it: where it sits.
     frame_id: str | None = "mid360_link"
     imu_frame_id: str = "imu_link"
     rate_hz: float = 10.0
@@ -64,13 +62,14 @@ class LivoxSim(Module):
 
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        config = self.config
-        return {"simulated": SimulatedSensor(config.name, "lidar", config.mount, config.robot_id)}
+        return {"simulated": SimulatedSensor("lidar", self.frame_id)}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_change)
-        view = open_view(self._simulation.describe())
+        description = self._simulation.describe()
+        site = sensor_frame(description, self.frame_id)
+        view = open_view(description)
         root = get_data("go2_sim")
         sensor = SimMid360(
             view.raycaster(self.config.geom_groups),
@@ -80,12 +79,11 @@ class LivoxSim(Module):
             if self.config.go2_occlusion
             else None,
         )
-        self._scanning = asyncio.create_task(self._scan(view, sensor))
-        self._reading = asyncio.create_task(self._read_imu(open_view(self._simulation.describe())))
+        self._scanning = asyncio.create_task(self._scan(view, sensor, site))
+        self._reading = asyncio.create_task(self._read_imu(open_view(description), site))
         yield
 
-    async def _scan(self, view: WorldView, sensor: SimMid360) -> None:
-        site = f"{self.config.robot_id or 'world'}/{self.config.name}"
+    async def _scan(self, view: WorldView, sensor: SimMid360, site: str) -> None:
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
         # Scans and IMU readings pace on sim time, so both keep their rates per sim second at any speed.
         async for _ in self._world.ticks(self.config.rate_hz):
@@ -105,8 +103,7 @@ class LivoxSim(Module):
                 )
             )
 
-    async def _read_imu(self, view: WorldView) -> None:
-        site = f"{self.config.robot_id or 'world'}/{self.config.name}"
+    async def _read_imu(self, view: WorldView, site: str) -> None:
         async for _ in self._world.ticks(self.config.imu_rate_hz):
             view.update(self._world)
             gyro, accelerometer, (w, x, y, z) = view.imu(site)

@@ -14,50 +14,39 @@
 
 """The sim2 Go2 with a Mid-360 on the real rig's mount, its fitted pattern and mount occlusion."""
 
-import math
-
-from scipy.spatial.transform import Rotation
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, frames_to_edge_transforms
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import CAMERA_XYZ, FRAMES
-from dimos.robot.unitree.go2.sim2 import Go2Sim
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
+    CAMERA_XYZ,
+    MID360_PITCH_DOWN,
+    MID360_XYZ,
+    OPTICAL_RPY,
+)
+from dimos.robot.unitree.go2.sim2 import GO2_MJCF, GO2_SIM_MODEL, Go2Sim
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
-from dimos.sim2.spec import Mount
 from dimos.visualization.vis_module import vis_module
 
-_EDGES = {edge.child_frame_id: edge for edge in frames_to_edge_transforms(FRAMES)}
-_MID360 = _EDGES["front_camera"].to_matrix() @ _EDGES["mid360_link"].to_matrix()
-
-
-class Go2Mid360Mount(StaticTfPublisher):
-    """base_link -> front_camera -> mid360_link; Go2Sim already publishes the camera frames."""
-
-    def transforms(self) -> list[Transform]:
-        return [_EDGES["front_camera"], _EDGES["mid360_link"]]
-
+# The real rig's frames (go2_mid360_static_transforms.FRAMES).
+CAMERA_FRAME = "front_camera"
+MID360_FRAME = "mid360_link"
+CAMERA_OPTICAL_FRAME = "camera_optical"
 
 unitree_go2_sim2_mid360 = autoconnect(
     Simulation.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     Go2Sim.blueprint(),
-    Go2Mid360Mount.blueprint(),
-    LivoxSim.blueprint(
-        robot_id="go2",
-        mount=Mount(
-            "base",
-            tuple(_MID360[:3, 3]),
-            tuple(Rotation.from_matrix(_MID360[:3, :3]).as_euler("xyz")),
-        ),
-        go2_occlusion=True,
-    ),
-    # MuJoCo cameras look down their -z; this one looks along the body's +x.
-    SimCamera.blueprint(
-        robot_id="go2", mount=Mount("base", CAMERA_XYZ, (math.pi / 2, 0.0, -math.pi / 2))
-    ),
+    UrdfManager.blueprint(
+        model=GO2_SIM_MODEL.with_fixed_frame(CAMERA_FRAME, "base_link", xyz=CAMERA_XYZ)
+        .with_fixed_frame(
+            MID360_FRAME, CAMERA_FRAME, xyz=MID360_XYZ, rpy=(0.0, MID360_PITCH_DOWN, 0.0)
+        )
+        .with_fixed_frame(CAMERA_OPTICAL_FRAME, CAMERA_FRAME, rpy=OPTICAL_RPY),
+        formats={"mjcf": GO2_MJCF},
+    ).remappings([(UrdfManager, "coordinator_joint_state", "joint_state")]),
+    LivoxSim.blueprint(frame_id=MID360_FRAME, go2_occlusion=True),
+    SimCamera.blueprint(frame_id=CAMERA_OPTICAL_FRAME),
 ).global_config(n_workers=4, robot_model="unitree_go2")
