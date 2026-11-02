@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use crate::big_picture_fit::{closure_edges, Edge};
-use crate::connection_fit::{dump_icp, icp, IcpParams};
+use crate::connection_fit::{dump_icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
 use crate::pose_graph_solving::Solving;
@@ -319,6 +319,14 @@ pub struct Config {
     /// Closure ICP steps minimise distances along the target's surface normals (point-to-plane); false is the old
     /// point-to-point.
     pub closure_icp_point_to_plane: bool,
+    /// The single-scan closure ICP aligns against its target voxelized at this (m; cheaper search, fewer normals;
+    /// fitness and overlap still measured against the full target). 0 = the full target. Default 1.5 x
+    /// submap_resolution: on 200 small Mid-360 candidates it ran 18% faster and its 5 changed decisions all rejected
+    /// matches GT puts 7-55 m apart (half the inlier distance was faster but accepted one 62 m look-alike).
+    pub closure_icp_target_resolution_m: f64,
+    /// The single-scan closure ICP gives up (an ICP reject) once its fitness can no longer reach the gate's largest
+    /// passing fitness (`closure_icp_max_fitness_m`², `connection_fit::icp_with_early_stop`).
+    pub closure_icp_early_stop: bool,
     /// Drop the points a scan re-sends from the scan before (placed by the odometry they land exactly on their copies;
     /// the Go2 L1 republishes its last seconds of points) from every keyframe cloud, so scan context, ICP and the maps
     /// see each surface once. On by default.
@@ -465,6 +473,10 @@ pub struct Config {
     /// threshold, closest first), up to 1 + ceil(1 / (1 - pressure)) tries per keyframe (2 at no pressure), at most
     /// scan_context_top_k; a newer keyframe's better match still outranks a waiting retry.
     pub closure_alternative_places: bool,
+    /// Alternative places are tried only at or above this pressure; below it a keyframe tries only its best match.
+    /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
+    /// loops; huge: 12,012 of 16,867 for 69 right and 150 wrong).
+    pub closure_alternative_places_min_pressure: f64,
     /// When true, a closure the previous solve kept is a commitment: each solve holds the committed closures in, and
     /// drops them only when a cold solve (every closure re-decided) keeps more closures and rejects some committed one,
     /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
@@ -523,6 +535,8 @@ impl Default for Config {
             closure_icp_inlier_distance_m: 0.3872983346207417,
             closure_icp_max_fitness_m: 0.3872983346207417,
             closure_icp_point_to_plane: true,
+            closure_icp_target_resolution_m: 0.15,
+            closure_icp_early_stop: true,
             drop_reseen_points: true,
             auto_aggregate_cloud_size: 2000,
             closure_submap_half_range: 5,
@@ -572,6 +586,7 @@ impl Default for Config {
             closure_sharpness_nudge_deg: 5.0,
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
+            closure_alternative_places_min_pressure: 0.8,
             closure_commitments: true,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
@@ -774,11 +789,17 @@ impl ClosureSearch {
         // a cloud computation, through the ICP cache when there is one; a point-to-plane alignment is a different
         // result from a point-to-point one, so it is part of the key
         let cache = self.icp_cache.clone();
-        let key_suffix = if self.config.closure_icp_point_to_plane {
-            ":pl"
-        } else {
-            ""
-        };
+        // the thinned target and the early stop change the single ICP's result too, so they are part of the key
+        let key_suffix = format!(
+            "{}{}{}",
+            if self.config.closure_icp_point_to_plane { ":pl" } else { "" },
+            if self.config.closure_icp_target_resolution_m > 0.0 {
+                format!(":t{}", self.config.closure_icp_target_resolution_m)
+            } else {
+                String::new()
+            },
+            if self.config.closure_icp_early_stop { ":es" } else { "" },
+        );
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
                 Some(cache) => {
@@ -912,7 +933,7 @@ impl ClosureSearch {
         let t0 = std::time::Instant::now();
         let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
-            crate::icp_cache::encode_icp(&icp(
+            crate::icp_cache::encode_icp(&crate::connection_fit::icp_thinned(
                 source_cloud,
                 target_cloud,
                 target_tree,
@@ -924,6 +945,10 @@ impl ClosureSearch {
                     inlier_squared_distance: self.config.closure_inlier_squared_distance(),
                     point_to_plane: self.config.closure_icp_point_to_plane,
                 },
+                self.config
+                    .closure_icp_early_stop
+                    .then(|| self.config.closure_icp_max_fitness_m.powi(2)),
+                self.config.closure_icp_target_resolution_m,
             ))
         }));
         timing.icp_s += t0.elapsed().as_secs_f64();
@@ -1651,6 +1676,7 @@ impl GscPgo {
         tries: usize,
     ) {
         if !self.config.closure_alternative_places
+            || rejected.pressure < self.config.closure_alternative_places_min_pressure
             || alternatives.is_empty()
             || rejected.source_id >= self.key_poses.len()
         {

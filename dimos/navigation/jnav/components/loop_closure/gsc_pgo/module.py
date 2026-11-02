@@ -54,6 +54,12 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_max_fitness_m: float = 0.3872983346207417
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
     closure_icp_point_to_plane: bool = True
+    # the single-scan closure ICP aligns against its target voxelized at this (m, fitness still on the full target; 0 = full)
+    closure_icp_target_resolution_m: float = 0.15
+    # the single-scan closure ICP gives up once its fitness can no longer reach the gate's largest passing fitness
+    closure_icp_early_stop: bool = True
+    # alternative places are retried only at or above this pressure (below it, only the best match is tried)
+    closure_alternative_places_min_pressure: float = 0.8
     # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud (on by default)
     drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)

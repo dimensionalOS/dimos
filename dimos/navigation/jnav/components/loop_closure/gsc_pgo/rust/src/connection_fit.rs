@@ -60,7 +60,23 @@ pub fn icp(
     translation: &Vec3,
     params: &IcpParams,
 ) -> IcpResult {
+    icp_with_early_stop(source, target, tree, rotation, translation, params, None)
+}
+
+/// `icp`, but given `fail_fitness` (the gate's largest passing fitness, m²) it gives up, unconverged, once the fit's
+/// fitness (as `IcpResult` measures it, over this iteration's pairs) can no longer get under it: even improving every
+/// remaining iteration by its best improvement so far, it would still end above `fail_fitness`.
+pub fn icp_with_early_stop(
+    source: &[[f32; 3]],
+    target: &[[f32; 3]],
+    tree: &impl NearestIndex,
+    rotation: &Mat3,
+    translation: &Vec3,
+    params: &IcpParams,
+    fail_fitness: Option<f64>,
+) -> IcpResult {
     let (mut rotation, mut translation) = (*rotation, *translation);
+    let mut fitness_history: Vec<f64> = Vec::new();
     let mut converged = false;
     let limit = (params.max_correspondence_distance * params.max_correspondence_distance) as f32;
     let mut previous_mse = f64::MAX;
@@ -101,6 +117,30 @@ pub fn icp(
             );
             let cos = (step_rotation[0][0] + step_rotation[1][1] + step_rotation[2][2] - 1.0) / 2.0;
             let mse = pairs.iter().map(|p| p.2 as f64).sum::<f64>() / pairs.len() as f64;
+            if let Some(fail) = fail_fitness {
+                let inliers: Vec<f64> = pairs
+                    .iter()
+                    .map(|p| p.2 as f64)
+                    .filter(|&d| d <= params.inlier_squared_distance)
+                    .collect();
+                let overlap = inliers.len() as f64 / source.len() as f64;
+                fitness_history.push(if inliers.is_empty() {
+                    f64::MAX
+                } else {
+                    inliers.iter().sum::<f64>() / inliers.len() as f64 / overlap
+                });
+                if let [.., previous, latest] = fitness_history[..] {
+                    let best_step = fitness_history
+                        .windows(2)
+                        .filter(|w| w[0] < f64::MAX)
+                        .map(|w| w[0] - w[1])
+                        .fold(0.0f64, f64::max);
+                    let remaining = (params.max_iterations - iteration) as f64;
+                    if previous.is_finite() && latest - best_step * remaining > fail {
+                        break;
+                    }
+                }
+            }
             if iteration == params.max_iterations
                 || (cos >= 0.99999 && mat3::norm(&step_translation) <= 1e-3)
                 || (previous_mse - mse).abs() <= 1e-6 * previous_mse
@@ -123,6 +163,35 @@ pub fn icp(
         fitness,
         overlap,
     }
+}
+
+/// `icp_with_early_stop` against `target` voxelized at `resolution` (a coarser target is a cheaper search and fewer
+/// normals; at half the inlier distance every inlier still has a target point within it), the result's fitness and
+/// overlap then measured against the full target (`tree`) as the gate reads them. `resolution` 0 = the full target.
+#[allow(clippy::too_many_arguments)]
+pub fn icp_thinned(
+    source: &[[f32; 3]],
+    target: &[[f32; 3]],
+    tree: &impl NearestIndex,
+    rotation: &Mat3,
+    translation: &Vec3,
+    params: &IcpParams,
+    fail_fitness: Option<f64>,
+    resolution: f64,
+) -> IcpResult {
+    if resolution <= 0.0 {
+        return icp_with_early_stop(source, target, tree, rotation, translation, params, fail_fitness);
+    }
+    let thin = crate::pointcloud::voxel_downsample(target, resolution);
+    let thin_tree = crate::pointcloud::KdTree::build(&thin);
+    let mut result =
+        icp_with_early_stop(source, &thin, &thin_tree, rotation, translation, params, fail_fitness);
+    (result.fitness, result.overlap) = fit_quality(
+        &transform_cloud(source, &result.rotation, &result.translation),
+        tree,
+        params.inlier_squared_distance,
+    );
+    result
 }
 
 impl IcpResult {
@@ -610,14 +679,21 @@ fn plane_fit(
     tree: &impl NearestIndex,
     normals: &[std::sync::OnceLock<Option<[f64; 3]>>],
 ) -> Option<(Mat3, Vec3)> {
+    let normal_of = |i: usize| {
+        *normals[i].get_or_init(|| {
+            let neighbours = tree.knn(&target[i], 10);
+            (neighbours.len() >= 3).then(|| least_spread_direction(target, &neighbours))
+        })
+    };
+    // the paired target points' normals, found in parallel (each is a 10-neighbour search); the sum below stays in order
+    pairs.par_iter().for_each(|&(_, _, _, i)| {
+        normal_of(i);
+    });
     let mut information = [[0.0; 6]; 6];
     let mut gradient = [0.0; 6];
     let mut used = 0;
     for (p, q, _, i) in pairs {
-        let Some(n) = *normals[*i].get_or_init(|| {
-            let neighbours = tree.knn(&target[*i], 10);
-            (neighbours.len() >= 3).then(|| least_spread_direction(target, &neighbours))
-        }) else {
+        let Some(n) = normal_of(*i) else {
             continue;
         };
         let (p, q) = (p.map(|v| v as f64), q.map(|v| v as f64));
