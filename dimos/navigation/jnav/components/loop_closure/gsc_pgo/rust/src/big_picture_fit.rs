@@ -116,7 +116,7 @@ pub fn solve(
             r2 = residual(&state);
             // stop like GTSAM's GncOptimizer: weights settled, or the weighted cost stopped changing
             let weighted_cost = cost(&state, odometry, &scaled, &weights);
-            if weights.iter().all(|&w| w < 1e-4 || w > 1.0 - 1e-4)
+            if weights.iter().all(|&w| !(1e-4..=1.0 - 1e-4).contains(&w))
                 || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost
             {
                 break;
@@ -695,45 +695,13 @@ impl GscPgo {
         }
     }
     /// Start a solve of every committed closure from the odometry (GNC must start from the dead-reckoned chain,
-    /// not an estimate earlier closures already bent). With `closure_cooling`, a keyframe held up by two or more
-    /// independent cycles nearby (it still holds if any one closure is wrong) stays where it is, unless a new
-    /// closure that disagrees with the graph runs through it; closures between two held keyframes keep their verdicts.
+    /// not an estimate earlier closures already bent).
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
         let all_closures = closure_edges(self.committed_closures.iter());
         // keyframe 0 pins the map
-        let mut free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-        if config.closure_cooling {
-            let kept: Vec<Edge> = all_closures[..self.closures_dispatched]
-                .iter()
-                .zip(&self.committed_closures)
-                .filter(|(_, c)| c.gnc_weight > 0.5)
-                .map(|(e, _)| *e)
-                .collect();
-            let backups = local_cycles(n, &kept, config.closure_submap_half_range.max(1) as usize);
-            for k in 1..n {
-                free[k] = backups[k] < 2;
-            }
-            let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_global).collect();
-            let positions: Vec<Vec3> = self
-                .key_poses
-                .iter()
-                .map(|k| k.translation_global)
-                .collect();
-            let threshold = chi2_inverse_6dof(config.closure_gnc_inlier_probability);
-            for e in &all_closures[self.closures_dispatched..] {
-                let scaled = Edge {
-                    variances: e.variances.map(|v| v * config.closure_gnc_var_scale),
-                    ..*e
-                };
-                if residuals(&rotations, &positions, &[scaled])[0] > threshold {
-                    for k in e.from.min(e.to).max(1)..=e.from.max(e.to) {
-                        free[k] = true;
-                    }
-                }
-            }
-        }
+        let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
         // free keyframes start from the odometry, riding the correction of the nearest held keyframe before them
         let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
         let mut offset = (mat3::identity(), [0.0; 3]);
@@ -838,9 +806,9 @@ impl GscPgo {
                 &self.translation_offset,
             );
         }
-        // a closure no solve judged (both ends held) agreed with a map that holds without it
-        let mut weights: Vec<f64> = self
-            .committed_closures
+        // a closure this solve had but did not judge (both ends held) agreed with a map that holds without it; one
+        // committed while it ran was not in it, so it stays unjudged
+        let mut weights: Vec<f64> = self.committed_closures[..self.closures_dispatched]
             .iter()
             .map(|c| {
                 if c.gnc_weight.is_nan() {
@@ -923,49 +891,6 @@ pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClos
             rotation: l.rotation_offset,
             translation: l.translation_offset,
             variances: [l.score.max(1e-6); 6],
-        })
-        .collect()
-}
-
-/// Independent cycles (backups) holding each keyframe: in the graph of its `hops`-step neighbourhood (odometry
-/// and `closures`), edges - nodes + 1.
-fn local_cycles(n: usize, closures: &[Edge], hops: usize) -> Vec<usize> {
-    let mut neighbours: Vec<Vec<usize>> = (0..n)
-        .map(|k| {
-            [k.checked_sub(1), (k + 1 < n).then_some(k + 1)]
-                .into_iter()
-                .flatten()
-                .collect()
-        })
-        .collect();
-    for c in closures {
-        neighbours[c.from].push(c.to);
-        neighbours[c.to].push(c.from);
-    }
-    let mut seen = vec![usize::MAX; n];
-    (0..n)
-        .map(|start| {
-            let (mut frontier, mut nodes) = (vec![start], vec![start]);
-            seen[start] = start;
-            for _ in 0..hops {
-                let mut next = Vec::new();
-                for &k in &frontier {
-                    for &m in &neighbours[k] {
-                        if seen[m] != start {
-                            seen[m] = start;
-                            next.push(m);
-                        }
-                    }
-                }
-                nodes.extend(&next);
-                frontier = next;
-            }
-            let edges = nodes
-                .iter()
-                .map(|&k| neighbours[k].iter().filter(|&&m| seen[m] == start).count())
-                .sum::<usize>()
-                / 2;
-            (edges + 1).saturating_sub(nodes.len())
         })
         .collect()
 }

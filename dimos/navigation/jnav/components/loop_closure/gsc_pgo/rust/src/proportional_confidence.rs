@@ -15,7 +15,8 @@
 //! Stage 4, proportional confidence: how much evidence a connection needs grows with how hard it pulls
 //! the graph. The yank (how far the closure would move its source keyframe from where the graph has it) is scaled against the yanks of the candidates scored so far
 //! into z; the connection's confidence (scan context x ICP fitness x degeneracy) must reach
-//! 1 - exp(-z^2 / 2k^2), and one that falls short gets a second look with extended ICP on more keyframes.
+//! 1 - exp(-required evidence) (yank, the solve's keep record, look-alike places), and one that falls short gets a second
+//! look with extended ICP on more keyframes, as many as the loop-overlap pressure allows.
 
 use crate::connection_fit::{dump_icp, icp, IcpParams, IcpResult};
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
@@ -72,12 +73,23 @@ impl ClosureSearch {
                 1.0
             };
         diag.confidence = diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor;
-        let width = self.config.closure_yank_gate_width.max(f64::EPSILON);
-        diag.required_confidence = 1.0 - (-diag.yank_z * diag.yank_z / (2.0 * width * width)).exp();
+        diag.required_confidence = 1.0 - (-self.required_evidence(diag)).exp();
         (
             diag.yank_rotation_deg / drift,
             diag.yank_translation / drift,
         )
+    }
+    /// Evidence (-ln(1 - confidence)) a candidate must reach before look-alike places: z^2 / 2k^2 for its yank, plus,
+    /// when the solve has been rejecting more closures than it keeps, the log-odds against a passed closure being kept,
+    /// ln((1 - keep_rate) / keep_rate) (never below 0, so a good record never lowers the bar).
+    pub(crate) fn required_evidence(&self, diag: &ClosureCandidateDiag) -> f64 {
+        let width = self.config.closure_yank_gate_width.max(f64::EPSILON);
+        let record = if diag.keep_rate.is_finite() {
+            ((1.0 - diag.keep_rate) / diag.keep_rate).ln().max(0.0)
+        } else {
+            0.0
+        };
+        diag.yank_z * diag.yank_z / (2.0 * width * width) + record
     }
     /// Global-frame cloud of keyframes `ids`, voxel-downsampled at the submap resolution.
     pub(crate) fn stacked_cloud(&self, ids: impl Iterator<Item = usize>) -> PointCloud {
@@ -97,8 +109,9 @@ impl ClosureSearch {
         }
         cloud
     }
-    /// See `Config::closure_extended_icp_max_keyframes`. Returns the extended ICP of the first round
-    /// whose confidence clears `diag.required_confidence`, or None.
+    /// Extended ICP on 2, 4, 8, ... keyframes, up to `diag.extension_budget` (closure_extended_icp_max_keyframes x
+    /// pressure). Returns the extended ICP of the first round whose evidence reaches `required(evidence)` (which may
+    /// count more look-alike places now that the evidence could cover them), or None.
     pub(crate) fn extended_icp(
         &self,
         cur_idx: usize,
@@ -106,8 +119,11 @@ impl ClosureSearch {
         source_cloud: &PointCloud,
         first: &IcpResult,
         diag: &mut ClosureCandidateDiag,
+        required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
     ) -> Option<IcpResult> {
-        let max_keyframes = self.config.closure_extended_icp_max_keyframes;
+        let max_keyframes = diag
+            .extension_budget
+            .min(self.config.closure_extended_icp_max_keyframes);
         if max_keyframes < 2 || !first.converged {
             return None;
         }
@@ -193,10 +209,9 @@ impl ClosureSearch {
                 / (single as f64 / source_cloud.len() as f64))
                 .min(1.0);
             let per_scan = diag.confidence * held_up;
-            // evidence = -ln(1 - confidence); the gate compares it to z^2 / 2k^2 without rounding to 1
+            // evidence = -ln(1 - confidence); compared with the required evidence without rounding to 1
             let evidence = -(1.0 - per_scan).ln() * extended as f64 / single as f64;
-            let width = self.config.closure_yank_gate_width.max(f64::EPSILON);
-            let required = diag.yank_z * diag.yank_z / (2.0 * width * width);
+            let required = required(evidence, diag);
             let confidence = 1.0 - (-evidence).exp();
             diag.extended_keyframes = cur_idx - source_first + 1;
             diag.extended_source_points = stacked.len();
