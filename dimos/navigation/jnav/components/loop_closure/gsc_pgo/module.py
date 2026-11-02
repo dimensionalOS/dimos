@@ -118,6 +118,13 @@ class PGOConfig(NativeModuleConfig):
     # exp(sensitivity (1 - min(d, 5)^2)) per step, d = how far that step's alignment is from the one before it at the
     # source keyframe, in inlier distances (0 = plain median)
     compounding_agreement_sensitivity: float = 1.5
+    # Graph change heat: a finished solve is adopted only while the heat <= threshold; adopting adds the curbed yank of the
+    # largest keyframe move it makes (stated odometry error sigmas along the path) above the floor; the heat decays by
+    # decay per keyframe; a solve finishing while hot waits (a newer one replaces it), always adopted at the run's end
+    graph_change_heat_enabled: bool = True
+    graph_change_heat_threshold: float = 30.0
+    graph_change_heat_floor: float = 20.0
+    graph_change_heat_decay: float = 0.995
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off

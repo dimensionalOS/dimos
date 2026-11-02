@@ -456,6 +456,16 @@ pub struct Config {
     /// solve takes. 0 = the plain median.
     #[cfg_attr(feature = "native", serde(alias = "closure_extension_agreement_alpha"))]
     pub compounding_agreement_sensitivity: f64,
+    /// Graph change heat: a finished solve is adopted only while the heat is at or under `graph_change_heat_threshold`;
+    /// adopting one adds its cost, the curbed yank (yank units) of the largest keyframe move it makes from the accepted
+    /// graph, in standard deviations of the stated odometry error accumulated along the path, above
+    /// `graph_change_heat_floor`; the heat decays by `graph_change_heat_decay` per keyframe. A solve finishing while the
+    /// heat is over waits, a newer one replacing it, and is adopted at the first keyframe the heat is back under (always
+    /// at `finish`). The solver itself never sees it.
+    pub graph_change_heat_enabled: bool,
+    pub graph_change_heat_threshold: f64,
+    pub graph_change_heat_floor: f64,
+    pub graph_change_heat_decay: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -641,6 +651,10 @@ impl Default for Config {
             decisive_pressure_rate: 1.0,
             extension_cloud_spacing: 0.25,
             compounding_agreement_sensitivity: 1.5,
+            graph_change_heat_enabled: true,
+            graph_change_heat_threshold: 30.0,
+            graph_change_heat_floor: 20.0,
+            graph_change_heat_decay: 0.995,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -729,6 +743,11 @@ pub struct GscPgo {
     /// Per finished solve (adopted or not): the keyframes it was dispatched over, its newest keyframe's time, and the
     /// seconds it took on its thread.
     pub(crate) solve_records: Vec<(usize, f64, f64)>,
+    /// The graph change heat (`graph_change_heat_enabled`), the keyframe count it was last raised at, and the finished
+    /// solve waiting for it to cool.
+    pub(crate) heat: f64,
+    pub(crate) heat_keyframes: usize,
+    pub(crate) pending_solve: Option<crate::pose_graph_solving::FinishedSolve>,
     /// The newest 51 scans' pose times and positions (odometry frame), for the body's recent speed.
     pub(crate) recent_motion: std::collections::VecDeque<(f64, Vec3)>,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
@@ -1950,6 +1969,9 @@ impl GscPgo {
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {
+        // a solve waiting on the graph change heat is adopted at the last keyframe count's end once the heat is under
+        let keyframes = self.key_poses.len();
+        self.release_pending_solve(keyframes);
         self.graph_version += 1;
         // every use of a keyframe's cloud (submaps, stacked clouds) voxelizes it at submap_resolution, so it is
         // stored that way: a dense scan (the Go2 L1's ~30k-point local map) would otherwise be kept whole
