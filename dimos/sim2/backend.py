@@ -20,11 +20,11 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from dimos_lcm.world_msgs import WorldChange
+from dimos_lcm.world_msgs import WorldObservations
 
 from dimos.sim2.actions import Action
 from dimos.sim2.spec import Simulated
-from dimos.sim2.world_change import WorldWriter
+from dimos.sim2.world_observations import WorldWriter
 
 if TYPE_CHECKING:
     from dimos.sim2.module import SimulationConfig
@@ -35,7 +35,7 @@ BACKENDS = {"mujoco": "dimos.sim2.mujoco_backend.MujocoBackend"}
 class Publisher(Protocol):
     @property
     def busy(self) -> bool: ...
-    def offer(self, change: WorldChange) -> None: ...
+    def offer(self, frame: WorldObservations) -> None: ...
 
 
 class SimulationBackend(Protocol):
@@ -47,8 +47,8 @@ class SimulationBackend(Protocol):
     ) -> None:
         """Build the world from config.scene and simulated, writing any files into directory."""
 
-    async def run(self, world_change: Publisher) -> None:
-        """Step the world forever, offering a frame of what changed whenever world_change is not busy.
+    async def run(self, world_observations: Publisher) -> None:
+        """Step the world forever, offering a frame of what changed whenever world_observations is not busy.
 
         It writes a frame only when it can offer it, so no change is ever written and then dropped.
         """

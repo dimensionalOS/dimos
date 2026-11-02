@@ -29,7 +29,7 @@ import tempfile
 from threading import Event, Thread
 from typing import Any, Protocol
 
-from dimos_lcm.world_msgs import WorldAction, WorldChange
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
 from pydantic import Field
 
 from dimos.core.core import rpc
@@ -61,13 +61,13 @@ class SimulationConfig(ModuleConfig):
 
 
 class Simulation(SharedConfigModule):
-    """Publishes the world on world_change and acts on actions, through whichever backend config names.
+    """Publishes the world on world_observations and acts on actions, through whichever backend config names.
 
     It steps only once every module has started: a module that misses a frame never gets it.
     """
 
     config: SimulationConfig
-    world_change: Out[WorldChange]
+    world_observations: Out[WorldObservations]
     actions: In[WorldAction]
     # Like UrdfManager: a request names the world file, or a file it names, and gets it on file_info.
     render_file_request: In[String]
@@ -114,7 +114,7 @@ class Simulation(SharedConfigModule):
         assert self._backend is not None
         # Every action is applied: one dropped while busy would be a lost motor command.
         self.actions.subscribe(self._on_actions)
-        self._publisher = _LatestPublisher(self.world_change.publish)
+        self._publisher = _LatestPublisher(self.world_observations.publish)
         self._running = asyncio.create_task(self._run())
         announcing = asyncio.create_task(self._announce())
         yield
@@ -195,19 +195,19 @@ class _LatestPublisher:
 
     def __init__(self, publish: Any) -> None:
         self._publish = publish
-        self._pending: WorldChange | None = None
+        self._pending: WorldObservations | None = None
         self._wake = Event()
         self._closed = False
-        self._thread = Thread(target=self._loop, name="world_change", daemon=True)
+        self._thread = Thread(target=self._loop, name="world_observations", daemon=True)
         self._thread.start()
 
     @property
     def busy(self) -> bool:
         return self._wake.is_set()
 
-    def offer(self, change: WorldChange) -> None:
+    def offer(self, frame: WorldObservations) -> None:
         if not self.busy:
-            self._pending = change
+            self._pending = frame
             self._wake.set()
 
     def close(self) -> None:

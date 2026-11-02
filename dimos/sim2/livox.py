@@ -21,7 +21,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
-from dimos_lcm.world_msgs import WorldChange
+from dimos_lcm.world_msgs import WorldObservations
 import numpy as np
 
 from dimos.core.module import Module, ModuleConfig
@@ -34,7 +34,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.mid360.lidar import OcclusionMap, SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE, Mid360Pattern
 from dimos.utils.data import get_data
@@ -57,7 +57,7 @@ class LivoxSim(Module):
     config: LivoxSimConfig
     lidar: Out[PointCloud2]
     imu: Out[Imu]
-    world_change: In[WorldChange]
+    world_observations: In[WorldObservations]
     _simulation: SimulationSpec
 
     @shared_config(Simulation)
@@ -66,7 +66,7 @@ class LivoxSim(Module):
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
-        self._world.subscribe(self.world_change)
+        self._world.subscribe(self.world_observations)
         description = self._simulation.describe()
         site = sensor_frame(description, self.frame_id)
         view = open_view(description)

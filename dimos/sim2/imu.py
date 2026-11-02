@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An IMU at its frame, read from its own view of the world as world_change moves it."""
+"""An IMU at its frame, read from its own view of the world as world_observations moves it."""
 
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
-from dimos_lcm.world_msgs import WorldChange
+from dimos_lcm.world_msgs import WorldObservations
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
@@ -29,7 +29,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, sensor_frame
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 
 
 class SimImuConfig(ModuleConfig):
@@ -41,7 +41,7 @@ class SimImuConfig(ModuleConfig):
 class SimImu(Module):
     config: SimImuConfig
     imu: Out[Imu]
-    world_change: In[WorldChange]
+    world_observations: In[WorldObservations]
     _simulation: SimulationSpec
 
     @shared_config(Simulation)
@@ -50,7 +50,7 @@ class SimImu(Module):
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
-        self._world.subscribe(self.world_change)
+        self._world.subscribe(self.world_observations)
         description = self._simulation.describe()
         self._reading = asyncio.create_task(
             self._read(open_view(description), sensor_frame(description, self.frame_id))
