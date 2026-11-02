@@ -605,7 +605,6 @@ dependencies = [
  "lcm-msgs",
  "rayon",
  "serde",
- "serde_json",
  "smallvec",
  "tokio",
  "tracing",

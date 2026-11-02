@@ -13,8 +13,7 @@
 // limitations under the License.
 
 //! Small worlds where whole voxels misread a surface and the ray tracer's
-//! planes read it right, shared by the planner's tests and the
-//! voxel_problem_scenes example.
+//! planes read it right, for the planner's tests.
 
 use super::{Config, MapPoint, Planner};
 
