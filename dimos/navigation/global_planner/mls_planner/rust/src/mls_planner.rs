@@ -249,7 +249,35 @@ impl VoxelTimes {
     }
 }
 
+/// How big the planner's containers are, for the periodic memory log.
+#[derive(Clone, Debug, Default)]
+pub struct PlannerSizes {
+    pub voxels: usize,
+    pub column_tiles: usize,
+    pub surface_cells: usize,
+    pub surface_slots: usize,
+    pub surface_edges: usize,
+    pub nodes: usize,
+    pub node_edges: usize,
+    pub dijkstra_slots: usize,
+    pub voxel_times: usize,
+}
+
 impl Planner {
+    pub fn sizes(&self) -> PlannerSizes {
+        PlannerSizes {
+            voxels: self.voxel_map.len(),
+            column_tiles: self.by_col.tile_count(),
+            surface_cells: self.graph.cells.live_len(),
+            surface_slots: self.graph.cells.slot_capacity(),
+            surface_edges: self.graph.cells.edge_count(),
+            nodes: self.graph.nodes.len(),
+            node_edges: self.graph.node_edges.len(),
+            dijkstra_slots: self.graph.cell_state.dist.len() + self.graph.wall_state.dist.len(),
+            voxel_times: self.voxel_times.as_ref().map_or(0, |t| t.by_key.len()),
+        }
+    }
+
     pub fn new(worker_threads: u32) -> Self {
         Self {
             pool: worker_pool(worker_threads),

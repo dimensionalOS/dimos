@@ -64,6 +64,8 @@ node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
 
 [dependencies]
+# Resident memory for the periodic memory log.
+libc = "0.2"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }

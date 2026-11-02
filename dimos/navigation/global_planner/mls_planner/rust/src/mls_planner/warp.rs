@@ -21,6 +21,9 @@ use crate::columns::ColumnEdit;
 use crate::reform::{Tile, Warp};
 use crate::voxel::surface_point_xyz;
 
+/// A point's place before and after a warp.
+pub type Displacement = ([f32; 3], [f32; 3]);
+
 /// What one warp did and what each stage cost.
 #[derive(Clone, Debug, Default)]
 pub struct WarpReport {
@@ -41,6 +44,37 @@ pub struct WarpReport {
     pub voxel_ms: f64,
     pub surface_ms: f64,
     pub graph_ms: f64,
+    /// Points the warp sent somewhere non-finite or implausibly far, left in place.
+    pub implausible: usize,
+    /// The worst of those: where it was, where the warp sent it.
+    pub worst_implausible: Option<Displacement>,
+}
+
+/// Leave in place every warped point that is non-finite or moved farther than
+/// `max_move_m`, counting them and keeping the worst for the log.
+pub(crate) fn hold_implausible(
+    queries: &[[f32; 3]],
+    warped: &mut [[f32; 3]],
+    max_move_m: f64,
+) -> (usize, Option<Displacement>) {
+    let mut count = 0;
+    let mut worst: Option<(f64, [f32; 3], [f32; 3])> = None;
+    for (from, to) in queries.iter().zip(warped.iter_mut()) {
+        let moved = ((to[0] - from[0]) as f64)
+            .hypot((to[1] - from[1]) as f64)
+            .hypot((to[2] - from[2]) as f64);
+        let finite = to.iter().all(|v| v.is_finite());
+        if finite && moved <= max_move_m {
+            continue;
+        }
+        count += 1;
+        let score = if finite { moved } else { f64::INFINITY };
+        if worst.is_none_or(|(w, _, _)| score > w) {
+            worst = Some((score, *from, *to));
+        }
+        *to = *from;
+    }
+    (count, worst.map(|(_, from, to)| (from, to)))
 }
 
 impl Planner {
@@ -140,7 +174,9 @@ impl Planner {
             queries.push([p.0, p.1, p.2]);
             times.push(time_of(&self.surface_under(*p, vs)));
         }
-        let warped = warp.apply(&queries, &times);
+        let mut warped = warp.apply(&queries, &times);
+        (report.implausible, report.worst_implausible) =
+            hold_implausible(&queries, &mut warped, warp.max_plausible_move_m());
         report.warp_ms = ms_since(stage);
 
         let (moved_voxels, rest) = warped.split_at(voxels.len());

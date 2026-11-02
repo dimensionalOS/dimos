@@ -31,6 +31,9 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
+/// How often the planner logs its memory and container sizes.
+const MEMORY_LOG_PERIOD: Duration = Duration::from_secs(10);
+
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
 type Xyzi = (f32, f32, f32, f32);
@@ -570,7 +573,12 @@ impl Worker {
         );
         let mut seed_progress = SeedProgress::default();
         let mut path_out = false;
+        let mut last_memory_log = Instant::now();
         loop {
+            if last_memory_log.elapsed() >= MEMORY_LOG_PERIOD {
+                last_memory_log = Instant::now();
+                self.log_memory(&planner);
+            }
             // A warp moves the frame everything else is in, so it goes first.
             let warp = self.warps.lock().expect("warp mutex").pop_front();
             if let Some(warp) = warp {
@@ -648,18 +656,52 @@ impl Worker {
         }
         drop(goal);
         viz.mark_all();
-        info!(
+        let (median_shift_m, max_shift_m) = warp.keyframe_shift_m();
+        warn!(
             total_ms = ms_since(started),
             warp_ms = report.warp_ms,
             voxel_ms = report.voxel_ms,
             surface_ms = report.surface_ms,
             graph_ms = report.graph_ms,
+            keyframes = warp.keyframes(),
             keyframes_moved = warp.moved_keyframes(),
+            median_shift_m,
+            max_shift_m,
             voxels_warped = report.voxels_warped,
             voxels_moved = report.voxels_moved,
             nodes_moved = report.nodes_moved,
-            rebuilt = report.rebuilt,
+            nodes = report.nodes,
+            decision = if report.rebuilt { "rebuild" } else { "repair" },
             "Loop closure applied in place."
+        );
+        if let Some((from, to)) = report.worst_implausible {
+            warn!(
+                held_in_place = report.implausible,
+                limit_m = warp.max_plausible_move_m(),
+                worst_from = ?from,
+                worst_to = ?to,
+                "A warp sent points somewhere non-finite or implausibly far; they stayed put."
+            );
+        }
+    }
+
+    /// Resident memory and the containers that hold it, every MEMORY_LOG_PERIOD.
+    fn log_memory(&self, planner: &Planner) {
+        let sizes = planner.sizes();
+        warn!(
+            rss_mb = crate::rss::rss_mb().unwrap_or(f64::NAN),
+            voxels = sizes.voxels,
+            column_tiles = sizes.column_tiles,
+            surface_cells = sizes.surface_cells,
+            surface_slots = sizes.surface_slots,
+            surface_edges = sizes.surface_edges,
+            nodes = sizes.nodes,
+            node_edges = sizes.node_edges,
+            dijkstra_slots = sizes.dijkstra_slots,
+            voxel_times = sizes.voxel_times,
+            queued_warps = self.warps.lock().expect("warp mutex").len(),
+            queued_seeds = self.seed_regions.lock().expect("seed mutex").len(),
+            "Planner memory."
         );
     }
 

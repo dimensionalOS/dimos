@@ -24,6 +24,7 @@ mod planner;
 pub mod reform;
 pub mod reform_module;
 mod region_viz;
+pub mod rss;
 mod smoother;
 mod surfaces;
 pub mod voxel;

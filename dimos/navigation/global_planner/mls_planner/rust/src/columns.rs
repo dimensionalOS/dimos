@@ -79,6 +79,11 @@ pub struct ColumnIz {
 }
 
 impl ColumnIz {
+    /// Tiles held, each a dense block of columns.
+    pub fn tile_count(&self) -> usize {
+        self.tiles.len()
+    }
+
     /// The sorted z values of a column, None when it holds no voxel.
     pub fn get(&self, col: (i32, i32)) -> Option<&[i32]> {
         let zs = self.tiles.get(&tile_of(col))?.columns[slot_of(col)].as_slice();
@@ -182,6 +187,9 @@ impl ColumnIz {
     }
 }
 
+/// A footprint past this many columns is reported: only a stray voxel makes one.
+const MAX_MASK_COLUMNS: usize = 250_000_000;
+
 /// Dense set of columns over an inclusive box, for change footprints that
 /// dilate by the morphology reach.
 #[derive(Clone)]
@@ -196,8 +204,16 @@ pub struct ColumnMask {
 impl ColumnMask {
     /// An empty mask over the box widened by `margin` on every side.
     pub fn new((x0, x1, y0, y1): ColumnWindow, margin: i32) -> Self {
-        let width = (x1 - x0 + 1 + 2 * margin).max(0) as usize;
-        let height = (y1 - y0 + 1 + 2 * margin).max(0) as usize;
+        let width = (x1 as i64 - x0 as i64 + 1 + 2 * margin as i64).max(0) as usize;
+        let height = (y1 as i64 - y0 as i64 + 1 + 2 * margin as i64).max(0) as usize;
+        if width.saturating_mul(height) > MAX_MASK_COLUMNS {
+            tracing::warn!(
+                cells = width.saturating_mul(height),
+                x = ?(x0, x1),
+                y = ?(y0, y1),
+                "A change footprint spans an enormous box: some voxel is far from the rest."
+            );
+        }
         Self {
             x0: x0 - margin,
             y0: y0 - margin,

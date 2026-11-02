@@ -66,6 +66,16 @@ impl SurfaceCells {
         self.coord.len()
     }
 
+    /// Live cells, excluding tombstones.
+    pub fn live_len(&self) -> usize {
+        self.by_coord.len()
+    }
+
+    /// Edges held across every slot, tombstones included.
+    pub fn edge_count(&self) -> usize {
+        self.edges.iter().map(Vec::len).sum()
+    }
+
     /// Clear all vecs but keep allocated capacity.
     pub fn clear(&mut self) {
         self.coord.clear();
