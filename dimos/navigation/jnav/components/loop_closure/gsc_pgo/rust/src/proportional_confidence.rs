@@ -91,7 +91,7 @@ impl Stack {
             if !self.keyframes.insert(k) {
                 continue;
             }
-            let key_pose = &search.key_poses[k];
+            let key_pose = &search.key_poses.get(k);
             let Some(body) = &key_pose.body_cloud else {
                 continue;
             };
@@ -235,7 +235,7 @@ impl ClosureSearch {
         let views: Vec<connection_fit::RangeImage> = target_ids
             .iter()
             .filter_map(|&k| {
-                let key_pose = &self.key_poses[k];
+                let key_pose = &self.key_poses.get(k);
                 let cloud = self.keyframe_clouds.get(k, key_pose.body_cloud.as_ref()?);
                 Some(connection_fit::RangeImage::at(
                     cloud.bins(),
@@ -275,7 +275,7 @@ impl ClosureSearch {
         let resolution = self.config.submap_resolution;
         let mut cloud = PointCloud::new();
         for k in ids {
-            let key_pose = &self.key_poses[k];
+            let key_pose = &self.key_poses.get(k);
             if let Some(body_cloud) = &key_pose.body_cloud {
                 cloud.extend(transform_cloud(
                     self.keyframe_clouds
@@ -397,7 +397,7 @@ impl ClosureSearch {
             target.add(self, &added, true);
             target_ids.extend(added);
             let round = memo(&format!("xc{j}"), 1, &mut || {
-                let key_pose = &self.key_poses[j];
+                let key_pose = &self.key_poses.get(j);
                 let Some(body) = &key_pose.body_cloud else {
                     return vec![f64::NAN; 17];
                 };

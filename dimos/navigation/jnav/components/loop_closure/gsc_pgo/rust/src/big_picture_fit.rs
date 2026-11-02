@@ -25,6 +25,7 @@ use faer::sparse::linalg::SupernodalThreshold;
 use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Par, Side};
 
+use crate::store::KeyFrames;
 use crate::gsc_pgo::{CommittedClosure, Config, KeyPoseWithCloud};
 use crate::landmarks::{self, Sighting};
 use crate::mat3::{self, Mat3, Vec3};
@@ -1544,6 +1545,17 @@ pub fn step_variances(config: &Config, from: &KeyPoseWithCloud, to: &KeyPoseWith
     motion_variances(config, distance, turn)
 }
 
+/// `step_variances` from the keyframes' fixed data (`store::KeyFixed`).
+pub(crate) fn local_step_variances(
+    config: &Config,
+    from: &crate::store::KeyFixed,
+    to: &crate::store::KeyFixed,
+) -> [f64; 4] {
+    let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
+    let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
+    motion_variances(config, distance, turn)
+}
+
 /// The reported odometry variance (xy, z, yaw, roll/pitch) of `distance` m travelled while turning `turn` rad.
 pub fn motion_variances(config: &Config, distance: f64, turn: f64) -> [f64; 4] {
     let c = config;
@@ -1569,7 +1581,7 @@ pub fn motion_variances(config: &Config, distance: f64, turn: f64) -> [f64; 4] {
 }
 
 /// The mean of `step_variances` over the odometry so far (before two keyframes, a step of the keyframe thresholds).
-pub(crate) fn mean_step_variances(key_poses: &[KeyPoseWithCloud], config: &Config) -> [f64; 4] {
+pub(crate) fn mean_step_variances(key_poses: &KeyFrames, config: &Config) -> [f64; 4] {
     if key_poses.len() < 2 {
         return motion_variances(
             config,
@@ -1578,8 +1590,8 @@ pub(crate) fn mean_step_variances(key_poses: &[KeyPoseWithCloud], config: &Confi
         );
     }
     let mut sum = [0.0; 4];
-    for pair in key_poses.windows(2) {
-        let step = step_variances(config, &pair[0], &pair[1]);
+    for k in 1..key_poses.len() {
+        let step = local_step_variances(config, key_poses.fixed(k - 1), key_poses.fixed(k));
         for c in 0..4 {
             sum[c] += step[c];
         }
@@ -1590,16 +1602,15 @@ pub(crate) fn mean_step_variances(key_poses: &[KeyPoseWithCloud], config: &Confi
 /// The odometry as pose-graph edges, each step's reported variances (`step_variances`) times `noise` (xy, z, yaw,
 /// roll/pitch ratios).
 pub(crate) fn odometry_edges(
-    key_poses: &[KeyPoseWithCloud],
+    key_poses: &KeyFrames,
     config: &Config,
     noise: [f64; 4],
 ) -> Vec<Edge> {
-    key_poses
-        .windows(2)
-        .enumerate()
+    (1..key_poses.len())
+        .map(|k| (k - 1, [key_poses.fixed(k - 1), key_poses.fixed(k)]))
         .map(|(i, pair)| {
             let back = mat3::transpose(&pair[0].rotation_local);
-            let step = step_variances(config, &pair[0], &pair[1]);
+            let step = local_step_variances(config, pair[0], pair[1]);
             let [xy, z, yaw, tilt]: [f64; 4] = std::array::from_fn(|c| step[c] * noise[c]);
             Edge {
                 from: i,
@@ -1616,7 +1627,7 @@ pub(crate) fn odometry_edges(
 }
 
 /// Committed closures as pose-graph edges; a closure's variance is its ICP fitness on every axis.
-pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClosure>) -> Vec<Edge> {
+pub(crate) fn closure_edges(closures: impl Iterator<Item = CommittedClosure>) -> Vec<Edge> {
     closures
         .map(|l| Edge {
             from: l.target_id,

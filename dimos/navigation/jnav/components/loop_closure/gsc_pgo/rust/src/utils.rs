@@ -15,6 +15,7 @@
 //! Standalone helpers for the native PGO module: odometry interpolation, quaternion slerp, the
 //! published-message builders and the inbound PointCloud2 parser.
 
+use dimos_gsc_pgo::store::KeyFrames;
 use dimos_gsc_pgo::gsc_pgo::{ClosureEdgeEvent, KeyPoseWithCloud, CLOSURE_EDGE_RECORD_BYTES};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::pointcloud::PointCloud;
@@ -163,7 +164,7 @@ const DELTA_FIELDS: [(&str, u8); 7] = [
 
 /// pose_graph as packed records, one per keyframe at its current pose.
 pub fn build_pose_graph_records(
-    key_poses: &[KeyPoseWithCloud],
+    key_poses: &KeyFrames,
     ts: f64,
     frame_id: &str,
 ) -> PointCloud2 {
@@ -184,7 +185,7 @@ pub fn build_pose_graph_records(
 /// delta with post = delta * pre.
 pub fn build_loop_closure_records(
     pre_poses: &[(Mat3, Vec3)],
-    post_poses: &[KeyPoseWithCloud],
+    post_poses: &KeyFrames,
     ts: f64,
     frame_id: &str,
 ) -> PointCloud2 {
@@ -233,7 +234,7 @@ const CLOSURE_EDGE_FIELDS: [(&str, u8); 12] = [
 /// closure_edges as packed records, one per lifecycle event (see `ClosureEdgeEvent`).
 pub fn build_closure_edge_records(
     events: &[ClosureEdgeEvent],
-    key_poses: &[KeyPoseWithCloud],
+    key_poses: &KeyFrames,
     ts: f64,
     frame_id: &str,
 ) -> PointCloud2 {

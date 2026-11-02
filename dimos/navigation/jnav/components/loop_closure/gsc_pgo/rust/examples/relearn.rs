@@ -97,7 +97,7 @@ fn main() {
     );
     let mut out = Vec::new();
     for (k, record) in records.iter().enumerate() {
-        let key = &pgo.key_poses()[k];
+        let key = &pgo.key_poses().get(k);
         let q = mat3::quat_from_mat(&key.rotation_global);
         let corrected = [
             key.translation_global[0],

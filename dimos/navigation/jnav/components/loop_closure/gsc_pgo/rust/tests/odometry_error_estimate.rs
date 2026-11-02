@@ -63,8 +63,9 @@ fn translation_and_heading_noise_are_measured_apart() {
         let moved = mat3::mat_vec(&mat3::rot_z(yaw), &step);
         odometry.push((yaw + noisy_turn, mat3::add(&p, &moved)));
     }
-    let key_poses: Vec<KeyPoseWithCloud> =
-        odometry.iter().map(|&(yaw, p)| key_pose(yaw, p)).collect();
+    let key_poses = dimos_gsc_pgo::store::KeyFrames::from_poses(
+        odometry.iter().map(|&(yaw, p)| key_pose(yaw, p)).collect(),
+    );
     // closures over stretches of 5 to 600 keyframes, each measuring the true relative position with 5 cm noise, and
     // one in five a look-alike place: anywhere in the mapped area
     let fitness = 0.05_f64.powi(2);

@@ -561,7 +561,7 @@ impl GscPgo {
         let config = &self.config;
         let resolution = config.submap_resolution;
         let points = |k: usize| {
-            search.key_poses[k]
+            search.key_poses.get(k)
                 .body_cloud
                 .as_ref()
                 .map_or(0, |body| self.keyframe_clouds.get(k, body).voxelized(resolution).len())

@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use crate::store::KeyFrames;
 use crate::big_picture_fit::{closure_edges, Edge};
 use crate::connection_fit::{dump_icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
@@ -389,11 +390,13 @@ pub const CLOSURE_EDGE_RECORD_BYTES: usize = 52;
 impl ClosureEdgeEvent {
     /// Append this event as one packed record: both keyframes where they are now (x y z, then
     /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_stdevs f32, time f64.
-    pub fn put_record(&self, data: &mut Vec<u8>, key_poses: &[KeyPoseWithCloud]) {
+    pub fn put_record(&self, data: &mut Vec<u8>, key_poses: &KeyFrames) {
         let at = |id: usize| {
-            key_poses
-                .get(id)
-                .map_or([f64::NAN; 3], |kp| kp.translation_global)
+            if id < key_poses.len() {
+                key_poses.position(id)
+            } else {
+                [f64::NAN; 3]
+            }
         };
         for v in at(self.source_id).into_iter().chain(at(self.target_id)) {
             data.extend_from_slice(&(v as f32).to_le_bytes());
@@ -891,10 +894,10 @@ impl Default for Config {
 pub struct GscPgo {
     pub(crate) config: Config,
     pub(crate) scan_context_config: similarity_discovery::Config,
-    pub(crate) key_poses: Vec<KeyPoseWithCloud>,
-    pub(crate) committed_closures: Vec<CommittedClosure>,
-    /// Per committed closure: its yank_stdevs and gate confidence, for its closure-edge events.
-    pub(crate) closure_yank_stdevs: Vec<f64>,
+    pub(crate) key_poses: KeyFrames,
+    pub(crate) committed_closures: crate::store::Closures,
+    /// The newest accepted search's fit confidence and yank, for the closure `commit_closure` commits next.
+    pub(crate) committed_stats: Option<(f64, f64)>,
     /// ln of each odometry variance's ratio to the reported one (0: the reported noise), set from the kept closures
     /// after each solve.
     pub(crate) learned_odometry_error_estimate_ln: [f64; 4],
@@ -911,7 +914,6 @@ pub struct GscPgo {
     /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
     /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
     pub(crate) odometry_error_estimate_rescaled: bool,
-    pub(crate) closure_fit_confidence: Vec<f64>,
     /// A closure was committed since the last `update`.
     pub(crate) new_closure: bool,
     /// Committed closures a solve has been started for.
@@ -1001,9 +1003,9 @@ pub struct GscPgo {
     /// `auto_aggregate_cloud_size`: the scans since the last keyframe, in the odometry frame, voxelized.
     pub(crate) gathered: PointCloud,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
-    pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
+    pub(crate) solved_relative_covariance: Option<(usize, Arc<Vec<Mat3>>)>,
     /// Shared, so a closure search can count look-alike places without copying them.
-    pub(crate) scan_context_descriptors: Vec<Arc<similarity_discovery::Descriptor>>,
+    pub(crate) scan_context_descriptors: crate::store::Appended<Arc<similarity_discovery::Descriptor>>,
     pub(crate) scan_context_ring_keys: Vec<similarity_discovery::RingKey>,
     pub(crate) rotation_offset: Mat3,
     pub(crate) translation_offset: Vec3,
@@ -1060,7 +1062,7 @@ pub struct ClosureProposal {
 /// The ICP half of one closure search, on its own copy of the keyframes so it can run on another thread
 /// while scans keep arriving (`GscPgo::begin_closure_search` makes it, `finish_closure_search` applies it).
 pub struct ClosureSearch {
-    pub(crate) key_poses: Vec<KeyPoseWithCloud>,
+    pub(crate) key_poses: KeyFrames,
     pub(crate) config: Config,
     /// The odometry's mean xy variance per keyframe step at the reported noise (`big_picture_fit::mean_step_variances`).
     pub(crate) mean_step_xy_variance: f64,
@@ -1070,11 +1072,17 @@ pub struct ClosureSearch {
     pub(crate) target_idx: usize,
     pub(crate) init_rotation: Mat3,
     pub(crate) init_translation: Vec3,
-    pub(crate) scan_context_descriptors: Vec<Arc<similarity_discovery::Descriptor>>,
+    pub(crate) scan_context_descriptors: crate::store::Appended<Arc<similarity_discovery::Descriptor>>,
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) ranked: Vec<(f32, usize)>,
     /// Every closure the solve has judged: its yank_stdevs when committed, and whether the solve kept it.
     pub(crate) judged_yanks: Vec<(f64, bool)>,
+    /// The snapshots the search's setup reads where it starts (`prepare`): the committed closures and their weights,
+    /// the keyframes' reach, the odometry error estimate and the newest solve's relative covariances.
+    pub(crate) closures: crate::store::Closures,
+    pub(crate) keyframe_reach: (f64, usize),
+    pub(crate) error_estimate: [f64; 4],
+    pub(crate) solved_relative_covariance: Option<(usize, Arc<Vec<Mat3>>)>,
     pub(crate) alternatives: Vec<(f32, usize, i32)>,
     pub(crate) tries: usize,
     /// The ICP cache the search's cloud computations go through (`icp_cache`), if any.
@@ -1245,6 +1253,7 @@ impl ClosureSearch {
             self.tries,
         );
         let (started, dumps) = (std::time::Instant::now(), self.dump_s.clone());
+        self.prepare();
         let stage = self.search_stage();
         let seconds = started.elapsed().as_secs_f64() - *dumps.lock().expect("dump seconds");
         match stage {
@@ -1261,6 +1270,55 @@ impl ClosureSearch {
             }
         }
     }
+    /// The search's setup from its snapshots, on its own thread (it was the scan thread's): the closures the newest solve
+    /// kept (or has not judged), every judged closure's yank and verdict, the odometry's mean step variance, and the
+    /// overlap model's chance this scan overlaps the target and the graph's covariance of their offset, which set the
+    /// extension's budget.
+    fn prepare(&mut self) {
+        self.mean_step_xy_variance =
+            crate::big_picture_fit::mean_step_variances(&self.key_poses, &self.config)[0];
+        // kept, or not judged yet
+        self.kept_closures = closure_edges(
+            self.closures
+                .iter()
+                .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5),
+        );
+        self.judged_yanks = (0..self.closures.len())
+            .map(|i| (self.closures.fixed(i).yank_stdevs, self.closures.weight(i)))
+            .filter(|(z, weight)| !weight.is_nan() && z.is_finite())
+            .map(|(z, weight)| (z, weight > 0.5))
+            .collect();
+        let (source_id, target_idx) = (self.diag.source_id, self.target_idx);
+        let inputs = crate::loop_overlap::OverlapInputs {
+            key_poses: &self.key_poses,
+            config: &self.config,
+            keyframe_reach: self.keyframe_reach,
+            error_estimate: self.error_estimate,
+            solved_relative_covariance: self
+                .solved_relative_covariance
+                .as_ref()
+                .map(|(tip, covariance)| (*tip, covariance.as_slice())),
+            committed_closures: &self.closures,
+        };
+        // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
+        // the doubling step that covers max keyframes x that chance
+        let model = inputs.overlap_model(source_id);
+        let diag = &mut self.diag;
+        diag.target_overlap = model
+            .as_ref()
+            .map_or(0.0, |model| model.overlap(target_idx).0);
+        // the graph's covariance of the source's offset from this target, at the odometry error estimate in use
+        if let Some(model) = &model {
+            diag.innovation_covariance = model.relative(target_idx);
+        }
+        // either reason makes extending worthwhile: a loop is likely somewhere unresolved (pressure), or this scan likely
+        // overlaps this target
+        let worth = 1.0 - (1.0 - diag.pressure) * (1.0 - diag.target_overlap);
+        diag.extension_budget = ((self.config.closure_extended_icp_max_keyframes as f64 * worth)
+            .ceil() as usize)
+            .next_power_of_two()
+            .min(self.config.closure_extended_icp_max_keyframes);
+    }
     /// A cloud alignment through the ICP cache (`icp_cache`): stored as the source's pose relative to the target
     /// (`relative_icp`), the computed value itself returned when it was computed here.
     pub(crate) fn memo_alignment(
@@ -1276,12 +1334,12 @@ impl ClosureSearch {
         };
         let (source_pose, target_pose) = (
             (
-                &self.key_poses[cur_idx].rotation_global,
-                &self.key_poses[cur_idx].translation_global,
+                &self.key_poses.rotation(cur_idx),
+                &self.key_poses.position(cur_idx),
             ),
             (
-                &self.key_poses[target_idx].rotation_global,
-                &self.key_poses[target_idx].translation_global,
+                &self.key_poses.rotation(target_idx),
+                &self.key_poses.position(target_idx),
             ),
         );
         let mut computed = None;
@@ -1301,8 +1359,8 @@ impl ClosureSearch {
     /// The closure measurement an alignment gives: the source keyframe moved by it, in the target's frame.
     pub(crate) fn measured(&self, rotation: &Mat3, translation: &Vec3) -> (Mat3, Vec3) {
         let (source, target) = (
-            &self.key_poses[self.diag.source_id],
-            &self.key_poses[self.target_idx],
+            &self.key_poses.get(self.diag.source_id),
+            &self.key_poses.get(self.target_idx),
         );
         let closure_rotation_transpose = mat3::transpose(&target.rotation_global);
         let moved = mat3::add(
@@ -1489,8 +1547,8 @@ impl ClosureSearch {
         // voxel, times the largest stack
         if self.config.closure_likelihood_confidence && self.config.closure_yank_pre_check {
             let reach = self.config.closure_icp_max_correspondence_m;
-            let source_position = self.key_poses[cur_idx].translation_global;
-            let seeded = self.key_poses[target_idx].translation_global;
+            let source_position = self.key_poses.position(cur_idx);
+            let seeded = self.key_poses.position(target_idx);
             let jump = mat3::norm(&mat3::sub(&seeded, &source_position));
             let spread = mat3::jacobi_eigen(diag.innovation_covariance)
                 .0
@@ -1559,7 +1617,7 @@ impl ClosureSearch {
         diag.icp_iterations = icp.iterations;
         diag.icp_stop = icp.stop.name();
         // where each puts the source keyframe
-        let source_position = &self.key_poses[cur_idx].translation_global;
+        let source_position = &self.key_poses.position(cur_idx);
         diag.icp_init_offset_m = mat3::norm(&mat3::sub(
             &mat3::add(
                 &mat3::mat_vec(&icp.rotation, source_position),
@@ -1626,7 +1684,7 @@ impl ClosureSearch {
         diag.yank_rotation_deg =
             mat3::angular_distance(&rotation_offset, &current_relative_rotation).to_degrees();
         diag.innovation = mat3::mat_vec(
-            &self.key_poses[target_idx].rotation_global,
+            &self.key_poses.rotation(target_idx),
             &mat3::sub(&translation_offset, &current_relative_translation),
         );
 
@@ -1934,8 +1992,7 @@ impl GscPgo {
                 ClosureEdgeState::GateRejected
             };
             if outcome == ClosureEdgeState::Committed {
-                self.closure_fit_confidence.push(checked.clamp(0.0, 1.0));
-                self.closure_yank_stdevs.push(diag.yank_stdevs);
+                self.committed_stats = Some((checked.clamp(0.0, 1.0), diag.yank_stdevs));
             }
             self.push_edge(source, target, outcome, checked, diag.yank_stdevs);
         }
@@ -2095,7 +2152,7 @@ impl GscPgo {
     pub fn pressure(&self) -> Option<(usize, crate::loop_overlap::LoopOverlap)> {
         self.pressure
     }
-    pub fn key_poses(&self) -> &[KeyPoseWithCloud] {
+    pub fn key_poses(&self) -> &KeyFrames {
         &self.key_poses
     }
     pub fn rotation_offset(&self) -> Mat3 {
@@ -2133,7 +2190,7 @@ impl GscPgo {
             diag.outcome = "stale";
             self.record_search(diag);
         }
-        let current = &self.key_poses[cur_idx];
+        let current = &self.key_poses.get(cur_idx);
         let mut diag = ClosureCandidateDiag::new(cur_idx, current.time, current.translation_global);
 
         // stage 1, universal uniqueness: a scan whose structure barely fills the descriptor can't place itself
@@ -2164,8 +2221,8 @@ impl GscPgo {
             return;
         };
         diag.target_id = target_idx as i64;
-        diag.target_time = self.key_poses[target_idx].time;
-        diag.target_xyz = self.key_poses[target_idx].translation_global;
+        diag.target_time = self.key_poses.fixed(target_idx).time;
+        diag.target_xyz = self.key_poses.position(target_idx);
         diag.candidate_distance = mat3::norm(&mat3::sub(&diag.source_xyz, &diag.target_xyz));
         if diag.from_scan_context && sc_second > 1e-6 {
             diag.scan_context_best = sc_best;
@@ -2236,25 +2293,8 @@ impl GscPgo {
             .map_or(0.0, |(_, overlap)| overlap.unclosed_overlap_probability);
         diag.learned_odometry_error_estimate = self.learned_odometry_error_estimate();
         diag.odometry_error_estimate_gate = self.odometry_error_estimate();
-        // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
-        // the doubling step that covers max keyframes x that chance
-        let model = self.overlap_model(diag.source_id);
-        diag.target_overlap = model
-            .as_ref()
-            .map_or(0.0, |model| model.overlap(target_idx).0);
-        // the graph's covariance of the source's offset from this target, at the odometry error estimate in use
-        if let Some(model) = &model {
-            diag.innovation_covariance = model.relative(target_idx);
-        }
-        // either reason makes extending worthwhile: a loop is likely somewhere unresolved (pressure), or this scan likely
-        // overlaps this target
-        let worth = 1.0 - (1.0 - diag.pressure) * (1.0 - diag.target_overlap);
-        diag.extension_budget = ((self.config.closure_extended_icp_max_keyframes as f64 * worth)
-            .ceil() as usize)
-            .next_power_of_two()
-            .min(self.config.closure_extended_icp_max_keyframes);
-        let source_position = self.key_poses[diag.source_id].translation_global;
-        let target_position = self.key_poses[target_idx].translation_global;
+        let source_position = self.key_poses.position(diag.source_id);
+        let target_position = self.key_poses.position(target_idx);
         // ICP starts with the source keyframe at the target's position, turned by the scan-context yaw:
         // after a long drift the two positions differ by the whole drift, and seeding at the source's
         // own position would leave the two submaps without overlap
@@ -2271,16 +2311,13 @@ impl GscPgo {
         Some(ClosureSearch {
             key_poses: self.key_poses.clone(),
             config: self.config.clone(),
-            mean_step_xy_variance: crate::big_picture_fit::mean_step_variances(
-                &self.key_poses,
-                &self.config,
-            )[0],
-            // kept, or not judged yet
-            kept_closures: closure_edges(
-                self.committed_closures
-                    .iter()
-                    .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5),
-            ),
+            // set where the search starts (`prepare`), from the snapshots
+            mean_step_xy_variance: f64::NAN,
+            kept_closures: Vec::new(),
+            closures: self.committed_closures.clone(),
+            keyframe_reach: self.keyframe_reach,
+            error_estimate: self.odometry_error_estimate(),
+            solved_relative_covariance: self.solved_relative_covariance.clone(),
             diag,
             target_idx,
             init_rotation,
@@ -2288,13 +2325,7 @@ impl GscPgo {
             scan_context_descriptors: self.scan_context_descriptors.clone(),
             scan_context_config: self.scan_context_config,
             ranked,
-            judged_yanks: self
-                .committed_closures
-                .iter()
-                .zip(&self.closure_yank_stdevs)
-                .filter(|(c, z)| !c.gnc_weight.is_nan() && z.is_finite())
-                .map(|(c, z)| (*z, c.gnc_weight > 0.5))
-                .collect(),
+            judged_yanks: Vec::new(),
             alternatives,
             tries: tries + 1,
             icp_cache: self.icp_cache.clone(),
@@ -2383,8 +2414,8 @@ impl GscPgo {
         diag.descriptor_occupancy = rejected.descriptor_occupancy;
         diag.from_scan_context = true;
         diag.target_id = target_idx as i64;
-        diag.target_time = self.key_poses[target_idx].time;
-        diag.target_xyz = self.key_poses[target_idx].translation_global;
+        diag.target_time = self.key_poses.fixed(target_idx).time;
+        diag.target_xyz = self.key_poses.position(target_idx);
         diag.candidate_distance = mat3::norm(&mat3::sub(&diag.source_xyz, &diag.target_xyz));
         diag.scan_context_best = distance;
         diag.scan_context_second = rejected.scan_context_second;
@@ -2424,16 +2455,12 @@ impl GscPgo {
                 self.keyframe_reach.1 += 1;
             }
         }
-        self.key_poses.push(KeyPoseWithCloud {
+        // placed by the current correction (`KeyFrames::global` rides it on the odometry pose when read)
+        self.key_poses.push(crate::store::KeyFixed {
             time: pose.second,
             rotation_local: pose.rotation,
             translation_local: pose.translation,
             body_cloud: stored,
-            rotation_global: mat3::mat_mul(&self.rotation_offset, &pose.rotation),
-            translation_global: mat3::add(
-                &mat3::mat_vec(&self.rotation_offset, &pose.translation),
-                &self.translation_offset,
-            ),
         });
 
         // the scan context descriptor and ring key (empty without a cloud); a non-positive max range is set once from
@@ -2470,13 +2497,16 @@ impl GscPgo {
         translation_offset: Vec3,
         score: f64,
     ) {
-        self.committed_closures.push(CommittedClosure {
+        // a closure committed directly (no search) has no search confidence or yank recorded
+        let (fit_confidence, yank_stdevs) = self.committed_stats.take().unwrap_or((f64::NAN, f64::NAN));
+        self.committed_closures.push(crate::store::ClosureFixed {
             source_id,
             target_id,
             rotation_offset,
             translation_offset,
             score,
-            gnc_weight: f64::NAN,
+            fit_confidence,
+            yank_stdevs,
         });
         self.new_closure = true;
     }

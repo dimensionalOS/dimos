@@ -39,6 +39,7 @@ mod odometry_error_estimate_overtrust;
 pub mod pointcloud;
 pub mod pose_graph_solving;
 pub mod pressure_schedule;
+pub mod store;
 pub mod proportional_confidence;
 #[cfg(feature = "native")]
 pub mod records;

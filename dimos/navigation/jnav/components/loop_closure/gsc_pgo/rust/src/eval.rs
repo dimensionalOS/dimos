@@ -878,7 +878,7 @@ fn run() -> Result<(), String> {
     let committed_closure_edges: Vec<CommittedClosureEdge> = pgo
         .committed_closures()
         .iter()
-        .map(CommittedClosureEdge::from)
+        .map(|closure| CommittedClosureEdge::from(&closure))
         .collect();
 
     let (icp_cache_hits, icp_cache_misses) = match &icp_cache {
