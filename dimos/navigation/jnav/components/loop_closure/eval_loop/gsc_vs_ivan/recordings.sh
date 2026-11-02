@@ -11,12 +11,15 @@ world_db=
 case $recording in
     hk[1-6]) db=$HOME/.dimos/recordings/hk_village_tf/hk_village${recording#hk}.db; eval_args=(--odom-stream go2_odometry --lidar-stream l1_cloud); gt=(--gt-db $db --gt-stream go2_odometry_corrected); step=2; world_db=$db ;;
     small_l1) db=$SMALL_DB; eval_args=(--odom-stream go2_odometry --lidar-stream l1_cloud); gt=(); step=2; world_db=$SMALL_DB ;;
+    grassy_l1) db=$(ls -d "$HOME"/datasets/mid360_recordings/*__grassy_field/mem2.db); eval_args=(--odom-stream go2_odometry --lidar-stream l1_cloud); gt=(); step=3; world_db=$db ;;
+    huge_pointlio) db=$HUGE_DB; eval_args=(--odom-stream pointlio_odometry --lidar-stream pointlio_lidar "${MID[@]}"); gt=(--gt-db $HUGE_DB --gt-stream fastlio_odometry_corrected); step=5 ;;
     huge_l1) db=$HUGE_DB; eval_args=(--odom-stream go2_odometry --lidar-stream l1_cloud); gt=(); step=5; world_db=$HUGE_DB ;;
     small_go2) db=$SMALL_DB; eval_args=(--odom-stream odom --lidar-stream lidar); gt=(); step=2; world_db=$SMALL_DB ;;
     small_mid) db=$SMALL_DB; eval_args=(--odom-stream fastlio_odometry --lidar-stream fastlio_lidar "${MID[@]}"); gt=(--gt-db $SMALL_DB --gt-stream fastlio_odometry_corrected); step=2 ;;
     gir2) db=$GIR2_DB; eval_args=(--odom-stream pointlio_odometry --lidar-stream pointlio_lidar "${MID[@]}"); gt=(--gt-db $GIR2_DB --gt-stream odometry_corrected); step=3 ;;
     huge) db=$HUGE_DB; eval_args=(--odom-stream fastlio_odometry --lidar-stream fastlio_lidar "${MID[@]}"); gt=(--gt-db $HUGE_DB --gt-stream fastlio_odometry_corrected); step=5 ;;
     gir1) db=$(ls -d "$HOME"/datasets/mid360_recordings/*__gir_stairs1/mem2.db); eval_args=(--odom-stream pointlio_odometry --lidar-stream pointlio_lidar "${MID[@]}"); gt=(--gt-db $db --gt-stream pointlio_odometry_corrected); step=3 ;;
+    china_drifty) db=$HOME/repos/dimos/data/china_office.db; eval_args=(--odom-stream pointlio_odometry --lidar-stream pointlio_lidar "${MID[@]}"); gt=(); step=3 ;;  # LFS replay, ~35 cm tag drift; corrected pointlio_odometry_corrected_v5
     china) db=$(ls -d "$HOME"/datasets/mid360_recordings/*__china_office1/mem2.db); eval_args=(--odom-stream pointlio_odometry --lidar-stream pointlio_lidar "${MID[@]}"); gt=(); step=3 ;;  # its fastlio diverged (77x110 m vs 35x58 m)
     grassy|park1|park1_2)
         db=$(ls -d "$HOME"/datasets/mid360_recordings/*__$(case $recording in grassy) echo grassy_field;; gir1) echo gir_stairs1;; park1) echo gir_park1;; park1_2) echo gir_park1_2;; china) echo china_office1;; esac)/mem2.db)
