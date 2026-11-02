@@ -61,6 +61,12 @@ parser.add_argument(
 parser.add_argument(
     "--until", type=float, default=None, help="stop after this many s of recording (a quick look)"
 )
+parser.add_argument(
+    "--lidar-stream",
+    default="lidar",
+    help="a cloud not in frame world is taken as in the odometry's frame",
+)
+parser.add_argument("--odom-stream", default="odom")
 args = parser.parse_args()
 
 import itertools
@@ -84,7 +90,7 @@ if not args.at_dump and (args.run / "solve.jsonl").exists():
     from dimos.memory.store.sqlite import SqliteStore
 
     with SqliteStore(path=str(args.db)) as store:
-        scan_ts = np.array([o.ts for o in store.streams.lidar.order_by("ts")])
+        scan_ts = np.array([o.ts for o in getattr(store.streams, args.lidar_stream).order_by("ts")])
     adoptions = []
     for line in (args.run / "solve.jsonl").read_text().splitlines():
         solve = json.loads(line)
@@ -323,6 +329,8 @@ rm.lockstep(
     until_ts=until_ts,
     on_scan=on_scan,
     on_closure=on_closure,
+    lidar_stream=args.lidar_stream,
+    odom_stream=args.odom_stream,
 )
 wall_s = time.monotonic() - started
 result = {

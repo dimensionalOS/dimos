@@ -255,7 +255,11 @@ def rebuild(db: Path, keyframes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             )
             r_latest, t_latest = pose(odom[latest][1])
             r_near, t_near = pose(odom[nearest][1])
-            world = r_near.apply(r_latest.inv().apply(points - t_latest)) + t_near
+            # a sensor-frame cloud (the odometry's own frame) is in base_link already
+            body = (
+                points if obs.data.frame_id != "world" else r_latest.inv().apply(points - t_latest)
+            )
+            world = r_near.apply(body) + t_near
             k = max(int(np.searchsorted(keyframes["ts"], obs.ts, side="right")) - 1, 0)
             rotation, translation = correction_rotation[k], correction_translation[k]
             corrected = (rotation.apply(world) + translation).astype(np.float32)
@@ -360,6 +364,8 @@ def lockstep(
     with_planner: bool = True,
     on_scan: Callable[[float, np.ndarray, np.ndarray, VoxelRayMapper], None] | None = None,
     on_closure: Callable[[float, np.ndarray, VoxelRayMapper], None] | None = None,
+    lidar_stream: str = "lidar",
+    odom_stream: str = "odom",
 ) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """Every scan in order through the module code with no timing or drops.
 
@@ -373,7 +379,8 @@ def lockstep(
     before it only move the pose offset), until_ts stops after the scans up to then,
     scan_stride keeps every Nth scan, with_planner False skips the planner. on_scan(ts, world
     points, origin, tracer) sees each scan as placed; on_closure(ts, records, tracer) each
-    closure after it is applied (for exporting the replay).
+    closure after it is applied (for exporting the replay). lidar_stream / odom_stream name the
+    streams; a cloud whose frame is not "world" is taken as in the odometry's own frame.
     """
     from dimos.mapping.ray_tracing.reform_module import ReformRayTracingVoxelMapConfig
     from dimos.navigation.global_planner.mls_planner.mls_reform_planner_native import (
@@ -404,7 +411,11 @@ def lockstep(
     reports: list[dict] = []
     next_closure = 0
     with SqliteStore(path=str(db)) as store:
-        odom = [(obs.ts, obs.data) for obs in store.streams.odom.order_by("ts")]
+        # an Odometry stream's poses are under .pose; a PoseStamped is its own pose
+        odom = [
+            (obs.ts, getattr(obs.data, "pose", obs.data))
+            for obs in getattr(store.streams, odom_stream).order_by("ts")
+        ]
         odom_ts = np.array([ts for ts, _ in odom])
         pose = lambda o: (  # noqa: E731
             Rotation.from_quat(
@@ -414,7 +425,7 @@ def lockstep(
         )
         start, span = odom_ts[0], max(odom_ts[-1] - odom_ts[0], 1e-9)
         next_report = 0.05
-        for scan_index, obs in enumerate(store.streams.lidar.order_by("ts")):
+        for scan_index, obs in enumerate(getattr(store.streams, lidar_stream).order_by("ts")):
             if until_ts is not None and obs.ts > until_ts:
                 break
             in_window = start_ts is None or obs.ts >= start_ts
@@ -487,7 +498,11 @@ def lockstep(
             )
             r_latest, t_latest = pose(odom[latest][1])
             r_near, t_near = pose(odom[nearest][1])
-            world = r_near.apply(r_latest.inv().apply(points - t_latest)) + t_near
+            # a sensor-frame cloud (the odometry's own frame) is in base_link already
+            body = (
+                points if obs.data.frame_id != "world" else r_latest.inv().apply(points - t_latest)
+            )
+            world = r_near.apply(body) + t_near
             if blend is not None:
                 corrected = blend.apply(world.astype(np.float32), obs.ts)
                 origin = blend.apply(t_near[None].astype(np.float32), obs.ts)[0].astype(float)
