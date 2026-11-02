@@ -64,7 +64,9 @@ class PGOConfig(NativeModuleConfig):
     drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
     auto_aggregate_cloud_size: int = 2000
-    closure_submap_half_range: int = 5
+    # Closure target submap half range = ceil(source clouds x (1 + extra_fraction)) + extra_keyframes (5 for the single scan)
+    closure_target_extra_fraction: float = 0.3
+    closure_target_extra_keyframes: int = 3
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
     # 0 disables
@@ -110,6 +112,8 @@ class PGOConfig(NativeModuleConfig):
     barely_pass_uncertainty_range: float = 1.05
     # The uncertainty range narrows over the extension's steps, slowed by 1 / (1 - pressure)^this
     decisive_pressure_rate: float = 1.0
+    # Odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach
+    extension_cloud_spacing: float = 0.25
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off

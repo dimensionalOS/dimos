@@ -33,28 +33,12 @@ pub struct KeyframeCloud {
     body: Arc<PointCloud>,
     voxelized: OnceLock<PointCloud>,
     bins: OnceLock<Arc<connection_fit::RangeBins>>,
-    reach: OnceLock<f64>,
 }
 
 impl KeyframeCloud {
     pub(crate) fn voxelized(&self, resolution: f64) -> &PointCloud {
         self.voxelized
             .get_or_init(|| voxel_downsample(&self.body, resolution))
-    }
-    /// How far the scan sees across the ground: its points' 95th-percentile planar range.
-    pub(crate) fn reach(&self) -> f64 {
-        *self.reach.get_or_init(|| {
-            let mut ranges: Vec<f64> = self
-                .body
-                .iter()
-                .map(|p| (p[0] as f64).hypot(p[1] as f64))
-                .collect();
-            if ranges.is_empty() {
-                return 0.0;
-            }
-            let k = (ranges.len() * 95 / 100).min(ranges.len() - 1);
-            *ranges.select_nth_unstable_by(k, f64::total_cmp).1
-        })
     }
     pub(crate) fn bins(&self) -> Arc<connection_fit::RangeBins> {
         self.bins
@@ -80,7 +64,6 @@ impl KeyframeClouds {
                     body: body.clone(),
                     voxelized: OnceLock::new(),
                     bins: OnceLock::new(),
-                    reach: OnceLock::new(),
                 })
             })
             .clone()
@@ -148,13 +131,6 @@ impl Stack {
         }
         self.index.push(&fresh);
         fresh.len()
-    }
-    /// The source stack's points (voxel centroids).
-    fn points(&self) -> PointCloud {
-        self.sums
-            .iter()
-            .map(|(sum, count)| sum.map(|v| (v / *count as f64) as f32))
-            .collect()
     }
 }
 
@@ -312,17 +288,21 @@ impl ClosureSearch {
         }
         voxel_downsample(&cloud, resolution)
     }
-    /// Extended ICP: stacks of 2, 4, 8, ... keyframes per side up to `diag.extension_budget`, chosen by how close they
-    /// sit to the match under the single-scan fit (`extension_pools`, any time order, the sides kept apart), grown in
-    /// place (each step adds only its new keyframes' points to the stacks and the target's index) and warm-started from
-    /// the previous step. Returns the extended ICP of the first step whose evidence reaches `required(evidence)`, or
-    /// None; it stops once a step's evidence stops growing or its fit leaves the single fit's place (moves any stacked
-    /// source point farther than the search radius from where the single fit put it).
+    /// Extension: each round fits one more separate source cloud (a newer keyframe at least `extension_cloud_spacing`
+    /// of the mean scan reach of odometry distance from the previously chosen one, `extension_clouds`) on its own,
+    /// warm-started from the single-scan fit, against a target that covers it, grown in place (one shared `KdForest` per
+    /// candidate): the target's submap widened to `Config::target_half_range` for that many clouds, plus the older
+    /// keyframes within a scan's reach of where the single fit puts that cloud (nearest first, a submap's worth per
+    /// cloud), never within half_range of a source cloud. Each cloud scores
+    /// its confidence ratio (its likelihood ratio over the candidate's bar, yank units); the candidate's score is the
+    /// median ratio over its clouds so far, and the uncertainty range (`UncertaintyRange`) decides on it: at or above
+    /// barely_pass accept (the single-scan fit is the closure), at or below barely_fail reject, else another cloud; with
+    /// no cloud left or the range collapsed, a median >= 1 accepts.
     pub(crate) fn extended_icp(
         &self,
         cur_idx: usize,
         target_idx: usize,
-        source_points: usize,
+        _source_points: usize,
         first: &IcpResult,
         first_ratio: f64,
         diag: &mut ClosureCandidateDiag,
@@ -330,16 +310,41 @@ impl ClosureSearch {
         // an alignment's cloud computation through the cache, its encoded alignment starting at the given index
         memo: &dyn Fn(&str, usize, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64>,
     ) -> Option<IcpResult> {
-        let max_keyframes = diag
+        let max_clouds = diag
             .extension_budget
             .min(self.config.closure_extended_icp_max_keyframes);
         if !first.converged {
             return None;
         }
-        let single = (first.overlap * source_points as f64).round() as usize;
-        diag.single_inliers = single;
-        if max_keyframes < 2 || single == 0 {
-            return (first_ratio >= 1.0).then(|| first.clone());
+        let accept = |ratio: f64| (ratio >= 1.0).then(|| first.clone());
+        // the gap between the sides, and the single scan's target submap; the target's range grows with the extension
+        let half_range = self.config.target_half_range(1);
+        let radius = self.config.closure_search_radius;
+        let positions: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_global).collect();
+        let odometry: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_local).collect();
+        let clouds = extension_clouds(
+            &odometry,
+            target_idx,
+            cur_idx,
+            half_range,
+            max_clouds,
+            self.mean_reach * self.config.extension_cloud_spacing,
+        );
+        // the target side stays older than every source cloud by more than half_range, so no scan (or its neighbour,
+        // which shares points with it) is on both sides
+        let target_end = clouds
+            .iter()
+            .copied()
+            .chain([cur_idx])
+            .min()
+            .unwrap_or(cur_idx)
+            .saturating_sub(half_range);
+        let mut target_ids: Vec<usize> = (target_idx.saturating_sub(half_range)
+            ..=target_idx + half_range)
+            .filter(|&k| k < target_end && k < self.key_poses.len())
+            .collect();
+        if max_clouds < 2 || target_ids.is_empty() || clouds.is_empty() {
+            return accept(first_ratio);
         }
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
@@ -347,100 +352,55 @@ impl ClosureSearch {
             inlier_squared_distance: self.config.closure_inlier_squared_distance(),
             point_to_plane: self.config.closure_icp_point_to_plane,
         };
-        let half_range = self.config.closure_submap_half_range.max(0) as usize;
-        let radius = self.config.closure_search_radius;
-        let positions: Vec<Vec3> = self
-            .key_poses
-            .iter()
-            .map(|k| k.translation_global)
-            .collect();
-        let placed_cur = mat3::add(
-            &mat3::mat_vec(&first.rotation, &positions[cur_idx]),
-            &first.translation,
-        );
-        // a keyframe can add to a stack wherever its scan overlaps the match's: two scans of reach r cover discs that
-        // meet while their centres are within 2r
-        let reach = 2.0
-            * self.key_poses[cur_idx]
-                .body_cloud
-                .as_ref()
-                .map_or(radius, |body| {
-                    self.keyframe_clouds.get(cur_idx, body).reach()
-                })
-                .max(radius);
-        let (source_pool, target_pool, base_len) = extension_pools(
-            &positions,
-            target_idx,
-            cur_idx,
-            half_range,
-            max_keyframes,
-            reach,
-            &placed_cur,
-        );
-        // recording an ICP cache, every step up to the budget is computed (so a replay that extends further, or
-        // differently, still finds it), but the result and the diagnostics stay those of the first step that passed
         let record_all = self
             .icp_cache
             .as_ref()
             .is_some_and(|c| c.mode == crate::icp_cache::Mode::Record);
-        let sharp = self.config.closure_sharpness_half > 0.0;
-        let likelihood = self.config.closure_likelihood_confidence;
-        // what is decided when the extension cannot go on: the newest converged step (the single fit before any) on
-        // which side of its bar it fell
-        let mut last = (first.clone(), diag.clone(), first_ratio);
-        let decide = |last: (IcpResult, ClosureCandidateDiag, f64),
-                      diag: &mut ClosureCandidateDiag| {
-            let (icp, kept, ratio) = last;
-            *diag = kept;
-            (ratio >= 1.0).then_some(icp)
-        };
-        if target_pool.is_empty() {
-            return decide(last, diag);
-        }
-        let range = UncertaintyRange::new(&self.config, max_keyframes, diag.pressure);
-        let mut source = Stack::default();
+        let submap_size = target_ids.len();
         let mut target = Stack::default();
-        let (mut seed_rotation, mut seed_translation) = (first.rotation, first.translation);
-        let mut found: Option<Option<(IcpResult, ClosureCandidateDiag)>> = None;
-        let mut previous_evidence = f64::NEG_INFINITY;
-        let mut keyframes = 2;
-        let mut step = 0;
-        while keyframes <= max_keyframes {
-            step += 1;
-            let source_ids: Vec<usize> = std::iter::once(cur_idx)
-                .chain(source_pool.iter().copied())
-                .take(keyframes)
+        target.add(self, &target_ids, true);
+        let range = UncertaintyRange::new(&self.config, clouds.len() + 1, diag.pressure);
+        let mut ratios = vec![first_ratio];
+        let mut found: Option<Option<IcpResult>> = None;
+        for (step, &j) in clouds.iter().enumerate() {
+            let step = step + 1;
+            // the target submap's range around target_idx for this many source clouds, then the keyframes near where
+            // this cloud lands
+            let range_half = self.config.target_half_range(step + 1);
+            let widened: Vec<usize> = (target_idx.saturating_sub(range_half)..=target_idx + range_half)
+                .filter(|&k| k < target_end && !target_ids.contains(&k))
                 .collect();
-            let target_ids: Vec<usize> = target_pool
-                .iter()
-                .copied()
-                .take(base_len + keyframes)
+            target.add(self, &widened, true);
+            target_ids.extend(widened);
+            let placed = mat3::add(&mat3::mat_vec(&first.rotation, &positions[j]), &first.translation);
+            let mut near: Vec<(f64, usize)> = (0..target_end)
+                .filter(|k| !target_ids.contains(k))
+                .map(|k| (mat3::norm(&mat3::sub(&positions[k], &placed)), k))
+                .filter(|&(d, _)| d < self.mean_reach)
                 .collect();
-            if keyframes > 2
-                && source_ids.len() + target_ids.len()
-                    <= source.keyframes.len() + target.keyframes.len()
-            {
-                break;
-            }
-            let round = memo(&format!("xo{keyframes}"), 2, &mut || {
-                source.add(self, &source_ids, false);
-                target.add(self, &target_ids, true);
-                // the stacked source is thinned to about the single scan's size, so a step costs about what the first
-                // ICP did; the target keeps full resolution so the inlier test means the same thing in every step
-                let stacked = source.points();
-                let thinning = (stacked.len() as f64 / source_points.max(1) as f64).max(1.0);
-                let thinned = if thinning > 1.0 {
-                    voxel_downsample(&stacked, self.config.submap_resolution * thinning.sqrt())
-                } else {
-                    stacked.clone()
+            near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            let added: Vec<usize> = near.into_iter().map(|(_, k)| k).take(submap_size).collect();
+            target.add(self, &added, true);
+            target_ids.extend(added);
+            let round = memo(&format!("xc{j}"), 1, &mut || {
+                let key_pose = &self.key_poses[j];
+                let Some(body) = &key_pose.body_cloud else {
+                    return vec![f64::NAN; 17];
                 };
+                let source = transform_cloud(
+                    self.keyframe_clouds
+                        .get(j, body)
+                        .voxelized(self.config.submap_resolution),
+                    &key_pose.rotation_global,
+                    &key_pose.translation_global,
+                );
                 let target_points = target.index.points();
                 let icp = icp(
-                    &thinned,
+                    &source,
                     target_points,
                     &target.index,
-                    &seed_rotation,
-                    &seed_translation,
+                    &first.rotation,
+                    &first.translation,
                     &params,
                 );
                 if !self.config.closure_icp_dump_dir.is_empty() {
@@ -449,139 +409,113 @@ impl ClosureSearch {
                         &self.config.closure_icp_dump_dir,
                         cur_idx,
                         target_idx,
-                        &thinned,
+                        &source,
                         target_points,
                         &icp,
-                        &format!("_x{keyframes}"),
+                        &format!("_c{j}"),
                     );
                     self.debug_io_s
                         .set(self.debug_io_s.get() + t0.elapsed().as_secs_f64());
                 }
-                let score = |on: bool, f: &dyn Fn() -> f64| {
-                    if on && icp.converged {
-                        f()
-                    } else {
-                        f64::NAN
-                    }
-                };
-                let mut v = vec![stacked.len() as f64, target_points.len() as f64];
+                let mut v = vec![source.len() as f64];
                 v.extend(crate::icp_cache::encode_icp(&icp));
-                v.push(score(sharp, &|| {
-                    self.sharpness(&thinned, &target.index, &icp)
-                }));
-                v.push(score(likelihood, &|| {
-                    self.likelihood_ratio(&thinned, target_points, &target.index, &icp, &target_ids)
+                v.push(if icp.converged {
+                    self.likelihood_ratio(&source, target_points, &target.index, &icp, &target_ids)
                         .0
-                }));
+                } else {
+                    f64::NAN
+                });
                 v
             });
-            let (stacked_len, target_len) = (round[0] as usize, round[1] as usize);
-            let icp = crate::icp_cache::decode_icp(&round[2..17]);
-            // inliers of the full stack, estimated from the thinned one's inlier fraction
-            let extended = if icp.converged {
-                (icp.overlap * stacked_len as f64).round() as usize
-            } else {
-                0
-            };
-            let held_up = ((extended as f64 / stacked_len.max(1) as f64)
-                / (single as f64 / source_points as f64))
-                .min(1.0);
-            let per_scan = diag.confidence * held_up;
-            if sharp && icp.converged {
-                diag.extended_sharpness = round[17];
-            }
-            if likelihood && icp.converged {
-                diag.extended_likelihood_ratio = round[18];
-            }
-            // evidence = -ln(1 - confidence); the stack adds evidence as far as it covers surface the single scan did
-            // not: its per-point ratio times its size over the single scan's (both voxelized at the submap resolution, so
-            // a keyframe seeing the same ground again adds nothing). Scored by sharpness, the stack earns its own
-            // confidence; otherwise its evidence grows with its inlier count
-            let evidence = if likelihood {
-                diag.extended_likelihood_ratio.max(0.0) * stacked_len as f64
-                    / source_points.max(1) as f64
-            } else if sharp {
-                let half = self.config.closure_sharpness_half;
-                -(1.0
-                    - diag.scan_context_factor
-                        * diag.degeneracy_factor
-                        * (diag.extended_sharpness / (diag.extended_sharpness + half))
-                            .clamp(0.0, 1.0))
-                .ln()
-            } else {
-                -(1.0 - per_scan).ln() * extended as f64 / single as f64
-            };
-            let required = required(evidence, diag);
-            let confidence = 1.0 - (-evidence).exp();
-            diag.extended_keyframes = source_ids.len();
-            diag.extended_source_points = stacked_len;
-            diag.extended_target_points = target_len;
-            diag.extended_inliers = extended;
-            diag.extended_fitness = icp.fitness;
-            diag.extended_confidence = if confidence.is_finite() {
-                confidence.clamp(0.0, 1.0)
+            let icp = crate::icp_cache::decode_icp(&round[1..16]);
+            // a cloud that would not fit, or fitted somewhere other than where the single fit put it, adds no evidence
+            let moved = mat3::norm(&mat3::sub(
+                &mat3::add(&mat3::mat_vec(&icp.rotation, &positions[j]), &icp.translation),
+                &placed,
+            )) > radius;
+            let evidence = if icp.converged && !moved && round[16].is_finite() {
+                round[16].max(0.0)
             } else {
                 0.0
             };
-            if !icp.converged {
-                break;
-            }
-            // a step that moves the stack off the single fit's place found a different place, not more of this one
-            let moved = source_ids.iter().any(|&k| {
-                let p = &positions[k];
-                let a = mat3::add(&mat3::mat_vec(&icp.rotation, p), &icp.translation);
-                let b = mat3::add(&mat3::mat_vec(&first.rotation, p), &first.translation);
-                mat3::norm(&mat3::sub(&a, &b)) > radius
-            }) && self.config.closure_extension_stop_on_swing;
-            let ratio = if required > 0.0 {
-                evidence / required
-            } else {
-                f64::INFINITY
-            };
-            let flat =
-                self.config.closure_extension_stop_when_flat && evidence <= previous_evidence;
+            let bar = required(evidence, diag);
+            ratios.push(if bar > 0.0 { evidence / bar } else { f64::INFINITY });
+            let median = median_ratio(&ratios);
+            diag.cloud_ratios = ratios.clone();
+            diag.extended_keyframes = ratios.len();
+            diag.extended_source_points = round[0] as usize;
+            diag.extended_target_points = target.index.points().len();
+            diag.extended_fitness = icp.fitness;
+            diag.extended_likelihood_ratio = round[16];
+            diag.extended_confidence = 1.0 - (-median * bar.max(0.0)).exp();
             let (low, high) = range.at(step);
-            let verdict = if moved {
+            let verdict = if median >= high {
+                Some(Some(first.clone()))
+            } else if median <= low {
                 Some(None)
-            } else if ratio >= high {
-                Some(Some((icp.clone(), diag.clone())))
-            } else if ratio <= low {
-                Some(None)
-            } else if flat {
-                // no new information: decide by which side of the bar it sits
-                Some((ratio >= 1.0).then(|| (icp.clone(), diag.clone())))
             } else {
                 None
             };
-            last = (icp.clone(), diag.clone(), ratio);
             if let Some(verdict) = verdict {
                 if !record_all {
-                    return verdict.map(|(icp, kept)| {
-                        *diag = kept;
-                        icp
-                    });
+                    return verdict;
                 }
                 found.get_or_insert(verdict);
             }
-            previous_evidence = evidence;
-            if !sharp {
-                (seed_rotation, seed_translation) = (icp.rotation, icp.translation);
-            }
-            keyframes *= 2;
         }
         match found {
-            Some(verdict) => verdict.map(|(icp, kept)| {
-                *diag = kept;
-                icp
-            }),
-            None => decide(last, diag),
+            Some(verdict) => verdict,
+            None => accept(median_ratio(&ratios)),
         }
     }
 }
 
+/// The median of a candidate's per-cloud confidence ratios (the mean of the middle two for an even count).
+pub(crate) fn median_ratio(ratios: &[f64]) -> f64 {
+    let mut sorted: Vec<f64> = ratios.iter().copied().filter(|r| !r.is_nan()).collect();
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    sorted.sort_by(f64::total_cmp);
+    let n = sorted.len();
+    if n % 2 == 1 {
+        sorted[n / 2]
+    } else if sorted[n / 2 - 1].is_infinite() {
+        sorted[n / 2 - 1]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    }
+}
+
+/// The separate source clouds an extension fits, in order: newer keyframes than the target side may reach (more than
+/// `2 half_range` after `target_idx`), walking back from `cur_idx`, each at least `spacing` of odometry path from the one
+/// chosen before (so each sees the place from somewhere else), up to `max_clouds - 1` (the single scan is the first).
+pub(crate) fn extension_clouds(
+    odometry: &[Vec3],
+    target_idx: usize,
+    cur_idx: usize,
+    half_range: usize,
+    max_clouds: usize,
+    spacing: f64,
+) -> Vec<usize> {
+    let floor = target_idx + 2 * half_range + 1;
+    let mut chosen = Vec::new();
+    let mut since = 0.0;
+    let mut k = cur_idx;
+    while k > floor && chosen.len() + 1 < max_clouds {
+        k -= 1;
+        since += mat3::norm(&mat3::sub(&odometry[k + 1], &odometry[k]));
+        if since >= spacing {
+            chosen.push(k);
+            since = 0.0;
+        }
+    }
+    chosen
+}
+
 /// The uncertainty range: ratios of a candidate's evidence to its bar (both in yank units). At or above `high` it accepts,
-/// at or below `low` it rejects, and in between the stack grows. Both ratios move linearly to 1 over the extension's
-/// steps, stretched by 1 / (1 - pressure)^`decisive_pressure_rate` (50% pressure: twice as long at the default rate 1),
+/// at or below `low` it rejects, and in between another cloud is fitted. Both ratios move linearly to 1 over the
+/// extension's rounds (one per cloud after the single scan), stretched by 1 / (1 - pressure)^`decisive_pressure_rate` (50% pressure: twice as long at the default rate 1),
 /// so the budget's end forces a decision at ratio >= 1 while a high pressure keeps the uncertainty range wide longer.
 pub(crate) struct UncertaintyRange {
     low: f64,
@@ -592,10 +526,10 @@ pub(crate) struct UncertaintyRange {
 impl UncertaintyRange {
     pub(crate) fn new(
         config: &crate::gsc_pgo::Config,
-        max_keyframes: usize,
+        clouds: usize,
         pressure: f64,
     ) -> UncertaintyRange {
-        let doublings = (max_keyframes.max(2) as f64).log2().floor().max(1.0);
+        let rounds = (clouds.max(2) - 1) as f64;
         let pressure = if pressure.is_finite() {
             pressure.clamp(0.0, 0.999)
         } else {
@@ -604,7 +538,7 @@ impl UncertaintyRange {
         UncertaintyRange {
             low: config.barely_fail_uncertainty_range,
             high: config.barely_pass_uncertainty_range,
-            steps: doublings
+            steps: rounds
                 * (1.0 / (1.0 - pressure)).powf(config.decisive_pressure_rate.max(0.0)),
         }
     }
@@ -618,51 +552,6 @@ impl UncertaintyRange {
     }
 }
 
-/// The keyframes an extension may stack, each list nearest first (the target's own submap ahead of the rest; the third
-/// value is its size). Source: the newer side, keyframes from `split` to `cur_idx` within `reach` (how far a scan
-/// overlaps another) of the current keyframe. Target: the older side, any keyframe up to `split - 1 - half_range`
-/// (either side of `target_idx` in time) within `reach` of where the single fit puts the current keyframe. The sides
-/// never share a keyframe, and `half_range` keyframes separate them so neighbouring scans (which share points) cannot
-/// land on both; `split` leaves room for the target's own submap (`target_idx` +- `half_range`) and at most twice the
-/// budget of newer keyframes.
-pub(crate) fn extension_pools(
-    positions: &[Vec3],
-    target_idx: usize,
-    cur_idx: usize,
-    half_range: usize,
-    max_keyframes: usize,
-    reach: f64,
-    placed_cur: &Vec3,
-) -> (Vec<usize>, Vec<usize>, usize) {
-    let split = (target_idx + 2 * half_range + 1)
-        .max(cur_idx.saturating_sub(2 * max_keyframes))
-        .min(cur_idx);
-    let near = |ids: std::ops::Range<usize>, to: &Vec3| -> Vec<usize> {
-        let mut found: Vec<(f64, usize)> = ids
-            .map(|k| (mat3::norm(&mat3::sub(&positions[k], to)), k))
-            .filter(|&(d, _)| d < reach)
-            .collect();
-        found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        found.into_iter().map(|(_, k)| k).collect()
-    };
-    let source = near(split..cur_idx, &positions[cur_idx]);
-    let target_end = split.saturating_sub(half_range);
-    // the target's own submap first (as far as it is old enough), then the rest nearest first
-    let base: Vec<usize> = (target_idx.saturating_sub(half_range)..=target_idx + half_range)
-        .filter(|&j| j < target_end)
-        .collect();
-    let target = base
-        .iter()
-        .copied()
-        .chain(
-            near(0..target_end, placed_cur)
-                .into_iter()
-                .filter(|j| !base.contains(j)),
-        )
-        .collect();
-    (source, target, base.len())
-}
-
 #[cfg(test)]
 mod uncertainty_range_tests {
     use super::UncertaintyRange;
@@ -672,7 +561,8 @@ mod uncertainty_range_tests {
     #[test]
     fn pressure_keeps_the_uncertainty_range_open_longer() {
         let config = crate::gsc_pgo::Config::default();
-        let calm = UncertaintyRange::new(&config, 16, 0.0);
+        // 5 clouds: the single scan and 4 more, so 4 rounds
+        let calm = UncertaintyRange::new(&config, 5, 0.0);
         assert_eq!(
             calm.at(0),
             (
@@ -681,7 +571,7 @@ mod uncertainty_range_tests {
             )
         );
         assert_eq!(calm.at(4), (1.0, 1.0));
-        let pressed = UncertaintyRange::new(&config, 16, 0.5);
+        let pressed = UncertaintyRange::new(&config, 5, 0.5);
         let half = 1.0 + (config.barely_pass_uncertainty_range - 1.0) / 2.0;
         assert!((pressed.at(4).1 - half).abs() < 1e-12);
         assert_eq!(pressed.at(8), (1.0, 1.0));
@@ -693,37 +583,48 @@ mod uncertainty_range_tests {
 
 #[cfg(test)]
 mod extension_tests {
-    use super::extension_pools;
+    use super::{extension_clouds, median_ratio};
     use crate::connection_fit::{icp, IcpParams};
     use crate::mat3;
     use crate::pointcloud::{KdForest, KdTree, NearestIndex, PointCloud};
 
-    /// A short-gap revisit (the current keyframe a few after the target): the source and target sides share no keyframe and
-    /// stay half_range apart, however close in space their scans are.
+    /// The extension's source clouds are newer than every keyframe the target side may take (its submap, and anything
+    /// older than the oldest source cloud by more than half_range), so the sides share no keyframe and stay half_range
+    /// apart, however short the gap; and they are spaced along the odometry.
     #[test]
     fn the_sides_never_share_a_keyframe() {
-        // a robot standing still: every keyframe at the origin, so every keyframe is near every other
-        let positions = vec![[0.0; 3]; 60];
-        for (target_idx, cur_idx) in [(20, 22), (20, 30), (20, 59), (0, 5), (40, 59)] {
-            let half_range = 5;
-            let (source, target, _) = extension_pools(
-                &positions, target_idx, cur_idx, half_range, 16, 3.0, &[0.0; 3],
-            );
-            let Some(&target_top) = target.iter().max() else {
-                continue;
-            };
-            for &s in source.iter().chain([&cur_idx]) {
-                assert!(
-                    !target.contains(&s),
-                    "{target_idx}->{cur_idx}: {s} on both sides"
-                );
-                assert!(
-                    s > target_top + half_range,
-                    "{target_idx}->{cur_idx}: source {s} within {half_range} of target {target_top}"
-                );
+        let half_range = 5;
+        // one metre of odometry per keyframe
+        let odometry: Vec<[f64; 3]> = (0..60).map(|k| [k as f64, 0.0, 0.0]).collect();
+        for (target_idx, cur_idx) in [(20, 22), (20, 32), (20, 59), (0, 5), (40, 59)] {
+            let clouds = extension_clouds(&odometry, target_idx, cur_idx, half_range, 5, 3.0);
+            let oldest_source = clouds.iter().copied().chain([cur_idx]).min().unwrap();
+            let target_end = oldest_source.saturating_sub(half_range);
+            let submap: Vec<usize> = (target_idx.saturating_sub(half_range)..=target_idx + half_range)
+                .filter(|&k| k < target_end)
+                .collect();
+            for &s in clouds.iter().chain([&cur_idx]) {
+                assert!(!submap.contains(&s), "{target_idx}->{cur_idx}: {s} on both sides");
+                assert!(s >= target_end + half_range, "{target_idx}->{cur_idx}: {s} within the gap");
             }
-            assert!(source.iter().all(|&s| s < cur_idx));
+            for pair in std::iter::once(cur_idx).chain(clouds.iter().copied()).collect::<Vec<_>>().windows(2) {
+                assert!(pair[0] - pair[1] >= 3, "{target_idx}->{cur_idx}: clouds {pair:?} closer than the spacing");
+            }
+            assert!(clouds.len() <= 4);
         }
+    }
+
+    /// The candidate's score is the median of its clouds' confidence ratios: one cloud alone cannot carry it, and one bad
+    /// cloud among good ones cannot sink it.
+    #[test]
+    fn the_median_of_the_cloud_ratios_scores_a_candidate() {
+        assert_eq!(median_ratio(&[1.2]), 1.2);
+        assert_eq!(median_ratio(&[0.2, 1.5]), 0.85);
+        assert_eq!(median_ratio(&[0.2, 1.5, 1.1]), 1.1);
+        assert_eq!(median_ratio(&[5.0, 0.1, 0.0, 0.2]), 0.15000000000000002);
+        assert_eq!(median_ratio(&[f64::INFINITY, f64::INFINITY]), f64::INFINITY);
+        assert_eq!(median_ratio(&[f64::NAN, 0.9]), 0.9);
+        assert_eq!(median_ratio(&[]), 0.0);
     }
 
     /// The growing index answers exactly as one tree over the same points, and ICP against it lands where ICP against a

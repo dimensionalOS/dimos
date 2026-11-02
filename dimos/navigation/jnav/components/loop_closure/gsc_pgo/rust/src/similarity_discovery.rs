@@ -372,7 +372,7 @@ impl crate::gsc_pgo::GscPgo {
     /// against itself only checks odometry against itself). Extended ICP keeps its stack clear of the target on its own.
     pub(crate) fn newest_closure_target(&self) -> usize {
         (self.key_poses.len() - 1)
-            .saturating_sub(self.config.closure_submap_half_range.max(0) as usize + 1)
+            .saturating_sub(self.config.target_half_range(1) + 1)
     }
     /// Radius search on past key-pose global positions (candidates ascending
     /// by distance), returning the nearest that is far enough back.
