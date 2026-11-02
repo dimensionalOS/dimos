@@ -73,7 +73,7 @@ def build(
     if not cfg.source:
         typer.echo("error: no source given (use --source or set it in --config)", err=True)
         raise typer.Exit(2)
-    if not cfg.observation and not cfg.action:
+    if not cfg.recording_schema.observation and not cfg.recording_schema.action:
         typer.echo(
             "error: no observation/action streams configured; pass --config with the "
             "stream maps (see dimos/imitation/dataprep/example_config.json)",
@@ -82,7 +82,12 @@ def build(
         raise typer.Exit(2)
 
     try:
-        path = run_dataprep(cfg)
+        if cfg.output.format == "lerobot":
+            from dimos.imitation.dataprep.formats.lerobot.adapter import run_lerobot_dataprep
+
+            path = run_lerobot_dataprep(cfg)
+        else:
+            path = run_dataprep(cfg)
     except Exception as e:
         # CLI boundary: any failure becomes a clean message + non-zero exit
         # instead of a traceback. run_dataprep raises specific errors internally.

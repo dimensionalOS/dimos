@@ -195,7 +195,11 @@ replacement is rejected without dispatching or consuming it. SDK moves always
 pass this ID. Calling `execute()` without an ID explicitly consumes whichever
 plan is pending. Previewing a plan does not select it for execution.
 `clear_planned_path()` discards pending work without
-cancelling active execution. Use one motion-commanding client per module;
+cancelling active execution. The module no longer exposes `reset()`. Use
+`arm.rpc.cancel()` to cancel planning or execution, or
+`arm.rpc.clear_planned_path()` to discard a pending plan without cancelling
+execution. Cancellation failures remain in the returned result; these calls do
+not clear hardware errors. Use one motion-commanding client per module;
 separate `Arm` objects do not own independent plans or executions.
 
 `execute()` blocks by default. With `blocking=False`, success means dispatch was

@@ -38,8 +38,8 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.control.benchmarking.benchmark import Benchmarker
-from dimos.core.coordination.blueprints import TransportSpec, autoconnect
-from dimos.core.stream import Transport
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_holonomic_controller import (
