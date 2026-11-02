@@ -95,12 +95,8 @@ pub struct Config {
     pub graze_cos: f32,
     /// Spare a grazing miss only on a voxel hit within this many frames, so a surface nothing sees any more clears; u32::MAX spares always.
     pub graze_recent_frames: u32,
-    /// A voxel whose plane fits its points within this RMS distance (m), and whose own points' mean lies that close to it, is a thin surface, which a ray clears only by crossing that plane; zero turns it off.
-    #[validate(range(min = 0.0))]
-    pub thin_surface_m: f32,
-    /// A ray crossing a thin surface is spared when abs of its dot with the plane's normal is below this, instead of graze_cos.
-    #[validate(range(min = 0.0, max = 1.0))]
-    pub thin_graze_cos: f32,
+    /// A voxel whose plane fits its points, and its own points' mean, within a fine cell is a thin surface, which a ray clears only by crossing that plane. Off without fine cells.
+    pub thin_surfaces: bool,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
     /// emits all. Higher drops isolated returns. The global map is unfiltered.
     #[validate(range(min = 0))]
@@ -1060,8 +1056,10 @@ pub fn update_map(
         graze_cos: cfg.graze_cos,
         map_frame: map.frame,
         graze_recent_frames: cfg.graze_recent_frames,
-        thin_surface_m: cfg.thin_surface_m,
-        thin_graze_cos: cfg.thin_graze_cos,
+        thin_cell: cfg
+            .fine_layer()
+            .filter(|_| cfg.thin_surfaces)
+            .map(|(_, cell)| cell),
         fine_divisor: fine,
     };
     let step = cfg.ray_subsample as usize;
@@ -1460,8 +1458,8 @@ struct RayFrame<'a> {
     /// This frame's number, and how recent a hit keeps a voxel's grazing protection.
     map_frame: u32,
     graze_recent_frames: u32,
-    thin_surface_m: f32,
-    thin_graze_cos: f32,
+    /// The fine cell size when thin surfaces are on: how close a fit must be to make one.
+    thin_cell: Option<f32>,
     fine_divisor: Option<i32>,
 }
 
@@ -1487,8 +1485,7 @@ fn find_misses_along_ray(
         graze_cos,
         map_frame,
         graze_recent_frames,
-        thin_surface_m,
-        thin_graze_cos,
+        thin_cell,
         fine_divisor,
     } = *frame;
     if origin_voxel == endpoint {
@@ -1607,10 +1604,12 @@ fn find_misses_along_ray(
             }
             let t_exit = tx.min(ty).min(tz);
             // The fit must be tight, and this voxel's own points must lie on it, not only those below.
-            let thin = surface.filter(|p| {
-                p.spread < thin_surface_m
-                    && p.determined
-                    && (p.normal.dot(&(c.sum / c.num_pts as f32)) - p.offset).abs() < thin_surface_m
+            let thin = thin_cell.and_then(|cell| {
+                surface.filter(|p| {
+                    p.spread < cell
+                        && p.determined
+                        && (p.normal.dot(&(c.sum / c.num_pts as f32)) - p.offset).abs() < cell
+                })
             });
             // A ray that stays on one side of a thin surface passes beside it, not through it.
             if let Some(plane) = thin {
@@ -1644,11 +1643,9 @@ fn find_misses_along_ray(
                 walk.misses.insert((x, y, z));
                 continue;
             }
-            // A thin surface's own plane alone decides whether a crossing ray grazes it.
-            if let Some(plane) = thin {
-                if !should_spare(Some(plane.normal), ray_unit, thin_graze_cos) {
-                    walk.misses.insert((x, y, z));
-                }
+            // A ray through a thin surface's plane sees through it, at any angle.
+            if thin.is_some() {
+                walk.misses.insert((x, y, z));
                 continue;
             }
             match c.normal {

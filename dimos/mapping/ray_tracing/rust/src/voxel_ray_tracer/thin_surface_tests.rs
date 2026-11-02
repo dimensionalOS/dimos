@@ -24,13 +24,13 @@ fn thin_patch(z: f32) -> VoxelMap {
 }
 
 // A wide pooled band, so a test passing proves the thin rules decided.
-fn thin_config(thin_surface_m: f32, thin_graze_cos: f32) -> Config {
+fn thin_config(thin_surfaces: bool) -> Config {
     Config {
         voxel_size: 0.1,
+        fine_divisor: 3,
         shadow_depth: 0.1,
         graze_cos: 0.9,
-        thin_surface_m,
-        thin_graze_cos,
+        thin_surfaces,
         ..basic_config()
     }
 }
@@ -44,7 +44,7 @@ fn thin_surface_spares_a_ray_that_never_crosses_its_plane() {
     let mut map = thin_patch(0.52);
     let off = Config {
         graze_cos: 0.0,
-        ..thin_config(0.0, 0.0)
+        ..thin_config(false)
     };
     update_map(&mut map, origin, &[hit], &off);
     assert!(
@@ -54,7 +54,7 @@ fn thin_surface_spares_a_ray_that_never_crosses_its_plane() {
 
     let mut map = thin_patch(0.52);
     let on = Config {
-        thin_surface_m: 0.01,
+        thin_surfaces: true,
         ..off
     };
     update_map(&mut map, origin, &[hit], &on);
@@ -64,9 +64,9 @@ fn thin_surface_spares_a_ray_that_never_crosses_its_plane() {
     );
 }
 
-/// A ray crossing a thin surface is spared only within the thin grazing band.
+/// A ray crossing a thin surface's plane inside its voxel carves it, however shallow, though a wide pooled band would spare it.
 #[test]
-fn thin_surface_grazing_band_spares_only_shallow_crossings() {
+fn thin_surface_is_carved_by_any_crossing() {
     let patch = (5, 0, 5);
     let crossing = |deg: f32| {
         let (c, s) = (deg.to_radians().cos(), deg.to_radians().sin());
@@ -74,17 +74,11 @@ fn thin_surface_grazing_band_spares_only_shallow_crossings() {
         let origin = (at.0 - c, at.1, at.2 + s);
         let hit = (at.0 + c, at.1, at.2 - s);
         let mut map = thin_patch(0.52);
-        update_map(&mut map, origin, &[hit], &thin_config(0.01, 0.26));
+        update_map(&mut map, origin, &[hit], &thin_config(true));
         map.voxels.contains_key(&patch)
     };
-    assert!(
-        crossing(10.0),
-        "a 10 degree crossing is a graze and must be spared"
-    );
-    assert!(
-        !crossing(30.0),
-        "a 30 degree crossing sees through the patch and must carve it"
-    );
+    assert!(!crossing(10.0), "a 10 degree crossing must carve it");
+    assert!(!crossing(30.0), "a 30 degree crossing must carve it");
 }
 
 /// Sparse points above a dense floor share its plane but are not a thin surface of their own.
@@ -105,7 +99,7 @@ fn points_above_a_floor_are_not_thin_through_its_fit() {
         &[(1.55, 0.05, 0.56)],
         &Config {
             graze_cos: 0.0,
-            ..thin_config(0.03, 0.26)
+            ..thin_config(true)
         },
     );
     assert!(
@@ -127,7 +121,7 @@ fn scan_line_voxel_is_not_thin() {
         &[(1.55, 0.05, 0.58)],
         &Config {
             graze_cos: 0.0,
-            ..thin_config(0.01, 0.0)
+            ..thin_config(true)
         },
     );
     assert!(
@@ -143,7 +137,7 @@ fn three_point_voxel_is_not_thin() {
     let mut map = map_of_points(&points, 0.1);
     let cfg = Config {
         graze_cos: 0.0,
-        ..thin_config(0.01, 0.0)
+        ..thin_config(true)
     };
     update_map(&mut map, (0.05, 0.05, 0.58), &[(1.55, 0.05, 0.58)], &cfg);
     assert!(
