@@ -50,6 +50,13 @@ fn fan() -> Vec<[f64; 3]> {
     p
 }
 
+/// A straight leg ending in a rotate-in-place fan.
+fn terminal_fan() -> Vec<[f64; 3]> {
+    let mut p: Vec<[f64; 3]> = (0..10).map(|k| [k as f64 * 0.1, 0.0, 0.0]).collect();
+    p.extend([0.3, 0.6, 0.9, 1.2, 1.5].iter().map(|&y| [0.9, 0.0, y]));
+    p
+}
+
 #[test]
 fn on_path_drives_forward() {
     let (vx, vy, wz) = update((0.0, 0.0, 0.0), &straight(), None, None, &cfg());
@@ -115,6 +122,17 @@ fn walk_command_is_identity_at_rest_and_continuous() {
 #[test]
 fn fan_rotates_in_place() {
     let (vx, vy, wz) = update((0.0, 0.0, 0.0), &fan(), None, None, &cfg());
+    assert!(wz > 0.3, "wz={wz}");
+    assert!(
+        vx.hypot(vy) < 0.15,
+        "holds position: speed={}",
+        vx.hypot(vy)
+    );
+}
+
+#[test]
+fn a_terminal_fan_turns_in_place_at_the_goal() {
+    let (vx, vy, wz) = update((0.9, 0.0, 0.0), &terminal_fan(), None, None, &cfg());
     assert!(wz > 0.3, "wz={wz}");
     assert!(
         vx.hypot(vy) < 0.15,

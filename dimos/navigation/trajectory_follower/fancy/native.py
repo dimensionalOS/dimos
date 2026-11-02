@@ -41,6 +41,7 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     # config has no Rust-side defaults.
     control_frequency: float = 10.0
     goal_tolerance: float = 0.20  # planar distance that counts as arrival in meters
+    goal_yaw_tolerance: float = 0.15  # arrival heading error on a goal with a heading in radians
     embodiment: Embodiment
     # The pose is the path.frame_id to base_frame edge on tf, read each tick.
     base_frame: str = "base_link"
