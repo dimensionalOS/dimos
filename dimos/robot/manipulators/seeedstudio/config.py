@@ -18,21 +18,20 @@ from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import TaskConfig
-from dimos.core.global_config import global_config
-from dimos.hardware.manipulators.seeedstudio.adapter import (
-    ARM_DOF,
-    ARM_LOWER,
-    ARM_UPPER,
-    ARM_VELOCITY_MAX,
-    GRIPPER_MAX_OPENING_M,
-    JOINT2_REST_MARGIN,
-)
 from dimos.hardware.spec import JointLimits
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
-from dimos.robot.manipulators._modeling import joint_names
+from dimos.robot.manipulators.seeedstudio.joints import (
+    SEEEDSTUDIO_ARM_JOINTS,
+    SEEEDSTUDIO_DOF,
+    SEEEDSTUDIO_GRIPPER_JOINT,
+    SEEEDSTUDIO_HARDWARE_ID,
+    SEEEDSTUDIO_JOINTS,
+)
 
 SEEEDSTUDIO_DESCRIPTION_REPO = "https://github.com/Seeed-Projects/reBotArm_control_py.git"
 SEEEDSTUDIO_DESCRIPTION_REF = "6415d43130d1e143c70dc106096a857ac5556f81"
@@ -42,78 +41,87 @@ _SEEEDSTUDIO_REPO = RobotDescriptionSource(
 )
 SEEEDSTUDIO_MODEL_PATH = _SEEEDSTUDIO_REPO / "urdf" / "DM" / "urdf" / "ReBot_Arm_DM.urdf"
 
+# At its folded mechanical rest this arm's joint2 encoder reads about
+# +0.0055 rad, just past the vendor URDF's 0.0 upper limit.
+SEEEDSTUDIO_JOINT2_LIMITS = (-3.14, 0.02)
 # The vendor URDF lists 50-200 rad/s joint velocities; the motors top out at
 # 10-30 rad/s. Scale planned trajectories to 0.2 rad/s (joints 1-3) and
-# 0.8 rad/s (joints 4-6), under the adapter's POS_VEL ceiling.
+# 0.8 rad/s (joints 4-6).
 SEEEDSTUDIO_VELOCITY_SCALE = 0.004
-# One control tick sweeps seven serial feedback requests and seven POS_VEL
-# writes over the USB bridge, roughly 30 ms.
-SEEEDSTUDIO_TICK_RATE_HZ = 25.0
 SEEEDSTUDIO_ACCELERATION_LIMIT = 0.5
+# MIT gains for the DM4340P shoulder and elbow and the DM4310 wrist; the
+# gripper runs its own current-limited position control.
+SEEEDSTUDIO_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0)
+SEEEDSTUDIO_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0)
 
 
-def seeedstudio_hardware(hw_id: str = "arm") -> HardwareComponent:
-    """Configure mock B601-DM hardware unless an explicit CAN port selects the real adapter."""
-    adapter_type = "mock"
-    address = None
-    limits = None
-    if not global_config.simulation and global_config.can_port:
-        adapter_type = "seeedstudio_b601_dm"
-        address = global_config.can_port
-    else:
-        limits = JointLimits(
-            position_lower=[*ARM_LOWER, 0.0],
-            position_upper=[*ARM_UPPER, GRIPPER_MAX_OPENING_M],
-            velocity_max=[ARM_VELOCITY_MAX] * ARM_DOF + [0.0],
-        )
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=[*joint_names(ARM_DOF), f"{hw_id}/gripper"],
-        adapter_type=adapter_type,
-        address=address,
-        auto_enable=True,
-        limits=limits,
+def seeedstudio_model() -> RobotModel:
+    """Vendor model with the fingers fixed closed; the gripper is driven, not planned."""
+    lower, upper = SEEEDSTUDIO_JOINT2_LIMITS
+    return (
+        RobotModel.from_file(SEEEDSTUDIO_MODEL_PATH)
+        .with_fixed_joints("finger_left", "finger_right")
+        .with_joint_position_limits("joint2", lower=lower, upper=upper)
+        .with_default_joint_acceleration_limit(SEEEDSTUDIO_ACCELERATION_LIMIT)
     )
 
 
-def seeedstudio_gripper_task(hw_id: str = "arm") -> TaskConfig:
+def seeedstudio_hardware(
+    *,
+    address: str | None = None,
+    gravity_comp: bool = False,
+) -> HardwareComponent:
+    """Configure the B601-DM, running mock hardware while no address reaches it.
+
+    The address is the serial port of the Damiao USB-CAN bridge shipped with
+    the arm (``/dev/ttyACM0``) or a SocketCAN interface (``can0``), given here
+    or through the coordinator's ``addresses`` under ``"arm"``.
+    """
+    return HardwareComponent(
+        hardware_id=SEEEDSTUDIO_HARDWARE_ID,
+        hardware_type=HardwareType.WHOLE_BODY,
+        joints=list(SEEEDSTUDIO_JOINTS),
+        adapter_type="seeedstudio_b601_dm",
+        address=address,
+        auto_enable=True,
+        adapter_kwargs={"runtime_config": DamiaoRuntimeConfig(gravity_comp=gravity_comp)},
+        wb_config=WholeBodyConfig(kp=SEEEDSTUDIO_KP, kd=SEEEDSTUDIO_KD),
+        mock_limits=JointLimits(
+            position_lower=[*([None] * SEEEDSTUDIO_DOF), 0.0],
+            position_upper=[*([None] * SEEEDSTUDIO_DOF), 1.0],
+            velocity_max=[None] * len(SEEEDSTUDIO_JOINTS),
+        ),
+    )
+
+
+def seeedstudio_gripper_task() -> TaskConfig:
     """Normalized open/close control of the gripper joint (0.0 closed, 1.0 open)."""
     return TaskConfig(
-        name=f"{hw_id}_gripper",
+        name=f"{SEEEDSTUDIO_HARDWARE_ID}_gripper",
         type="gripper",
-        joint_names=[f"{hw_id}/gripper"],
+        joint_names=[SEEEDSTUDIO_GRIPPER_JOINT],
         priority=20,
     )
 
 
 def make_seeedstudio_model_config(
     *,
-    gripper_hardware_id: str | None = "arm",
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
-    """Vendor model with fingers fixed closed; the gripper is driven, not planned."""
-    model_joint_names = joint_names(ARM_DOF)
-    model = (
-        RobotModel.from_file(SEEEDSTUDIO_MODEL_PATH)
-        .with_fixed_joints("finger_left", "finger_right")
-        # Match the adapter: joint2 rests just past the URDF's 0.0 upper bound.
-        .with_joint_position_limits("joint2", lower=ARM_LOWER[1], upper=JOINT2_REST_MARGIN)
-        .with_default_joint_acceleration_limit(SEEEDSTUDIO_ACCELERATION_LIMIT)
-    )
+    """Build the planning config for the arm joints of the vendor model."""
     return RobotModelConfig(
-        model=model,
-        joint_names=model_joint_names,
+        model=seeedstudio_model(),
+        joint_names=list(SEEEDSTUDIO_ARM_JOINTS),
         base_link="base_link",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(model_joint_names),
+                joint_names=SEEEDSTUDIO_ARM_JOINTS,
                 base_link="base_link",
                 tip_link="end_link",
             )
         ],
         auto_convert_meshes=True,
-        gripper_hardware_id=gripper_hardware_id,
-        home_joints=home_joints or [0.0] * ARM_DOF,
+        gripper_hardware_id=SEEEDSTUDIO_HARDWARE_ID,
+        home_joints=home_joints or [0.0] * SEEEDSTUDIO_DOF,
     )

@@ -14,24 +14,25 @@
 
 """Basic Seeed Studio reBot B601-DM coordinator and planner blueprints.
 
-Mock hardware by default; pass ``--can-port`` with the HDSC bridge's serial
-port to drive the real arm.
+Mock hardware by default; pass ``--can-port`` with the Damiao USB-CAN
+bridge's serial port (or a SocketCAN interface) to drive the real arm.
 """
 
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
+from dimos.robot.manipulators.common.blueprints import coordinator, planner
 from dimos.robot.manipulators.seeedstudio.config import (
-    SEEEDSTUDIO_TICK_RATE_HZ,
     SEEEDSTUDIO_VELOCITY_SCALE,
     make_seeedstudio_model_config,
     seeedstudio_gripper_task,
     seeedstudio_hardware,
 )
+from dimos.robot.manipulators.seeedstudio.joints import SEEEDSTUDIO_JOINTS
 
-_seeedstudio_planner_hw = seeedstudio_hardware("arm")
+_seeedstudio_planner_hw = seeedstudio_hardware()
 
 seeedstudio_planner_coordinator = autoconnect(
     planner(
@@ -43,16 +44,14 @@ seeedstudio_planner_coordinator = autoconnect(
         },
     ),
     coordinator(
-        tick_rate=SEEEDSTUDIO_TICK_RATE_HZ,
         hardware=[_seeedstudio_planner_hw],
-        tasks=[trajectory_task(_seeedstudio_planner_hw), seeedstudio_gripper_task()],
+        tasks=[joint_trajectory_task(SEEEDSTUDIO_JOINTS), seeedstudio_gripper_task()],
     ),
 )
 
-_coordinator_seeedstudio_hw = seeedstudio_hardware("arm")
+_coordinator_seeedstudio_hw = seeedstudio_hardware()
 
 coordinator_seeedstudio = ControlCoordinator.blueprint(
-    tick_rate=SEEEDSTUDIO_TICK_RATE_HZ,
     hardware=[_coordinator_seeedstudio_hw],
-    tasks=[trajectory_task(_coordinator_seeedstudio_hw), seeedstudio_gripper_task()],
+    tasks=[joint_trajectory_task(SEEEDSTUDIO_JOINTS), seeedstudio_gripper_task()],
 )

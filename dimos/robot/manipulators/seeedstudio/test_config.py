@@ -13,36 +13,25 @@
 # limitations under the License.
 
 from collections.abc import Callable, Iterator
-import importlib
 from queue import Queue
 import time
-from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.control.components import HardwareComponent
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryExecutionStatus,
+    joint_trajectory_task,
+)
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import global_config
-from dimos.hardware.manipulators.seeedstudio.adapter import (
-    GRIPPER_MAX_OPENING_M,
-    JOINT2_REST_MARGIN,
-    gripper_opening_to_motor,
-)
-from dimos.hardware.manipulators.seeedstudio.protocol import (
-    DISABLE,
-    ENABLE,
-    Feedback,
-    MotorParameters,
-)
-from dimos.hardware.spec import JointLimits
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.manipulators.common.blueprints import trajectory_task
 from dimos.robot.manipulators.seeedstudio.blueprints import basic
 from dimos.robot.manipulators.seeedstudio.config import (
     make_seeedstudio_model_config,
@@ -54,51 +43,57 @@ JOINTS = [*(f"joint{i}" for i in range(1, 7)), "arm/gripper"]
 
 
 @pytest.mark.parametrize(
-    "port,simulation,expected",
-    [(None, "", "mock"), ("test-only", "", "seeedstudio_b601_dm"), ("test-only", "mock", "mock")],
+    "address,simulation,expected",
+    [
+        (None, "", "mock_whole_body"),
+        ("/dev/ttyACM0", "", "seeedstudio_b601_dm"),
+        ("can0", "", "seeedstudio_b601_dm"),
+        ("/dev/ttyACM0", "mujoco", "mock_whole_body"),
+    ],
 )
-def test_hardware_is_mock_unless_a_can_port_is_given(
-    port: str | None, simulation: str, expected: str, monkeypatch: pytest.MonkeyPatch
+def test_hardware_is_mock_unless_an_address_reaches_it(
+    address: str | None,
+    simulation: str,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(global_config, "can_port", port)
     monkeypatch.setattr(global_config, "simulation", simulation)
     hardware = seeedstudio_hardware()
-    assert hardware.adapter_type == expected
+    assert hardware.hardware_type == HardwareType.WHOLE_BODY
     assert hardware.joints == JOINTS
     assert hardware.auto_enable
-    if expected == "mock":
-        assert isinstance(hardware.limits, JointLimits)
-        assert hardware.limits.position_upper[1] == JOINT2_REST_MARGIN
-        assert hardware.limits.position_upper[-1] == GRIPPER_MAX_OPENING_M
-    else:
-        assert hardware.address == port
-        assert hardware.limits is None
+    assert hardware.adapter_kwargs["runtime_config"] == DamiaoRuntimeConfig(gravity_comp=False)
 
-
-def test_planner_coordinator_drives_arm_and_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
+    addresses = {"arm": address} if address else {}
+    coordinator = ControlCoordinator(addresses=addresses, hardware=[hardware])
     try:
-        monkeypatch.setattr(global_config, "can_port", "test-only")
-        monkeypatch.setattr(global_config, "simulation", "")
-        blueprint = importlib.reload(basic).seeedstudio_planner_coordinator
-        parsed = BlueprintConfigParser(blueprint).parse(environ={})
-        coordinator_atom = next(
-            a for a in blueprint.active_blueprints if issubclass(a.module, ControlCoordinator)
-        )
-        planner_atom = next(
-            a for a in blueprint.active_blueprints if issubclass(a.module, ManipulationModule)
-        )
-        config = ControlCoordinatorConfig.model_validate(
-            parsed.module_kwargs(coordinator_atom.name)
-        )
-        assert config.hardware[0].adapter_type == "seeedstudio_b601_dm"
-        tasks = {task.type: task for task in config.tasks}
-        assert tasks["trajectory"].joint_names == JOINTS
-        assert tasks["gripper"].name == "arm_gripper"
-        assert tasks["gripper"].joint_names == ["arm/gripper"]
-        assert planner_atom.kwargs["model"].gripper_hardware_id == "arm"
+        resolved = coordinator._resolve_component(hardware)
     finally:
-        monkeypatch.undo()
-        importlib.reload(basic)
+        coordinator.stop()
+    assert resolved.adapter_type == expected
+    if expected == "mock_whole_body":
+        assert resolved.limits is not None
+        assert resolved.limits.position_upper[-1] == 1.0
+    else:
+        assert resolved.address == address
+
+
+def test_planner_coordinator_drives_arm_and_gripper() -> None:
+    blueprint = basic.seeedstudio_planner_coordinator
+    parsed = BlueprintConfigParser(blueprint).parse(environ={})
+    coordinator_atom = next(
+        a for a in blueprint.active_blueprints if issubclass(a.module, ControlCoordinator)
+    )
+    planner_atom = next(
+        a for a in blueprint.active_blueprints if issubclass(a.module, ManipulationModule)
+    )
+    config = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator_atom.name))
+    assert config.hardware[0].adapter_type == "seeedstudio_b601_dm"
+    tasks = {task.type: task for task in config.tasks}
+    assert tasks["trajectory"].joint_names == JOINTS
+    assert tasks["gripper"].name == "arm_gripper"
+    assert tasks["gripper"].joint_names == ["arm/gripper"]
+    assert planner_atom.kwargs["model"].gripper_hardware_id == "arm"
 
 
 def test_model_plans_arm_joints_to_the_tool_link() -> None:
@@ -110,16 +105,14 @@ def test_model_plans_arm_joints_to_the_tool_link() -> None:
 
 
 @pytest.fixture
-def coordinator_factory(mocker: MockerFixture) -> Iterator[Callable[..., ControlCoordinator]]:
-    # A regression must never open a USB port during software integration tests.
-    mocker.patch("serial.Serial", side_effect=AssertionError("Hardware IO forbidden in this test"))
+def coordinator_factory() -> Iterator[Callable[[HardwareComponent], ControlCoordinator]]:
     coordinators: list[ControlCoordinator] = []
 
     def make(hardware: HardwareComponent) -> ControlCoordinator:
         blueprint = ControlCoordinator.blueprint(
             tick_rate=50.0,
             hardware=[hardware],
-            tasks=[trajectory_task(hardware), seeedstudio_gripper_task()],
+            tasks=[joint_trajectory_task(JOINTS), seeedstudio_gripper_task()],
         )
         parsed = BlueprintConfigParser(blueprint).parse(environ={})
         coordinator = ControlCoordinator(
@@ -143,63 +136,26 @@ def wait_for(states: "Queue[JointState]", predicate: Callable[[JointState], bool
 
 
 def test_mock_coordinator_executes_trajectory_and_gripper_command(
-    coordinator_factory: Callable[..., ControlCoordinator],
+    coordinator_factory: Callable[[HardwareComponent], ControlCoordinator],
     mocker: MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(global_config, "can_port", None)
     coordinator = coordinator_factory(seeedstudio_hardware())
     states: Queue[JointState] = Queue()
     mocker.patch.object(coordinator.coordinator_joint_state, "publish", side_effect=states.put)
     coordinator.start()
     assert wait_for(states, lambda _: True).name == JOINTS
 
-    target = [0.01, -0.01, -0.01, 0.01, 0.01, 0.01, 0.0]
+    target = [0.01, -0.01, -0.01, 0.01, 0.01, 0.01]
     trajectory = JointTrajectory(
         joint_names=JOINTS[:6],
         points=[
             TrajectoryPoint(positions=[0.0] * 6, velocities=[0.0] * 6, time_from_start=0.0),
-            TrajectoryPoint(positions=target[:6], velocities=[0.0] * 6, time_from_start=0.3),
+            TrajectoryPoint(positions=target, velocities=[0.0] * 6, time_from_start=0.3),
         ],
     )
     assert coordinator.execute_trajectory(trajectory).status == TrajectoryExecutionStatus.ACCEPTED
-    wait_for(states, lambda s: list(s.position[:6]) == pytest.approx(target[:6]))
+    wait_for(states, lambda s: list(s.position[:6]) == pytest.approx(target))
 
     assert coordinator.task_invoke("arm_gripper", "set_normalized", {"values": [1.0]})
-    wait_for(states, lambda s: s.position[6] == pytest.approx(GRIPPER_MAX_OPENING_M))
-
-
-def test_real_coordinator_enables_on_start_and_disables_on_stop(
-    coordinator_factory: Callable[..., ControlCoordinator],
-    monkeypatch: pytest.MonkeyPatch,
-    mocker: MockerFixture,
-) -> None:
-    monkeypatch.setattr(global_config, "can_port", "test-only")
-    monkeypatch.setattr(global_config, "simulation", "")
-    bus: MagicMock = mocker.patch(
-        "dimos.hardware.manipulators.seeedstudio.adapter.DmSerialTransport"
-    ).return_value
-    enabled: set[int] = set()
-    home = [0.0] * 6 + [gripper_opening_to_motor(0.0)]
-
-    def send(mid: int, payload: bytes, *_: float) -> None:
-        if payload == ENABLE:
-            enabled.add(mid)
-        elif payload == DISABLE:
-            enabled.discard(mid)
-
-    def feedback(params: MotorParameters) -> Feedback:
-        status = int(params.motor_id in enabled)
-        return Feedback(home[params.motor_id - 1], 0.0, 0.0, status, 25, 25, time.monotonic())
-
-    bus.is_open.return_value = True
-    bus.parameters.side_effect = lambda mid, fid: MotorParameters(mid, fid, 2, 12.5, 10, 28, 0)
-    bus.feedback.side_effect = feedback
-    bus.read_register.return_value = 2
-    bus.send.side_effect = send
-
-    coordinator = coordinator_factory(seeedstudio_hardware())
-    coordinator.start()
-    assert enabled == set(range(1, 8))
-    coordinator.stop()
-    assert enabled == set()
+    wait_for(states, lambda s: s.position[6] == pytest.approx(1.0))

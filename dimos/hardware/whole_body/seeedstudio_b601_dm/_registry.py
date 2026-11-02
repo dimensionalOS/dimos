@@ -13,5 +13,7 @@
 # limitations under the License.
 
 ADAPTER_FACTORIES = {
-    "seeedstudio_b601_dm": "dimos.hardware.manipulators.seeedstudio.adapter:SeeedStudioAdapter",
+    "seeedstudio_b601_dm": (
+        "dimos.hardware.whole_body.seeedstudio_b601_dm.adapter:SeeedStudioB601DMAdapter"
+    ),
 }

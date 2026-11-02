@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 import sys
 from typing import Any, NoReturn
@@ -61,20 +62,22 @@ class DamiaoWholeBodyAdapter(ABC):
     ) -> None:
         """Initialize runtime settings for a subclass-declared Damiao topology.
 
-        ``address`` is accepted for the coordinator's common adapter factory
-        convention, but one scalar cannot represent a multi-bus whole body.
-        Configure physical CAN devices by logical bus name through
-        ``runtime_config.bus_devices`` instead.
+        ``address`` follows the coordinator's common adapter factory
+        convention. It names the device of a single-bus topology; one scalar
+        cannot represent a multi-bus whole body, so configure those devices
+        by logical bus name through ``runtime_config.bus_devices`` instead.
         """
         del domain_id
-        if address is not None:
-            raise ValueError("configure Damiao CAN buses through runtime_config.bus_devices")
         if runtime_config is None:
             config = DamiaoRuntimeConfig()
         elif isinstance(runtime_config, DamiaoRuntimeConfig):
             config = runtime_config
         else:
             config = DamiaoRuntimeConfig(**runtime_config)
+        if address is not None:
+            if len(self.bus_names) != 1 or config.bus_devices:
+                raise ValueError("configure Damiao CAN buses through runtime_config.bus_devices")
+            config = replace(config, bus_devices={self.bus_names[0]: str(address)})
         unknown_buses = config.bus_devices.keys() - set(self.bus_names)
         if unknown_buses:
             raise ValueError(f"unknown CAN bus overrides: {sorted(unknown_buses)}")
@@ -124,10 +127,19 @@ class DamiaoWholeBodyAdapter(ABC):
         Linux maps ordered logical buses to ``can0``, ``can1``, and so on.
         macOS maps them to matching gs_usb enumeration indices. A runtime
         ``bus_devices`` override is a SocketCAN interface on Linux and a USB
-        serial number on macOS.
+        serial number on macOS. On either platform, an override starting with
+        ``/dev/`` is the serial port of a Damiao USB-CAN bridge.
         """
         index = self._bus_index(name)
         device = self._runtime_config.bus_devices.get(name)
+        if device is not None and device.startswith("/dev/"):
+            # Released can-motor-control versions may predate the serial bridge.
+            dm_serial_bus = getattr(can_motor_control, "DmSerialBus", None)
+            if dm_serial_bus is None:
+                raise RuntimeError(
+                    "Damiao serial bridges need a can-motor-control release with DmSerialBus"
+                )
+            return dm_serial_bus(device)
         if sys.platform == "linux":
             return can_motor_control.SocketCanBus(device or f"can{index}")
         if sys.platform == "darwin":
