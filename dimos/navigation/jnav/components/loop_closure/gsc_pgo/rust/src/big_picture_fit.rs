@@ -25,10 +25,13 @@ use faer::sparse::linalg::SupernodalThreshold;
 use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Par, Side};
 
-use std::thread::JoinHandle;
-
-use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, Config, GscPgo, KeyPoseWithCloud};
+use crate::store::KeyFrames;
+use crate::gsc_pgo::{CommittedClosure, Config, KeyPoseWithCloud};
+use crate::landmarks::{self, Sighting};
 use crate::mat3::{self, Mat3, Vec3};
+
+pub use crate::landmarks::{bearing_and_range, LandmarkSighting};
+pub use crate::world_positions::{solve_with_priors, PositionPrior};
 
 /// A relative-pose measurement from keyframe `from` to keyframe `to`, in `from`'s body frame
 /// (R_to = R_from * rotation, p_to = p_from + R_from * translation), with variances for the rotation
@@ -50,6 +53,11 @@ pub struct SolveConfig {
     pub gnc_inlier_probability: f64,
     /// Huber threshold on a kept closure's whitened residual; 0 = plain least squares.
     pub huber_k: f64,
+    /// The noise evidence reads only the kept closures' PCM core (`odometry_error_estimate_evidence_core`).
+    pub evidence_core: bool,
+    /// Compute that evidence at all (a polishing solve and Hutchinson traces each solve); it only feeds the learned
+    /// odometry error estimate, which is only logged.
+    pub learned_evidence: bool,
 }
 
 pub struct Solution {
@@ -57,11 +65,52 @@ pub struct Solution {
     pub positions: Vec<Vec3>,
     /// Per closure: 1 kept, 0 rejected (GNC's final weight, rounded at 0.5).
     pub closure_weights: Vec<f64>,
+    /// Per position prior (`solve_with_priors`): 1 kept, 0 rejected; and per world frame the priors made observable,
+    /// its map -> frame alignment (frame id, yaw about z, then translation).
+    pub prior_weights: Vec<f64>,
+    pub world_alignment: Vec<(u32, f64, Vec3)>,
+    /// Per landmark (`LandmarkSighting::landmark`), where the solve put it (and its rotation, identity for a landmark
+    /// no sighting gave one); per sighting, 1 kept, 0 rejected.
+    pub landmarks: Vec<Vec3>,
+    pub landmark_rotations: Vec<Mat3>,
+    pub sighting_weights: Vec<f64>,
     /// Half the sum of squared whitened residuals of everything kept.
     pub error: f64,
     /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
+    /// Whether GNC's last Levenberg-Marquardt pass reached a minimum.
+    pub converged: bool,
+    /// Variance-component evidence on the odometry error estimate from the solved graph (`odometry_error_estimate_evidence`): per source
+    /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
+    /// redundancy; None if the graph could not be factored.
+    pub odometry_error_estimate_evidence: Option<[(f64, f64); 6]>,
+    /// How GNC reached this solution, only when `GSC_SOLVE_LOG` is set (`solve_log_path`).
+    pub trace: Option<SolveTrace>,
+}
+
+/// GNC's path to a solution, for the solve log.
+#[derive(Clone)]
+pub struct SolveTrace {
+    pub gnc_iterations: usize,
+    /// The mu of GNC's last iteration (NaN when nothing exceeded its cutoff, so GNC never ran).
+    pub gnc_mu: f64,
+    /// "under_cutoff" (GNC never ran), "converged" (every weight settled at 0 or 1), "cost_change" (the weighted cost
+    /// stopped changing first) or "max_iterations".
+    pub gnc_stop: &'static str,
+    /// Per closure, GNC's final weight before rounding at 0.5.
+    pub gnc_weights: Vec<f64>,
+    /// Cost (sum of squared whitened residuals) as [odometry, closures, priors and sightings]: at the starting estimate
+    /// with every closure in at its own variance, and at the solution with its kept, Huber-weighted closures.
+    pub initial_cost: [f64; 3],
+    pub final_cost: [f64; 3],
+}
+
+/// `GSC_SOLVE_LOG=<path>`: one JSON line per adopted solve (`GscPgo::apply_solve`); read once, unset costs nothing.
+pub fn solve_log_path() -> Option<&'static std::path::Path> {
+    static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::var_os("GSC_SOLVE_LOG").map(std::path::PathBuf::from))
+        .as_deref()
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -74,10 +123,88 @@ pub fn solve(
     closures: &[Edge],
     config: &SolveConfig,
 ) -> Solution {
+    solve_core(
+        rotations,
+        positions,
+        free,
+        odometry,
+        closures,
+        &[],
+        &[],
+        config,
+    )
+}
+
+/// A position prior placed in the solve frame: keyframe `keyframe`'s sensor at `lever` (body frame) should be at
+/// `position`, with information (inverse covariance) `information`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Unary {
+    pub(crate) keyframe: usize,
+    pub(crate) lever: Vec3,
+    pub(crate) position: Vec3,
+    pub(crate) information: Mat3,
+}
+
+fn unary_residual(u: &Unary, state: &State) -> Vec3 {
+    let sensor = mat3::add(
+        &state.position[u.keyframe],
+        &mat3::mat_vec(&state.rotation[u.keyframe], &u.lever),
+    );
+    mat3::sub(&sensor, &u.position)
+}
+
+fn unary_whitened(u: &Unary, state: &State) -> f64 {
+    let r = unary_residual(u, state);
+    let ir = mat3::mat_vec(&u.information, &r);
+    r[0] * ir[0] + r[1] * ir[1] + r[2] * ir[2]
+}
+
+pub(crate) fn solve_core(
+    rotations: &[Mat3],
+    positions: &[Vec3],
+    free: &[bool],
+    odometry: &[Edge],
+    closures: &[Edge],
+    unary: &[Unary],
+    sightings: &[LandmarkSighting],
+    config: &SolveConfig,
+) -> Solution {
+    // each landmark starts where its first sighting puts it from the starting estimate
+    let landmark_count = sightings.iter().map(|s| s.landmark + 1).max().unwrap_or(0);
+    let mut landmark: Vec<Option<(Mat3, Vec3)>> = vec![None; landmark_count];
+    for s in sightings {
+        landmark[s.landmark].get_or_insert_with(|| {
+            (
+                mat3::mat_mul(&rotations[s.keyframe], &s.rotation),
+                mat3::add(
+                    &positions[s.keyframe],
+                    &mat3::mat_vec(&rotations[s.keyframe], &s.position),
+                ),
+            )
+        });
+    }
+    let sightings: Vec<Sighting> = sightings.iter().map(Sighting::new).collect();
+    // a landmark is a pose once any sighting knows its rotation, else a point
+    let mut landmark_dims = vec![3; landmark_count];
+    for s in sightings.iter().filter(|s| s.knows_rotation()) {
+        landmark_dims[s.landmark] = 6;
+    }
+    let (landmark_rotation, landmark): (Vec<Mat3>, Vec<Vec3>) = landmark
+        .into_iter()
+        .zip(&landmark_dims)
+        .map(|(l, &dims)| match l {
+            Some((r, p)) if dims == 6 => (r, p),
+            Some((_, p)) => (mat3::identity(), p),
+            None => (mat3::identity(), [0.0; 3]),
+        })
+        .unzip();
     let mut state = State {
         rotation: rotations.to_vec(),
         position: positions.to_vec(),
+        landmark,
+        landmark_rotation,
     };
+    let sightings = &sightings[..];
     let scaled: Vec<Edge> = closures
         .iter()
         .map(|e| Edge {
@@ -85,8 +212,13 @@ pub fn solve(
             ..*e
         })
         .collect();
-    let pattern = Pattern::new(free, odometry.iter().chain(closures));
-
+    let pattern = Pattern::new(
+        free,
+        odometry.iter().chain(closures),
+        unary,
+        sightings,
+        &landmark_dims,
+    );
     // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
     // until each closure is clearly in or out. Odometry is always in.
     let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
@@ -96,29 +228,132 @@ pub fn solve(
     // GncOptimizer does): the worse the start, the more gently it tightens
     let worst = residual(&state).into_iter().fold(0.0, f64::max);
     let mut weights = vec![1.0; closures.len()];
-    levenberg_marquardt(&mut state, &pattern, odometry, &scaled, &weights, 1e-5);
+    // position priors: GNC-weighted the same way, against the 3-DoF cutoff
+    let unary_threshold = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
+    let unary_residuals =
+        |state: &State| -> Vec<f64> { unary.iter().map(|u| unary_whitened(u, state)).collect() };
+    let unary_worst = unary_residuals(&state).into_iter().fold(0.0, f64::max);
+    let mut unary_weights = vec![1.0; unary.len()];
+    // landmark sightings: the same, each against the cutoff for its known dimensions (a sighting matched to the wrong
+    // landmark is an outlier); residuals kept as fractions of that cutoff
+    let sighting_thresholds: Vec<f64> = sightings
+        .iter()
+        .map(|s| landmarks::chi2_inverse(config.gnc_inlier_probability, s.known.max(1)))
+        .collect();
+    let sighting_residuals = |state: &State| -> Vec<f64> {
+        sightings
+            .iter()
+            .zip(&sighting_thresholds)
+            .map(|(s, t)| s.whitened(state) / t)
+            .collect()
+    };
+    let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
+    let mut sighting_weights = vec![1.0; sightings.len()];
+    let tracing = solve_log_path().is_some();
+    let initial_cost = if tracing {
+        cost_parts(
+            &state,
+            odometry,
+            closures,
+            &vec![1.0; closures.len()],
+            unary,
+            &unary_weights,
+            sightings,
+            &sighting_weights,
+        )
+    } else {
+        [f64::NAN; 3]
+    };
+    let (mut gnc_iterations, mut gnc_mu, mut gnc_stop) = (0, f64::NAN, "under_cutoff");
+    // whether the newest Levenberg-Marquardt pass of GNC (or of its start, when GNC never runs) reached a minimum
+    let mut converged = levenberg_marquardt(
+        &mut state,
+        &pattern,
+        odometry,
+        &scaled,
+        &weights,
+        unary,
+        &unary_weights,
+        sightings,
+        &sighting_weights,
+        1e-5,
+    );
     let mut r2 = residual(&state);
-    if worst > threshold {
-        let mut mu = threshold / (2.0 * worst - threshold).max(f64::EPSILON);
-        let mut previous_cost = f64::INFINITY;
-        for _ in 0..100 {
-            for (w, &r) in weights.iter_mut().zip(&r2) {
-                let (upper, lower) = ((mu + 1.0) / mu * threshold, mu / (mu + 1.0) * threshold);
-                *w = if r >= upper {
-                    0.0
-                } else if r <= lower {
-                    1.0
-                } else {
-                    ((threshold * mu * (mu + 1.0) / r).sqrt() - mu).clamp(0.0, 1.0)
-                };
+    let mut u2 = unary_residuals(&state);
+    let mut s2 = sighting_residuals(&state);
+    if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
+        // the gentlest start any factor kind that exceeds its own cutoff needs (a kind under its cutoff sets none)
+        let start = |worst: f64, threshold: f64| {
+            (worst > threshold).then(|| threshold / (2.0 * worst - threshold))
+        };
+        let mut mu = [
+            start(worst, threshold),
+            start(unary_worst, unary_threshold),
+            start(sighting_worst, 1.0),
+        ]
+        .into_iter()
+        .flatten()
+        .fold(f64::INFINITY, f64::min)
+        .max(f64::EPSILON);
+        let tls = |r: f64, threshold: f64, mu: f64| {
+            let (upper, lower) = ((mu + 1.0) / mu * threshold, mu / (mu + 1.0) * threshold);
+            if r >= upper {
+                0.0
+            } else if r <= lower {
+                1.0
+            } else {
+                ((threshold * mu * (mu + 1.0) / r).sqrt() - mu).clamp(0.0, 1.0)
             }
-            levenberg_marquardt(&mut state, &pattern, odometry, &scaled, &weights, 1e-5);
+        };
+        let mut previous_cost = f64::INFINITY;
+        gnc_stop = "max_iterations";
+        for _ in 0..100 {
+            gnc_iterations += 1;
+            gnc_mu = mu;
+            for (w, &r) in weights.iter_mut().zip(&r2) {
+                *w = tls(r, threshold, mu);
+            }
+            for (w, &r) in unary_weights.iter_mut().zip(&u2) {
+                *w = tls(r, unary_threshold, mu);
+            }
+            for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
+                *w = tls(r, 1.0, mu);
+            }
+            converged = levenberg_marquardt(
+                &mut state,
+                &pattern,
+                odometry,
+                &scaled,
+                &weights,
+                unary,
+                &unary_weights,
+                sightings,
+                &sighting_weights,
+                1e-5,
+            );
             r2 = residual(&state);
+            u2 = unary_residuals(&state);
+            s2 = sighting_residuals(&state);
             // stop like GTSAM's GncOptimizer: weights settled, or the weighted cost stopped changing
-            let weighted_cost = cost(&state, odometry, &scaled, &weights);
-            if weights.iter().all(|&w| w < 1e-4 || w > 1.0 - 1e-4)
-                || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost
-            {
+            let weighted_cost = cost(
+                &state,
+                odometry,
+                &scaled,
+                &weights,
+                unary,
+                &unary_weights,
+                sightings,
+                &sighting_weights,
+            );
+            let settled = weights
+                .iter()
+                .chain(&unary_weights)
+                .chain(&sighting_weights)
+                .all(|&w| !(1e-4..=1.0 - 1e-4).contains(&w));
+            // below mu 1 the surrogate is still the convex start (every weight tiny next to the worst residual), so
+            // neither stop applies until GNC has graduated to where a weight can reach 1
+            if mu >= 1.0 && (settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost) {
+                gnc_stop = if settled { "converged" } else { "cost_change" };
                 break;
             }
             previous_cost = weighted_cost;
@@ -129,11 +364,31 @@ pub fn solve(
         .iter()
         .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
         .collect();
+    let gnc_weights = if tracing { weights } else { Vec::new() };
+    let unary_kept: Vec<f64> = unary_weights
+        .iter()
+        .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
+        .collect();
+    let sighting_kept: Vec<f64> = sighting_weights
+        .iter()
+        .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
+        .collect();
 
     // the kept closures at their own variances, Huber-weighted
     let mut huber = kept.clone();
     for _ in 0..3 {
-        levenberg_marquardt(&mut state, &pattern, odometry, closures, &huber, 1e-5);
+        levenberg_marquardt(
+            &mut state,
+            &pattern,
+            odometry,
+            closures,
+            &huber,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+            1e-5,
+        );
         for (h, (e, &k)) in huber.iter_mut().zip(closures.iter().zip(&kept)) {
             let r = whitened_squared(e, &state).sqrt();
             *h = if config.huber_k > 0.0 && r > config.huber_k {
@@ -143,23 +398,434 @@ pub fn solve(
             };
         }
     }
-    let error = 0.5 * cost(&state, odometry, closures, &huber);
+    let error = 0.5
+        * cost(
+            &state,
+            odometry,
+            closures,
+            &huber,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+        );
     let relative_position_covariance = relative_position_covariances(
         &state,
         &pattern,
         odometry,
         closures,
         &huber,
+        unary,
+        &unary_kept,
+        sightings,
+        &sighting_kept,
         positions.len() - 1,
     )
     .unwrap_or_default();
+    // only the kept closures' mutually consistent core (the largest set that agree pairwise around their cycles, PCM)
+    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry error estimate and widen it
+    let evidence_weights: Vec<f64> = if !config.learned_evidence {
+        Vec::new()
+    } else if config.evidence_core {
+        let kept_closures: Vec<(usize, Edge)> = closures
+            .iter()
+            .zip(&huber)
+            .enumerate()
+            .filter(|(_, (_, &w))| w > 0.0)
+            .map(|(i, (e, _))| (i, *e))
+            .collect();
+        let edges: Vec<Edge> = kept_closures.iter().map(|&(_, e)| e).collect();
+        let consistent = consistent_closures(&edges, odometry, config);
+        let mut weights = vec![0.0; closures.len()];
+        for ((i, _), held) in kept_closures.iter().zip(consistent) {
+            if held {
+                weights[*i] = huber[*i];
+            }
+        }
+        weights
+    } else {
+        huber.clone()
+    };
+    // the evidence reads the solve of what it weighs (the odometry at its noise, the core's closures), and only at
+    // that solve's minimum: residuals a solve stopped short of removing are no one's noise (only when `learned_evidence`)
+    let odometry_error_estimate_evidence = if config.learned_evidence {
+        let mut evidence_state = state.clone();
+        let converged = levenberg_marquardt_steps(
+            &mut evidence_state,
+            &pattern,
+            odometry,
+            closures,
+            &evidence_weights,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+            1e-5,
+            // a bound on time only: from the solve's state this is near its minimum, but a flat direction can creep
+            1000,
+            true,
+        );
+        let odometry_error_estimate_evidence = converged
+            .then(|| {
+                odometry_error_estimate_evidence(
+                    &evidence_state,
+                    &pattern,
+                    odometry,
+                    closures,
+                    &evidence_weights,
+                    unary,
+                    &unary_kept,
+                    sightings,
+                    &sighting_kept,
+                )
+            })
+            .flatten();
+        odometry_error_estimate_evidence
+    } else {
+        None
+    };
+    let trace = tracing.then(|| SolveTrace {
+        gnc_iterations,
+        gnc_mu,
+        gnc_stop,
+        gnc_weights,
+        initial_cost,
+        final_cost: cost_parts(
+            &state,
+            odometry,
+            closures,
+            &huber,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+        ),
+    });
     Solution {
+        trace,
+        odometry_error_estimate_evidence,
         rotations: state.rotation,
         positions: state.position,
         closure_weights: kept,
+        prior_weights: unary_kept,
+        world_alignment: Vec::new(),
+        landmarks: state.landmark,
+        landmark_rotations: state.landmark_rotation,
+        sighting_weights: sighting_kept,
         error,
         relative_position_covariance,
+        converged,
     }
+}
+
+/// The noise source (xy, z, yaw, roll/pitch) of each component of an odometry edge's residual [rotation x, y, z,
+/// translation x, y, z].
+const RESIDUAL_SOURCE: [usize; 6] = [3, 3, 2, 0, 0, 1];
+
+/// Variance-component evidence on the odometry error estimate from the solved graph (Förstner's estimator): for each noise source,
+/// how far the solve had to bend its parts of the odometry edges (their residuals squared, whitened by the variances
+/// the solve used) and how many independent checks the graph gave it, its redundancy r_c = n_c - tr(N^-1 N_c) (n_c its
+/// residual count; N the solve's information matrix, N_c the source's own share of it). A source's variance times
+/// sum / r_c is the variance that explains the residuals. The odometry alone determines the graph exactly (a chain),
+/// so n_c = tr(N_odo^-1 N_c) and r_c = tr((N_odo^-1 - N^-1) N_c): the difference has rank at most the kept constraints',
+/// so Hutchinson's estimator (the mean of z^T (N_odo^-1 - N^-1) N_c z over fixed random +-1 vectors z, two solves each)
+/// is accurate to a few percent of r_c, and exactly 0 with nothing kept. None if a matrix cannot be factored.
+#[allow(clippy::too_many_arguments)]
+fn odometry_error_estimate_evidence(
+    state: &State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+) -> Option<[(f64, f64); 6]> {
+    let size = pattern.size;
+    let factor = |cw: &[f64], uw: &[f64], sw: &[f64]| {
+        let (mut values, _, diagonal) = normal_equations(
+            state, pattern, odometry, closures, cw, unary, uw, sightings, sw,
+        );
+        values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
+        let hessian =
+            SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values)
+                .ok()?;
+        Llt::try_new_with_symbolic(pattern.llt.clone(), hessian.as_ref(), Side::Lower).ok()
+    };
+    let full = factor(closure_weights, unary_weights, sighting_weights)?;
+    // the odometry alone: everything else at weight 0 (keeping the pattern's fill order)
+    let odometry_only = factor(
+        &vec![0.0; closures.len()],
+        &vec![0.0; unary.len()],
+        &vec![0.0; sightings.len()],
+    )?;
+    let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
+        odometry.iter().map(|e| linearize(e, state)).collect();
+    let mut evidence = [(0.0, 0.0); 6];
+    for (e, (r, _, _)) in odometry.iter().zip(&linear) {
+        for k in 0..6 {
+            evidence[RESIDUAL_SOURCE[k]].0 += r[k] * r[k] / e.variances[k];
+        }
+    }
+    // a deterministic +-1 sequence (the trace is an expectation over any such sequence)
+    let sign = |probe: usize, i: usize| {
+        let x = ((probe * 7919 + i * 104729) as f64 * 12.9898).sin() * 43758.5453;
+        if x.rem_euclid(1.0) < 0.5 {
+            -1.0
+        } else {
+            1.0
+        }
+    };
+    // r_c = tr(K_c D K_c^T) with K_c the source's whitened odometry rows (N_c = K_c^T K_c) and D = N_odo^-1 - N^-1:
+    // symmetric, eigenvalues in [0, 1], rank at most the kept constraints', so +-1 probes over those rows estimate it
+    // to about sqrt(2 r_c / probes)
+    const PROBES: usize = 32;
+    for source in 0..4 {
+        let rows: Vec<(usize, usize)> = (0..odometry.len())
+            .flat_map(|e| (0..6).map(move |k| (e, k)))
+            .filter(|&(_, k)| RESIDUAL_SOURCE[k] == source)
+            .collect();
+        for probe in 0..PROBES {
+            // u = K_c^T w
+            let mut u = Mat::<f64>::zeros(size, 1);
+            for (index, &(e, k)) in rows.iter().enumerate() {
+                let edge = &odometry[e];
+                let weight = sign(probe * 4 + source, index) / edge.variances[k].sqrt();
+                let (_, jf, jt) = &linear[e];
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for i in 0..6 {
+                            u[(6 * slot + i, 0)] += j[k][i] * weight;
+                        }
+                    }
+                }
+            }
+            let mut through_odometry = u.clone();
+            odometry_only.solve_in_place_with_conj(Conj::No, through_odometry.as_mut());
+            let mut through_full = u;
+            full.solve_in_place_with_conj(Conj::No, through_full.as_mut());
+            // w^T K_c y with y = D u
+            let mut estimate = 0.0;
+            for (index, &(e, k)) in rows.iter().enumerate() {
+                let edge = &odometry[e];
+                let weight = sign(probe * 4 + source, index) / edge.variances[k].sqrt();
+                let (_, jf, jt) = &linear[e];
+                let mut jy = 0.0;
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for i in 0..6 {
+                            let at = 6 * slot + i;
+                            jy += j[k][i] * (through_odometry[(at, 0)] - through_full[(at, 0)]);
+                        }
+                    }
+                }
+                estimate += weight * jy;
+            }
+            evidence[source].1 += estimate / PROBES as f64;
+        }
+    }
+    // the kept closures' rotation and translation as two more sources: sum of their whitened residuals squared, and redundancy
+    // r = n - tr(K N^-1 K^T) = tr(M), M = I - K N^-1 K^T (K their weighted whitened rows): symmetric, eigenvalues in
+    // [0, 1], so the same +-1 probes estimate it to about sqrt(2 r / probes). With it, a closure variance reported too
+    // loose shows as closure residuals too small for their redundancy, instead of passing as odometry too good
+    let closure_linear: Vec<(usize, [f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> = closures
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| closure_weights[i] > 0.0)
+        .map(|(i, e)| {
+            let (r, jf, jt) = linearize(e, state);
+            (i, r, jf, jt)
+        })
+        .collect();
+    for &(i, r, _, _) in &closure_linear {
+        let e = &closures[i];
+        for k in 0..6 {
+            evidence[4 + k / 3].0 += closure_weights[i] * r[k] * r[k] / e.variances[k];
+        }
+    }
+    for group in 0..2 {
+        let rows: Vec<(usize, usize)> = (0..closure_linear.len())
+            .flat_map(|c| (3 * group..3 * group + 3).map(move |k| (c, k)))
+            .collect();
+        let row_weight = |c: usize, k: usize| {
+            let (i, ..) = closure_linear[c];
+            (closure_weights[i] / closures[i].variances[k]).sqrt()
+        };
+        for probe in 0..PROBES {
+            let mut u = Mat::<f64>::zeros(size, 1);
+            let mut norm = 0.0;
+            for (index, &(c, k)) in rows.iter().enumerate() {
+                let (i, _, jf, jt) = &closure_linear[c];
+                let edge = &closures[*i];
+                let s = sign(probe * 4 + 4 + group, index);
+                norm += s * s;
+                let weight = s * row_weight(c, k);
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for m in 0..6 {
+                            u[(6 * slot + m, 0)] += j[k][m] * weight;
+                        }
+                    }
+                }
+            }
+            let mut y = u;
+            full.solve_in_place_with_conj(Conj::No, y.as_mut());
+            let mut projected = 0.0;
+            for (index, &(c, k)) in rows.iter().enumerate() {
+                let (i, _, jf, jt) = &closure_linear[c];
+                let edge = &closures[*i];
+                let weight = sign(probe * 4 + 4 + group, index) * row_weight(c, k);
+                let mut jy = 0.0;
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for m in 0..6 {
+                            jy += j[k][m] * y[(6 * slot + m, 0)];
+                        }
+                    }
+                }
+                projected += weight * jy;
+            }
+            evidence[4 + group].1 += (norm - projected) / PROBES as f64;
+        }
+    }
+    Some(evidence)
+}
+
+/// The largest set of closures that pairwise agree (PCM, Mangelson 2018): two closures agree when the cycle they close
+/// with the raw odometry (A.from through A to A.to, against A.from along the odometry to B.from, through B to B.to,
+/// along the odometry to A.to) lands A.to where A says, within the chi-square cutoff of `gnc_inlier_probability` (3
+/// DOF). The cycle's covariance is the first-order propagation of every noise on it at the variances its edges carry:
+/// both closures' translations, B's rotation swinging the path after it, and each odometry step's translation plus its
+/// rotation swinging the path's end about it (a heading error reaches as far as the loop is from where it was made).
+/// The set is grown greedily from the best-agreeing closure (an approximate maximum clique); a set of one is no
+/// evidence of agreement, so it holds nothing.
+pub fn consistent_closures(
+    closures: &[Edge],
+    odometry: &[Edge],
+    config: &SolveConfig,
+) -> Vec<bool> {
+    let n = closures.len();
+    let cutoff = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
+    type Pose = (Mat3, Vec3);
+    let compose = |a: &Pose, b: &Pose| -> Pose {
+        (
+            mat3::mat_mul(&a.0, &b.0),
+            mat3::add(&a.1, &mat3::mat_vec(&a.0, &b.1)),
+        )
+    };
+    let invert = |a: &Pose| -> Pose {
+        let back = mat3::transpose(&a.0);
+        (back, mat3::scale(&mat3::mat_vec(&back, &a.1), -1.0))
+    };
+    let world = |rotation: &Mat3, variances: &[f64]| -> Mat3 {
+        let scaled: Mat3 =
+            std::array::from_fn(|i| std::array::from_fn(|j| rotation[i][j] * variances[j]));
+        mat3::mat_mul(&scaled, &mat3::transpose(rotation))
+    };
+    let around = |lever: &Vec3, covariance: &Mat3| -> Mat3 {
+        let skew = mat3::skew(lever);
+        mat3::mat_mul(&mat3::mat_mul(&skew, covariance), &mat3::transpose(&skew))
+    };
+    // the raw odometry chain's poses, and prefix sums over its steps (step k from keyframe k to k + 1) of, in the
+    // chain's frame, the translation covariance T, the rotation covariance A, A P^T and P A P^T (P = skew of the step's
+    // end), so a stretch's covariance at a point q, sum T + [q - p]x A [q - p]x^T, is
+    // Q S_A Q^T - Q S_AP - (Q S_AP)^T + S_PAP + S_T
+    let keyframes = odometry.iter().map(|e| e.to + 1).max().unwrap_or(0);
+    let mut chain: Vec<Pose> = vec![(mat3::identity(), [0.0; 3]); keyframes];
+    let mut steps = vec![[[[0.0; 3]; 3]; 4]; keyframes];
+    let mut by_from: Vec<Option<&Edge>> = vec![None; keyframes];
+    for e in odometry.iter().filter(|e| e.to == e.from + 1) {
+        by_from[e.from] = Some(e);
+    }
+    for k in 1..keyframes {
+        let Some(e) = by_from[k - 1] else {
+            chain[k] = chain[k - 1];
+            steps[k] = steps[k - 1];
+            continue;
+        };
+        chain[k] = compose(&chain[k - 1], &(e.rotation, e.translation));
+        let rotation = &chain[k - 1].0;
+        let a = world(rotation, &e.variances[..3]);
+        let p = mat3::skew(&chain[k].1);
+        let ap = mat3::mat_mul(&a, &mat3::transpose(&p));
+        let step = [
+            world(rotation, &e.variances[3..]),
+            a,
+            ap,
+            mat3::mat_mul(&p, &ap),
+        ];
+        steps[k] = std::array::from_fn(|m| mat3::add_mat(&steps[k - 1][m], &step[m]));
+    }
+    let stretch = |a: usize, b: usize, q: &Vec3| -> Mat3 {
+        let (low, high) = (a.min(b), a.max(b));
+        let part = |m: usize| mat3::sub_mat(&steps[high][m], &steps[low][m]);
+        let skew_q = mat3::skew(q);
+        let q_ap = mat3::mat_mul(&skew_q, &part(2));
+        let q_a_q = mat3::mat_mul(&mat3::mat_mul(&skew_q, &part(1)), &mat3::transpose(&skew_q));
+        let lever = mat3::sub_mat(&mat3::sub_mat(&q_a_q, &q_ap), &mat3::transpose(&q_ap));
+        mat3::add_mat(&mat3::add_mat(&lever, &part(3)), &part(0))
+    };
+    let agree = |a: &Edge, b: &Edge| -> bool {
+        if [a.from, a.to, b.from, b.to].iter().any(|&k| k >= keyframes) {
+            return false;
+        }
+        let through_a = compose(&chain[a.from], &(a.rotation, a.translation));
+        let b_to = compose(&chain[b.from], &(b.rotation, b.translation));
+        // the chain after B.to, laid where B puts B.to
+        let laid = compose(&b_to, &invert(&chain[b.to]));
+        let through_b = compose(&laid, &chain[a.to]);
+        let q = through_b.1;
+        let after_b = stretch(
+            b.to,
+            a.to,
+            &mat3::mat_vec(&invert(&laid).0, &mat3::sub(&q, &laid.1)),
+        );
+        let covariance = [
+            world(&chain[a.from].0, &a.variances[3..]),
+            world(&chain[b.from].0, &b.variances[3..]),
+            around(&mat3::sub(&q, &b_to.1), &world(&b_to.0, &b.variances[..3])),
+            stretch(a.from, b.from, &q),
+            mat3::mat_mul(&mat3::mat_mul(&laid.0, &after_b), &mat3::transpose(&laid.0)),
+        ]
+        .iter()
+        .fold([[0.0; 3]; 3], |sum, m| mat3::add_mat(&sum, m));
+        let d = mat3::sub(&through_a.1, &q);
+        // inverted at unit trace: the variances are far below mat3::inverse's absolute determinant floor
+        let trace = covariance[0][0] + covariance[1][1] + covariance[2][2];
+        let unit: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| covariance[i][j] / trace));
+        trace > 0.0
+            && mat3::inverse(&unit).is_some_and(|information| {
+                let id = mat3::mat_vec(&information, &d);
+                (d[0] * id[0] + d[1] * id[1] + d[2] * id[2]) / trace < cutoff
+            })
+    };
+    let pairs: Vec<Vec<bool>> = (0..n)
+        .map(|i| {
+            (0..n)
+                .map(|j| i == j || agree(&closures[i], &closures[j]))
+                .collect()
+        })
+        .collect();
+    let degree: Vec<usize> = pairs
+        .iter()
+        .map(|row| row.iter().filter(|&&x| x).count())
+        .collect();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&x, &y| degree[y].cmp(&degree[x]));
+    let mut members: Vec<usize> = Vec::new();
+    for &i in &order {
+        if members.iter().all(|&m| pairs[i][m] && pairs[m][i]) {
+            members.push(i);
+        }
+    }
+    let mut held = vec![false; n];
+    if members.len() > 1 {
+        for m in members {
+            held[m] = true;
+        }
+    }
+    held
 }
 
 /// The covariance of keyframe `tip`'s position as seen from each keyframe (its offset in that keyframe's own frame, in world
@@ -173,11 +839,24 @@ fn relative_position_covariances(
     odometry: &[Edge],
     closures: &[Edge],
     closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
     tip: usize,
 ) -> Option<Vec<Mat3>> {
     let size = pattern.size;
-    let (mut values, _, diagonal) =
-        normal_equations(state, pattern, odometry, closures, closure_weights);
+    let (mut values, _, diagonal) = normal_equations(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    );
     // the pattern's damping diagonal, at Levenberg-Marquardt's smallest damping
     values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
     let hessian =
@@ -271,7 +950,7 @@ fn relative_position_covariances(
                 // δ = δp_tip - δp_k + skew(p_tip - p_k) R_k δθ_k (k's own heading uncertainty does not move the tip
                 // relative to k)
                 let lever = mul(
-                    &skew(&mat3::sub(&state.position[tip], &state.position[k])),
+                    &mat3::skew(&mat3::sub(&state.position[tip], &state.position[k])),
                     &state.rotation[k],
                 );
                 let block = |r: usize, c: usize| -> Mat3 {
@@ -302,18 +981,12 @@ fn relative_position_covariances(
     )
 }
 
-/// Each edge's squared whitened residual at the given poses.
-pub fn residuals(rotations: &[Mat3], positions: &[Vec3], edges: &[Edge]) -> Vec<f64> {
-    let state = State {
-        rotation: rotations.to_vec(),
-        position: positions.to_vec(),
-    };
-    edges.iter().map(|e| whitened_squared(e, &state)).collect()
-}
-
-struct State {
-    rotation: Vec<Mat3>,
-    position: Vec<Vec3>,
+#[derive(Clone)]
+pub(crate) struct State {
+    pub(crate) rotation: Vec<Mat3>,
+    pub(crate) position: Vec<Vec3>,
+    pub(crate) landmark: Vec<Vec3>,
+    pub(crate) landmark_rotation: Vec<Mat3>,
 }
 
 impl State {
@@ -328,7 +1001,7 @@ impl State {
 }
 
 /// [rotation error (axis-angle), translation error] of an edge between two poses.
-fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
+pub(crate) fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
     let predicted = mat3::mat_mul(from.0, &e.rotation);
     let rotation = log(&mat3::mat_mul(&mat3::transpose(&predicted), to.0));
     let local = mat3::mat_vec(&mat3::transpose(from.0), &mat3::sub(to.1, from.1));
@@ -355,21 +1028,26 @@ fn whitened_squared(e: &Edge, state: &State) -> f64 {
 /// The residual and its Jacobians with respect to `from`'s and `to`'s 6-vector perturbations
 /// (rotation about the keyframe's own axes, then world position).
 fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]) {
-    let (ri, rj) = (&state.rotation[e.from], &state.rotation[e.to]);
-    let residual = edge_residual(
+    linearize_between(
         e,
-        (ri, &state.position[e.from]),
-        (rj, &state.position[e.to]),
-    );
+        (&state.rotation[e.from], &state.position[e.from]),
+        (&state.rotation[e.to], &state.position[e.to]),
+    )
+}
+
+/// `linearize` between two given poses.
+pub(crate) fn linearize_between(
+    e: &Edge,
+    (ri, pi): (&Mat3, &Vec3),
+    (rj, pj): (&Mat3, &Vec3),
+) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]) {
+    let residual = edge_residual(e, (ri, pi), (rj, pj));
     let ri_t = mat3::transpose(ri);
-    let local = mat3::mat_vec(
-        &ri_t,
-        &mat3::sub(&state.position[e.to], &state.position[e.from]),
-    );
+    let local = mat3::mat_vec(&ri_t, &mat3::sub(pj, pi));
     // rotation error phi = Log(E), E = (Ri Rm)^T Rj; to first order d phi = Jr^-1 (d theta_j - E^T Rm^T d theta_i),
     // with Jr^-1 ~ I + [phi]x / 2
     let phi = [residual[0], residual[1], residual[2]];
-    let mut jr_inv = skew(&phi);
+    let mut jr_inv = mat3::skew(&phi);
     for row in jr_inv.iter_mut() {
         for v in row.iter_mut() {
             *v *= 0.5;
@@ -383,7 +1061,7 @@ fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]
         &jr_inv,
         &mat3::mat_mul(&mat3::transpose(&error), &mat3::transpose(&e.rotation)),
     );
-    let skew_local = skew(&local);
+    let skew_local = mat3::skew(&local);
     let (mut jf, mut jt) = ([[0.0; 6]; 6], [[0.0; 6]; 6]);
     for r in 0..3 {
         for c in 0..3 {
@@ -398,15 +1076,58 @@ fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]
     (residual, jf, jt)
 }
 
-fn skew(v: &Vec3) -> Mat3 {
-    [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]]
+/// `cost`, split as [odometry, closures, priors and sightings].
+#[allow(clippy::too_many_arguments)]
+fn cost_parts(
+    state: &State,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+) -> [f64; 3] {
+    [
+        cost(state, odometry, &[], &[], &[], &[], &[], &[]),
+        cost(state, &[], closures, closure_weights, &[], &[], &[], &[]),
+        cost(
+            state,
+            &[],
+            &[],
+            &[],
+            unary,
+            unary_weights,
+            sightings,
+            sighting_weights,
+        ),
+    ]
 }
 
-fn cost(state: &State, odometry: &[Edge], closures: &[Edge], closure_weights: &[f64]) -> f64 {
-    odometry
+fn cost(
+    state: &State,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+) -> f64 {
+    sightings
         .iter()
-        .map(|e| whitened_squared(e, state))
+        .zip(sighting_weights)
+        .map(|(s, w)| w * s.whitened(state))
         .sum::<f64>()
+        + unary
+            .iter()
+            .zip(unary_weights)
+            .map(|(u, w)| w * unary_whitened(u, state))
+            .sum::<f64>()
+        + odometry
+            .iter()
+            .map(|e| whitened_squared(e, state))
+            .sum::<f64>()
         + closures
             .iter()
             .zip(closure_weights)
@@ -419,6 +1140,9 @@ fn cost(state: &State, odometry: &[Edge], closures: &[Edge], closure_weights: &[
 /// `blocks` order) instead of re-sorting.
 struct Pattern {
     slot: Vec<Option<usize>>,
+    /// Per landmark, where its block starts (after every keyframe's) and its size: 6 for a pose, 3 for a point.
+    landmark_at: Vec<usize>,
+    landmark_dims: Vec<usize>,
     size: usize,
     symbolic: SymbolicSparseColMat<usize>,
     order: Argsort<usize>,
@@ -426,18 +1150,38 @@ struct Pattern {
 }
 
 impl Pattern {
-    fn new<'a>(free: &[bool], edges: impl Iterator<Item = &'a Edge>) -> Pattern {
+    fn new<'a>(
+        free: &[bool],
+        edges: impl Iterator<Item = &'a Edge>,
+        unary: &[Unary],
+        sightings: &[Sighting],
+        landmark_dims: &[usize],
+    ) -> Pattern {
         let mut count = 0;
         let slot: Vec<Option<usize>> = free
             .iter()
             .map(|&f| f.then(|| (count, count += 1).0))
             .collect();
-        let size = 6 * count.max(1);
+        let mut size = 6 * count.max(1);
+        let landmark_at: Vec<usize> = landmark_dims.iter().map(|&d| (size, size += d).0).collect();
         let mut indices: Vec<Pair<usize, usize>> = Vec::new();
         for e in edges {
             for (_, _, a, b) in blocks(&slot, e) {
                 indices.extend(block_entries(a, b).map(|(_, _, r, c)| Pair::new(r, c)));
             }
+        }
+        // position priors after the edges (their keyframe's own block), in `normal_equations` fill order
+        for u in unary {
+            if let Some(a) = slot[u.keyframe] {
+                indices.extend(block_entries(a, a).map(|(_, _, r, c)| Pair::new(r, c)));
+            }
+        }
+        // landmark sightings after those, in `normal_equations` fill order
+        for s in sightings {
+            indices.extend(
+                s.entries(&slot, landmark_at[s.landmark], landmark_dims[s.landmark])
+                    .map(|(_, _, r, c)| Pair::new(r, c)),
+            );
         }
         // the damping diagonal last, so the matrix is never structurally singular
         indices.extend((0..size).map(|i| Pair::new(i, i)));
@@ -447,6 +1191,8 @@ impl Pattern {
             SymbolicLlt::try_new(symbolic.as_ref(), Side::Lower).expect("pose graph ordering");
         Pattern {
             slot,
+            landmark_at,
+            landmark_dims: landmark_dims.to_vec(),
             size,
             symbolic,
             order,
@@ -477,25 +1223,85 @@ fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usiz
         .filter(|&(_, _, r, c)| r >= c)
 }
 
-/// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers
-/// the cost by less than `tolerance` of it.
+/// `levenberg_marquardt_steps` with at most 100 steps, stopping at the first small drop.
+#[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt(
     state: &mut State,
     pattern: &Pattern,
     odometry: &[Edge],
     closures: &[Edge],
     closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
     tolerance: f64,
-) {
+) -> bool {
+    levenberg_marquardt_steps(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+        tolerance,
+        100,
+        false,
+    )
+}
+
+/// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers the cost
+/// (whitened squared residuals) by less than `tolerance` of it plus one, the variance of one residual, so a cost near
+/// zero is done instead of shrinking forever, or no step lowers it at all where the quadratic model expects no more
+/// than that either. With `to_minimum` a small drop counts only from a step as undamped as the first one tried (a
+/// heavily damped step drops little anywhere): the noise evidence must be read at the minimum, but the solves stop at
+/// the first small drop, as they always have (holding them to the minimum too moved athens' map 2.5 -> 6.2 cm off the
+/// ground truth). False if `steps` steps did not get there, or it stalled short of a minimum.
+#[allow(clippy::too_many_arguments)]
+fn levenberg_marquardt_steps(
+    state: &mut State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+    tolerance: f64,
+    steps: usize,
+    to_minimum: bool,
+) -> bool {
     let size = pattern.size;
     let mut damping = 1e-6;
-    let mut current = cost(state, odometry, closures, closure_weights);
-    for _ in 0..100 {
-        let (mut values, gradient, diagonal) =
-            normal_equations(state, pattern, odometry, closures, closure_weights);
+    let mut current = cost(
+        state,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    );
+    for _ in 0..steps {
+        let (mut values, gradient, diagonal) = normal_equations(
+            state,
+            pattern,
+            odometry,
+            closures,
+            closure_weights,
+            unary,
+            unary_weights,
+            sightings,
+            sighting_weights,
+        );
         let filled = values.len();
         values.resize(filled + size, 0.0);
-        let mut stepped = false;
+        let (mut stepped, mut accepted, mut predicted) = (false, false, None);
         while damping < 1e12 {
             for (i, d) in diagonal.iter().enumerate() {
                 values[filled + i] = damping * (d + 1e-9);
@@ -511,19 +1317,48 @@ fn levenberg_marquardt(
             };
             let mut step = Mat::<f64>::from_fn(size, 1, |i, _| gradient[i]);
             llt.solve_in_place_with_conj(Conj::No, step.as_mut());
+            // the cost the quadratic model says the least damped step would remove, g^T step
+            predicted
+                .get_or_insert_with(|| (0..size).map(|i| gradient[i] * step[(i, 0)]).sum::<f64>());
             let mut trial = State {
                 rotation: state.rotation.clone(),
                 position: state.position.clone(),
+                landmark: state.landmark.clone(),
+                landmark_rotation: state.landmark_rotation.clone(),
             };
+            for j in 0..trial.landmark.len() {
+                let (at, dims) = (pattern.landmark_at[j], pattern.landmark_dims[j]);
+                let entry = |i: usize| step[(at + i, 0)];
+                if dims == 6 {
+                    trial.landmark_rotation[j] = mat3::mat_mul(
+                        &trial.landmark_rotation[j],
+                        &exp([entry(0), entry(1), entry(2)]),
+                    );
+                }
+                let p = dims - 3;
+                trial.landmark[j] =
+                    mat3::add(&trial.landmark[j], &[entry(p), entry(p + 1), entry(p + 2)]);
+            }
             for (k, slot) in pattern.slot.iter().enumerate() {
                 if let Some(slot) = slot {
                     let delta: Vec<f64> = (0..6).map(|i| step[(6 * slot + i, 0)]).collect();
                     (trial.rotation[k], trial.position[k]) = state.retract(k, &delta);
                 }
             }
-            let trial_cost = cost(&trial, odometry, closures, closure_weights);
+            let trial_cost = cost(
+                &trial,
+                odometry,
+                closures,
+                closure_weights,
+                unary,
+                unary_weights,
+                sightings,
+                sighting_weights,
+            );
             if trial_cost.is_finite() && trial_cost <= current {
-                stepped = current - trial_cost > tolerance * current;
+                stepped = current - trial_cost > tolerance * (current + 1.0)
+                    || (to_minimum && damping > 1e-6);
+                accepted = true;
                 *state = trial;
                 current = trial_cost;
                 damping = (damping / 10.0).max(1e-9);
@@ -532,9 +1367,11 @@ fn levenberg_marquardt(
             damping *= 10.0;
         }
         if !stepped {
-            break;
+            // no step lowering the cost is a minimum only if the model sees nothing left there either
+            return accepted || predicted.is_some_and(|p| p <= tolerance * (current + 1.0));
         }
     }
+    false
 }
 
 /// The Gauss-Newton normal equations at `state`: J^T W J's entries in `Pattern` fill order (damping
@@ -545,6 +1382,10 @@ fn normal_equations(
     odometry: &[Edge],
     closures: &[Edge],
     closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let mut values: Vec<f64> = Vec::new();
     let mut gradient = vec![0.0; pattern.size];
@@ -579,28 +1420,94 @@ fn normal_equations(
             }
         }
     }
+    // position priors: residual p_k + R_k lever - z; Jacobian -R_k [lever]x on the rotation perturbation (entries 0..3),
+    // identity on the position (entries 3..6)
+    for (u, w) in unary.iter().zip(unary_weights) {
+        let Some(slot) = pattern.slot[u.keyframe] else {
+            continue;
+        };
+        let r = unary_residual(u, state);
+        let lever_skew = mat3::mat_mul(&state.rotation[u.keyframe], &mat3::skew(&u.lever));
+        // jacobian[row][col], 3 x 6
+        let mut jacobian = [[0.0; 6]; 3];
+        for row in 0..3 {
+            for col in 0..3 {
+                jacobian[row][col] = -lever_skew[row][col];
+            }
+            jacobian[row][3 + row] = 1.0;
+        }
+        let info_j: Vec<[f64; 6]> = (0..3)
+            .map(|row| {
+                let mut out = [0.0; 6];
+                for (col, o) in out.iter_mut().enumerate() {
+                    *o = (0..3)
+                        .map(|m| u.information[row][m] * jacobian[m][col])
+                        .sum();
+                }
+                out
+            })
+            .collect();
+        for (i, j, row, col) in block_entries(slot, slot) {
+            let v = w * (0..3).map(|m| jacobian[m][i] * info_j[m][j]).sum::<f64>();
+            if row == col {
+                diagonal[row] += v;
+            }
+            values.push(v);
+        }
+        let ir = mat3::mat_vec(&u.information, &r);
+        for i in 0..6 {
+            gradient[6 * slot + i] -= w * (0..3).map(|m| jacobian[m][i] * ir[m]).sum::<f64>();
+        }
+    }
+    // landmark sightings: J^T I J over the keyframe's pose and the landmark (`Sighting::entries`)
+    for (s, w) in sightings.iter().zip(sighting_weights) {
+        let (at, dims) = (
+            pattern.landmark_at[s.landmark],
+            pattern.landmark_dims[s.landmark],
+        );
+        let (r, jacobian) = s.linearize(state, dims);
+        let info_j: Vec<[f64; 12]> = (0..6)
+            .map(|row| {
+                std::array::from_fn(|col| {
+                    (0..6)
+                        .map(|m| s.information[row][m] * jacobian[m][col])
+                        .sum()
+                })
+            })
+            .collect();
+        for (i, j, row, col) in s.entries(&pattern.slot, at, dims) {
+            let v = w * (0..6).map(|m| jacobian[m][i] * info_j[m][j]).sum::<f64>();
+            if row == col {
+                diagonal[row] += v;
+            }
+            values.push(v);
+        }
+        let ir = landmarks::mat_vec6(&s.information, &r);
+        let pull = |i: usize| w * (0..6).map(|m| jacobian[m][i] * ir[m]).sum::<f64>();
+        if let Some(slot) = pattern.slot[s.keyframe] {
+            for i in 0..6 {
+                gradient[6 * slot + i] -= pull(i);
+            }
+        }
+        for i in 0..dims {
+            gradient[at + i] -= pull(6 + i);
+        }
+    }
     (values, gradient, diagonal)
 }
 
 /// The chi-square value a 6-DoF residual stays under with probability `p` (CDF 1 - e^{-x/2}(1 + x/2 + x²/8)).
 fn chi2_inverse_6dof(p: f64) -> f64 {
-    let (mut lo, mut hi) = (0.0f64, 200.0f64);
-    for _ in 0..100 {
-        let x = 0.5 * (lo + hi);
+    crate::loop_overlap::chi2_inverse(p, |x| {
         let half = x / 2.0;
-        if 1.0 - (-half).exp() * (1.0 + half + half * half / 2.0) < p {
-            lo = x;
-        } else {
-            hi = x;
-        }
-    }
-    0.5 * (lo + hi)
+        1.0 - (-half).exp() * (1.0 + half + half * half / 2.0)
+    })
 }
 
 /// Rotation by axis-angle `w` (Rodrigues).
 fn exp(w: Vec3) -> Mat3 {
     let angle = mat3::norm(&w);
-    let k = [[0.0, -w[2], w[1]], [w[2], 0.0, -w[0]], [-w[1], w[0], 0.0]];
+    let k = mat3::skew(&w);
     let (a, b) = if angle < 1e-9 {
         (1.0, 0.5)
     } else {
@@ -617,7 +1524,7 @@ fn exp(w: Vec3) -> Mat3 {
 }
 
 /// Axis-angle of rotation `r`.
-fn log(r: &Mat3) -> Vec3 {
+pub(crate) fn log(r: &Mat3) -> Vec3 {
     let cos = ((r[0][0] + r[1][1] + r[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
     let angle = cos.acos();
     let v = [r[2][1] - r[1][2], r[0][2] - r[2][0], r[1][0] - r[0][1]];
@@ -629,277 +1536,82 @@ fn log(r: &Mat3) -> Vec3 {
     v.map(|x| x * scale)
 }
 
-// ---- the pose graph GSC keeps, re-solved on a background thread whenever closures arrive ----
-
-/// A pose-graph solve running on another thread over the first `keyframes` keyframes (`free` of them
-/// free), adopted once it finishes (`GscPgo::update`) or when waited for (`GscPgo::wait_for_solve`).
-pub(crate) struct Solving {
-    handle: JoinHandle<(Solution, f64)>,
-    keyframes: usize,
-    free: usize,
-    /// The committed closures the solve judged, in its closure order (the rest keep their verdicts).
-    judged: Vec<usize>,
+/// The reported odometry variance of one keyframe step from `from` to `to` (xy, z, yaw, roll/pitch): each source's
+/// drift per square root of metre travelled, squared, times the distance, plus its drift per square root of radian
+/// turned, squared, times the angle.
+pub fn step_variances(config: &Config, from: &KeyPoseWithCloud, to: &KeyPoseWithCloud) -> [f64; 4] {
+    let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
+    let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
+    motion_variances(config, distance, turn)
 }
 
-impl GscPgo {
-    /// Half the sum of squared whitened residuals of the newest applied solve (how much its
-    /// constraints conflict).
-    pub fn graph_error(&self) -> f64 {
-        self.graph_error
-    }
-    pub fn committed_closures(&self) -> &[CommittedClosure] {
-        &self.committed_closures
-    }
-    /// Whether a solve is running or closures are waiting for one.
-    pub fn solve_pending(&self) -> bool {
-        self.solving.is_some() || self.committed_closures.len() > self.closures_dispatched
-    }
-    /// Apply the running solve if it has finished, and start one when closures have arrived since the
-    /// last. Never blocks. Returns whether keyframes moved.
-    pub fn update(&mut self) -> bool {
-        let finished = self
-            .solving
-            .as_ref()
-            .is_some_and(|solving| solving.handle.is_finished());
-        self.adopt(finished)
-    }
-    /// `update`, but waiting for the running solve to finish first.
-    pub fn wait_for_solve(&mut self) -> bool {
-        self.adopt(true)
-    }
-    /// The running solve's keyframe count and free keyframe count when it started, if one is running.
-    pub fn solve_started(&self) -> Option<(usize, usize)> {
-        self.solving.as_ref().map(|s| (s.keyframes, s.free))
-    }
-    /// Call `solved` (from the solve's thread) whenever a solve finishes, so a caller can sleep until then.
-    pub fn notify_when_solved(&mut self, solved: impl Fn() + Send + Sync + 'static) {
-        self.solved = Some(std::sync::Arc::new(solved));
-    }
-    fn adopt(&mut self, ready: bool) -> bool {
-        self.new_closure = false;
-        let moved = ready && self.apply_solve();
-        if self.solving.is_none() && self.committed_closures.len() > self.closures_dispatched {
-            self.dispatch_solve();
-        }
-        moved
-    }
-    /// Wait for the running solve, and solve again until every closure is in. Returns whether keyframes moved.
-    pub fn finish(&mut self) -> bool {
-        let mut moved = false;
-        loop {
-            moved |= self.apply_solve();
-            if self.committed_closures.len() == self.closures_dispatched {
-                return moved;
-            }
-            self.dispatch_solve();
-        }
-    }
-    /// Start a solve of every committed closure from the odometry (GNC must start from the dead-reckoned chain,
-    /// not an estimate earlier closures already bent). With `closure_cooling`, a keyframe held up by two or more
-    /// independent cycles nearby (it still holds if any one closure is wrong) stays where it is, unless a new
-    /// closure that disagrees with the graph runs through it; closures between two held keyframes keep their verdicts.
-    fn dispatch_solve(&mut self) {
-        let n = self.key_poses.len();
-        let config = &self.config;
-        let all_closures = closure_edges(self.committed_closures.iter());
-        // keyframe 0 pins the map
-        let mut free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-        if config.closure_cooling {
-            let kept: Vec<Edge> = all_closures[..self.closures_dispatched]
-                .iter()
-                .zip(&self.committed_closures)
-                .filter(|(_, c)| c.gnc_weight > 0.5)
-                .map(|(e, _)| *e)
-                .collect();
-            let backups = local_cycles(n, &kept, config.closure_submap_half_range.max(1) as usize);
-            for k in 1..n {
-                free[k] = backups[k] < 2;
-            }
-            let rotations: Vec<Mat3> = self.key_poses.iter().map(|k| k.rotation_global).collect();
-            let positions: Vec<Vec3> = self
-                .key_poses
-                .iter()
-                .map(|k| k.translation_global)
-                .collect();
-            let threshold = chi2_inverse_6dof(config.closure_gnc_inlier_probability);
-            for e in &all_closures[self.closures_dispatched..] {
-                let scaled = Edge {
-                    variances: e.variances.map(|v| v * config.closure_gnc_var_scale),
-                    ..*e
-                };
-                if residuals(&rotations, &positions, &[scaled])[0] > threshold {
-                    for k in e.from.min(e.to).max(1)..=e.from.max(e.to) {
-                        free[k] = true;
-                    }
-                }
-            }
-        }
-        // free keyframes start from the odometry, riding the correction of the nearest held keyframe before them
-        let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
-        let mut offset = (mat3::identity(), [0.0; 3]);
-        for (k, key_pose) in self.key_poses.iter().enumerate() {
-            if free[k] {
-                rotations.push(mat3::mat_mul(&offset.0, &key_pose.rotation_local));
-                positions.push(mat3::add(
-                    &mat3::mat_vec(&offset.0, &key_pose.translation_local),
-                    &offset.1,
-                ));
-            } else {
-                let rotation = mat3::mat_mul(
-                    &key_pose.rotation_global,
-                    &mat3::transpose(&key_pose.rotation_local),
-                );
-                let translation = mat3::sub(
-                    &key_pose.translation_global,
-                    &mat3::mat_vec(&rotation, &key_pose.translation_local),
-                );
-                offset = (rotation, translation);
-                rotations.push(key_pose.rotation_global);
-                positions.push(key_pose.translation_global);
-            }
-        }
-        let touches_free = |e: &Edge| free[e.from] || free[e.to];
-        let odometry: Vec<Edge> = odometry_edges(&self.key_poses, config)
-            .into_iter()
-            .filter(touches_free)
-            .collect();
-        let judged: Vec<usize> = (0..all_closures.len())
-            .filter(|&i| touches_free(&all_closures[i]))
-            .collect();
-        let closures: Vec<Edge> = judged.iter().map(|&i| all_closures[i]).collect();
-        let free_count = free.iter().filter(|&&f| f).count();
-        let solve_config = SolveConfig {
-            gnc_variance_scale: config.closure_gnc_var_scale,
-            gnc_inlier_probability: config.closure_gnc_inlier_probability,
-            huber_k: config.closure_robust_huber_k,
-        };
-        let solved = self.solved.clone();
-        let handle = std::thread::Builder::new()
-            .name("gsc-pose-graph".into())
-            .spawn(move || {
-                let started = std::time::Instant::now();
-                let solution = solve(
-                    &rotations,
-                    &positions,
-                    &free,
-                    &odometry,
-                    &closures,
-                    &solve_config,
-                );
-                let seconds = started.elapsed().as_secs_f64();
-                if let Some(solved) = solved {
-                    solved();
-                }
-                (solution, seconds)
-            })
-            .expect("spawn pose graph thread");
-        self.closures_dispatched = self.committed_closures.len();
-        self.solving = Some(Solving {
-            handle,
-            keyframes: n,
-            free: free_count,
-            judged,
-        });
-    }
-    /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
-    /// ride on, and its closure verdicts. Returns whether there was one.
-    fn apply_solve(&mut self) -> bool {
-        let Some(solving) = self.solving.take() else {
-            return false;
-        };
-        let (solution, seconds) = solving.handle.join().expect("pose graph solve panicked");
-        self.timing.solve_s += seconds;
-        let n = solving.keyframes;
-        self.solved_relative_covariance =
-            Some((n - 1, solution.relative_position_covariance.clone()))
-                .filter(|(_, covariance)| covariance.len() == n);
-        for (key_pose, (rotation, position)) in self.key_poses[..n]
-            .iter_mut()
-            .zip(solution.rotations.iter().zip(&solution.positions))
-        {
-            key_pose.rotation_global = *rotation;
-            key_pose.translation_global = *position;
-        }
-        // keyframes made since the solve started ride on its newest keyframe's correction
-        let newest = &self.key_poses[n - 1];
-        self.rotation_offset = mat3::mat_mul(
-            &newest.rotation_global,
-            &mat3::transpose(&newest.rotation_local),
-        );
-        self.translation_offset = mat3::sub(
-            &newest.translation_global,
-            &mat3::mat_vec(&self.rotation_offset, &newest.translation_local),
-        );
-        for key_pose in &mut self.key_poses[n..] {
-            key_pose.rotation_global =
-                mat3::mat_mul(&self.rotation_offset, &key_pose.rotation_local);
-            key_pose.translation_global = mat3::add(
-                &mat3::mat_vec(&self.rotation_offset, &key_pose.translation_local),
-                &self.translation_offset,
-            );
-        }
-        // a closure no solve judged (both ends held) agreed with a map that holds without it
-        let mut weights: Vec<f64> = self
-            .committed_closures
-            .iter()
-            .map(|c| {
-                if c.gnc_weight.is_nan() {
-                    1.0
-                } else {
-                    c.gnc_weight
-                }
-            })
-            .collect();
-        for (&index, &weight) in solving.judged.iter().zip(&solution.closure_weights) {
-            weights[index] = weight;
-        }
-        for (index, weight) in weights.into_iter().enumerate() {
-            let previous = self.committed_closures[index].gnc_weight;
-            self.committed_closures[index].gnc_weight = weight;
-            if previous == weight {
-                continue;
-            }
-            let (source, target) = (
-                self.committed_closures[index].source_id,
-                self.committed_closures[index].target_id,
-            );
-            let (confidence, yank_z) = (
-                self.closure_fit_confidence[index],
-                self.closure_yank_z[index],
-            );
-            if weight > 0.5 {
-                self.push_edge(
-                    source,
-                    target,
-                    ClosureEdgeState::Accepted,
-                    confidence,
-                    yank_z,
-                );
-                self.push_edge(
-                    source,
-                    target,
-                    ClosureEdgeState::Applied,
-                    confidence,
-                    yank_z,
-                );
-            } else {
-                self.push_edge(source, target, ClosureEdgeState::Rejected, 0.0, yank_z);
-            }
-        }
-        self.graph_error = solution.error;
-        true
-    }
+/// `step_variances` from the keyframes' fixed data (`store::KeyFixed`).
+pub(crate) fn local_step_variances(
+    config: &Config,
+    from: &crate::store::KeyFixed,
+    to: &crate::store::KeyFixed,
+) -> [f64; 4] {
+    let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
+    let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
+    motion_variances(config, distance, turn)
 }
 
-/// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
-pub(crate) fn odometry_edges(key_poses: &[KeyPoseWithCloud], config: &Config) -> Vec<Edge> {
-    let (tilt, yaw) = (config.odom_rot_roll_pitch_var, config.odom_rot_yaw_var);
-    let (xy, z) = (config.odom_trans_xy_var, config.odom_trans_z_var);
-    key_poses
-        .windows(2)
-        .enumerate()
+/// The reported odometry variance (xy, z, yaw, roll/pitch) of `distance` m travelled while turning `turn` rad.
+pub fn motion_variances(config: &Config, distance: f64, turn: f64) -> [f64; 4] {
+    let c = config;
+    [
+        (
+            c.odometry_error_estimate_xy_per_sqrt_m,
+            c.odometry_error_estimate_xy_per_sqrt_rad,
+        ),
+        (
+            c.odometry_error_estimate_z_per_sqrt_m,
+            c.odometry_error_estimate_z_per_sqrt_rad,
+        ),
+        (
+            c.odometry_error_estimate_yaw_per_sqrt_m,
+            c.odometry_error_estimate_yaw_per_sqrt_rad,
+        ),
+        (
+            c.odometry_error_estimate_tilt_per_sqrt_m,
+            c.odometry_error_estimate_tilt_per_sqrt_rad,
+        ),
+    ]
+    .map(|(per_m, per_rad)| per_m * per_m * distance + per_rad * per_rad * turn)
+}
+
+/// The mean of `step_variances` over the odometry so far (before two keyframes, a step of the keyframe thresholds).
+pub(crate) fn mean_step_variances(key_poses: &KeyFrames, config: &Config) -> [f64; 4] {
+    if key_poses.len() < 2 {
+        return motion_variances(
+            config,
+            config.keyframe_min_distance_meters,
+            config.keyframe_min_rotation_degrees.to_radians(),
+        );
+    }
+    let mut sum = [0.0; 4];
+    for k in 1..key_poses.len() {
+        let step = local_step_variances(config, key_poses.fixed(k - 1), key_poses.fixed(k));
+        for c in 0..4 {
+            sum[c] += step[c];
+        }
+    }
+    sum.map(|s| s / (key_poses.len() - 1) as f64)
+}
+
+/// The odometry as pose-graph edges, each step's reported variances (`step_variances`) times `noise` (xy, z, yaw,
+/// roll/pitch ratios).
+pub(crate) fn odometry_edges(
+    key_poses: &KeyFrames,
+    config: &Config,
+    noise: [f64; 4],
+) -> Vec<Edge> {
+    (1..key_poses.len())
+        .map(|k| (k - 1, [key_poses.fixed(k - 1), key_poses.fixed(k)]))
         .map(|(i, pair)| {
             let back = mat3::transpose(&pair[0].rotation_local);
+            let step = local_step_variances(config, pair[0], pair[1]);
+            let [xy, z, yaw, tilt]: [f64; 4] = std::array::from_fn(|c| step[c] * noise[c]);
             Edge {
                 from: i,
                 to: i + 1,
@@ -914,8 +1626,8 @@ pub(crate) fn odometry_edges(key_poses: &[KeyPoseWithCloud], config: &Config) ->
         .collect()
 }
 
-/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness.
-pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClosure>) -> Vec<Edge> {
+/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness on every axis.
+pub(crate) fn closure_edges(closures: impl Iterator<Item = CommittedClosure>) -> Vec<Edge> {
     closures
         .map(|l| Edge {
             from: l.target_id,
@@ -923,49 +1635,6 @@ pub(crate) fn closure_edges<'a>(closures: impl Iterator<Item = &'a CommittedClos
             rotation: l.rotation_offset,
             translation: l.translation_offset,
             variances: [l.score.max(1e-6); 6],
-        })
-        .collect()
-}
-
-/// Independent cycles (backups) holding each keyframe: in the graph of its `hops`-step neighbourhood (odometry
-/// and `closures`), edges - nodes + 1.
-fn local_cycles(n: usize, closures: &[Edge], hops: usize) -> Vec<usize> {
-    let mut neighbours: Vec<Vec<usize>> = (0..n)
-        .map(|k| {
-            [k.checked_sub(1), (k + 1 < n).then_some(k + 1)]
-                .into_iter()
-                .flatten()
-                .collect()
-        })
-        .collect();
-    for c in closures {
-        neighbours[c.from].push(c.to);
-        neighbours[c.to].push(c.from);
-    }
-    let mut seen = vec![usize::MAX; n];
-    (0..n)
-        .map(|start| {
-            let (mut frontier, mut nodes) = (vec![start], vec![start]);
-            seen[start] = start;
-            for _ in 0..hops {
-                let mut next = Vec::new();
-                for &k in &frontier {
-                    for &m in &neighbours[k] {
-                        if seen[m] != start {
-                            seen[m] = start;
-                            next.push(m);
-                        }
-                    }
-                }
-                nodes.extend(&next);
-                frontier = next;
-            }
-            let edges = nodes
-                .iter()
-                .map(|&k| neighbours[k].iter().filter(|&&m| seen[m] == start).count())
-                .sum::<usize>()
-                / 2;
-            (edges + 1).saturating_sub(nodes.len())
         })
         .collect()
 }

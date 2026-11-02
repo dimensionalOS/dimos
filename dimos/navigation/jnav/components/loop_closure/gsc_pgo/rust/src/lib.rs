@@ -22,14 +22,28 @@
 //! - stage 5 `big_picture_fit`: the pose graph solve (GNC) deciding which closures agree.
 //!
 //! `mat3` and `pointcloud` are the small math underneath. The module executable (`src/main.rs`,
-//! binary `gsc-pgo`) builds behind the default `native` feature.
+//! binary `gsc-pgo`), the offline eval (`src/eval.rs`, binary `pgo-eval`) and the `records` they share build
+//! behind the default `native` feature.
 
+pub mod adoption_schedule;
 pub mod big_picture_fit;
+pub mod closure_search_schedule;
 pub mod connection_fit;
 pub mod gsc_pgo;
+pub mod icp_cache;
+pub mod landmarks;
 pub mod loop_overlap;
 pub mod mat3;
+pub mod odometry_error_estimate;
+#[cfg(test)]
+mod odometry_error_estimate_overtrust;
 pub mod pointcloud;
+pub mod pose_graph_solving;
+pub mod pressure_schedule;
+pub mod store;
 pub mod proportional_confidence;
+#[cfg(feature = "native")]
+pub mod records;
 pub mod similarity_discovery;
 pub mod uniqueness;
+pub mod world_positions;

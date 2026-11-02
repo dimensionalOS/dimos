@@ -28,6 +28,8 @@
 
 use std::f64::consts::PI;
 
+use std::sync::Arc;
+
 use crate::mat3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -106,7 +108,6 @@ impl Descriptor {
 
 /// Mean per row — the coarse feature used for candidate retrieval.
 pub type RingKey = Vec<f32>;
-/// Mean per column — only used for the optional sector-key alignment.
 
 /// Build the polar-max-z descriptor for a body-frame scan (points as
 /// `[x, y, z]`, f32 like PCL). Points outside `max_range_m` or at the sensor
@@ -276,17 +277,10 @@ pub fn yaw_from_shift(shift: i32, n_sectors: usize) -> f64 {
     yaw
 }
 
-/// Rank candidate ring keys by L2 distance to `query_key` and return the
-/// top-k `(distance, index)` pairs, ascending — the coarse retrieval stage of
-/// `SimplePGO::searchByScanContext` (a linear scan + partial selection; small
-/// enough at keyframe counts that a kd-tree buys nothing yet). Entries whose
-/// ring key length differs from the query (e.g. cloud-less nodes) are
-/// skipped.
-///
-/// TODO: switch to a kd-tree later for O(log n) instead of O(n) — this linear
-/// scan is O(N) per query (O(N^2) over a run) and won't scale to massive maps.
-pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> Vec<(f32, usize)> {
-    let mut ranked: Vec<(f32, usize)> = Vec::with_capacity(candidates.len());
+/// `(ring-key L2 distance, index)` to every candidate, unordered: the coarse retrieval stage (a linear scan, O(N) per
+/// query). Candidates whose ring key length differs from the query (e.g. cloud-less keyframes) are skipped.
+pub fn ring_key_distances(query_key: &RingKey, candidates: &[RingKey]) -> Vec<(f32, usize)> {
+    let mut distances: Vec<(f32, usize)> = Vec::with_capacity(candidates.len());
     for (idx, key) in candidates.iter().enumerate() {
         if key.len() != query_key.len() || key.is_empty() {
             continue;
@@ -296,18 +290,81 @@ pub fn ring_key_top_k(query_key: &RingKey, candidates: &[RingKey], k: usize) -> 
             let d = a - b;
             sq += d * d;
         }
-        ranked.push((sq.sqrt(), idx));
+        distances.push((sq.sqrt(), idx));
+    }
+    distances
+}
+
+/// Make `ranking[from..from + count]` the closest `count` of `ranking[from..]`, ascending, leaving the rest unordered:
+/// a partial selection, linear in the remainder instead of sorting all of it.
+pub fn order_closest(ranking: &mut [(f32, usize)], from: usize, count: usize) {
+    let start = from.min(ranking.len());
+    let rest = &mut ranking[start..];
+    let count = count.min(rest.len());
+    if count == 0 {
+        return;
     }
     let by_distance = |a: &(f32, usize), b: &(f32, usize)| a.0.total_cmp(&b.0);
-    if k == 0 {
-        return Vec::new();
+    if count < rest.len() {
+        rest.select_nth_unstable_by(count - 1, by_distance);
     }
-    if k < ranked.len() {
-        ranked.select_nth_unstable_by(k - 1, by_distance);
-        ranked.truncate(k);
+    rest[..count].sort_unstable_by(by_distance);
+}
+
+/// The separate places a scan matches, counted lazily: candidates are taken in ring-key order (`ranking`, put in order a
+/// batch at a time), each one scored on the full descriptor, and one that matches (cosine distance under the match
+/// threshold) and could not be the same place as any already counted (`same_place`) is a new place. Counting stops at the
+/// first of: more places than the caller's limit, `cap` candidates scored, or no candidates left.
+pub struct LookAlikes {
+    ranking: Vec<(f32, usize)>,
+    ordered: usize,
+    scored: usize,
+    places: Vec<usize>,
+    cap: usize,
+}
+
+impl LookAlikes {
+    pub fn new(ranking: Vec<(f32, usize)>, cap: usize) -> LookAlikes {
+        LookAlikes {
+            ranking,
+            ordered: 0,
+            scored: 0,
+            places: Vec::new(),
+            cap,
+        }
     }
-    ranked.sort_unstable_by(by_distance);
-    ranked
+    /// Places counted so far (at least one: the scan's own match).
+    pub fn places(&self) -> usize {
+        self.places.len().max(1)
+    }
+    /// Count until more than `limit` places are known (the caller's decision can't change past that) or the
+    /// candidates or `cap` run out; returns the places counted.
+    pub fn count_past(
+        &mut self,
+        limit: f64,
+        query: &Descriptor,
+        descriptors: &crate::store::Appended<Arc<Descriptor>>,
+        match_threshold: f64,
+        same_place: impl Fn(usize, usize) -> bool,
+    ) -> usize {
+        let end = self.cap.min(self.ranking.len());
+        while self.places.len() as f64 <= limit && self.scored < end {
+            if self.scored == self.ordered {
+                // the next batch, as large as everything scored so far
+                let batch = self.ordered.max(1);
+                order_closest(&mut self.ranking, self.ordered, batch);
+                self.ordered += batch;
+            }
+            let idx = self.ranking[self.scored].1;
+            self.scored += 1;
+            if (best_distance(query, &descriptors[idx]).0 as f64) < match_threshold
+                && self.places.iter().all(|&place| !same_place(place, idx))
+            {
+                self.places.push(idx);
+            }
+        }
+        self.places()
+    }
 }
 
 impl crate::gsc_pgo::GscPgo {
@@ -315,46 +372,59 @@ impl crate::gsc_pgo::GscPgo {
     /// against itself only checks odometry against itself). Extended ICP keeps its stack clear of the target on its own.
     pub(crate) fn newest_closure_target(&self) -> usize {
         (self.key_poses.len() - 1)
-            .saturating_sub(self.config.closure_submap_half_range.max(0) as usize + 1)
+            .saturating_sub(self.config.target_half_range(1) + 1)
     }
     /// Radius search on past key-pose global positions (candidates ascending
     /// by distance), returning the nearest that is far enough back.
-    pub(crate) fn search_by_position(&self) -> i64 {
+    pub(crate) fn search_by_position(&self) -> Option<usize> {
         let here = self.key_poses.last().unwrap().translation_global;
-        self.key_poses[..self.newest_closure_target()]
-            .iter()
-            .map(|k| mat3::norm(&mat3::sub(&k.translation_global, &here)))
+        (0..self.newest_closure_target())
+            .map(|k| mat3::norm(&mat3::sub(&self.key_poses.position(k), &here)))
             .enumerate()
             .filter(|&(_, d)| d <= self.config.closure_search_radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map_or(-1, |(i, _)| i as i64)
+            .map(|(i, _)| i)
     }
-    /// Scan-context candidate search. Returns (target_idx or -1,
-    /// sector_shift, best, second): the accepted candidate under the match
-    /// threshold, plus the closest / 2nd-closest cosine distances across the
-    /// top-K (the Lowe ratio distinctiveness signal).
-    pub(crate) fn search_by_scan_context(&self) -> (i64, i32, f32, f32) {
-        let mut out_best = 2.0f32;
-        let mut out_second = 2.0f32;
-        if self.scan_context_descriptors.is_empty()
-            || self.scan_context_descriptors.last().unwrap().is_empty()
-        {
-            return (-1, 0, out_best, out_second);
-        }
-        let query = self.scan_context_descriptors.last().unwrap();
+    /// Scan-context candidate search, on the hot path: every earlier keyframe's ring-key distance, the closest
+    /// `candidate_top_k` scored on the full descriptor. Returns (target_idx, sector_shift, best, second, ranking):
+    /// the accepted candidate under the match threshold, the closest / 2nd-closest cosine distances (the Lowe ratio, 2
+    /// when missing) and the ring-key distances (top k in order), which the closure search reuses to count look-alike
+    /// places, and every top-k keyframe under the threshold other than the accepted one, closest first (distance,
+    /// index, sector shift).
+    pub(crate) fn search_by_scan_context(
+        &self,
+    ) -> (
+        Option<usize>,
+        i32,
+        f32,
+        f32,
+        Vec<(f32, usize)>,
+        Vec<(f32, usize, i32)>,
+    ) {
+        let (mut best_dist, mut second_dist) = (2.0f32, 2.0f32);
+        let Some(query) = self
+            .scan_context_descriptors
+            .last()
+            .filter(|d| !d.is_empty())
+        else {
+            return (None, 0, best_dist, second_dist, Vec::new(), Vec::new());
+        };
         // two-stage retrieval: rank by ring-key distance, then score the top k on the full descriptor
-        let ranked = ring_key_top_k(
+        let mut ranked = ring_key_distances(
             self.scan_context_ring_keys.last().unwrap(),
             &self.scan_context_ring_keys[..self.newest_closure_target()],
-            self.scan_context_config.candidate_top_k,
         );
-        let mut best_dist = f32::MAX;
-        let mut second_dist = f32::MAX;
+        let top_k = self.scan_context_config.candidate_top_k;
+        order_closest(&mut ranked, 0, top_k);
         let mut best_dist_filtered = self.scan_context_config.match_threshold as f32;
-        let mut best_idx: i64 = -1;
+        let mut best: Option<usize> = None;
         let mut best_shift = 0i32;
-        for &(_, idx) in &ranked {
+        let mut matches = Vec::new();
+        for &(_, idx) in ranked.iter().take(top_k) {
             let (distance, shift) = best_distance(query, &self.scan_context_descriptors[idx]);
+            if (distance as f64) < self.scan_context_config.match_threshold {
+                matches.push((distance, idx, shift));
+            }
             if distance < best_dist {
                 second_dist = best_dist; // demote previous best
                 best_dist = distance;
@@ -363,17 +433,12 @@ impl crate::gsc_pgo::GscPgo {
             }
             if distance < best_dist_filtered {
                 best_dist_filtered = distance;
-                best_idx = idx as i64;
+                best = Some(idx);
                 best_shift = shift;
             }
         }
-
-        if best_dist < 2.0 {
-            out_best = best_dist;
-        }
-        if second_dist < 2.0 {
-            out_second = second_dist;
-        }
-        (best_idx, best_shift, out_best, out_second)
+        matches.retain(|&(_, idx, _)| Some(idx) != best);
+        matches.sort_by(|a, b| a.0.total_cmp(&b.0));
+        (best, best_shift, best_dist, second_dist, ranked, matches)
     }
 }

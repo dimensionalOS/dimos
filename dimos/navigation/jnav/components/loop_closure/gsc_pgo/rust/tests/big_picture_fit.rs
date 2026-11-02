@@ -14,14 +14,16 @@
 
 //! The pose graph on a drifted square: a true closure closes it, a false one is voted out.
 
-use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
+use dimos_gsc_pgo::big_picture_fit::{consistent_closures, solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
 const SIDE: usize = 40;
 
+type Poses = Vec<(Mat3, Vec3)>;
+
 /// A square walk of 4 * SIDE keyframes, 1 m apart, back to the start: the true poses, and the
 /// odometry's, which over-turns every keyframe by `yaw_bias`.
-fn square(yaw_bias: f64) -> (Vec<(Mat3, Vec3)>, Vec<(Mat3, Vec3)>) {
+fn square(yaw_bias: f64) -> (Poses, Poses) {
     let (mut truth, mut odometry) = (Vec::new(), Vec::new());
     let (mut true_yaw, mut drift_yaw) = (0.0f64, 0.0f64);
     let (mut true_xy, mut drift_xy) = ([0.0; 3], [0.0; 3]);
@@ -80,6 +82,8 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
+            evidence_core: false,
+            learned_evidence: true,
         },
     );
     assert_eq!(solution.closure_weights, vec![1.0, 0.0]);
@@ -98,7 +102,7 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
 /// between them: each step's translation noise, plus each step's rotation noise swinging the newest keyframe by its lever
 /// arm. The solver's Takahashi readout must give the same.
 #[test]
-fn relative_covariance_of_a_chain_is_its_odometry_noise() {
+fn relative_covariance_of_a_chain_is_its_odometry_error_estimate() {
     let (translation_variance, rotation_variances) = (1e-4, [1e-6, 1e-6, 3e-6]);
     let n = 30;
     let (mut rotations, mut positions) = (Vec::new(), Vec::new());
@@ -136,11 +140,12 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         gnc_variance_scale: 10.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
+        evidence_core: false,
+        learned_evidence: true,
     };
     let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
     assert_eq!(solution.relative_position_covariance.len(), n);
     let newest = positions[n - 1];
-    let skew = |v: &Vec3| [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]];
     let sandwich = |a: &Mat3, d: [f64; 3]| -> Mat3 {
         std::array::from_fn(|r| {
             std::array::from_fn(|c| (0..3).map(|k| a[r][k] * d[k] * a[c][k]).sum())
@@ -151,7 +156,7 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         for i in j..n - 1 {
             let translation = sandwich(&rotations[i], [translation_variance; 3]);
             // the step's rotation noise, in the turned-to keyframe's axes, swings the newest one about it
-            let lever = skew(&mat3::sub(&newest, &positions[i + 1]));
+            let lever = mat3::skew(&mat3::sub(&newest, &positions[i + 1]));
             let rotation = mat3::mat_mul(&lever, &rotations[i + 1]);
             let swing = sandwich(&rotation, rotation_variances);
             for r in 0..3 {
@@ -173,4 +178,184 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
             }
         }
     }
+}
+
+/// A square walk of 4 * SIDE keyframes plus `revisit` more along its first side again, whose odometry's yaw takes a
+/// random walk of `yaw_sd` rad per keyframe (a fixed seed): the true poses and the odometry's.
+fn revisited_square(yaw_sd: f64, revisit: usize) -> (Poses, Poses) {
+    let mut seed = 0x2545F4914F6CDD1Du64;
+    let mut gauss = || {
+        let mut uniform = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (a, b) = (uniform().max(1e-12), uniform());
+        (-2.0 * a.ln()).sqrt() * (2.0 * std::f64::consts::PI * b).cos()
+    };
+    let (mut truth, mut odometry) = (Vec::new(), Vec::new());
+    let (mut true_yaw, mut drift_yaw) = (0.0f64, 0.0f64);
+    let (mut true_xy, mut drift_xy) = ([0.0; 3], [0.0; 3]);
+    for k in 0..4 * SIDE + revisit + 1 {
+        truth.push((mat3::rot_z(true_yaw), true_xy));
+        odometry.push((mat3::rot_z(drift_yaw), drift_xy));
+        let turn = if (k + 1) % SIDE == 0 && k < 4 * SIDE {
+            std::f64::consts::FRAC_PI_2
+        } else {
+            0.0
+        };
+        true_xy = mat3::add(
+            &true_xy,
+            &mat3::mat_vec(&mat3::rot_z(true_yaw), &[1.0, 0.0, 0.0]),
+        );
+        drift_xy = mat3::add(
+            &drift_xy,
+            &mat3::mat_vec(&mat3::rot_z(drift_yaw), &[1.0, 0.0, 0.0]),
+        );
+        true_yaw += turn;
+        drift_yaw += turn + yaw_sd * gauss();
+    }
+    (truth, odometry)
+}
+
+/// The revisited square with its five true closures, then nine look-alikes that agree with each other and with the
+/// dead-reckoned graph (they claim the revisit is where the drifted odometry puts it, as a burst of wrong matches dragged
+/// along by the drift does). A solve, starting from the odometry, keeps the nine and drops the true five.
+fn look_alike_square() -> (Vec<f64>, f64, f64) {
+    let (yaw_sd, revisit, closure_var) = (0.003, 5, 1e-4);
+    let (truth, odometry) = revisited_square(yaw_sd, revisit);
+    let last = truth.len() - 1;
+    let honest = [1e-8, 1e-8, yaw_sd * yaw_sd, 1e-6, 1e-6, 1e-6];
+    let odometry_edges: Vec<Edge> = (1..=last)
+        .map(|k| between(&odometry, k - 1, k, honest))
+        .collect();
+    let mut closures: Vec<Edge> = (0..revisit)
+        .map(|j| between(&truth, j, 4 * SIDE + j, [closure_var; 6]))
+        .collect();
+    closures
+        .extend((0..9).map(|j| between(&odometry, j, 4 * SIDE + j % revisit, [closure_var; 6])));
+    let solution = solve(
+        &odometry.iter().map(|p| p.0).collect::<Vec<_>>(),
+        &odometry.iter().map(|p| p.1).collect::<Vec<_>>(),
+        &(0..odometry.len()).map(|k| k > 0).collect::<Vec<_>>(),
+        &odometry_edges,
+        &closures,
+        &SolveConfig {
+            gnc_variance_scale: 10.0,
+            gnc_inlier_probability: 0.95,
+            huber_k: 1.345,
+            evidence_core: false,
+            learned_evidence: true,
+        },
+    );
+    let gap = |positions: &[Vec3]| mat3::norm(&mat3::sub(&positions[4 * SIDE], &positions[0]));
+    (
+        solution.closure_weights,
+        gap(&odometry.iter().map(|p| p.1).collect::<Vec<_>>()),
+        gap(&solution.positions),
+    )
+}
+
+#[test]
+fn a_cold_solve_follows_a_larger_group_of_look_alikes_that_agree_with_the_drift() {
+    let (weights, drifted, solved) = look_alike_square();
+    eprintln!("{weights:?} drifted {drifted} solved {solved}");
+    assert_eq!(weights, [vec![0.0; 5], vec![1.0; 9]].concat());
+    assert!(
+        solved > 0.9 * drifted,
+        "the revisit should stay drifted: {solved} of {drifted}"
+    );
+}
+
+/// A circle driven twice whose second lap's odometry turns a random degree off each step (a heading drift the
+/// stated yaw noise covers): two true closures between the laps agree around their cycle, a closure to the wrong
+/// place agrees with neither.
+#[test]
+fn closures_agree_around_a_drifting_cycle() {
+    let (steps_per_lap, radius) = (200, 20.0);
+    let turn = std::f64::consts::TAU / steps_per_lap as f64;
+    let chord = 2.0 * radius * (turn / 2.0).sin();
+    let drift = 1.0_f64.to_radians();
+    let (yaw_variance, xy_variance) = (drift * drift, 1e-6);
+    let truth = |k: usize| -> (Mat3, Vec3) {
+        let yaw = k as f64 * turn;
+        (
+            mat3::rot_z(yaw),
+            [radius * yaw.sin(), radius * (1.0 - yaw.cos()), 0.0],
+        )
+    };
+    let odometry: Vec<Edge> = (0..2 * steps_per_lap)
+        .map(|k| Edge {
+            from: k,
+            to: k + 1,
+            // +-drift from a fixed hash, on the second lap only
+            rotation: mat3::rot_z(
+                turn + if k >= steps_per_lap {
+                    drift
+                        * ((k as f64 * 12.9898).sin() * 43758.5453)
+                            .rem_euclid(1.0)
+                            .mul_add(2.0, -1.0)
+                            .signum()
+                } else {
+                    0.0
+                },
+            ),
+            translation: mat3::mat_vec(&mat3::rot_z(turn / 2.0), &[chord, 0.0, 0.0]),
+            variances: [
+                1e-8,
+                1e-8,
+                yaw_variance,
+                xy_variance,
+                xy_variance,
+                xy_variance,
+            ],
+        })
+        .collect();
+    let closure = |from: usize, to: usize, offset: Vec3| {
+        let (a, b) = (truth(from), truth(to));
+        let back = mat3::transpose(&a.0);
+        Edge {
+            from,
+            to,
+            rotation: mat3::mat_mul(&back, &b.0),
+            translation: mat3::add(&mat3::mat_vec(&back, &mat3::sub(&b.1, &a.1)), &offset),
+            variances: [1e-6, 1e-6, 1e-6, 1e-4, 1e-4, 1e-4],
+        }
+    };
+    let closures = [
+        closure(50, 50 + steps_per_lap, [0.0; 3]),
+        closure(120, 120 + steps_per_lap, [0.0; 3]),
+        closure(150, 150 + steps_per_lap, [8.0, 0.0, 0.0]),
+    ];
+    let config = SolveConfig {
+        gnc_variance_scale: 1.0,
+        gnc_inlier_probability: 0.99,
+        huber_k: 0.0,
+        evidence_core: false,
+        learned_evidence: true,
+    };
+    assert_eq!(
+        consistent_closures(&closures, &odometry, &config),
+        vec![true, true, false]
+    );
+    // at a tenth of the yaw variance the drift is out of reach, so the true pair disagrees too
+    let tight: Vec<Edge> = odometry
+        .iter()
+        .map(|e| Edge {
+            variances: [
+                1e-8,
+                1e-8,
+                yaw_variance / 100.0,
+                xy_variance,
+                xy_variance,
+                xy_variance,
+            ],
+            ..*e
+        })
+        .collect();
+    assert_eq!(
+        consistent_closures(&closures, &tight, &config),
+        vec![false, false, false]
+    );
 }
