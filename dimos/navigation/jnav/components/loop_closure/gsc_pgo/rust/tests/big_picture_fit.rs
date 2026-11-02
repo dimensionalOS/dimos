@@ -82,6 +82,7 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             gnc_variance_scale: 10.0,
             gnc_inlier_probability: 0.95,
             huber_k: 1.345,
+            pcm_odometry_translation_variance: 0.0,
         },
     );
     assert_eq!(solution.closure_weights, vec![1.0, 0.0]);
@@ -138,6 +139,7 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         gnc_variance_scale: 10.0,
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
+        pcm_odometry_translation_variance: 0.0,
     };
     let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
     assert_eq!(solution.relative_position_covariance.len(), n);

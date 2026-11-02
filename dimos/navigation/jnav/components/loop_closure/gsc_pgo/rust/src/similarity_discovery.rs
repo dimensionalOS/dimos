@@ -390,17 +390,25 @@ impl crate::gsc_pgo::GscPgo {
     /// `candidate_top_k` scored on the full descriptor. Returns (target_idx, sector_shift, best, second, ranking):
     /// the accepted candidate under the match threshold, the closest / 2nd-closest cosine distances (the Lowe ratio, 2
     /// when missing) and the ring-key distances (top k in order), which the closure search reuses to count look-alike
-    /// places.
+    /// places, and every top-k keyframe under the threshold other than the accepted one, closest first (distance,
+    /// index, sector shift).
     pub(crate) fn search_by_scan_context(
         &self,
-    ) -> (Option<usize>, i32, f32, f32, Vec<(f32, usize)>) {
+    ) -> (
+        Option<usize>,
+        i32,
+        f32,
+        f32,
+        Vec<(f32, usize)>,
+        Vec<(f32, usize, i32)>,
+    ) {
         let (mut best_dist, mut second_dist) = (2.0f32, 2.0f32);
         let Some(query) = self
             .scan_context_descriptors
             .last()
             .filter(|d| !d.is_empty())
         else {
-            return (None, 0, best_dist, second_dist, Vec::new());
+            return (None, 0, best_dist, second_dist, Vec::new(), Vec::new());
         };
         // two-stage retrieval: rank by ring-key distance, then score the top k on the full descriptor
         let mut ranked = ring_key_distances(
@@ -412,8 +420,12 @@ impl crate::gsc_pgo::GscPgo {
         let mut best_dist_filtered = self.scan_context_config.match_threshold as f32;
         let mut best: Option<usize> = None;
         let mut best_shift = 0i32;
+        let mut matches = Vec::new();
         for &(_, idx) in ranked.iter().take(top_k) {
             let (distance, shift) = best_distance(query, &self.scan_context_descriptors[idx]);
+            if (distance as f64) < self.scan_context_config.match_threshold {
+                matches.push((distance, idx, shift));
+            }
             if distance < best_dist {
                 second_dist = best_dist; // demote previous best
                 best_dist = distance;
@@ -426,6 +438,8 @@ impl crate::gsc_pgo::GscPgo {
                 best_shift = shift;
             }
         }
-        (best, best_shift, best_dist, second_dist, ranked)
+        matches.retain(|&(_, idx, _)| Some(idx) != best);
+        matches.sort_by(|a, b| a.0.total_cmp(&b.0));
+        (best, best_shift, best_dist, second_dist, ranked, matches)
     }
 }

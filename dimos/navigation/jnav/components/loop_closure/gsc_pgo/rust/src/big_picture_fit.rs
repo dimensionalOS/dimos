@@ -50,6 +50,9 @@ pub struct SolveConfig {
     pub gnc_inlier_probability: f64,
     /// Huber threshold on a kept closure's whitened residual; 0 = plain least squares.
     pub huber_k: f64,
+    /// Pairwise consistency (PCM, Mangelson 2018): the largest set of closures that all agree pairwise around the
+    /// cycles they close with the odometry is held in through GNC (`consistent_closures`); 0 odometry variance = off.
+    pub pcm_odometry_translation_variance: f64,
 }
 
 pub struct Solution {
@@ -96,13 +99,21 @@ pub fn solve(
     // GncOptimizer does): the worse the start, the more gently it tightens
     let worst = residual(&state).into_iter().fold(0.0, f64::max);
     let mut weights = vec![1.0; closures.len()];
+    let held = if config.pcm_odometry_translation_variance > 0.0 {
+        consistent_closures(&state, &scaled, config)
+    } else {
+        vec![false; closures.len()]
+    };
     levenberg_marquardt(&mut state, &pattern, odometry, &scaled, &weights, 1e-5);
     let mut r2 = residual(&state);
     if worst > threshold {
         let mut mu = threshold / (2.0 * worst - threshold).max(f64::EPSILON);
         let mut previous_cost = f64::INFINITY;
         for _ in 0..100 {
-            for (w, &r) in weights.iter_mut().zip(&r2) {
+            for ((w, &r), &held) in weights.iter_mut().zip(&r2).zip(&held) {
+                if held {
+                    continue;
+                }
                 let (upper, lower) = ((mu + 1.0) / mu * threshold, mu / (mu + 1.0) * threshold);
                 *w = if r >= upper {
                     0.0
@@ -160,6 +171,66 @@ pub fn solve(
         error,
         relative_position_covariance,
     }
+}
+
+/// The largest set of closures that pairwise agree (PCM): two closures agree when keyframe A.to's position predicted
+/// through closure A equals its position predicted through B and the odometry between their ends, within the
+/// chi-square cutoff of `gnc_inlier_probability` (3 DOF), the translation variance being both closures' plus the
+/// odometry's over the keyframes between their ends. The set is grown greedily from the best-agreeing closure (an
+/// approximate maximum clique); a set of one is no evidence of agreement, so it holds nothing.
+fn consistent_closures(state: &State, closures: &[Edge], config: &SolveConfig) -> Vec<bool> {
+    let n = closures.len();
+    let cutoff = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
+    let at = |pose: usize, offset: &Vec3| {
+        mat3::add(
+            &state.position[pose],
+            &mat3::mat_vec(&state.rotation[pose], offset),
+        )
+    };
+    let agree = |a: &Edge, b: &Edge| -> bool {
+        // a.to through a
+        let through_a = at(a.from, &a.translation);
+        // b.to through b, then a.to through the odometry from b.to (b.to's orientation as b says)
+        let b_to = at(b.from, &b.translation);
+        let b_to_rotation = mat3::mat_mul(&state.rotation[b.from], &b.rotation);
+        let odometry_offset = mat3::mat_vec(
+            &mat3::transpose(&state.rotation[b.to]),
+            &mat3::sub(&state.position[a.to], &state.position[b.to]),
+        );
+        let through_b = mat3::add(&b_to, &mat3::mat_vec(&b_to_rotation, &odometry_offset));
+        // a.from and b.from are tied by the odometry too: shift b's prediction by their odometry offset error
+        let gap = (a.from.abs_diff(b.from) + a.to.abs_diff(b.to)) as f64;
+        let variance =
+            a.variances[3] + b.variances[3] + gap * config.pcm_odometry_translation_variance;
+        let d = mat3::sub(&through_a, &through_b);
+        (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / variance.max(f64::EPSILON) < cutoff
+    };
+    let pairs: Vec<Vec<bool>> = (0..n)
+        .map(|i| {
+            (0..n)
+                .map(|j| i == j || agree(&closures[i], &closures[j]))
+                .collect()
+        })
+        .collect();
+    let degree: Vec<usize> = pairs
+        .iter()
+        .map(|row| row.iter().filter(|&&x| x).count())
+        .collect();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&x, &y| degree[y].cmp(&degree[x]));
+    let mut members: Vec<usize> = Vec::new();
+    for &i in &order {
+        if members.iter().all(|&m| pairs[i][m] && pairs[m][i]) {
+            members.push(i);
+        }
+    }
+    let mut held = vec![false; n];
+    if members.len() > 1 {
+        for m in members {
+            held[m] = true;
+        }
+    }
+    held
 }
 
 /// The covariance of keyframe `tip`'s position as seen from each keyframe (its offset in that keyframe's own frame, in world
@@ -703,6 +774,11 @@ impl GscPgo {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
             huber_k: config.closure_robust_huber_k,
+            pcm_odometry_translation_variance: if config.closure_pcm {
+                config.odom_trans_xy_var
+            } else {
+                0.0
+            },
         };
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()

@@ -20,9 +20,9 @@
 use std::sync::Arc;
 
 use crate::big_picture_fit::{closure_edges, Edge, Solving};
-use crate::connection_fit::{dump_icp, icp, IcpParams};
+use crate::connection_fit::{self, dump_icp, icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
-use crate::pointcloud::{voxel_downsample, KdTree, PointCloud};
+use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
 use crate::similarity_discovery;
 use crate::uniqueness;
 
@@ -167,6 +167,20 @@ pub struct ClosureCandidateDiag {
     pub extended_inliers: usize,
     pub extended_fitness: f64,
     pub extended_confidence: f64,
+    /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
+    pub sharpness: f64,
+    pub extended_sharpness: f64,
+    /// `connection_fit::overlap_score` of the single-scan alignment (its box's points, quality and score) and of the
+    /// last extended one (NaN when not scored).
+    /// `connection_fit::likelihood_ratio` (mean log ratio, nats) of the single-scan and the last extended alignment, and
+    /// the aligned-distance width it measured (NaN when not scored).
+    pub likelihood_ratio: f64,
+    pub extended_likelihood_ratio: f64,
+    pub likelihood_width: f64,
+    pub overlap_points: f64,
+    pub overlap_quality: f64,
+    pub overlap_score: f64,
+    pub extended_overlap_score: f64,
 }
 impl ClosureCandidateDiag {
     fn new(source_id: usize, source_time: f64, source_xyz: Vec3) -> ClosureCandidateDiag {
@@ -212,6 +226,15 @@ impl ClosureCandidateDiag {
             extended_inliers: 0,
             extended_fitness: f64::NAN,
             extended_confidence: f64::NAN,
+            sharpness: f64::NAN,
+            extended_sharpness: f64::NAN,
+            likelihood_ratio: f64::NAN,
+            extended_likelihood_ratio: f64::NAN,
+            likelihood_width: f64::NAN,
+            overlap_points: f64::NAN,
+            overlap_quality: f64::NAN,
+            overlap_score: f64::NAN,
+            extended_overlap_score: f64::NAN,
         }
     }
 }
@@ -339,6 +362,65 @@ pub struct Config {
     pub scan_context_top_k: i32,
     pub scan_context_match_threshold: f64,
     pub scan_context_lidar_height_m: f64,
+    /// Closure ICP and its scores leave out points this far (m) above each cloud's floor and lower (`above_floor`);
+    /// 0 keeps every point.
+    pub closure_ground_clearance_m: f64,
+    /// When above 0, a closure's ICP factor is its sharpness s (`connection_fit::sharpness`) as s / (s + this), and an
+    /// extended stack is scored the same way from its own sharpness, each round started from the single-scan alignment;
+    /// 0 keeps the fitness factor and the inlier-count evidence of extended ICP.
+    pub closure_sharpness_half: f64,
+    /// The nudge `sharpness` measures against: this far (m) along x and y, and this many degrees about z.
+    pub closure_sharpness_nudge_m: f64,
+    pub closure_sharpness_nudge_deg: f64,
+    /// When true, a closure's confidence is its overlap score (`connection_fit::overlap_score`) in place of scan context
+    /// x ICP x degeneracy, and an extended stack's is the stack's own overlap score; the `closure_overlap_*` knobs are its
+    /// noise sigma (m), misfit reach (m), shared-point radius (sigmas), evidence per doubling, coin-flip point count, and
+    /// whether to score only the points near a shared point (`OverlapScoreParams::local`) instead of their bounding box.
+    /// When true, a closure's evidence (nats) is its likelihood ratio (`connection_fit::likelihood_ratio`, scales measured
+    /// from the clouds, misfit reach = `closure_icp_max_correspondence_m`), as confidence 1 - e^-ratio, in place of scan
+    /// context x ICP x degeneracy, and an extended stack's is the stack's own ratio. Takes precedence over
+    /// `closure_overlap_score`. It also sets the extension budget: the keyframes the still-needed evidence takes at the
+    /// single scan's evidence per keyframe (at least one bit), up to the next doubling, at most
+    /// `closure_extended_icp_max_keyframes`; a stack's evidence is its ratio per point x its size over the single scan's
+    /// (the new surface it covers).
+    pub closure_likelihood_confidence: bool,
+    /// When true, a keyframe whose search is rejected tries its next scan-context match (other places under the match
+    /// threshold, closest first), up to 1 + ceil(1 / (1 - pressure)) tries per keyframe (2 at no pressure), at most
+    /// scan_context_top_k; a newer keyframe's better match still outranks a waiting retry.
+    pub closure_alternative_places: bool,
+    /// When true, a scan-context match the graph already knows is skipped before ICP: the variance of the two
+    /// keyframes' relative position along the odometry or across one kept closure (as the `uninformative` gate after
+    /// ICP measures it) is under the median ICP fitness of the closures accepted so far, so the closure would add only
+    /// ICP's noise; nothing is skipped before the first acceptance. The next
+    /// match is taken instead; with none left the keyframe is recorded "known".
+    pub closure_skip_known: bool,
+    /// When true, the solve holds the largest pairwise-consistent set of closures in through GNC (PCM; see
+    /// `big_picture_fit::consistent_closures`), so a consistent group is not voted out by over-trusted odometry.
+    pub closure_pcm: bool,
+    /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
+    /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
+    pub closure_hessian_observability: bool,
+    /// With `closure_likelihood_confidence`: score only the source points the target can speak to, those within ICP's
+    /// inlier distance of it or in space a target scan looked through (`connection_fit::likelihood_ratio_visible`);
+    /// a point no target scan saw counts for nothing instead of as a misfit.
+    pub closure_likelihood_visibility: bool,
+    /// With visibility: a source point counts wherever a target scan could see it (on or in front of what it saw, the
+    /// beam model), with no inlier-distance gate.
+    pub closure_likelihood_beam: bool,
+    /// When true, a keyframe's scan-context matches are tried in order of how unsure the graph is of their relative
+    /// position (the information a closure would add, ½ ln(1 + known variance / measurement variance), grows with it)
+    /// instead of by scan-context distance.
+    pub closure_rank_by_information: bool,
+    /// When true, the yank scale (`sigma_*` in the diagnostics) comes from the closures the solve kept rather than from
+    /// every ICP-scored candidate, so a run of large wrong yanks does not make the next large yank look ordinary.
+    pub closure_yank_scale_from_kept: bool,
+    pub closure_overlap_score: bool,
+    pub closure_overlap_sigma_m: f64,
+    pub closure_overlap_reach_m: f64,
+    pub closure_overlap_noise_sigmas: f64,
+    pub closure_overlap_per_doubling: f64,
+    pub closure_overlap_coin_flip: f64,
+    pub closure_overlap_local: bool,
     /// Recompute the loop-overlap pressure (`loop_overlap`) on every this-many-th scan, reusing it in between; 0 = never.
     pub pressure_check_frequency: usize,
     /// `soft_pressure` (display only, the same probability without the cliff): 50% where log10 of the loop hazard
@@ -376,6 +458,26 @@ impl Default for Config {
             scan_context_top_k: 10,
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
+            closure_ground_clearance_m: 0.0,
+            closure_sharpness_half: 0.0,
+            closure_sharpness_nudge_m: 1.0,
+            closure_sharpness_nudge_deg: 5.0,
+            closure_likelihood_confidence: false,
+            closure_alternative_places: false,
+            closure_skip_known: false,
+            closure_pcm: false,
+            closure_hessian_observability: false,
+            closure_likelihood_visibility: false,
+            closure_likelihood_beam: false,
+            closure_rank_by_information: false,
+            closure_yank_scale_from_kept: false,
+            closure_overlap_score: false,
+            closure_overlap_sigma_m: 0.03,
+            closure_overlap_reach_m: 0.5,
+            closure_overlap_noise_sigmas: 3.0,
+            closure_overlap_per_doubling: 2.7,
+            closure_overlap_coin_flip: 350.0,
+            closure_overlap_local: false,
             pressure_check_frequency: 5,
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
@@ -391,6 +493,8 @@ pub struct GscPgo {
     pub(crate) committed_closures: Vec<CommittedClosure>,
     /// Per committed closure: its yank_z and gate confidence, for its closure-edge events.
     pub(crate) closure_yank_z: Vec<f64>,
+    /// Per committed closure: its yank per sqrt keyframe gap (rotation deg, translation m), for `closure_yank_scale_from_kept`.
+    pub(crate) closure_yanks: Vec<(f64, f64)>,
     pub(crate) closure_fit_confidence: Vec<f64>,
     /// A closure was committed since the last `update`.
     pub(crate) new_closure: bool,
@@ -419,6 +523,8 @@ pub struct GscPgo {
     /// shrink with each rejection and reject the rest.
     pub(crate) scored_yanks: Vec<(f64, f64)>,
     pub(crate) waiting_proposal: Option<ClosureProposal>,
+    /// ICP fitness of every accepted closure: the variance a real closure is expected to add (`closure_skip_known`).
+    pub(crate) scored_fitness: Vec<f64>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -443,6 +549,9 @@ pub struct ClosureProposal {
     pub(crate) similarity: f32,
     /// Every earlier keyframe's ring-key distance (the top k in order), for the search's look-alike count.
     pub(crate) ranked: Vec<(f32, usize)>,
+    /// The keyframe's other scan-context matches still untried (distance, index, shift), and the tries so far.
+    pub(crate) alternatives: Vec<(f32, usize, i32)>,
+    pub(crate) tries: usize,
 }
 
 /// The ICP half of one closure search, on its own copy of the keyframes so it can run on another thread
@@ -462,6 +571,8 @@ pub struct ClosureSearch {
     pub(crate) ranked: Vec<(f32, usize)>,
     /// Every closure the solve has judged: its yank_z when committed, and whether the solve kept it.
     pub(crate) judged_yanks: Vec<(f64, bool)>,
+    pub(crate) alternatives: Vec<(f32, usize, i32)>,
+    pub(crate) tries: usize,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
@@ -471,6 +582,8 @@ pub struct ClosureSearchResult {
     accepted: Option<(Mat3, Vec3, f64)>,
     scored_yank: Option<(f64, f64)>,
     timing: TimingStats,
+    /// The search's place-recognition inputs, for a retry on the next alternative (`closure_alternative_places`).
+    retry: Option<(Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize)>,
 }
 
 /// A search that ended at the gate `outcome`.
@@ -486,12 +599,23 @@ fn rejected(
         accepted: None,
         scored_yank,
         timing,
+        retry: None,
     }
 }
 
 impl ClosureSearch {
     /// The ICP half of a closure search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
-    pub fn run(self) -> ClosureSearchResult {
+    pub fn run(mut self) -> ClosureSearchResult {
+        let retry = (
+            self.ranked.clone(),
+            std::mem::take(&mut self.alternatives),
+            self.tries,
+        );
+        let mut result = self.search();
+        result.retry = Some(retry);
+        result
+    }
+    fn search(self) -> ClosureSearchResult {
         let mut diag = self.diag.clone();
         let (cur_idx, target_idx) = (diag.source_id, self.target_idx);
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
@@ -499,12 +623,32 @@ impl ClosureSearch {
         let mut scored_yank = None;
         let t0 = std::time::Instant::now();
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
-        let target_cloud = self.stacked_cloud(
-            target_idx.saturating_sub(half_range)
-                ..=(target_idx + half_range).min(self.key_poses.len() - 1),
+        let clearance = self.config.closure_ground_clearance_m;
+        let target_cloud = above_floor(
+            &self.stacked_cloud(
+                target_idx.saturating_sub(half_range)
+                    ..=(target_idx + half_range).min(self.key_poses.len() - 1),
+            ),
+            clearance,
         );
-        let source_cloud = self.stacked_cloud(std::iter::once(cur_idx));
+        let source_cloud = above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance);
         timing.submap_s += t0.elapsed().as_secs_f64();
+
+        // Observability gate: a planar/degenerate source scan leaves the alignment unconstrained in-plane, so fitness
+        // lies. It reads only the source scan, so it runs before ICP (computed for every candidate, gate on or off)
+        let degenerate = |degeneracy_min: f32| {
+            self.config.closure_min_degeneracy > 0.0
+                && degeneracy_min >= 0.0
+                && (degeneracy_min as f64) < self.config.closure_min_degeneracy
+        };
+        if !self.config.closure_hessian_observability {
+            let t0 = std::time::Instant::now();
+            diag.degeneracy_min = uniqueness::degeneracy(&source_cloud);
+            timing.degeneracy_s += t0.elapsed().as_secs_f64();
+            if degenerate(diag.degeneracy_min) {
+                return rejected(diag, "degeneracy_reject", scored_yank, timing);
+            }
+        }
 
         let t0 = std::time::Instant::now();
         let target_tree = KdTree::build(&target_cloud);
@@ -537,20 +681,19 @@ impl ClosureSearch {
         diag.icp_overlap = icp.overlap;
         diag.icp_translation_norm = mat3::norm(&icp.translation);
 
-        // Observability gate: a planar/degenerate source scan leaves the
-        // alignment unconstrained in-plane — fitness lies. Computed for every
-        // candidate that reaches ICP (not just when the gate is on) so the
-        // metric is always available to compare good vs bad closures.
-        let t0 = std::time::Instant::now();
-        let degeneracy_min = uniqueness::degeneracy(&source_cloud);
-        timing.degeneracy_s += t0.elapsed().as_secs_f64();
-        diag.degeneracy_min = degeneracy_min;
-
-        if self.config.closure_min_degeneracy > 0.0
-            && degeneracy_min >= 0.0
-            && (degeneracy_min as f64) < self.config.closure_min_degeneracy
-        {
-            return rejected(diag, "degeneracy_reject", scored_yank, timing);
+        // Observability gate, Hessian form: how well the ICP alignment pins x, y, z and yaw (needs the alignment)
+        if self.config.closure_hessian_observability {
+            let t0 = std::time::Instant::now();
+            diag.degeneracy_min = connection_fit::observability(
+                &transform_cloud(&source_cloud, &icp.rotation, &icp.translation),
+                &target_cloud,
+                &target_tree,
+                self.config.closure_score_thresh,
+            ) as f32;
+            timing.degeneracy_s += t0.elapsed().as_secs_f64();
+            if degenerate(diag.degeneracy_min) {
+                return rejected(diag, "degeneracy_reject", scored_yank, timing);
+            }
         }
 
         if !icp.converged || icp.fitness > self.config.closure_score_thresh {
@@ -570,6 +713,24 @@ impl ClosureSearch {
             });
         if icp.fitness >= known {
             return rejected(diag, "uninformative", scored_yank, timing);
+        }
+        if self.config.closure_sharpness_half > 0.0 {
+            diag.sharpness = self.sharpness(&source_cloud, &target_tree, &icp);
+        }
+        if self.config.closure_likelihood_confidence {
+            let window: Vec<usize> = (target_idx.saturating_sub(half_range)
+                ..=(target_idx + half_range).min(self.key_poses.len() - 1))
+                .collect();
+            let (ratio, _, width) =
+                self.likelihood_ratio(&source_cloud, &target_cloud, &target_tree, &icp, &window);
+            diag.likelihood_ratio = ratio;
+            diag.likelihood_width = width;
+        }
+        if self.config.closure_overlap_score {
+            let overlap = self.overlap_score(&source_cloud, &target_cloud, &icp);
+            diag.overlap_points = overlap.points;
+            diag.overlap_quality = overlap.quality;
+            diag.overlap_score = overlap.score;
         }
 
         let mut score = icp.fitness;
@@ -661,6 +822,14 @@ impl ClosureSearch {
         };
         let evidence = -(1.0 - diag.confidence).ln();
         let single_required = required(evidence, &mut diag);
+        if self.config.closure_likelihood_confidence {
+            // extend as far as the evidence still needed takes at this scan's own evidence per keyframe (at least one bit):
+            // the yank and the look-alike places it matched set what is needed, not the pressure
+            let per_keyframe = evidence.max(std::f64::consts::LN_2);
+            diag.extension_budget = ((single_required / per_keyframe).ceil().max(1.0) as usize)
+                .next_power_of_two()
+                .min(self.config.closure_extended_icp_max_keyframes);
+        }
         diag.required_confidence = 1.0 - (-single_required).exp();
         if evidence < single_required {
             let t0 = std::time::Instant::now();
@@ -688,6 +857,7 @@ impl ClosureSearch {
             accepted: Some((rotation_offset, translation_offset, score)),
             scored_yank,
             timing,
+            retry: None,
         }
     }
 }
@@ -779,6 +949,11 @@ impl GscPgo {
             if outcome == ClosureEdgeState::Committed {
                 self.closure_fit_confidence.push(checked.clamp(0.0, 1.0));
                 self.closure_yank_z.push(diag.yank_z);
+                let drift = diag.yank_drift_scale.max(f64::EPSILON);
+                self.closure_yanks.push((
+                    diag.yank_rotation_deg / drift,
+                    diag.yank_translation / drift,
+                ));
             }
             self.push_edge(source, target, outcome, checked, diag.yank_z);
         }
@@ -857,8 +1032,52 @@ impl GscPgo {
 
         // stage 2, similarity discovery: scan context, else the nearest past keyframe by position
         let t0 = std::time::Instant::now();
-        let (scan_context_target, sector_shift, sc_best, sc_second, ranked) =
-            self.search_by_scan_context();
+        let (
+            mut scan_context_target,
+            mut sector_shift,
+            mut sc_best,
+            sc_second,
+            ranked,
+            mut alternatives,
+        ) = self.search_by_scan_context();
+        if self.config.closure_rank_by_information && !alternatives.is_empty() {
+            let mut options: Vec<(f32, usize, i32)> = scan_context_target
+                .map(|t| (sc_best, t, sector_shift))
+                .into_iter()
+                .chain(alternatives.drain(..))
+                .collect();
+            options.sort_by(|a, b| {
+                self.known_variance(cur_idx, b.1)
+                    .total_cmp(&self.known_variance(cur_idx, a.1))
+            });
+            (sc_best, scan_context_target, sector_shift) =
+                (options[0].0, Some(options[0].1), options[0].2);
+            alternatives = options.split_off(1);
+        }
+        if let Some(expected) = self
+            .config
+            .closure_skip_known
+            .then(|| self.expected_fitness())
+            .flatten()
+        {
+            let mut options: Vec<(f32, usize, i32)> = scan_context_target
+                .map(|t| (sc_best, t, sector_shift))
+                .into_iter()
+                .chain(alternatives.drain(..))
+                .collect();
+            let found = !options.is_empty();
+            options.retain(|&(_, t, _)| self.known_variance(cur_idx, t) > expected);
+            if found && options.is_empty() {
+                diag.outcome = "known";
+                self.record_search(diag);
+                return;
+            }
+            if !options.is_empty() {
+                (sc_best, scan_context_target, sector_shift) =
+                    (options[0].0, Some(options[0].1), options[0].2);
+                alternatives = options.split_off(1);
+            }
+        }
         self.timing.scan_context_s += t0.elapsed().as_secs_f64();
         diag.from_scan_context = scan_context_target.is_some();
         let Some(target_idx) = scan_context_target.or_else(|| self.search_by_position()) else {
@@ -883,7 +1102,53 @@ impl GscPgo {
             sector_shift,
             similarity,
             ranked,
+            alternatives,
+            tries: 0,
         };
+        self.offer_proposal(proposal);
+    }
+    /// The yanks the yank scale is measured from: every ICP-scored candidate's, or with `closure_yank_scale_from_kept` the
+    /// closures the newest solve kept (still every candidate's until a solve has kept one).
+    fn yank_scale_sample(&self) -> Vec<(f64, f64)> {
+        if self.config.closure_yank_scale_from_kept {
+            let kept: Vec<(f64, f64)> = self
+                .committed_closures
+                .iter()
+                .zip(&self.closure_yanks)
+                .filter(|(c, _)| c.gnc_weight > 0.5)
+                .map(|(_, &y)| y)
+                .collect();
+            if !kept.is_empty() {
+                return kept;
+            }
+        }
+        self.scored_yanks.clone()
+    }
+    /// The median ICP fitness of the closures accepted so far (None before any).
+    fn expected_fitness(&self) -> Option<f64> {
+        let mut fitness = self.scored_fitness.clone();
+        if fitness.is_empty() {
+            return None;
+        }
+        fitness.sort_by(f64::total_cmp);
+        Some(fitness[fitness.len() / 2])
+    }
+    /// How sure the graph already is of keyframes `a` and `b`'s relative position (variance, m²): along the odometry,
+    /// or across one kept (or not yet judged) closure, as `ClosureSearch::run`'s uninformative gate measures it.
+    fn known_variance(&self, a: usize, b: usize) -> f64 {
+        let step = |x: usize, y: usize| x.abs_diff(y) as f64 * self.config.odom_trans_xy_var;
+        self.committed_closures
+            .iter()
+            .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5)
+            .fold(step(a, b), |known, l| {
+                let via = |x: usize, y: usize| step(b, x) + l.score.max(1e-6) + step(a, y);
+                known
+                    .min(via(l.target_id, l.source_id))
+                    .min(via(l.source_id, l.target_id))
+            })
+    }
+    /// Make `proposal` the waiting one if its match beats the one already waiting; the loser is recorded as "outranked".
+    fn offer_proposal(&mut self, proposal: ClosureProposal) {
         let (winner, loser) = match self.waiting_proposal.take() {
             None => (proposal, None),
             Some(waiting) if waiting.similarity <= proposal.similarity => (waiting, Some(proposal)),
@@ -905,6 +1170,8 @@ impl GscPgo {
             target_idx,
             sector_shift,
             ranked,
+            alternatives,
+            tries,
             ..
         } = self.waiting_proposal.take()?;
         let mut diag = diag;
@@ -941,7 +1208,7 @@ impl GscPgo {
         Some(ClosureSearch {
             key_poses: self.key_poses.clone(),
             config: self.config.clone(),
-            scored_yanks: self.scored_yanks.clone(),
+            scored_yanks: self.yank_scale_sample(),
             // kept, or not judged yet
             kept_closures: closure_edges(
                 self.committed_closures
@@ -962,12 +1229,15 @@ impl GscPgo {
                 .filter(|(c, z)| !c.gnc_weight.is_nan() && z.is_finite())
                 .map(|(c, z)| (*z, c.gnc_weight > 0.5))
                 .collect(),
+            alternatives,
+            tries: tries + 1,
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
     pub fn search_for_closure_pairs(&mut self) {
         self.propose_closure();
-        if let Some(search) = self.begin_closure_search() {
+        // a rejected search may queue the keyframe's next alternative, which this thread tries right away
+        while let Some(search) = self.begin_closure_search() {
             let result = search.run();
             self.finish_closure_search(result);
         }
@@ -979,6 +1249,7 @@ impl GscPgo {
             accepted,
             scored_yank,
             timing,
+            retry,
         } = result;
         self.timing.submap_s += timing.submap_s;
         self.timing.icp_s += timing.icp_s;
@@ -987,13 +1258,63 @@ impl GscPgo {
         if let Some(yank) = scored_yank {
             self.scored_yanks.push(yank);
         }
+        if accepted.is_some() && diag.icp_fitness.is_finite() {
+            self.scored_fitness.push(diag.icp_fitness);
+        }
         let Some((rotation_offset, translation_offset, score)) = accepted else {
+            if let Some((ranked, alternatives, tries)) = retry {
+                self.retry_alternative(&diag, ranked, alternatives, tries);
+            }
             self.record_search(diag);
             return;
         };
         let (source, target) = (diag.source_id, diag.target_id as usize);
         self.record_search(diag);
         self.commit_closure(source, target, rotation_offset, translation_offset, score);
+    }
+    /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 + ceil(1 /
+    /// (1 - pressure)), at most scan_context_top_k (`closure_alternative_places`).
+    fn retry_alternative(
+        &mut self,
+        rejected: &ClosureCandidateDiag,
+        ranked: Vec<(f32, usize)>,
+        mut alternatives: Vec<(f32, usize, i32)>,
+        tries: usize,
+    ) {
+        if !self.config.closure_alternative_places
+            || alternatives.is_empty()
+            || rejected.source_id >= self.key_poses.len()
+        {
+            return;
+        }
+        let allowed = (1.0 + (1.0 / (1.0 - rejected.pressure).max(f64::EPSILON)).ceil())
+            .min(self.scan_context_config.candidate_top_k as f64) as usize;
+        if tries >= allowed {
+            return;
+        }
+        let (distance, target_idx, sector_shift) = alternatives.remove(0);
+        let mut diag = ClosureCandidateDiag::new(
+            rejected.source_id,
+            rejected.source_time,
+            rejected.source_xyz,
+        );
+        diag.descriptor_occupancy = rejected.descriptor_occupancy;
+        diag.from_scan_context = true;
+        diag.target_id = target_idx as i64;
+        diag.target_time = self.key_poses[target_idx].time;
+        diag.target_xyz = self.key_poses[target_idx].translation_global;
+        diag.candidate_distance = mat3::norm(&mat3::sub(&diag.source_xyz, &diag.target_xyz));
+        diag.scan_context_best = distance;
+        diag.scan_context_second = rejected.scan_context_second;
+        self.offer_proposal(ClosureProposal {
+            diag,
+            target_idx,
+            sector_shift,
+            similarity: distance,
+            ranked,
+            alternatives,
+            tries,
+        });
     }
     /// Add a keyframe at `pose`, placed by the current correction.
     fn insert_keyframe(&mut self, pose: &PoseWithTime, cloud: Option<Arc<PointCloud>>) {

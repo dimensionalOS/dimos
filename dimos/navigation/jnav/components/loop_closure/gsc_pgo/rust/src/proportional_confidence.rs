@@ -18,10 +18,12 @@
 //! 1 - exp(-required evidence) (yank, the solve's keep record, look-alike places), and one that falls short gets a second
 //! look with extended ICP on more keyframes, as many as the loop-overlap pressure allows.
 
-use crate::connection_fit::{dump_icp, icp, IcpParams, IcpResult};
+use crate::connection_fit::{
+    self, dump_icp, icp, IcpParams, IcpResult, OverlapScore, OverlapScoreParams,
+};
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
 use crate::mat3::{self, Vec3};
-use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
+use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
 
 impl ClosureSearch {
     /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, and
@@ -64,19 +66,100 @@ impl ClosureSearch {
                 1.0 - diag.candidate_distance / self.config.closure_search_radius.max(f64::EPSILON),
             )
         };
-        diag.icp_factor =
-            unit(1.0 - diag.icp_fitness / self.config.closure_score_thresh.max(f64::EPSILON));
+        let half = self.config.closure_sharpness_half;
+        diag.icp_factor = if half > 0.0 {
+            unit(diag.sharpness / (diag.sharpness + half))
+        } else {
+            unit(1.0 - diag.icp_fitness / self.config.closure_score_thresh.max(f64::EPSILON))
+        };
         diag.degeneracy_factor =
             if self.config.closure_min_degeneracy > 0.0 && diag.degeneracy_min >= 0.0 {
                 unit(diag.degeneracy_min as f64 / self.config.closure_min_degeneracy)
             } else {
                 1.0
             };
-        diag.confidence = diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor;
+        diag.confidence = if self.config.closure_likelihood_confidence {
+            // the ratio is the evidence: confidence = 1 - e^-evidence, none for a ratio that favours a misfit
+            1.0 - (-diag.likelihood_ratio.max(0.0)).exp()
+        } else if self.config.closure_overlap_score {
+            unit(diag.overlap_score)
+        } else {
+            diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor
+        };
         diag.required_confidence = 1.0 - (-self.required_evidence(diag)).exp();
         (
             diag.yank_rotation_deg / drift,
             diag.yank_translation / drift,
+        )
+    }
+    /// `connection_fit::sharpness` of `source` moved by `icp` onto the tree's cloud, by the configured nudge.
+    pub(crate) fn sharpness(&self, source: &PointCloud, tree: &KdTree, icp: &IcpResult) -> f64 {
+        connection_fit::sharpness(
+            &transform_cloud(source, &icp.rotation, &icp.translation),
+            tree,
+            self.config.submap_resolution,
+            self.config.closure_score_thresh,
+            self.config.closure_sharpness_nudge_m,
+            self.config.closure_sharpness_nudge_deg,
+        )
+    }
+    /// `connection_fit::likelihood_ratio` of `source` moved by `icp` against `target`, out to the ICP match distance.
+    pub(crate) fn likelihood_ratio(
+        &self,
+        source: &PointCloud,
+        target: &PointCloud,
+        tree: &KdTree,
+        icp: &IcpResult,
+        target_ids: &[usize],
+    ) -> (f64, usize, f64) {
+        let moved = transform_cloud(source, &icp.rotation, &icp.translation);
+        if !self.config.closure_likelihood_visibility {
+            return connection_fit::likelihood_ratio(
+                &moved,
+                target,
+                tree,
+                self.config.closure_icp_max_correspondence_m,
+            );
+        }
+        let views: Vec<connection_fit::RangeImage> = target_ids
+            .iter()
+            .filter_map(|&k| {
+                let key_pose = &self.key_poses[k];
+                Some(connection_fit::RangeImage::build(
+                    key_pose.body_cloud.as_ref()?,
+                    &key_pose.rotation_global,
+                    &key_pose.translation_global,
+                ))
+            })
+            .collect();
+        connection_fit::likelihood_ratio_visible(
+            &moved,
+            target,
+            tree,
+            self.config.closure_icp_max_correspondence_m,
+            self.config.closure_score_thresh,
+            &views,
+            self.config.closure_likelihood_beam,
+        )
+    }
+    /// `connection_fit::overlap_score` of `source` moved by `icp` against `target`, by the `closure_overlap_*` knobs.
+    pub(crate) fn overlap_score(
+        &self,
+        source: &PointCloud,
+        target: &PointCloud,
+        icp: &IcpResult,
+    ) -> OverlapScore {
+        connection_fit::overlap_score(
+            &transform_cloud(source, &icp.rotation, &icp.translation),
+            target,
+            &OverlapScoreParams {
+                sigma: self.config.closure_overlap_sigma_m,
+                reach: self.config.closure_overlap_reach_m,
+                overlap_noise: self.config.closure_overlap_noise_sigmas,
+                per_doubling: self.config.closure_overlap_per_doubling,
+                coin_flip: self.config.closure_overlap_coin_flip,
+                local: self.config.closure_overlap_local,
+            },
         )
     }
     /// Evidence (-ln(1 - confidence)) a candidate must reach before look-alike places: z^2 / 2k^2 for its yank, plus,
@@ -169,14 +252,16 @@ impl ClosureSearch {
             };
             // the stacked source is thinned to about the single scan's size, so a round costs about what the first ICP did;
             // the target keeps full resolution so the inlier test below means the same thing in every round
-            let stacked = self.stacked_cloud(source_first..=cur_idx);
+            let clearance = self.config.closure_ground_clearance_m;
+            let stacked = above_floor(&self.stacked_cloud(source_first..=cur_idx), clearance);
             let thinning = (stacked.len() as f64 / source_cloud.len().max(1) as f64).max(1.0);
             let source = if thinning > 1.0 {
                 voxel_downsample(&stacked, self.config.submap_resolution * thinning.sqrt())
             } else {
                 stacked.clone()
             };
-            let target = self.stacked_cloud(target_ids.filter(|&j| near(j)));
+            let target_ids: Vec<usize> = target_ids.filter(|&j| near(j)).collect();
+            let target = above_floor(&self.stacked_cloud(target_ids.iter().copied()), clearance);
             let tree = KdTree::build(&target);
             let icp = icp(
                 &source,
@@ -207,8 +292,42 @@ impl ClosureSearch {
                 / (single as f64 / source_cloud.len() as f64))
                 .min(1.0);
             let per_scan = diag.confidence * held_up;
-            // evidence = -ln(1 - confidence); compared with the required evidence without rounding to 1
-            let evidence = -(1.0 - per_scan).ln() * extended as f64 / single as f64;
+            let sharp = self.config.closure_sharpness_half > 0.0;
+            if sharp && icp.converged {
+                diag.extended_sharpness = self.sharpness(&source, &tree, &icp);
+            }
+            let likelihood = self.config.closure_likelihood_confidence;
+            if likelihood && icp.converged {
+                diag.extended_likelihood_ratio = self
+                    .likelihood_ratio(&source, &target, &tree, &icp, &target_ids)
+                    .0;
+            }
+            let overlap = self.config.closure_overlap_score && !likelihood;
+            if overlap && icp.converged {
+                diag.extended_overlap_score = self.overlap_score(&source, &target, &icp).score;
+            }
+            // evidence = -ln(1 - confidence); compared with the required evidence without rounding to 1. Scored by
+            // sharpness, the stack earns its own confidence (more scans count only as far as they line up better);
+            // otherwise its evidence grows with its inlier count
+            // the stack adds evidence as far as it covers surface the single scan did not: its per-point ratio times its
+            // size over the single scan's (both voxelized at the submap resolution, so a keyframe seeing the same ground
+            // again adds nothing)
+            let evidence = if likelihood {
+                diag.extended_likelihood_ratio.max(0.0) * stacked.len() as f64
+                    / source_cloud.len().max(1) as f64
+            } else if overlap {
+                -(1.0 - diag.extended_overlap_score.clamp(0.0, 1.0)).ln()
+            } else if sharp {
+                let half = self.config.closure_sharpness_half;
+                -(1.0
+                    - diag.scan_context_factor
+                        * diag.degeneracy_factor
+                        * (diag.extended_sharpness / (diag.extended_sharpness + half))
+                            .clamp(0.0, 1.0))
+                .ln()
+            } else {
+                -(1.0 - per_scan).ln() * extended as f64 / single as f64
+            };
             let required = required(evidence, diag);
             let confidence = 1.0 - (-evidence).exp();
             diag.extended_keyframes = cur_idx - source_first + 1;
@@ -227,7 +346,9 @@ impl ClosureSearch {
             if evidence >= required {
                 return Some(icp);
             }
-            (seed_rotation, seed_translation) = (icp.rotation, icp.translation);
+            if !sharp {
+                (seed_rotation, seed_translation) = (icp.rotation, icp.translation);
+            }
             keyframes *= 2;
         }
         None
