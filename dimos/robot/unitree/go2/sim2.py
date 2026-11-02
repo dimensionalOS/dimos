@@ -41,17 +41,17 @@ from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.utils.mjcf_to_urdf import MjcfUrdf
+from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.sim2.view import rotation_matrix
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
-from dimos.utils.data import LfsPath
+from dimos.utils.data import get_data
 
 GO2_ROBOT_ID = "go2"
-GO2_MJCF = LfsPath("go2_sim/unitree_go2/go2.xml")
+GO2_MJCF = get_data("go2_sim") / "unitree_go2" / "go2.xml"
 # The MJCF's base body is the URDF's base_link, the frame odometry moves.
-GO2_SIM_MODEL = RobotModel.from_file(MjcfUrdf(GO2_MJCF, GO2_ROBOT_ID, "base_link"))
+GO2_SIM_MODEL = RobotModel.from_file(mjcf_to_urdf(GO2_MJCF, GO2_ROBOT_ID, "base_link"))
 
 
 class Go2SimConfig(ModuleConfig):
