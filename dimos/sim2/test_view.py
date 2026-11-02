@@ -48,7 +48,10 @@ def description(tmp_path: Path) -> dict:
     <body name="base">
       <freejoint/>
       <geom type="box" size=".2 .1 .1" mass="1"/>
-      <body name="head" pos=".2 0 .1"><joint name="neck" type="hinge" axis="0 0 1"/><geom type="sphere" size=".05" mass=".1"/></body>
+      <site name="imu"/>
+      <body name="head" pos=".2 0 .1"><joint name="neck" type="hinge" axis="0 0 1"/><geom type="sphere" size=".05" mass=".1"/>
+        <site name="eye"/><site name="lidar"/>
+      </body>
     </body>
   </worldbody>
 </mujoco>
@@ -56,10 +59,10 @@ def description(tmp_path: Path) -> dict:
     return {
         "scene": str(scene),
         "simulated": [
-            SimulatedRobot("dog", "base", robot),
-            SimulatedSensor("camera", "eye", robot_id="dog", body="head"),
-            SimulatedSensor("imu", "imu", robot_id="dog", body="base"),
-            SimulatedSensor("lidar", "lidar", robot_id="dog", body="head"),
+            SimulatedRobot("dog", robot, "base"),
+            SimulatedSensor("camera", "eye", robot_id="dog"),
+            SimulatedSensor("imu", "imu", robot_id="dog"),
+            SimulatedSensor("lidar", "lidar", robot_id="dog"),
         ],
     }
 

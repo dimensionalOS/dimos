@@ -35,8 +35,6 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.imu import SimImu
@@ -44,7 +42,7 @@ from dimos.sim2.l1 import SimL1
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
+from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.world_change import WorldMirror
 
 L1_PERIOD = 0.13
@@ -90,6 +88,7 @@ def robot_model(tmp_path: Path) -> Path:
 
 
 class _DogConfig(ModuleConfig):
+    model: Path
     # With a control period, the world waits this long (wall seconds) for each of its commands.
     control_period: float | None = None
     think: float = 0.0
@@ -105,7 +104,7 @@ class _Dog(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
         config = self.config
-        robot = SimulatedRobot("dog", "base", control_period=config.control_period)
+        robot = SimulatedRobot("dog", config.model, "base", control_period=config.control_period)
         return {"simulated": robot}
 
     async def main(self) -> AsyncIterator[None]:
@@ -157,14 +156,16 @@ class _Readings(Module):
 def _run(
     scene: Path, robot_model: Path, seconds: float, speed: float = 1.0, **dog: Any
 ) -> dict[str, Any]:
-    # Every sensor at a frame of the dog's URDF.
-    model = RobotModel.from_file(mjcf_to_urdf(robot_model, out_dir=robot_model.parent))
-    for frame, parent in (("eye", "head"), ("imu_link", "base"), ("livox", "head"), ("l1", "base")):
-        model = model.with_fixed_frame(frame, parent)
+    # Every sensor at a frame of the dog's model.
+    frames = {"eye": "head", "imu_link": "base", "livox": "head", "l1": "base"}
+    model = mjcf_with_frames(
+        robot_model,
+        {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in frames.items()},
+        out_dir=robot_model.parent,
+    )
     blueprint = autoconnect(
         Simulation.blueprint(scene=scene, speed=speed),
-        UrdfManager.blueprint(model=model, formats={"mjcf": robot_model}),
-        _Dog.blueprint(**dog),
+        _Dog.blueprint(model=model, **dog),
         SimCamera.blueprint(frame_id="eye", width=64, height=48, rate_hz=RATES["color_image"]),
         SimImu.blueprint(frame_id="imu_link", rate_hz=RATES["imu"]),
         LivoxSim.blueprint(
