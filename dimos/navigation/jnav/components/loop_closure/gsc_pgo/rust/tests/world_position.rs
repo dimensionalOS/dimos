@@ -137,6 +137,7 @@ fn world_positions_pull_a_drifting_path_onto_the_world() {
         &edges,
         &[],
         &priors,
+        &[],
         &config(),
     );
 
@@ -198,6 +199,7 @@ fn two_world_frames_each_get_their_own_alignment() {
         &edges,
         &[],
         &priors,
+        &[],
         &config(),
     );
 
@@ -267,6 +269,7 @@ fn an_off_center_antenna_is_placed_through_its_lever_arm() {
         &edges,
         &[],
         &priors,
+        &[],
         &config(),
     );
     let &(_, yaw, shift) = solution

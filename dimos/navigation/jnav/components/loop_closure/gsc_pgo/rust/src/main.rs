@@ -131,6 +131,14 @@ struct OdomSample {
     translation: Vec3,
 }
 
+/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::add_landmark_sighting`).
+struct LandmarkFix {
+    ts: f64,
+    landmark: u64,
+    position: Vec3,
+    covariance: Mat3,
+}
+
 /// A sensor's measured position in a fixed world frame, waiting for the worker (`GscPgo::add_world_position`).
 struct WorldFix {
     ts: f64,
@@ -146,6 +154,9 @@ struct SharedState {
     world_fixes: Vec<WorldFix>,
     /// Each world frame's name, its index the frame id the pose graph knows it by.
     world_frames: Vec<String>,
+    /// Landmark sightings not yet handed to the pose graph, and each landmark's name (its index the id).
+    landmark_sightings: Vec<LandmarkFix>,
+    landmark_names: Vec<String>,
     latest_odom: Option<OdomSample>,
     /// Reject out-of-order scans.
     last_message_time: f64,
@@ -173,6 +184,13 @@ struct GscPgoModule {
     // its uncertainty. Orientation and twist are ignored.
     #[input(decode = Odometry::decode, handler = on_world_position)]
     world_position: Input<Odometry>,
+
+    // A landmark seen by a sensor (a camera's bearing with a rough range, a reflector, another robot's landmark):
+    // header.frame_id is the sensor (placed on the body through tf), child_frame_id names the landmark (every sighting
+    // with that name is of the same fixed point), pose.position is where it was in the sensor's frame and
+    // pose.covariance's xyz block its uncertainty there (m²). Orientation and twist are ignored.
+    #[input(decode = Odometry::decode, handler = on_landmark_sighting)]
+    landmark_sighting: Input<Odometry>,
 
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
@@ -317,6 +335,64 @@ impl GscPgoModule {
         self.wake.notify_one();
     }
 
+    async fn on_landmark_sighting(&mut self, msg: Odometry) {
+        let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
+        let sensor = &msg.header.frame_id;
+        let body = &self.config.body_frame;
+        let p = &msg.pose.pose.position;
+        let c = &msg.pose.covariance;
+        let (mut position, mut covariance) = (
+            [p.x, p.y, p.z],
+            [
+                [c[0], c[1], c[2]],
+                [c[6], c[7], c[8]],
+                [c[12], c[13], c[14]],
+            ],
+        );
+        if !sensor.is_empty() && sensor != body {
+            // a sighting placed through a guessed mount would bias the map, so one without its mount is dropped
+            let Some(t) = self.tf.lookup(body, sensor).at(ts).get() else {
+                return;
+            };
+            let r = t.rotation().to_rotation_matrix();
+            let rotation: Mat3 = std::array::from_fn(|i| std::array::from_fn(|j| r[(i, j)]));
+            let v = t.translation();
+            position = mat3::add(&mat3::mat_vec(&rotation, &position), &[v.x, v.y, v.z]);
+            covariance = mat3::mat_mul(
+                &rotation,
+                &mat3::mat_mul(&covariance, &mat3::transpose(&rotation)),
+            );
+        }
+        if !position
+            .iter()
+            .chain(covariance.iter().flatten())
+            .all(|v| v.is_finite())
+        {
+            warn!(landmark = %msg.child_frame_id, "landmark sighting not finite; dropped");
+            return;
+        }
+        let mut state = self.state.lock().expect("state");
+        let landmark = match state
+            .landmark_names
+            .iter()
+            .position(|n| *n == msg.child_frame_id)
+        {
+            Some(i) => i,
+            None => {
+                state.landmark_names.push(msg.child_frame_id.clone());
+                state.landmark_names.len() - 1
+            }
+        } as u64;
+        state.landmark_sightings.push(LandmarkFix {
+            ts,
+            landmark,
+            position,
+            covariance,
+        });
+        drop(state);
+        self.wake.notify_one();
+    }
+
     /// Handle an incoming lidar scan: pair it with the latest odometry pose
     /// and enqueue it on the bounded scan FIFO.
     async fn on_cloud(&mut self, msg: PointCloud2) {
@@ -432,11 +508,20 @@ impl Worker {
                 self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
                 self.log_solve(&pgo, last_time);
             }
-            // world-position fixes join the graph as they arrive; a fix alone starts a solve
-            let fixes = std::mem::take(&mut self.state.lock().expect("state").world_fixes);
-            if !fixes.is_empty() {
+            // world-position fixes and landmark sightings join the graph as they arrive; one alone starts a solve
+            let (fixes, sightings) = {
+                let mut state = self.state.lock().expect("state");
+                (
+                    std::mem::take(&mut state.world_fixes),
+                    std::mem::take(&mut state.landmark_sightings),
+                )
+            };
+            if !fixes.is_empty() || !sightings.is_empty() {
                 for f in fixes {
                     pgo.add_world_position(f.ts, f.frame, f.lever, f.position, f.covariance);
+                }
+                for s in sightings {
+                    pgo.add_landmark_sighting(s.ts, s.landmark, s.position, s.covariance);
                 }
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
@@ -459,6 +544,7 @@ impl Worker {
                 if state.cloud_buffer.is_empty()
                     && !state.solve_finished
                     && state.world_fixes.is_empty()
+                    && state.landmark_sightings.is_empty()
                 {
                     let _ = self.wake.wait_timeout(state, wake_timeout);
                 }
