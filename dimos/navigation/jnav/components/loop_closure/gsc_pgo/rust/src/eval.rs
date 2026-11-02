@@ -139,6 +139,9 @@ struct EvalOutput {
     /// whose cost the scan thread recomputed (a solve adopted while they ran).
     change_cost_calls: Vec<(usize, f64)>,
     change_cost_recomputed: usize,
+    /// The LET coefficients this run measured (`GscPgo::runtime_profile`): per LET the 99th percentile of measured /
+    /// estimated scans, its jobs, and its coefficients scaled by it (a config block ready to paste; diagnostics only).
+    runtime_profile: Vec<(String, f64, usize, Vec<(String, f64)>)>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
     /// How much faster than real each part of the module runs (`Speed`).
@@ -939,6 +942,18 @@ fn run() -> Result<(), String> {
         pressure_calls: pgo.pressure_calls().to_vec(),
         change_cost_calls: pgo.change_cost_calls().0.to_vec(),
         change_cost_recomputed: pgo.change_cost_calls().1,
+        runtime_profile: pgo
+            .runtime_profile()
+            .into_iter()
+            .map(|(name, ratio, jobs, coefficients)| {
+                (
+                    name.to_string(),
+                    ratio,
+                    jobs,
+                    coefficients.into_iter().map(|(f, v)| (f.to_string(), v)).collect(),
+                )
+            })
+            .collect(),
         stage_seconds: pgo
             .stage_seconds()
             .iter()
@@ -1001,6 +1016,22 @@ fn run() -> Result<(), String> {
             ms.last().copied().unwrap_or(f32::NAN),
             ms.len()
         );
+    }
+    // the LET coefficients this run measured, a config block ready to paste (each LET's coefficients scaled by its jobs'
+    // 99th-percentile measured / estimated scans; diagnostics only)
+    {
+        let mut block = Vec::new();
+        let mut ratios = Vec::new();
+        for (name, ratio, jobs, coefficients) in &output.runtime_profile {
+            ratios.push(format!("{name} {ratio:.2} ({jobs} jobs)"));
+            for (field, value) in coefficients {
+                if value.is_finite() {
+                    block.push(format!("\"{field}\": {value:.4e}"));
+                }
+            }
+        }
+        eprintln!("pgo-eval: LET measured / estimated scans, 99th percentile: {}", ratios.join(", "));
+        eprintln!("pgo-eval: suggested LET config: {{{}}}", block.join(", "));
     }
     eprintln!(
         "pgo-eval: closure searches: {} overshot their estimate ({} verifications); the buffers dropped {} scan-context candidates and {} matches waiting for verification; this replay waited {:.1}s for searches",

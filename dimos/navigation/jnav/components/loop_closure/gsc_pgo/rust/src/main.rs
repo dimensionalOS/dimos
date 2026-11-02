@@ -103,15 +103,12 @@ config! {
     graph_change_heat_floor: f64,
     graph_change_heat_decay: f64,
     solve_hold_enabled: bool,
-    solve_estimate_scale: f64,
-    solve_estimate_keyframe_power: f64,
-    solve_estimate_closure_power: f64,
-    solve_estimate_rejected_power: f64,
-    solve_estimate_speed_power: f64,
-    solve_estimate_speed_floor_mps: f64,
-    solve_estimate_change_cost_s_per_keyframe: f64,
+    solve_scans_scale: f64,
+    solve_keyframe_power: f64,
+    solve_closure_power: f64,
+    solve_rejected_power: f64,
+    debounce_scans_per_keyframe: f64,
     closure_search_hold_enabled: bool,
-    scan_period_window: usize,
     closure_search_let_enabled: bool,
     closure_search_workers: usize,
     closure_search_two_stage: bool,
@@ -119,16 +116,12 @@ config! {
     sc_buffer_size: usize,
     verification_workers: usize,
     verification_buffer_slots: usize,
-    verification_estimate_overhead_s: f64,
-    verification_estimate_round_s: f64,
-    closure_search_estimate_lookup_s: f64,
-    closure_search_estimate_lookup_per_keyframe_s: f64,
-    closure_search_estimate_build_per_point_s: f64,
-    closure_search_estimate_degeneracy_per_point_s: f64,
-    closure_search_estimate_icp_s: f64,
-    closure_search_estimate_gates_s: f64,
-    closure_search_estimate_extension_overhead_s: f64,
-    closure_search_estimate_extension_cloud_s: f64,
+    fast_match_scans_fixed_overhead: f64,
+    fast_match_scans_per_keyframe: f64,
+    fast_match_scans_per_point: f64,
+    fast_match_scans_per_source_point: f64,
+    verification_scans_fixed_overhead: f64,
+    verification_scans_per_round: f64,
     solve_speed_window_poses: usize,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
@@ -168,9 +161,9 @@ config! {
     odometry_error_estimate_evidence_core: bool,
     pressure_check_frequency: usize,
     pressure_let_enabled: bool,
-    pressure_estimate_s: f64,
-    pressure_estimate_per_keyframe_s: f64,
-    pressure_estimate_per_closure_s: f64,
+    pressure_scans_fixed_overhead: f64,
+    pressure_scans_per_keyframe: f64,
+    pressure_scans_per_closure: f64,
     soft_pressure_half_log10_hazard: f64,
     soft_pressure_decades: f64,
 }
@@ -784,6 +777,20 @@ impl Worker {
                 );
                 fields.insert(format!("{source}_measured"), measured[k].into());
             }
+            // beside it, the LET coefficients this run measured (`GscPgo::runtime_profile`), a config block ready to
+            // paste (each 99th-percentile measured / estimated, diagnostics only), and the ratio and jobs per LET
+            let mut suggested = serde_json::Map::new();
+            let mut ratios = serde_json::Map::new();
+            for (name, ratio, jobs, coefficients) in pgo.runtime_profile() {
+                ratios.insert(name.into(), serde_json::json!({ "measured_over_estimated_p99": ratio, "jobs": jobs }));
+                for (field, value) in coefficients {
+                    if value.is_finite() {
+                        suggested.insert(field.into(), value.into());
+                    }
+                }
+            }
+            fields.insert("suggested_let_config".into(), serde_json::Value::Object(suggested));
+            fields.insert("let_measured".into(), serde_json::Value::Object(ratios));
             self.log("odometry_drift", ts, serde_json::Value::Object(fields));
         }
     }

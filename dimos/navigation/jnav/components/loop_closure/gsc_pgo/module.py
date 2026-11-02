@@ -90,11 +90,11 @@ class PGOConfig(NativeModuleConfig):
     # recompute the loop-overlap pressure (debug_log unresolved_loop_probability) every this-many-th scan; 0 = never
     pressure_check_frequency: int = 5
     # The pressure off the scan thread: a job on one worker (newest request pending), landing at dispatch + estimate
-    # (seconds: constant + per keyframe + per committed closure); off = inline on the scan thread
+    # (scans: fixed overhead + per keyframe + per committed closure, rounded up); off = inline on the scan thread
     pressure_let_enabled: bool = True
-    pressure_estimate_s: float = 1.21e-5
-    pressure_estimate_per_keyframe_s: float = 1.355e-7
-    pressure_estimate_per_closure_s: float = 1.957e-7
+    pressure_scans_fixed_overhead: float = 1.21e-4
+    pressure_scans_per_keyframe: float = 1.355e-6
+    pressure_scans_per_closure: float = 1.957e-6
     # soft_pressure (display only: the same probability without the cliff) is 50% where log10 of the loop hazard
     # (pressure = 1 - e^-hazard) is soft_pressure_half_log10_hazard, falling log-compressed to 0% soft_pressure_decades below
     soft_pressure_half_log10_hazard: float = -0.5
@@ -131,28 +131,22 @@ class PGOConfig(NativeModuleConfig):
     graph_change_heat_threshold: float = 30.0
     graph_change_heat_floor: float = 20.0
     graph_change_heat_decay: float = 0.995
-    # Deterministic solve schedule: a finished solve is held until scale * keyframes^keyframe_power *
-    # (1 + closures)^closure_power * (1 + rejected)^rejected_power * max(speed, speed_floor)^speed_power scans after its
-    # dispatch (an upper bound on its cost; rejected = closures the newest adopted solve rejected); one still running
-    # then is an overshoot, logged and adopted as it finishes. A 99th-percentile fit of Mac solves over six recordings
+    # Deterministic solve schedule: a finished solve is held ceil(solve_scans_scale * keyframes^solve_keyframe_power *
+    # (1 + closures)^solve_closure_power * (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe *
+    # keyframes) scans after its dispatch (an upper bound on its cost in scans; rejected = closures the newest adopted
+    # solve rejected; debounce = the graph change heat's cost its thread measures); one still running then is an
+    # overshoot, logged and adopted as it finishes
     solve_hold_enabled: bool = True
-    solve_estimate_scale: float = 3.843e-5
-    solve_estimate_keyframe_power: float = 2.017
-    solve_estimate_closure_power: float = -0.215
-    solve_estimate_rejected_power: float = 0.558
-    solve_estimate_speed_power: float = 0.0
-    solve_estimate_speed_floor_mps: float = 0.05
-    # The solve's thread also measures the graph change heat's cost: this many more seconds per keyframe in its estimate
-    solve_estimate_change_cost_s_per_keyframe: float = 2.56e-7
-    # Deterministic closure-search schedule: a search's result lands only once its estimated cost in scans has passed since
-    # its dispatch and the data time since has reached its seconds (the search thread takes no other until then): at
-    # dispatch the lookup bench curve + build, degeneracy, single ICP (at max iterations) and gates terms below, then the
-    # extension's overhead as it starts and one cloud's bound before each round (seconds, turned into scans by the median
-    # recent scan period). One joint upper-bound fit of whole Mac searches over six recordings (>= 99% of each one's
-    # searches under; it put no weight on the single ICP's term, which the build term's points carry)
+    solve_scans_scale: float = 3.843e-5
+    solve_keyframe_power: float = 2.017
+    solve_closure_power: float = -0.215
+    solve_rejected_power: float = 0.558
+    debounce_scans_per_keyframe: float = 2.56e-6
+    # Deterministic closure-search schedule: a search's result lands only once ceil(its estimate) scans have passed since
+    # its dispatch: the fast match (fast_match_scans_fixed_overhead + per keyframe, the scan-context lookup, + per point,
+    # source and target, + per source point) at dispatch, then the verification's fixed overhead as the extension
+    # starts and one round's scans before each round (verification_scans_*)
     closure_search_hold_enabled: bool = True
-    # Closure-search estimates turn seconds into scans by the median of the newest this many scan periods
-    scan_period_window: int = 50
     # Logical execution time: each keyframe's search is its own job (snapshot at its keyframe, lands at its own estimate),
     # run on this many worker threads in dispatch order; off = one held search at a time, later proposals going stale
     closure_search_let_enabled: bool = True
@@ -166,16 +160,13 @@ class PGOConfig(NativeModuleConfig):
     sc_buffer_size: int = 4
     verification_workers: int = 2
     verification_buffer_slots: int = 2
-    verification_estimate_overhead_s: float = 0.0306
-    verification_estimate_round_s: float = 0.334
-    closure_search_estimate_lookup_s: float = 610e-6
-    closure_search_estimate_lookup_per_keyframe_s: float = 5.7e-9
-    closure_search_estimate_build_per_point_s: float = 3.137e-6
-    closure_search_estimate_degeneracy_per_point_s: float = 7.808e-6
-    closure_search_estimate_icp_s: float = 0.0
-    closure_search_estimate_gates_s: float = 0.05404
-    closure_search_estimate_extension_overhead_s: float = 0.1322
-    closure_search_estimate_extension_cloud_s: float = 0.08830
+    # provisional (the Mac fit at 10 scans per Mac second) until the Jetson fit
+    fast_match_scans_fixed_overhead: float = 0.5465
+    fast_match_scans_per_keyframe: float = 5.7e-8
+    fast_match_scans_per_point: float = 3.137e-5
+    fast_match_scans_per_source_point: float = 7.808e-5
+    verification_scans_fixed_overhead: float = 1.322
+    verification_scans_per_round: float = 0.883
     # The body's recent speed (solve estimate, closure diagnostics): median over the newest this many distinct-pose steps
     solve_speed_window_poses: int = 500
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
