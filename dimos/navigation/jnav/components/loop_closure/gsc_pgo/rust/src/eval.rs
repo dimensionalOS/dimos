@@ -62,6 +62,9 @@ struct EvalConfig {
     /// The frame the odometry's poses are really of, where its child_frame_id misnames it (office555's Point-LIO names
     /// base_link but reports the lidar's pose: "livox_frame"); empty = the child frame.
     odom_pose_frame: String,
+    /// Threads closure search and solves may use (the module's `worker_threads`): the rayon pool pgo-eval builds, so a
+    /// replay runs as fast as the module would. 0 (the default) = every core: no GSC run times itself handicapped.
+    worker_threads: usize,
 }
 
 impl Default for EvalConfig {
@@ -71,6 +74,7 @@ impl Default for EvalConfig {
             max_scan_queue: 5,
             odometry_error_estimate_scale: 1.0,
             odom_pose_frame: String::new(),
+            worker_threads: 0,
         }
     }
 }
@@ -645,6 +649,14 @@ fn run() -> Result<(), String> {
     if args.icp_cache.is_some() {
         pgo_config.closure_icp_dump_dir.clear();
     }
+    // the rayon pool ICP and the solver's factorization run on, as the module builds it (`worker_threads`)
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
+        .num_threads(config.worker_threads)
+        .thread_name(|i| format!("gsc-worker-{i}"))
+        .build_global()
+    {
+        eprintln!("pgo-eval: could not cap the worker threads: {e}");
+    }
     let mut pgo = GscPgo::new(pgo_config);
     // a lockstep replay waits for a due job that has not finished (live, it lands late)
     pgo.set_wait_for_due_jobs(!args.live);
@@ -864,6 +876,7 @@ fn run() -> Result<(), String> {
     let finish_started = Instant::now();
     pgo.finish();
     let finish_s = finish_started.elapsed().as_secs_f64();
+    let overshoots = pgo.overshoot_report();
     let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
     recorder.dump(&pgo, false, ts)?;
     if let Some(path) = &args.event_dump {
@@ -1027,6 +1040,14 @@ fn run() -> Result<(), String> {
         speed.lag_max_s,
         speed.solve_overshoots,
         speed.replay_solve_wait_s,
+    );
+    eprintln!(
+        "pgo-eval: overshoots per LET (jobs): {}",
+        overshoots
+            .iter()
+            .map(|(kind, jobs, over)| format!("{kind} {over} / {jobs}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     eprintln!(
         "pgo-eval: pressure: {} computations, {} overshot their estimate; graph change cost: {} measured on the solve's thread, {} recomputed on the scan thread",

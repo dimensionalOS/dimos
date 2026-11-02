@@ -410,6 +410,60 @@ impl ClosureEdgeEvent {
     }
 }
 
+/// One LET kind's overshoots: over the run, and since the last warning (`Config::overshoot_warning_interval_s`).
+#[derive(Default)]
+pub(crate) struct OvershootTally {
+    pub(crate) jobs: usize,
+    pub(crate) overshoots: usize,
+    jobs_since_warning: usize,
+    overshoots_since_warning: usize,
+}
+
+impl GscPgo {
+    /// Count a landed job's overshoot verdict; on an overshoot, warn (a log line only: nothing reads it) when
+    /// `overshoot_warning_interval_s` of data has passed since the last warning, with each kind's overshoots and jobs since.
+    pub(crate) fn note_overshoot(&mut self, kind: &'static str, overshoot: bool) {
+        let tally = self.overshoot_tally.entry(kind).or_default();
+        tally.jobs += 1;
+        tally.jobs_since_warning += 1;
+        if !overshoot {
+            return;
+        }
+        tally.overshoots += 1;
+        tally.overshoots_since_warning += 1;
+        let now = self.newest_scan_time();
+        let due = self
+            .last_overshoot_warning
+            .is_none_or(|last| now - last >= self.config.overshoot_warning_interval_s);
+        if !due {
+            return;
+        }
+        self.last_overshoot_warning = Some(now);
+        let counts: Vec<String> = self
+            .overshoot_tally
+            .iter_mut()
+            .filter(|(_, tally)| tally.jobs_since_warning > 0)
+            .map(|(kind, tally)| {
+                let line = format!("{kind} {} of {}", tally.overshoots_since_warning, tally.jobs_since_warning);
+                tally.jobs_since_warning = 0;
+                tally.overshoots_since_warning = 0;
+                line
+            })
+            .collect();
+        eprintln!(
+            "gsc_pgo: WARNING: jobs ran past their deterministic_config estimates (overshoots since the last warning: {}); this machine is slower than the config's, so a replay waits for them and a live run lands them late; a fast-mode run prints a deterministic_config that fits it",
+            counts.join(", ")
+        );
+    }
+    /// Per LET kind, its jobs and overshoots over the run (a report only).
+    pub fn overshoot_report(&self) -> Vec<(&'static str, usize, usize)> {
+        self.overshoot_tally
+            .iter()
+            .map(|(&kind, tally)| (kind, tally.jobs, tally.overshoots))
+            .collect()
+    }
+}
+
 /// `Config::mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
@@ -502,6 +556,10 @@ pub struct Config {
     pub mode: Mode,
     /// The deterministic mode's estimates, every coefficient in scans (the exponents unitless).
     pub deterministic_config: DeterministicConfig,
+    /// A job past its estimate (an overshoot: a replay waits for it, a live run lands it late) logs a warning at most
+    /// once per this many seconds of data, with each LET kind's overshoots since the last; a warning only, it changes
+    /// nothing (a slower machine running a faster one's `deterministic_config` just waits, the output the same).
+    pub overshoot_warning_interval_s: f64,
     pub keyframe_min_rotation_degrees: f64,
     pub keyframe_min_distance_meters: f64,
     pub closure_search_radius: f64,
@@ -807,6 +865,9 @@ impl Config {
             if count == 0 {
                 return Err(format!("{name} must be >= 1"));
             }
+        if !(self.overshoot_warning_interval_s >= 0.0) {
+            return Err("overshoot_warning_interval_s must be >= 0".into());
+        }
         }
         if let Some((name, value)) = estimates.iter().find(|(_, v)| !(*v >= 0.0)) {
             return Err(format!("{name} must be >= 0 (got {value})"));
@@ -824,6 +885,7 @@ impl Default for Config {
         Config {
             mode: Mode::Deterministic,
             deterministic_config: DeterministicConfig::default(),
+            overshoot_warning_interval_s: 10.0,
             keyframe_min_rotation_degrees: 10.0,
             keyframe_min_distance_meters: 0.5,
             closure_search_radius: 3.0,
@@ -963,6 +1025,8 @@ pub struct GscPgo {
     pub(crate) adoption_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) merge_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) adoption_inline: bool,
+    /// A merge landed (keyframes moved) since the last `update`.
+    pub(crate) adopted_since_update: bool,
     /// The newest `solve_speed_window_poses` + 1 distinct odometry poses' times and positions (odometry frame), for the
     /// body's recent speed.
     pub(crate) recent_motion: std::collections::VecDeque<(f64, Vec3)>,
@@ -978,6 +1042,9 @@ pub struct GscPgo {
     /// Each landed job's kind, its measured scans (seconds x the scan rate then) over its estimate in scans: what a run
     /// reports as its measured coefficients (`runtime_profile`); never read by a decision.
     pub(crate) job_ratios: Vec<(&'static str, f64)>,
+    /// Per LET kind, its jobs and overshoots (over the run and since the last warning), and the data time of that warning.
+    pub(crate) overshoot_tally: std::collections::BTreeMap<&'static str, OvershootTally>,
+    pub(crate) last_overshoot_warning: Option<f64>,
     /// The closure searches dispatched and not landed yet, in dispatch order (`closure_search_hold_enabled`), the number
     /// the next one gets, the recorded times of the advancing scans since the oldest one's dispatch (the first is advancing
     /// scan `search_scan_base`), the worker pool they run on (`closure_search_let_enabled`), the searches that overshot
@@ -2097,8 +2164,12 @@ impl GscPgo {
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
         let check_due = frequency > 0 && self.scans_seen.is_multiple_of(frequency);
-        // the pressure is a job on its own worker (`pressure_schedule`), held to its estimate in deterministic mode
+        // the pressure is a job on its own worker (`pressure_schedule`), held to its estimate in deterministic mode; the
+        // debounce and the merge land every scan too, so an adoption is not held to the next keyframe
         self.step_pressure(check_due);
+        if !self.adoption_inline && self.step_adoption(false) {
+            self.adopted_since_update = true;
+        }
         self.timing.pressure_s += checked.elapsed().as_secs_f64();
         keyframe
     }

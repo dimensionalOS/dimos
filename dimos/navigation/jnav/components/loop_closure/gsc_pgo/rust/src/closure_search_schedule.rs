@@ -515,6 +515,14 @@ impl GscPgo {
             diag.estimate_scans = estimate_scans;
             diag.search_overshoot = overshoot;
         }
+        self.note_overshoot(
+            match job.kind {
+                JobKind::Verification => "verification",
+                JobKind::FastMatch => "fast_match",
+                JobKind::Search => "search",
+            },
+            overshoot,
+        );
         if overshoot {
             let count = if job.kind == JobKind::Verification {
                 self.verification_overshoots += 1;
