@@ -33,8 +33,8 @@ from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import Simulation, SimulationSpec
-from dimos.sim2.spec import SimulatedSensor
-from dimos.sim2.view import WorldView, open_view, rotation_matrix
+from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
+from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.sensors.mid360.lidar import Raycaster
 
@@ -72,24 +72,26 @@ class SimL1(Module):
         self._world = WorldMirror()
         self._world.subscribe(self.world_change)
         description = self._simulation.describe()
-        sensor = next(
-            d
+        site = sensor_frame(description, self.frame_id)
+        # The map is centred on the robot the L1 is on.
+        robot_id = site.split("/")[0]
+        root = next(
+            d.root_body
             for d in description["simulated"]
-            if isinstance(d, SimulatedSensor) and d.frame_id == self.frame_id
+            if isinstance(d, SimulatedRobot) and d.robot_id == robot_id
         )
         view = open_view(description)
         self._mapping = asyncio.create_task(
-            self._map(view, view.raycaster(self.config.geom_groups), sensor)
+            self._map(view, view.raycaster(self.config.geom_groups), site, f"{robot_id}/{root}")
         )
         yield
 
-    async def _map(self, view: WorldView, raycaster: Raycaster, sensor: SimulatedSensor) -> None:
+    async def _map(
+        self, view: WorldView, raycaster: Raycaster, site: str, center_body: str
+    ) -> None:
         config = self.config
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
-        site = f"{sensor.robot_id}/{sensor.frame_id}"
-        # The map is centred on the body the L1 is fixed to.
-        center_body = f"{sensor.robot_id}/{sensor.body}"
         cells = np.zeros(0, dtype=np.int64)
         # Every period of sim time, so the map keeps its rate per sim second at any speed.
         async for _ in self._world.ticks(1 / config.period):
