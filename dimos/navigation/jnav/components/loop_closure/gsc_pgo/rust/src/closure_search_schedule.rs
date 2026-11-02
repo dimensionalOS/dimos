@@ -625,6 +625,7 @@ impl GscPgo {
                     "verification_scans_per_round" => &mut suggested.verification_scans_per_round,
                     "solve_scans_scale" => &mut suggested.solve_scans_scale,
                     "debounce_scans_per_keyframe" => &mut suggested.debounce_scans_per_keyframe,
+                    "merge_scans_per_keyframe" => &mut suggested.merge_scans_per_keyframe,
                     "pressure_scans_fixed_overhead" => &mut suggested.pressure_scans_fixed_overhead,
                     "pressure_scans_per_keyframe" => &mut suggested.pressure_scans_per_keyframe,
                     "pressure_scans_per_closure" => &mut suggested.pressure_scans_per_closure,
@@ -645,7 +646,7 @@ impl GscPgo {
             values[((values.len() - 1) as f64 * 0.99).round() as usize]
         };
         let c = &self.config;
-        let groups: [(&'static str, &[&'static str], Vec<(&'static str, f64)>); 5] = [
+        let groups: [(&'static str, &[&'static str], Vec<(&'static str, f64)>); 6] = [
             ("fast_match", &["search", "fast_match"], vec![
                 ("fast_match_scans_fixed_overhead", c.deterministic_config.fast_match_scans_fixed_overhead),
                 ("fast_match_scans_per_keyframe", c.deterministic_config.fast_match_scans_per_keyframe),
@@ -658,6 +659,7 @@ impl GscPgo {
             ]),
             ("solve", &["solve"], vec![("solve_scans_scale", c.deterministic_config.solve_scans_scale)]),
             ("debounce", &["debounce"], vec![("debounce_scans_per_keyframe", c.deterministic_config.debounce_scans_per_keyframe)]),
+            ("merge", &["merge"], vec![("merge_scans_per_keyframe", c.deterministic_config.merge_scans_per_keyframe)]),
             ("pressure", &["pressure"], vec![
                 ("pressure_scans_fixed_overhead", c.deterministic_config.pressure_scans_fixed_overhead),
                 ("pressure_scans_per_keyframe", c.deterministic_config.pressure_scans_per_keyframe),

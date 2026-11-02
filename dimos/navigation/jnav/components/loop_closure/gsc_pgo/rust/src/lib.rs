@@ -25,6 +25,7 @@
 //! binary `gsc-pgo`), the offline eval (`src/eval.rs`, binary `pgo-eval`) and the `records` they share build
 //! behind the default `native` feature.
 
+pub mod adoption_schedule;
 pub mod big_picture_fit;
 pub mod closure_search_schedule;
 pub mod connection_fit;

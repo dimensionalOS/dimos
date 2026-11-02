@@ -30,7 +30,7 @@ use crate::mat3::{self, Mat3, Vec3};
 /// first `closures_dispatched` committed closures, adopted once it finishes and its hold has passed (`GscPgo::update`)
 /// or when waited for (`GscPgo::wait_for_due_solve`, `GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
-    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>, Option<ChangeScan>)>,
+    pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
     /// The adopted solves at dispatch (`GscPgo::adopted_solves`): the accepted graph its thread measured its change against.
     pub(crate) graph_version: u64,
     pub(crate) keyframes: usize,
@@ -165,17 +165,10 @@ impl GscPgo {
             .iter()
             .filter(|c| c.gnc_weight <= 0.5)
             .count() as f64;
-        // the graph change heat's cost on the solve's thread (`debounce`)
-        let change_cost = if config.graph_change_heat_enabled {
-            config.deterministic_config.debounce_scans_per_keyframe * keyframes as f64
-        } else {
-            0.0
-        };
         let estimate_raw_scans = config.deterministic_config.solve_scans_scale
             * (keyframes as f64).powf(config.deterministic_config.solve_keyframe_power)
             * (1.0 + closures).powf(config.deterministic_config.solve_closure_power)
-            * (1.0 + rejected).powf(config.deterministic_config.solve_rejected_power)
-            + change_cost;
+            * (1.0 + rejected).powf(config.deterministic_config.solve_rejected_power);
         (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans, config))
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
@@ -190,7 +183,8 @@ impl GscPgo {
     }
     fn adopt(&mut self, ready: bool) -> bool {
         self.new_closure = false;
-        let moved = ready && self.apply_solve();
+        let mut moved = self.step_adoption(false);
+        moved |= ready && self.apply_solve();
         if self.solving.is_none() && self.unsolved() {
             self.dispatch_solve();
         }
@@ -345,9 +339,15 @@ impl GscPgo {
     /// Wait for the running solve, and solve again until every closure is in; then measure the learned odometry error
     /// estimate once (`learned_odometry_error_estimate_from_closures`). Returns whether keyframes moved.
     pub fn finish(&mut self) -> bool {
-        // a closure search still running when the data ends lands now (`closure_search_hold_enabled`)
+        // a closure search still running when the data ends lands now, and the debounce and merge finish theirs; from here
+        // on they run inline
         self.land_remaining_closure_search();
-        let mut moved = self.settle();
+        let mut moved = false;
+        while self.adoption_busy() {
+            moved |= self.step_adoption(true);
+        }
+        self.adoption_inline = true;
+        moved |= self.settle();
         // the learned odometry error estimate, for the next run's config: measured here from the final kept loops (one more
         // solve of the same graph with the evidence on), and during the run only after a solve keeps a longer loop
         if self.config.learned_odometry_error_estimate_from_closures
@@ -418,16 +418,6 @@ impl GscPgo {
         };
         let solved = self.solved.clone();
         let closures_before = self.closures_dispatched;
-        // the accepted graph and the odometry as of now, for the graph change heat's cost on the solve's thread
-        let change_inputs = config.graph_change_heat_enabled.then(|| {
-            (
-                config.clone(),
-                self.key_poses
-                    .iter()
-                    .map(|k| (k.rotation_local, k.translation_local, k.rotation_global, k.translation_global))
-                    .collect::<Vec<_>>(),
-            )
-        });
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
@@ -454,26 +444,10 @@ impl GscPgo {
                     )
                 };
                 let seconds = started.elapsed().as_secs_f64();
-                let change = change_inputs.map(|(config, poses)| {
-                    let started = std::time::Instant::now();
-                    let mut scan = ChangeScan::default();
-                    for (k, &(rotation_local, translation_local, rotation_global, translation_global)) in
-                        poses.iter().enumerate()
-                    {
-                        scan.step(
-                            &config,
-                            (&rotation_local, &translation_local),
-                            (&rotation_global, &translation_global),
-                            (solution.rotations[k], solution.positions[k]),
-                        );
-                    }
-                    scan.seconds = started.elapsed().as_secs_f64();
-                    scan
-                });
                 if let Some(solved) = solved {
                     solved();
                 }
-                (solution, seconds, landmark_ids, change)
+                (solution, seconds, landmark_ids)
             })
             .expect("spawn pose graph thread");
         // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
@@ -518,7 +492,7 @@ impl GscPgo {
             return false;
         };
         let joined = std::time::Instant::now();
-        let (solution, seconds, landmark_ids, change) =
+        let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
         self.solve_join_wait_s += joined.elapsed().as_secs_f64();
         // a solve waited for was finished at the scan it was waited at; one slower than the data its estimate spanned (a
@@ -569,7 +543,6 @@ impl GscPgo {
         }
         let finished = FinishedSolve {
             solution,
-            change,
             graph_version: solving.graph_version,
             seconds,
             landmark_ids,
@@ -578,22 +551,16 @@ impl GscPgo {
             dispatched: solving.dispatched,
             arrived_keyframes: self.key_poses.len(),
         };
+        // the debounce and the merge are their own jobs (`adoption_schedule`), except at the end of the data
+        if !self.adoption_inline {
+            self.offer_debounce(finished);
+            return false;
+        }
         if !self.config.graph_change_heat_enabled {
-            return self.adopt_solution(finished, None);
+            return self.adopt_solution(finished, None, None);
         }
-        // the newest finished solve is the one waiting; an older one still waiting is superseded
-        let arrived = self.key_poses.len();
-        let heat = self.heat_at(arrived);
-        if let Some(older) = self.pending_solve.replace(finished) {
-            self.log_heat_event("superseded", &older, heat);
-        }
-        if self.release_pending_solve(arrived) {
-            return true;
-        }
-        if let Some(waiting) = &self.pending_solve {
-            self.log_heat_event("held", waiting, heat);
-        }
-        false
+        let cost = graph_change_cost_on(&self.key_poses, &self.config, &finished.solution, finished.keyframes);
+        self.debounced(finished, cost, true)
     }
     /// Adopt a finished solve: its poses, the correction the keyframes since then ride on, and its closure verdicts;
     /// `heat`, the graph change heat before it, its cost and after it (for the solve log). Returns true.
@@ -601,6 +568,7 @@ impl GscPgo {
         &mut self,
         finished: FinishedSolve,
         heat: Option<(f64, f64, f64)>,
+        prepared: Option<crate::adoption_schedule::MergePrepared>,
     ) -> bool {
         let FinishedSolve {
             mut solution,
@@ -666,11 +634,17 @@ impl GscPgo {
         });
         self.key_poses.adopt(solved, self.rotation_offset, self.translation_offset);
         // the solve judged every closure dispatched to it; one committed while it ran was not in it, so it stays unjudged
-        for (index, weight) in solution.closure_weights.iter().copied().enumerate() {
-            let previous = self.committed_closures.weight(index);
-            if previous == weight {
-                continue;
-            }
+        let changed: Vec<(usize, f64)> = match &prepared {
+            Some(prepared) => prepared.changed.clone(),
+            None => solution
+                .closure_weights
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|&(index, weight)| self.committed_closures.weight(index) != weight)
+                .collect(),
+        };
+        for (index, weight) in changed {
             // a closure committed directly (`commit_closure`, no search) has no search confidence or yank recorded
             let fixed = *self.committed_closures.fixed(index);
             let (source, target) = (fixed.source_id, fixed.target_id);
@@ -721,13 +695,16 @@ impl GscPgo {
         }
         // a loop longer than any kept before is new information on the odometry's error: measure the learned estimate
         // with the next solve (logged only, never a decision)
-        let longest = self
-            .committed_closures
-            .iter()
-            .filter(|c| c.gnc_weight > 0.5)
-            .map(|c| c.source_id.abs_diff(c.target_id))
-            .max()
-            .unwrap_or(0);
+        let longest = match &prepared {
+            Some(prepared) => prepared.longest_kept,
+            None => self
+                .committed_closures
+                .iter()
+                .filter(|c| c.gnc_weight > 0.5)
+                .map(|c| c.source_id.abs_diff(c.target_id))
+                .max()
+                .unwrap_or(0),
+        };
         if longest > self.learned_evidence_gap {
             self.learned_evidence_gap = longest;
             self.learned_evidence_requested = true;
@@ -885,14 +862,12 @@ impl GscPgo {
 
 /// A finished solve's result and what it was dispatched over, waiting to be adopted (`graph_change_heat_enabled`).
 pub(crate) struct FinishedSolve {
-    solution: Solution,
-    /// The graph change over its solved keyframes against the accepted graph at dispatch (`graph_change_heat_enabled`),
-    /// measured on the solve's thread, and that graph's version.
-    change: Option<ChangeScan>,
-    graph_version: u64,
+    pub(crate) solution: Solution,
+    /// The adopted solves at its dispatch (`GscPgo::adopted_solves`).
+    pub(crate) graph_version: u64,
     seconds: f64,
     landmark_ids: Vec<u64>,
-    keyframes: usize,
+    pub(crate) keyframes: usize,
     schedule: SolveSchedule,
     dispatched: Option<SolveDispatch>,
     /// The keyframe count when it finished.
@@ -934,84 +909,39 @@ impl GscPgo {
         }
         self.adopt_pending_solve(keyframes, heat)
     }
-    /// Adopt the waiting solve whatever the heat (`finish`, so the final graph is the solver's last output).
+    /// Adopt the waiting solve whatever the heat (`finish`, so the final graph is the solver's last output): its cost
+    /// joins the heat, and it goes to the merge (inline at the end of the data).
     pub(crate) fn adopt_pending_solve(&mut self, keyframes: usize, heat: f64) -> bool {
-        let Some(waiting) = self.pending_solve.take() else {
+        let Some((waiting, cost)) = self.pending_solve.take() else {
             return false;
         };
-        let cost = self.graph_change_cost_of(&waiting);
         self.heat = heat + cost;
         self.heat_keyframes = keyframes;
-        self.adopt_solution(waiting, Some((heat, cost, self.heat)))
-    }
-    /// What adopting `solution` (solved over the first `solved` keyframes) costs in graph change heat: the largest
-    /// keyframe move from the accepted graph to the new one (the keyframes after `solved` riding its newest's
-    /// correction), in standard deviations of the stated odometry error accumulated along the path from the start (xy,
-    /// z and yaw combined; 1 m of travel at least), curbed (`curbed_yank`, drift range `closure_yank_drift_range`),
-    /// above `graph_change_heat_floor`.
-    fn graph_change_cost(&self, solution: &Solution, solved: usize) -> f64 {
-        let mut scan = ChangeScan::default();
-        for (k, key_pose) in self.key_poses.range(0..solved).enumerate() {
-            scan.step(
-                &self.config,
-                (&key_pose.rotation_local, &key_pose.translation_local),
-                (&key_pose.rotation_global, &key_pose.translation_global),
-                (solution.rotations[k], solution.positions[k]),
-            );
+        let heat = Some((heat, cost, self.heat));
+        if self.adoption_inline {
+            return self.adopt_solution(waiting, heat, None);
         }
-        self.finish_graph_change_cost(scan, solution, solved)
+        self.offer_merge(waiting, heat);
+        false
     }
-    /// The graph change heat's cost of adopting `finished`: its solved keyframes' part measured on its thread against the
-    /// accepted graph at dispatch, which is the accepted graph now unless a solve was adopted since (a held one released
-    /// while it ran: then all of it here), then the keyframes made since it started, riding its newest's correction.
-    fn graph_change_cost_of(&mut self, finished: &FinishedSolve) -> f64 {
-        match &finished.change {
-            Some(scan) if finished.graph_version == self.adopted_solves => {
-                self.change_cost_calls.push((finished.keyframes, scan.seconds));
-                let estimate_raw_scans =
-                    self.config.deterministic_config.debounce_scans_per_keyframe * finished.keyframes as f64;
-                self.record_job_ratio("debounce", scan.seconds, estimate_raw_scans);
-                self.finish_graph_change_cost(scan.clone(), &finished.solution, finished.keyframes)
-            }
-            _ => {
-                self.graph_change_cost_recomputed += 1;
-                self.graph_change_cost(&finished.solution, finished.keyframes)
-            }
+    /// A debounced solve (its graph change heat cost measured): adopted at once if the heat allows, else held as the
+    /// newest waiting solve (an older one superseded); `inline` at the end of the data. Returns whether it was adopted.
+    pub(crate) fn debounced(&mut self, finished: FinishedSolve, cost: f64, inline: bool) -> bool {
+        let arrived = self.key_poses.len();
+        let heat = self.heat_at(arrived);
+        if let Some((older, _)) = self.pending_solve.replace((finished, cost)) {
+            self.log_heat_event("superseded", &older, heat);
         }
-    }
-    /// `scan` (over the first `solved` keyframes) carried on over the keyframes since, riding the solution's newest
-    /// keyframe's correction, and its cost: curbed (`curbed_yank`, drift range `closure_yank_drift_range`), above
-    /// `graph_change_heat_floor`.
-    fn finish_graph_change_cost(&self, mut scan: ChangeScan, solution: &Solution, solved: usize) -> f64 {
-        let config = &self.config;
-        let newest = &self.key_poses.get(solved - 1);
-        let ride_rotation = mat3::mat_mul(
-            &solution.rotations[solved - 1],
-            &mat3::transpose(&newest.rotation_local),
-        );
-        let ride_translation = mat3::sub(
-            &solution.positions[solved - 1],
-            &mat3::mat_vec(&ride_rotation, &newest.translation_local),
-        );
-        for key_pose in self.key_poses.range(solved..self.key_poses.len()) {
-            scan.step(
-                config,
-                (&key_pose.rotation_local, &key_pose.translation_local),
-                (&key_pose.rotation_global, &key_pose.translation_global),
-                (
-                    mat3::mat_mul(&ride_rotation, &key_pose.rotation_local),
-                    mat3::add(
-                        &mat3::mat_vec(&ride_rotation, &key_pose.translation_local),
-                        &ride_translation,
-                    ),
-                ),
-            );
+        if heat <= self.config.graph_change_heat_threshold {
+            return self.adopt_pending_solve(arrived, heat) && inline;
         }
-        (curbed_yank(scan.largest, config.closure_yank_drift_range) - config.graph_change_heat_floor)
-            .max(0.0)
+        if let Some((waiting, _)) = &self.pending_solve {
+            self.log_heat_event("held", waiting, heat);
+        }
+        false
     }
     /// A `GSC_SOLVE_LOG` line for a solve the graph change heat held or superseded, with the heat then.
-    fn log_heat_event(&self, event: &str, finished: &FinishedSolve, heat: f64) {
+    pub(crate) fn log_heat_event(&self, event: &str, finished: &FinishedSolve, heat: f64) {
         let Some(dispatched) = &finished.dispatched else {
             return;
         };
@@ -1124,4 +1054,50 @@ impl ChangeScan {
         .sqrt();
         self.largest = self.largest.max(z);
     }
+}
+
+/// What adopting `solution` (solved over the first `solved` keyframes) costs in graph change heat, against `keys` (a
+/// snapshot of the accepted graph): the largest keyframe move from it to the new one (the keyframes after `solved`
+/// riding its newest's correction), in standard deviations of the stated odometry error accumulated along the path from
+/// the start (xy, z and yaw combined; 1 m of travel at least), curbed (`curbed_yank`, drift range
+/// `closure_yank_drift_range`), above `graph_change_heat_floor`.
+pub(crate) fn graph_change_cost_on(
+    keys: &crate::store::KeyFrames,
+    config: &crate::gsc_pgo::Config,
+    solution: &Solution,
+    solved: usize,
+) -> f64 {
+    let mut scan = ChangeScan::default();
+    for (k, key_pose) in keys.range(0..solved).enumerate() {
+        scan.step(
+            config,
+            (&key_pose.rotation_local, &key_pose.translation_local),
+            (&key_pose.rotation_global, &key_pose.translation_global),
+            (solution.rotations[k], solution.positions[k]),
+        );
+    }
+    let newest = keys.fixed(solved - 1);
+    let ride_rotation = mat3::mat_mul(
+        &solution.rotations[solved - 1],
+        &mat3::transpose(&newest.rotation_local),
+    );
+    let ride_translation = mat3::sub(
+        &solution.positions[solved - 1],
+        &mat3::mat_vec(&ride_rotation, &newest.translation_local),
+    );
+    for key_pose in keys.range(solved..keys.len()) {
+        scan.step(
+            config,
+            (&key_pose.rotation_local, &key_pose.translation_local),
+            (&key_pose.rotation_global, &key_pose.translation_global),
+            (
+                mat3::mat_mul(&ride_rotation, &key_pose.rotation_local),
+                mat3::add(
+                    &mat3::mat_vec(&ride_rotation, &key_pose.translation_local),
+                    &ride_translation,
+                ),
+            ),
+        );
+    }
+    (curbed_yank(scan.largest, config.closure_yank_drift_range) - config.graph_change_heat_floor).max(0.0)
 }
