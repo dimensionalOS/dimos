@@ -297,4 +297,8 @@
         <!--        <velocimeter name="base_vel" site="base_site"/>-->
 
     </sensor>
+
+    <keyframe>
+        <key name="home" qpos="0 0 0.567668 1 0 0 0 0 -0.3 0.6 0 0 -0.3 0.6 0 0 0.3 -0.6 0 0 0.3 -0.6 0"/>
+    </keyframe>
 </mujoco>
