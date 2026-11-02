@@ -63,8 +63,12 @@ class CompressedCodec(PubSubTransport[T]):
         self.inner = inner
         self.quality = quality
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (CompressedCodec, (self.inner, self.quality))
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"inner": self.inner, "quality": self.quality}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> CompressedCodec[Any]:
+        return cls(data["inner"], data["quality"])
 
     def broadcast(self, stream: Out[T] | None, msg: T) -> None:
         from dimos.msgs.sensor_msgs.CompressedImage import (

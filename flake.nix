@@ -85,10 +85,11 @@
           { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
+          { vals.pkg=pkgs.cargo;                        flags={}; }
+          { vals.pkg=pkgs.rustc;                        flags={}; }
+
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
-          { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
-          { vals.pkg=pkgs.ffmpeg_6.dev;              flags={}; }
 
           ### Graphics / X11 stack
           { vals.pkg=pkgs.libGL;              flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }

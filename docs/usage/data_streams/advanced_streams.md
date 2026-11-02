@@ -102,12 +102,15 @@ The `LATEST` strategy means: when the slow subscriber finishes processing, it ge
 Most module streams offer backpressured observables.
 
 ```python session=bp
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs import Image
 
 class MLModel(Module):
     color_image: In[Image]
+
+    @rpc
     def start(self):
        # no reactivex, simple callback
        self.color_image.subscribe(...)

@@ -109,6 +109,7 @@ impl VoxelRayMapper {
         min_health = -1,
         max_health = 5,
         graze_cos = 0.7,
+        graze_recent_frames = u32::MAX,
         support_min = 4,
         region_percentile = 95.0,
         worker_threads = 4,
@@ -126,6 +127,7 @@ impl VoxelRayMapper {
         min_health: i32,
         max_health: i32,
         graze_cos: f32,
+        graze_recent_frames: u32,
         support_min: i32,
         region_percentile: f32,
         worker_threads: u32,
@@ -147,6 +149,7 @@ impl VoxelRayMapper {
             min_health,
             max_health,
             graze_cos,
+            graze_recent_frames,
             support_min,
             emit_every,
             global_emit_every: 1,
@@ -157,8 +160,9 @@ impl VoxelRayMapper {
             tf_wait_timeout_s: 0.05,
             worker_threads,
             region_m,
+            viz_cell_m: region_m,
             viz_emit_every: 0,
-            viz_sweep_regions: 0,
+            viz_sweep_cells: 0,
         };
         config
             .validate()

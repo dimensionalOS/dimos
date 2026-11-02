@@ -30,6 +30,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.simulation.habitat.constants import HABITAT_ROOT, HM3D_EXAMPLE_DATASET_CONFIG
 from dimos.simulation.habitat.server import HabitatProp
 
 
@@ -38,11 +39,7 @@ def _default_scene_dataset_config(config: dict[str, Any]) -> str:
     if config["source_dir"] is None:
         executable = executable.absolute()
     # The installer places data next to habitat-native in both launch modes.
-    return str(
-        executable.parent
-        / "data/versioned_data/hm3d-0.2/hm3d/example"
-        / "hm3d_annotated_example_basis.scene_dataset_config.json"
-    )
+    return str(executable.parent / HM3D_EXAMPLE_DATASET_CONFIG.relative_to(HABITAT_ROOT))
 
 
 class HabitatConnectionConfig(NativeModuleConfig):

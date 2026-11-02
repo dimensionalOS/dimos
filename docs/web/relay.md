@@ -118,7 +118,7 @@ A robot that must trust a private CA (mkcert on a LAN) passes it with `--relay-c
 }
 ```
 
-A robot sends its key when it connects (`RELAY_KEY` in its environment or `.env`, bound to its `--robot-id`). A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, so hand tokens out like passwords.
+A robot sends its key when it connects (`--relay-key`, bound to its `--robot-id`). The [Bridge](/docs/web/bridge.md#robot-side-options) page has the environment form. A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, so hand tokens out like passwords.
 
 A wrong or missing secret fails with `auth_failed`, and that is terminal: neither client retries. The relay compares secrets in constant time, never logs one, and reports a malformed file by entry name. Edits to the file need a restart. With auth on, `/api/stats` wants the viewer token as a bearer and the log names viewers (`viewer 1 authenticated as paul`).
 

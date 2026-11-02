@@ -252,6 +252,7 @@ class NativeModule(Module):
     """
 
     config: NativeModuleConfig
+    warm_up_inputs = False  # the native process subscribes and decodes itself
 
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None

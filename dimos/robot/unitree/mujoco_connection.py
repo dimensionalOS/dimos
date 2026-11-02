@@ -38,7 +38,6 @@ from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -46,6 +45,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
+from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
     LIDAR_FPS,
@@ -69,7 +69,7 @@ T = TypeVar("T")
 class MujocoConnection:
     """MuJoCo simulator connection that runs in a separate subprocess."""
 
-    def __init__(self, global_config: GlobalConfig) -> None:
+    def __init__(self, config: MujocoConfig, *, robot_model: str | None = None) -> None:
         try:
             import mujoco  # noqa: F401
         except ImportError as exc:
@@ -82,7 +82,8 @@ class MujocoConnection:
         # where the download can time out.
         ensure_menagerie()
 
-        self.global_config = global_config
+        self.config = config
+        self.robot_model = robot_model
         self.process: subprocess.Popen[bytes] | None = None
         self.shm_data: ShmWriter | None = None
         self._stop_timer: threading.Timer | None = None
@@ -128,7 +129,9 @@ class MujocoConnection:
         self._last_odom_seq = 0
         self._last_lidar_seq = 0
 
-        config_pickle = base64.b64encode(pickle.dumps(self.global_config)).decode("ascii")
+        config_pickle = base64.b64encode(pickle.dumps((self.config, self.robot_model))).decode(
+            "ascii"
+        )
         shm_names_json = json.dumps(self.shm_data.shm.to_names())
 
         # Launch the subprocess

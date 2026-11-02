@@ -16,6 +16,7 @@
 
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 if sys.version_info >= (3, 11):
@@ -51,12 +52,52 @@ def test_cargo_toml_pins_absolute_paths_for_module_crates() -> None:
     assert "strip" not in parsed["profile"]["release"]
 
 
-def test_the_generated_crate_reuses_the_workspace_profiles() -> None:
-    root = tomllib.loads((DIMOS_PROJECT_ROOT / "Cargo.toml").read_text())
+def test_the_generated_crate_reuses_the_module_profiles() -> None:
+    """The generated host must carry the same profiles as every module workspace.
+
+    They all write into one shared target dir (.cargo/config.toml), and cargo
+    refingerprints everything when a profile differs -- so a host built beside the
+    modules would rebuild their whole graph. This used to compare against the
+    repo-root workspace; there is no root workspace now, so it compares against
+    every module root, which also catches those drifting apart from each other.
+    """
     generated = tomllib.loads(render_cargo_toml("go2-nav", [MAPPER, PLANNER], Path("/repo")))
     release = {k: v for k, v in generated["profile"]["release"].items() if k != "package"}
-    assert release == root["profile"]["release"]
-    assert generated["profile"]["dev"] == root["profile"]["dev"]
+
+    deliberate_deviations = {
+        # Full LTO for the SLAM core; it registers no bake module, so no host shares its target dir.
+        "dimos/mapping/dim_slam/rust/Cargo.toml",
+        # panic = "abort" so its supervisor sees a dead worker thread (main's choice for the go2 driver).
+        "dimos/robot/unitree/go2/dds/rust/Cargo.toml",
+    }
+
+    # Tracked manifests only: a baked crate under build/ is gitignored, not a module.
+    tracked = subprocess.run(
+        ["git", "ls-files", "*Cargo.toml"],
+        cwd=DIMOS_PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    roots = [
+        path
+        for path in (DIMOS_PROJECT_ROOT / p for p in tracked)
+        if "[workspace]" in path.read_text() and "[profile.release]" in path.read_text()
+    ]
+    assert roots, "no module workspace roots found"
+    checked = 0
+    for path in roots:
+        where = path.relative_to(DIMOS_PROJECT_ROOT).as_posix()
+        if where in deliberate_deviations:
+            continue
+        module_toml = tomllib.loads(path.read_text())
+        module_release = {
+            k: v for k, v in module_toml["profile"]["release"].items() if k != "package"
+        }
+        assert release == module_release, where
+        assert generated["profile"]["dev"] == module_toml["profile"]["dev"], where
+        checked += 1
+    assert checked, "every workspace root was excused; the check proved nothing"
 
 
 def test_main_rs_lists_entries_with_their_thread_counts() -> None:
@@ -98,10 +139,17 @@ def test_generate_crate_writes_the_blobs_the_host_includes(tmp_path: Path) -> No
     assert (crate / "Cargo.toml").exists()
 
 
-def test_generate_crate_seeds_the_workspace_lock(tmp_path: Path) -> None:
+def test_generate_crate_does_not_seed_a_lockfile(tmp_path: Path) -> None:
+    """A generated host resolves its own dependency graph.
+
+    It used to inherit the repo-root Cargo.lock. That workspace is gone, and a host
+    aggregates crates from several modules with separate locks, so there is no single
+    lock to inherit -- seeding one would pin the host to whichever module's resolution
+    happened to be copied.
+    """
     (tmp_path / "Cargo.lock").write_text('version = 4\n\n[[package]]\nname = "serde"\n')
     crate = generate_crate("go2-nav", [MAPPER, PLANNER], GRAPH, tmp_path)
-    assert (crate / "Cargo.lock").read_text() == (tmp_path / "Cargo.lock").read_text()
+    assert not (crate / "Cargo.lock").exists()
 
 
 def test_generate_crate_is_idempotent(tmp_path: Path) -> None:

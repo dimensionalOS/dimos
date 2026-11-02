@@ -24,7 +24,8 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from dimos.agents.llm_trace import list_llm_trace_pairs
-from dimos.evals.agents.base import Agent
+from dimos.agents.mcp.constants import TURN_FAILED_KEY
+from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment
@@ -36,7 +37,8 @@ class _Turn:
     from the moment ``/agent_idle`` goes False until it comes back True.
     ``/agent_idle`` is its own topic and can overtake the last ``/agent``
     message, so the turn is done only once the received ``AIMessage``s match
-    the raw trace, which is complete before the idle flip is published."""
+    the raw trace, which is complete before the idle flip is published, or
+    once McpClient reports the turn failed."""
 
     def __init__(self, raw_dir: Path) -> None:
         self.received: list[BaseMessage] = []
@@ -61,13 +63,20 @@ class _Turn:
                 self._maybe_done()
 
     def _maybe_done(self) -> None:
-        if self._expected is not None and (
-            sum(isinstance(m, AIMessage) for m in self.received) >= self._expected
-        ):
+        if self._expected is None:
+            return
+        # An HTTP error response leaves a trace pair with no AIMessage, so a failed
+        # turn may never reach the expected count.
+        failed = any(_is_failure_note(m) for m in self.received)
+        if failed or sum(isinstance(m, AIMessage) for m in self.received) >= self._expected:
             self.done.set()
 
 
-class McpClientAdapter(Agent):
+def _is_failure_note(msg: BaseMessage) -> bool:
+    return isinstance(msg, AIMessage) and TURN_FAILED_KEY in msg.additional_kwargs
+
+
+class McpClientAdapter(EvalSubject):
     """An eval adapter for the production ``McpClient``.
 
     Send the instruction on ``/human_input`` and capture ``/agent`` until
@@ -134,6 +143,8 @@ class McpClientAdapter(Agent):
         pairs = list_llm_trace_pairs(run_dir / "raw")
         calls = 0
         for msg in turn.received:
+            if _is_failure_note(msg):
+                return trajectory.build("error", error=str(msg.content))
             if isinstance(msg, AIMessage):
                 if calls >= len(pairs):
                     raise RuntimeError(

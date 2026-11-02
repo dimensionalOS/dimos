@@ -13,12 +13,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # The self-hosted CI job's apt list plus Chromium's runtime libs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip build-essential pkg-config \
-    libgl1 libturbojpeg portaudio19-dev \
+    libgl1 libturbojpeg portaudio19-dev libusb-1.0-0 \
     libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \
     libxfixes3 libdrm2 libx11-xcb1 libxext6 libxshmfence1 fonts-liberation \
-    iproute2 xvfb ffmpeg x11-utils \
+    iproute2 xvfb x11-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Recordings and results land under /state, which compose bind-mounts.

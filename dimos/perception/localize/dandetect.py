@@ -12,109 +12,197 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The perception models as one disposable resource.
+"""The swappable models behind localize's stages, as one disposable resource.
 
-Enter once, query many times on warm weights; ``stop()`` releases whatever
-loaded. Every entry point takes an optional
-:class:`~dimos.perception.localize.rig.Rig`; without one the store's shape
-decides.
+``localize`` sees three interfaces only: the embedder is any dimos
+``EmbeddingModel`` (index frames and queries), a ``Detector`` scores every
+query against every box it proposes, a ``Segmenter`` turns those boxes into
+masks. Each stage takes a registry name, a ``module:attr`` path to a class
+or factory, or a built model. Enter once, query many times on warm weights;
+``stop()`` releases whatever loaded, after the live embedding that uses them.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field, replace
+import importlib
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
-from dimos.memory.transform import QualityWindow
-from dimos.perception.localize.localize import embed_index, localize
-from dimos.perception.localize.rig import Rig
+from dimos.perception.localize.localize import index_frames, localize
+from dimos.perception.localize.types import Localization, LocalizeParams
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import numpy as np
     from reactivex.abc import DisposableBase
 
     from dimos.memory.stream import Stream
-    from dimos.models.embedding.siglip import SigLIPModel
-    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+    from dimos.models.embedding.base import EmbeddingModel
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+    from dimos.perception.localize.association import Groups
+    from dimos.perception.localize.localize import LocalizeTrace
+    from dimos.perception.localize.rig import Rig
+
+
+class Detector(Protocol):
+    def query_score_rows(
+        self, image: Image, queries: list[str], threshold: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Pixel ``(x1, y1, x2, y2)`` boxes whose best query scores above
+        ``threshold``, and their ``(n_boxes, n_queries)`` scores."""
+        ...
+
+    def stop(self) -> None: ...
+
+
+class Segmenter(Protocol):
+    def segment(self, detections: ImageDetections2D[Any]) -> ImageDetections2D[Any]:
+        """The detections as masks, each keeping its ``track_id``; any may be dropped."""
+        ...
+
+    def stop(self) -> None: ...
+
+
+class NoSegmenter:
+    """Boxes lift as they are; the lift keeps the depth cluster at the box median."""
+
+    def segment(self, detections: ImageDetections2D[Any]) -> ImageDetections2D[Any]:
+        return detections
+
+    def stop(self) -> None:
+        pass
+
+
+def _owlv2() -> Detector:
+    import torch
+
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-    from dimos.perception.localize.types import Localization, LocalizePolicy
+
+    return Owlv2Detector(dtype=torch.float16)
+
+
+@dataclass(frozen=True)
+class Option:
+    """A registered model: how to build it, and the score deltas its scale shifts from OWLv2."""
+
+    build: str | Callable[[], Any]  # "module:attr" of a class or factory, or the callable
+    shift: dict[str, float] = field(default_factory=dict)
+
+
+EMBEDDERS: dict[str, Option] = {
+    "siglip": Option("dimos.models.embedding.siglip:SigLIPModel"),
+    "clip": Option("dimos.models.embedding.clip:CLIPModel"),
+}
+DETECTORS: dict[str, Option] = {
+    "owlv2": Option(_owlv2),
+    "omdet": Option(
+        "dimos.perception.detection.detectors.omdet:OmDetDetector",
+        {"candidate_floor": -0.10, "accept_score": -0.10},
+    ),
+    "gdino": Option(
+        "dimos.perception.detection.detectors.grounding_dino:GroundingDinoDetector",
+        {"candidate_floor": 0.10, "accept_score": 0.15},
+    ),
+}
+SEGMENTERS: dict[str, Option] = {
+    "edgetam": Option("dimos.models.segmentation.edge_tam:EdgeTAMImageSegmenter"),
+    "yoloe": Option("dimos.models.segmentation.yoloe:YoloeBoxSegmenter"),
+    "none": Option(NoSegmenter),
+}
+
+
+def _option(registry: dict[str, Option], spec: Any) -> Option:
+    if not isinstance(spec, str):
+        return Option(lambda: spec)
+    if spec in registry:
+        return registry[spec]
+    if ":" not in spec:
+        raise ValueError(f"unknown model {spec!r}: one of {', '.join(registry)} or module:attr")
+    return Option(spec)
+
+
+def _build(option: Option) -> Any:
+    if not isinstance(option.build, str):
+        return option.build()
+    module, _, attr = option.build.partition(":")
+    return getattr(importlib.import_module(module), attr)()
 
 
 class DanDetector(Resource):
-    """SigLIP, OWLv2 and EdgeTAM; the HuggingFace two load on first use."""
+    """One embedder, detector and segmenter; the HuggingFace models load on first use."""
 
-    siglip: SigLIPModel
-    detector: Owlv2Detector
-    segmenter: EdgeTAMImageSegmenter
+    embedder: EmbeddingModel
+    detector: Detector
+    segmenter: Segmenter
+
+    def __init__(
+        self, embedder: Any = "siglip", detector: Any = "owlv2", segmenter: Any = "edgetam"
+    ) -> None:
+        specs = (embedder, detector, segmenter)
+        self.names = tuple(s if isinstance(s, str) else type(s).__name__ for s in specs)
+        self.options = tuple(
+            _option(registry, spec)
+            for registry, spec in zip((EMBEDDERS, DETECTORS, SEGMENTERS), specs, strict=True)
+        )
 
     def start(self) -> None:
-        import torch
-
-        from dimos.models.embedding.siglip import SigLIPModel
-        from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-        from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-
-        self.siglip = SigLIPModel()
-        self.detector = Owlv2Detector(dtype=torch.float16)
-        self.segmenter = EdgeTAMImageSegmenter()
+        self.embedder, self.detector, self.segmenter = (_build(o) for o in self.options)
         self._live: list[DisposableBase] = []
 
     def stop(self) -> None:
         for disposable in self._live:
             disposable.dispose()
-        self.siglip.stop()
-        self.detector.stop()
-        del self.segmenter
+        for model in (self.embedder, self.detector, self.segmenter):
+            model.stop()
+        del self.embedder, self.detector, self.segmenter
 
-    def embed(
-        self, store: Any, after: float, before: float, *, rig: Rig | None = None
-    ) -> Stream[Any, Any]:
-        """SigLIP-embedded, world-posed index over ``[after, before]``."""
-        return embed_index(store, self.siglip, after, before, rig=rig or Rig.from_store(store))
+    def shifted(self, base: LocalizeParams, fields: dict[str, Any] | None = None) -> LocalizeParams:
+        """``base`` shifted onto these models' score scales, then ``fields``.
 
-    def embed_live(
-        self, store: Any, *, rig: Rig | None = None, source: Stream[Any, Any] | None = None
-    ) -> Stream[Any, Any]:
-        """Tail the colour stream into ``color_image_embedded`` on a background thread.
-
-        Returns that named stream, which :meth:`localize` reads like a replay
-        index; it keeps filling for as long as the resource is open. ``source``
-        is the raw feed to tail when it is not the rig's own colour stream.
+        Each model's shift is a delta relative to the OWLv2 baseline that
+        ``LocalizeParams`` was fit on; explicit overrides in ``fields`` take
+        precedence.
         """
-        from dimos.msgs.sensor_msgs.Image import Image
+        shifts = {
+            key: round(getattr(base, key) + delta, 6)
+            for option in self.options
+            for key, delta in option.shift.items()
+        }
+        return replace(base, **{**shifts, **(fields or {})})
 
-        rig = rig or Rig.from_store(store)
-        feed = source if source is not None else rig.color
-        embedded: Stream[Any, Any] = store.stream("color_image_embedded", Image)
+    def embed_live(self, rig: Rig, source: Stream[Any, Any], index: Stream[Any, Any]) -> None:
+        """Tail ``source`` into ``index`` on a background thread while the resource is open."""
         pipeline = (
-            feed.live()
-            .filter(lambda obs: obs.data.brightness > 0.1)
-            .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / rig.embed_hz))
-            .map(lambda obs: obs.derive(data=obs.data, pose=rig.index_pose(obs)))
-            .filter(lambda obs: obs.pose is not None)
-            .transform(EmbedImages(self.siglip, batch_size=1))
-            .save(embedded)
+            index_frames(rig, source.live())
+            .transform(EmbedImages(self.embedder, batch_size=1))
+            .save(index)
         )
         self._live.append(pipeline.drain_thread())
-        return embedded
 
     def localize(
         self,
-        store: Any,
-        query: str | list[str],
+        queries: list[str],
         *,
         index: Stream[Any, Any],
-        policy: LocalizePolicy | None = None,
-        **kwargs: Any,
-    ) -> list[Localization] | list[list[Localization]]:
-        """:func:`localize` on this resource's models."""
+        rig: Rig,
+        params: LocalizeParams = LocalizeParams(),
+        fields: dict[str, Any] | None = None,
+        traces: list[LocalizeTrace] | None = None,
+        groups: dict[str, Groups] | None = None,
+    ) -> list[list[Localization]]:
+        """:func:`localize` on this resource's models, with ``params`` shifted onto their scales."""
         return localize(
-            store,
-            query,
+            queries,
             index=index,
-            siglip=self.siglip,
+            rig=rig,
+            embedder=self.embedder,
             detector=self.detector,
             segmenter=self.segmenter,
-            policy=policy,
-            **kwargs,
+            params=self.shifted(params, fields),
+            traces=traces,
+            groups=groups,
         )

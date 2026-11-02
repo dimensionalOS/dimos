@@ -17,7 +17,6 @@ A YOLO detector on the camera supplies `detections_2d`; world-frame boxes on
 `detections_3d`, from a 3D detector or a fixed scene, take precedence when present.
 """
 
-from dimos.agents.typesafe.agent import typesafe_api_key
 from dimos.agents.typesafe.navigation import TypeSafeNavigationAgent
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.perception.detection.module2D import Detection2DModule
@@ -30,4 +29,4 @@ unitree_go2_typesafe = autoconnect(
         camera_info=GO2Connection.camera_info_static, publish_detection_images=False
     ).remappings([(Detection2DModule, "detections", "detections_2d")]),
     TypeSafeNavigationAgent.blueprint(),
-).requirements(typesafe_api_key)
+)

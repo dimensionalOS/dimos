@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import threading
+from unittest.mock import ANY
 
 import pytest
 import rerun as rr
@@ -57,7 +58,7 @@ class TestViewerLaunch:
         sdk_spawn = mocker.patch.object(rr, "spawn")
         server_uri = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
 
-        assert spawn_viewer(server_uri, "25%")
+        assert spawn_viewer(server_uri, "25%", "ws://localhost:4321/ws")
         assert reaped.wait(timeout=2)
 
         launch.assert_called_once_with(
@@ -65,14 +66,17 @@ class TestViewerLaunch:
                 "dimos-viewer",
                 "--connect",
                 server_uri,
+                "--ws-url",
+                "ws://localhost:4321/ws",
                 "--memory-limit",
                 "25%",
                 "--expect-data-soon",
             ],
             stdin=subprocess.DEVNULL,
             start_new_session=True,
-            env={**os.environ, "RUST_LOG": _VIEWER_RUST_LOG},
+            env=ANY,
         )
+        assert launch.call_args.kwargs["env"]["RUST_LOG"] == _VIEWER_RUST_LOG
         sdk_spawn.assert_not_called()
         assert "RUST_LOG" not in os.environ
 

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod emb;
+pub mod ground;
 pub mod msg;
 pub mod obstacles;
 pub mod planner;

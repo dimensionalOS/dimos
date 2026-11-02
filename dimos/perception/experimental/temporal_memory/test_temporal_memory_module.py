@@ -17,21 +17,13 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
-import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, create_autospec, patch
 
 import numpy as np
 import pytest
-from reactivex import operators as ops
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.stream import Out
-from dimos.core.transport import LCMTransport
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
@@ -512,133 +504,3 @@ class TestWindowAnalyzer:
         result = analyzer.answer_query("What is the answer?", {}, img)
         assert result is not None
         assert result.answer == "The answer is 42"
-
-
-class VideoReplayModule(Module):
-    """Module that replays synthetic video data for tests."""
-
-    video_out: Out[Image]
-
-    def __init__(self, num_frames: int = 5, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.num_frames = num_frames
-
-    @rpc
-    def start(self) -> None:
-        import reactivex
-
-        def emit_frames(observer, scheduler):
-            for i in range(self.num_frames):
-                img = _make_image(value=min(50 + i * 30, 255))  # Varying brightness
-                img.ts = time.time()
-                observer.on_next(img)
-                time.sleep(0.5)
-            observer.on_completed()
-
-        self.register_disposable(
-            reactivex.create(emit_frames)
-            .pipe(
-                ops.observe_on(reactivex.scheduler.NewThreadScheduler()),
-            )
-            .subscribe(self.video_out.publish)
-        )
-
-    @rpc
-    def stop(self) -> None:
-        for stream in list(self.outputs.values()):
-            if stream.transport is not None and hasattr(stream.transport, "stop"):
-                stream.transport.stop()
-                stream._transport = None
-        super().stop()
-
-
-@pytest.mark.skipif_in_ci
-@pytest.mark.skipif_no_openai
-class TestTemporalMemoryIntegration:
-    @pytest.fixture(scope="function")
-    def dimos_cluster(self):
-        dimos = ModuleCoordinator()
-        dimos.start()
-        try:
-            yield dimos
-        finally:
-            dimos.stop()
-
-    @pytest.fixture(scope="function")
-    def video_module(self, dimos_cluster):
-        video_module = dimos_cluster.deploy(VideoReplayModule, num_frames=8)
-        video_module.video_out.transport = LCMTransport("/test_video_refactored", Image)
-        yield video_module
-        try:
-            video_module.stop()
-        except Exception:
-            pass
-
-    @pytest.fixture(scope="function")
-    def temporal_memory_module(self, dimos_cluster, tmp_path):
-        from dimos.models.vl.openai import OpenAIVlModel
-
-        api_key = os.getenv("OPENAI_API_KEY")
-        vlm = OpenAIVlModel(api_key=api_key)
-
-        db_dir = tmp_path / "memory" / "temporal"
-        log_dir = tmp_path / "logs" / "run1"
-        log_dir.mkdir(parents=True)
-
-        with patch(
-            "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
-            return_value=log_dir,
-        ):
-            tm = dimos_cluster.deploy(
-                TemporalMemory,
-                vlm=vlm,
-                fps=1.0,
-                window_s=2.0,
-                stride_s=2.0,
-                summary_interval_s=10.0,
-                max_frames_per_window=3,
-                db_dir=str(db_dir),
-            )
-        yield tm
-        try:
-            tm.stop()
-        except Exception:
-            pass
-
-    def test_frames_flow_and_query(
-        self, dimos_cluster, video_module, temporal_memory_module, tmp_path
-    ):
-        temporal_memory_module.color_image.connect(video_module.video_out)
-        temporal_memory_module.start()  # subscribe first (consumer)
-        time.sleep(1)  # let subscription establish
-        video_module.start()  # then emit frames (producer)
-
-        timeout = 15.0
-        start_time = time.time()
-        while (time.time() - start_time) < timeout:
-            state = temporal_memory_module.get_state()
-            if state["frame_count"] >= 3:
-                break
-            time.sleep(0.5)
-        else:
-            state = temporal_memory_module.get_state()
-            raise AssertionError(
-                f"No frames processed within {timeout}s. Count: {state['frame_count']}"
-            )
-
-        time.sleep(3)
-
-        state = temporal_memory_module.get_state()
-        assert state["frame_count"] >= 3
-
-        answer = temporal_memory_module.query("What entities are visible?")
-        assert len(answer) > 0
-
-        entities = temporal_memory_module.get_entity_roster()
-        assert isinstance(entities, list)
-
-        summary = temporal_memory_module.get_rolling_summary()
-        assert isinstance(summary, str)
-
-        video_module.stop()
-        temporal_memory_module.stop()

@@ -14,8 +14,8 @@
 
 """The xArm grasping stack, on hardware by default.
 
-``dimos run xarm-grasp --xarm7-ip 192.168.1.x``   heuristic grasps
-``dimos run xarm-grasp-graspgenx --xarm7-ip ...`` learned grasps
+``dimos run xarm-grasp --config robot.json``   heuristic grasps
+``dimos run xarm-grasp-graspgenx --config robot.json`` learned grasps
 ``dimos run xarm-grasp --simulation mujoco``      the same stack in MuJoCo
 
 Only the grasp provider separates the two blueprints. The arm-versus-sim split is
@@ -36,16 +36,18 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
-from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
+from dimos.robot.manipulators.common.blueprints import (
+    coordinator,
+    manipulation_mapping,
+    trajectory_task,
+)
 from dimos.robot.manipulators.xarm.config import (
-    XARM7_COLLISION_LINKS,
+    XARM_HEURISTIC_AIM,
     make_xarm7_model_config,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
@@ -63,10 +65,7 @@ XARM_GRASP_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
 # spaced targets. This collision-free top-down pose raises the camera enough to
 # put every mesh in one frame, without changing the configured base pose.
 XARM_GRASP_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
-# One resolution for the whole mapping chain. The self filter's clear mask, the
-# mapper's cells and the planner's octree must all agree: a mismatched mask names
-# cells the map does not hold, and a mismatched octree does not line up with what
-# was mapped.
+# The mapper and planner octree use the same resolution.
 XARM_GRASP_VOXEL_SIZE = 0.025
 
 XARM_GRASP_PROMPTS = [
@@ -122,19 +121,15 @@ if SIMULATED:
     # planning model 12 cm above the arm MuJoCo simulates.
     _model = make_xarm7_sim_robot_config(
         base_pose=PoseStamped(frame_id="world"),
-        # The self filter needs a capture-time transform for every collision link
-        # and drops the whole cloud when one is missing.
-        tf_extra_links=XARM7_COLLISION_LINKS,
+        tf_extra_links=[],
     )
-    _hardware = make_xarm7_sim_hardware(XARM_GRASP_SCENE_PATH, home_joints=XARM_GRASP_SCAN_JOINTS)
+    _hardware = make_xarm7_sim_hardware(home_joints=XARM_GRASP_SCAN_JOINTS)
 else:
     _model = make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
         base_pose=PoseStamped(frame_id="world"),
-        # The self filter needs a capture-time transform for every collision link
-        # and drops the whole cloud when one is missing.
-        tf_extra_links=XARM7_COLLISION_LINKS,
+        tf_extra_links=["link7"],
     )
     _hardware = xarm7_hardware("arm", gripper=True)
 
@@ -196,39 +191,6 @@ def _scene_registration() -> Blueprint:
     )
 
 
-def _voxel_mapping() -> tuple[Blueprint, ...]:
-    """Wrist camera -> self filter -> mapper -> the planner's octree obstacle."""
-    return (
-        # The wrist camera sees the arm itself, so the arm's returns must be
-        # dropped before mapping and the volume it occupies erased from the map:
-        # ray tracing cannot clear what the arm permanently occludes.
-        PointCloudSelfFilter.blueprint(
-            model=_model.model,
-            voxel_size=XARM_GRASP_VOXEL_SIZE,
-            world_frame="world",
-            # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
-            # tolerance cannot bracket a ~92ms publish period and drops most
-            # clouds. One full period admits them all, and the arm holds still
-            # while scanning, so a transform a period old describes the same pose.
-            tf_tolerance_s=0.1,
-            tf_forward_tolerance_s=0.1,
-        ),
-        # Tabletop reach, not a room-scale lidar sweep.
-        RayTracingVoxelMap.blueprint(
-            voxel_size=XARM_GRASP_VOXEL_SIZE,
-            world_frame="world",
-            max_range=2.0,
-        ),
-    )
-
-
-# The mapping chain is wired by stream name, so the two edges whose names differ
-# are bridged here: self filter -> mapper, and mapper -> the planner's octree.
-_REMAPPINGS = [
-    (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),
-    (ManipulationModule, "voxel_map", "global_map"),
-]
-
 # Everything but the grasp provider. Exactly one provider may be composed in:
 # PickAndPlaceModule resolves its generator by spec, so two would be ambiguous.
 _XARM_GRASP_MODULES = (
@@ -241,10 +203,14 @@ _XARM_GRASP_MODULES = (
         voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
+    PickAndPlaceModule.blueprint(planning_frame="world", robot=_model),
     *_sensing(),
     _scene_registration(),
-    *_voxel_mapping(),
+    manipulation_mapping(
+        # Filter only the arm; gripper returns may remain in the map.
+        self_filter_model=make_xarm7_model_config(add_gripper=False).model,
+        voxel_size=XARM_GRASP_VOXEL_SIZE,
+    ),
     RerunBridgeModule.blueprint(),
     coordinator(
         hardware=[_hardware],
@@ -260,14 +226,14 @@ _XARM_GRASP_MODULES = (
     ),
 )
 
-xarm_grasp = autoconnect(*_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint()).remappings(
-    _REMAPPINGS
-)
+xarm_grasp = autoconnect(*_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM))
 
 xarm_grasp_graspgenx = autoconnect(
     *_XARM_GRASP_MODULES,
     GraspGenXModule.blueprint(
         gripper=XARM_GRIPPER_SWEEP_VOLUME,
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+        # Return every sample: the pick's contact check chooses among them.
+        max_candidates=500,
     ),
-).remappings(_REMAPPINGS)
+)

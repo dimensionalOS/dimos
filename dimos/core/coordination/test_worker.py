@@ -13,16 +13,20 @@
 # limitations under the License.
 
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.agents.annotation import skill
+from dimos.core.coordination.python_worker import Actor, MethodCallProxy, PythonWorker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.encode.cbor import decode, encode
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.stats import WorkerStats
@@ -52,7 +56,7 @@ class SimpleModule(Module):
         return global_config.robot_ip
 
     @rpc
-    def unpicklable(self) -> threading.Lock:
+    def unencodable(self) -> threading.Lock:
         return threading.Lock()
 
     @rpc
@@ -144,29 +148,70 @@ def test_worker_manager_basic(create_worker_manager):
     module.stop()
 
 
-def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
-    """An RPC result that cannot pickle comes back as the error, not a dead worker."""
+def test_worker_manager_stops_workers_concurrently_and_only_once(mocker, monkeypatch):
+    manager = WorkerManagerPython(g=GlobalConfig(n_workers=0))
+    workers = [PythonWorker(), PythonWorker()]
+    monkeypatch.setattr(manager, "_workers", workers)
+    barrier = threading.Barrier(len(workers), timeout=2)
+    finished = []
+
+    def shutdown() -> None:
+        barrier.wait()
+        finished.append(True)
+
+    shutdowns = [
+        mocker.patch.object(worker, "shutdown", side_effect=shutdown) for worker in workers
+    ]
+    try:
+        manager.stop()
+        manager.stop()
+        assert finished == [True, True]
+        for stop in shutdowns:
+            stop.assert_called_once_with()
+        assert manager.workers == []
+    finally:
+        manager.stop()
+
+
+def test_worker_shutdown_kills_and_reaps_a_process_that_ignores_terminate(mocker, monkeypatch):
+    worker = PythonWorker()
+    process = mocker.Mock()
+    process.is_alive.side_effect = [True, True, False]
+    monkeypatch.setattr(worker, "_process", process)
+
+    worker.shutdown()
+    worker.shutdown()
+
+    process.terminate.assert_called_once_with()
+    process.kill.assert_called_once_with()
+    process.close.assert_called_once_with()
+    assert process.join.call_count == 3
+    assert worker.pid is None
+
+
+def test_unencodable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
+    """An RPC result that cannot be encoded comes back as the error, not a dead worker."""
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(SimpleModule, global_config, {})
     module.start()
 
-    with pytest.raises(TypeError, match="cannot pickle"):
-        module.unpicklable()
+    with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+        module.unencodable()
 
     assert module.increment() == 1
 
     module.stop()
 
 
-def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
-    """A response the worker pipe cannot pickle errors out; the worker lives on."""
+def test_unencodable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
+    """A response the worker pipe cannot encode errors out; the worker lives on."""
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(SimpleModule, global_config, {})
     module.start()
     module.make_lock()
 
     # Attribute access rides the pipe, unlike rpc calls, which ride the transport.
-    with pytest.raises(RuntimeError, match="(?i)pickle"):
+    with pytest.raises(RuntimeError, match="Cannot CBOR-encode"):
         module.actor_instance.lock  # noqa: B018
 
     assert module.increment() == 1
@@ -401,3 +446,77 @@ def test_dedicated_workers_trigger_autoscale(manager_and_modules):
     # at least match the dedicated count.
     assert len(manager._workers) == 4
     assert sum(1 for w in manager._workers if w.dedicated) == 2
+
+
+class WarmedMsg:
+    """Stand-in for a message type with heavy decode dependencies."""
+
+    warmed_on: str | None = None  # thread name, set in the worker process
+
+    @classmethod
+    def lcm_warmup(cls) -> None:
+        cls.warmed_on = threading.current_thread().name
+
+
+class WarmedModule(Module):
+    input: In[WarmedMsg]
+    skills_built_on: str | None = None
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @skill
+    def wave(self) -> str:
+        """Wave at the operator."""
+        return "waved"
+
+    def _build_skills(self):
+        self.skills_built_on = threading.current_thread().name
+        return super()._build_skills()
+
+    @rpc
+    def warmed_on(self) -> tuple[str | None, str | None]:
+        return WarmedMsg.warmed_on, self.skills_built_on
+
+
+class UnwarmedInputsModule(WarmedModule):
+    warm_up_inputs = False
+
+
+def _wait_for_warm_up(module) -> tuple[str | None, str | None]:
+    # Skills are warmed up last, so once they are built the whole warm-up ran.
+    deadline = time.monotonic() + 5
+    while module.warmed_on()[1] is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return module.warmed_on()
+
+
+@pytest.mark.skipif_macos_bug
+def test_deploy_warms_up_inputs_and_skills_on_a_background_thread(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(WarmedModule, global_config, {})
+    module.start()
+
+    assert _wait_for_warm_up(module) == ("warmup-WarmedModule", "warmup-WarmedModule")
+    assert [s.func_name for s in module.get_skills()] == ["wave"]
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_module_can_opt_out_of_input_warm_up(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(UnwarmedInputsModule, global_config, {})
+    module.start()
+
+    assert _wait_for_warm_up(module) == (None, "warmup-UnwarmedInputsModule")
+    module.stop()
+
+
+def test_actor_and_method_call_proxy_cross_processes_as_ids() -> None:
+    actor = Actor(None, SimpleModule, worker_id=3, module_id=7, lock=threading.Lock())
+    restored = decode(encode(MethodCallProxy(actor)))
+    assert type(restored) is MethodCallProxy
+    inner = restored._actor
+    assert (inner._worker_id, inner._module_id) == (3, 7)
+    assert inner._conn is None and inner._cls is None and inner._lock is None

@@ -14,12 +14,12 @@
 
 from collections.abc import Callable
 from pathlib import Path
-import pickle
 import xml.etree.ElementTree as ET
 
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.assets.model as robot_model
 from dimos.utils.data import LfsPath
 
@@ -146,6 +146,29 @@ def test_loaded_model_exposes_cached_urdf_topology(tmp_path: Path) -> None:
     assert loaded.root_link == "base"
     assert loaded.get_joint("tool_joint") == joints[0]
     assert loaded.get_joint("missing") is None
+
+
+def test_loaded_model_reads_every_joint_limit(tmp_path: Path) -> None:
+    loaded = robot_model.LoadedRobotModel(
+        """
+        <robot name="test">
+          <link name="base"/>
+          <link name="arm"/>
+          <joint name="shoulder" type="revolute">
+            <parent link="base"/>
+            <child link="arm"/>
+            <limit lower="-1.5" upper="2.5" velocity="3.0" effort="40.0"/>
+          </joint>
+        </robot>
+        """,
+        tmp_path / "robot.urdf",
+        {},
+    )
+
+    joint = loaded.get_joint("shoulder")
+
+    assert joint is not None
+    assert (joint.lower, joint.upper, joint.velocity, joint.effort) == (-1.5, 2.5, 3.0, 40.0)
 
 
 def test_with_fixed_frame_builds_ordered_model_chain_and_preserves_extensions(
@@ -680,7 +703,7 @@ def test_with_fixed_frame_rejects_invalid_model(
         model.load()
 
 
-def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
+def test_roundtrip_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
         "<robot name='before'><link name='base'/><link name='slider'/><link name='camera'/>"
@@ -698,7 +721,7 @@ def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> No
     )
     assert ET.fromstring(model.load().xml).get("name") == "before"
 
-    restored = pickle.loads(pickle.dumps(model))
+    restored = decode(encode(model))
     urdf.write_text(urdf.read_text().replace("name='before'", "name='after'"))
     root = ET.fromstring(restored.load().xml)
 

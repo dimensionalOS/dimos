@@ -16,22 +16,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import json
 import os
 import signal
 import sys
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.run_registry import RunEntry
+    from dimos.core.module import ModuleBase
 
 logger = setup_logger()
+
+DAEMON_STATUS_FD_ENV = "_DIMOS_DAEMON_STATUS_FD"
 
 
 def health_check(coordinator: ModuleCoordinator) -> bool:
@@ -56,12 +61,31 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     The grandchild keeps the launcher's stdio so startup output still reaches
     the terminal; it must call ``redirect_stdio_to_devnull`` and
     ``write_daemon_status`` once startup succeeds or fails.
+
+    On macOS the grandchild re-execs the CLI before building. Native imports
+    can initialize CoreFoundation, which is unsafe in a forked interpreter
+    even if no transport sessions have been opened.
     """
+    inherited_fd = os.environ.pop(DAEMON_STATUS_FD_ENV, None)
+    if inherited_fd is not None:
+        write_fd = int(inherited_fd)
+        # Keep the pipe across this exec only, not later worker/watchdog execs.
+        os.set_inheritable(write_fd, False)
+        return 0, write_fd
+
     log_dir.mkdir(parents=True, exist_ok=True)
     # Anything buffered would otherwise be flushed by both processes.
     sys.stdout.flush()
     sys.stderr.flush()
     read_fd, write_fd = os.pipe()
+
+    exec_env = None
+    exec_argv = None
+    if sys.platform == "darwin":
+        os.set_inheritable(write_fd, True)
+        exec_env = os.environ | {DAEMON_STATUS_FD_ENV: str(write_fd)}
+        # Preserve interpreter flags and both console-script/python -m entry.
+        exec_argv = [sys.executable, *sys.orig_argv[1:]]
 
     pid = os.fork()
     if pid > 0:
@@ -75,6 +99,8 @@ def fork_daemon(log_dir: Path) -> tuple[int, int]:
     # Second fork — can never reacquire a controlling terminal
     if os.fork() > 0:
         os._exit(0)
+    if exec_env is not None and exec_argv is not None:
+        os.execve(sys.executable, exec_argv, exec_env)
     return 0, write_fd
 
 
@@ -83,7 +109,7 @@ def redirect_stdio_to_devnull() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
 
-    devnull = open(os.devnull)
+    devnull = open(os.devnull, "r+")
     os.dup2(devnull.fileno(), sys.stdin.fileno())
     os.dup2(devnull.fileno(), sys.stdout.fileno())
     os.dup2(devnull.fileno(), sys.stderr.fileno())
@@ -109,31 +135,62 @@ def read_daemon_status(fd: int) -> dict[str, Any] | None:
 
 
 def install_signal_handlers(
-    entry: RunEntry,
+    run_id: str,
     coordinator: ModuleCoordinator,
     *,
     sigint: bool = True,
 ) -> None:
-    """Install SIGTERM/SIGINT handlers that stop the coordinator and clean the registry.
+    """Install SIGTERM/SIGINT handlers that request shutdown through the main loop.
 
     When `sigint` is False, only SIGTERM is wired. This is useful for foreground
-    mode where the default SIGINT behavior (`KeyboardInterrupt`) should be
-    preserved so Ctrl+C produces a visible traceback.
+    mode where the default SIGINT behavior (`KeyboardInterrupt`) is preserved.
+
+    The watchdog sweeps strays after exit. Sweeping here would kill and reap
+    multiprocessing's resource tracker before its owning interpreter cleans up.
     """
 
     def _shutdown(signum: int, frame: object) -> None:
-        logger.info("Received signal, shutting down", signal=signum)
-        try:
-            coordinator.stop()
-        except Exception:
-            logger.error("Error during coordinator stop", exc_info=True)
-        try:
-            kill_run_processes(entry.run_id)
-        except Exception:
-            logger.error("Error during run-process sweep", exc_info=True)
-        entry.remove()
-        sys.exit(0)
+        logger.info("Received signal, shutting down", signal=signum, run_id=run_id)
+        coordinator.shutdown()
 
     signal.signal(signal.SIGTERM, _shutdown)
     if sigint:
         signal.signal(signal.SIGINT, _shutdown)
+
+
+def run_coordinator(
+    blueprint: Blueprint,
+    config: ParsedBlueprintConfig,
+    *,
+    run_id: str,
+    log_dir: str | os.PathLike[str],
+    rpc_name: str | None = None,
+    remote_module_refs: Mapping[tuple[str, str], tuple[type[ModuleBase] | frozenset[str], str]]
+    | None = None,
+    sigint: bool = True,
+    on_ready: Callable[[ModuleCoordinator], None] | None = None,
+) -> None:
+    """Build, serve RPC, call ``on_ready`` and loop until a signal; the caller owns any registry entry."""
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.process_lifecycle import spawn_watchdog
+    from dimos.memory.tap import recording
+
+    os.environ[DIMOS_RUN_ID_ENV] = run_id
+    coordinator = ModuleCoordinator.build(blueprint, config, remote_module_refs=remote_module_refs)
+    try:
+        if not coordinator.health_check():
+            raise RuntimeError("health check failed, a worker process died")
+        coordinator.start_rpc_service(name=rpc_name)
+    except BaseException:
+        coordinator.stop()
+        raise
+    spawn_watchdog(run_id, log_dir=log_dir)
+    install_signal_handlers(run_id, coordinator, sigint=sigint)
+    try:
+        if on_ready is not None:
+            on_ready(coordinator)
+        with recording(coordinator):
+            coordinator.loop()
+    except Exception:
+        coordinator.stop()
+        raise

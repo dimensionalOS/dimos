@@ -213,7 +213,8 @@ class LCMSpySource:
 class ZenohSpySource:
     """Spy source over zenoh, via ZenohPubSubBase.subscribe_all.
 
-    zenoh's subscribe_all is latest-per-topic over dimos/** (best-effort), so
+    zenoh's subscribe_all is latest-per-topic over dimos/** and dimos-domains/**
+    (best-effort), so
     same-topic bursts between drains conflate away. nbytes = payload length;
     topics arrive as str(Topic) with the type suffix reconstructed from the key.
     """
@@ -352,7 +353,7 @@ SOURCE_FACTORIES: dict[str, Callable[[], SpySource]] = {
 }
 """Known transports by name; each factory constructs its source only when called.
 
-v1: lcm + zenoh. SHM/ROS/DDS/Redis are future sources.
+v1: lcm + zenoh. ROS/DDS are future sources.
 """
 
 

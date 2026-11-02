@@ -14,7 +14,15 @@
 
 """The Go2's numbers live in `embodiment/go2.py`; everything else is pinned to them."""
 
+import itertools
+
+import mujoco
+import numpy as np
+import pytest
+
+from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.embodiment.go2 import GO2
+from dimos.robot.diy.alfred.config import alfred_model
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
 
 
@@ -50,3 +58,23 @@ def test_dilate_leaves_the_clearance_floor_alone():
     """It moves the BODY. The margin the search adds is the follower's tracking
     floor and is not this knob's to spend."""
     assert GO2.dilated(by=-0.05).precision == GO2.precision
+
+
+@pytest.mark.self_hosted
+def test_alfred_box_and_height_cover_the_model_with_the_arms_hanging() -> None:
+    model = mujoco.MjSpec.from_string(alfred_model().load().xml).compile()
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    reach = np.zeros(3)
+    for geom in range(model.ngeom):
+        mesh = model.geom_dataid[geom]
+        if model.geom_type[geom] == mujoco.mjtGeom.mjGEOM_MESH:
+            start = model.mesh_vertadr[mesh]
+            local = model.mesh_vert[start : start + model.mesh_vertnum[mesh]]
+        else:
+            local = np.array(list(itertools.product(*((-h, h) for h in model.geom_size[geom]))))
+        world = data.geom_xpos[geom] + local @ data.geom_xmat[geom].reshape(3, 3).T
+        reach = np.maximum(reach, np.abs(world).max(axis=0))
+    assert ALFRED.length / 2.0 == pytest.approx(reach[0], abs=0.005)
+    assert ALFRED.width / 2.0 == pytest.approx(reach[1], abs=0.005)
+    assert ALFRED.height == pytest.approx(reach[2], abs=0.005)

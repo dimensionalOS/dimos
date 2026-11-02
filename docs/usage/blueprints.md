@@ -181,12 +181,12 @@ If you don't like the name you can always override it like in the next section.
 
 ## Which transport is used?
 
-By default `LCMTransport` is used if the object supports `lcm_encode`. If it doesn't `pLCMTransport` is used (meaning "pickled LCM").
+Streams follow the configured backend, which defaults to Zenoh. Objects supporting `lcm_encode` use `ZenohTransport`; other objects use `pZenohTransport`. Selecting `--transport=lcm` uses the corresponding LCM transports.
 
 You can override transports with the `transports` method. It returns a new blueprint in which the override is set.
 
 ```python session=blueprint-ex1
-from dimos.core.transport import pSHMTransport, pLCMTransport
+from dimos.core.transport_factory import make_transport
 
 base_blueprint = autoconnect(
     module1(arg1=1),
@@ -198,10 +198,8 @@ expanded_blueprint = autoconnect(
     module5(),
 )
 base_blueprint = base_blueprint.transports({
-    ("image", Image): pSHMTransport(
-        "/go2/color_image", default_capacity=1920 * 1080 * 3,  # 1920x1080 frame x 3 (RGB) x uint8
-    ),
-    ("start_explore", bool): pLCMTransport("/start_explore"),
+    ("image", Image): make_transport("go2/color_image", Image),
+    ("start_explore", bool): make_transport("start_explore", bool),
 })
 ```
 
@@ -331,6 +329,10 @@ This works in simulation too: adding `--simulation` starts one MuJoCo instance p
 ```bash
 ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
 ```
+
+## Running across machines
+
+`.hosted(...)` places part of a blueprint on another machine. See [Placing modules](/docs/usage/distributed/blueprints.md).
 
 ## Overriding global configuration.
 

@@ -49,6 +49,12 @@ pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
     )
 }
 
+/// The region grid cell a world point falls in.
+pub fn region_at((x, y, _): (f32, f32, f32), voxel_size: f32, region_m: f32) -> Cell {
+    let cell_m = region_m.max(CHUNK_EDGE as f32 * voxel_size);
+    ((x / cell_m).floor() as i32, (y / cell_m).floor() as i32)
+}
+
 #[inline]
 fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     let half = voxel_size * 0.5;
@@ -85,6 +91,8 @@ pub struct Config {
     /// on direct hits, lower clears on slight grazes too.
     #[validate(range(min = 0.0, max = 1.0))]
     pub graze_cos: f32,
+    /// Spare a grazing miss only on a voxel hit within this many frames, so a surface nothing sees any more clears; u32::MAX spares always.
+    pub graze_recent_frames: u32,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
     /// emits all. Higher drops isolated returns. The global map is unfiltered.
     #[validate(range(min = 0))]
@@ -115,14 +123,16 @@ pub struct Config {
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Edge of the square regions a seed load is handed on in and the map
-    /// viz publishes by.
+    /// Edge of the square regions a seed load is handed on in.
     #[validate(range(exclusive_min = 0.0))]
     pub region_m: f32,
-    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    /// Edge of the square cells the map viz publishes by, at least a chunk edge.
+    #[validate(range(exclusive_min = 0.0))]
+    pub viz_cell_m: f32,
+    /// Publish the cells whose chunks changed every Nth frame. Zero disables it.
     pub viz_emit_every: u32,
-    /// Unchanged regions republished per viz tick, round robin. Zero turns the sweep off.
-    pub viz_sweep_regions: u32,
+    /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
+    pub viz_sweep_cells: u32,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
@@ -188,6 +198,8 @@ pub struct VoxelMap {
     changed_chunks: AHashSet<ChunkKey>,
     /// Occupied neighbors a healthy voxel needs to be emitted, zero for none.
     support_min: i32,
+    /// Frames integrated so far, which voxels stamp their last hit with.
+    frame: u32,
 }
 
 impl VoxelMap {
@@ -316,8 +328,9 @@ impl VoxelMap {
             return false;
         }
         let support = self.count_healthy_neighbors(key);
-        self.voxels
-            .insert(key, Voxel::with_health(SEED_HEALTH), support);
+        let mut seed = Voxel::with_health(SEED_HEALTH);
+        seed.last_hit = self.frame;
+        self.voxels.insert(key, seed, support);
         self.health_crossed(key, true);
         true
     }
@@ -361,30 +374,6 @@ impl VoxelMap {
         }
         if (was > 0) != now_healthy {
             self.health_crossed(key, now_healthy);
-        }
-        removed
-    }
-
-    /// Delete voxels outright, whatever their health, keeping every neighbor's
-    /// `support` count in sync. Unknown keys are skipped. Returns how many voxels
-    /// were removed.
-    ///
-    /// This is the escape hatch for space a sensor cannot ray-trace clear: a
-    /// wrist camera's own arm occludes the volume behind it, so no ray ever
-    /// fires a miss there and the arm's own returns would sit in the map
-    /// forever. A caller that knows those keys are free names them here.
-    pub fn clear_voxels(&mut self, keys: impl IntoIterator<Item = VoxelKey>) -> usize {
-        let mut removed = 0;
-        for key in keys {
-            let Some(voxel) = self.voxels.remove(&key) else {
-                continue;
-            };
-            // The fine-cell bitmask rides inside the removed voxel, so the fine
-            // layer needs no separate cleanup.
-            if voxel.health > 0 {
-                self.health_crossed(key, false);
-            }
-            removed += 1;
         }
         removed
     }
@@ -449,6 +438,8 @@ pub struct Voxel {
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
     normal: NormalFit,
+    /// The map frame this voxel was last hit (or seeded) in.
+    last_hit: u32,
 }
 
 impl Default for Voxel {
@@ -461,6 +452,7 @@ impl Default for Voxel {
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
+            last_hit: 0,
         }
     }
 }
@@ -958,6 +950,7 @@ pub fn update_map(
     points: &[(f32, f32, f32)],
     cfg: &Config,
 ) -> FrameHits {
+    map.frame = map.frame.wrapping_add(1);
     let inv = 1.0_f32 / cfg.voxel_size;
     let max_range_sq = if cfg.max_range > 0.0 {
         cfg.max_range * cfg.max_range
@@ -992,6 +985,8 @@ pub fn update_map(
         shadow_depth: cfg.shadow_depth,
         grace_depth: cfg.grace_depth,
         graze_cos: cfg.graze_cos,
+        map_frame: map.frame,
+        graze_recent_frames: cfg.graze_recent_frames,
         fine_divisor: fine,
     };
     let step = cfg.ray_subsample as usize;
@@ -1020,6 +1015,9 @@ pub fn update_map(
     for &v in &hits {
         if map.record_hit(v, cfg.min_health, cfg.max_health) {
             changed.insert(v);
+        }
+        if let Some(voxel) = map.voxels.get_mut(&v) {
+            voxel.last_hit = map.frame;
         }
     }
 
@@ -1256,19 +1254,6 @@ fn in_key_range(x: f32, y: f32, z: f32, inv: f32) -> bool {
     (x * inv).abs() < KEY_LIMIT && (y * inv).abs() < KEY_LIMIT && (z * inv).abs() < KEY_LIMIT
 }
 
-/// Quantize world-frame metric points to voxel keys the same way returns are
-/// quantized, so a caller naming voxels by position lands on the ones the map
-/// actually holds.
-pub fn metric_voxel_keys(
-    points: impl IntoIterator<Item = (f32, f32, f32)>,
-    voxel_size: f32,
-) -> impl Iterator<Item = VoxelKey> {
-    let inv = 1.0 / voxel_size;
-    points
-        .into_iter()
-        .map(move |(x, y, z)| world_to_voxel(x, y, z, inv))
-}
-
 /// Fine cells of `key` crossed by the ray segment between `t0` and `t1`,
 /// as a bitmask of flat child indices.
 fn crossed_fine_cells(
@@ -1359,6 +1344,9 @@ struct RayFrame<'a> {
     shadow_depth: f32,
     grace_depth: f32,
     graze_cos: f32,
+    /// This frame's number, and how recent a hit keeps a voxel's grazing protection.
+    map_frame: u32,
+    graze_recent_frames: u32,
     fine_divisor: Option<i32>,
 }
 
@@ -1382,6 +1370,8 @@ fn find_misses_along_ray(
         shadow_depth,
         grace_depth,
         graze_cos,
+        map_frame,
+        graze_recent_frames,
         fine_divisor,
     } = *frame;
     if origin_voxel == endpoint {
@@ -1514,6 +1504,11 @@ fn find_misses_along_ray(
                         continue;
                     }
                 }
+            }
+            // Nothing has seen this voxel lately: no surface there to protect from a grazing ray.
+            if map_frame.wrapping_sub(c.last_hit) > graze_recent_frames {
+                walk.misses.insert((x, y, z));
+                continue;
             }
             match c.normal {
                 NormalFit::Fitted(n) => {

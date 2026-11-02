@@ -35,12 +35,12 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
 if TYPE_CHECKING:
-    from .backend import GraspGenXRuntime
+    from graspgenx_runtime.backend import GraspGenXRuntime
 
 
 def _create_runtime(config: GraspGenXConfig) -> GraspGenXRuntime:
     # This import is the intentional first-use boundary for the optional GPU runtime.
-    from .backend import GraspGenXRuntime
+    from graspgenx_runtime.backend import GraspGenXRuntime
 
     return GraspGenXRuntime(config)
 
@@ -83,7 +83,7 @@ class GraspGenXRuntimeModule(GraspGenXModule):
             raise ValueError("object pointcloud XYZ values must be finite floats in metres")
 
         try:
-            poses, scores = self._runtime.infer(points)
+            poses, scores = self._runtime.infer(points, self.config.num_samples)
         except Exception as exc:
             raise GraspGenXError("GraspGenX inference failed") from exc
         scores = scores.reshape(-1)

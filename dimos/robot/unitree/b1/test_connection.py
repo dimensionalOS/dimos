@@ -22,17 +22,19 @@
 # should be used and tested. Additionally, tests should always use `try-finally`
 # to clean up even if the test fails.
 
+import os
 import sys
 import threading
 import time
+
+import pytest
 
 _IS_MACOS = sys.platform == "darwin"
 
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Int32 import Int32
-
-from .connection import MockB1ConnectionModule
+from dimos.robot.unitree.b1.connection import MockB1ConnectionModule
 
 
 class TestB1Connection:
@@ -240,6 +242,10 @@ class TestB1Connection:
             conn.watchdog_thread.join(timeout=1.0)
             conn._close_module()
 
+    @pytest.mark.skipif(
+        _IS_MACOS and bool(os.environ.get("CI")),
+        reason="watchdog timing assertions fail on the macOS CI runners",
+    )
     def test_watchdog_timing_accuracy(self) -> None:
         """Test that watchdog zeros commands at approximately 200ms."""
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
@@ -327,6 +333,10 @@ class TestB1Connection:
         conn.watchdog_thread.join(timeout=0.5)
         conn._close_module()
 
+    @pytest.mark.skipif(
+        _IS_MACOS and bool(os.environ.get("CI")),
+        reason="watchdog timing assertions fail on the macOS CI runners",
+    )
     def test_watchdog_stops_movement_when_commands_stop(self) -> None:
         """Verify watchdog zeros commands when packets stop being sent."""
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)

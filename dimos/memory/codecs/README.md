@@ -26,10 +26,15 @@ class Codec(Protocol[T]):
 from dimos.memory.codecs import codec_for
 
 codec_for(Image)        # → JpegCodec(quality=50)
+codec_for(Image, sample=depth_image)  # → Lz4Codec(LcmCodec(Image))  (DEPTH, DEPTH16, GRAY16)
 codec_for(SomeLcmMsg)   # → LcmCodec(SomeLcmMsg)   (if has lcm_encode/lcm_decode)
 codec_for(dict)         # → PickleCodec()            (fallback)
 codec_for(None)         # → PickleCodec()
 ```
+
+`Image` covers depth as well as colour, and JPEG would destroy depth values, so pass a
+first payload as `sample` when one is at hand. `--record` opens each stream on its first
+message and does this.
 
 ## Writing a new codec
 

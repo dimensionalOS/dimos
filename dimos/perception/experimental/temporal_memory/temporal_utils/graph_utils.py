@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from ..entity_graph_db import EntityGraphDB
+    from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
 
 logger = setup_logger()
 

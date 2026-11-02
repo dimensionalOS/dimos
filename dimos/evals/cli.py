@@ -31,14 +31,14 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
 
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
 
 
-def agent_class(module: str) -> type[Agent]:
+def agent_class(module: str) -> type[EvalSubject]:
     """The one agent class defined in *module* — an agent is a module."""
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
 
     mod = importlib.import_module(module)
     found = [
@@ -46,7 +46,7 @@ def agent_class(module: str) -> type[Agent]:
         for v in vars(mod).values()
         if isinstance(v, type)
         and v.__module__ == mod.__name__
-        and issubclass(v, Agent)
+        and issubclass(v, EvalSubject)
         and not inspect.isabstract(v)
     ]
     if len(found) != 1:
@@ -95,7 +95,7 @@ def run_provenance(source: dict[str, Any], module: str, kwargs: dict[str, Any]) 
     return {"source": source, "agent": agent}
 
 
-def load_agent(module: str, overrides: Iterable[str] = ()) -> Agent:
+def load_agent(module: str, overrides: Iterable[str] = ()) -> EvalSubject:
     """``--agent module --set field=value ...``: the agent class in *module*,
     constructed with the overrides. A field the agent does not have is the
     constructor's own ``TypeError``."""
@@ -127,6 +127,12 @@ def run(
         False, "--docker", help="Run in a detached container (docker/evals/compose.yaml)"
     ),
 ) -> None:
+    """Run an eval suite.
+
+    Exits 1 when a case errored or no case was selected. A case that scored
+    below its threshold is a measurement, not an error, and exits 0. With
+    --docker the status only says whether the container started.
+    """
     if docker:
         _run_in_docker(suite, agent, set_, allow, exclude, tags, limit)
         return
@@ -164,6 +170,8 @@ def run(
         f"\n{s.n} cases | mean {s.mean_score:.2f} | pass {s.pass_rate:.0%} "
         f"| errors {s.errors} | {s.duration_s:.0f}s | {runner.run_dir}"
     )
+    if s.errors or not s.n:
+        raise typer.Exit(1)
 
 
 def _run_in_docker(

@@ -18,7 +18,8 @@ Relay discovery and `RelayClient.connect` are replaced by fakes and fake
 transports sit under the module's `In` streams (module_test_support.py), so lazy
 subscribe/unsubscribe, the maxHz gate, the encode path, and reconnect are all
 observable directly. cockpit()-authored channels and the publish path are
-covered in test_relay_bridge_authoring.py.
+covered in test_relay_bridge_authoring.py, WebRTC video in
+test_relay_bridge_rtc.py.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import replace
 import json
 from pathlib import Path
+import random
 import socket
 import subprocess
 import sys
@@ -40,7 +42,6 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.core.global_config import global_config
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -48,7 +49,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
-from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop
+from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.module_test_support import (
@@ -65,6 +67,7 @@ from dimos.web.relay_bridge.module_test_support import (
     push,
     wait_until,
 )
+from dimos.web.relay_bridge.pacing import passes_rate_gate, passes_sampling_gate
 from dimos.web.relay_bridge.protocol import (
     PROTOCOL_VERSION,
     ProtocolError,
@@ -74,12 +77,7 @@ from dimos.web.relay_bridge.protocol import (
     TeleopStop as WireTeleopStop,
     Twist as WireTwist,
 )
-from dimos.web.relay_bridge.relay_bridge_module import (
-    RelayBridgeConfig,
-    RelayBridgeModule,
-    default_manifest,
-    resolve_robot_info,
-)
+from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.wt_client import RelayInfo, RelayRejectedError
 
 
@@ -137,9 +135,9 @@ def test_manifest_and_robot_info_content() -> None:
 
     info = resolve_robot_info(config)
     assert (info.id, info.name) == ("go2-lab", "Lab")
-    # Fallback chain: explicit id -> global robot_id -> hostname.
+    # An unspecified id uses the hostname.
     fallback = resolve_robot_info(RelayBridgeConfig())
-    assert fallback.id == (RelayBridgeConfig().g.robot_id or socket.gethostname())
+    assert fallback.id == socket.gethostname()
     assert fallback.name == fallback.id
 
 
@@ -236,13 +234,13 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
 
 def test_default_image_gate_preserves_mujoco_video_rate() -> None:
     config = RelayBridgeConfig()
-    last_input: dict[str, float] = {}
+    next_due: dict[str, float] = {}
     times = [100.0 + frame / VIDEO_FPS for frame in range(VIDEO_FPS)]
     accepted = [
         now
         for now in times
-        if relay_bridge_module._passes_rate_gate(
-            last_input,
+        if passes_sampling_gate(
+            next_due,
             "color_image",
             now,
             1.0 / config.image_max_hz,
@@ -250,6 +248,46 @@ def test_default_image_gate_preserves_mujoco_video_rate() -> None:
     ]
 
     assert accepted == times
+
+
+def _sampled(times: list[float], hz: float) -> int:
+    next_due: dict[str, float] = {}
+    return sum(passes_sampling_gate(next_due, "ch", now, 1.0 / hz) for now in times)
+
+
+def _jittered(hz: float, seconds: int, jitter: float, seed: int = 7) -> list[float]:
+    rng = random.Random(seed)
+    return [100.0 + i / hz + rng.uniform(-jitter, jitter) for i in range(int(hz * seconds))]
+
+
+def test_sampling_gate_passes_a_source_at_the_gate_rate_through_jitter() -> None:
+    # A last-arrival anchor rejects every slightly early frame and re-anchors
+    # on the late ones (30 fps -> 20 in the benchmark); the schedule anchor
+    # passes them all. +-2 ms at 30 Hz and +-3 ms at 20 Hz are the W1 cases.
+    assert _sampled(_jittered(30.0, 10, 0.002), 30.0) == 300
+    assert _sampled(_jittered(20.0, 10, 0.003), 20.0) == 200
+    last_input: dict[str, float] = {}
+    strict = sum(
+        passes_rate_gate(last_input, "ch", now, 1.0 / 30.0) for now in _jittered(30.0, 10, 0.002)
+    )
+    assert strict < 250  # the old gate's thinning, for contrast
+
+
+def test_sampling_gate_never_exceeds_the_rate_on_average() -> None:
+    # A 60 Hz source through a 30 Hz gate: half the frames, evenly (plus the
+    # one-frame burst the first accept allows, half an interval after it).
+    assert _sampled(_jittered(60.0, 10, 0.0), 30.0) == 301
+    assert _sampled(_jittered(60.0, 10, 0.004), 30.0) <= 301
+    # A late frame is followed by at most one early one (the schedule holds):
+    # 3 frames in 40 ms after a 100 ms gap on a 30 Hz gate admit 2, not 3.
+    next_due: dict[str, float] = {}
+    assert passes_sampling_gate(next_due, "ch", 100.0, 1 / 30)
+    late = [100.1, 100.12, 100.14]
+    assert [passes_sampling_gate(next_due, "ch", now, 1 / 30) for now in late] == [
+        True,
+        True,
+        False,
+    ]
 
 
 def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
@@ -331,13 +369,13 @@ def test_no_costmap_encode_while_unsubscribed(costmap_bridge, monkeypatch) -> No
     # happen without viewers, independent of the module.encoded bookkeeping.
     module, clients = costmap_bridge
     calls = {"n": 0}
-    real = zlib.compress
+    real = builtin_codecs._zlib_rle
 
-    def spy(data: Any, level: int = -1) -> bytes:
+    def spy(data: bytes) -> bytes:
         calls["n"] += 1
-        return real(data, level)
+        return real(data)
 
-    monkeypatch.setattr(builtin_codecs.zlib, "compress", spy)
+    monkeypatch.setattr(builtin_codecs, "_zlib_rle", spy)
     costmap_transport(module).publish(COSTMAP_GRID)
     costmap_transport(module).publish(COSTMAP_GRID)
     flush_loop(module)
@@ -992,7 +1030,7 @@ def test_local_relay_ignores_relay_ca(monkeypatch) -> None:
         seen.append((kwargs.get("cafile"), kwargs.get("insecure")))
         return client
 
-    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    monkeypatch.setattr(relay_bridge_module, "probe_local_port", lambda _: None)
     patch_relay(monkeypatch, fake_connect)
     monkeypatch.setattr(
         RelayBridgeModule,
@@ -1032,26 +1070,6 @@ def test_relay_key_reaches_hello(monkeypatch) -> None:
         stop_module(module)
 
 
-def test_relay_key_falls_back_to_global_config(monkeypatch) -> None:
-    # RELAY_KEY (env or .env) lands in GlobalConfig; the module reads it when
-    # its own field is unset. The autouse fixture restores global_config.
-    client = FakeClient()
-
-    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
-        return client
-
-    patch_relay(monkeypatch, fake_connect)
-    global_config.update(relay_key="global-key-0123456789abcdef")
-    module = RelayBridgeModule(
-        relay_url="http://127.0.0.1:7780", open_browser=False, robot_id="unit-bot"
-    )
-    try:
-        module.start()
-        assert client.hello_token == "global-key-0123456789abcdef"
-    finally:
-        stop_module(module)
-
-
 def test_local_relay_ignores_relay_key(monkeypatch) -> None:
     # A spawned local relay has no auth file: the key is never sent to it.
     client = FakeClient()
@@ -1059,7 +1077,7 @@ def test_local_relay_ignores_relay_key(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         return client
 
-    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    monkeypatch.setattr(relay_bridge_module, "probe_local_port", lambda _: None)
     patch_relay(monkeypatch, fake_connect)
     monkeypatch.setattr(
         RelayBridgeModule,
@@ -1374,7 +1392,7 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     assert wait_until(lambda: len(twists) == 2)
     elapsed = time.monotonic() - started
     assert twists[1].is_zero()
-    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+    deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
     assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s (deadline {deadline:.3f}s)"
     time.sleep(3 * _TELEOP_TEST_WATCHDOG_MS / 1000)
     settle(module)
@@ -1672,7 +1690,7 @@ def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
         elapsed = time.monotonic() - started
         assert not release_encode.is_set()
         assert twists[1].is_zero()
-        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + teleop._TELEOP_POLL_S + 0.5
         assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s during a replay encode"
         push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=2))
         assert wait_until(lambda: len(twists) == 3)

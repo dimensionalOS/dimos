@@ -128,7 +128,7 @@ def baked_host(
 ) -> type[BakedHost]:
     """Build the NativeModule subclass that drives a baked host binary.
 
-    Assign the result to `name` at module level: deploying to a worker pickles
+    Assign the result to `name` at module level: deploying to a worker sends
     the class by that path.
     """
     if not members:
@@ -160,6 +160,6 @@ def baked_host(
         "_remaps": remaps,
     }
     host_cls = type(name, (BakedHost,), namespace)
-    # Nothing names the config class, so put it where pickle will look for it.
+    # Nothing names the config class, so put it where the codec will look for it.
     setattr(sys.modules[caller], config_cls.__name__, config_cls)
     return host_cls

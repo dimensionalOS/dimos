@@ -43,7 +43,7 @@ class Navigation(Module):
     def start(self) -> None:
         def _odom(msg) -> None:
             self.odom_msg_count += 1
-            print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
+            print("RCV:", msg)
             self.mov.publish(msg.position)
 
         unsub = self.odometry.subscribe(_odom)
@@ -51,23 +51,26 @@ class Navigation(Module):
 
         def _lidar(msg) -> None:
             self.lidar_msg_count += 1
-            if hasattr(msg, "pubtime"):
-                print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
-            else:
-                print("RCV: unknown time", msg)
+            print("RCV:", msg)
 
         unsub = self.lidar.subscribe(_lidar)
         self.register_disposable(Disposable(unsub))
 
 
-def test_classmethods() -> None:
+@pytest.fixture
+def navigation():
+    nav = Navigation()
+    try:
+        yield nav
+    finally:
+        nav.stop()
+
+
+def test_classmethods(navigation) -> None:
     # Test class property access
     class_rpcs = Navigation.rpcs
-    print("Class rpcs:", class_rpcs)
     # Test instance property access
-    nav = Navigation()
-    instance_rpcs = nav.rpcs
-    print("Instance rpcs:", instance_rpcs)
+    instance_rpcs = navigation.rpcs
 
     # Assertions
     assert isinstance(class_rpcs, dict), "Class rpcs should be a dictionary"
@@ -77,7 +80,8 @@ def test_classmethods() -> None:
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 8
+    assert "get_stream_descriptors" in class_rpcs
+    assert len(class_rpcs) == 9
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -88,8 +92,6 @@ def test_classmethods() -> None:
         "navigate_to should have __rpc__ attribute"
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
-
-    nav._close_module()
 
 
 @pytest.mark.self_hosted
@@ -105,7 +107,7 @@ def test_basic_deployment(dimos) -> None:
     # this one encodes proper LCM messages
     robot.lidar.transport = LCMTransport("/lidar", PointCloud2)
 
-    # odometry & mov using just a pickle over LCM
+    # odometry & mov on the untyped (CBOR) LCM transport
     robot.odometry.transport = pLCMTransport("/odom")
     nav.mov.transport = pLCMTransport("/mov")
 

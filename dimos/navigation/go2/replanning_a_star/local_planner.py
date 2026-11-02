@@ -21,7 +21,6 @@ from typing import Literal, TypeAlias
 import numpy as np
 from reactivex import Subject
 
-from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -59,7 +58,6 @@ class LocalPlanner(Resource):
     _stop_planning_event: Event
     _state: PlannerState
     _state_unique_id: int
-    _global_config: GlobalConfig
     _navigation_map: NavigationMap
     _goal_tolerance: float
     _controller: Controller
@@ -71,7 +69,13 @@ class LocalPlanner(Resource):
     _navigation_costmap_last: float = 0.0
 
     def __init__(
-        self, global_config: GlobalConfig, navigation_map: NavigationMap, goal_tolerance: float
+        self,
+        navigation_map: NavigationMap,
+        goal_tolerance: float,
+        *,
+        robot_width: float,
+        nerf_speed: float = 1.0,
+        simulation: bool = False,
     ) -> None:
         self.cmd_vel = Subject()
         self.stopped_navigating = Subject()
@@ -82,16 +86,16 @@ class LocalPlanner(Resource):
         self._stop_planning_event = Event()
         self._state = "idle"
         self._state_unique_id = 0
-        self._global_config = global_config
+        self._robot_width = robot_width
         self._navigation_map = navigation_map
         self._goal_tolerance = goal_tolerance
 
         speed = self._speed
-        if global_config.nerf_speed < 1.0:
-            speed *= global_config.nerf_speed
+        if nerf_speed < 1.0:
+            speed *= nerf_speed
 
         self._controller = PController(
-            self._global_config,
+            simulation,
             speed,
             self._control_frequency,
         )
@@ -113,7 +117,7 @@ class LocalPlanner(Resource):
 
         with self._lock:
             self._path = path
-            self._path_clearance = PathClearance(self._global_config, self._path)
+            self._path_clearance = PathClearance(self._robot_width, self._path)
             self._path_distancer = PathDistancer(self._path)
             self._pose_index = 0
             self._thread = Thread(target=self._thread_entrypoint, daemon=True)

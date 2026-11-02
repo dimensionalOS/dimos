@@ -36,6 +36,7 @@ fn basic_config() -> Config {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -46,8 +47,9 @@ fn basic_config() -> Config {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     }
 }
 
@@ -144,6 +146,8 @@ fn find_misses_along_ray_hits_correct_voxels() {
         shadow_depth,
         grace_depth: 0.0,
         graze_cos: 0.5,
+        map_frame: 0,
+        graze_recent_frames: u32::MAX,
         fine_divisor: None,
     };
     let mut walk = RayWalk::default();
@@ -353,6 +357,7 @@ fn ground_clipping_single_ray() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -363,8 +368,9 @@ fn ground_clipping_single_ray() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -511,6 +517,7 @@ fn stair_clipping_ray_fan() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -521,8 +528,9 @@ fn stair_clipping_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Staircase
@@ -595,6 +603,7 @@ fn landing_floor_ray_fan() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -605,8 +614,9 @@ fn landing_floor_ray_fan() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -667,6 +677,7 @@ fn landing_grazed_from_below() {
         min_health: 0,
         max_health: 1,
         graze_cos,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -677,8 +688,9 @@ fn landing_grazed_from_below() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -808,6 +820,7 @@ fn grazing_ray_spares_planar_floor() {
         min_health: 0,
         max_health: 1,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -818,14 +831,106 @@ fn grazing_ray_spares_planar_floor() {
         tf_wait_timeout_s: 0.05,
         worker_threads: 4,
         region_m: 4.0,
+        viz_cell_m: 4.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_sweep_cells: 0,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map.voxels.keys().filter(|k| k.1 == 0 && k.2 == 0).collect();
     update_map(&mut map, origin, &ray, &cfg);
     let clipped = row.iter().filter(|k| !map.voxels.contains_key(k)).count();
     assert_eq!(clipped, 0, "a planar floor keeps its grazing spare");
+}
+
+/// Floor points, the grazing ray's origin, the ray's endpoints, and the config.
+type GrazedFloor = (
+    Vec<(f32, f32, f32)>,
+    (f32, f32, f32),
+    Vec<(f32, f32, f32)>,
+    Config,
+);
+
+/// The floor of `grazing_ray_spares_planar_floor`, a ray grazing it, and a config sparing only voxels hit in the last 3 frames.
+fn grazed_floor_with_recency() -> GrazedFloor {
+    let voxel_size = 0.1_f32;
+    let y_half = 0.3_f32;
+    let ds = voxel_size / 3.0;
+    let nx = (20.0 / ds).ceil() as i32;
+    let ny = (2.0 * y_half / ds).ceil() as i32;
+    let floor: Vec<(f32, f32, f32)> = (0..=nx)
+        .flat_map(|column| {
+            (0..=ny).map(move |row| {
+                (
+                    column as f32 * ds,
+                    -y_half + row as f32 * ds,
+                    voxel_size * 0.5,
+                )
+            })
+        })
+        .collect();
+    let cfg = Config {
+        voxel_size,
+        shadow_depth: 0.2,
+        grace_depth: 0.2,
+        min_health: 0,
+        max_health: 1,
+        graze_cos: 0.5,
+        graze_recent_frames: 3,
+        support_min: 0,
+        ..basic_config()
+    };
+    (floor, (0.0, 0.0, 0.35), vec![(8.0, 0.0, 0.0)], cfg)
+}
+
+#[test]
+fn grazing_ray_clears_a_layer_nothing_sees_any_more() {
+    let (floor, origin, ray, cfg) = grazed_floor_with_recency();
+    let (mut map, _) = build_surface(&floor, cfg.voxel_size, cfg.max_health);
+    let row: Vec<VoxelKey> = map
+        .voxels
+        .keys()
+        .filter(|key| key.1 == 0 && key.2 == 0)
+        .collect();
+    for _ in 0..cfg.graze_recent_frames {
+        update_map(&mut map, origin, &ray, &cfg);
+    }
+    assert!(
+        row.iter().all(|key| map.voxels.contains_key(key)),
+        "spared while recently hit"
+    );
+    update_map(&mut map, origin, &ray, &cfg);
+    let cleared = row
+        .iter()
+        .filter(|key| !map.voxels.contains_key(key))
+        .count();
+    assert!(
+        cleared > 0,
+        "a layer unhit for longer than graze_recent_frames clears under a grazing ray"
+    );
+}
+
+#[test]
+fn grazing_ray_spares_a_layer_still_being_seen() {
+    let (floor, origin, ray, cfg) = grazed_floor_with_recency();
+    let (mut map, _) = build_surface(&floor, cfg.voxel_size, cfg.max_health);
+    let row: Vec<VoxelKey> = map
+        .voxels
+        .keys()
+        .filter(|key| key.1 == 0 && key.2 == 0)
+        .collect();
+    let above = (10.0_f32, 0.0_f32, 2.0_f32);
+    for _ in 0..4 * cfg.graze_recent_frames {
+        update_map(&mut map, above, &floor, &cfg);
+        update_map(&mut map, origin, &ray, &cfg);
+    }
+    let clipped = row
+        .iter()
+        .filter(|key| !map.voxels.contains_key(key))
+        .count();
+    assert_eq!(
+        clipped, 0,
+        "a floor re-hit every other frame keeps its grazing spare"
+    );
 }
 
 #[test]
@@ -1248,6 +1353,7 @@ fn milestone_gated_normals_match_full_refit() {
         shadow_depth: 0.2,
         grace_depth: 0.2,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -1373,6 +1479,7 @@ fn new_voxel_is_fit_before_grazing_ray() {
         shadow_depth: 0.2,
         grace_depth: 0.2,
         graze_cos: 0.5,
+        graze_recent_frames: u32::MAX,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -1504,90 +1611,13 @@ fn fine_children_bin_exactly_to_their_parents() {
 }
 
 #[test]
-fn metric_voxel_keys_quantize_by_map_resolution() {
-    let keys: Vec<VoxelKey> =
-        metric_voxel_keys([(0.049, 0.05, -0.001), (0.1, -0.1, 0.0)], 0.05).collect();
+fn world_to_voxel_quantizes_by_map_resolution() {
+    let keys: Vec<VoxelKey> = [(0.049, 0.05, -0.001), (0.1, -0.1, 0.0)]
+        .into_iter()
+        .map(|(x, y, z)| world_to_voxel(x, y, z, 1.0 / 0.05))
+        .collect();
 
     assert_eq!(keys, vec![(0, 1, -1), (2, -2, 0)]);
-}
-
-/// A cleared voxel leaves the chunk's healthy mask with it, so emit_points
-/// cannot bring it back out.
-#[test]
-fn clear_voxels_drops_the_voxel_from_emission() {
-    let cfg = basic_config();
-    let mut map = VoxelMap::default();
-    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
-    let no_live = AHashSet::new();
-    assert!(!emit_points(&map, 1.0, None, &no_live).is_empty());
-
-    assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
-
-    assert_eq!(map.health((5, 0, 0)), None);
-    assert!(
-        emit_points(&map, 1.0, None, &no_live).is_empty(),
-        "cleared voxel must not be emitted"
-    );
-}
-
-/// Every one of the 26 neighbors counts a healthy voxel in its `support`.
-/// Deleting it without decrementing them leaves counts that never come back
-/// down, and support_min then keeps phantom surfaces in the local map.
-#[test]
-fn clear_voxels_decrements_neighbor_support() {
-    let mut map = VoxelMap::default();
-    map.set_health((0, 0, 0), 1);
-    map.set_health((1, 0, 0), 1);
-    map.set_health((0, 1, 0), 1);
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 2);
-    assert_eq!(map.voxels.support(&(0, 1, 0)).unwrap(), 2);
-
-    assert_eq!(map.clear_voxels([(0, 0, 0)]), 1);
-
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 1);
-    assert_eq!(map.voxels.support(&(0, 1, 0)).unwrap(), 1);
-}
-
-/// An unhealthy voxel was never counted in its neighbors' support, so removing
-/// it must not decrement them or the counts go stale downward.
-#[test]
-fn clear_voxels_leaves_support_alone_for_an_unhealthy_voxel() {
-    let mut map = VoxelMap::default();
-    map.set_health((1, 0, 0), 1);
-    map.set_health((0, 0, 0), 0);
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 0);
-
-    assert_eq!(map.clear_voxels([(0, 0, 0)]), 1);
-
-    assert_eq!(map.voxels.support(&(1, 0, 0)).unwrap(), 0);
-}
-
-#[test]
-fn clear_voxels_skips_keys_the_map_does_not_hold() {
-    let mut map = VoxelMap::default();
-    map.set_health((0, 0, 0), 1);
-
-    assert_eq!(map.clear_voxels([(0, 0, 0), (9, 9, 9), (0, 0, 0)]), 1);
-
-    assert!(map.voxels.is_empty());
-}
-
-/// The fine-cell bitmask lives inside the voxel, so clearing the coarse voxel
-/// has to take its fine children with it.
-#[test]
-fn clear_voxels_takes_the_fine_layer_with_it() {
-    let cfg = Config {
-        fine_divisor: 2,
-        ..basic_config()
-    };
-    let mut map = VoxelMap::default();
-    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
-    let no_live = AHashSet::new();
-    assert!(!emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
-
-    assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
-
-    assert!(emit_points_fine(&map, 1.0, 2, None, &no_live).is_empty());
 }
 
 /// Every support count matches a neighbor scan and the healthy mask
@@ -1745,7 +1775,8 @@ fn seeded_wall_normals_spare_grazing_rays() {
 
     // The same wall without moments, so no normals.
     let mut bare = VoxelMap::default();
-    for key in metric_voxel_keys(wall.iter().copied(), cfg.voxel_size) {
+    for &(x, y, z) in &wall {
+        let key = world_to_voxel(x, y, z, 1.0 / cfg.voxel_size);
         bare.set_health(key, SEED_HEALTH);
     }
 
@@ -1968,7 +1999,12 @@ fn a_health_crossing_marks_exactly_its_chunk_once() {
     assert!(map.take_changed_chunks().is_empty());
 
     // Carving it back to zero flips it out of the emitted set.
-    map.clear_voxels([key]);
+    for _ in 0..2 {
+        assert!(!map.record_miss(key, -1));
+        assert!(map.take_changed_chunks().is_empty());
+    }
+    assert!(!map.record_miss(key, -1));
+    assert_eq!(map.health(key), Some(0));
     assert_eq!(map.take_changed_chunks().len(), 1);
 }
 

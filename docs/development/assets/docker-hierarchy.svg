@@ -2,7 +2,7 @@
 <path d="M9.66,114.984L205.58,114.984A7.5 7.5 0 0 0 213.08 107.484L213.08,71.076A7.5 7.5 0 0 0 205.58 63.576L9.66,63.576A7.5 7.5 0 0 0 2.16 71.076L2.16,107.484A7.5 7.5 0 0 0 9.66 114.984Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
 <text x="107.62" y="89.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">ubuntu:22.04</text>
 <path d="M369.66,114.984L565.58,114.984A7.5 7.5 0 0 0 573.08 107.484L573.08,71.076A7.5 7.5 0 0 0 565.58 63.576L369.66,63.576A7.5 7.5 0 0 0 362.16 71.076L362.16,107.484A7.5 7.5 0 0 0 369.66 114.984Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
-<text x="467.62" y="89.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">ubuntu:22.04</text>
+<text x="467.62" y="89.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">ubuntu:26.04</text>
 <text x="107.62" y="17.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Non-ROS Track</text>
 <text x="467.62" y="17.28" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">ROS Track</text>
 <polygon points="107.62,172.584 103.3,161.064 111.94,161.064" style="fill:rgb(255,255,255)"/>

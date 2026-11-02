@@ -81,11 +81,11 @@ Pick the path that matches what you want to do.
 2. **Sign the CLA:** All contributions require a signed [Contributor License Agreement](CLA.md). See [Contributor License Agreement](#contributor-license-agreement) below.
 3. **Make every push count:** Name your branch `<you>/<type>/<topic>` (for example `paul/feat/add-3d-map`, with `type` one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`, `style`, `revert`), target `main`, and run `uv run pytest` and pre-commit locally before pushing. Do not force-push or spam pushes; every push triggers roughly an hour of CI.
 4. **Fill out the PR description template:** GitHub pre-fills it when you open the pull request. Do not clear it. Complete every section:
-  - What is this feature: What your change does and why you took this approach.
-  - Why do we need this: The problem it solves.
-  - How to Test: The sim, replay, or hardware steps a reviewer can follow.
+  - Why do we need this: Explain the problem the change solves, or link to an issue that explains it.
+  - What is this feature: Describe what you changed, why you chose this approach, and any key design decisions or tradeoffs.
+  - How to manually run this: Give the commands and steps a reviewer can follow to verify the feature, along with the expected result. Do not put pytest commands here.
   - Which issue(s) does this PR close: Link the issue or discussion, or write N/A for a small, safe change.
-  - Checklist: Including the CLA confirmation.
+  - Checklist: Confirm that you have read and approved the CLA.
    If you strip out the template, maintainers may close the PR without reviewing it.
 5. **Your PR description is the first thing we judge.** A clear, specific description is our first heuristic for whether a change was understood or slopped together. Write a good one, and ideally ping us on [Discord](https://discord.gg/dimos) before you start and after you push. If the PR is not yet ready for human review, keep it as a draft.
 6. **PRs are not the place to debate design.** If a feature needs discussion, use a discussion and link your branch.

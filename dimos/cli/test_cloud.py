@@ -24,7 +24,6 @@ import pytest
 import typer
 
 from dimos.cli import cloud
-from dimos.core.global_config import global_config
 
 
 class FakeKeyring:
@@ -50,7 +49,7 @@ def filestore(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     cred = tmp_path / "dimos" / "credentials"
     cred.parent.mkdir()
     monkeypatch.setattr(cloud, "CREDENTIALS_PATH", cred)
-    monkeypatch.setattr(global_config, "dimos_api_key", None)
+    monkeypatch.delenv("DIMOS_CLOUD_API_KEY", raising=False)
     return cred
 
 
@@ -108,11 +107,11 @@ def test_login_denied_exits(monkeypatch: pytest.MonkeyPatch, filestore: Path) ->
     assert not filestore.exists()
 
 
-def test_global_config_key_overrides_stored(
+def test_cloud_config_key_overrides_stored(
     monkeypatch: pytest.MonkeyPatch, filestore: Path
 ) -> None:
     filestore.write_text("dimos_sk_stored\n")
-    monkeypatch.setattr(global_config, "dimos_api_key", "dimos_sk_env")
+    monkeypatch.setenv("DIMOS_CLOUD_API_KEY", "dimos_sk_env")
     assert cloud.api_key() == "dimos_sk_env"
 
 
@@ -120,7 +119,7 @@ def test_keyring_store_load_forget(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     kr = FakeKeyring()
     monkeypatch.setattr(cloud, "_keyring", lambda: kr)
     monkeypatch.setattr(cloud, "CREDENTIALS_PATH", tmp_path / "never-written.json")
-    monkeypatch.setattr(global_config, "dimos_api_key", None)
+    monkeypatch.delenv("DIMOS_CLOUD_API_KEY", raising=False)
 
     assert cloud._store("dimos_sk_kr") == "system keyring"
     assert not (tmp_path / "never-written.json").exists()  # keyring won; no file

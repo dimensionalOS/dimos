@@ -64,6 +64,13 @@ Reaching off the machine is opt-in
 
 Every one of these unpins the listener back to zenoh's all-interfaces default.
 
+`--zenoh-domain office2` (or `ZENOH_DOMAIN=office2`) keeps every stream of the run under
+`dimos-domains/office2/` instead of `dimos/`, so runs sharing a fabric never cross. A hosted
+run (`Blueprint.hosted()`, placed on `dimos host` daemons) gets its run id as its domain. A
+rerun bridge listens to every domain and drops the domain from entity paths, so a viewer that
+dials the robot's router on its own still shows such a run. With `topics` set it only listens to
+its own domain. `dimos topic` and `dimos record` show the domain's keys.
+
 **Two ways to override for one run or for your shell:**
 
 1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
@@ -81,7 +88,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
 
 blueprint = blueprint.transports(
-    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+    {("image", WebcamModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
 )
 ```
 
@@ -125,7 +132,7 @@ P: box "PubSub" rad 5px
 # Descriptions below
 text "robot configs" at B.s + (0.1, -0.2in)
 text "camera, nav" at M.s + (0, -0.2in)
-text "LCM, SHM, ROS" at T.s + (0, -0.2in)
+text "Zenoh, LCM, ROS" at T.s + (0, -0.2in)
 text "pub/sub API" at P.s + (0, -0.2in)
 ```
 
@@ -141,7 +148,7 @@ See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
 From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
-Example: rebind a few streams from the default `LCMTransport` to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L226)) so you can visualize in **rviz2**.
+Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L187)) so you can visualize in **rviz2**.
 
 ```python skip
 nav = autoconnect(
@@ -166,7 +173,7 @@ ros = nav.transports(
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
-The runnable example below uses a tiny synthetic image publisher instead of `CameraModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
+The runnable example below uses a tiny synthetic image publisher instead of `WebcamModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
 
 ```python ansi=false
 import time
@@ -284,7 +291,7 @@ At the stream layer, a transport is implemented by subclassing `Transport` (see 
 Your `Transport.__init__` args can be anything meaningful for your backend:
 
 * `(ip, port)`
-* a shared-memory segment name
+* a Zenoh key expression
 * a filesystem path
 * a Redis channel
 
@@ -330,7 +337,7 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have CBOR-encoded transports for Python values without an LCM form.
 
 ### LCM (UDP multicast)
 
@@ -363,30 +370,7 @@ Received velocity: x=1.0, y=0.0, z=0.5
 
 ### Zenoh
 
-### Shared memory (IPC)
-
-Shared memory is highest performance, but only works on the **same machine**.
-
-```python
-from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
-
-shm = PickleSharedMemory(prefer="cpu")
-shm.start()
-
-received = []
-shm.subscribe("test/topic", lambda msg, topic: received.append(msg))
-shm.publish("test/topic", {"data": [1, 2, 3]})
-
-import time
-time.sleep(0.1)
-
-print(f"Received: {received}")
-shm.stop()
-```
-
-```results
-Received: [{'data': [1, 2, 3]}]
-```
+See [Zenoh](#zenoh) for backend selection, connection settings, and per-topic QoS.
 
 ### DDS Transport
 
@@ -461,7 +445,7 @@ Transports often need to serialize messages before sending and deserialize after
 
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
-| `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
+| `CborEncoderMixin`   | CBOR            | Python values with their types kept (tuples, numpy, enums, dataclasses, messages); what RPC uses |
 | `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 
@@ -494,10 +478,10 @@ class MyJsonPubSub(JsonEncoderMixin, Memory):
 Swap serialization by changing the mixin:
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.encoders import PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
 
-class MyPicklePubSub(PickleEncoderMixin, Memory):
+class MyCborPubSub(CborEncoderMixin, Memory):
     pass
 ```
 
@@ -520,9 +504,7 @@ python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchma
 | Transport      | Use case                            | Cross-process | Network | Notes                                |
 |----------------|-------------------------------------|---------------|---------|--------------------------------------|
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
-| `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
 | `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
-| `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

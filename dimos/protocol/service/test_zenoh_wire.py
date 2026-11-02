@@ -69,3 +69,11 @@ def test_derived_settings_are_resolved(zenoh_defaults: None) -> None:
 def test_lcm_sends_no_session_settings() -> None:
     """LCM natives take their settings from the environment LCM itself reads."""
     assert LCMConfig().to_wire() == {}
+
+
+def test_the_cpp_suite_reads_the_same_fixtures() -> None:
+    """native/cpp keeps a copy: a nix build of that directory sees nothing outside it."""
+    cpp = Path(__file__).parents[3] / "native" / "cpp" / "tests" / "fixtures"
+    assert sorted(p.name for p in _GOLDENS.iterdir()) == sorted(p.name for p in cpp.iterdir())
+    for golden in _GOLDENS.iterdir():
+        assert (cpp / golden.name).read_bytes() == golden.read_bytes(), golden.name

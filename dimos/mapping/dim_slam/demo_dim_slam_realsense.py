@@ -14,7 +14,8 @@
 
 """dimSLAM on a RealSense stereo camera.
 
-    dimos run demo-dim-slam-realsense --viewer rerun --rerun-host 0.0.0.0
+    dimos run demo-dim-slam-realsense --viewer rerun \\
+      --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
 
 ``world/odom_hist`` should retrace the route walked.
 """
