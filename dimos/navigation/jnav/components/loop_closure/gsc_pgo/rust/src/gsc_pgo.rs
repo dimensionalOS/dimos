@@ -231,7 +231,7 @@ pub struct ClosureCandidateDiag {
     /// keyframes' summed before merging.
     pub dispatch_source_points: usize,
     pub dispatch_target_points: usize,
-    /// The two-stage search (`closure_search_two_stage`): the single scan's confidence ratio a match inside the
+    /// The two-stage search (`closure_search_schedule`): the single scan's confidence ratio a match inside the
     /// uncertainty range is ranked by in the verification buffer, and its verification job's schedule (as the fast
     /// match's above); each extension round's separate source cloud and target points.
     pub promise: f64,
@@ -493,9 +493,11 @@ pub struct DeterministicConfig {
     pub fast_match_scans_per_keyframe: f64,
     pub fast_match_scans_per_point: f64,
     pub fast_match_scans_per_source_point: f64,
-    /// The verification (the extension, in a whole search or its own job): fixed as it starts, and per round before each.
+    /// The verification (the extension, in a whole search or its own job): fixed as it starts, and before each round
+    /// that round's own: per round + per point of its source cloud and target (both known as it starts).
     pub verification_scans_fixed_overhead: f64,
     pub verification_scans_per_round: f64,
+    pub verification_scans_per_round_point: f64,
     /// The solve: `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power * (1 +
     /// rejected)^solve_rejected_power`, the closures in the solve and the ones the newest adopted solve rejected.
     pub solve_scans_scale: f64,
@@ -520,7 +522,10 @@ impl Default for DeterministicConfig {
             fast_match_scans_per_point: 3.137e-5,
             fast_match_scans_per_source_point: 7.808e-5,
             verification_scans_fixed_overhead: 1.322,
-            verification_scans_per_round: 0.883,
+            // a 99%-of-rounds upper bound over Mac rounds of huge L1, gir1 and small L1 (their per-round points
+            // logged), until the Jetson battery's fit
+            verification_scans_per_round: 0.1966,
+            verification_scans_per_round_point: 1.723e-5,
             solve_scans_scale: 3.843e-5,
             solve_keyframe_power: 2.017,
             solve_closure_power: -0.215,
@@ -661,27 +666,15 @@ pub struct Config {
     /// voxelized source keyframe's, and the single target submap's keyframes' before merging); the verification (the
     /// extension, in a whole search or its own job) `verification_scans_fixed_overhead` as it starts and
     /// `verification_scans_per_round` before each round.
-    /// Logical execution time for closure searches (with `closure_search_hold_enabled`): every keyframe's search is its own
-    /// job, started (its graph snapshot taken) at the keyframe it is proposed and landing at its own dispatch + estimate,
-    /// whatever other searches are doing, run on `closure_search_workers` threads first-dispatched first; results land in
-    /// due order, ties by dispatch order. Off: one search at a time on its own thread, the next keyframes' proposals going
-    /// stale while it is held.
-    pub closure_search_let_enabled: bool,
-    pub closure_search_workers: usize,
-    /// The two-stage search (with `closure_search_let_enabled`; off = one job per search on `closure_search_workers`):
-    /// each keyframe's scan-context candidate and each retry alternative wait in a priority buffer of
-    /// `sc_buffer_size`, the most similar first (ties by arrival), the least similar dropped when it overflows; each of
-    /// `fast_match_workers` takes the best one as it frees (at its job's landing) for the fast match (cloud build,
-    /// single ICP, degeneracy and the gates, estimated by the `fast_match_scans_*` terms). A
+    /// The closure search's pipeline (`closure_search_schedule`): each keyframe's scan-context candidate and each retry
+    /// alternative wait in a priority buffer of `sc_buffer_size`, the most similar first (ties by arrival), the least
+    /// similar dropped when it overflows; each of `fast_match_workers` takes the best one as it frees (at its job's
+    /// landing) for the fast match (cloud build, single ICP, degeneracy and the gates, the `fast_match_scans_*` terms). A
     /// clear pass or fail lands decided; a match inside the uncertainty range waits in a priority buffer of
     /// `verification_buffer_slots`, the highest single-scan confidence ratio first (ties by dispatch), the lowest dropped
     /// when it overflows, for one of `verification_workers` to run its extension rounds and yank verdict as it frees:
-    /// held `verification_scans_fixed_overhead` + `verification_scans_per_round` per round started, each round's bound
-    /// counted before it starts (one job reporting each round's tick). The round bound is a constant for now: the
-    /// largest of five Mac recordings' 99th percentile of a round's seconds (334 ms, gir2), until each round's logged
-    /// points (`extension_rounds_*_points`) can fit it per round; the overhead is the largest recording's 99th
-    /// percentile of the extension's seconds outside its rounds.
-    pub closure_search_two_stage: bool,
+    /// held `verification_scans_fixed_overhead` + each round's own estimate as it starts (one job reporting each round's
+    /// tick).
     pub fast_match_workers: usize,
     pub sc_buffer_size: usize,
     pub verification_workers: usize,
@@ -849,6 +842,7 @@ impl Config {
             ("fast_match_scans_per_source_point", self.deterministic_config.fast_match_scans_per_source_point),
             ("verification_scans_fixed_overhead", self.deterministic_config.verification_scans_fixed_overhead),
             ("verification_scans_per_round", self.deterministic_config.verification_scans_per_round),
+            ("verification_scans_per_round_point", self.deterministic_config.verification_scans_per_round_point),
             ("pressure_scans_fixed_overhead", self.deterministic_config.pressure_scans_fixed_overhead),
             ("pressure_scans_per_keyframe", self.deterministic_config.pressure_scans_per_keyframe),
             ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
@@ -856,7 +850,6 @@ impl Config {
             ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
         ];
         for (name, count) in [
-            ("closure_search_workers", self.closure_search_workers),
             ("fast_match_workers", self.fast_match_workers),
             ("sc_buffer_size", self.sc_buffer_size),
             ("verification_workers", self.verification_workers),
@@ -916,9 +909,6 @@ impl Default for Config {
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
             graph_change_heat_decay: 0.995,
-            closure_search_let_enabled: true,
-            closure_search_workers: 2,
-            closure_search_two_stage: false,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
@@ -1047,14 +1037,14 @@ pub struct GscPgo {
     pub(crate) last_overshoot_warning: Option<f64>,
     /// The closure searches dispatched and not landed yet, in dispatch order (`closure_search_hold_enabled`), the number
     /// the next one gets, the recorded times of the advancing scans since the oldest one's dispatch (the first is advancing
-    /// scan `search_scan_base`), the worker pool they run on (`closure_search_let_enabled`), the searches that overshot
+    /// scan `search_scan_base`), the worker pool they run on, the searches that overshot
     /// their estimate and the seconds a lockstep replay waited on them.
     pub(crate) closure_searches: std::collections::VecDeque<crate::closure_search_schedule::SearchJob>,
     pub(crate) search_order: u64,
     pub(crate) search_scan_times: std::collections::VecDeque<f64>,
     pub(crate) search_scan_base: usize,
     pub(crate) search_pool: Option<crate::closure_search_schedule::SearchPool>,
-    /// The two-stage search (`closure_search_two_stage`): the candidates waiting for a fast-match worker (and their
+    /// The two-stage search (`closure_search_schedule`): the candidates waiting for a fast-match worker (and their
     /// arrival numbers), the matches waiting for verification (and their fast match's dispatch numbers), the
     /// verification pool, and the counts its buffers dropped and its verification jobs overshot.
     pub(crate) sc_buffer: Vec<(ClosureProposal, u64)>,
@@ -1339,7 +1329,7 @@ impl ClosureSearch {
             SearchStage::Extend(pending) => pending.run(),
         }
     }
-    /// The fast match (`closure_search_two_stage`): everything up to the extension, which a match inside the uncertainty
+    /// The fast match (`closure_search_schedule`): everything up to the extension, which a match inside the uncertainty
     /// range is handed on to (`SearchStage::Extend`); a clear pass or fail is decided here.
     pub(crate) fn run_stage(mut self) -> SearchStage {
         let retry = (
@@ -2427,16 +2417,7 @@ impl GscPgo {
     /// (`closure_search_hold_enabled`) on the search thread, waiting for a search only once its estimate has passed
     /// (`step_closure_search`); else all on this thread.
     pub fn search_for_closure_pairs(&mut self) {
-        if self.config.deterministic() {
-            self.step_closure_search(true, true);
-            return;
-        }
-        self.propose_closure();
-        // a rejected search may queue the keyframe's next alternative, which this thread tries right away
-        while let Some(search) = self.begin_closure_search() {
-            let result = search.run();
-            self.finish_closure_search(result);
-        }
+        self.step_closure_search(true);
     }
     /// Apply a `ClosureSearch`'s result: record its diagnostics and commit the closure it accepted.
     pub fn finish_closure_search(&mut self, result: ClosureSearchResult) {
