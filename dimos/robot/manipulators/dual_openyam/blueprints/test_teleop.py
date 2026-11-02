@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.protocol.encode.cbor import encode
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     build_dual_openyam_webxr,
     teleop_webxr_dual_openyam,
@@ -41,19 +41,15 @@ def test_visualization_configuration_preserves_teleop_composition(mocker):
         **original.kwargs,
         "visualization": ViserVisualizationConfig(host="0.0.0.0"),
     }
-    assert encode(
-        [
-            (atom.name, atom.kwargs)
-            for atom in configured.blueprints
-            if atom.module is not ManipulationModule
-        ]
-    ) == encode(
-        [
-            (atom.name, atom.kwargs)
-            for atom in base.blueprints
-            if atom.module is not ManipulationModule
-        ]
-    )
+    assert [
+        (atom.name, atom.kwargs)
+        for atom in configured.blueprints
+        if atom.module is not ManipulationModule
+    ] == [
+        (atom.name, atom.kwargs)
+        for atom in base.blueprints
+        if atom.module is not ManipulationModule
+    ]
 
     parsed = BlueprintConfigParser(configured).parse(
         ["--manipulationmodule.visualization.host", "127.0.0.1"], environ={}

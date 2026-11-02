@@ -17,13 +17,13 @@
 from __future__ import annotations
 
 import importlib
+from pickle import dumps as encode, loads as decode
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.manipulators.common import damiao_connection as common
 
 

@@ -43,9 +43,6 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
     openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.openyam.blueprints.connection import openyam_connection_control
-from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection import (
-    openyam_quest_collection,
-)
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
@@ -67,7 +64,6 @@ CASES = [
     ("openyam-connection-control", openyam_connection_control),
     ("openarm-connection-control", openarm_connection_control),
     ("makermods-metal-connection-control", makermods_metal_connection_control),
-    ("openyam-quest-collection", openyam_quest_collection),
 ]
 
 

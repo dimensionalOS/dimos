@@ -153,7 +153,7 @@ Existing entry names now compose the direct connection too:
 
 - YAM: `coordinator-openyam`, `openyam-planner-coordinator`,
   `keyboard-teleop-openyam`, `keyboard-teleop-openyam-planner`,
-  `teleop-webxr-openyam`, and `openyam-quest-collection`.
+  and `teleop-webxr-openyam`.
 - Dual YAM: `coordinator-dual-openyam`, `dual-openyam-planner-coordinator`,
   and `teleop-webxr-dual-openyam`.
 - OpenArm: `coordinator-openarm`, `openarm-planner-coordinator`,
@@ -166,6 +166,6 @@ Single grippers are `arm/gripper`; bimanual grippers are `arm/left_gripper` and
 `arm/right_gripper`. Openings are calibrated 0 closed to 1 open, not distances.
 Logical gripper links do not animate the physical finger meshes.
 
-Planner groups, task joints, and Quest recording names derive from the same
+Planner groups and task joints derive from the same
 connection's `planning_model()` and `control_model()` views. Existing recordings using the old bare names retain
 their original schema; newly collected Quest recordings use the deployed names.

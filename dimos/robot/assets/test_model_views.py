@@ -14,9 +14,10 @@
 
 """Loaded model transformations preserve source context without derived files."""
 
+from pickle import dumps as encode, loads as decode
+
 import pytest
 
-from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import JointDescription, RobotModel
 
 
