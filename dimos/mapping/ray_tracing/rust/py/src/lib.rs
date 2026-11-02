@@ -19,9 +19,14 @@ use pyo3::prelude::*;
 use validator::Validate;
 
 use dimos_voxel_ray_tracing::mapper::{Mapper, Pose};
+use dimos_voxel_ray_tracing::reform::{
+    decode_loop_closure_event, decode_pose_graph, record_cloud, ReformParams, ReformState,
+    LOOP_EVENT_FIELDS, POSE_GRAPH_FIELDS,
+};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{
     partition_seed, Config, LocalBounds, SeedPartition,
 };
+use pyo3::types::PyDict;
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
     let arr: PyReadonlyArray2<'_, f32> = arr.extract().map_err(|_| {
@@ -82,6 +87,8 @@ pub struct VoxelRayMapper {
     mapper: Mapper,
     // A region-by-region seed in progress, as the module applies one.
     seed: Option<(SeedPartition, usize)>,
+    // Keyframes and their applied poses, for loop closures (reform_ray_tracing).
+    reform: ReformState,
 }
 
 /// One region of a seed as the map now holds it: the cylinder covering its
@@ -170,6 +177,7 @@ impl VoxelRayMapper {
         Ok(Self {
             mapper: Mapper::new(config),
             seed: None,
+            reform: ReformState::default(),
         })
     }
 
@@ -212,6 +220,76 @@ impl VoxelRayMapper {
         let mapper = &mut self.mapper;
         py.allow_threads(move || mapper.add_frame_world(pts, origin));
         Ok(())
+    }
+
+    /// Record when each voxel lands, for loop closures, as reform_ray_tracing does.
+    fn track_voxel_times(&mut self) {
+        self.mapper.track_voxel_times();
+    }
+
+    /// The time (s) the next frames' new voxels are stamped with.
+    fn set_clock(&mut self, t: f64) {
+        self.mapper.set_clock(t);
+    }
+
+    /// Take keyframes from raw pose_graph records (40 bytes each). Keyframes
+    /// already known keep the pose the map holds them at.
+    fn add_keyframes(&mut self, records: Vec<u8>) -> PyResult<usize> {
+        if !records.len().is_multiple_of(40) {
+            return Err(PyValueError::new_err(
+                "pose_graph records are 40 bytes each",
+            ));
+        }
+        let msg = record_cloud(POSE_GRAPH_FIELDS, records);
+        let records = decode_pose_graph(&msg).map_err(|e| PyValueError::new_err(e.0))?;
+        self.reform.add_keyframes(&records);
+        Ok(self.reform.len())
+    }
+
+    /// Warp the map through raw loop_closure_event records (68 bytes each), as
+    /// reform_ray_tracing does. None when no keyframe moved past min_shift_m,
+    /// else a dict of what the warp did and cost.
+    #[pyo3(signature = (records, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, rebuild_fraction = 1.0))]
+    fn apply_loop_closure<'py>(
+        &mut self,
+        py: Python<'py>,
+        records: Vec<u8>,
+        blend_sigma_m: f64,
+        blend_time_sigma_s: f64,
+        min_shift_m: f64,
+        rebuild_fraction: f64,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if !records.len().is_multiple_of(68) {
+            return Err(PyValueError::new_err(
+                "loop_closure_event records are 68 bytes each",
+            ));
+        }
+        let msg = record_cloud(LOOP_EVENT_FIELDS, records);
+        let moved = decode_loop_closure_event(&msg).map_err(|e| PyValueError::new_err(e.0))?;
+        let params = ReformParams {
+            blend_sigma_m,
+            blend_time_sigma_s,
+            min_shift_m,
+            rebuild_fraction,
+        };
+        let Some(warp) = self.reform.closure(&moved, &params) else {
+            return Ok(None);
+        };
+        let mapper = &mut self.mapper;
+        let report = py.allow_threads(|| mapper.apply_warp(&warp));
+        let out = PyDict::new(py);
+        out.set_item("voxels_warped", report.voxels_warped)?;
+        out.set_item("voxels_moved", report.voxels_moved)?;
+        out.set_item("rebuilt", report.rebuilt)?;
+        out.set_item("warp_ms", report.warp_ms)?;
+        out.set_item("voxel_ms", report.voxel_ms)?;
+        out.set_item("keyframes_moved", warp.moved_keyframes())?;
+        Ok(Some(out))
+    }
+
+    /// Every healthy voxel's center, (N, 3) float32: what reform_ray_tracing dumps.
+    fn healthy_centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        flat_to_array(py, self.mapper.healthy_centers())
     }
 
     /// Bulk-seed a world-frame map cloud, creating only absent voxels.
