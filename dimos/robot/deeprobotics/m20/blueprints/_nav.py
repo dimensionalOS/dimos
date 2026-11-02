@@ -37,7 +37,8 @@ from dimos.robot.deeprobotics.m20.constants import (
 
 VOXEL_SIZE_M = 0.08
 WALL_CLEARANCE_M = 0.3
-PLANNER_VIZ_HZ = 0.0
+PLANNER_VIZ_HZ = 2.0
+PLANNER_VIZ_SWEEP_CELLS = 1
 WORLD_FRAME = "map"
 
 _m20_nav = autoconnect(
@@ -63,6 +64,7 @@ _m20_nav = autoconnect(
         step_threshold_m=M20.steppable,
         step_penalty_weight=4.0,
         viz_publish_hz=PLANNER_VIZ_HZ,
+        viz_sweep_cells=PLANNER_VIZ_SWEEP_CELLS,
         worker_threads=2,
     ).remappings(
         [

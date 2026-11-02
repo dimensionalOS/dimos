@@ -20,7 +20,7 @@ from datetime import datetime
 import json
 import socket
 import struct
-from threading import Condition, RLock, Thread
+from threading import Condition, Event, RLock, Thread
 from typing import Any, Literal
 
 from pydantic import Field
@@ -60,6 +60,9 @@ _BASIC_SERVER_JSON = 1
 _BASIC_SERVER_HEADER = struct.Struct("<4sHHB7s")
 _BASIC_SERVER_MODE_TYPE = 1101
 _BASIC_SERVER_MODE_COMMAND = 5
+_BASIC_SERVER_HEARTBEAT_TYPE = 100
+_BASIC_SERVER_HEARTBEAT_COMMAND = 100
+_BASIC_SERVER_HEARTBEAT_PERIOD_S = 0.5
 
 
 class M20ConnectionConfig(ModuleConfig):
@@ -71,6 +74,7 @@ class M20ConnectionConfig(ModuleConfig):
     control_ready_timeout_s: float = Field(default=15.0, gt=0.0)
     basic_server_host: str = "10.21.31.103"
     basic_server_tcp_port: int = Field(default=30001, ge=1, le=65535)
+    basic_server_udp_port: int = Field(default=30000, ge=1, le=65535)
     basic_server_timeout_s: float = Field(default=3.0, gt=0.0)
     sit_timeout_s: float = Field(default=3.0, gt=0.0)
     auto_stand: bool = False
@@ -111,6 +115,7 @@ class M20Connection(Module):
         self._gait_state: int | None = None
         self._navigation_terrain: NavigationTerrain = "stairs"
         self._basic_server_message_ids = SequentialIds()
+        self._heartbeat_stop = Event()
 
     @rpc
     def start(self) -> None:
@@ -119,6 +124,8 @@ class M20Connection(Module):
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+        self._heartbeat_stop.clear()
+        Thread(target=self._heartbeat, name="m20-heartbeat", daemon=True).start()
         if self.config.auto_stand:
             Thread(target=self._auto_stand, name="m20-auto-stand", daemon=True).start()
 
@@ -134,6 +141,7 @@ class M20Connection(Module):
                 logger.warning("M20 did not confirm Sit before stopping")
         else:
             self.stop_movement()
+        self._heartbeat_stop.set()
         super().stop()
 
     @rpc
@@ -279,6 +287,51 @@ class M20Connection(Module):
         command: int,
         items: dict[str, Any],
     ) -> dict[str, Any]:
+        message_id, apdu = self._encode_basic_server_apdu(message_type, command, items)
+        try:
+            with socket.create_connection(
+                (self.config.basic_server_host, self.config.basic_server_tcp_port),
+                timeout=self.config.basic_server_timeout_s,
+            ) as connection:
+                connection.settimeout(self.config.basic_server_timeout_s)
+                connection.sendall(apdu)
+                response_header = _recv_exact(connection, _BASIC_SERVER_HEADER.size)
+                magic, length, response_id, encoding, _reserved = _BASIC_SERVER_HEADER.unpack(
+                    response_header
+                )
+                if magic != _BASIC_SERVER_MAGIC:
+                    raise ValueError("invalid APDU magic")
+                if response_id != message_id:
+                    raise ValueError("response APDU message ID does not match request")
+                if encoding != _BASIC_SERVER_JSON:
+                    raise ValueError("basic_server response is not JSON")
+                response_payload = _recv_exact(connection, length)
+        except (OSError, ValueError) as exc:
+            logger.error("M20 basic_server request failed: %s", exc)
+            return {}
+
+        try:
+            decoded = json.loads(response_payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            logger.error("M20 basic_server returned invalid JSON: %s", exc)
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+
+    def _heartbeat(self) -> None:
+        address = (self.config.basic_server_host, self.config.basic_server_udp_port)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            while not self._heartbeat_stop.wait(_BASIC_SERVER_HEARTBEAT_PERIOD_S):
+                _message_id, apdu = self._encode_basic_server_apdu(
+                    _BASIC_SERVER_HEARTBEAT_TYPE, _BASIC_SERVER_HEARTBEAT_COMMAND, {}
+                )
+                try:
+                    udp.sendto(apdu, address)
+                except OSError as exc:
+                    logger.warning("M20 basic_server heartbeat failed: %s", exc)
+
+    def _encode_basic_server_apdu(
+        self, message_type: int, command: int, items: dict[str, Any]
+    ) -> tuple[int, bytes]:
         payload = json.dumps(
             {
                 "PatrolDevice": {
@@ -301,35 +354,7 @@ class M20Connection(Module):
             _BASIC_SERVER_JSON,
             b"\0" * 7,
         )
-
-        try:
-            with socket.create_connection(
-                (self.config.basic_server_host, self.config.basic_server_tcp_port),
-                timeout=self.config.basic_server_timeout_s,
-            ) as connection:
-                connection.settimeout(self.config.basic_server_timeout_s)
-                connection.sendall(header + payload)
-                response_header = _recv_exact(connection, _BASIC_SERVER_HEADER.size)
-                magic, length, response_id, encoding, _reserved = _BASIC_SERVER_HEADER.unpack(
-                    response_header
-                )
-                if magic != _BASIC_SERVER_MAGIC:
-                    raise ValueError("invalid APDU magic")
-                if response_id != message_id:
-                    raise ValueError("response APDU message ID does not match request")
-                if encoding != _BASIC_SERVER_JSON:
-                    raise ValueError("basic_server response is not JSON")
-                response_payload = _recv_exact(connection, length)
-        except (OSError, ValueError) as exc:
-            logger.error("M20 basic_server request failed: %s", exc)
-            return {}
-
-        try:
-            decoded = json.loads(response_payload)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            logger.error("M20 basic_server returned invalid JSON: %s", exc)
-            return {}
-        return decoded if isinstance(decoded, dict) else {}
+        return message_id, header + payload
 
     def _wait_for_motion_state(self, expected: int, timeout_s: float) -> bool:
         with self._state_condition:
