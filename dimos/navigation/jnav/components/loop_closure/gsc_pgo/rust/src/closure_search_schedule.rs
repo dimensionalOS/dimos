@@ -406,8 +406,9 @@ impl GscPgo {
             diag.cost_lookup_s
         };
         let seconds = lookup + handed_on_s.unwrap_or(diag.cost_search_s - job.earlier_s);
-        // the data time from dispatch to the scan its hold ended at (none when the data ended first)
-        let due = (job.dispatch_scan + estimate_scans).saturating_sub(self.search_scan_base + 1);
+        // the data time from dispatch to the scan its hold ended at (none when the data ended first): advancing scan n is
+        // `search_scan_times[n - search_scan_base]`
+        let due = (job.dispatch_scan + estimate_scans).saturating_sub(self.search_scan_base);
         let spanned = self
             .search_scan_times
             .get(due)
