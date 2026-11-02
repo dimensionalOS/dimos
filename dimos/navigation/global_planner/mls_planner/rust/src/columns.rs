@@ -324,6 +324,9 @@ pub struct ColumnEdit {
     pub added: Vec<i32>,
 }
 
+/// Largest box voxels are bucketed over: ~32 bytes a column, so 50M is ~1.6 GB.
+const MAX_BUCKET_COLUMNS: usize = 50_000_000;
+
 /// Incoming voxels bucketed by column over a column bbox, each column's z
 /// values sorted and deduped.
 pub struct ColumnBuckets {
@@ -345,8 +348,25 @@ const BAND_ROWS: usize = TILE_EDGE as usize;
 
 impl ColumnBuckets {
     pub fn new(keys: &[VoxelKey], (x0, x1, y0, y1): ColumnWindow) -> Self {
-        let width = (x1 - x0 + 1).max(0) as usize;
-        let height = (y1 - y0 + 1).max(0) as usize;
+        let width = (x1 as i64 - x0 as i64 + 1).max(0) as usize;
+        let height = (y1 as i64 - y0 as i64 + 1).max(0) as usize;
+        // Per-column scratch over the whole box: refuse a box no sane region has.
+        if width.saturating_mul(height) > MAX_BUCKET_COLUMNS {
+            tracing::error!(
+                columns = width.saturating_mul(height),
+                x = ?(x0, x1),
+                y = ?(y0, y1),
+                voxels = keys.len(),
+                "Refused to bucket voxels over an enormous box; they are dropped."
+            );
+            return Self {
+                x0,
+                y0,
+                width: 0,
+                height: 0,
+                bands: Vec::new(),
+            };
+        }
         let n_bands = height.div_ceil(BAND_ROWS);
         let band_of = |&(_, iy, _): &VoxelKey| {
             let y = iy - y0;

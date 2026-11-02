@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ahash::{AHashMap, AHashSet};
-use dimos_module::{debug_throttled, native_config, worker_pool};
+use dimos_module::{debug_throttled, native_config, warn_throttled, worker_pool};
 use rayon::prelude::*;
 use validator::ValidationError;
 
@@ -167,6 +167,11 @@ pub(crate) fn ms_since(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1e3
 }
 
+/// Largest region box a local map update allocates over: 10M columns is a
+/// radius of ~126 m at 8 cm voxels, already four times a lidar's range, and
+/// costs ~300 MB of per-column scratch. A larger one is a bad pose or bound.
+pub const MAX_REGION_COLUMNS: f64 = 1e7;
+
 /// Cylindrical region the planner re-derives from a local map slice.
 #[derive(Clone, Copy)]
 pub struct RegionBounds {
@@ -195,6 +200,34 @@ impl RegionBounds {
         let dx = kx as f32 * voxel_size + half - self.origin_x;
         let dy = ky as f32 * voxel_size + half - self.origin_y;
         dx * dx + dy * dy <= self.radius * self.radius
+    }
+
+    /// Columns in the cylinder's bounding box, what a region update allocates over.
+    pub fn column_count(&self, voxel_size: f32) -> f64 {
+        let side = (2.0 * self.radius as f64 / voxel_size as f64).ceil() + 1.0;
+        side * side
+    }
+
+    /// Why this region can't be ingested, None when it can: a non-finite field,
+    /// an inverted height range, or a box past MAX_REGION_COLUMNS.
+    pub fn defect(&self, voxel_size: f32) -> Option<&'static str> {
+        let fields = [
+            self.origin_x,
+            self.origin_y,
+            self.radius,
+            self.z_min,
+            self.z_max,
+        ];
+        if fields.iter().any(|v| !v.is_finite()) {
+            return Some("a non-finite field");
+        }
+        if self.radius < 0.0 || self.z_min > self.z_max {
+            return Some("a negative radius or inverted height range");
+        }
+        if self.column_count(voxel_size) > MAX_REGION_COLUMNS {
+            return Some("a box too large to allocate over");
+        }
+        None
     }
 
     /// Inclusive voxel-column bounding box of the cylinder in the xy plane.
@@ -367,6 +400,21 @@ impl Planner {
         config: &Config,
         window_steps: i32,
     ) -> Option<ColumnWindow> {
+        if let Some(defect) = bounds.defect(config.voxel_size) {
+            warn_throttled!(
+                Duration::from_secs(5),
+                defect,
+                origin_x = bounds.origin_x,
+                origin_y = bounds.origin_y,
+                radius = bounds.radius,
+                z_min = bounds.z_min,
+                z_max = bounds.z_max,
+                columns = bounds.column_count(config.voxel_size),
+                points = local_points.len(),
+                "Rejected a region update with bad bounds."
+            );
+            return None;
+        }
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
@@ -556,6 +604,7 @@ impl Planner {
     ) -> VoxelEdits {
         let incoming: Vec<VoxelKey> = local_points
             .par_iter()
+            .filter(|p| p.0.is_finite() && p.1.is_finite() && p.2.is_finite())
             .map(|&p| voxelize(p, voxel_size))
             .filter(|&k| bounds.contains_voxel(k, voxel_size))
             .collect();

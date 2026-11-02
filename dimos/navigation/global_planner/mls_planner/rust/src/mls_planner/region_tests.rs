@@ -1438,3 +1438,64 @@ fn chains_reach_their_nodes_through_a_stream_of_changes() {
         }
     }
 }
+
+#[test]
+fn a_region_with_bad_bounds_is_rejected_before_it_allocates() {
+    let cfg = test_config();
+    let mut p = Planner::new(2);
+    let floor: Vec<(f32, f32, f32)> = world_points();
+    let sane = RegionBounds {
+        origin_x: 0.0,
+        origin_y: 0.0,
+        radius: 5.0,
+        z_min: -1.0,
+        z_max: 2.0,
+    };
+    for bad in [
+        RegionBounds {
+            radius: 5_000.0,
+            ..sane
+        },
+        RegionBounds {
+            radius: f32::INFINITY,
+            ..sane
+        },
+        RegionBounds {
+            origin_x: f32::NAN,
+            ..sane
+        },
+        RegionBounds { z_min: 3.0, ..sane },
+    ] {
+        let started = Instant::now();
+        assert!(p.update_region(&floor, &bad, &cfg).is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "it allocated over the box"
+        );
+    }
+    assert_eq!(p.sizes().voxels, 0);
+}
+
+#[test]
+fn far_and_non_finite_points_in_a_sane_region_are_dropped() {
+    let cfg = test_config();
+    let mut p = Planner::new(2);
+    let mut cloud = world_points();
+    let n = cloud.len();
+    cloud.extend([
+        (f32::NAN, 0.0, 0.0),
+        (0.0, f32::INFINITY, 0.0),
+        (1.0e9, 1.0e9, 0.0),
+    ]);
+    let bounds = RegionBounds {
+        origin_x: 0.0,
+        origin_y: 0.0,
+        radius: 30.0,
+        z_min: -5.0,
+        z_max: 5.0,
+    };
+    p.update_region(&cloud, &bounds, &cfg);
+    let mut clean = Planner::new(2);
+    clean.update_region(&cloud[..n], &bounds, &cfg);
+    assert_eq!(p.sizes().voxels, clean.sizes().voxels);
+}
