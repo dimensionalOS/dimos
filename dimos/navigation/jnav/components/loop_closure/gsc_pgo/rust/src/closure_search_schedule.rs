@@ -133,7 +133,9 @@ impl GscPgo {
         };
         let progress = Arc::new(SearchProgress::default());
         search.progress = Some(progress.clone());
-        let estimate_s = self.closure_search_estimate_s(&search);
+        let (estimate_s, source_points, target_points) = self.closure_search_estimate_s(&search);
+        search.diag.dispatch_source_points = source_points;
+        search.diag.dispatch_target_points = target_points;
         let scan_period_s = self.scan_period_s();
         self.search_scan_times.clear();
         let handle = std::thread::Builder::new()
@@ -222,7 +224,8 @@ impl GscPgo {
     }
     /// The search's estimated cost at dispatch (seconds): the scan-context lookup (none for a retry), building the
     /// source scan and single target submap, the degeneracy check, the single ICP at its most iterations, and the gates.
-    fn closure_search_estimate_s(&self, search: &ClosureSearch) -> f64 {
+    /// Returns it with the source and target points it counted.
+    fn closure_search_estimate_s(&self, search: &ClosureSearch) -> (f64, usize, usize) {
         let config = &self.config;
         let resolution = config.submap_resolution;
         let points = |k: usize| {
@@ -233,26 +236,27 @@ impl GscPgo {
         };
         let (source_idx, target_idx) = (search.diag.source_id, search.target_idx);
         let half_range = config.target_half_range(1);
-        let source = points(source_idx).max(1) as f64;
-        let target = (target_idx.saturating_sub(half_range)
+        let source_points = points(source_idx);
+        let target_points = (target_idx.saturating_sub(half_range)
             ..=(target_idx + half_range).min(search.key_poses.len() - 1))
             .map(points)
-            .sum::<usize>()
-            .max(2) as f64;
+            .sum::<usize>();
+        let (source, target) = (source_points.max(1) as f64, target_points.max(2) as f64);
         let lookup = if search.diag.cost_lookup_s > 0.0 {
             config.closure_search_estimate_lookup_s
                 + config.closure_search_estimate_lookup_per_keyframe_s * search.diag.map_keyframes as f64
         } else {
             0.0
         };
-        lookup
+        let seconds = lookup
             + config.closure_search_estimate_build_per_point_s * (source + target)
             + config.closure_search_estimate_degeneracy_per_point_s * source
             + config.closure_search_estimate_icp_s
                 * source
                 * target.log2()
                 * config.closure_icp_max_iterations as f64
-            + config.closure_search_estimate_gates_s
+            + config.closure_search_estimate_gates_s;
+        (seconds, source_points, target_points)
     }
     /// The newest advancing scan's recorded time (`advancing_scans`; -inf before any).
     fn newest_scan_time(&self) -> f64 {

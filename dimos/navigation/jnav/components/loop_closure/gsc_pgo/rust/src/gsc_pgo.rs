@@ -226,6 +226,10 @@ pub struct ClosureCandidateDiag {
     pub estimate_s: f64,
     pub estimate_scans: usize,
     pub search_overshoot: bool,
+    /// The points the dispatch-time estimate counted: the voxelized source keyframe's, and the single target submap's
+    /// keyframes' summed before merging.
+    pub dispatch_source_points: usize,
+    pub dispatch_target_points: usize,
     pub agreement_multiplier: f64,
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
@@ -313,6 +317,8 @@ impl ClosureCandidateDiag {
             estimate_s: f64::NAN,
             estimate_scans: 0,
             search_overshoot: false,
+            dispatch_source_points: 0,
+            dispatch_target_points: 0,
             agreement_multiplier: 1.0,
             sharpness: f64::NAN,
             extended_sharpness: f64::NAN,
