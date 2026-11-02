@@ -15,7 +15,8 @@
 """The URDF of an MJCF robot, so a URDF consumer (UrdfManager, renderers) stays in sync with what MuJoCo simulates.
 
 Each body becomes a link of the same name (the root may be renamed), each hinge/slide joint a revolute/prismatic
-joint of the same name, and a body without joints a fixed joint. A free root joint is dropped: tf poses the root.
+joint of the same name, a body without joints a fixed joint, and each named site (a sensor's frame, see
+mjcf_with_frames) a link fixed to its body. A free root joint is dropped: tf poses the root.
 Meshes are written out as compiled (MuJoCo recenters them), so the URDF needs no MuJoCo to render.
 """
 
@@ -32,6 +33,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.robot.assets.model import RobotModel
+
 _CACHE = Path(tempfile.gettempdir()) / "dimos-sim2-urdf"
 # MuJoCo puts collision-only geoms in group 3 by convention; the rest are drawn.
 _VISUAL_GROUPS = frozenset({0, 1, 2})
@@ -39,8 +42,8 @@ _VISUAL_GROUPS = frozenset({0, 1, 2})
 
 def mjcf_to_urdf(
     mjcf: Path, name: str | None = None, root_link: str | None = None, out_dir: Path | None = None
-) -> Path:
-    """Write the URDF of `mjcf` (and its meshes) under out_dir, reusing it while the MJCF and options are unchanged.
+) -> RobotModel:
+    """The URDF of `mjcf`, written (with its meshes) under out_dir and reused while the MJCF and options are unchanged.
 
     The robot is named `name`, else the MJCF's model name, else the file's stem.
     """
@@ -57,7 +60,7 @@ def mjcf_to_urdf(
         partial = urdf.with_suffix(".partial")
         partial.write_text(xml)
         partial.replace(urdf)
-    return urdf
+    return RobotModel.from_file(urdf)
 
 
 def _urdf(model: mujoco.MjModel, name: str, root_link: str | None, directory: Path) -> str:
@@ -78,6 +81,20 @@ def _urdf(model: mujoco.MjModel, name: str, root_link: str | None, directory: Pa
             _check_root_joints(model, body)
             continue
         _add_joints(robot, model, body, links[int(model.body_parentid[body])], links[body])
+    names = set(links.values())
+    for site in range(model.nsite):
+        site_name = model.site(site).name
+        if site_name and site_name not in names:
+            ET.SubElement(robot, "link", name=site_name)
+            on_body = _transform(model.site_pos[site], model.site_quat[site])
+            _joint(
+                robot,
+                f"{site_name}_fixed",
+                "fixed",
+                links[int(model.site_bodyid[site])],
+                site_name,
+                on_body,
+            )
     ET.indent(robot)
     return ET.tostring(robot, encoding="unicode")
 

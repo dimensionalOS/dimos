@@ -17,24 +17,20 @@
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_sim2_l1 import (
-    CAMERA_OPTICAL_FRAME,
-    GO2_L1_MODEL,
-    L1_FRAME,
-)
-from dimos.robot.unitree.go2.sim2 import GO2_MJCF, GO2_ROBOT_ID
+from dimos.robot.unitree.go2.sim2 import Go2Sim
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.kinematic_base import SimKinematicBase
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.module import Simulation
+from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 
 unitree_go2_dimsim = autoconnect(
     Simulation.blueprint(
         backend="dimsim", scene=Path(__file__).parents[5] / "sim2" / "logistics_props.xml"
     ),
-    SimKinematicBase.blueprint(robot_id=GO2_ROBOT_ID, root_body="base"),
-    UrdfManager.blueprint(model=GO2_L1_MODEL, formats={"mjcf": GO2_MJCF}),
-    SimL1.blueprint(frame_id=L1_FRAME),
-    SimCamera.blueprint(frame_id=CAMERA_OPTICAL_FRAME),
+    SimKinematicBase.blueprint(robot_id="go2", model=Go2Sim.mjcf, root_body="base"),
+    UrdfManager.blueprint(model=mjcf_to_urdf(Go2Sim.mjcf, "go2", "base_link")),
+    SimL1.blueprint(frame_id=Go2Sim.l1_mount_frame),
+    SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame),
 ).global_config(n_workers=6, robot_model="unitree_go2")

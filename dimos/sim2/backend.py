@@ -15,10 +15,10 @@
 
 """What a physics engine implements to run behind Simulation."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos_lcm.world_msgs import WorldChange
 
@@ -42,8 +42,6 @@ class Publisher(Protocol):
 
 
 class SimulationBackend(Protocol):
-    # The robot_description format it loads a robot's model from.
-    model_format: ClassVar[str]
     # What its frames are written with: the ids actions address its entities by.
     world: WorldWriter
 
@@ -71,6 +69,8 @@ class SimulationBackend(Protocol):
         """Backend specifics for local clients, like the paths of a shared model and state."""
 
 
-def load_backend(name: str) -> type[SimulationBackend]:
+def load_backend(
+    name: str,
+) -> Callable[["SimulationConfig", Mapping[str, Simulated], Path], SimulationBackend]:
     module, _, cls = BACKENDS[name].rpartition(".")
     return getattr(import_module(module), cls)  # type: ignore[no-any-return]

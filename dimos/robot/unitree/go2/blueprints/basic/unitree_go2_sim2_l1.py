@@ -14,47 +14,25 @@
 
 """unitree-go2-basic in sim2: the walking Go2, its head L1 and front camera, its URDF posed for viewers."""
 
-import math
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
-    CAMERA_XYZ,
-    L1_MOUNT,
-    L1_XYZ,
-    OPTICAL_RPY,
-)
-from dimos.robot.unitree.go2.sim2 import GO2_MJCF, GO2_SIM_MODEL, Go2Sim
+from dimos.robot.unitree.go2.sim2 import Go2Sim
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.module import Simulation
+from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.visualization.vis_module import vis_module
-
-L1_FRAME = "utlidar_lidar"
-CAMERA_FRAME = "front_camera"
-CAMERA_OPTICAL_FRAME = "camera_optical"
-# The Go2 and its L1 and camera frames.
-GO2_L1_MODEL = (
-    GO2_SIM_MODEL.with_fixed_frame(
-        L1_FRAME,
-        "base_link",
-        xyz=L1_XYZ,
-        rpy=(math.radians(L1_MOUNT[0]), math.radians(L1_MOUNT[1]), math.radians(L1_MOUNT[2])),
-    )
-    .with_fixed_frame(CAMERA_FRAME, "base_link", xyz=CAMERA_XYZ)
-    .with_fixed_frame(CAMERA_OPTICAL_FRAME, CAMERA_FRAME, rpy=OPTICAL_RPY)
-)
 
 unitree_go2_sim2_l1 = autoconnect(
     Simulation.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     Go2Sim.blueprint(),
-    UrdfManager.blueprint(
-        model=GO2_L1_MODEL,
-        formats={"mjcf": GO2_MJCF},
-    ).remappings([(UrdfManager, "coordinator_joint_state", "joint_state")]),
-    SimL1.blueprint(frame_id=L1_FRAME),
-    SimCamera.blueprint(frame_id=CAMERA_OPTICAL_FRAME),
+    # The MJCF's base body is the URDF's base_link, the frame odometry moves.
+    UrdfManager.blueprint(model=mjcf_to_urdf(Go2Sim.mjcf, "go2", "base_link")).remappings(
+        [(UrdfManager, "coordinator_joint_state", "joint_state")]
+    ),
+    SimL1.blueprint(frame_id=Go2Sim.l1_mount_frame),
+    SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame),
 ).global_config(n_workers=6, robot_model="unitree_go2")

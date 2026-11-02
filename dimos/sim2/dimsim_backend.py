@@ -75,8 +75,6 @@ _MAX_BURST_STEPS = 5
 
 
 class DimsimBackend:
-    model_format = "mjcf"
-
     def __init__(
         self, config: "SimulationConfig", simulated: Mapping[str, Simulated], directory: Path
     ) -> None:

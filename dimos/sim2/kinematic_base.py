@@ -37,9 +37,8 @@ from dimos.sim2.world_change import WorldMirror
 
 class SimKinematicBaseConfig(ModuleConfig):
     robot_id: str
+    model: Path
     root_body: str
-    # None: the robot_description of robot_id's (a UrdfManager's) names it.
-    model: Path | None = None
     xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     # Seconds a cmd_vel holds before the base stops, as a real base's watchdog does.
     cmd_vel_timeout: float = 0.5
@@ -64,7 +63,7 @@ class SimKinematicBase(Module):
         config = self.config
         return {
             "simulated": SimulatedRobot(
-                config.robot_id, config.root_body, config.model, xyz=config.xyz
+                config.robot_id, config.model, config.root_body, xyz=config.xyz
             )
         }
 

@@ -302,36 +302,19 @@ if global_config.simulation == "mujoco":
     )
     _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 
     if global_config.simulation == "sim2":
-        from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
-        from dimos.robot.unitree.g1.sim2 import G1_MJCF, G1_SIM_MODEL, G1Sim
-        from dimos.robot.urdf_manager import UrdfManager
+        from dimos.robot.unitree.g1.sim2 import G1Sim
         from dimos.sim2.livox import LivoxSim
         from dimos.sim2.module import Simulation
 
-        _MID360_FRAME = PointLioConfig.model_fields["sensor_frame_id"].default
-        # The real stack with each device swapped for its sim twin: G1Sim for the connection, LivoxSim for the
-        # Mid360 at its frame (upside down on the torso, as torso_to_mid360 has it). This UrdfManager only hands
-        # the sim the G1 and that frame; the real stack's tf publishers still own tf.
-        _backend = autoconnect(
-            Simulation.blueprint(),
-            G1Sim.blueprint(),
-            UrdfManager.blueprint(
-                model=G1_SIM_MODEL.with_fixed_frame(
-                    _MID360_FRAME,
-                    "torso_link",
-                    xyz=_TORSO_MID360_XYZ,
-                    rpy=(math.pi, MID360_PITCH, 0.0),
-                ),
-                formats={"mjcf": G1_MJCF},
-                publish_joint_tf=False,
-            ),
-        )
-        _mid360 = LivoxSim.blueprint(frame_id=_MID360_FRAME).remappings(
+        # The real stack with each device swapped for its sim twin: G1Sim for the connection, LivoxSim at
+        # G1Sim's Mid-360 frame for the Mid360.
+        _backend = autoconnect(Simulation.blueprint(), G1Sim.blueprint())
+        _mid360 = LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame).remappings(
             [(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")]
         )
         # Nobody to click Activate in sim.
