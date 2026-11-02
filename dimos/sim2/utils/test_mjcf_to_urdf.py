@@ -21,6 +21,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.unitree.g1.sim2 import G1_MJCF
 from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.utils.data import get_data
 
@@ -133,3 +134,7 @@ def test_ball_joints_are_refused(tmp_path: Path) -> None:
 
 def test_the_go2_urdf_matches_its_mjcf(tmp_path: Path) -> None:
     assert_urdf_matches_mujoco(get_data("go2_sim") / "unitree_go2" / "go2.xml", tmp_path, 20)
+
+
+def test_the_g1_urdf_matches_its_mjcf(tmp_path: Path) -> None:
+    assert_urdf_matches_mujoco(G1_MJCF, tmp_path, 20)

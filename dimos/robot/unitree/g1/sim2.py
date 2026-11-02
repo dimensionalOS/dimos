@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1Sim: the sim twin of G1WholeBodyConnection, with its motor_command in and motor_states and pelvis imu out."""
+"""G1Sim: the sim twin of G1WholeBodyConnection, with its motor_command in and motor_states and pelvis imu out.
+
+Its model comes from the robot_description of the same name: a UrdfManager with G1_SIM_MODEL (the URDF of G1_MJCF,
+plus any sensor frames) and formats={"mjcf": G1_MJCF}.
+"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -29,13 +33,19 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import Servo, SimulatedRobot
+from dimos.sim2.utils.mjcf_to_urdf import MjcfUrdf
 from dimos.sim2.view import WorldView, open_view
 from dimos.sim2.world_change import WorldMirror
 from dimos.simulation.mujoco.menagerie import menagerie_path
+
+G1_ROBOT_ID = "g1"
+G1_MJCF = menagerie_path() / "unitree_g1" / "g1.xml"
+G1_SIM_MODEL = RobotModel.from_file(MjcfUrdf(G1_MJCF, G1_ROBOT_ID))
 
 # Where it starts: pelvis height, and per joint (Menagerie's order, which is the motors' order) the pose it stands in
 # and the PD gains that hold it there until the first motor_command.
@@ -79,7 +89,7 @@ SERVOS = (
 
 
 class G1SimConfig(ModuleConfig):
-    robot_id: str = "g1"
+    robot_id: str = G1_ROBOT_ID
     xy: tuple[float, float] = (0.0, 0.0)
     frame_id: str = "g1_pelvis"
     # As G1WholeBodyConnection: full damping at once, stiffness and torque fading in over this long.
@@ -106,7 +116,6 @@ class G1Sim(Module):
         return {
             "simulated": SimulatedRobot(
                 self.config.robot_id,
-                menagerie_path() / "unitree_g1" / "g1.xml",
                 "pelvis",
                 xyz=(x, y, HOME_HEIGHT),
                 servos=SERVOS,
