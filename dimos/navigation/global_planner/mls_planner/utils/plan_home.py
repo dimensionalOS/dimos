@@ -51,6 +51,18 @@ parser.add_argument(
 )
 parser.add_argument("--threads", type=int, default=0)
 parser.add_argument(
+    "--warp-min-shift",
+    type=float,
+    default=0.0,
+    help="a warp moving the map less than this (m) replans like a scan (subject to --plan-period)",
+)
+parser.add_argument(
+    "--plan-period",
+    type=float,
+    default=0.0,
+    help="replan on scans at most this often (s); warps always replan",
+)
+parser.add_argument(
     "--goal-at", type=float, default=0.0, help="the goal is the robot's pose this many s in"
 )
 parser.add_argument(
@@ -208,6 +220,9 @@ def replan(ts: float, why: str) -> None:
     if origin is None:
         return
     start = (float(origin[0]), float(origin[1]), float(origin[2]) - base_drop)
+    if why == "scan" and ts - state.get("last_plan", -1e18) < args.plan_period:
+        return
+    state["last_plan"] = ts
     if not held:
         if ts - t0 < args.goal_at:
             return
@@ -316,7 +331,7 @@ def on_closure(ts: float, records: np.ndarray, tracer) -> None:
             "goal_after": [round(held[0][0], 3), round(held[0][1], 3)] if held else None,
         }
     )
-    replan(ts, "warp")
+    replan(ts, "warp" if shift >= args.warp_min_shift else "scan")
 
 
 started = time.monotonic()
