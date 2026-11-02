@@ -21,7 +21,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
     _m20_nav,
     m20_nav_overrides,
@@ -80,6 +80,7 @@ def _m20_rerun_blueprint() -> Any:
 
 
 _rerun_config = {
+    "pubsubs": [Zenoh()],
     "blueprint": _m20_rerun_blueprint,
     "tf_axes": 0.35,
     "max_hz": {
@@ -100,7 +101,9 @@ m20_nav = (
     autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
-        M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
+        M20Connection.blueprint(auto_stand=True).remappings(
+            [(M20Connection, "odometry", "slam_odom")]
+        ),
         _m20_nav,
     )
     .global_config(

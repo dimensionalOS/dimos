@@ -20,7 +20,7 @@ from datetime import datetime
 import json
 import socket
 import struct
-from threading import Condition, RLock
+from threading import Condition, RLock, Thread
 from typing import Any, Literal
 
 from pydantic import Field
@@ -72,6 +72,8 @@ class M20ConnectionConfig(ModuleConfig):
     basic_server_host: str = "10.21.31.103"
     basic_server_tcp_port: int = Field(default=30001, ge=1, le=65535)
     basic_server_timeout_s: float = Field(default=3.0, gt=0.0)
+    sit_timeout_s: float = Field(default=3.0, gt=0.0)
+    auto_stand: bool = False
 
 
 class M20Connection(Module):
@@ -117,10 +119,21 @@ class M20Connection(Module):
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+        if self.config.auto_stand:
+            Thread(target=self._auto_stand, name="m20-auto-stand", daemon=True).start()
+
+    def _auto_stand(self) -> None:
+        if not self.standup():
+            logger.error("M20 did not stand up on start")
 
     @rpc
     def stop(self) -> None:
-        self.stop_movement()
+        if self.config.auto_stand:
+            self.liedown()
+            if not self._wait_for_motion_state(MOTION_SIT, self.config.sit_timeout_s):
+                logger.warning("M20 did not confirm Sit before stopping")
+        else:
+            self.stop_movement()
         super().stop()
 
     @rpc
