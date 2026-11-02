@@ -70,12 +70,12 @@ def resolve(
     robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
     frames: dict[str, tuple[str, str, NDArray[np.float64]]] = {}
     for robot_id, robot in robots.items():
-        description = descriptions.get(robot_id)
-        if description is None:
+        robot_description = descriptions.get(robot_id)
+        if robot_description is None:
             continue
-        frames.update(_frames(robot_id, robot.root_body, description["urdf"]))
+        frames.update(_frames(robot_id, robot.root_body, robot_description["urdf"]))
         if robot.model is None:
-            model = description["formats"].get(model_format)
+            model = robot_description["formats"].get(model_format)
             if model is None:
                 raise ValueError(f"{robot_id}'s robot_description has no {model_format!r} format")
             robot = replace(robot, model=Path(model))
@@ -88,9 +88,12 @@ def resolve(
             resolved.append(robot)
         elif description.frame_id in frames:
             robot_id, body, transform = frames[description.frame_id]
-            xyz = tuple(float(v) for v in transform[:3, 3])
-            rpy = tuple(float(v) for v in Rotation.from_matrix(transform[:3, :3]).as_euler("xyz"))
-            resolved.append(replace(description, robot_id=robot_id, body=body, xyz=xyz, rpy=rpy))  # type: ignore[arg-type]
+            x, y, z = (float(v) for v in transform[:3, 3])
+            roll, pitch, yaw = (
+                float(v) for v in Rotation.from_matrix(transform[:3, :3]).as_euler("xyz")
+            )
+            xyz, rpy = (x, y, z), (roll, pitch, yaw)
+            resolved.append(replace(description, robot_id=robot_id, body=body, xyz=xyz, rpy=rpy))
         else:
             resolved.append(replace(description, robot_id=None, body=description.frame_id))
     return resolved
@@ -100,26 +103,26 @@ def _frames(
     robot_id: str, root_body: str, urdf: str
 ) -> dict[str, tuple[str, str, NDArray[np.float64]]]:
     """Every URDF link: (robot, the body it is fixed to, its pose on that body)."""
-    joints = {}
+    joints: dict[str, tuple[str, str, NDArray[np.float64]]] = {}
     root = ET.fromstring(urdf)
     for joint in root.findall("joint"):
-        origin = joint.find("origin")
-        transform = np.eye(4)
-        if origin is not None:
-            transform[:3, :3] = Rotation.from_euler("xyz", _triple(origin.get("rpy"))).as_matrix()
-            transform[:3, 3] = _triple(origin.get("xyz"))
-        child = joint.find("child").get("link")  # type: ignore[union-attr]
-        parent = joint.find("parent").get("link")  # type: ignore[union-attr]
-        joints[child] = (parent, joint.get("type"), transform)
-    frames = {}
+        element = joint.find("origin")
+        origin = np.eye(4)
+        if element is not None:
+            origin[:3, :3] = Rotation.from_euler("xyz", _triple(element.get("rpy"))).as_matrix()
+            origin[:3, 3] = _triple(element.get("xyz"))
+        child = joint.find("child").get("link", "")  # type: ignore[union-attr]
+        parent = joint.find("parent").get("link", "")  # type: ignore[union-attr]
+        joints[child] = (parent, joint.get("type", "fixed"), origin)
+    frames: dict[str, tuple[str, str, NDArray[np.float64]]] = {}
     for link in root.findall("link"):
-        name, transform = link.get("name"), np.eye(4)
-        assert name is not None
+        frame = name = link.get("name", "")
+        transform = np.eye(4)
         while name in joints and joints[name][1] == "fixed":
             parent, _, origin = joints[name]
             name, transform = parent, origin @ transform
-        frames[link.get("name")] = (robot_id, name if name in joints else root_body, transform)
-    return frames  # type: ignore[return-value]
+        frames[frame] = (robot_id, name if name in joints else root_body, transform)
+    return frames
 
 
 def _triple(text: str | None) -> list[float]:
