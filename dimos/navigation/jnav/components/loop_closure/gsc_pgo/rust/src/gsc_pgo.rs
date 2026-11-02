@@ -448,8 +448,10 @@ pub struct DeterministicConfig {
     pub solve_keyframe_power: f64,
     pub solve_closure_power: f64,
     pub solve_rejected_power: f64,
-    /// The graph change heat's cost the solve's thread measures after it, per keyframe (added to the solve's).
+    /// The debounce (`adoption_schedule`): the graph change heat's cost of a finished solve, per keyframe.
     pub debounce_scans_per_keyframe: f64,
+    /// The merge (`adoption_schedule`): preparing the adoption's new graph version, per keyframe.
+    pub merge_scans_per_keyframe: f64,
     /// The loop-overlap pressure: fixed, per keyframe and per committed closure.
     pub pressure_scans_fixed_overhead: f64,
     pub pressure_scans_per_keyframe: f64,
@@ -470,6 +472,7 @@ impl Default for DeterministicConfig {
             solve_closure_power: -0.215,
             solve_rejected_power: 0.558,
             debounce_scans_per_keyframe: 2.56e-6,
+            merge_scans_per_keyframe: 2.56e-6,
             pressure_scans_fixed_overhead: 1.21e-4,
             pressure_scans_per_keyframe: 1.355e-6,
             pressure_scans_per_closure: 1.957e-6,
@@ -950,7 +953,16 @@ pub struct GscPgo {
     /// solve waiting for it to cool.
     pub(crate) heat: f64,
     pub(crate) heat_keyframes: usize,
-    pub(crate) pending_solve: Option<crate::pose_graph_solving::FinishedSolve>,
+    pub(crate) pending_solve: Option<(crate::pose_graph_solving::FinishedSolve, f64)>,
+    /// The debounce and the merge (`adoption_schedule`): each job out, the newest solve waiting for each, their workers,
+    /// and whether they run inline (the end of the data).
+    pub(crate) debounce_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Debounced>>,
+    pub(crate) debounce_waiting: Option<crate::pose_graph_solving::FinishedSolve>,
+    pub(crate) merge_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Merged>>,
+    pub(crate) merge_waiting: Option<(crate::pose_graph_solving::FinishedSolve, Option<(f64, f64, f64)>)>,
+    pub(crate) adoption_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) merge_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) adoption_inline: bool,
     /// The newest `solve_speed_window_poses` + 1 distinct odometry poses' times and positions (odometry frame), for the
     /// body's recent speed.
     pub(crate) recent_motion: std::collections::VecDeque<(f64, Vec3)>,
