@@ -390,6 +390,12 @@ impl GscPgo {
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
         self.timing.solve_s += seconds;
+        let dispatched_over = solving.keyframes;
+        self.solve_records.push((
+            dispatched_over,
+            self.key_poses[dispatched_over - 1].time,
+            seconds,
+        ));
         // a solve that stalled short of a minimum would bend the map wrong: the map keeps the previous solve (a real loop
         // closure can raise the cost a hundredfold, so the cost itself is no test)
         let previous = self.graph_error;

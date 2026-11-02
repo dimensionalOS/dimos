@@ -368,7 +368,11 @@ impl ClosureSearch {
         let mut previous = (first.rotation, first.translation);
         let mut multiplier = 1.0;
         let mut found: Option<Option<IcpResult>> = None;
+        diag.extension_clouds_planned = clouds.len();
         for (step, &j) in clouds.iter().enumerate() {
+            // each round's seconds, debug dumps left out
+            let round_started = std::time::Instant::now();
+            let dumped_before = *self.dump_s.lock().expect("dump seconds");
             let step = step + 1;
             // the target submap's range around target_idx for this many source clouds, then the keyframes near where
             // this cloud lands
@@ -423,6 +427,7 @@ impl ClosureSearch {
                     );
                     self.debug_io_s
                         .set(self.debug_io_s.get() + t0.elapsed().as_secs_f64());
+                    *self.dump_s.lock().expect("dump seconds") += t0.elapsed().as_secs_f64();
                 }
                 let mut v = vec![source.len() as f64];
                 v.extend(crate::icp_cache::encode_icp(&icp));
@@ -469,6 +474,11 @@ impl ClosureSearch {
             previous = (icp.rotation, icp.translation);
             diag.cloud_agreement.push(apart);
             diag.agreement_multiplier = multiplier;
+            diag.extension_clouds_used = step;
+            diag.cost_extension_rounds_s.push(
+                round_started.elapsed().as_secs_f64()
+                    - (*self.dump_s.lock().expect("dump seconds") - dumped_before),
+            );
             let score = median * multiplier;
             diag.cloud_ratios = ratios.clone();
             diag.extended_keyframes = ratios.len();
