@@ -341,7 +341,7 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
-    # sim2's WorldChange metadata
+    # sim2's WorldObservations metadata
     "cbor2>=5.6",
     "playground>=0.0.5",
     "pygame>=2.6.1",

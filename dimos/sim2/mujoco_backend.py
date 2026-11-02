@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""The MuJoCo backend: one compiled world, stepped in real time, each frame a WorldChange of what moved."""
+"""The MuJoCo backend: one compiled world, stepped in real time, each frame a WorldObservations of what moved."""
 
 import asyncio
 import base64
@@ -25,7 +25,7 @@ import time
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 
-from dimos_lcm.world_msgs import WorldChange
+from dimos_lcm.world_msgs import WorldObservations
 import mujoco
 import numpy as np
 
@@ -45,7 +45,7 @@ from dimos.sim2.actions import (
 from dimos.sim2.backend import Publisher
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.world import compile_world, keyframe
-from dimos.sim2.world_change import (
+from dimos.sim2.world_observations import (
     EPOCH,
     OBJECT,
     PAUSED,
@@ -198,7 +198,7 @@ class MujocoBackend:
                 if isinstance(action, JointCommand) and action.entity in self._acted:
                     self._acted[action.entity] += 1
 
-    async def run(self, world_change: Publisher) -> None:
+    async def run(self, world_observations: Publisher) -> None:
         model, data = self.model, self.data
         self._reset()
         started = time.monotonic()
@@ -217,15 +217,15 @@ class MujocoBackend:
                     started += (steps - max_steps) * model.opt.timestep / self._config.speed
                     steps = max_steps
             for _ in range(steps):
-                if await self._hold_for_controllers(world_change):
+                if await self._hold_for_controllers(world_observations):
                     started = time.monotonic() - data.time / self._config.speed
                 mujoco.mj_step(model, data)
                 self._expire_wrenches()
-            if not world_change.busy:
-                world_change.offer(self.frame())
+            if not world_observations.busy:
+                world_observations.offer(self.frame())
             await asyncio.sleep(0.001)
 
-    async def _hold_for_controllers(self, world_change: Publisher) -> bool:
+    async def _hold_for_controllers(self, world_observations: Publisher) -> bool:
         """At a controller's tick, send it the world and wait for its actions; True if the world waited."""
         now = self.data.time
         due = [
@@ -244,9 +244,9 @@ class MujocoBackend:
             for robot_id in due:
                 self._acted[robot_id] = 0
         # The tick's frame must reach its controllers, so it waits out a busy publisher rather than being dropped.
-        while world_change.busy:
+        while world_observations.busy:
             await asyncio.sleep(0)
-        world_change.offer(self.frame(tuple(due)))
+        world_observations.offer(self.frame(tuple(due)))
         deadline = time.monotonic() + self._config.controller_timeout
         while time.monotonic() < deadline:
             with self._lock:
@@ -401,7 +401,7 @@ class MujocoBackend:
                 roots[model.body(body).name or f"body{body}"] = body
         return roots
 
-    def frame(self, waiting_for: tuple[str, ...] = ()) -> WorldChange:
+    def frame(self, waiting_for: tuple[str, ...] = ()) -> WorldObservations:
         """What changed since the last frame: entities that moved, joints, refusals, and the robots the world waits for."""
         world, data = self.world, self.data
         if not self._announced:

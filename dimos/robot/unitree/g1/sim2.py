@@ -23,7 +23,7 @@ import math
 import time
 from typing import Any
 
-from dimos_lcm.world_msgs import WorldAction, WorldChange
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
@@ -40,7 +40,7 @@ from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.view import WorldView, open_view
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.mujoco.menagerie import menagerie_path
 
 # Where it starts: pelvis height, and per joint (Menagerie's order, which is the motors' order) the pose it stands in
@@ -104,7 +104,7 @@ class G1Sim(Module):
 
     config: G1SimConfig
     motor_command: In[MotorCommandArray]
-    world_change: In[WorldChange]
+    world_observations: In[WorldObservations]
     actions: Out[WorldAction]
     # Named and ordered as G1WholeBodyConnection's.
     motor_states: Out[JointState]
@@ -128,7 +128,7 @@ class G1Sim(Module):
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
-        self._world.subscribe(self.world_change)
+        self._world.subscribe(self.world_observations)
         self._view = open_view(self._simulation.describe())
         self._publishing = asyncio.create_task(self._publish())
         yield

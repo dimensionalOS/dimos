@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A WorldView drawn by MuJoCo: its own model of the described world, never the backend's, posed from world_change."""
+"""A WorldView drawn by MuJoCo: its own model of the described world, never the backend's, posed from world_observations."""
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -24,7 +24,7 @@ from numpy.typing import NDArray
 
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world import compile_world
-from dimos.sim2.world_change import JOINT, OBJECT, ROBOT, Entity, WorldMirror
+from dimos.sim2.world_observations import JOINT, OBJECT, ROBOT, Entity, WorldMirror
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
 _GRAVITY = np.array([0.0, 0.0, -9.81])

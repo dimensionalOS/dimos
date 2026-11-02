@@ -21,7 +21,7 @@ import time
 from typing import Any
 import uuid
 
-from dimos_lcm.world_msgs import WorldAction, WorldChange
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
 import numpy as np
 import pytest
 
@@ -43,7 +43,7 @@ from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 
 L1_PERIOD = 0.13
 RATES = {
@@ -98,7 +98,7 @@ class _Dog(Module):
     """A robot that, in lockstep, is slow to answer: the world runs slower than real waiting for it."""
 
     config: _DogConfig
-    world_change: In[WorldChange]
+    world_observations: In[WorldObservations]
     actions: Out[WorldAction]
 
     @shared_config(Simulation)
@@ -118,7 +118,7 @@ class _Dog(Module):
                 loop.call_soon_threadsafe(loop.call_later, self.config.think, act)
 
         world.on_frame(on_frame)
-        world.subscribe(self.world_change)
+        world.subscribe(self.world_observations)
         yield
 
 

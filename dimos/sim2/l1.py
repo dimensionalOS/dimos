@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator
 import math
 from typing import Any
 
-from dimos_lcm.world_msgs import WorldChange
+from dimos_lcm.world_msgs import WorldObservations
 import numpy as np
 from numpy.typing import NDArray
 
@@ -35,7 +35,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.mid360.lidar import Raycaster
 
 # Cell keys pack three offset 21-bit indices into one int64.
@@ -61,7 +61,7 @@ class SimL1Config(ModuleConfig):
 class SimL1(Module):
     config: SimL1Config
     lidar: Out[PointCloud2]
-    world_change: In[WorldChange]
+    world_observations: In[WorldObservations]
     _simulation: SimulationSpec
 
     @shared_config(Simulation)
@@ -70,7 +70,7 @@ class SimL1(Module):
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
-        self._world.subscribe(self.world_change)
+        self._world.subscribe(self.world_observations)
         description = self._simulation.describe()
         site = sensor_frame(description, self.frame_id)
         # The map is centred on the robot the L1 is on.
