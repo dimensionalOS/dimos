@@ -110,6 +110,8 @@ config! {
     solve_estimate_speed_power: f64,
     solve_estimate_speed_floor_mps: f64,
     closure_search_hold_enabled: bool,
+    closure_search_let_enabled: bool,
+    closure_search_workers: usize,
     closure_search_estimate_lookup_s: f64,
     closure_search_estimate_lookup_per_keyframe_s: f64,
     closure_search_estimate_build_per_point_s: f64,

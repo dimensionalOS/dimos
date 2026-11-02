@@ -515,6 +515,13 @@ pub struct Config {
     /// but each recording's hardest 1% (re-chosen over 3 refits), so >= 99% of each recording's searches are under it;
     /// the fit put no weight on the single ICP's term (the build term's points carry it), `icp_s` 0.
     pub closure_search_hold_enabled: bool,
+    /// Logical execution time for closure searches (with `closure_search_hold_enabled`): every keyframe's search is its own
+    /// job, started (its graph snapshot taken) at the keyframe it is proposed and landing at its own dispatch + estimate,
+    /// whatever other searches are doing, run on `closure_search_workers` threads first-dispatched first; results land in
+    /// due order, ties by dispatch order. Off: one search at a time on its own thread, the next keyframes' proposals going
+    /// stale while it is held.
+    pub closure_search_let_enabled: bool,
+    pub closure_search_workers: usize,
     pub closure_search_estimate_lookup_s: f64,
     pub closure_search_estimate_lookup_per_keyframe_s: f64,
     pub closure_search_estimate_build_per_point_s: f64,
@@ -684,6 +691,9 @@ impl Config {
             ("closure_search_estimate_extension_overhead_s", self.closure_search_estimate_extension_overhead_s),
             ("closure_search_estimate_extension_cloud_s", self.closure_search_estimate_extension_cloud_s),
         ];
+        if self.closure_search_workers == 0 {
+            return Err("closure_search_workers must be >= 1".into());
+        }
         if let Some((name, value)) = estimates.iter().find(|(_, v)| !(*v >= 0.0)) {
             return Err(format!("{name} must be >= 0 (got {value})"));
         }
@@ -736,6 +746,8 @@ impl Default for Config {
             solve_estimate_speed_power: 0.0,
             solve_estimate_speed_floor_mps: 0.05,
             closure_search_hold_enabled: true,
+            closure_search_let_enabled: true,
+            closure_search_workers: 2,
             closure_search_estimate_lookup_s: 610e-6,
             closure_search_estimate_lookup_per_keyframe_s: 5.7e-9,
             closure_search_estimate_build_per_point_s: 3.137e-6,
@@ -849,10 +861,15 @@ pub struct GscPgo {
     /// an earlier stamp spans no data time).
     pub(crate) recent_scan_times: std::collections::VecDeque<f64>,
     pub(crate) advancing_scans: usize,
-    /// The closure search running or held (`closure_search_hold_enabled`), the recorded times of the scans since its
-    /// dispatch, the searches that overshot their estimate and the seconds a lockstep replay waited on them.
-    pub(crate) closure_search: Option<crate::closure_search_schedule::RunningSearch>,
-    pub(crate) search_scan_times: Vec<f64>,
+    /// The closure searches dispatched and not landed yet, in dispatch order (`closure_search_hold_enabled`), the number
+    /// the next one gets, the recorded times of the advancing scans since the oldest one's dispatch (the first is advancing
+    /// scan `search_scan_base`), the worker pool they run on (`closure_search_let_enabled`), the searches that overshot
+    /// their estimate and the seconds a lockstep replay waited on them.
+    pub(crate) closure_searches: std::collections::VecDeque<crate::closure_search_schedule::SearchJob>,
+    pub(crate) search_order: u64,
+    pub(crate) search_scan_times: std::collections::VecDeque<f64>,
+    pub(crate) search_scan_base: usize,
+    pub(crate) search_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) closure_search_overshoots: usize,
     pub(crate) closure_search_wait_s: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
@@ -993,7 +1010,6 @@ impl ClosureSearch {
             self.tries,
         );
         let (started, dumps) = (std::time::Instant::now(), self.dump_s.clone());
-        let progress = self.progress.clone();
         let mut result = self.search();
         result.timing.search_s =
             started.elapsed().as_secs_f64() - *dumps.lock().expect("dump seconds");
@@ -1006,9 +1022,6 @@ impl ClosureSearch {
         diag.cost_search_s = t.search_s;
         diag.cost_gates_s = t.search_s - t.submap_s - t.degeneracy_s - t.icp_s - t.extended_icp_s;
         result.retry = Some(retry);
-        if let Some(progress) = &progress {
-            progress.done();
-        }
         result
     }
     fn search(self) -> ClosureSearchResult {
@@ -1720,8 +1733,11 @@ impl GscPgo {
                 self.recent_scan_times.pop_front();
             }
             self.recent_scan_times.push_back(pose.second);
-            if self.closure_search.is_some() {
-                self.search_scan_times.push(pose.second);
+            if !self.closure_searches.is_empty() {
+                if self.search_scan_times.is_empty() {
+                    self.search_scan_base = self.advancing_scans;
+                }
+                self.search_scan_times.push_back(pose.second);
             }
         }
         // the running solve's estimate ends at this scan: its data time, to judge an overshoot by
