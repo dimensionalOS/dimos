@@ -38,53 +38,91 @@ figure{margin:24px 0}figcaption{font-size:13px;color:var(--muted);margin-top:14p
 <body><main>
 <header>
 <div class="eyebrow">DimOS sim2 · first principles, source code, measurements</div>
-<h1>Deltas save communication.<br>Finding them costs work.</h1>
-<p class="lead">A delta reuses information the receiver already has. Jeff's implementation first reads the exported state to find changes, then sends only changed groups. The question is whether the work avoided after detection exceeds the cost of detection and bookkeeping.</p>
+<h1>WorldState: the physical quantities we export, and the cost of updating them.</h1>
+<p class="lead">In sim2-minimal, <code>WorldState</code> is the simulator's authoritative sample of body poses and velocities, scalar joint positions and velocities, and actuator efforts at one simulation tick, identified by an epoch and model revision.</p>
 <div class="finding"><p><strong>The central test:</strong> does saving encoding, transfer and receiver work pay for scanning, comparison and maintaining history?</p></div>
-<p class="muted">Follow the argument: what is saved → what must be inspected → proof in the code → break-even equation → measured costs → implication for sim2. The existing experimental data is unchanged.</p>
+<p class="muted">First define the state and each implementation's coverage. Then derive the cost of communicating changes and test it against the code and measurements. The existing experimental data is unchanged.</p>
 </header>
-<nav aria-label="Report sections"><a href="#reuse">1. What is saved</a><a href="#detect">2. Detection cost</a><a href="#code">3. Code proof</a><a href="#equation">4. Break-even</a><a href="#measurements">5. Measurements</a><a href="#decision">6. Decision</a><a href="#evidence">Evidence</a></nav>
+<nav aria-label="Report sections"><a href="#state">1. WorldState definition</a><a href="#reuse">2. Delta definition</a><a href="#detect">3. Detection cost</a><a href="#code">4. Code proof</a><a href="#equation">5. Break-even</a><a href="#measurements">6. Measurements</a><a href="#decision">7. Decision</a><a href="#evidence">Evidence</a></nav>
+
+<section id="state">
+<div class="eyebrow">1 · The actual sim2-minimal contract</div>
+<h2>WorldState specifies physical values, their identities and their sampling time</h2>
+<p><strong>Scope:</strong> rigid bodies and independent scalar joints. A <strong>body</strong> is a rigid part with a position and orientation. A <strong>joint</strong> defines the permitted relative motion between bodies; a scalar joint has one position coordinate, such as a hinge angle or slider displacement. An <strong>instance</strong> is a named placement of a model containing bodies and joints. Robots and scene objects both use <code>Instance</code>. A <strong>root body</strong> is the top body of that instance's body tree, attached to the world by a fixed or floating base in this prototype.</p>
+<p>These are different quantities: a link's <strong>pose</strong> locates that link in world coordinates; a joint's <strong>position</strong> describes motion relative to its connected bodies. Given the model, root pose and joint positions, forward kinematics computes the link poses. Exporting both gives consumers directly usable link poses, but includes derived information.</p>
+<p>The existing class, quoted verbatim from the benchmarked revision:</p>
+$source_state
+<p><code>Array</code> means a NumPy <code>float64</code> array. The companion <code>Layout</code> maps each array row to a body or joint name. Let <strong>B = len(layout.bodies)</strong> and <strong>J = len(layout.joints)</strong>. This is the complete meaning of the fields:</p>
+<div class="tablewrap"><table><thead><tr><th>Field</th><th>Physical meaning and convention</th></tr></thead><tbody>
+<tr><td><code>poses</code> · B × 7</td><td>For each named body: <code>[x, y, z, qx, qy, qz, qw]</code>. Position is the body origin in metres. The unit quaternion rotates body-frame coordinates into world axes. Together they are the world-from-body rigid transform.</td></tr>
+<tr><td><code>twists</code> · B × 6</td><td><code>[vx, vy, vz, wx, wy, wz]</code>: linear velocity of that body's origin in m/s, followed by angular velocity in rad/s. Both are expressed in world axes. This is not a centre-of-mass velocity or a body-axis velocity.</td></tr>
+<tr><td><code>position</code>, <code>velocity</code> · J each</td><td>Actual scalar joint position and rate. Hinge: rad and rad/s. Slider: m and m/s. Fixed joints have no scalar row. A floating root's 6-DOF motion is represented by its pose and twist, not a row in these arrays.</td></tr>
+<tr><td><code>effort</code> · J</td><td>Generalized force from actuators at each scalar joint: Nm for a hinge, N for a slider. This backend reads <code>qfrc_actuator</code>. It is neither the requested target nor total joint load; contact and constraint reaction forces are excluded.</td></tr>
+<tr><td><code>revision</code></td><td>Identity of the materialized world description. It must match <code>Layout.revision</code> to interpret names and rows. It identifies the description, not the current physical configuration.</td></tr>
+<tr><td><code>epoch</code>, <code>tick</code></td><td>Epoch identifies a continuous run segment. Reset or privileged placement creates a new epoch and resets the tick to zero. Tick counts completed physics steps in that epoch.</td></tr>
+<tr><td><code>sim_time</code>, <code>wall_time</code></td><td>Simulation seconds within the epoch, currently <code>tick × dt</code>; and host-clock seconds sampled during snapshot construction for downstream timestamping. Wall time is not a physics coordinate or a delivery timestamp.</td></tr>
+</tbody></table></div>
+<p class="caption">Conventions: <a href="https://github.com/dimensionalOS/dimos/blob/$pim_sha/dimos/sim2/types.py#L15-L34">units and coordinate frames</a>. Coverage: <a href="https://github.com/dimensionalOS/dimos/blob/$pim_sha/dimos/sim2/mujoco.py#L193-L213">layout construction</a>. Values: <a href="https://github.com/dimensionalOS/dimos/blob/$pim_sha/dimos/sim2/mujoco.py#L311-L345">step refresh and snapshot extraction</a>. Epoch changes: <a href="https://github.com/dimensionalOS/dimos/blob/$pim_sha/dimos/sim2/runtime.py#L95-L111">reset/place</a>.</p>
+
+<h3>What belongs outside this sample</h3>
+<div class="tablewrap"><table><thead><tr><th>Existing concept</th><th>Exact role</th></tr></thead><tbody>
+<tr><td><code>World</code> / <code>Instance</code> / <code>RobotModel</code></td><td>The scene description: which models are instantiated, their initial placement, geometry, joint structure, drives and sensor configuration. These describe what is simulated. They do not contain the current sampled body and joint values.</td></tr>
+<tr><td><code>Layout</code></td><td>The names and ordering of bodies, scalar joints, drives, roots and IMU frames, plus the description revision. It gives array rows meaning; it contains no current poses or velocities.</td></tr>
+<tr><td>Sensor output</td><td>Camera images, lidar returns and IMU measurements. These have acquisition semantics separate from physical truth. <code>Frame</code> is the existing wrapper for <code>WorldState</code> plus IMU values; it is not a coordinate frame.</td></tr>
+<tr><td>Commands</td><td><code>JointTargets</code>, <code>JointEfforts</code> and <code>Wrench</code> request actuation. A published state reports the resulting sampled values. Receiving a state update does not apply a force to the simulator.</td></tr>
+<tr><td>Backend checkpoint</td><td>The engine-specific data needed to resume integration. MuJoCo's integration state includes more than body poses and joint values, including controls, actuator activation and solver warm-start data. <code>WorldState</code> does not export those fields and cannot serve as that checkpoint.</td></tr>
+</tbody></table></div>
+<p class="caption"><a href="https://github.com/dimensionalOS/dimos/blob/$pim_sha/dimos/sim2/types.py#L37-L126">World, Instance and Layout</a> · <a href="https://github.com/dimensionalOS/dimos/blob/$pim_sha/dimos/sim2/types.py#L144-L179">Frame and commands</a> · <a href="https://mujoco.readthedocs.io/en/stable/APIreference/APItypes.html#mjtstate">MuJoCo integration-state components</a>.</p>
+<p><strong>Coverage limit:</strong> this <code>WorldState</code> has no contact list, contact forces, accelerations, deformable-body state or entity creation/deletion events. It is the current rigid-body/joint truth interface, not a promise to expose every simulator quantity. A task evaluator needing contact force cannot obtain it from this type.</p>
+
+<h3>The experiments compare different exported subsets</h3>
+<div class="tablewrap"><table><thead><tr><th>Path</th><th>Body values</th><th>Joint values and representation</th></tr></thead><tbody>
+<tr><td>A · Pim full</td><td>Pose and twist of every native body except MuJoCo's world body, including articulated links.</td><td>All supported scalar joints' position, velocity and actuator effort, in the <code>WorldState</code> arrays above.</td></tr>
+<tr><td>B · Compact full</td><td>Only the root bodies selected by Jeff's backend, in full arrays every sample.</td><td>The same scalar joint quantities. This is an experimental control, not the existing <code>WorldState</code> class with its all-body layout.</td></tr>
+<tr><td>C / D · Jeff always-send / delta</td><td>Registered robot roots and movable top-level object roots. No per-link poses or static scenery poses in this stream.</td><td>Scalar joints beneath those roots, grouped by root. Both paths use the same <code>WorldChange</code> format; D suppresses unchanged groups.</td></tr>
+</tbody></table></div>
+<p>Jeff's <code>WorldMirror</code> stores the received values in named <code>Entity</code> objects, with IDs, group membership, tags and metadata. A joint is also represented as an <code>Entity</code> in that protocol; that data-model choice does not make a physical joint a rigid body. The stream also carries announcements and events, which are separate from the recurring physical values.</p>
+<details><summary>Exact Layout and Entity definitions, and source of the exported subsets</summary>$source_layout $source_entity<p><a href="https://github.com/dimensionalOS/dimos/blob/$jeff_sha/dimos/sim2/mujoco_backend.py#L376-L419">Root selection and physical export</a> · <a href="https://github.com/dimensionalOS/dimos/blob/$jeff_sha/dimos/sim2/mujoco_backend.py#L432-L459">Announcements and scalar-joint selection</a>.</p></details>
+<div class="finding"><p><strong>What the benchmark holds equal:</strong> every receiver returns the same selected root poses, root twists and scalar joint triples. It does not reconstruct every articulated link pose. Consequently A → B tests reducing exported coverage as well as extraction code; C → D tests suppression with the same coverage and message format. “Full” means every value in that path's declared export, not every quantity inside MuJoCo.</p></div>
+</section>
 
 <section id="reuse">
-<div class="eyebrow">1 · A delta is a caching optimization</div>
-<h2>The receiver already knows most of the answer</h2>
-<p>Think of the exported world state as an ordered collection of records: object poses, robot-root velocities and joint values. A <strong>full sample</strong> contains all agreed records at a particular simulation time. A <strong>delta</strong> identifies changed records and supplies their new values. Jeff's receiver stores the accumulated state in a <strong>mirror</strong>.</p>
-<figure class="state-example" aria-label="Four cached values, one changed value, and the two possible messages">
-<div class="state-row"><b>Receiver already has</b><div class="cells"><span>10</span><span>20</span><span>30</span><span>40</span></div></div>
-<div class="state-row"><b>Simulator now has</b><div class="cells"><span>10</span><span class="changed">21</span><span>30</span><span>40</span></div></div>
-<div class="state-row"><b>Full sample sends</b><div class="cells sent"><span>10</span><span>21</span><span>30</span><span>40</span></div></div>
-<div class="state-row"><b>Delta sends</b><div class="patch">Replace slot 2 with <strong>21</strong></div></div>
-<figcaption>The receiver retains the other three values. “21” is an absolute replacement, not “add 1” and not a command to physics.</figcaption>
-</figure>
-<p>Assume a known layout, separate sender/receiver copies and fixed-size records. Let <strong>N</strong> be the number of records, <strong>k</strong> the number changed, <strong>b</strong> the bytes per value and <strong>h</strong> the identity/metadata bytes per changed record. After the initial baseline, this simple indexed format sends:</p>
+<div class="eyebrow">2 · The delta changes delivery, not the physical meaning of state</div>
+<h2>A WorldChange tells the receiver which stored values to replace</h2>
+<p>A <strong>full sample</strong> supplies all current physical values within the declared export. Jeff's <strong>delta</strong> supplies absolute replacements for publication groups whose values differ from the sender's last-sent values beyond its tolerance. The <strong>mirror</strong> is the receiver's retained local state after applying those replacements. Its correctness depends on receiving the initial declarations and subsequent updates.</p>
+<div class="tablewrap"><table><thead><tr><th>Jeff's publication group</th><th>Compared and transmitted together</th><th>Meaning of omission</th></tr></thead><tbody>
+<tr><td>One root body</td><td>7 pose values + 6 twist values = 13 float64 values. A change in either causes both to be sent.</td><td>Retain the prior pose and twist. They remained within the sender's 1e-6 component tolerance when compared.</td></tr>
+<tr><td>One root's scalar joints</td><td>One row per joint: position, velocity, actuator effort. One changed component sends the entire joint group; a 29-joint group contains 87 float64 values.</td><td>Retain the prior joint matrix. Omission does not mean joint position, velocity or effort is zero.</td></tr>
+</tbody></table></div>
+<p>For the measured scene with <strong>2,048 props and one 29-joint chain</strong>, those physical quantities occupy <strong>13 × 2,049 + 3 × 29 = 26,724 float64 values</strong>, or <strong>213,792 raw bytes</strong>, before metadata and encoding. At 1% prop activity, Jeff's actual messages were <strong>$jeff_full_bytes bytes</strong> always-send versus <strong>$delta_bytes bytes</strong> with suppression (median summaries). The receiver still retains the state for all roots and joints.</p>
+<p>For the simplified cost equations, define <strong>N</strong> as the number of publication groups and <strong>k</strong> as the number emitted in an update. Assume equally sized groups of <strong>b</strong> payload bytes, plus <strong>h</strong> identity/metadata bytes for each emitted delta group. With a known layout and an established baseline:</p>
 <div class="equations">
 <math display="block" aria-label="Full sample bytes equal N times b"><msub><mi>B</mi><mtext>full</mtext></msub><mo>=</mo><mi>N</mi><mi>b</mi></math>
 <math display="block" aria-label="Delta bytes equal k times b plus h"><msub><mi>B</mi><mtext>delta</mtext></msub><mo>=</mo><mi>k</mi><mo>(</mo><mi>b</mi><mo>+</mo><mi>h</mi><mo>)</mo></math>
 </div>
-<p>For a teaching example with 1,000 records of 64 bytes, ten changes and an 8-byte identity per update: a full sample sends <strong>64,000 bytes</strong>; a delta sends <strong>720 bytes</strong>, before message headers. Those other 990 values are already known. This is the communication saving.</p>
-<p>The mirror still stores N records. It needs an initial baseline of the relevant state and identities. Over many updates, the saving is repeatedly avoiding unchanged transfers, not eliminating the initial copy or the state itself. If everything changes, this indexed format sends all values plus identities; a hybrid could instead fall back to a full sample.</p>
-<p class="caption">These byte equations explain a format, not Jeff's exact wire layout. His updates have variable-sized groups and headers. The measurements below use his actual encoder.</p>
+<p>The saving is the payload of omitted groups, minus the identities and update metadata. If all groups must be emitted, this indexed format sends all values plus their identities. It does not remove the receiver's need to store the full declared state.</p>
+<p class="caption">Jeff's groups have different sizes: 13 values per root and 3 per scalar joint. The equations assume equal sizes to expose the tradeoff; they are not his exact byte formula. The 1% setting controls prop motion, not k/N: the chain's joints move too, and one changed joint resends its group. The measurements use the actual grouping and encoder.</p>
 </section>
 
 <section id="detect">
-<div class="eyebrow">2 · Communication and detection are different computations</div>
+<div class="eyebrow">3 · Communication and detection are different computations</div>
 <h2>To discover arbitrary changes by comparison, you must inspect the state</h2>
 <p>Suppose the publisher has the old and current arrays, but receives no list of changes. Can it correctly identify all changed entries while inspecting only k entries?</p>
 <div class="proof"><strong>Proof by an unseen entry.</strong> Pick an entry the algorithm did not inspect. Consider two current states that agree everywhere it did inspect, but differ at that entry. The algorithm sees the same observations in both cases. It cannot reliably decide whether that entry should be omitted. To identify all arbitrary changes, it must inspect every entry in the worst case.</div>
-<p>For fixed-size records, that is an <strong>Ω(N) lower bound</strong>: at least work proportional to N. Comparing a full current array with a previous array is normally O(N). Sending k changed records afterward does not undo that scan. An algorithm can conservatively send uninspected records, but then it loses the guarantee of sending only the changes.</p>
+<p>For fixed-size groups, that is an <strong>Ω(N) lower bound</strong>: at least work proportional to N. Comparing a full current array with a previous array is normally O(N). Sending k emitted groups afterward does not undo that scan. An algorithm can conservatively send uninspected groups, but then it loses the guarantee of sending only the changes.</p>
 
 <figure class="flow-figure" aria-label="Full samples scan N and send N; comparison deltas scan N and send k; native change lists can avoid a publication-time full scan">
-<div class="pipeline"><b>Full sample</b><div class="step scan">Read N records</div><span class="arrow">→</span><div class="step scan">Encode / send N</div><span class="arrow">→</span><div class="step scan">Load N values</div></div>
-<div class="pipeline"><b>Comparison delta<br><small>Jeff's approach</small></b><div class="step scan">Read N<br>+ compare N</div><span class="arrow">→</span><div class="step sparse">Encode / send k</div><span class="arrow">→</span><div class="step sparse">Patch k values</div></div>
-<div class="pipeline"><b>Known changes<br><small>Different algorithm</small></b><div class="step sparse">Visit a maintained<br>list of k changes</div><span class="arrow">→</span><div class="step sparse">Encode / send k</div><span class="arrow">→</span><div class="step sparse">Patch k values</div></div>
+<div class="pipeline"><b>Full sample</b><div class="step scan">Read N groups</div><span class="arrow">→</span><div class="step scan">Encode / send N</div><span class="arrow">→</span><div class="step scan">Load N groups</div></div>
+<div class="pipeline"><b>Comparison delta<br><small>Jeff's approach</small></b><div class="step scan">Read N<br>+ compare N</div><span class="arrow">→</span><div class="step sparse">Encode / send k</div><span class="arrow">→</span><div class="step sparse">Patch k groups</div></div>
+<div class="pipeline"><b>Known changes<br><small>Different algorithm</small></b><div class="step sparse">Visit a maintained<br>list of k changes</div><span class="arrow">→</span><div class="step sparse">Encode / send k</div><span class="arrow">→</span><div class="step sparse">Patch k groups</div></div>
 <figcaption>Blue boxes scale with the exported state; green boxes can scale with changed values. The last row requires the engine or writer to maintain change information. Its maintenance cost is not free, and this design was not benchmarked.</figcaption>
 </figure>
 <p>A simulator that records changed objects while updating them can provide that list. A publisher may then do O(k) incremental work. But a solver can rewrite an array without changing its numerical values: “was written” and “changed enough to publish” are not the same condition.</p>
-<p>The consumer also matters. If it turns the mirror back into a fresh complete N-record array every sample, that output construction is again Ω(N). Incremental messages provide the greatest processing benefit when the receiver can retain and use state incrementally.</p>
+<p>The consumer also matters. If it turns the mirror back into a fresh complete array containing all N groups every sample, that output construction is again Ω(N). Incremental messages provide the greatest processing benefit when the receiver can retain and use state incrementally.</p>
 </section>
 
 <section id="code">
-<div class="eyebrow">3 · Evidence from the actual implementation</div>
+<div class="eyebrow">4 · Evidence from the actual implementation</div>
 <h2>Jeff's conditional comes after extraction</h2>
 <p>The following are verbatim excerpts from the reviewed commit, not pseudocode. Each line links to that exact Git revision. Here “the exported world” means Jeff's selected robot/movable-object roots and their scalar joints, not every internal MuJoCo array or every mesh. <a href="https://github.com/dimensionalOS/dimos/blob/$jeff_sha/dimos/sim2/mujoco_backend.py#L376-L388">The root-selection code defines that set.</a></p>
 $source_roots
@@ -113,9 +151,9 @@ $source_consumer
 </section>
 
 <section id="equation">
-<div class="eyebrow">4 · The condition for a win</div>
+<div class="eyebrow">5 · The condition for a win</div>
 <h2>Less output wins only when it saves more work than detection adds</h2>
-<p>For a simple linear, serial model after initial synchronization, define three time costs. <strong>a</strong> is the per-record cost through the full-sample path. <strong>c</strong> is the per-record cost of the delta path's N-sized work: extraction, comparison/history and any full-array receiver projection. <strong>d</strong> is its remaining cost per changed record: encoding, transfer and patch application.</p>
+<p>For a simple linear, serial model after initial synchronization, define three time costs. <strong>a</strong> is the per-group cost through the full-sample path. <strong>c</strong> is the per-group cost of the delta path's N-sized work: extraction, comparison/history and any full-array receiver projection. <strong>d</strong> is its remaining cost per emitted group: encoding, transfer and patch application.</p>
 <div class="equations">
 <math display="block" aria-label="Full time equals a times N"><msub><mi>T</mi><mtext>full</mtext></msub><mo>=</mo><mi>a</mi><mi>N</mi></math>
 <math display="block" aria-label="Delta time equals c times N plus d times k"><msub><mi>T</mi><mtext>delta</mtext></msub><mo>=</mo><mi>c</mi><mi>N</mi><mo>+</mo><mi>d</mi><mi>k</mi></math>
@@ -123,13 +161,13 @@ $source_consumer
 <math display="block" aria-label="c N plus d k is less than a N, equivalently k over N is less than a minus c over d"><mi>c</mi><mi>N</mi><mo>+</mo><mi>d</mi><mi>k</mi><mo>&lt;</mo><mi>a</mi><mi>N</mi><mspace width="1em"/><mo>⟺</mo><mspace width="1em"/><mfrac><mi>k</mi><mi>N</mi></mfrac><mo>&lt;</mo><mfrac><mrow><mi>a</mi><mo>−</mo><mi>c</mi></mrow><mi>d</mi></mfrac></math>
 </div>
 <p>Three consequences follow directly. <strong>If c ≥ a, this scanning delta path cannot win</strong> for any nonnegative k. If transfer is expensive, avoiding unchanged transfers can make the trade favorable. And <strong>making N larger at a fixed changed fraction does not itself guarantee a win: N cancels out</strong>.</p>
-<p class="caption">Assumptions: N &gt; 0, d &gt; 0, fixed-size records, constant per-record costs, no stage overlap, and startup/repair/fixed message costs excluded. Jeff's comparison can short-circuit, so its effective cost can vary with activity. Cache effects, batching, variable groups and parallelism also require care. We have not fitted a, c and d; the measured ledger below does not assume they are constant.</p>
+<p class="caption">Assumptions: N &gt; 0, d &gt; 0, fixed-size groups, constant per-group costs, no stage overlap, and startup/repair/fixed message costs excluded. Jeff's comparison can short-circuit, so its effective cost can vary with activity. Cache effects, batching, variable groups and parallelism also require care. We have not fitted a, c and d; the measured ledger below does not assume they are constant.</p>
 <div class="balance"><div><b>Work added</b><span>Detection + history maintenance + extra patch bookkeeping</span></div><span class="balance-sign">&lt;</span><div><b>Work avoided</b><span>Encoding + transfer + replacement of unchanged receiver values</span></div></div>
 <p>This is the precise interpretation of “less copying.” We must identify which allocations, serializations or receiver writes disappear, and compare their cost with the new work. The name <code>WorldChange</code> alone establishes none of those costs.</p>
 </section>
 
 <section id="measurements">
-<div class="eyebrow">5 · Connect the proof to our measurements</div>
+<div class="eyebrow">6 · Connect the proof to our measurements</div>
 <h2>We can see both sides of the trade in the recorded timings</h2>
 <p><strong>Hypothesis:</strong> suppressing unchanged groups saves payload and downstream work, but detection can cost more than it saves. <strong>Test:</strong> run Jeff's actual implementation twice against the same native state, codec and receiver workload. The control clears comparison history before every capture, so it sends all groups; the normal path preserves history and suppresses unchanged groups.</p>
 $source_ablation
@@ -167,7 +205,7 @@ $activity_plots
 </section>
 
 <section id="decision">
-<div class="eyebrow">6 · What follows for sim2</div>
+<div class="eyebrow">7 · What follows for sim2</div>
 <h2>WorldState, ownership and synchronization are three separate choices</h2>
 <div class="choices"><div><b>State contract</b><span>Which physical facts can a reader observe, in which frames and at what simulation time?</span></div><div><b>Storage and lifetime</b><span>Can it read an existing buffer? How long are those values valid, and who may change them?</span></div><div><b>Synchronization</b><span>Does a separate copy receive complete samples, changed fields, or a combination?</span></div></div>
 <p>A <code>WorldState</code> API does not itself force a copy. A borrowed view of an existing buffer can avoid copying, provided its validity and concurrent access are defined. Keeping an immutable historical snapshot after the producer changes its data is a different storage requirement.</p>

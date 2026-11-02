@@ -411,6 +411,9 @@ def main() -> None:
         **dict.fromkeys(range(405, 407), "send"),
     }
     source_specs = {
+        "source_state": (PIM_SHA, "dimos/sim2/types.py", 129, 141, None),
+        "source_layout": (PIM_SHA, "dimos/sim2/types.py", 117, 126, None),
+        "source_entity": (JEFF_SHA, world_path, 219, 232, None),
         "source_roots": (JEFF_SHA, backend_path, 395, 406, root_highlights),
         "source_close": (JEFF_SHA, backend_path, 468, 469, None),
         "source_pack": (JEFF_SHA, world_path, 85, 90, None),
