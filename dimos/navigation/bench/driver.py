@@ -77,7 +77,7 @@ class EpisodeDriver(Module):
     config: EpisodeDriverConfig
 
     ground_truth: In[PoseStamped]
-    goal: In[PointStamped]
+    goal: In[PoseStamped]
     goal_reached: In[Bool]
     cmd_vel: In[Twist]
 
@@ -124,7 +124,7 @@ class EpisodeDriver(Module):
         while self._recent and self._recent[0][0] < msg.ts - self._rules.stuck_s:
             self._recent.popleft()
 
-    def _on_goal(self, msg: PointStamped) -> None:
+    def _on_goal(self, msg: PoseStamped) -> None:
         if np.linalg.norm(np.subtract((msg.x, msg.y, msg.z), self._case.goal)) <= GOAL_ECHO_M:
             self._echo = self._echo if self._echo is not None else msg.ts
 

@@ -27,19 +27,19 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
+from dimos.navigation.spec import cancel_goal, position_goal
 
 # Seconds a go_to waits for the robot pose to show up on tf.
 POSE_WAIT_S = 0.5
 
 
-def reports_goal(msg: GoalStatus, goal: PointStamped) -> bool:
+def reports_goal(msg: GoalStatus, goal: PoseStamped) -> bool:
     """Whether a nav_status report is about this goal, which its stamp says."""
     return [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] == goal.ros_timestamp()
 
@@ -106,7 +106,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     # the region pipeline between live updates. Live updates keep priority.
     seed_map: In[PointCloud2]
     seed_bounds: In[PoseStamped]
-    goal: In[PointStamped]
+    goal: In[PoseStamped]
     tf: In[TFMessage]
 
     path: Out[Path]
@@ -115,7 +115,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     nodes: Out[PointCloud2]
     node_edges: Out[LineSegments3D]
 
-    _goal: PointStamped | None = None
+    _goal: PoseStamped | None = None
     """The goal of the go_to under way."""
 
     def __init__(self, **kwargs: object) -> None:
@@ -175,14 +175,14 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
 
         # The planner picks the surface nearest the goal's z, so send the floor height under the robot.
         floor_z = pose.z - self.config.start_z_offset_m
-        goal = PointStamped(x, y, floor_z, frame_id=self.config.world_frame)
+        goal = position_goal(x, y, floor_z, self.config.world_frame)
         with self._goal_lock:
             self._goal = goal
         self.goal.transport.publish(goal)
         return "Navigating. A tool update reports the robot's position when it stops."
 
     def _finish(
-        self, outcome: str, *, cancel: bool = True, ended: PointStamped | None = None
+        self, outcome: str, *, cancel: bool = True, ended: PoseStamped | None = None
     ) -> None:
         with self._goal_lock:
             if ended is not None and self._goal is not ended:
@@ -202,7 +202,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             self._cancel()
 
     def _cancel(self) -> None:
-        self.goal.transport.publish(PointStamped(math.nan, math.nan, math.nan))
+        self.goal.transport.publish(cancel_goal(self.config.world_frame))
 
     @skill
     async def stop_navigation(self) -> str:

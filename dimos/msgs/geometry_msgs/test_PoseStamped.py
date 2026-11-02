@@ -40,6 +40,12 @@ def test_lcm_encode_decode() -> None:
     assert pose_dest == pose_source
 
 
+def test_str_of_a_zero_quaternion_says_no_heading() -> None:
+    pose = PoseStamped(position=[1.0, 2.0, 0.0], orientation=[0.0, 0.0, 0.0, 0.0])
+    assert str(pose) == "PoseStamped(pos=[1.000, 2.000, 0.000], no heading)"
+    assert PoseStamped.lcm_decode(pose.lcm_encode()).orientation.is_zero()
+
+
 def test_pickle_encode_decode() -> None:
     """Test encoding and decoding of PoseStamped to/from binary LCM format."""
 

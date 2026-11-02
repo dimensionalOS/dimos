@@ -23,7 +23,6 @@ from dimos.agents.typesafe.test_drive import answers
 from dimos.agents.typesafe.test_world_state import det2d, det3d
 from dimos.agents.typesafe.types import Answers, Question
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -63,7 +62,7 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
     )
     a.odom.transport = LCMTransport("/test_typesafe/odom", PoseStamped)
     a.cmd_vel.transport = LCMTransport("/test_typesafe/cmd_vel", Twist)
-    a.goal.transport = LCMTransport("/test_typesafe/goal", PointStamped)
+    a.goal.transport = LCMTransport("/test_typesafe/goal", PoseStamped)
     for name in (
         "odometry",
         "detections_3d",
@@ -195,7 +194,7 @@ def test_deadman_zeroes_when_inference_stalls(rig: Rig) -> None:
 
 def test_goal_point_published_and_used_when_target_leaves_view(rig: Rig) -> None:
     a, fake, twists = rig
-    goals: list[PointStamped] = []
+    goals: list[PoseStamped] = []
     unsub = a.goal.transport.subscribe(goals.append)
     fake.answers = answers(x="forward")
     a.set_goal("go to the chair")

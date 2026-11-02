@@ -28,7 +28,7 @@ use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
 use dimos_module::time::now;
 use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::actionlib_msgs::GoalStatus;
-use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
+use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -246,8 +246,8 @@ pub struct MlsPlanner {
     #[input(decode = PoseStamped::decode, handler = on_seed_bounds)]
     seed_bounds: Input<PoseStamped>,
 
-    #[input(decode = PointStamped::decode, handler = on_goal)]
-    goal: Input<PointStamped>,
+    #[input(decode = PoseStamped::decode, handler = on_goal)]
+    goal: Input<PoseStamped>,
 
     #[tf]
     tf: Tf,
@@ -417,8 +417,8 @@ impl MlsPlanner {
 
     /// Set or cancel the active goal, then wake the worker. A goal this
     /// displaces is reported preempted under its own id.
-    async fn on_goal(&mut self, msg: PointStamped) {
-        match goal_position(&msg.point) {
+    async fn on_goal(&mut self, msg: PoseStamped) {
+        match goal_position(&msg.pose.position) {
             Some(position) => {
                 let id = self.next_goal_id(&msg.header.stamp);
                 let held = *self.active_goal.lock().expect("goal mutex");

@@ -33,6 +33,7 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.bench.driver import TERMINAL_FILE, EpisodeDriver, without_objects
 from dimos.navigation.bench.ground_truth import Difficulty, GroundTruth
 from dimos.navigation.bench.suite import Case, Manifest, Rules
+from dimos.navigation.spec import position_goal
 from dimos.simulation.scenes.procedural import BLOCK_SIZE, Scene, block, office
 
 
@@ -125,7 +126,7 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
         name: LCMTransport(f"/test_driver/{name}", kind)
         for name, kind in (
             ("ground_truth", PoseStamped),
-            ("goal", PointStamped),
+            ("goal", PoseStamped),
             ("goal_reached", Bool),
             ("cmd_vel", Twist),
         )
@@ -158,7 +159,7 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
         assert len(seeds) == 1 and seeds[0].frame_id == "odom"
         assert len(seeds[0].points_f32()) > 10_000
         assert world.resets[0][:2] == (1.0, 1.0) and len(world.resets) == 1
-        echo = PointStamped(clicks[0].x, clicks[0].y, clicks[0].z, ts=time.time(), frame_id="odom")
+        echo = position_goal(clicks[0].x, clicks[0].y, clicks[0].z, "odom", time.time())
         transports["goal"].publish(echo)
         _until(lambda: driver._echo is not None, 5.0)
         transports["goal_reached"].publish(Bool(True))

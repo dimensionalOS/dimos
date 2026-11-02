@@ -35,6 +35,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
 )
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.global_planner.viz import render_path
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.simulation.habitat.connection import HabitatConnection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -43,11 +44,9 @@ from dimos.visualization.vis_module import vis_module
 # One stream, two port names: remap rather than rename.
 SCAN_TOPIC = "habitat_scan"
 
-# Teleop and the follower publish straight onto cmd_vel. No MovementManager: it
-# cancels the goal on the zero twist the viewer sends on every key release.
+# Teleop and the follower publish straight onto cmd_vel, not through MovementManager's
+# mux: it cancels the goal on the zero twist the viewer sends on every key release.
 CMD_VEL_TOPIC = "cmd_vel"
-# The viewer's clicked point is already the planner's goal.
-GOAL_TOPIC = "goal"
 
 # VoxelGridMapper wants world-frame clouds; RayTracingVoxelMap registers via tf
 # and raytraces from the sensor origin, so it needs the sensor frame.
@@ -171,6 +170,16 @@ habitat_raycaster = autoconnect(
 habitat_nav = autoconnect(
     habitat_raycaster,
     _mls_planner,
+    # Turns the viewer's click into a goal. Everything else on it is parked.
+    MovementManager.blueprint().remappings(
+        [
+            (MovementManager, "nav_cmd_vel", "_habitat_nav_cmd_vel_unused"),
+            (MovementManager, "tele_cmd_vel", "_habitat_tele_cmd_vel_unused"),
+            (MovementManager, "cmd_vel", "_habitat_mux_cmd_vel_unused"),
+            (MovementManager, "way_point", "_habitat_way_point_unused"),
+            (MovementManager, "stop_movement", "_habitat_stop_movement_unused"),
+        ]
+    ),
     # Defaults to odom; the sim's tf root is world.
     BasicPathFollower.blueprint(
         world_frame=WORLD_FRAME, speed=0.5, heading_gain=1.5, max_angular=1.5
@@ -185,12 +194,7 @@ habitat_nav = autoconnect(
                 ),
             }
         ),
-    ).remappings(
-        [
-            (RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC),
-            (RerunWebSocketServer, "clicked_point", GOAL_TOPIC),
-        ]
-    ),
+    ).remappings([(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]),
 ).global_config(transport="zenoh")
 
 
