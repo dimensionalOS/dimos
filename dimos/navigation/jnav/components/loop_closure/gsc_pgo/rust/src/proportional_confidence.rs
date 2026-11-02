@@ -411,6 +411,7 @@ impl ClosureSearch {
                         target_idx,
                         &source,
                         target_points,
+                        (&first.rotation, &first.translation),
                         &icp,
                         &format!("_c{j}"),
                     );

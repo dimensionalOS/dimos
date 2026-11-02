@@ -35,9 +35,50 @@ pub struct IcpParams {
     pub point_to_plane: bool,
 }
 
+/// Why an ICP stopped iterating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IcpStop {
+    /// An iteration barely moved it, or the correspondences' mean squared distance stopped changing.
+    Converged,
+    /// The early stop gave up: the fit could no longer get under the gate's fitness (`icp_with_early_stop`).
+    EarlyStop,
+    /// It ran `max_iterations` (reported as converged).
+    MaxIterations,
+    /// Fewer than three correspondences, or no step could be solved for.
+    Diverged,
+}
+
+impl IcpStop {
+    pub fn name(self) -> &'static str {
+        match self {
+            IcpStop::Converged => "converged",
+            IcpStop::EarlyStop => "early_stop",
+            IcpStop::MaxIterations => "max_iterations",
+            IcpStop::Diverged => "diverged",
+        }
+    }
+    pub fn code(self) -> u8 {
+        self as u8
+    }
+    pub fn from_code(code: u8) -> Self {
+        [
+            IcpStop::Converged,
+            IcpStop::EarlyStop,
+            IcpStop::MaxIterations,
+            IcpStop::Diverged,
+        ]
+        .get(code as usize)
+        .copied()
+        .unwrap_or(IcpStop::Diverged)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IcpResult {
     pub converged: bool,
+    /// Iterations run, and why it stopped.
+    pub iterations: u32,
+    pub stop: IcpStop,
     /// The transform that moves the source onto the target.
     pub rotation: Mat3,
     pub translation: Vec3,
@@ -65,7 +106,9 @@ pub fn icp(
 
 /// `icp`, but given `fail_fitness` (the gate's largest passing fitness, m²) it gives up, unconverged, once the fit's
 /// fitness (as `IcpResult` measures it, over this iteration's pairs) can no longer get under it: even improving every
-/// remaining iteration by its best improvement so far, it would still end above `fail_fitness`.
+/// remaining iteration at its mean rate since it settled, it would still end above `fail_fitness`. A fit settles once a
+/// step moves the source points under the inlier distance: one seeded metres off scores worse while it slides into place
+/// (judged while travelling, by its best step so far, huge's long loops seeded 5-50 m off gave up at iteration 2-4).
 pub fn icp_with_early_stop(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
@@ -77,7 +120,9 @@ pub fn icp_with_early_stop(
 ) -> IcpResult {
     let (mut rotation, mut translation) = (*rotation, *translation);
     let mut fitness_history: Vec<f64> = Vec::new();
+    let mut settled_from: Option<usize> = None;
     let mut converged = false;
+    let (mut iterations, mut stop) = (0u32, IcpStop::Diverged);
     let limit = (params.max_correspondence_distance * params.max_correspondence_distance) as f32;
     let mut previous_mse = f64::MAX;
     // target surface normals, found the first time a pair uses the point
@@ -88,8 +133,26 @@ pub fn icp_with_early_stop(
     } else {
         Vec::new()
     };
+    // the source's centroid and RMS radius about it, for how far a step moves its points
+    let centroid = source
+        .iter()
+        .fold([0.0f64; 3], |c, p| {
+            [c[0] + p[0] as f64, c[1] + p[1] as f64, c[2] + p[2] as f64]
+        })
+        .map(|v| v / source.len().max(1) as f64);
+    let spread = (source
+        .iter()
+        .map(|p| {
+            (0..3)
+                .map(|k| (p[k] as f64 - centroid[k]).powi(2))
+                .sum::<f64>()
+        })
+        .sum::<f64>()
+        / source.len().max(1) as f64)
+        .sqrt();
     if !source.is_empty() && !target.is_empty() {
         for iteration in 1..=params.max_iterations {
+            iterations = iteration as u32;
             let moved = transform_cloud(source, &rotation, &translation);
             let pairs: Vec<Correspondence> = moved
                 .par_iter()
@@ -110,12 +173,18 @@ pub fn icp_with_early_stop(
             } else {
                 rigid_fit(&pairs)
             };
+            let placed = mat3::add(&mat3::mat_vec(&rotation, &centroid), &translation);
             rotation = mat3::mat_mul(&step_rotation, &rotation);
             translation = mat3::add(
                 &mat3::mat_vec(&step_rotation, &translation),
                 &step_translation,
             );
             let cos = (step_rotation[0][0] + step_rotation[1][1] + step_rotation[2][2] - 1.0) / 2.0;
+            // how far this step moved the source points: its centroid's move plus the turn at their RMS radius
+            let step_motion = mat3::norm(&mat3::sub(
+                &mat3::add(&mat3::mat_vec(&step_rotation, &placed), &step_translation),
+                &placed,
+            )) + cos.clamp(-1.0, 1.0).acos() * spread;
             let mse = pairs.iter().map(|p| p.2 as f64).sum::<f64>() / pairs.len() as f64;
             if let Some(fail) = fail_fitness {
                 let inliers: Vec<f64> = pairs
@@ -129,23 +198,37 @@ pub fn icp_with_early_stop(
                 } else {
                     inliers.iter().sum::<f64>() / inliers.len() as f64 / overlap
                 });
-                if let [.., previous, latest] = fitness_history[..] {
-                    let best_step = fitness_history
-                        .windows(2)
-                        .filter(|w| w[0] < f64::MAX)
-                        .map(|w| w[0] - w[1])
-                        .fold(0.0f64, f64::max);
+                // the fit settles once a step moves the points under the inlier distance, and travels again past it
+                if step_motion >= params.inlier_squared_distance.sqrt() {
+                    settled_from = None;
+                } else if settled_from.is_none() {
+                    settled_from = Some(fitness_history.len() - 1);
+                }
+                let latest = fitness_history[fitness_history.len() - 1];
+                if let Some(start) = settled_from.filter(|&s| s + 1 < fitness_history.len()) {
+                    // improving every remaining iteration at its mean rate since it settled
+                    let rate = (fitness_history[start] - latest)
+                        / (fitness_history.len() - 1 - start) as f64;
                     let remaining = (params.max_iterations - iteration) as f64;
-                    if previous.is_finite() && latest - best_step * remaining > fail {
+                    if fitness_history[start] < f64::MAX
+                        && latest < f64::MAX
+                        && latest - rate.max(0.0) * remaining > fail
+                    {
+                        stop = IcpStop::EarlyStop;
                         break;
                     }
                 }
             }
-            if iteration == params.max_iterations
-                || (cos >= 0.99999 && mat3::norm(&step_translation) <= 1e-3)
+            if (cos >= 0.99999 && mat3::norm(&step_translation) <= 1e-3)
                 || (previous_mse - mse).abs() <= 1e-6 * previous_mse
             {
                 converged = true;
+                stop = IcpStop::Converged;
+                break;
+            }
+            if iteration == params.max_iterations {
+                converged = true;
+                stop = IcpStop::MaxIterations;
                 break;
             }
             previous_mse = mse;
@@ -158,6 +241,8 @@ pub fn icp_with_early_stop(
     );
     IcpResult {
         converged,
+        iterations,
+        stop,
         rotation,
         translation,
         fitness,
@@ -796,15 +881,21 @@ fn rigid_fit(pairs: &[Correspondence]) -> (Mat3, Vec3) {
     )
 }
 
+/// The `.icp` dump layout version, the file's last 4 bytes (`dump_icp`); a file without it is version 1.
+pub const ICP_DUMP_VERSION: u32 = 2;
+
 /// Write an ICP's exact input and result to `<dir>/<source>_<target><suffix>.icp`: u32 source count, u32
 /// target count, f32 xyz points (source, then target), the rotation (row-major) and translation as f64,
-/// f64 fitness, u8 converged.
+/// f64 fitness, u8 converged (version 1 ends here); then the initial guess's rotation (row-major) and translation as
+/// f64, u32 iterations, u8 stop (`IcpStop::code`), and u32 `ICP_DUMP_VERSION` last.
+#[allow(clippy::too_many_arguments)]
 pub fn dump_icp(
     dir: &str,
     source_id: usize,
     target_id: usize,
     source: &[[f32; 3]],
     target: &[[f32; 3]],
+    init: (&Mat3, &Vec3),
     icp: &IcpResult,
     suffix: &str,
 ) {
@@ -824,6 +915,12 @@ pub fn dump_icp(
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     bytes.push(icp.converged as u8);
+    for v in init.0.iter().flatten().chain(init.1) {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes.extend_from_slice(&icp.iterations.to_le_bytes());
+    bytes.push(icp.stop.code());
+    bytes.extend_from_slice(&ICP_DUMP_VERSION.to_le_bytes());
     let path = std::path::Path::new(dir).join(format!("{source_id}_{target_id}{suffix}.icp"));
     if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, bytes)) {
         eprintln!(
