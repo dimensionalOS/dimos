@@ -206,8 +206,7 @@ pub struct ClosureCandidateDiag {
     pub cost_search_s: f64,
     /// What was known before the search: the map's keyframes, the scan-context candidates ranked and the alternative
     /// places left (and this one's try, 1 = the best match), the extension clouds planned and fitted, the single ICP's
-    /// source, target and thinned-target points, the body's speed (m/s, the median over the newest 50 scans' poses by
-    /// their recorded times), and the scan count when the search was proposed and when its result landed.
+    /// source, target and thinned-target points, the body's speed (m/s, `recent_speed`), and the scan count when the search was proposed and when its result landed.
     pub map_keyframes: usize,
     pub scan_context_candidates: usize,
     pub alternatives_left: usize,
@@ -466,6 +465,22 @@ pub struct Config {
     pub graph_change_heat_threshold: f64,
     pub graph_change_heat_floor: f64,
     pub graph_change_heat_decay: f64,
+    /// Deterministic solve schedule: a finished solve is held until `estimate_scans` scans after its dispatch, an upper
+    /// bound on its cost in scans known before it starts, so the graph is the same however fast the machine is; one still
+    /// running then is an overshoot (logged loudly, counted) and is adopted as soon as it finishes. The estimate is
+    /// `solve_estimate_scale * keyframes^solve_estimate_keyframe_power * (1 + closures)^solve_estimate_closure_power *
+    /// (1 + rejected)^solve_estimate_rejected_power * speed^solve_estimate_speed_power`, rounded up: the closures in the
+    /// solve, the ones the newest adopted solve rejected (GNC takes longer with outliers in), the speed the body's
+    /// (`recent_speed`) floored at `solve_estimate_speed_floor_mps`. The graph change heat acts on adoption after the
+    /// hold. The coefficients are a 99th-percentile fit (log space, each recording weighed the same) of 399 Mac solves'
+    /// scans across huge, huge L1, gir1, gir2, small L1 and small Mid-360, which logged no speed (its power 0).
+    pub solve_hold_enabled: bool,
+    pub solve_estimate_scale: f64,
+    pub solve_estimate_keyframe_power: f64,
+    pub solve_estimate_closure_power: f64,
+    pub solve_estimate_rejected_power: f64,
+    pub solve_estimate_speed_power: f64,
+    pub solve_estimate_speed_floor_mps: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -655,6 +670,13 @@ impl Default for Config {
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
             graph_change_heat_decay: 0.995,
+            solve_hold_enabled: true,
+            solve_estimate_scale: 3.843e-5,
+            solve_estimate_keyframe_power: 2.017,
+            solve_estimate_closure_power: -0.215,
+            solve_estimate_rejected_power: 0.558,
+            solve_estimate_speed_power: 0.0,
+            solve_estimate_speed_floor_mps: 0.05,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -748,8 +770,11 @@ pub struct GscPgo {
     pub(crate) heat: f64,
     pub(crate) heat_keyframes: usize,
     pub(crate) pending_solve: Option<crate::pose_graph_solving::FinishedSolve>,
-    /// The newest 51 scans' pose times and positions (odometry frame), for the body's recent speed.
+    /// The newest 51 distinct odometry poses' times and positions (odometry frame), for the body's recent speed.
     pub(crate) recent_motion: std::collections::VecDeque<(f64, Vec3)>,
+    /// Solves slower than the data their estimate spanned (`solve_hold_enabled`), and the newest scan's recorded time.
+    pub(crate) solve_overshoots: usize,
+    pub(crate) scan_time: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
@@ -1571,11 +1596,18 @@ impl GscPgo {
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
         let started = std::time::Instant::now();
         let pose = &cloud_with_pose.pose;
-        if self.recent_motion.len() > 50 {
-            self.recent_motion.pop_front();
+        // an odometry that repeats each pose with a fresh stamp (huge's fastlio_odometry, ~2.7x) counts each pose once
+        if self
+            .recent_motion
+            .back()
+            .is_none_or(|last| last.1 != pose.translation)
+        {
+            if self.recent_motion.len() > 50 {
+                self.recent_motion.pop_front();
+            }
+            self.recent_motion
+                .push_back((pose.second, pose.translation));
         }
-        self.recent_motion
-            .push_back((pose.second, pose.translation));
         let due = self.is_key_pose(&cloud_with_pose.pose);
         let cloud = if self.config.drop_reseen_points {
             self.drop_reseen(cloud_with_pose)
@@ -1591,6 +1623,14 @@ impl GscPgo {
             self.insert_keyframe(&cloud_with_pose.pose, cloud);
         }
         self.scans_seen += 1;
+        self.scan_time = pose.second;
+        // the running solve's estimate ends at this scan: its data time, to judge an overshoot by
+        if let Some(solving) = &mut self.solving {
+            if solving.schedule.due_time.is_none() && self.scans_seen >= solving.schedule.due_scan()
+            {
+                solving.schedule.due_time = Some(pose.second);
+            }
+        }
         let checked = std::time::Instant::now();
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
@@ -1648,9 +1688,9 @@ impl GscPgo {
         self.reseen_previous = placed.into_iter().collect();
         Some(Arc::new(fresh))
     }
-    /// The body's speed (m/s): the median over the newest 50 scan-to-scan steps, by their poses' recorded times (NaN
-    /// before two).
-    fn recent_speed(&self) -> f64 {
+    /// The body's speed (m/s): the median over the newest 50 steps between distinct odometry poses, by their recorded
+    /// times (NaN before two).
+    pub(crate) fn recent_speed(&self) -> f64 {
         let mut speeds: Vec<f64> = self
             .recent_motion
             .iter()

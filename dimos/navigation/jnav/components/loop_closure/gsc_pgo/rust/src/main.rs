@@ -102,6 +102,13 @@ config! {
     graph_change_heat_threshold: f64,
     graph_change_heat_floor: f64,
     graph_change_heat_decay: f64,
+    solve_hold_enabled: bool,
+    solve_estimate_scale: f64,
+    solve_estimate_keyframe_power: f64,
+    solve_estimate_closure_power: f64,
+    solve_estimate_rejected_power: f64,
+    solve_estimate_speed_power: f64,
+    solve_estimate_speed_floor_mps: f64,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
     closure_robust_huber_k: f64,
@@ -554,10 +561,10 @@ impl Worker {
         > = None;
 
         while !self.stop.load(Ordering::Relaxed) {
-            // adopt a finished solve now, scans or not
+            // adopt a finished solve now, scans or not, once its hold has passed (`solve_hold_enabled`; else each scan's update)
             let solve_finished =
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
-            if solve_finished && pgo.wait_for_solve() {
+            if solve_finished && pgo.update() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
                 self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
                 self.log_solve(&pgo, last_time);

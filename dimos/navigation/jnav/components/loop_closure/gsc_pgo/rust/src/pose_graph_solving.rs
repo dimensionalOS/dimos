@@ -27,11 +27,12 @@ use crate::mat3::{self, Mat3, Vec3};
 // ---- the pose graph GSC keeps, re-solved on a background thread whenever closures arrive ----
 
 /// A pose-graph solve running on another thread over the first `keyframes` keyframes (all but keyframe 0 free) and the
-/// first `closures_dispatched` committed closures, adopted once it finishes (`GscPgo::update`) or when waited for
-/// (`GscPgo::wait_for_solve`).
+/// first `closures_dispatched` committed closures, adopted once it finishes and its hold has passed (`GscPgo::update`)
+/// or when waited for (`GscPgo::wait_for_due_solve`, `GscPgo::wait_for_solve`).
 pub(crate) struct Solving {
     pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
     pub(crate) keyframes: usize,
+    pub(crate) schedule: SolveSchedule,
     /// What the solve was handed, only when `GSC_SOLVE_LOG` is set.
     pub(crate) dispatched: Option<SolveDispatch>,
 }
@@ -43,6 +44,25 @@ pub(crate) struct SolveDispatch {
     /// Closures in this solve, and in the solve before it (the rest are new to this one).
     closures: usize,
     closures_before: usize,
+}
+
+/// When a solve was dispatched, its estimated cost and when it was seen finished, in scans (`solve_hold_enabled`), and
+/// the recorded times of its dispatch scan and of the scan its estimate ends at (once reached).
+#[derive(Clone, Copy)]
+pub(crate) struct SolveSchedule {
+    dispatch_scan: usize,
+    estimate_scans: usize,
+    finished_scan: Option<usize>,
+    dispatch_time: f64,
+    pub(crate) due_time: Option<f64>,
+    /// It took longer than the data time its estimate spanned (live, it would have been adopted late).
+    overshoot: bool,
+}
+
+impl SolveSchedule {
+    pub(crate) fn due_scan(&self) -> usize {
+        self.dispatch_scan + self.estimate_scans
+    }
 }
 
 fn wall_time() -> f64 {
@@ -86,18 +106,70 @@ impl GscPgo {
     pub fn committed_closures(&self) -> &[CommittedClosure] {
         &self.committed_closures
     }
-    /// Apply the running solve if it has finished, and start one when closures have arrived since the
-    /// last. Never blocks. Returns whether keyframes moved.
+    /// Apply the running solve if it has finished and its hold has passed (`solve_hold_enabled`), and start one when
+    /// closures have arrived since the last. Never blocks. Returns whether keyframes moved.
     pub fn update(&mut self) -> bool {
-        let finished = self
-            .solving
-            .as_ref()
-            .is_some_and(|solving| solving.handle.is_finished());
-        self.adopt(finished)
+        self.track_solve();
+        let hold = self.config.solve_hold_enabled;
+        let scans = self.scans_seen;
+        let ready = self.solving.as_ref().is_some_and(|solving| {
+            solving.schedule.finished_scan.is_some()
+                && (!hold || scans >= solving.schedule.due_scan())
+        });
+        self.adopt(ready)
     }
-    /// `update`, but waiting for the running solve to finish first.
+    /// `update`, but waiting for the running solve once its hold has passed, so a replay gives the same graph on any
+    /// machine (with the hold off, plain `update`).
+    pub fn wait_for_due_solve(&mut self) -> bool {
+        self.track_solve();
+        let due = self.config.solve_hold_enabled
+            && self
+                .solving
+                .as_ref()
+                .is_some_and(|solving| self.scans_seen >= solving.schedule.due_scan());
+        if due {
+            self.adopt(true)
+        } else {
+            self.update()
+        }
+    }
+    /// `update`, but waiting for the running solve to finish first, whatever its hold.
     pub fn wait_for_solve(&mut self) -> bool {
         self.adopt(true)
+    }
+    /// Solves that took longer than the data time their estimate spanned (`SolveSchedule::overshoot`).
+    pub fn solve_overshoots(&self) -> usize {
+        self.solve_overshoots
+    }
+    /// Note the scan the running solve was first seen finished at.
+    fn track_solve(&mut self) {
+        let scans = self.scans_seen;
+        if let Some(solving) = self.solving.as_mut() {
+            if solving.schedule.finished_scan.is_none() && solving.handle.is_finished() {
+                solving.schedule.finished_scan = Some(scans);
+            }
+        }
+    }
+    /// An upper bound on a solve's cost in scans over `keyframes` keyframes and every committed closure, from the
+    /// newest adopted solve's rejections and the body's recent speed (`solve_hold_enabled`).
+    fn solve_estimate_scans(&self, keyframes: usize) -> usize {
+        let config = &self.config;
+        let closures = self.committed_closures.len() as f64;
+        // a closure no solve has judged yet has a NaN weight, so it is not counted
+        let rejected = self
+            .committed_closures
+            .iter()
+            .filter(|c| c.gnc_weight <= 0.5)
+            .count() as f64;
+        let speed = self
+            .recent_speed()
+            .max(config.solve_estimate_speed_floor_mps);
+        (config.solve_estimate_scale
+            * (keyframes as f64).powf(config.solve_estimate_keyframe_power)
+            * (1.0 + closures).powf(config.solve_estimate_closure_power)
+            * (1.0 + rejected).powf(config.solve_estimate_rejected_power)
+            * speed.powf(config.solve_estimate_speed_power))
+        .ceil() as usize
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
     pub fn solve_started(&self) -> Option<(usize, usize)> {
@@ -382,6 +454,14 @@ impl GscPgo {
         self.solving = Some(Solving {
             handle,
             keyframes: n,
+            schedule: SolveSchedule {
+                dispatch_scan: self.scans_seen,
+                estimate_scans: self.solve_estimate_scans(n),
+                finished_scan: None,
+                dispatch_time: self.scan_time,
+                due_time: None,
+                overshoot: false,
+            },
             dispatched,
         });
     }
@@ -393,6 +473,26 @@ impl GscPgo {
         };
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
+        // a solve waited for was finished at the scan it was waited at; one slower than the data its estimate spanned (a
+        // replay outrunning real time waits on others too) overshot: the estimate was not an upper bound
+        let schedule = SolveSchedule {
+            finished_scan: Some(solving.schedule.finished_scan.unwrap_or(self.scans_seen)),
+            overshoot: solving
+                .schedule
+                .due_time
+                .is_some_and(|due| seconds > due - solving.schedule.dispatch_time),
+            ..solving.schedule
+        };
+        if schedule.overshoot {
+            self.solve_overshoots += 1;
+            eprintln!(
+                "gsc_pgo: SOLVE OVERSHOOT #{}: the solve over {} keyframes took {seconds:.2}s, past the {:.2}s of data its estimate of {} scans spanned",
+                self.solve_overshoots,
+                solving.keyframes,
+                schedule.due_time.unwrap_or(f64::NAN) - schedule.dispatch_time,
+                schedule.estimate_scans
+            );
+        }
         self.timing.solve_s += seconds;
         let dispatched_over = solving.keyframes;
         self.solve_records.push((
@@ -409,6 +509,7 @@ impl GscPgo {
                 self.log_rejected_solve(
                     solving.keyframes,
                     dispatched,
+                    &schedule,
                     &solution,
                     reason,
                     previous,
@@ -422,6 +523,7 @@ impl GscPgo {
             seconds,
             landmark_ids,
             keyframes: solving.keyframes,
+            schedule,
             dispatched: solving.dispatched,
             arrived_keyframes: self.key_poses.len(),
         };
@@ -454,6 +556,7 @@ impl GscPgo {
             seconds,
             landmark_ids,
             keyframes,
+            schedule,
             dispatched,
             arrived_keyframes,
         } = finished;
@@ -567,6 +670,7 @@ impl GscPgo {
             self.log_solve(
                 n,
                 dispatched,
+                &schedule,
                 &solution,
                 &previous_kept,
                 largest_move_keyframe,
@@ -631,6 +735,7 @@ impl GscPgo {
         &self,
         n: usize,
         dispatched: &SolveDispatch,
+        schedule: &SolveSchedule,
         solution: &Solution,
         previous_kept: &[bool],
         largest_move_keyframe: usize,
@@ -673,7 +778,7 @@ impl GscPgo {
         }
         let line = format!(
             "{{{}{heat},\"weight_histogram\":{:?},\"largest_move_m\":{},\"largest_move_keyframe\":{largest_move_keyframe},\"changed\":[{changed}]}}\n",
-            self.solve_fields(n, dispatched, solution, seconds),
+            self.solve_fields(n, dispatched, schedule, solution, seconds),
             histogram,
             json_number(largest_move),
         );
@@ -685,6 +790,7 @@ impl GscPgo {
         &self,
         n: usize,
         dispatched: &SolveDispatch,
+        schedule: &SolveSchedule,
         solution: &Solution,
         reason: &str,
         previous_error: f64,
@@ -692,17 +798,19 @@ impl GscPgo {
     ) {
         let line = format!(
             "{{\"rejected_solve\":\"{reason}\",{},\"error\":{},\"previous_error\":{}}}\n",
-            self.solve_fields(n, dispatched, solution, seconds),
+            self.solve_fields(n, dispatched, schedule, solution, seconds),
             json_number(solution.error),
             json_number(previous_error),
         );
         append_solve_log(&line);
     }
-    /// The solve log fields every line has: when it was dispatched and finished, its closures, and its GNC's path.
+    /// The solve log fields every line has: when it was dispatched and finished, its schedule in scans (the scan count
+    /// now as `adopted_scan`, the data seconds its estimate spanned once reached), its closures, and its GNC's path.
     fn solve_fields(
         &self,
         n: usize,
         dispatched: &SolveDispatch,
+        schedule: &SolveSchedule,
         solution: &Solution,
         seconds: f64,
     ) -> String {
@@ -713,7 +821,7 @@ impl GscPgo {
             .count();
         let trace = solution.trace.as_ref();
         format!(
-            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}]",
+            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"estimate_scans\":{},\"estimate_data_s\":{},\"dispatch_scan\":{},\"finished_scan\":{},\"adopted_scan\":{},\"overshoot\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}]",
             n,
             json_number(dispatched.keyframe_time),
             json_number(dispatched.wall_time),
@@ -721,6 +829,12 @@ impl GscPgo {
             json_number(self.key_poses.last().map_or(f64::NAN, |k| k.time)),
             json_number(wall_time()),
             json_number(seconds),
+            schedule.estimate_scans,
+            json_number(schedule.due_time.map_or(f64::NAN, |due| due - schedule.dispatch_time)),
+            schedule.dispatch_scan,
+            schedule.finished_scan.map_or("null".into(), |scan| scan.to_string()),
+            self.scans_seen,
+            schedule.overshoot,
             dispatched.closures,
             dispatched.closures - dispatched.closures_before.min(dispatched.closures),
             closures_hash(dispatched.closures, &self.committed_closures),
@@ -740,6 +854,7 @@ pub(crate) struct FinishedSolve {
     seconds: f64,
     landmark_ids: Vec<u64>,
     keyframes: usize,
+    schedule: SolveSchedule,
     dispatched: Option<SolveDispatch>,
     /// The keyframe count when it finished.
     arrived_keyframes: usize,
@@ -867,7 +982,13 @@ impl GscPgo {
         };
         let line = format!(
             "{{\"{event}_solve\":true,{},\"arrived_keyframes\":{},\"heat\":{},\"heat_threshold\":{}}}\n",
-            self.solve_fields(finished.keyframes, dispatched, &finished.solution, finished.seconds),
+            self.solve_fields(
+                finished.keyframes,
+                dispatched,
+                &finished.schedule,
+                &finished.solution,
+                finished.seconds
+            ),
             finished.arrived_keyframes,
             json_number(heat),
             json_number(self.config.graph_change_heat_threshold),
