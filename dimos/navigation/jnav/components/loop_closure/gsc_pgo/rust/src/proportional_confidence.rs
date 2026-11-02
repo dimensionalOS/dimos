@@ -298,6 +298,7 @@ impl ClosureSearch {
     /// median ratio over its clouds so far, and the uncertainty range (`UncertaintyRange`) decides on it: at or above
     /// barely_pass accept (the single-scan fit is the closure), at or below barely_fail reject, else another cloud; with
     /// no cloud left or the range collapsed, a median >= 1 accepts.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(crate) fn extended_icp(
         &self,
         cur_idx: usize,

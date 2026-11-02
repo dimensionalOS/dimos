@@ -184,8 +184,10 @@ pub fn from_bytes(bytes: &[u8]) -> Result<HashMap<String, Vec<f64>>, String> {
         let key = String::from_utf8(take(&mut at, key_len)?.to_vec()).map_err(|e| e.to_string())?;
         let count = u32_at(take(&mut at, 4)?);
         let value = take(&mut at, 8 * count)?
-            .chunks_exact(8)
-            .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| f64::from_le_bytes(*c))
             .collect();
         entries.insert(key, value);
     }

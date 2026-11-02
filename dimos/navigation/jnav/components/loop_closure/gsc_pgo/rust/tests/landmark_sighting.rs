@@ -275,8 +275,8 @@ fn unknown_dimensions_carry_no_information() {
     covariance[0][0] = -1.0;
     covariance[1][1] = f64::INFINITY;
     covariance[2][2] = 4.0;
-    for i in 3..6 {
-        covariance[i][i] = 0.25;
+    for (i, row) in covariance.iter_mut().enumerate().skip(3) {
+        row[i] = 0.25;
     }
     covariance[3][4] = 0.1;
     covariance[4][3] = 0.1;

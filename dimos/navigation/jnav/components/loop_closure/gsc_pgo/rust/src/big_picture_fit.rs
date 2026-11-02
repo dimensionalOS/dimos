@@ -159,6 +159,7 @@ fn unary_whitened(u: &Unary, state: &State) -> f64 {
     r[0] * ir[0] + r[1] * ir[1] + r[2] * ir[2]
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_core(
     rotations: &[Mat3],
     positions: &[Vec3],
@@ -465,7 +466,7 @@ pub(crate) fn solve_core(
             1000,
             true,
         );
-        let odometry_error_estimate_evidence = converged
+        converged
             .then(|| {
                 odometry_error_estimate_evidence(
                     &evidence_state,
@@ -479,8 +480,7 @@ pub(crate) fn solve_core(
                     &sighting_kept,
                 )
             })
-            .flatten();
-        odometry_error_estimate_evidence
+            .flatten()
     } else {
         None
     };
@@ -560,7 +560,7 @@ fn odometry_error_estimate_evidence(
         &vec![0.0; unary.len()],
         &vec![0.0; sightings.len()],
     )?;
-    let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
+    let linear: Vec<Linearized> =
         odometry.iter().map(|e| linearize(e, state)).collect();
     let mut evidence = [(0.0, 0.0); 6];
     for (e, (r, _, _)) in odometry.iter().zip(&linear) {
@@ -581,7 +581,7 @@ fn odometry_error_estimate_evidence(
     // symmetric, eigenvalues in [0, 1], rank at most the kept constraints', so +-1 probes over those rows estimate it
     // to about sqrt(2 r_c / probes)
     const PROBES: usize = 32;
-    for source in 0..4 {
+    for (source, source_evidence) in evidence.iter_mut().enumerate().take(4) {
         let rows: Vec<(usize, usize)> = (0..odometry.len())
             .flat_map(|e| (0..6).map(move |k| (e, k)))
             .filter(|&(_, k)| RESIDUAL_SOURCE[k] == source)
@@ -614,22 +614,22 @@ fn odometry_error_estimate_evidence(
                 let mut jy = 0.0;
                 for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
                     if let Some(slot) = slot {
-                        for i in 0..6 {
+                        for (i, &jki) in j[k].iter().enumerate() {
                             let at = 6 * slot + i;
-                            jy += j[k][i] * (through_odometry[(at, 0)] - through_full[(at, 0)]);
+                            jy += jki * (through_odometry[(at, 0)] - through_full[(at, 0)]);
                         }
                     }
                 }
                 estimate += weight * jy;
             }
-            evidence[source].1 += estimate / PROBES as f64;
+            source_evidence.1 += estimate / PROBES as f64;
         }
     }
     // the kept closures' rotation and translation as two more sources: sum of their whitened residuals squared, and redundancy
     // r = n - tr(K N^-1 K^T) = tr(M), M = I - K N^-1 K^T (K their weighted whitened rows): symmetric, eigenvalues in
     // [0, 1], so the same +-1 probes estimate it to about sqrt(2 r / probes). With it, a closure variance reported too
     // loose shows as closure residuals too small for their redundancy, instead of passing as odometry too good
-    let closure_linear: Vec<(usize, [f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> = closures
+    let closure_linear: Vec<ClosureLinearized> = closures
         .iter()
         .enumerate()
         .filter(|&(i, _)| closure_weights[i] > 0.0)
@@ -833,6 +833,7 @@ pub fn consistent_closures(
 /// matrix, is needed at each keyframe's own 6x6 block, from the Takahashi recursion over its sparse Cholesky factor (the
 /// entries the factor's pattern holds, one backward pass), and at its cross blocks with the tip's position, from one solve
 /// against the tip's position columns. A held keyframe has no uncertainty of its own.
+#[allow(clippy::too_many_arguments)]
 fn relative_position_covariances(
     state: &State,
     pattern: &Pattern,
@@ -1027,7 +1028,12 @@ fn whitened_squared(e: &Edge, state: &State) -> f64 {
 
 /// The residual and its Jacobians with respect to `from`'s and `to`'s 6-vector perturbations
 /// (rotation about the keyframe's own axes, then world position).
-fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]) {
+/// An edge's residual and its Jacobians at its two ends.
+type Linearized = ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]);
+/// A kept closure's index with its residual and Jacobians.
+type ClosureLinearized = (usize, [f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]);
+
+fn linearize(e: &Edge, state: &State) -> Linearized {
     linearize_between(
         e,
         (&state.rotation[e.from], &state.position[e.from]),
@@ -1104,6 +1110,7 @@ fn cost_parts(
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cost(
     state: &State,
     odometry: &[Edge],
@@ -1376,6 +1383,7 @@ fn levenberg_marquardt_steps(
 
 /// The Gauss-Newton normal equations at `state`: J^T W J's entries in `Pattern` fill order (damping
 /// diagonal not included), -J^T W r, and J^T W J's diagonal.
+#[allow(clippy::too_many_arguments)]
 fn normal_equations(
     state: &State,
     pattern: &Pattern,

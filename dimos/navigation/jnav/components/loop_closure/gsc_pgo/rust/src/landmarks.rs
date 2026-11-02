@@ -243,12 +243,12 @@ fn chi2_cdf(x: f64, dof: usize) -> f64 {
     }
     let (a, half) = (dof as f64 / 2.0, x / 2.0);
     // Γ(a + 1) from Γ(1) = 1 or Γ(3/2) = √π / 2
-    let mut gamma = if dof % 2 == 0 {
+    let mut gamma = if dof.is_multiple_of(2) {
         1.0
     } else {
         std::f64::consts::PI.sqrt() / 2.0
     };
-    let mut g = if dof % 2 == 0 { 1.0 } else { 1.5 };
+    let mut g = if dof.is_multiple_of(2) { 1.0 } else { 1.5 };
     while g < a + 1.0 - 1e-9 {
         gamma *= g;
         g += 1.0;

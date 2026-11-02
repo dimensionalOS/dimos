@@ -316,9 +316,9 @@ impl GscPgo {
                     ids.len() - 1
                 });
                 let mut grown = crate::landmarks::known_inverse(&information);
-                for axis in 3..6 {
-                    if grown[axis][axis] > 0.0 {
-                        grown[axis][axis] += moved;
+                for (axis, row) in grown.iter_mut().enumerate().skip(3) {
+                    if row[axis] > 0.0 {
+                        row[axis] += moved;
                     }
                 }
                 Some(LandmarkSighting {
@@ -799,6 +799,7 @@ impl GscPgo {
     }
     /// A `GSC_SOLVE_LOG` line for a solve that was not adopted (its last Levenberg-Marquardt pass did not converge), with
     /// why and the previous adopted solve's final cost.
+    #[allow(clippy::too_many_arguments)]
     fn log_rejected_solve(
         &self,
         n: usize,
@@ -865,6 +866,7 @@ impl GscPgo {
 pub(crate) struct FinishedSolve {
     pub(crate) solution: Solution,
     /// The adopted solves at its dispatch (`GscPgo::adopted_solves`).
+    #[allow(dead_code)]
     pub(crate) graph_version: u64,
     seconds: f64,
     landmark_ids: Vec<u64>,
@@ -1008,6 +1010,7 @@ pub(crate) struct ChangeScan {
     turned: f64,
     previous_local: Option<(Mat3, Vec3)>,
     largest: f64,
+    #[allow(dead_code)]
     seconds: f64,
 }
 

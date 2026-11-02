@@ -506,16 +506,19 @@ struct Publish {
     ts: f64,
 }
 
+/// The newest snapshot waiting to publish and whether the publisher should stop, with its wakeup.
+type PendingPublish = Arc<(Mutex<(Option<Publish>, bool)>, Condvar)>;
+
 /// The thread that publishes each keyframe's graph (every keyframe's pose: O(map)) and the pose changes consumers have
 /// not heard (`HeardPoses`: O(map)), so the scan thread only hands it a snapshot; a newer snapshot replaces one not yet
 /// sent, so a slow publish never queues stale graphs.
 struct GraphPublisher {
-    pending: Arc<(Mutex<(Option<Publish>, bool)>, Condvar)>,
+    pending: PendingPublish,
 }
 
 impl GraphPublisher {
     fn spawn(worker: &Worker, frame_id: String) -> GraphPublisher {
-        let pending: Arc<(Mutex<(Option<Publish>, bool)>, Condvar)> = Arc::default();
+        let pending: PendingPublish = Arc::default();
         let (shared, stop) = (Arc::clone(&pending), Arc::clone(&worker.stop));
         let (pose_graph, loop_closure_event) = (worker.pose_graph.clone(), worker.loop_closure_event.clone());
         let (rt, dump_path) = (worker.rt.clone(), worker.config.dump_path.clone());

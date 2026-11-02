@@ -652,8 +652,8 @@ pub struct Config {
     /// Deterministic solve schedule: a finished solve is held `ceil(estimate)` scans (at least one) after its dispatch,
     /// its estimate an upper bound on its cost in scans known before it starts, so the graph is the same however fast the
     /// machine is; one still running then is an overshoot (logged loudly, counted) and is adopted as soon as it
-    /// finishes. The estimate is `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power
-    /// * (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe * keyframes`: the closures in the solve, the
+    /// finishes. The estimate is `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power *
+    /// (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe * keyframes`: the closures in the solve, the
     /// ones the newest adopted solve rejected (GNC takes longer with outliers in), and the graph change heat's cost the
     /// solve's thread measures after it (`debounce`). The graph change heat acts on adoption after the hold.
     /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
@@ -822,6 +822,8 @@ impl Config {
             + self.closure_target_extra_keyframes
     }
     /// An error naming the first setting out of its allowed range, if any.
+    // the negated comparisons reject NaN too
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn validate(&self) -> Result<(), String> {
         if !(self.barely_fail_uncertainty_range < 1.0) {
             return Err(format!(
@@ -993,7 +995,7 @@ pub struct GscPgo {
     pub(crate) world_alignment: Vec<(u32, f64, Vec3)>,
     /// Landmark sightings (`add_landmark_factor`): time, landmark id, rotation, position and 6x6 information in the body
     /// frame; how many a solve has been started for; and the newest solve's landmarks (id, map rotation and position).
-    pub(crate) landmark_sightings: Vec<(f64, u64, Mat3, Vec3, [[f64; 6]; 6])>,
+    pub(crate) landmark_sightings: Vec<LandmarkSightingRecord>,
     pub(crate) landmark_sightings_dispatched: usize,
     pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
     pub(crate) solving: Option<Solving>,
@@ -1011,7 +1013,7 @@ pub struct GscPgo {
     pub(crate) debounce_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Debounced>>,
     pub(crate) debounce_waiting: Option<crate::pose_graph_solving::FinishedSolve>,
     pub(crate) merge_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Merged>>,
-    pub(crate) merge_waiting: Option<(crate::pose_graph_solving::FinishedSolve, Option<(f64, f64, f64)>)>,
+    pub(crate) merge_waiting: Option<MergeWaiting>,
     pub(crate) adoption_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) merge_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) adoption_inline: bool,
@@ -1191,7 +1193,7 @@ pub struct ClosureSearchResult {
     accepted: Option<(Mat3, Vec3, f64)>,
     timing: TimingStats,
     /// The search's place-recognition inputs, for a retry on the next alternative (`closure_alternative_places`).
-    retry: Option<(Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize)>,
+    retry: Option<RetryInputs>,
 }
 
 impl ClosureSearchResult {
@@ -1216,7 +1218,15 @@ impl ClosureSearchResult {
     }
 }
 
+/// A landmark sighting (`add_landmark_factor`): time, landmark id, rotation, position and 6x6 information in the body frame.
+pub(crate) type LandmarkSightingRecord = (f64, u64, Mat3, Vec3, [[f64; 6]; 6]);
+/// A finished solve waiting for the merge, with what its debounce measured.
+pub(crate) type MergeWaiting = (crate::pose_graph_solving::FinishedSolve, Option<(f64, f64, f64)>);
+/// A search's place-recognition inputs for a retry: ring-key distances, the top-k matches under the threshold, and the next alternative.
+type RetryInputs = (Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize);
+
 /// Where a search stands after its fast match: decided, or inside the uncertainty range and handed to the extension.
+#[allow(clippy::large_enum_variant)]
 pub enum SearchStage {
     Done(ClosureSearchResult),
     Extend(Box<PendingExtension>),
@@ -1235,7 +1245,7 @@ pub struct PendingExtension {
     look_alikes: similarity_discovery::LookAlikes,
     error_estimate_sums: Option<Vec<crate::loop_overlap::Sums>>,
     base: f64,
-    retry: Option<(Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize)>,
+    retry: Option<RetryInputs>,
     pub(crate) fast_s: f64,
 }
 

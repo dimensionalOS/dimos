@@ -338,7 +338,7 @@ impl<'a> OverlapInputs<'a> {
             })
             .map(|(_, earlier)| self.key_poses.position(earlier))
             .collect();
-        for j in 0..self.newest_closure_target() {
+        for (j, &path_from_j) in path_from.iter().enumerate().take(self.newest_closure_target()) {
             let position = self.key_poses.position(j);
             // keyframes closer than a sensor range along the path see the same place: count one of them
             if last_counted
@@ -350,7 +350,7 @@ impl<'a> OverlapInputs<'a> {
             let (probability, unresolved, ln_chance) = model.overlap(j);
             let closed = closed_places.iter().any(|place| near(place, &position));
             // the stretch walked within a sensor range back along the path is continuous odometry, not a loop
-            if !closed && path_from[j] > model.sensor_range {
+            if !closed && path_from_j > model.sensor_range {
                 none_unclosed *= 1.0 - model.revisit(j);
             }
             let chance = (probability * unresolved).clamp(0.0, 1.0);
