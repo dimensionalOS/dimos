@@ -22,11 +22,13 @@ deterministic.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
     OperatorHoldStatus,
@@ -43,7 +45,10 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import OperatorHoldCoordinator
+from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import (
+    OperatorHoldCoordinator,
+    hybrid_teleop_sim,
+)
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -102,6 +107,8 @@ class Rig:
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
         )
+        # The coordinator reads joint positions from its tick loop's last tick.
+        self.coordinator._tick_loop = self._loop
 
     def tick(self) -> None:
         self._loop._tick()
@@ -171,3 +178,14 @@ class TestEstopStatus:
             coordinator.stop()
 
         assert [msg.data for msg in statuses] == [False]
+
+
+def test_blueprint_ranks_hold_over_jog_over_autonomy():
+    tasks = next(
+        cast("list[TaskConfig]", cast("dict[str, Any]", atom.kwargs)["tasks"])
+        for atom in hybrid_teleop_sim.blueprints
+        if issubclass(atom.module, ControlCoordinator)
+    )
+    priority = {task.type: task.priority for task in tasks}
+
+    assert priority["operator_hold"] > priority["eef_twist"] > priority["trajectory"]
