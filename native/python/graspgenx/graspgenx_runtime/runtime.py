@@ -83,7 +83,7 @@ class GraspGenXRuntimeModule(GraspGenXModule):
             raise ValueError("object pointcloud XYZ values must be finite floats in metres")
 
         try:
-            poses, scores = self._runtime.infer(points)
+            poses, scores = self._runtime.infer(points, self.config.num_samples)
         except Exception as exc:
             raise GraspGenXError("GraspGenX inference failed") from exc
         scores = scores.reshape(-1)

@@ -17,13 +17,14 @@
 | `dimos --record run unitree-go2` | Navigation + record every stream to `recordings/<run-id>/memory.db` ([Recording](/docs/usage/recording.md)) |
 | `dimos run unitree-go2-memory` | Navigation + record `lidar`/`odom`/`color_image` to `.db` |
 | `dimos --record run unitree-go2-joystick-record` | Teleop from the local keyboard window + record `joystick`, `cmd_vel` and every sensor; no mapper, viewer capped at 2 GB |
-| `dimos run unitree-go2-relocalization` | Navigation + align live scans to a saved `.pc2.lcm` premap |
+| `dimos run unitree-go2 --map-file=<map>` | Navigation on a saved map (`<map>.map.db`) |
+| `dimos run unitree-go2-map` | Navigation on a map that every run extends and saves back (`map_go2`) |
 
 ## Deep Dive
 
 - [Navigation overview](/docs/capabilities/navigation/index.md): live mapping vs premap relocalization
 - [Navigation stack](/docs/capabilities/navigation/deep_dive.md): column-carving voxel mapping, costmap generation, A* planning
-- [Relocalization](/docs/capabilities/navigation/relocalization.md): record → `dimos map global --export` → replay or live deploy
+- [Mapping and relocalization](/docs/capabilities/navigation/go2/index.md): permanent map, relocalizing on a saved map
 - [Visualization](/docs/usage/visualization.md): Rerun, performance tuning
 - [Data Streams](/docs/usage/data_streams/index.md): RxPY streams, backpressure, quality filtering
 - [Transports](/docs/usage/transports/index.md): Zenoh, LCM, DDS

@@ -25,8 +25,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationState
-from dimos.manipulation.manipulation_spec import ExecutionStatus
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus, OperationStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.visualization.operator import ManipulationOperator
@@ -98,11 +98,12 @@ def test_execute_consumes_cached_plan_after_dispatch(
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)
     plan = _plan()
-    module._last_plan = plan
+    module._pending_plan = plan
+    module._state = OperationStatus.HAS_PLAN
 
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
     assert module.execute(blocking=False).status is ExecutionStatus.NO_PLAN
-    assert module._last_plan is None
+    assert module._pending_plan is None
     assert _executed(coordinator) is plan.trajectory
 
 
@@ -111,13 +112,13 @@ def test_known_coordinator_rejection_restores_previous_state(
 ) -> None:
     coordinator = _coordinator(execute_status=TrajectoryExecutionStatus.START_STATE_MISMATCH)
     module = _module_with_coordinator(coordinator, module_factory)
-    module._last_plan = _plan()
-    module._state = ManipulationState.COMPLETED
+    module._pending_plan = _plan()
+    module._state = OperationStatus.HAS_PLAN
 
     assert module.execute(blocking=False).status is ExecutionStatus.REJECTED
 
-    assert module._state is ManipulationState.IDLE
-    assert module._last_plan is None
+    assert module._state is OperationStatus.IDLE
+    assert module._pending_plan is None
 
 
 def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
@@ -131,15 +132,15 @@ def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
     )
     module.config.model.model = module.config.model.model.with_planar_base(planar_base)
     plan = _plan(joint_name=planar_base.joint_names[0])
-    module._last_plan = plan
-    module._state = ManipulationState.COMPLETED
+    module._pending_plan = plan
+    module._state = OperationStatus.HAS_PLAN
 
     result = module.execute(blocking=False)
 
     assert result.status is ExecutionStatus.REJECTED
     assert "planning and preview only" in result.message
-    assert module._last_plan is plan
-    assert module._state is ManipulationState.COMPLETED
+    assert module._pending_plan is plan
+    assert module._state is OperationStatus.HAS_PLAN
     coordinator.task_invoke.assert_not_called()
 
 
@@ -168,12 +169,13 @@ def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> N
         TrajectoryPoint(positions=[0.0] * 4, time_from_start=0.0),
         TrajectoryPoint(positions=[1.0] * 4, time_from_start=1.0),
     ]
-    module._last_plan = GeneratedPlan(
+    module._pending_plan = GeneratedPlan(
         group_ids=("manipulator",),
         trajectory=JointTrajectory(joint_names=names, points=points),
         path=[JointState(name=names, position=point.positions) for point in points],
         status=PlanningStatus.SUCCESS,
     )
+    module._state = OperationStatus.HAS_PLAN
 
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
 
@@ -197,7 +199,8 @@ def test_execute_allows_arm_only_plan_from_planar_model(module_factory) -> None:
     )
     module.config.model.model = module.config.model.model.with_planar_base(planar_base)
     plan = _plan()
-    module._last_plan = plan
+    module._pending_plan = plan
+    module._state = OperationStatus.HAS_PLAN
 
     result = module.execute(blocking=False)
 
@@ -205,27 +208,28 @@ def test_execute_allows_arm_only_plan_from_planar_model(module_factory) -> None:
     assert _executed(coordinator) is plan.trajectory
 
 
-def test_uncertain_execute_projects_to_fault(module_factory) -> None:
+def test_uncertain_execute_keeps_motion_admission_blocked(module_factory) -> None:
     coordinator = _coordinator()
     coordinator.task_invoke.side_effect = TimeoutError("timed out")
     module = _module_with_coordinator(coordinator, module_factory)
-    module._last_plan = _plan()
+    module._pending_plan = _plan()
+    module._state = OperationStatus.HAS_PLAN
 
     assert module.execute(blocking=False).status is ExecutionStatus.UNCERTAIN
 
-    assert module._state is ManipulationState.FAULT
+    assert module._state is OperationStatus.EXECUTING
     assert "timed out" in module.get_error()
 
 
-def test_uncertain_cancel_projects_to_fault(module_factory) -> None:
+def test_uncertain_cancel_keeps_motion_admission_blocked(module_factory) -> None:
     coordinator = _coordinator()
     coordinator.task_invoke.side_effect = TimeoutError("timed out")
     module = _module_with_coordinator(coordinator, module_factory)
-    module._state = ManipulationState.EXECUTING
+    module._state = OperationStatus.EXECUTING
 
     assert module.cancel().status is ExecutionStatus.UNCERTAIN
 
-    assert module._state is ManipulationState.FAULT
+    assert module._state is OperationStatus.EXECUTING
     assert "timed out" in module.get_error()
 
 
@@ -233,9 +237,9 @@ def test_uncertain_cancel_projects_to_fault(module_factory) -> None:
 @pytest.mark.parametrize(
     ("terminal", "operation"),
     [
-        (TrajectoryState.COMPLETED, "COMPLETED"),
+        (TrajectoryState.COMPLETED, "IDLE"),
         (TrajectoryState.ABORTED, "IDLE"),
-        (TrajectoryState.FAULT, "FAULT"),
+        (TrajectoryState.FAULT, "EXECUTING"),
     ],
 )
 def test_status_refresh_observes_nonblocking_execution(module_factory, reader, terminal, operation):
@@ -248,7 +252,9 @@ def test_status_refresh_observes_nonblocking_execution(module_factory, reader, t
             return operator.status().state
         return module.get_state().operation_status.name
 
-    assert operator.execute(_plan()) is True
+    module._pending_plan = _plan()
+    module._state = OperationStatus.HAS_PLAN
+    assert operator.execute(module._pending_plan) is True
     coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
     assert read_status() == "EXECUTING"
 
@@ -257,21 +263,29 @@ def test_status_refresh_observes_nonblocking_execution(module_factory, reader, t
     assert module.get_state().execution_status.name == terminal.name
     coordinator.task_invoke.reset_mock()
     assert read_status() == operation
-    coordinator.task_invoke.assert_not_called()
+    if terminal is not TrajectoryState.FAULT:
+        coordinator.task_invoke.assert_not_called()
+    else:
+        coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.ABORTED)
+        assert module.cancel().status is ExecutionStatus.ABORTED
 
-    assert operator.execute(_plan()) is True
+    module._pending_plan = _plan()
+    module._state = OperationStatus.HAS_PLAN
+    assert operator.execute(module._pending_plan) is True
 
 
 def test_status_refresh_reports_coordinator_failure(module_factory):
     coordinator = _coordinator()
     module = module_factory(coordinator)
     operator = ManipulationOperator(module, MagicMock())
-    assert operator.execute(_plan()) is True
+    module._pending_plan = _plan()
+    module._state = OperationStatus.HAS_PLAN
+    assert operator.execute(module._pending_plan) is True
     coordinator.task_invoke.side_effect = TimeoutError("status unavailable")
 
     status = operator.status()
 
-    assert status.state == "FAULT"
+    assert status.state == "EXECUTING"
     assert "status unavailable" in status.error
     assert module.get_state().execution_status is ExecutionStatus.UNCERTAIN
 
@@ -287,3 +301,64 @@ def _executed(coordinator, task: str = "joint_trajectory"):
 def _cancelled(coordinator) -> list[str]:
     """Tasks that were asked to cancel."""
     return [c.args[0] for c in coordinator.task_invoke.call_args_list if c.args[1] == "cancel"]
+
+
+def test_rejected_operator_plan_preserves_pending_plan(module_factory):
+    module = module_factory()
+    pending = _plan()
+    module._pending_plan = pending
+    module._state = OperationStatus.HAS_PLAN
+    module._error_message = "previous outcome"
+
+    assert not module._execute_generated_plan(_plan(joint_name="preview_only"))
+
+    assert module._pending_plan is pending
+    assert module.get_operation_status() is OperationStatus.HAS_PLAN
+    assert module.get_error() == "previous outcome"
+
+
+def test_historical_wait_result_does_not_end_planning(module_factory, mocker):
+    module = module_factory()
+    module._state = OperationStatus.PLANNING
+    module._error_message = "current planning diagnostic"
+    mocker.patch.object(
+        module._execution_manager, "wait", return_value=ExecutionResult(ExecutionStatus.COMPLETED)
+    )
+
+    assert module.wait_for_execution().status is ExecutionStatus.COMPLETED
+
+    assert module._state is OperationStatus.PLANNING
+    assert module.get_error() == "current planning diagnostic"
+
+
+def test_clear_during_execution_preserves_completion(module_factory):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    module._pending_plan = _plan()
+    module._state = OperationStatus.HAS_PLAN
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+
+    assert module.clear_planned_path().succeeded
+    assert module._state is OperationStatus.EXECUTING
+    assert _cancelled(coordinator) == []
+
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    assert module.wait_for_execution(timeout=0).status is ExecutionStatus.COMPLETED
+    assert module.get_operation_status() is OperationStatus.IDLE
+
+
+def test_next_operator_execution_refreshes_finished_nonblocking_execution(module_factory):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    module._pending_plan = _plan()
+    module._state = OperationStatus.HAS_PLAN
+    assert module._execute_generated_plan(module._pending_plan)
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+
+    module.get_operation_status()
+    module._pending_plan = _plan(final_position=0.5)
+    module._state = OperationStatus.HAS_PLAN
+    assert module._execute_generated_plan(module._pending_plan)
+
+    assert len([c for c in coordinator.task_invoke.call_args_list if c.args[1] == "execute"]) == 2
+    assert module._state is OperationStatus.EXECUTING

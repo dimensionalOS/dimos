@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
+from dimos.visualization.rerun.constants import RERUN_GRPC_PORT, RERUN_WEBSOCKET_URL
 
 logger = setup_logger()
 
@@ -36,7 +36,9 @@ logger = setup_logger()
 _VIEWER_RUST_LOG = "info,re_viewer::app=error,winit::platform_impl::linux::x11::window=warn"
 
 
-def spawn_viewer(server_uri: str, memory_limit: str) -> bool:
+def spawn_viewer(
+    server_uri: str, memory_limit: str, websocket_url: str = RERUN_WEBSOCKET_URL
+) -> bool:
     """Launch our custom viewer directly, falling back to stock Rerun if unavailable."""
     try:
         process = subprocess.Popen(
@@ -44,6 +46,8 @@ def spawn_viewer(server_uri: str, memory_limit: str) -> bool:
                 "dimos-viewer",
                 "--connect",
                 server_uri,
+                "--ws-url",
+                websocket_url,
                 "--memory-limit",
                 memory_limit,
                 "--expect-data-soon",
@@ -73,7 +77,7 @@ def spawn_viewer(server_uri: str, memory_limit: str) -> bool:
         logger.warning(
             "Rerun native viewer not available (headless?). "
             "Bridge will continue without a viewer — data is still "
-            "accessible via --rerun-open web or by connecting a viewer to the gRPC server.",
+            "accessible via --rerunbridgemodule.rerun-open web or by connecting a viewer to the gRPC server.",
             exc_info=True,
         )
         return False

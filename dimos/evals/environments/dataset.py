@@ -17,19 +17,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.base import Environment, EnvironmentConfig
-from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
+from dimos.evals.environments.lib.launch import launched_mcp_url, validate_blueprints
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.cli.dataset import open_dataset, resolve_dataset
 from dimos.memory.store.base import Store
 from dimos.memory.stream import Stream
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
 
 
 class DatasetConfig(EnvironmentConfig):
@@ -55,7 +56,7 @@ class Dataset(Environment):
     def has_robot(self) -> bool:
         return bool(self.config.mcp_url)
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalSubject) -> None:
         if agent.config.modules and self.config.mcp_url:
             raise RuntimeError(
                 f"Dataset({self.config.name!r}) already attaches to {self.config.mcp_url}; "
@@ -75,9 +76,11 @@ class Dataset(Environment):
             proc.demo_args = ["run", *modules]
             self._resources.callback(proc.stop)
             proc.start()
-            mcp_url = default_mcp_url()
+            assert proc.process is not None
+            deadline = time.monotonic() + self.config.launch_timeout_s
+            mcp_url = launched_mcp_url(proc.process, deadline)
             if not McpAdapter(mcp_url).wait_for_ready(
-                timeout=self.config.launch_timeout_s, interval=2.0
+                timeout=max(0.0, deadline - time.monotonic()), interval=2.0
             ):
                 raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
         store = open_dataset(self.config.name)

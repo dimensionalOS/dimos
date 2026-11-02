@@ -22,8 +22,9 @@ password. It is safe to run again.
 cd /var/opt/robot/data/dimos-m20-kronknav
 uv sync --extra all
 source .venv/bin/activate
-dimos --build-native --robot-ip 10.21.31.106 --rerun-host 0.0.0.0 \
-  run deeprobotics-m20-kronknav-control --daemon
+dimos --build-native --robot-ip 10.21.31.106 \
+  run deeprobotics-m20-kronknav-control --rerunbridgemodule.host 0.0.0.0 \
+  --rerunwebsocketserver.host 0.0.0.0 --daemon
 ```
 
 `--robot-ip` names the NOS Zenoh bridge. `M20Connection` and the camera relay

@@ -32,7 +32,6 @@ Usage:
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.experimental.robot.bosdyn.spot.replay import SpotReplay
 from dimos.experimental.robot.bosdyn.spot.rerun import (
     spot_body_static_overrides,
@@ -49,8 +48,6 @@ spot_replay = autoconnect(
     OdometryHist.blueprint(),
     RerunBridgeModule.blueprint(
         pubsubs=[LCM()],
-        rerun_open=global_config.rerun_open,
-        rerun_web=global_config.rerun_web,
         blueprint=spot_camera_layout,
         # Replay has no costmap, so drop the default z lift and draw the trail
         # on the ground where Spot actually walked.

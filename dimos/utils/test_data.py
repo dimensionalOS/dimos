@@ -108,6 +108,24 @@ def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None
     assert resolve_named_path("/nowhere/premap", ".pc2.lcm") == Path("/nowhere/premap.pc2.lcm")
 
 
+def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    get_data = mocker.patch.object(data, "get_data")
+    (tmp_path / "house.map.db").touch()
+    # found where it is, and nothing is pulled for one that is missing
+    assert resolve_named_path(tmp_path / "house", ".map.db", must_exist=False) == (
+        tmp_path / "house.map.db"
+    )
+    assert resolve_named_path("no_such_house", ".map.db", must_exist=False) == (
+        data.DIMOS_PROJECT_ROOT / "no_such_house.map.db"
+    )
+    assert resolve_named_path("maps/no_such_house", ".map.db", must_exist=False) == Path(
+        "maps/no_such_house.map.db"
+    )
+    get_data.assert_not_called()
+
+
 def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:
     pulled = Path("/lfs/maps/office.pc2.lcm")
     get_data = mocker.patch.object(data, "get_data", return_value=pulled)

@@ -26,7 +26,7 @@ them down again.
 Build the image once from the repo root, with the DimSim assets fetched (the
 image bakes them, and the sim refuses to load LFS pointer stubs), and export
 the API keys the evals use (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`TYPESAFE_API_KEY`):
+`TYPESAFENAVIGATIONAGENT__API_KEY`):
 
 ```bash
 git lfs pull --include="misc/DimSim/**"
@@ -61,13 +61,13 @@ Each case's result names its recording folder, so its `memory.db` and
 
 ## Rerun recording
 
-Workers run with `VIEWER=rerun RERUN_OPEN=none RERUN_SAVE=1`: the Rerun
+Workers run with `VIEWER=rerun RERUNBRIDGEMODULE__RERUN_OPEN=none RERUNBRIDGEMODULE__RERUN_SAVE=1`: the Rerun
 bridge logs as usual but never opens a viewer, and a headless `rerun --save`
 client of the bridge's own gRPC server streams every event to `rerun.rrd`
-next to that run's `memory.db`. The same `--rerun-save` flag works on a bare
+next to that run's `memory.db`. The same `--rerunbridgemodule.rerun-save` flag works on a bare
 `dimos run`, with a live viewer too if you want one. Files grow at roughly
 20 MB per minute of a DimSim case with camera and lidar on, so budget disk
-accordingly and sync the runs directory to S3 after a batch. `RERUN_SAVE=0`
+accordingly and sync the runs directory to S3 after a batch. `RERUNBRIDGEMODULE__RERUN_SAVE=0`
 in front of a `--docker` run skips the file for that run.
 
 ## Habitat
@@ -173,7 +173,7 @@ skip what you have.
    need `DIMOS_TRANSPORT=zenoh`; DimSim runs need it unset:
 
    ```bash
-   export OPENAI_API_KEY=... TYPESAFE_API_KEY=... DISPLAY=:0 HABITAT_DATA_DIR=/data/habitat
+   export OPENAI_API_KEY=... TYPESAFENAVIGATIONAGENT__API_KEY=... DISPLAY=:0 HABITAT_DATA_DIR=/data/habitat
    export COMPOSE_FILE=docker/evals/compose.yaml:docker/evals/compose.gpu.yaml:docker/evals/compose.habitat-data.yaml
    ```
 

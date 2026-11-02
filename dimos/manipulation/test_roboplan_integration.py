@@ -227,6 +227,31 @@ def test_real_contexts_keep_independent_state_and_refresh_geometry(scalar_world)
         assert world.is_collision_free(second)
 
 
+def test_real_touch_links_and_overlapping_obstacles(scalar_world):
+    world = scalar_world
+    at_rest = JointState(name=["slide"], position=[0.0])
+
+    def cube(name: str, x: float, **fields: Any) -> Obstacle:
+        return Obstacle(
+            name=name,
+            obstacle_type=ObstacleType.BOX,
+            dimensions=(0.1, 0.1, 0.1),
+            pose=PoseStamped(frame_id="world", position=[x, 0, 0]),
+            **fields,
+        )
+
+    # Two obstacles overlapping each other, clear of the arm's cube at x = 1.
+    world.add_obstacle(cube("wall", 1.5))
+    world.add_obstacle(cube("shelf", 1.55))
+    assert world.check_config_collision_free(at_rest)
+    world.add_obstacle(cube("part", 1.05))
+    assert not world.check_config_collision_free(at_rest)
+    assert world.update_obstacle(cube("part", 1.05, touch_links=("arm",)))
+    assert world.check_config_collision_free(at_rest)
+    with pytest.raises(ValueError, match="hand"):
+        world.add_obstacle(cube("held", 1.05, touch_links=("hand",)))
+
+
 def test_real_rrt_and_toppra_use_finite_prepared_limits(scalar_world, roboplan_types, monkeypatch):
     world = scalar_world
     group = world.all_planning_group()

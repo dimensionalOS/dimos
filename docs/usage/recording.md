@@ -30,7 +30,7 @@ engine. Python remains the default because the native recorder is experimental;
 MCAP recording currently requires the Rust engine.
 
 The Rust engine records exact `LCMTransport` and `ZenohTransport` streams. It
-rejects DDS, ROS, WebRTC, pickled, JPEG-transport, mixed LCM/Zenoh, and
+rejects DDS, ROS, WebRTC, untyped, JPEG-transport, mixed LCM/Zenoh, and
 other specialized transports before creating an artifact. Narrow
 `--record-topics` or use the Python engine when a selection contains one of
 those transports. Payloads must also be dimOS LCM message types.
@@ -104,6 +104,9 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 ## Behavior
 
 - Off unless `--record`; never active under `--replay`.
+- The Python recorder automatically subscribes to new streams when modules are
+  added to a recording run through `Dimos.connect().run(...)`. The same topic
+  filters apply, and messages go into the run's existing `memory.db`.
 - The Python recorder uses one writer thread. Its queue holds 1000 messages, then
   drops and warns. The Rust recorder uses its existing native encoding pool and
   ordered writer pipeline.

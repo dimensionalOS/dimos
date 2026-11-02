@@ -23,6 +23,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.agents.typesafe.agent import TypeSafeAgent
 from dimos.agents.typesafe.types import Answers, Question, noul
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.stream import In
 from dimos.core.transport import pLCMTransport
 
@@ -45,13 +46,20 @@ class EchoAgent(TypeSafeAgent):
         self.seen.append((state, answers))
 
 
+def test_help_explains_where_to_create_the_required_api_key() -> None:
+    help_text = BlueprintConfigParser(EchoAgent.blueprint()).format_help()
+
+    assert "--echoagent.api-key <str> [required]" in help_text
+    assert "https://console.typesafe.ai/settings/keys" in help_text
+
+
 @pytest.fixture
 def agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[EchoAgent, list[Answers], threading.Event]]:
     scheduler = ThreadPoolScheduler(max_workers=2)
     monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
-    a = EchoAgent(max_hz=None)
+    a = EchoAgent(max_hz=None, api_key="test-typesafe-key")
     for name in ("text", "choices", "scores", "nouls"):
         getattr(a, name).transport = pLCMTransport(f"/test_typesafe_agent/{name}")
     a.seen = []  # type: ignore[attr-defined]

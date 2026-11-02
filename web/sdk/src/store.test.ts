@@ -47,6 +47,30 @@ describe("ChannelStore", () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
+  it("publishes a channel's first frame on a microtask, later ones on the tick", async () => {
+    const store = new ChannelStore(() => 0);
+    const cb = vi.fn();
+    store.subscribeUi("odom", cb);
+    store.ingest("odom", header(1), 1, true);
+    store.ingest("cam", { ...header(1), ch: "cam" }, 1, true); // a second first frame: same flush
+    expect(cb).not.toHaveBeenCalled(); // never synchronously inside ingest
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(store.getUiSnapshot("odom").slot?.value).toBe(1);
+
+    store.ingest("odom", header(2), 2, true);
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(1); // not the first frame: waits for the tick
+    store.publishUi();
+    expect(cb).toHaveBeenCalledTimes(2);
+
+    store.reset();
+    expect(cb).toHaveBeenCalledTimes(3);
+    store.ingest("odom", header(3), 3, true); // the first since the reset
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(4);
+  });
+
   it("keeps snapshot identity stable between UI ticks", () => {
     let now = 0;
     const store = new ChannelStore(() => now);

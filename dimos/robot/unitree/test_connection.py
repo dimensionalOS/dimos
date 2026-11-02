@@ -15,7 +15,7 @@
 """Unit tests for UnitreeWebRTCConnection.
 
 Pure-Python test suite with no hardware or network. Covers connect() error propagation,
-aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
+and aes_128_key forwarding.
 """
 
 import json
@@ -26,7 +26,6 @@ import pytest
 from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree import connection as conn_mod
@@ -159,9 +158,3 @@ def test_empty_string_key_forwarded_as_falsy(stub_legion: MagicMock) -> None:
     """Empty-string key stays falsy → the driver treats it as no key."""
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
     assert not _aes_kwarg(stub_legion)
-
-
-def test_global_config_reads_unitree_aes_128_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The key enters via GlobalConfig, read from the UNITREE_AES_128_KEY env var."""
-    monkeypatch.setenv("UNITREE_AES_128_KEY", "ee" * 16)
-    assert GlobalConfig().unitree_aes_128_key == "ee" * 16

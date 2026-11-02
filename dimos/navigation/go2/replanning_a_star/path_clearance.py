@@ -17,7 +17,6 @@ from threading import RLock
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
@@ -31,13 +30,13 @@ class PathClearance:
     _last_used_shape: tuple[int, ...] | None = None
     _last_mask: NDArray[np.bool_] | None = None
     _last_used_pose: int | None = None
-    _global_config: GlobalConfig
+    _robot_width: float
     _lock: RLock
     _path: Path
     _pose_index: int
 
-    def __init__(self, global_config: GlobalConfig, path: Path) -> None:
-        self._global_config = global_config
+    def __init__(self, robot_width: float, path: Path) -> None:
+        self._robot_width = robot_width
         self._path = path
         self._pose_index = 0
         self._lock = RLock()
@@ -69,7 +68,7 @@ class PathClearance:
         self._last_mask = make_path_mask(
             occupancy_grid=costmap,
             path=self._path,
-            robot_width=self._global_config.robot_width,
+            robot_width=self._robot_width,
             pose_index=pose_index,
             max_length=self._path_lookup_distance,
         )

@@ -64,6 +64,13 @@ Reaching off the machine is opt-in
 
 Every one of these unpins the listener back to zenoh's all-interfaces default.
 
+`--zenoh-domain office2` (or `ZENOH_DOMAIN=office2`) keeps every stream of the run under
+`dimos-domains/office2/` instead of `dimos/`, so runs sharing a fabric never cross. A hosted
+run (`Blueprint.hosted()`, placed on `dimos host` daemons) gets its run id as its domain. A
+rerun bridge listens to every domain and drops the domain from entity paths, so a viewer that
+dials the robot's router on its own still shows such a run. With `topics` set it only listens to
+its own domain. `dimos topic` and `dimos record` show the domain's keys.
+
 **Two ways to override for one run or for your shell:**
 
 1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
@@ -81,7 +88,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
 
 blueprint = blueprint.transports(
-    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+    {("image", WebcamModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
 )
 ```
 
@@ -166,7 +173,7 @@ ros = nav.transports(
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
-The runnable example below uses a tiny synthetic image publisher instead of `CameraModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
+The runnable example below uses a tiny synthetic image publisher instead of `WebcamModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
 
 ```python ansi=false
 import time
@@ -330,7 +337,7 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have CBOR-encoded transports for Python values without an LCM form.
 
 ### LCM (UDP multicast)
 
@@ -438,7 +445,7 @@ Transports often need to serialize messages before sending and deserialize after
 
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
-| `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
+| `CborEncoderMixin`   | CBOR            | Python values with their types kept (tuples, numpy, enums, dataclasses, messages); what RPC uses |
 | `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 
@@ -471,10 +478,10 @@ class MyJsonPubSub(JsonEncoderMixin, Memory):
 Swap serialization by changing the mixin:
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.encoders import PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
 
-class MyPicklePubSub(PickleEncoderMixin, Memory):
+class MyCborPubSub(CborEncoderMixin, Memory):
     pass
 ```
 
