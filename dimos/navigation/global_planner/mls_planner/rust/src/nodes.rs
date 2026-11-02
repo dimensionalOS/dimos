@@ -599,7 +599,7 @@ fn collect_wall_adjacent_cells(
 /// Scale each edge by its endpoints' average wall penalty and add the step
 /// penalty. Unreached cells (dist +INFINITY) collapse the wall penalty to 1.0.
 fn apply_wall_safe_penalty(cells: &mut SurfaceCells, dist: &[f32], params: &PlacementParams) {
-    let mut edge_lists: Vec<(CellId, &mut Vec<Edge>)> = cells.iter_edges_mut().collect();
+    let mut edge_lists = cells.edge_lists_mut();
     edge_lists
         .par_iter_mut()
         .for_each(|(src, edges)| scale_edges(edges, *src, dist, params));

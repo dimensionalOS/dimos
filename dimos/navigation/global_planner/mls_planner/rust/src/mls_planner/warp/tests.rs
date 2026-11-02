@@ -341,3 +341,47 @@ fn rebuild_stage_bench() {
         );
     });
 }
+
+/// RSS across repeated full rebuilds: MLS_REBUILD_BENCH=<planner .voxels dump>
+/// cargo test --release --lib rebuild_rss_bench -- --ignored --nocapture
+#[test]
+#[ignore = "needs MLS_REBUILD_BENCH, a mls_reform_planner voxels dump"]
+fn rebuild_rss_bench() {
+    let raw = std::fs::read(std::env::var("MLS_REBUILD_BENCH").unwrap()).unwrap();
+    let cfg = Config {
+        voxel_size: 0.08,
+        robot_height: 0.45,
+        start_z_offset_m: 0.287,
+        wall_clearance_m: 0.1,
+        wall_buffer_m: 0.75,
+        wall_buffer_weight: 100.0,
+        step_threshold_m: 0.16,
+        step_penalty_weight: 4.0,
+        ..test_config()
+    };
+    let points: Vec<(f32, f32, f32)> = raw
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .map(|p| {
+            let f = |i: usize| f32::from_le_bytes(p[i..i + 4].try_into().unwrap());
+            (f(0), f(4), f(8))
+        })
+        .collect();
+    let mut p = Planner::new(4);
+    p.track_voxel_times();
+    for i in 0..12 {
+        let shifted: Vec<(f32, f32, f32)> = points
+            .iter()
+            .map(|q| (q.0 + 0.03 * i as f32, q.1, q.2))
+            .collect();
+        let t = Instant::now();
+        p.update_global_map(&shifted, &cfg);
+        println!(
+            "rebuild {i}: {:.0} ms, rss {:.0} MB, {:?}",
+            ms_since(t),
+            crate::rss::rss_mb().unwrap_or(f64::NAN),
+            p.sizes()
+        );
+    }
+}

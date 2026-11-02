@@ -30,6 +30,15 @@ pub struct DijkstraState {
     pub pred: Vec<CellId>,
     pub source: Vec<u32>,
     heap: BinaryHeap<Scored<u128>>,
+    /// The same order packed in a u64, for cells whose ids follow their coordinates.
+    packed: BinaryHeap<std::cmp::Reverse<u64>>,
+}
+
+/// A distance and an id as one u64 that orders like Scored(dist, heap_key) when
+/// ids follow coordinates: least distance first, then the larger key.
+#[inline]
+fn packed_key(dist: f32, id: CellId) -> u64 {
+    (dist.to_bits() as u64) << 32 | (u32::MAX - id) as u64
 }
 
 /// Heap tie-breaker for the ordering. This is totally swappable, this is
@@ -55,6 +64,7 @@ impl DijkstraState {
         self.source.clear();
         self.source.resize(n, 0);
         self.heap.clear();
+        self.packed.clear();
     }
 
     /// Grow the vecs to n slots without disturbing existing labels. New slots
@@ -95,6 +105,9 @@ pub fn dijkstra(
     weight: Weight,
 ) {
     state.reset(cells.slot_capacity());
+    if cells.coord_ordered() {
+        return dijkstra_packed(cells, sources, state, weight);
+    }
 
     for &s in sources {
         if !cells.is_live(s) {
@@ -122,6 +135,43 @@ pub fn dijkstra(
                 state
                     .heap
                     .push(Scored(nd, heap_key(cells.coord(edge.dest), edge.dest)));
+            }
+        }
+    }
+}
+
+/// dijkstra over cells whose ids follow their coordinates: the same labels from a
+/// heap of packed u64s, a quarter the size of Scored(f32, u128).
+fn dijkstra_packed(
+    cells: &SurfaceCells,
+    sources: &[CellId],
+    state: &mut DijkstraState,
+    weight: Weight,
+) {
+    use std::cmp::Reverse;
+    for &s in sources {
+        if !cells.is_live(s) {
+            continue;
+        }
+        state.dist[s as usize] = 0.0;
+        state.source[s as usize] = s;
+        state.packed.push(Reverse(packed_key(0.0, s)));
+    }
+    while let Some(Reverse(key)) = state.packed.pop() {
+        let d = f32::from_bits((key >> 32) as u32);
+        let u = u32::MAX - key as u32;
+        if d > state.dist[u as usize] {
+            continue;
+        }
+        let su = state.source[u as usize];
+        for edge in cells.neighbors(u) {
+            let nd = d + weight.of(edge);
+            let v = edge.dest as usize;
+            if nd < state.dist[v] {
+                state.dist[v] = nd;
+                state.pred[v] = u;
+                state.source[v] = su;
+                state.packed.push(Reverse(packed_key(nd, edge.dest)));
             }
         }
     }
@@ -601,6 +651,35 @@ mod tests {
             pred: full.pred.clone(),
             source: full.source.clone(),
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn packed_search_labels_exactly_like_the_general_one() {
+        // A grid with steps and equal-cost ties everywhere, many sources.
+        let cells: Vec<VoxelKey> = (-20i32..20)
+            .flat_map(|x| (-15..15).map(move |y| (x, y, (x * y).rem_euclid(3))))
+            .collect();
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&cells, &mut lookup);
+        let mut sc = SurfaceCells::default();
+        build_surface_cells(&mut sc, &lookup, 0.1, 2);
+        assert!(sc.coord_ordered());
+        let sources: Vec<CellId> = cells
+            .iter()
+            .step_by(37)
+            .map(|&k| sc.id(k).unwrap())
+            .collect();
+        for weight in [Weight::Base, Weight::Penalized] {
+            let mut packed = DijkstraState::default();
+            dijkstra(&sc, &sources, &mut packed, weight);
+            sc.unorder();
+            let mut general = DijkstraState::default();
+            dijkstra(&sc, &sources, &mut general, weight);
+            assert_eq!(packed.dist, general.dist);
+            assert_eq!(packed.pred, general.pred);
+            assert_eq!(packed.source, general.source);
+            build_surface_cells(&mut sc, &lookup, 0.1, 2);
         }
     }
 
