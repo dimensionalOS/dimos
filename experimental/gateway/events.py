@@ -35,7 +35,7 @@ logger = setup_logger()
 
 
 def resolve_namespace() -> str | None:
-    namespace: str | None = shared_config.setting("zenoh", "namespace")
+    namespace = shared_config.shared_config().zenoh_namespace
     if not namespace:
         return None
     if any(chunk == "" for chunk in namespace.split("/")) or re.search(r"[*?#$]", namespace):
@@ -46,7 +46,7 @@ def resolve_namespace() -> str | None:
 def resolve_connect() -> list[str]:
     from dimos.core.global_config import global_config
 
-    value = shared_config.setting("zenoh", "connect") or global_config.zenoh_connect
+    value = shared_config.shared_config().zenoh_connect or global_config.zenoh_connect
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 

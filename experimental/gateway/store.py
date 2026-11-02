@@ -23,7 +23,7 @@ import tempfile
 from typing import Any
 
 from dimos.constants import STATE_DIR
-from experimental.gateway.shared_config import setting
+from experimental.gateway.shared_config import shared_config
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -41,7 +41,7 @@ def logs_dir() -> Path:
 
 def recordings_dir(dimos_dir: Path) -> Path:
     """The configured one (a relative one is under the checkout, where launches run), else the checkout's default."""
-    configured = setting("recordings", "dir")
+    configured = shared_config().recordings_dir
     if configured:
         return dimos_dir / Path(str(configured)).expanduser()
     return dimos_dir / "recordings" if (dimos_dir / ".git").exists() else STATE_DIR / "recordings"
