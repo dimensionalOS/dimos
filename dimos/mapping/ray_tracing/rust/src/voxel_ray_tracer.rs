@@ -215,7 +215,7 @@ fn join_fine_key(coarse: VoxelKey, index: usize, divisor: i32) -> VoxelKey {
     )
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct VoxelMap {
     pub voxels: ChunkMap,
     /// Chunks whose emitted points changed since the viz last took them.
@@ -963,7 +963,7 @@ fn live_voxels(points: &[(f32, f32, f32)], voxel_size: f32) -> AHashSet<VoxelKey
 }
 
 /// One frame's hit sets from `update_map`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct FrameHits {
     /// Hit voxels at map resolution, the live merge for `emit_points`.
     pub coarse: AHashSet<VoxelKey>,

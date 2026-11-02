@@ -74,7 +74,7 @@ fn hold_implausible(
 
 /// Seconds since `epoch` at which each voxel landed, and the clock new ones
 /// are stamped with.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct VoxelTimes {
     epoch: Option<f64>,
     now: f32,

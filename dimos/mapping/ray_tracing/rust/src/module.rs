@@ -15,7 +15,8 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use crate::mapper::{register, Mapper, Pose};
+use crate::background_warp::{BackgroundWarp, WarpJob};
+use crate::mapper::{register, Mapper, Pose, WarpReport};
 use crate::reform::Warp;
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
@@ -42,8 +43,10 @@ pub(crate) enum Job {
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
     SeedPrepared(Option<SeedPartition>),
-    /// A loop closure's warp, applied to the whole map in place.
+    /// A loop closure's warp, run on a copy of the map off the scan path.
     Warp(Warp),
+    /// A warp finished on its copy, ready to swap in.
+    WarpDone(Box<WarpJob>, WarpReport),
 }
 
 /// How often the reform ray tracer logs its memory and container sizes.
@@ -318,6 +321,7 @@ struct State {
     last_frame_stamp: Time,
     seed: SeedState,
     viz: RegionSweep,
+    background_warp: BackgroundWarp,
 }
 
 fn warn_if_seed_starved(seed: &SeedState) {
@@ -386,6 +390,7 @@ impl Worker {
             last_frame_stamp: Time::default(),
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
+            background_warp: BackgroundWarp::default(),
         };
         let mut last_memory_log = Instant::now();
         loop {
@@ -441,13 +446,18 @@ impl Worker {
                 state.seed.placed(partition);
             }
             Job::Warp(warp) => {
-                let mapper = &mut state.mapper;
-                let report = tokio::task::block_in_place(|| mapper.apply_warp(&warp));
-                let (median_shift_m, max_shift_m) = warp.keyframe_shift_m();
+                let background = &mut state.background_warp;
+                let live = &state.mapper;
+                if let Some(job) = tokio::task::block_in_place(|| background.on_warp(warp, live)) {
+                    self.spawn_warp(job);
+                }
+            }
+            Job::WarpDone(job, report) => {
+                let (median_shift_m, max_shift_m) = job.warp.keyframe_shift_m();
                 warn!(
-                    keyframes = warp.keyframes(),
-                    keyframes_moved = warp.moved_keyframes(),
-                    keyframes_blended = warp.blended_keyframes(),
+                    keyframes = job.warp.keyframes(),
+                    keyframes_moved = job.warp.moved_keyframes(),
+                    keyframes_blended = job.warp.blended_keyframes(),
                     median_shift_m,
                     max_shift_m,
                     voxels_warped = report.voxels_warped,
@@ -459,14 +469,42 @@ impl Worker {
                 if let Some((from, to)) = report.worst_implausible {
                     warn!(
                         held_in_place = report.implausible,
-                        limit_m = warp.max_plausible_move_m(),
+                        limit_m = job.warp.max_plausible_move_m(),
                         worst_from = ?from,
                         worst_to = ?to,
                         "A warp sent voxels somewhere non-finite or implausibly far; they stayed put."
                     );
                 }
+                let WarpJob { epoch, map, .. } = *job;
+                let background = &mut state.background_warp;
+                let live = &mut state.mapper;
+                let swap_start = Instant::now();
+                let next = tokio::task::block_in_place(|| background.on_done(epoch, map, live));
+                info!(
+                    swap_ms = swap_start.elapsed().as_secs_f64() * 1e3,
+                    "Swapped in the warped map and replayed the scans that came in meanwhile."
+                );
+                if let Some(next) = next {
+                    self.spawn_warp(next);
+                }
             }
         }
+    }
+
+    /// Run a warp on its copy of the map off the scan path, then queue it back to swap in.
+    fn spawn_warp(&self, job: WarpJob) {
+        let sender = self.job_sender.clone();
+        tokio::spawn(async move {
+            let warped = tokio::task::spawn_blocking(move || {
+                let mut job = job;
+                let report = job.map.apply_warp(&job.warp);
+                (job, report)
+            })
+            .await;
+            if let (Ok((job, report)), Some(sender)) = (warped, sender.upgrade()) {
+                let _ = sender.send(Job::WarpDone(Box::new(job), report)).await;
+            }
+        });
     }
 
     /// Fold one lidar frame into the map and publish whatever is due.
@@ -519,13 +557,15 @@ impl Worker {
             return;
         }
 
+        let pose = tf_to_pose(&tf_pose);
+        state.background_warp.on_frame(stamp, &points, pose);
         let mapper = &mut state.mapper;
         let emit_fine = self.config.emit_fine;
         let process_start = Instant::now();
         let (region, global_points, local_points, fine_points) =
             tokio::task::block_in_place(|| {
                 mapper.set_clock(stamp);
-                mapper.add_frame(points, tf_to_pose(&tf_pose));
+                mapper.add_frame(points, pose);
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
                 let cylinder = region.map(|c| c.bounds());
                 let global_points = mapper.global_due().then(|| mapper.global_points());

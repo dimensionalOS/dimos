@@ -39,7 +39,8 @@ pub struct Pose {
 }
 
 /// The per-frame mapping loop shared by the native module and the Python
-/// binding. Callers own transport only.
+/// binding. Callers own transport only. A clone shares the worker pool.
+#[derive(Clone)]
 pub struct Mapper {
     config: Config,
     // The mapper owns its worker pool, so its thread setting cannot collide
