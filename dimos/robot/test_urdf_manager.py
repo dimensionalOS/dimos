@@ -25,6 +25,7 @@ import pinocchio as pin
 import pytest
 import trimesh
 
+from dimos.core.shared_config import SharedConfigModule, shared_config_methods
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -379,6 +380,24 @@ def test_render_file_request_serves_the_urdf_and_only_files_it_names(
     assert f'filename="{cube}"' in sent[0].data.decode()
     assert File.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
     assert sent[2].data == b"png bytes"
+
+
+def test_robot_description_reaches_every_shared_config_module_with_the_posed_urdf_and_other_formats(
+    make_filter, tmp_path
+):
+    mjcf = tmp_path / "box_robot.xml"
+    module = make_filter(
+        model=RobotModel.from_file(tmp_path / "robot.urdf").with_fixed_frame(
+            "sensor", "arm", xyz=(0.1, 0.0, 0.0)
+        ),
+        formats={"mjcf": mjcf},
+    )
+
+    assert dict(shared_config_methods(UrdfManager))["robot_description"] is SharedConfigModule
+    description = module.robot_description()["robot_description"]
+    assert description["name"] == "box_robot"
+    assert description["formats"] == {"mjcf": str(mjcf)}
+    assert 'link name="sensor"' in description["urdf"]
 
 
 def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_capture_is_still_filtered(
