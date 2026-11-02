@@ -111,7 +111,7 @@ class PGOConfig(NativeModuleConfig):
     # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
     closure_pcm: bool = False
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
-    closure_gnc_overtrust_check: bool = True
+    closure_gnc_overtrust_check: bool = False
     # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
     odometry_gravity_bound: bool = True
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
@@ -157,10 +157,6 @@ class PGOConfig(NativeModuleConfig):
     closure_informative_by_graph_covariance: bool = True
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
     closure_uninformative_gate: bool = True
-    # True: the uninformative gate uses the learned odometry noise's upper bound (thin evidence cannot shut the gate)
-    closure_uninformative_noise_upper_bound: bool = True
-    # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
-    odometry_noise_solve_lower_bound: bool = True
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
     # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. Defaults: Mid-360 +
     # FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning). After each solve

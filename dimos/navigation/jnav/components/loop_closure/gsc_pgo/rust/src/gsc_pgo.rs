@@ -116,10 +116,12 @@ pub struct ClosureCandidateDiag {
     /// keyframes (closure_extended_icp_max_keyframes x (1 - (1 - pressure)(1 - target_overlap)), up to the next doubling step), and the separate places the scan matched as well as
     /// this target, counted only as far as the decision needed (0 when it was never counted).
     pub pressure: f64,
+    /// Pressure 2 when the search started (`LoopOverlap::unclosed_overlap_probability`).
+    pub pressure2: f64,
     /// The odometry noise when the search started, as ratios to the reported variances (xy, z, yaw, roll/pitch;
     /// `GscPgo::odometry_noise`).
     pub odometry_noise: [f64; 4],
-    /// The same as the uninformative gate measures the graph with (`GscPgo::odometry_noise_for_gate`).
+    /// The same as the uninformative gate measures the graph with (`GscPgo::odometry_noise`, the stated noise).
     pub odometry_noise_gate: [f64; 4],
     /// The closure's innovation: the source keyframe's offset from where the graph put it, relative to the target, in
     /// world axes (m), and the graph's covariance of that offset at the odometry noise in use (m²); NaN before ICP.
@@ -204,6 +206,7 @@ impl ClosureCandidateDiag {
             scan_context_second: f32::NAN,
             lowe_ratio: f32::NAN,
             pressure: 0.0,
+            pressure2: 0.0,
             odometry_noise: [1.0; 4],
             odometry_noise_gate: [1.0; 4],
             innovation: [f64::NAN; 3],
@@ -380,16 +383,6 @@ pub struct Config {
     /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
     /// passes the other gates is committed, and repeats of a kept closure count again.
     pub closure_uninformative_gate: bool,
-    /// When true, the uninformative gate measures the graph with the learned odometry noise's upper bound (at
-    /// `closure_gnc_inlier_probability`, from the learner's posterior spread; the prior's while evidence is thin) instead of
-    /// its estimate: a closure is only called uninformative when the graph is surely surer than ICP, so a few tight
-    /// early loops that shrink the estimate cannot shut the gate on the loops that would correct it.
-    pub closure_uninformative_noise_upper_bound: bool,
-    /// When true (with `odometry_noise_from_closures`), the pose graph is solved with the learned odometry noise's lower
-    /// bound (at `closure_gnc_inlier_probability`) instead of its estimate: the odometry is trusted at least as much as
-    /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
-    /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
-    pub odometry_noise_solve_lower_bound: bool,
     /// The odometry's drift as a random walk in the motion itself, so it does not depend on how far apart keyframes
     /// are: per noise source (xy translation, z translation, yaw, roll/pitch tilt), the standard deviation it adds per
     /// square root of metres travelled (m/√m for translation, rad/√m for rotation) and per square root of radians
@@ -492,9 +485,9 @@ pub struct Config {
     /// position (the information a closure would add, ½ ln(1 + known variance / measurement variance), grows with it)
     /// instead of by scan-context distance.
     pub closure_rank_by_information: bool,
-    /// When true, the odometry's four noise variances (xy, z, yaw, roll/pitch per keyframe) are measured from how far the
-    /// kept closures disagreed with the raw odometry (`odometry_noise`), the reported ones as priors, and every solve,
-    /// the loop-overlap pressure and the gates use them (the reported ones until a closure is kept).
+    /// When true, the odometry's four noise variances (xy, z, yaw, roll/pitch per keyframe) are estimated from how far the
+    /// kept closures disagreed with the raw odometry (`odometry_noise_estimate`), the reported ones as priors, and logged
+    /// (each search's diagnostics, `GSC_LEARN_LOG`); nothing uses them: the solve, pressure and gates take the stated noise.
     pub odometry_noise_from_closures: bool,
     /// When true, the noise learner reads only the kept closures that agree pairwise around their raw-odometry cycles
     /// (the PCM core) on every solve: a bend two independent loops agree on is drift, a lone closure's may be a wrong
@@ -552,8 +545,6 @@ impl Default for Config {
             closure_gnc_inlier_probability: 0.95,
             closure_informative_by_graph_covariance: true,
             closure_uninformative_gate: true,
-            closure_uninformative_noise_upper_bound: true,
-            odometry_noise_solve_lower_bound: true,
             odom_xy_drift_per_sqrt_m: 3.91e-4,
             odom_xy_drift_per_sqrt_rad: 6.35e-3,
             odom_z_drift_per_sqrt_m: 6.42e-4,
@@ -580,7 +571,7 @@ impl Default for Config {
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
             closure_pcm: false,
-            closure_gnc_overtrust_check: true,
+            closure_gnc_overtrust_check: false,
             odometry_gravity_bound: true,
             closure_commitments: true,
             closure_inlier_distance_from_odometry: false,
@@ -1189,51 +1180,15 @@ impl GscPgo {
 
     /// The odometry noise in use as ratios to the reported variances (xy, z, yaw, roll/pitch;
     /// `odometry_noise_from_closures`); all 1 when off or before a kept closure.
+    /// The factor on each odometry variance everything uses: always the stated drift (the learned estimate,
+    /// `odometry_noise_estimate`, is only logged).
     pub fn odometry_noise(&self) -> [f64; 4] {
+        [1.0; 4]
+    }
+
+    /// The learned odometry noise (`odometry_noise_from_closures`), as factors on the stated variances; logged, never used.
+    pub fn odometry_noise_estimate(&self) -> [f64; 4] {
         self.odometry_noise_ln.map(f64::exp)
-    }
-
-    /// The prior spread of each noise source's ln (`odom_noise_prior_ln_sd_*`).
-    /// The factor on each odometry variance the uninformative gate uses: the estimate, or with
-    /// `closure_uninformative_noise_upper_bound` its upper bound at `closure_gnc_inlier_probability`.
-    pub(crate) fn odometry_noise_for_gate(&self) -> [f64; 4] {
-        if !self.config.closure_uninformative_noise_upper_bound {
-            return self.odometry_noise();
-        }
-        self.odometry_noise_bound(1.0)
-    }
-
-    /// The factor on each odometry variance the pose-graph solve uses: the estimate, or with
-    /// `odometry_noise_solve_lower_bound` its lower bound at `closure_gnc_inlier_probability`.
-    pub(crate) fn odometry_noise_for_solve(&self) -> [f64; 4] {
-        if !self.config.odometry_noise_solve_lower_bound {
-            return self.odometry_noise();
-        }
-        self.odometry_noise_bound(-1.0)
-    }
-
-    /// The learned odometry noise's one-sided bound at `closure_gnc_inlier_probability`, above (`side` 1) or below
-    /// (-1) the estimate, from its posterior spread. For a source no committed closure has measured yet, each bound errs
-    /// towards letting evidence in, so nothing starves the learner: the gate's upper bound takes the prior's spread (a
-    /// tight closure might still be news), the solve's lower bound is the estimate itself (the stated noise; a lower bound
-    /// from the prior alone solved huge overtrust at x0.03-0.2, voting 979 of 980 closures out before any was learned from).
-    pub(crate) fn odometry_noise_bound(&self, side: f64) -> [f64; 4] {
-        // one-sided normal quantile z: P(|Z| < z) = 2p - 1
-        let p = self.config.closure_gnc_inlier_probability;
-        let z = crate::landmarks::chi2_inverse(2.0 * p - 1.0, 1).sqrt();
-        let prior = self.odometry_noise_prior();
-        std::array::from_fn(|c| {
-            let sd = self.odometry_noise_ln_sd[c].unwrap_or_else(|| {
-                if side < 0.0 {
-                    0.0
-                } else if prior[c] > 0.0 {
-                    prior[c]
-                } else {
-                    crate::odometry_noise::standard_error(c, 0)
-                }
-            });
-            (self.odometry_noise_ln[c] + side * z * sd).exp()
-        })
     }
 
     /// The odometry drift this run's learned noise implies, in the config's own units (`odom_*_drift_per_sqrt_m` and
@@ -1247,7 +1202,7 @@ impl GscPgo {
             [c.odom_yaw_drift_per_sqrt_m, c.odom_yaw_drift_per_sqrt_rad],
             [c.odom_tilt_drift_per_sqrt_m, c.odom_tilt_drift_per_sqrt_rad],
         ];
-        let noise = self.odometry_noise();
+        let noise = self.odometry_noise_estimate();
         let measured = std::array::from_fn(|k| self.odometry_noise_ln_sd[k].is_some());
         // the learned noise scales each source's variances, so its drift (a standard deviation) by the square root
         (
@@ -1260,16 +1215,6 @@ impl GscPgo {
     /// residual checks (-2 ln curvature 2 / sd^2 = N; infinite at 0, no prior).
     pub(crate) fn odometry_noise_learner_prior(&self) -> [f64; 4] {
         [(2.0 / self.config.odom_error_stiffness).sqrt(); 4]
-    }
-
-    pub(crate) fn odometry_noise_prior(&self) -> [f64; 4] {
-        let c = &self.config;
-        [
-            c.odom_noise_prior_ln_sd_xy,
-            c.odom_noise_prior_ln_sd_z,
-            c.odom_noise_prior_ln_sd_yaw,
-            c.odom_noise_prior_ln_sd_tilt,
-        ]
     }
 
     /// The bound on the odometry's tilt error (rad², each axis; `odometry_gravity_bound`), from the committed closures:
@@ -1398,7 +1343,7 @@ impl GscPgo {
         }
         // what the next solve would use (the estimate, or its lower bound) against what the last one did
         let previous = std::mem::replace(&mut self.odometry_noise_ln, ln_odometry);
-        let next_solve = self.odometry_noise_for_solve().map(f64::ln);
+        let next_solve = self.odometry_noise().map(f64::ln);
         self.odometry_noise_ln = previous;
         let moved = (0..4).any(|c| {
             redundancy[c] > 0.5
@@ -1455,8 +1400,8 @@ impl GscPgo {
     pub(crate) fn record_search(&mut self, mut diag: ClosureCandidateDiag) {
         // a search that ended before its proposal was built never saw the noise scales
         if diag.target_id < 0 {
-            diag.odometry_noise = self.odometry_noise();
-            diag.odometry_noise_gate = self.odometry_noise_for_gate();
+            diag.odometry_noise = self.odometry_noise_estimate();
+            diag.odometry_noise_gate = self.odometry_noise();
         }
         if diag.target_id >= 0 {
             let (source, target) = (diag.source_id, diag.target_id as usize);
@@ -1754,8 +1699,11 @@ impl GscPgo {
         diag.pressure = self
             .pressure
             .map_or(0.0, |(_, overlap)| overlap.unresolved_loop_probability);
-        diag.odometry_noise = self.odometry_noise();
-        diag.odometry_noise_gate = self.odometry_noise_for_gate();
+        diag.pressure2 = self
+            .pressure
+            .map_or(0.0, |(_, overlap)| overlap.unclosed_overlap_probability);
+        diag.odometry_noise = self.odometry_noise_estimate();
+        diag.odometry_noise_gate = self.odometry_noise();
         // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
         // the doubling step that covers max keyframes x that chance
         let model = self.overlap_model(diag.source_id);
