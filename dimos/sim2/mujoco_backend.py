@@ -131,6 +131,8 @@ class MujocoBackend:
         self._wrench_until: dict[int, float] = {}
         self._files = _files_named_by(config.scene, None)
         for robot in self._robots.values():
+            # Simulation resolved every robot's model before building a backend.
+            assert robot.model is not None
             self._files.update(_files_named_by(robot.model, None))
         self._reset()
 
