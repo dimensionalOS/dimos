@@ -305,12 +305,13 @@ pub fn plan_once(
         &terrain,
         pose,
         approach,
+        None,
         emb,
         config.resolution,
         incumbent,
         COMMIT_MARGIN,
     ) {
-        Some(s) if !s.is_empty() => s,
+        Some((s, _)) if !s.is_empty() => s,
         _ => {
             debug!(
                 plan_ms = ms_since(started),
