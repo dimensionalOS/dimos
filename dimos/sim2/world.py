@@ -16,7 +16,6 @@
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
 
 import mujoco
 import numpy as np
@@ -61,17 +60,27 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
 
 
 def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str = "") -> None:
-    body: Any = spec.worldbody if sensor.body == "world" else spec.body(sensor.body)
-    if body is None:
-        raise ValueError(f"{owner}/{sensor.frame_id}: no body {sensor.body!r}")
-    pose = {"pos": sensor.xyz, "quat": _quaternion(sensor.rpy)}
+    """At its frame: a site of the model (on that site's body, at its pose), a body (at its origin), or "world"."""
+    frame = sensor.frame_id
+    site, body, pos, quat = None, spec.worldbody, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])
+    if frame != "world":
+        site, body = spec.site(frame), spec.body(frame)
+        if site is not None:
+            # Compiled, so a site oriented any way (euler, axisangle, ...) reads as pos and quat.
+            compiled = spec.copy().compile()
+            index = compiled.site(frame).id
+            body, pos, quat = site.parent, compiled.site_pos[index], compiled.site_quat[index]
+        elif body is None:
+            raise ValueError(f"{owner}: no site or body {frame!r} for its {sensor.kind}")
+    name = prefix + frame
     if sensor.kind == "camera":
         # The frame is the optical frame (z forward, y down); a MuJoCo camera looks down -z, y up.
-        rotation = Rotation.from_euler("xyz", sensor.rpy) * Rotation.from_euler("x", np.pi)
-        pose["quat"] = rotation.as_quat(scalar_first=True)
-        body.add_camera(name=prefix + sensor.frame_id, fovy=sensor.fovy, **pose)
-    else:
-        body.add_site(name=prefix + sensor.frame_id, size=_SITE_SIZE, rgba=(0, 0, 0, 0), **pose)
+        optical = Rotation.from_quat(quat, scalar_first=True) * Rotation.from_euler("x", np.pi)
+        body.add_camera(
+            name=name, fovy=sensor.fovy, pos=pos, quat=optical.as_quat(scalar_first=True)
+        )
+    elif site is None or prefix:
+        body.add_site(name=name, size=_SITE_SIZE, rgba=(0, 0, 0, 0), pos=pos, quat=quat)
 
 
 def _quaternion(rpy: Vector) -> NDArray[np.float64]:
