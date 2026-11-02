@@ -23,13 +23,13 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
-from dimos_lcm.world_msgs import Change, WorldAction
+from dimos_lcm.world_msgs import Observation, WorldAction
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.sim2.spec import Vector
-from dimos.sim2.world_change import (
+from dimos.sim2.world_observations import (
     EVENTS,
     PAUSED,
     WORLD,
@@ -40,8 +40,8 @@ from dimos.sim2.world_change import (
     group_update,
     joint_targets,
     pose_update,
-    read_change,
     read_group_payloads,
+    read_observation,
     tag_update,
     velocity_update,
 )
@@ -124,12 +124,14 @@ Action = JointCommand | SetJointPositions | SetPose | ApplyWrench | Pause | Resu
 def world_action(mirror: WorldMirror, *actions: Action) -> WorldAction:
     """The actions as a WorldAction, addressed by the ids the mirror's world gave its entities."""
     with mirror.lock:
-        changes = [change for action in actions for change in _encode(mirror, action)]
+        observations = [
+            observation for action in actions for observation in _encode(mirror, action)
+        ]
         frame, ts = mirror.frame, round(mirror.time * 1e9)
-    return WorldAction(ts=ts, frame=frame, actions_length=len(changes), actions=changes)
+    return WorldAction(ts=ts, frame=frame, actions_length=len(observations), actions=observations)
 
 
-def _encode(mirror: WorldMirror, action: Action) -> list[Change]:
+def _encode(mirror: WorldMirror, action: Action) -> list[Observation]:
     ids = mirror.ids
     match action:
         case JointCommand(entity, names, position, velocity, effort, kp, kd):
@@ -144,9 +146,9 @@ def _encode(mirror: WorldMirror, action: Action) -> list[Change]:
             # Every one of the entity's joints: one group update, its rows in the group's order.
             if sorted(order) == sorted(members):
                 rows = rows[[members.index(member) for member in order]]
-                return [group_update(group, Change.JOINT_TARGET_SET, joint_targets(rows))]  # type: ignore[arg-type]
+                return [group_update(group, Observation.JOINT_TARGET_SET, joint_targets(rows))]  # type: ignore[arg-type]
             return [
-                entity_update(member, (Change.JOINT_TARGET_SET, joint_targets(row[None])))
+                entity_update(member, (Observation.JOINT_TARGET_SET, joint_targets(row[None])))
                 for member, row in zip(members, rows, strict=True)
             ]
         case SetJointPositions(entity, names, positions):
@@ -154,7 +156,7 @@ def _encode(mirror: WorldMirror, action: Action) -> list[Change]:
                 entity_update(
                     ids[f"{entity}/{name}"],
                     (
-                        Change.JOINT_POSITION_SET,
+                        Observation.JOINT_POSITION_SET,
                         joint_targets(np.array([[q, 0.0, 0.0]])),
                     ),
                 )
@@ -172,7 +174,7 @@ def _encode(mirror: WorldMirror, action: Action) -> list[Change]:
         case ApplyWrench(entity, force, torque, point, duration):
             wrench = np.array([*force, *torque, *point, duration])
             payload = b"\0" * 8 + wrench.astype(">f8").tobytes()
-            return [entity_update(ids[entity], (Change.WRENCH, payload))]
+            return [entity_update(ids[entity], (Observation.WRENCH, payload))]
         case Pause() | Resume():
             return [entity_update(WORLD, tag_update(PAUSED, isinstance(action, Pause)))]
         case Step(steps):
@@ -185,8 +187,8 @@ def _encode(mirror: WorldMirror, action: Action) -> list[Change]:
 def read_actions(message: WorldAction, world: WorldWriter) -> list[Action]:
     """A WorldAction's typed actions, by the paths the backend's writer gave its entities' ids."""
     actions: list[Action] = []
-    for change in message.actions:
-        for action in _decode(change, world):
+    for observation in message.actions:
+        for action in _decode(observation, world):
             previous = actions[-1] if actions else None
             # A joint at a time on the wire, one command per entity here.
             if (
@@ -225,41 +227,41 @@ def _joint_command(entity: str, names: Sequence[str], rows: np.ndarray) -> Joint
     return JointCommand(entity, tuple(names), position, velocity, effort, kp, kd)
 
 
-def _decode(change: Change, world: WorldWriter) -> list[Action]:
+def _decode(observation: Observation, world: WorldWriter) -> list[Action]:
     paths = world.paths
-    if change.type == Change.GROUP_UPDATE:
-        robot, names = world.joint_groups[change.entity_id]
-        update, rows = read_group_payloads(change)
-        if update != Change.JOINT_TARGET_SET:
+    if observation.type == Observation.GROUP_UPDATE:
+        robot, names = world.joint_groups[observation.entity_id]
+        update, rows = read_group_payloads(observation)
+        if update != Observation.JOINT_TARGET_SET:
             raise ValueError(f"a group can only be sent joint targets, not update {update}")
         return [_joint_command(robot, names, rows)]
-    _, updates = read_change(change)
-    target = paths[change.entity_id]
+    _, updates = read_observation(observation)
+    target = paths[observation.entity_id]
     actions: list[Action] = []
     pose: Any = None
     for update, value in updates:
-        if update == Change.JOINT_TARGET_SET:
+        if update == Observation.JOINT_TARGET_SET:
             entity, name = target.split("/", 1)
             actions.append(_joint_command(entity, (name,), value[None]))
-        elif update == Change.JOINT_POSITION_SET:
+        elif update == Observation.JOINT_POSITION_SET:
             entity, name = target.split("/", 1)
             actions.append(SetJointPositions(entity, (name,), (float(value[0]),)))
-        elif update == Change.WORLD_POSE_SET:
+        elif update == Observation.WORLD_POSE_SET:
             pose = Pose(*value)
             actions.append(SetPose(target, pose))
-        elif update == Change.WORLD_VELOCITY_SET and pose is not None:
+        elif update == Observation.WORLD_VELOCITY_SET and pose is not None:
             actions[-1] = SetPose(
                 target,
                 pose,
                 Twist(linear=value[:3].tolist(), angular=value[3:].tolist()),
             )
-        elif update == Change.WRENCH:
+        elif update == Observation.WRENCH:
             _, w = value
             force, torque, point = (tuple(map(float, w[i : i + 3])) for i in (0, 3, 6))
             actions.append(ApplyWrench(target, force, torque, point, float(w[9])))  # type: ignore[arg-type]
-        elif update in (Change.ADDED_TAG, Change.REMOVED_TAG) and value == PAUSED:
-            actions.append(Pause() if update == Change.ADDED_TAG else Resume())
-        elif update == Change.EVENT:
+        elif update in (Observation.ADDED_TAG, Observation.REMOVED_TAG) and value == PAUSED:
+            actions.append(Pause() if update == Observation.ADDED_TAG else Resume())
+        elif update == Observation.EVENT:
             event, cbor = value
             if event == EVENTS["events/step"]:
                 actions.append(Step(cbor["steps"]))
