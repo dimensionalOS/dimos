@@ -493,9 +493,11 @@ pub struct DeterministicConfig {
     pub fast_match_scans_per_keyframe: f64,
     pub fast_match_scans_per_point: f64,
     pub fast_match_scans_per_source_point: f64,
-    /// The verification (the extension, in a whole search or its own job): fixed as it starts, and per round before each.
+    /// The verification (the extension, in a whole search or its own job): fixed as it starts, and before each round
+    /// that round's own: per round + per point of its source cloud and target (both known as it starts).
     pub verification_scans_fixed_overhead: f64,
     pub verification_scans_per_round: f64,
+    pub verification_scans_per_round_point: f64,
     /// The solve: `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power * (1 +
     /// rejected)^solve_rejected_power`, the closures in the solve and the ones the newest adopted solve rejected.
     pub solve_scans_scale: f64,
@@ -520,7 +522,10 @@ impl Default for DeterministicConfig {
             fast_match_scans_per_point: 3.137e-5,
             fast_match_scans_per_source_point: 7.808e-5,
             verification_scans_fixed_overhead: 1.322,
-            verification_scans_per_round: 0.883,
+            // a 99%-of-rounds upper bound over Mac rounds of huge L1, gir1 and small L1 (their per-round points
+            // logged), until the Jetson battery's fit
+            verification_scans_per_round: 0.1966,
+            verification_scans_per_round_point: 1.723e-5,
             solve_scans_scale: 3.843e-5,
             solve_keyframe_power: 2.017,
             solve_closure_power: -0.215,
@@ -849,6 +854,7 @@ impl Config {
             ("fast_match_scans_per_source_point", self.deterministic_config.fast_match_scans_per_source_point),
             ("verification_scans_fixed_overhead", self.deterministic_config.verification_scans_fixed_overhead),
             ("verification_scans_per_round", self.deterministic_config.verification_scans_per_round),
+            ("verification_scans_per_round_point", self.deterministic_config.verification_scans_per_round_point),
             ("pressure_scans_fixed_overhead", self.deterministic_config.pressure_scans_fixed_overhead),
             ("pressure_scans_per_keyframe", self.deterministic_config.pressure_scans_per_keyframe),
             ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
@@ -918,7 +924,7 @@ impl Default for Config {
             graph_change_heat_decay: 0.995,
             closure_search_let_enabled: true,
             closure_search_workers: 2,
-            closure_search_two_stage: false,
+            closure_search_two_stage: true,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,

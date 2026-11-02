@@ -48,7 +48,8 @@ class PGOConfig(NativeModuleConfig):
             "fast_match_scans_per_point": 3.137e-5,
             "fast_match_scans_per_source_point": 7.808e-5,
             "verification_scans_fixed_overhead": 1.322,
-            "verification_scans_per_round": 0.883,
+            "verification_scans_per_round": 0.1966,
+            "verification_scans_per_round_point": 1.723e-5,
             "solve_scans_scale": 3.843e-5,
             "solve_keyframe_power": 2.017,
             "solve_closure_power": -0.215,
@@ -173,7 +174,7 @@ class PGOConfig(NativeModuleConfig):
     # for fast_match_workers (cloud build, single ICP, gates); a match inside the uncertainty range waits in a priority
     # buffer (highest single-scan confidence ratio first, lowest dropped) for verification_workers to extend it, held
     # overhead + round bound per round (the round bound a constant for now: the largest Mac recording's p99 round, gir2)
-    closure_search_two_stage: bool = False
+    closure_search_two_stage: bool = True
     fast_match_workers: int = 2
     sc_buffer_size: int = 4
     verification_workers: int = 2

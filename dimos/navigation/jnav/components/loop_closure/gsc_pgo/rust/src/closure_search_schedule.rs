@@ -42,6 +42,8 @@ use std::thread::JoinHandle;
 #[derive(Default)]
 struct ProgressState {
     rounds: usize,
+    /// The extension rounds' estimates (scans), each counted as its round starts.
+    round_scans: f64,
     stage: Option<SearchStage>,
 }
 
@@ -53,9 +55,17 @@ pub struct SearchProgress {
 }
 
 impl SearchProgress {
-    pub(crate) fn round_started(&self) {
-        self.state.lock().expect("search progress").rounds += 1;
+    pub(crate) fn round_started(&self, estimate_scans: f64) {
+        let mut state = self.state.lock().expect("search progress");
+        state.rounds += 1;
+        state.round_scans += estimate_scans;
+        drop(state);
         self.changed.notify_all();
+    }
+    /// The rounds started and their estimates' sum (scans).
+    fn rounds(&self) -> (usize, f64) {
+        let state = self.state.lock().expect("search progress");
+        (state.rounds, state.round_scans)
     }
     fn finish(&self, stage: SearchStage) {
         self.state.lock().expect("search progress").stage = Some(stage);
@@ -145,18 +155,21 @@ pub struct SearchJob {
 }
 
 impl SearchJob {
-    /// The estimate (scans, before rounding up) with `rounds` extension rounds started.
+    /// The estimate (scans, before rounding up) with the extension rounds started so far (each round's own estimate,
+    /// counted as it starts: `verification_scans_per_round` + `verification_scans_per_round_point` x its source and
+    /// target points); `rounds` is the count those were read at.
     fn estimate_raw_scans(&self, rounds: usize, config: &crate::gsc_pgo::Config) -> f64 {
+        let (counted, round_scans) = self.progress.rounds();
+        // rounds started after `rounds` was read only raise the hold, never lower it, so reading the newer sum is safe
+        let round_scans = if counted >= rounds { round_scans } else { 0.0 };
         match self.kind {
             JobKind::FastMatch => self.estimate_raw_scans,
-            JobKind::Verification => {
-                self.estimate_raw_scans + rounds as f64 * config.deterministic_config.verification_scans_per_round
-            }
+            JobKind::Verification => self.estimate_raw_scans + round_scans,
             JobKind::Search if rounds == 0 => self.estimate_raw_scans,
             JobKind::Search => {
                 self.estimate_raw_scans
                     + config.deterministic_config.verification_scans_fixed_overhead
-                    + rounds as f64 * config.deterministic_config.verification_scans_per_round
+                    + round_scans
             }
         }
     }
@@ -631,6 +644,7 @@ impl GscPgo {
                     "fast_match_scans_per_source_point" => &mut suggested.fast_match_scans_per_source_point,
                     "verification_scans_fixed_overhead" => &mut suggested.verification_scans_fixed_overhead,
                     "verification_scans_per_round" => &mut suggested.verification_scans_per_round,
+                    "verification_scans_per_round_point" => &mut suggested.verification_scans_per_round_point,
                     "solve_scans_scale" => &mut suggested.solve_scans_scale,
                     "debounce_scans_per_keyframe" => &mut suggested.debounce_scans_per_keyframe,
                     "merge_scans_per_keyframe" => &mut suggested.merge_scans_per_keyframe,
@@ -664,6 +678,7 @@ impl GscPgo {
             ("verification", &["search", "verification"], vec![
                 ("verification_scans_fixed_overhead", c.deterministic_config.verification_scans_fixed_overhead),
                 ("verification_scans_per_round", c.deterministic_config.verification_scans_per_round),
+                ("verification_scans_per_round_point", c.deterministic_config.verification_scans_per_round_point),
             ]),
             ("solve", &["solve"], vec![("solve_scans_scale", c.deterministic_config.solve_scans_scale)]),
             ("debounce", &["debounce"], vec![("debounce_scans_per_keyframe", c.deterministic_config.debounce_scans_per_keyframe)]),
