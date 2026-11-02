@@ -520,6 +520,21 @@ impl Worker {
 
         // Bounds pair with local_map by stamp, so publish them on its cadence.
         if let Some(c) = region {
+            let limit = 2.0 * self.config.max_range;
+            if !(c.radius.is_finite() && c.cx.is_finite() && c.cy.is_finite())
+                || (limit > 0.0 && c.radius > limit)
+            {
+                warn_throttled!(
+                    Duration::from_secs(5),
+                    radius = c.radius,
+                    center_x = c.cx,
+                    center_y = c.cy,
+                    z_min = c.z_min,
+                    z_max = c.z_max,
+                    cloud_frame = %msg.header.frame_id,
+                    "Local region is far larger than the lidar's range: a cloud or its pose is off."
+                );
+            }
             let bounds_msg = bounds_to_pose(&c, out_frame_id, stamp.clone());
             publish_bounds(&self.outputs.region_bounds, &bounds_msg).await;
         }
