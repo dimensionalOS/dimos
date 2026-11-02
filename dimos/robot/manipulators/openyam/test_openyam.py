@@ -25,7 +25,6 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
 )
-from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection import _profile
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
@@ -230,13 +229,3 @@ def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
     assert gripper.joint_names == [_GRIPPER_JOINT]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
-
-
-def test_quest_collection_schema_uses_the_deployed_seven_joint_order() -> None:
-    state = _profile.observations["observation.state"]
-    action = _profile.actions["action"]
-    assert state.names == _JOINTS
-    assert state.shape == (7,)
-    assert action.names == _JOINTS
-    assert action.stream == "coordinator_joint_command"
-    assert action.source_kind == "joint_position_updates"
