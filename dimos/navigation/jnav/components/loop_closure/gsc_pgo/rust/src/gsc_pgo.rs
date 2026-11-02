@@ -378,6 +378,9 @@ pub struct Config {
     /// solved closures included) is surer than ICP in every direction, instead of the per-keyframe xy step times the
     /// keyframe gap (always on with `odom_noise_per_motion`).
     pub closure_informative_by_graph_covariance: bool,
+    /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
+    /// passes the other gates is committed, and repeats of a kept closure count again.
+    pub closure_uninformative_gate: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
@@ -505,6 +508,7 @@ impl Default for Config {
             odom_trans_z_var: 1e-4,
             odom_noise_per_motion: false,
             closure_informative_by_graph_covariance: false,
+            closure_uninformative_gate: true,
             odom_xy_var_per_m: 1.53e-7,
             odom_xy_var_per_rad: 4.03e-5,
             odom_z_var_per_m: 4.12e-7,
@@ -582,16 +586,16 @@ pub struct GscPgo {
     pub(crate) new_closure: bool,
     /// Committed closures a solve has been started for.
     pub(crate) closures_dispatched: usize,
-    /// World-frame position fixes (`add_world_position`): time, frame id, sensor offset in the body frame, position,
+    /// World-frame position fixes (`add_coordinate_factor`): time, frame id, sensor offset in the body frame, position,
     /// covariance; how many a solve has been started for; and the newest solve's map -> frame alignments.
     pub(crate) world_positions: Vec<(f64, u32, Vec3, Vec3, Mat3)>,
     pub(crate) world_positions_dispatched: usize,
     pub(crate) world_alignment: Vec<(u32, f64, Vec3)>,
-    /// Landmark sightings (`add_landmark_sighting`): time, landmark id, position and covariance in the body frame; how
-    /// many a solve has been started for; and the newest solve's landmark positions (id, map position).
-    pub(crate) landmark_sightings: Vec<(f64, u64, Vec3, Mat3)>,
+    /// Landmark sightings (`add_landmark_factor`): time, landmark id, rotation, position and 6x6 information in the body
+    /// frame; how many a solve has been started for; and the newest solve's landmarks (id, map rotation and position).
+    pub(crate) landmark_sightings: Vec<(f64, u64, Mat3, Vec3, [[f64; 6]; 6])>,
     pub(crate) landmark_sightings_dispatched: usize,
-    pub(crate) landmarks: Vec<(u64, Vec3)>,
+    pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
@@ -824,7 +828,8 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        if icp.fitness * diag.closure_noise_scale >= known {
+        if self.config.closure_uninformative_gate && icp.fitness * diag.closure_noise_scale >= known
+        {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
         if self.config.closure_sharpness_half > 0.0 {

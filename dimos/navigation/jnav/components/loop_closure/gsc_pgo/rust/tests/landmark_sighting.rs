@@ -13,11 +13,12 @@
 // limitations under the License.
 
 //! Landmark sightings (`solve_with_priors`): a drifting square path with no loop closures and no world positions,
-//! seeing a few landmarks by bearing with only a rough range (its uncertainty half the range).
+//! seeing a few landmarks by bearing with only a rough range (its uncertainty half the range), or one tag's full pose.
 
 use dimos_gsc_pgo::big_picture_fit::{
     bearing_and_range, solve_with_priors, Edge, LandmarkSighting, SolveConfig,
 };
+use dimos_gsc_pgo::landmarks::known_inverse;
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
 const N: usize = 160;
@@ -109,12 +110,7 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
                 bearing_sigma.powi(2),
                 range_sigma.powi(2),
             );
-            sightings.push(LandmarkSighting {
-                keyframe: k,
-                landmark,
-                position,
-                covariance,
-            });
+            sightings.push(LandmarkSighting::point(k, landmark, position, covariance));
         }
     }
     // a wrong data association: a sighting of post 0 labelled post 1
@@ -184,4 +180,132 @@ fn bearing_and_range_is_tight_across_the_ray_and_loose_along_it() {
     assert!((covariance[1][1] - 2500.0).abs() < 1e-9);
     assert!((covariance[0][0] - 1.0).abs() < 1e-9 && (covariance[2][2] - 1.0).abs() < 1e-9);
     assert!(covariance[0][1].abs() < 1e-9);
+}
+
+#[test]
+fn one_tag_seen_at_both_ends_closes_heading_and_position() {
+    // a tag (a full pose: position to 2 cm, rotation to 0.01 rad) on a wall by the start, seen only from the first and
+    // the last few keyframes: one sighting's pose pins the keyframe's heading, which a point never could
+    let truth = truth();
+    let (edges, rotations, positions) = odometry(&truth);
+    let heading = |r: &Mat3| r[1][0].atan2(r[0][0]);
+    let wrap = |a: f64| {
+        (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+    };
+    let last = N - 1;
+    let drifted_heading = wrap(heading(&rotations[last]) - truth[last].0).abs();
+    let drifted = mat3::norm(&mat3::sub(&positions[last], &truth[last].1));
+    let (tag_yaw, tag): (f64, Vec3) = (2.0, [2.0, -3.0, 1.0]);
+    let (position_sigma, rotation_sigma) = (0.02_f64, 0.01_f64);
+    let mut covariance = [[0.0; 6]; 6];
+    for i in 0..3 {
+        covariance[i][i] = rotation_sigma.powi(2);
+        covariance[3 + i][3 + i] = position_sigma.powi(2);
+    }
+    let sightings: Vec<LandmarkSighting> = (0..3)
+        .chain(last - 2..=last)
+        .map(|k| {
+            let (yaw, at) = truth[k];
+            let back = mat3::transpose(&mat3::rot_z(yaw));
+            LandmarkSighting {
+                keyframe: k,
+                landmark: 0,
+                rotation: mat3::rot_z(tag_yaw - yaw + noise(k, 7.0) * rotation_sigma),
+                position: mat3::add(
+                    &mat3::mat_vec(&back, &mat3::sub(&tag, &at)),
+                    &[
+                        noise(k, 8.0) * position_sigma,
+                        noise(k, 9.0) * position_sigma,
+                        0.0,
+                    ],
+                ),
+                information: known_inverse(&covariance),
+            }
+        })
+        .collect();
+    let free: Vec<bool> = (0..N).map(|k| k > 0).collect();
+    let config = SolveConfig {
+        gnc_variance_scale: 1.0,
+        gnc_inlier_probability: 0.95,
+        huber_k: 0.0,
+        pcm_odometry_translation_variance: 0.0,
+    };
+    let solution = solve_with_priors(
+        &rotations,
+        &positions,
+        &free,
+        &edges,
+        &[],
+        &[],
+        &sightings,
+        &config,
+    );
+    let solved_heading = wrap(heading(&solution.rotations[last]) - truth[last].0).abs();
+    let solved = mat3::norm(&mat3::sub(&solution.positions[last], &truth[last].1));
+    let tag_heading = wrap(heading(&solution.landmark_rotations[0]) - tag_yaw).abs();
+    eprintln!(
+        "last keyframe: heading off {drifted_heading:.3} -> {solved_heading:.3} rad, position {drifted:.2} -> {solved:.2} m; \
+         tag heading off {tag_heading:.3} rad"
+    );
+    assert!(
+        solution.sighting_weights.iter().all(|&w| w == 1.0),
+        "every sighting kept"
+    );
+    assert!(
+        drifted_heading > 0.05 && drifted > 1.0,
+        "the odometry drifts"
+    );
+    assert!(
+        solved_heading < 0.03,
+        "heading closed ({solved_heading} rad)"
+    );
+    assert!(solved < 0.2, "position closed ({solved} m)");
+    assert!(
+        tag_heading < 0.03,
+        "the tag's rotation solved ({tag_heading} rad)"
+    );
+}
+
+#[test]
+fn unknown_dimensions_carry_no_information() {
+    // ROS's -1 and an infinite variance are both unknown; the rest inverts on its own
+    let mut covariance = [[0.0; 6]; 6];
+    covariance[0][0] = -1.0;
+    covariance[1][1] = f64::INFINITY;
+    covariance[2][2] = 4.0;
+    for i in 3..6 {
+        covariance[i][i] = 0.25;
+    }
+    covariance[3][4] = 0.1;
+    covariance[4][3] = 0.1;
+    let information = known_inverse(&covariance);
+    assert!(information[0]
+        .iter()
+        .chain(&information[1])
+        .all(|&v| v == 0.0));
+    assert!((information[2][2] - 0.25).abs() < 1e-12);
+    let det = 0.25 * 0.25 - 0.1 * 0.1;
+    assert!((information[3][3] - 0.25 / det).abs() < 1e-9);
+    assert!((information[3][4] + 0.1 / det).abs() < 1e-9);
+}
+
+#[test]
+fn factors_before_the_first_keyframe_wait_for_it() {
+    // a fix or sighting can reach the module before its first scan; there is nothing to solve yet
+    let mut pgo = dimos_gsc_pgo::gsc_pgo::GscPgo::new(dimos_gsc_pgo::gsc_pgo::Config::default());
+    pgo.add_landmark_point(
+        0.0,
+        7,
+        [1.0, 0.0, 0.0],
+        [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]],
+    );
+    pgo.add_coordinate_factor(
+        0.0,
+        0,
+        [0.0; 3],
+        [0.0; 3],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    );
+    assert!(!pgo.update());
+    assert!(!pgo.finish());
 }

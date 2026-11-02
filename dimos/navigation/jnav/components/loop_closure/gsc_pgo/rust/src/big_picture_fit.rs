@@ -28,7 +28,10 @@ use faer::{Conj, Mat, Par, Side};
 use std::thread::JoinHandle;
 
 use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, Config, GscPgo, KeyPoseWithCloud};
+use crate::landmarks::{self, Sighting};
 use crate::mat3::{self, Mat3, Vec3};
+
+pub use crate::landmarks::{bearing_and_range, LandmarkSighting};
 pub use crate::world_positions::{solve_with_priors, PositionPrior};
 
 /// A relative-pose measurement from keyframe `from` to keyframe `to`, in `from`'s body frame
@@ -65,8 +68,10 @@ pub struct Solution {
     /// its map -> frame alignment (frame id, yaw about z, then translation).
     pub prior_weights: Vec<f64>,
     pub world_alignment: Vec<(u32, f64, Vec3)>,
-    /// Per landmark (`LandmarkSighting::landmark`), where the solve put it; per sighting, 1 kept, 0 rejected.
+    /// Per landmark (`LandmarkSighting::landmark`), where the solve put it (and its rotation, identity for a landmark
+    /// no sighting gave one); per sighting, 1 kept, 0 rejected.
     pub landmarks: Vec<Vec3>,
+    pub landmark_rotations: Vec<Mat3>,
     pub sighting_weights: Vec<f64>,
     /// Half the sum of squared whitened residuals of everything kept.
     pub error: f64,
@@ -101,47 +106,6 @@ pub fn solve(
     )
 }
 
-/// A landmark seen from keyframe `keyframe`: where it was in the keyframe's body frame (a camera's bearing with a rough
-/// range, a lidar reflector, ..., carried through the sensor's mount) and its covariance there (m²). Every sighting of
-/// one `landmark` (a dense index) is of the same fixed point, itself a variable of the solve, so sightings from
-/// keyframes far apart in time (or from different robots) tie them together the way a closure does.
-#[derive(Clone, Copy, Debug)]
-pub struct LandmarkSighting {
-    pub keyframe: usize,
-    pub landmark: usize,
-    pub position: Vec3,
-    pub covariance: Mat3,
-}
-
-/// A bearing (unit `direction`) with a range along it, as a point and its covariance: `range_variance` (m²) along the
-/// ray, `bearing_variance` (rad²) about each axis across it (so `range² · bearing_variance` across). A range barely
-/// known is a large `range_variance`, which leaves the sighting a bearing.
-pub fn bearing_and_range(
-    direction: &Vec3,
-    range: f64,
-    bearing_variance: f64,
-    range_variance: f64,
-) -> (Vec3, Mat3) {
-    let b = mat3::scale(direction, 1.0 / mat3::norm(direction));
-    let across = range * range * bearing_variance;
-    let covariance = std::array::from_fn(|i| {
-        std::array::from_fn(|j| {
-            let along = b[i] * b[j];
-            range_variance * along + across * ((i == j) as u8 as f64 - along)
-        })
-    });
-    (mat3::scale(&b, range), covariance)
-}
-
-/// A sighting with its information (inverse covariance).
-#[derive(Clone, Copy, Debug)]
-struct Sighting {
-    keyframe: usize,
-    landmark: usize,
-    position: Vec3,
-    information: Mat3,
-}
-
 /// A position prior placed in the solve frame: keyframe `keyframe`'s sensor at `lever` (body frame) should be at
 /// `position`, with information (inverse covariance) `information`.
 #[derive(Clone, Copy, Debug)]
@@ -166,22 +130,6 @@ fn unary_whitened(u: &Unary, state: &State) -> f64 {
     r[0] * ir[0] + r[1] * ir[1] + r[2] * ir[2]
 }
 
-/// A sighting's residual in its keyframe's body frame: where the landmark sits from the keyframe, minus where it was seen.
-fn sighting_residual(s: &Sighting, state: &State) -> Vec3 {
-    let k = s.keyframe;
-    let from = mat3::sub(&state.landmark[s.landmark], &state.position[k]);
-    mat3::sub(
-        &mat3::mat_vec(&mat3::transpose(&state.rotation[k]), &from),
-        &s.position,
-    )
-}
-
-fn sighting_whitened(s: &Sighting, state: &State) -> f64 {
-    let r = sighting_residual(s, state);
-    let ir = mat3::mat_vec(&s.information, &r);
-    r[0] * ir[0] + r[1] * ir[1] + r[2] * ir[2]
-}
-
 pub(crate) fn solve_core(
     rotations: &[Mat3],
     positions: &[Vec3],
@@ -194,32 +142,39 @@ pub(crate) fn solve_core(
 ) -> Solution {
     // each landmark starts where its first sighting puts it from the starting estimate
     let landmark_count = sightings.iter().map(|s| s.landmark + 1).max().unwrap_or(0);
-    let mut landmark: Vec<Option<Vec3>> = vec![None; landmark_count];
+    let mut landmark: Vec<Option<(Mat3, Vec3)>> = vec![None; landmark_count];
     for s in sightings {
         landmark[s.landmark].get_or_insert_with(|| {
-            mat3::add(
-                &positions[s.keyframe],
-                &mat3::mat_vec(&rotations[s.keyframe], &s.position),
+            (
+                mat3::mat_mul(&rotations[s.keyframe], &s.rotation),
+                mat3::add(
+                    &positions[s.keyframe],
+                    &mat3::mat_vec(&rotations[s.keyframe], &s.position),
+                ),
             )
         });
     }
+    let sightings: Vec<Sighting> = sightings.iter().map(Sighting::new).collect();
+    // a landmark is a pose once any sighting knows its rotation, else a point
+    let mut landmark_dims = vec![3; landmark_count];
+    for s in sightings.iter().filter(|s| s.knows_rotation()) {
+        landmark_dims[s.landmark] = 6;
+    }
+    let (landmark_rotation, landmark): (Vec<Mat3>, Vec<Vec3>) = landmark
+        .into_iter()
+        .zip(&landmark_dims)
+        .map(|(l, &dims)| match l {
+            Some((r, p)) if dims == 6 => (r, p),
+            Some((_, p)) => (mat3::identity(), p),
+            None => (mat3::identity(), [0.0; 3]),
+        })
+        .unzip();
     let mut state = State {
         rotation: rotations.to_vec(),
         position: positions.to_vec(),
-        landmark: landmark
-            .into_iter()
-            .map(|l| l.unwrap_or([0.0; 3]))
-            .collect(),
+        landmark,
+        landmark_rotation,
     };
-    let sightings: Vec<Sighting> = sightings
-        .iter()
-        .map(|s| Sighting {
-            keyframe: s.keyframe,
-            landmark: s.landmark,
-            position: s.position,
-            information: mat3::inverse(&s.covariance).unwrap_or([[0.0; 3]; 3]),
-        })
-        .collect();
     let sightings = &sightings[..];
     let scaled: Vec<Edge> = closures
         .iter()
@@ -233,7 +188,7 @@ pub(crate) fn solve_core(
         odometry.iter().chain(closures),
         unary,
         sightings,
-        landmark_count,
+        &landmark_dims,
     );
 
     // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
@@ -251,11 +206,17 @@ pub(crate) fn solve_core(
         |state: &State| -> Vec<f64> { unary.iter().map(|u| unary_whitened(u, state)).collect() };
     let unary_worst = unary_residuals(&state).into_iter().fold(0.0, f64::max);
     let mut unary_weights = vec![1.0; unary.len()];
-    // landmark sightings: the same, with the same 3-DoF cutoff (a sighting matched to the wrong landmark is an outlier)
+    // landmark sightings: the same, each against the cutoff for its known dimensions (a sighting matched to the wrong
+    // landmark is an outlier); residuals kept as fractions of that cutoff
+    let sighting_thresholds: Vec<f64> = sightings
+        .iter()
+        .map(|s| landmarks::chi2_inverse(config.gnc_inlier_probability, s.known.max(1)))
+        .collect();
     let sighting_residuals = |state: &State| -> Vec<f64> {
         sightings
             .iter()
-            .map(|s| sighting_whitened(s, state))
+            .zip(&sighting_thresholds)
+            .map(|(s, t)| s.whitened(state) / t)
             .collect()
     };
     let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
@@ -280,7 +241,7 @@ pub(crate) fn solve_core(
     let mut r2 = residual(&state);
     let mut u2 = unary_residuals(&state);
     let mut s2 = sighting_residuals(&state);
-    if worst > threshold || unary_worst > unary_threshold || sighting_worst > unary_threshold {
+    if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
         // the gentlest start any factor kind that exceeds its own cutoff needs (a kind under its cutoff sets none)
         let start = |worst: f64, threshold: f64| {
             (worst > threshold).then(|| threshold / (2.0 * worst - threshold))
@@ -288,7 +249,7 @@ pub(crate) fn solve_core(
         let mut mu = [
             start(worst, threshold),
             start(unary_worst, unary_threshold),
-            start(sighting_worst, unary_threshold),
+            start(sighting_worst, 1.0),
         ]
         .into_iter()
         .flatten()
@@ -316,7 +277,7 @@ pub(crate) fn solve_core(
                 *w = tls(r, unary_threshold, mu);
             }
             for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
-                *w = tls(r, unary_threshold, mu);
+                *w = tls(r, 1.0, mu);
             }
             levenberg_marquardt(
                 &mut state,
@@ -437,6 +398,7 @@ pub(crate) fn solve_core(
         prior_weights: unary_kept,
         world_alignment: Vec::new(),
         landmarks: state.landmark,
+        landmark_rotations: state.landmark_rotation,
         sighting_weights: sighting_kept,
         error,
         relative_position_covariance,
@@ -766,10 +728,11 @@ fn relative_position_covariances(
     )
 }
 
-struct State {
-    rotation: Vec<Mat3>,
-    position: Vec<Vec3>,
-    landmark: Vec<Vec3>,
+pub(crate) struct State {
+    pub(crate) rotation: Vec<Mat3>,
+    pub(crate) position: Vec<Vec3>,
+    pub(crate) landmark: Vec<Vec3>,
+    pub(crate) landmark_rotation: Vec<Mat3>,
 }
 
 impl State {
@@ -784,7 +747,7 @@ impl State {
 }
 
 /// [rotation error (axis-angle), translation error] of an edge between two poses.
-fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
+pub(crate) fn edge_residual(e: &Edge, from: (&Mat3, &Vec3), to: (&Mat3, &Vec3)) -> [f64; 6] {
     let predicted = mat3::mat_mul(from.0, &e.rotation);
     let rotation = log(&mat3::mat_mul(&mat3::transpose(&predicted), to.0));
     let local = mat3::mat_vec(&mat3::transpose(from.0), &mat3::sub(to.1, from.1));
@@ -811,17 +774,22 @@ fn whitened_squared(e: &Edge, state: &State) -> f64 {
 /// The residual and its Jacobians with respect to `from`'s and `to`'s 6-vector perturbations
 /// (rotation about the keyframe's own axes, then world position).
 fn linearize(e: &Edge, state: &State) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]) {
-    let (ri, rj) = (&state.rotation[e.from], &state.rotation[e.to]);
-    let residual = edge_residual(
+    linearize_between(
         e,
-        (ri, &state.position[e.from]),
-        (rj, &state.position[e.to]),
-    );
+        (&state.rotation[e.from], &state.position[e.from]),
+        (&state.rotation[e.to], &state.position[e.to]),
+    )
+}
+
+/// `linearize` between two given poses.
+pub(crate) fn linearize_between(
+    e: &Edge,
+    (ri, pi): (&Mat3, &Vec3),
+    (rj, pj): (&Mat3, &Vec3),
+) -> ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]) {
+    let residual = edge_residual(e, (ri, pi), (rj, pj));
     let ri_t = mat3::transpose(ri);
-    let local = mat3::mat_vec(
-        &ri_t,
-        &mat3::sub(&state.position[e.to], &state.position[e.from]),
-    );
+    let local = mat3::mat_vec(&ri_t, &mat3::sub(pj, pi));
     // rotation error phi = Log(E), E = (Ri Rm)^T Rj; to first order d phi = Jr^-1 (d theta_j - E^T Rm^T d theta_i),
     // with Jr^-1 ~ I + [phi]x / 2
     let phi = [residual[0], residual[1], residual[2]];
@@ -867,7 +835,7 @@ fn cost(
     sightings
         .iter()
         .zip(sighting_weights)
-        .map(|(s, w)| w * sighting_whitened(s, state))
+        .map(|(s, w)| w * s.whitened(state))
         .sum::<f64>()
         + unary
             .iter()
@@ -890,8 +858,9 @@ fn cost(
 /// `blocks` order) instead of re-sorting.
 struct Pattern {
     slot: Vec<Option<usize>>,
-    /// Where the landmarks' 3-entry blocks start, after every keyframe's.
-    landmark_base: usize,
+    /// Per landmark, where its block starts (after every keyframe's) and its size: 6 for a pose, 3 for a point.
+    landmark_at: Vec<usize>,
+    landmark_dims: Vec<usize>,
     size: usize,
     symbolic: SymbolicSparseColMat<usize>,
     order: Argsort<usize>,
@@ -904,15 +873,15 @@ impl Pattern {
         edges: impl Iterator<Item = &'a Edge>,
         unary: &[Unary],
         sightings: &[Sighting],
-        landmarks: usize,
+        landmark_dims: &[usize],
     ) -> Pattern {
         let mut count = 0;
         let slot: Vec<Option<usize>> = free
             .iter()
             .map(|&f| f.then(|| (count, count += 1).0))
             .collect();
-        let landmark_base = 6 * count.max(1);
-        let size = landmark_base + 3 * landmarks;
+        let mut size = 6 * count.max(1);
+        let landmark_at: Vec<usize> = landmark_dims.iter().map(|&d| (size, size += d).0).collect();
         let mut indices: Vec<Pair<usize, usize>> = Vec::new();
         for e in edges {
             for (_, _, a, b) in blocks(&slot, e) {
@@ -928,7 +897,8 @@ impl Pattern {
         // landmark sightings after those, in `normal_equations` fill order
         for s in sightings {
             indices.extend(
-                sighting_entries(&slot, landmark_base, s).map(|(_, _, r, c)| Pair::new(r, c)),
+                s.entries(&slot, landmark_at[s.landmark], landmark_dims[s.landmark])
+                    .map(|(_, _, r, c)| Pair::new(r, c)),
             );
         }
         // the damping diagonal last, so the matrix is never structurally singular
@@ -939,7 +909,8 @@ impl Pattern {
             SymbolicLlt::try_new(symbolic.as_ref(), Side::Lower).expect("pose graph ordering");
         Pattern {
             slot,
-            landmark_base,
+            landmark_at,
+            landmark_dims: landmark_dims.to_vec(),
             size,
             symbolic,
             order,
@@ -968,43 +939,6 @@ fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usiz
     (0..6)
         .flat_map(move |i| (0..6).map(move |j| (i, j, 6 * a + i, 6 * b + j)))
         .filter(|&(_, _, r, c)| r >= c)
-}
-
-/// A sighting's entries in fill order, as (row in its 3 x 9 Jacobian [pose 0..6, landmark 6..9], column in it, matrix
-/// row, matrix column): its keyframe's block (if free), its landmark's block, then landmark rows x keyframe columns.
-fn sighting_entries(
-    slot: &[Option<usize>],
-    landmark_base: usize,
-    s: &Sighting,
-) -> impl Iterator<Item = (usize, usize, usize, usize)> {
-    let l = landmark_base + 3 * s.landmark;
-    let pose = slot[s.keyframe];
-    let own = pose.into_iter().flat_map(|a| block_entries(a, a));
-    let landmark = (0..3).flat_map(move |i| (0..=i).map(move |j| (6 + i, 6 + j, l + i, l + j)));
-    let cross = pose.into_iter().flat_map(move |a| {
-        (0..3).flat_map(move |i| (0..6).map(move |j| (6 + i, j, l + i, 6 * a + j)))
-    });
-    own.chain(landmark).chain(cross)
-}
-
-/// A sighting's residual and its 3 x 9 Jacobian: rotation perturbation (R <- R exp(d)), position, landmark.
-fn sighting_linearize(s: &Sighting, state: &State) -> (Vec3, [[f64; 9]; 3]) {
-    let k = s.keyframe;
-    let rt = mat3::transpose(&state.rotation[k]);
-    let seen = mat3::mat_vec(
-        &rt,
-        &mat3::sub(&state.landmark[s.landmark], &state.position[k]),
-    );
-    let skew = mat3::skew(&seen);
-    let mut jacobian = [[0.0; 9]; 3];
-    for row in 0..3 {
-        for col in 0..3 {
-            jacobian[row][col] = skew[row][col];
-            jacobian[row][3 + col] = -rt[row][col];
-            jacobian[row][6 + col] = rt[row][col];
-        }
-    }
-    (mat3::sub(&seen, &s.position), jacobian)
 }
 
 /// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers
@@ -1067,10 +1001,20 @@ fn levenberg_marquardt(
                 rotation: state.rotation.clone(),
                 position: state.position.clone(),
                 landmark: state.landmark.clone(),
+                landmark_rotation: state.landmark_rotation.clone(),
             };
-            for (j, l) in trial.landmark.iter_mut().enumerate() {
-                let at = pattern.landmark_base + 3 * j;
-                *l = mat3::add(l, &[step[(at, 0)], step[(at + 1, 0)], step[(at + 2, 0)]]);
+            for j in 0..trial.landmark.len() {
+                let (at, dims) = (pattern.landmark_at[j], pattern.landmark_dims[j]);
+                let entry = |i: usize| step[(at + i, 0)];
+                if dims == 6 {
+                    trial.landmark_rotation[j] = mat3::mat_mul(
+                        &trial.landmark_rotation[j],
+                        &exp([entry(0), entry(1), entry(2)]),
+                    );
+                }
+                let p = dims - 3;
+                trial.landmark[j] =
+                    mat3::add(&trial.landmark[j], &[entry(p), entry(p + 1), entry(p + 2)]);
             }
             for (k, slot) in pattern.slot.iter().enumerate() {
                 if let Some(slot) = slot {
@@ -1188,35 +1132,38 @@ fn normal_equations(
             gradient[6 * slot + i] -= w * (0..3).map(|m| jacobian[m][i] * ir[m]).sum::<f64>();
         }
     }
-    // landmark sightings: J^T W J over the keyframe's pose and the landmark (`sighting_entries`)
+    // landmark sightings: J^T I J over the keyframe's pose and the landmark (`Sighting::entries`)
     for (s, w) in sightings.iter().zip(sighting_weights) {
-        let (r, jacobian) = sighting_linearize(s, state);
-        let info_j: Vec<[f64; 9]> = (0..3)
+        let (at, dims) = (
+            pattern.landmark_at[s.landmark],
+            pattern.landmark_dims[s.landmark],
+        );
+        let (r, jacobian) = s.linearize(state, dims);
+        let info_j: Vec<[f64; 12]> = (0..6)
             .map(|row| {
                 std::array::from_fn(|col| {
-                    (0..3)
+                    (0..6)
                         .map(|m| s.information[row][m] * jacobian[m][col])
                         .sum()
                 })
             })
             .collect();
-        for (i, j, row, col) in sighting_entries(&pattern.slot, pattern.landmark_base, s) {
-            let v = w * (0..3).map(|m| jacobian[m][i] * info_j[m][j]).sum::<f64>();
+        for (i, j, row, col) in s.entries(&pattern.slot, at, dims) {
+            let v = w * (0..6).map(|m| jacobian[m][i] * info_j[m][j]).sum::<f64>();
             if row == col {
                 diagonal[row] += v;
             }
             values.push(v);
         }
-        let ir = mat3::mat_vec(&s.information, &r);
-        let pull = |i: usize| w * (0..3).map(|m| jacobian[m][i] * ir[m]).sum::<f64>();
+        let ir = landmarks::mat_vec6(&s.information, &r);
+        let pull = |i: usize| w * (0..6).map(|m| jacobian[m][i] * ir[m]).sum::<f64>();
         if let Some(slot) = pattern.slot[s.keyframe] {
             for i in 0..6 {
                 gradient[6 * slot + i] -= pull(i);
             }
         }
-        let l = pattern.landmark_base + 3 * s.landmark;
-        for i in 0..3 {
-            gradient[l + i] -= pull(6 + i);
+        for i in 0..dims {
+            gradient[at + i] -= pull(6 + i);
         }
     }
     (values, gradient, diagonal)
@@ -1314,15 +1261,17 @@ impl GscPgo {
     }
     /// Whether a closure or a world position arrived after the newest solve started.
     fn unsolved(&self) -> bool {
-        self.committed_closures.len() > self.closures_dispatched
-            || self.world_positions.len() > self.world_positions_dispatched
-            || self.landmark_sightings.len() > self.landmark_sightings_dispatched
-            || self.odometry_noise_rescale
+        // nothing to solve before the first keyframe (a fix or sighting can arrive before it)
+        !self.key_poses.is_empty()
+            && (self.committed_closures.len() > self.closures_dispatched
+                || self.world_positions.len() > self.world_positions_dispatched
+                || self.landmark_sightings.len() > self.landmark_sightings_dispatched
+                || self.odometry_noise_rescale)
     }
     /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
     /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
     /// keyframe nearest in time (`solve_with_priors`).
-    pub fn add_world_position(
+    pub fn add_coordinate_factor(
         &mut self,
         time: f64,
         frame: u32,
@@ -1334,21 +1283,34 @@ impl GscPgo {
             .push((time, frame, lever, position, covariance));
     }
     /// A landmark `landmark` (any id the caller keeps for it: a tag's number, a matched feature, another robot's
-    /// landmark) seen at `time` at `position` in the body frame (through the sensor's mount), with its `covariance` there
-    /// (m²; `bearing_and_range` makes one from a bearing and a rough range). It joins the next solve as a sighting from
-    /// the keyframe nearest in time.
-    pub fn add_landmark_sighting(
+    /// landmark) seen at `time` with pose (`rotation`, `position`) in the body frame (through the sensor's mount), with
+    /// that pose's 6x6 `information` (`LandmarkSighting`'s order; zero in an unknown dimension). It joins the next solve
+    /// as a sighting from the keyframe nearest in time.
+    pub fn add_landmark_factor(
+        &mut self,
+        time: f64,
+        landmark: u64,
+        rotation: Mat3,
+        position: Vec3,
+        information: [[f64; 6]; 6],
+    ) {
+        self.landmark_sightings
+            .push((time, landmark, rotation, position, information));
+    }
+    /// `add_landmark_factor` for a point: `position` with its 3x3 `covariance` (m²; `bearing_and_range` makes one from a
+    /// bearing and a rough range), the rotation unknown.
+    pub fn add_landmark_point(
         &mut self,
         time: f64,
         landmark: u64,
         position: Vec3,
         covariance: Mat3,
     ) {
-        self.landmark_sightings
-            .push((time, landmark, position, covariance));
+        let point = LandmarkSighting::point(0, 0, position, covariance);
+        self.add_landmark_factor(time, landmark, point.rotation, position, point.information);
     }
-    /// The newest solve's landmarks: id and map position.
-    pub fn landmarks(&self) -> &[(u64, Vec3)] {
+    /// The newest solve's landmarks: id, map rotation (identity for a point) and map position.
+    pub fn landmarks(&self) -> &[(u64, Mat3, Vec3)] {
         &self.landmarks
     }
     /// The newest solve's map -> frame alignments (frame id, yaw about z, translation), one per world frame its
@@ -1402,28 +1364,31 @@ impl GscPgo {
         )) / gap;
         Some((keyframe, (speed * (time - time_of(keyframe)).abs()).powi(2)))
     }
-    /// Each landmark sighting from the keyframe nearest its time, its covariance grown by how far the body moves in
-    /// that gap; landmarks numbered densely in order of first sighting, with their ids.
+    /// Each landmark sighting from the keyframe nearest its time, its known position variances grown by how far the body
+    /// moves in that gap; landmarks numbered densely in order of first sighting, with their ids.
     fn sightings(&self) -> (Vec<LandmarkSighting>, Vec<u64>) {
         let mut ids: Vec<u64> = Vec::new();
         let sightings = self
             .landmark_sightings
             .iter()
-            .filter_map(|&(time, id, position, covariance)| {
+            .filter_map(|&(time, id, rotation, position, information)| {
                 let (keyframe, moved) = self.nearest_keyframe(time)?;
                 let landmark = ids.iter().position(|&i| i == id).unwrap_or_else(|| {
                     ids.push(id);
                     ids.len() - 1
                 });
-                let mut grown = covariance;
-                for (axis, row) in grown.iter_mut().enumerate() {
-                    row[axis] += moved;
+                let mut grown = crate::landmarks::known_inverse(&information);
+                for axis in 3..6 {
+                    if grown[axis][axis] > 0.0 {
+                        grown[axis][axis] += moved;
+                    }
                 }
                 Some(LandmarkSighting {
                     keyframe,
                     landmark,
+                    rotation,
                     position,
-                    covariance: grown,
+                    information: crate::landmarks::known_inverse(&grown),
                 })
             })
             .collect();
@@ -1541,7 +1506,8 @@ impl GscPgo {
         if !landmark_ids.is_empty() {
             self.landmarks = landmark_ids
                 .into_iter()
-                .zip(solution.landmarks.iter().copied())
+                .zip(solution.landmark_rotations.iter().zip(&solution.landmarks))
+                .map(|(id, (&r, &p))| (id, r, p))
                 .collect();
         }
         self.timing.solve_s += seconds;

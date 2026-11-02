@@ -152,6 +152,8 @@ class PGOConfig(NativeModuleConfig):
     odom_noise_per_motion: bool = False
     # True: a closure is uninformative only where the graph's own covariance of its ends is surer than ICP in every direction
     closure_informative_by_graph_covariance: bool = False
+    # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
+    closure_uninformative_gate: bool = True
     # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
     odom_xy_var_per_m: float = 1.53e-7
     odom_xy_var_per_rad: float = 4.03e-5
@@ -182,9 +184,9 @@ class GscPGO(NativeModule):
     cloud: In[PointCloud2]
     odometry: In[Odometry]
     # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
-    world_position: In[Odometry]
-    # a landmark seen by a sensor: header.frame_id = sensor, child_frame_id = landmark name, position/covariance in the sensor frame
-    landmark_sighting: In[Odometry]
+    coordinate_factor: In[Odometry]
+    # a landmark seen by a sensor: header.frame_id = sensor, child_frame_id = landmark name, pose + 6x6 covariance in the sensor frame (unknown dims: -1)
+    landmark_factor: In[Odometry]
     corrected_odometry: Out[Odometry]
     # the map -> odometry correction, identity until the first one
     tf: IO[TFMessage]

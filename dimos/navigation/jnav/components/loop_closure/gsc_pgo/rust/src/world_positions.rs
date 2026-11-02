@@ -218,6 +218,11 @@ pub fn solve_with_priors(
         .iter()
         .map(|p| mat3::mat_vec(&back, &mat3::sub(p, &align_translation)))
         .collect();
+    solution.landmark_rotations = solution
+        .landmark_rotations
+        .iter()
+        .map(|r| mat3::mat_mul(&back, r))
+        .collect();
     let primary_yaw = align_rotation[1][0].atan2(align_rotation[0][0]);
     solution.world_alignment = std::iter::once((primary, primary_yaw, align_translation))
         .chain(relative.iter().map(|&(f, (r, t))| {
