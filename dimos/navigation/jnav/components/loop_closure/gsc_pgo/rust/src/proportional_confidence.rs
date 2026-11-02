@@ -363,6 +363,10 @@ impl ClosureSearch {
         target.add(self, &target_ids, true);
         let range = UncertaintyRange::new(&self.config, clouds.len() + 1, diag.pressure);
         let mut ratios = vec![first_ratio];
+        // the string of alignments, first fit then each cloud's, and how well consecutive ones agree at the source
+        let source_position = positions[cur_idx];
+        let mut previous = (first.rotation, first.translation);
+        let mut multiplier = 1.0;
         let mut found: Option<Option<IcpResult>> = None;
         for (step, &j) in clouds.iter().enumerate() {
             let step = step + 1;
@@ -444,6 +448,28 @@ impl ClosureSearch {
             let bar = required(evidence, diag);
             ratios.push(if bar > 0.0 { evidence / bar } else { f64::INFINITY });
             let median = median_ratio(&ratios);
+            let at = |(rotation, translation): (Mat3, Vec3)| {
+                mat3::add(&mat3::mat_vec(&rotation, &source_position), &translation)
+            };
+            let shift = mat3::norm(&mat3::sub(
+                &at((icp.rotation, icp.translation)),
+                &at(previous),
+            ));
+            let turn = mat3::angular_distance(&previous.0, &icp.rotation);
+            let apart = (shift.powi(2) + (self.mean_reach * turn).powi(2)).sqrt()
+                / self.config.closure_icp_inlier_distance_m;
+            // a cloud that would not fit counts as the farthest
+            let apart = if apart.is_finite() {
+                apart.min(5.0)
+            } else {
+                5.0
+            };
+            multiplier *=
+                (self.config.compounding_agreement_sensitivity * (1.0 - apart.powi(2))).exp();
+            previous = (icp.rotation, icp.translation);
+            diag.cloud_agreement.push(apart);
+            diag.agreement_multiplier = multiplier;
+            let score = median * multiplier;
             diag.cloud_ratios = ratios.clone();
             diag.extended_keyframes = ratios.len();
             diag.extended_source_points = round[0] as usize;
@@ -452,9 +478,9 @@ impl ClosureSearch {
             diag.extended_likelihood_ratio = round[16];
             diag.extended_confidence = 1.0 - (-median * bar.max(0.0)).exp();
             let (low, high) = range.at(step);
-            let verdict = if median >= high {
+            let verdict = if score >= high {
                 Some(Some(first.clone()))
-            } else if median <= low {
+            } else if score <= low {
                 Some(None)
             } else {
                 None
@@ -468,7 +494,7 @@ impl ClosureSearch {
         }
         match found {
             Some(verdict) => verdict,
-            None => accept(median_ratio(&ratios)),
+            None => accept(median_ratio(&ratios) * multiplier),
         }
     }
 }

@@ -187,6 +187,11 @@ pub struct ClosureCandidateDiag {
     /// The extension's confidence ratio per cloud (evidence over the bar, yank units), the single scan's first; the
     /// candidate's score is their median.
     pub cloud_ratios: Vec<f64>,
+    /// How far each extension step's alignment is from the one before it (first fit, cloud 1, cloud 2, ...) at the
+    /// source keyframe, in inlier distances, and the agreement multiplier through the last step (1 before any; it
+    /// scales only the yank gate's score, `compounding_agreement_sensitivity`).
+    pub cloud_agreement: Vec<f64>,
+    pub agreement_multiplier: f64,
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
     pub extended_sharpness: f64,
@@ -247,6 +252,8 @@ impl ClosureCandidateDiag {
             extended_fitness: f64::NAN,
             extended_confidence: f64::NAN,
             cloud_ratios: Vec::new(),
+            cloud_agreement: Vec::new(),
+            agreement_multiplier: 1.0,
             sharpness: f64::NAN,
             extended_sharpness: f64::NAN,
             likelihood_ratio: f64::NAN,
@@ -392,6 +399,13 @@ pub struct Config {
     /// The odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach: small
     /// enough that each still lands inside the target submap's coverage.
     pub extension_cloud_spacing: f64,
+    /// The compounding agreement sensitivity: the yank gate scores an extension by the median cloud ratio times
+    /// exp(sensitivity (1 - min(d, 5)^2)) per step, where d is how far that step's alignment is from the one before it at
+    /// the source keyframe (shift and mean reach x turn, in inlier distances): clouds that agree to within an inlier
+    /// distance raise the score, ones that disagree lower it. It never changes a closure's fit or the confidence the
+    /// solve takes. 0 = the plain median.
+    #[cfg_attr(feature = "native", serde(alias = "closure_extension_agreement_alpha"))]
+    pub compounding_agreement_sensitivity: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -581,6 +595,7 @@ impl Default for Config {
             barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
             extension_cloud_spacing: 0.25,
+            compounding_agreement_sensitivity: 1.5,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,

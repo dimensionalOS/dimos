@@ -114,6 +114,10 @@ class PGOConfig(NativeModuleConfig):
     decisive_pressure_rate: float = 1.0
     # Odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach
     extension_cloud_spacing: float = 0.25
+    # Compounding agreement sensitivity: the yank gate scores an extension by its median cloud ratio times
+    # exp(sensitivity (1 - min(d, 5)^2)) per step, d = how far that step's alignment is from the one before it at the
+    # source keyframe, in inlier distances (0 = plain median)
+    compounding_agreement_sensitivity: float = 1.5
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
