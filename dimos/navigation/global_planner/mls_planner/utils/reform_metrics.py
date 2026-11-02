@@ -21,8 +21,12 @@ score: rebuilds the ray tracer's map from scratch with every scan placed by GSC'
        keyframes, and the planner's surface from that map, and compares them with the reformed ones.
        Writes <out>/<name>.metrics.json.
 
+events: GSC's closure dump as the event file tests/reform_against_fast_reform.rs reads
+       (MLS_REFORM_EVENTS=<out>/<name>.events.bin).
+
 usage: reform_metrics.py run --db <recording.db> --name <name> --out <dir> [--no-closures]
        reform_metrics.py score --db <recording.db> --name <name> --out <dir>
+       reform_metrics.py events --db <recording.db> --name <name> --out <dir>
 """
 
 from __future__ import annotations
@@ -52,6 +56,21 @@ SETTLE_S = 60.0
 NO_CLOSURES = "1e9"
 # ts, raw xyz + xyzw, corrected xyz + xyzw (gsc_pgo dump_keyframes)
 KEYFRAME = np.dtype([("ts", "<f8"), ("raw", "<f8", 7), ("corrected", "<f8", 7)])
+# one loop_closure_records record: pre pose, id, ts, then the delta with post = delta * pre
+CLOSURE_RECORD = np.dtype(
+    [
+        ("xyz", "<f4", 3),
+        ("id", "<u4"),
+        ("ts", "<f8"),
+        ("q", "<f4", 4),
+        ("dt", "<f4", 3),
+        ("dq", "<f4", 4),
+    ]
+)
+# `pgo-eval --event-dump`'s record, what tests/reform_against_fast_reform.rs reads
+EVENT_RECORD = np.dtype(
+    [("id", "<u4"), ("ts", "<f8"), ("pre", "<f4", 7), ("post", "<f4", 7), ("local", "<f4", 7)]
+)
 
 
 def paths(out: Path, name: str, mode: str) -> dict[str, Path]:
@@ -148,6 +167,29 @@ def run(db: Path, name: str, out: Path, closures: bool) -> None:
     if run_log is not None:
         files["jsonl"].write_bytes(run_log.read_bytes())
     print(f"{name} {mode}: exit {proc.returncode}, log {files['jsonl']}", flush=True)
+
+
+def events(closures: Path, out: Path) -> int:
+    """Turn GSC's closure dump into the event dump reform_against_fast_reform reads."""
+    raw = closures.read_bytes()
+    chunks, at = [], 0
+    while at < len(raw):
+        ts = np.frombuffer(raw, "<f8", 1, at)
+        n = int(np.frombuffer(raw, "<u4", 1, at + 8)[0])
+        records = np.frombuffer(raw, CLOSURE_RECORD, n, at + 12)
+        at += 12 + n * CLOSURE_RECORD.itemsize
+        delta = Rotation.from_quat(records["dq"].astype(float))
+        out_records = np.zeros(n, EVENT_RECORD)
+        out_records["id"], out_records["ts"] = records["id"], records["ts"]
+        out_records["pre"][:, :3], out_records["pre"][:, 3:] = records["xyz"], records["q"]
+        out_records["post"][:, :3] = delta.apply(records["xyz"].astype(float)) + records["dt"]
+        out_records["post"][:, 3:] = (
+            delta * Rotation.from_quat(records["q"].astype(float))
+        ).as_quat()
+        out_records["local"] = out_records["pre"]
+        chunks += [ts.tobytes(), np.uint32(n).tobytes(), out_records.tobytes()]
+    out.write_bytes(b"".join(chunks))
+    return len(chunks) // 3
 
 
 def load_points(path: Path) -> np.ndarray:
@@ -291,7 +333,7 @@ def score(db: Path, name: str, out: Path) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    parser.add_argument("command", choices=("run", "score"))
+    parser.add_argument("command", choices=("run", "score", "events"))
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--out", type=Path, required=True)
@@ -299,6 +341,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "run":
         run(args.db, args.name, args.out, closures=not args.no_closures)
+    elif args.command == "events":
+        closures = Path(f"{paths(args.out, args.name, 'closures')['keyframes']}.closures")
+        out = args.out / f"{args.name}.events.bin"
+        print(f"{events(closures, out)} closures -> {out}")
     else:
         score(args.db, args.name, args.out)
 
