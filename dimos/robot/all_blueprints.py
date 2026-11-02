@@ -265,7 +265,6 @@ all_modules = {
     "go2-fleet-connection": "dimos.robot.unitree.go2.fleet_connection.Go2FleetConnection",
     "go2-l1-lidar": "dimos.robot.unitree.go2.dds.module.GO2L1Lidar",
     "go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2.Go2Memory",
-    "go2-mid360-mount": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_sim2_mid360.Go2Mid360Mount",
     "go2-mid360-recorder": "dimos.robot.unitree.go2.go2_mid360_recorder.Go2Mid360Recorder",
     "go2-mid360-static-tf": "dimos.robot.unitree.go2.go2_mid360_static_transforms.Go2Mid360StaticTf",
     "go2-teleop-module": "dimos.teleop.webxr.extensions.Go2TeleopModule",
