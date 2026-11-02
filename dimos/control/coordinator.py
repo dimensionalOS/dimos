@@ -305,10 +305,7 @@ class ControlCoordinator(Module):
         if not self.config.g.simulation:
             address = self.config.addresses.get(component.hardware_id, address)
         if address is None and component.mock_limits is not None:
-            mock_type = (
-                "mock_whole_body" if component.hardware_type == HardwareType.WHOLE_BODY else "mock"
-            )
-            return replace(component, adapter_type=mock_type, limits=component.mock_limits)
+            return replace(component, adapter_type="mock", limits=component.mock_limits)
         if address is None and component.adapter_type == "sim_mujoco":
             if self._mujoco_sim is None:
                 raise RuntimeError(

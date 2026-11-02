@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Seeed Studio reBot B601-DM joint names without hardware or model imports."""
+"""Seeed B601-DM joint names without hardware or model imports."""
 
-SEEEDSTUDIO_HARDWARE_ID = "arm"
-SEEEDSTUDIO_DOF = 6
+B601_DM_DOF = 6
 # The vendor URDF's joint names, so the adapter's gravity model and the
 # planner share them without renaming.
-SEEEDSTUDIO_ARM_JOINTS = tuple(f"joint{i}" for i in range(1, SEEEDSTUDIO_DOF + 1))
-SEEEDSTUDIO_GRIPPER_JOINT = f"{SEEEDSTUDIO_HARDWARE_ID}/gripper"
-SEEEDSTUDIO_JOINTS = [*SEEEDSTUDIO_ARM_JOINTS, SEEEDSTUDIO_GRIPPER_JOINT]
+B601_DM_ARM_JOINTS = tuple(f"joint{index}" for index in range(1, B601_DM_DOF + 1))
+B601_DM_GRIPPER_JOINT = "arm/gripper"
+B601_DM_JOINTS = (*B601_DM_ARM_JOINTS, B601_DM_GRIPPER_JOINT)

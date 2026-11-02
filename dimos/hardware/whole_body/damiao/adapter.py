@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import replace
 from pathlib import Path
 import sys
 from typing import Any, NoReturn
@@ -62,22 +61,20 @@ class DamiaoWholeBodyAdapter(ABC):
     ) -> None:
         """Initialize runtime settings for a subclass-declared Damiao topology.
 
-        ``address`` follows the coordinator's common adapter factory
-        convention. It names the device of a single-bus topology; one scalar
-        cannot represent a multi-bus whole body, so configure those devices
-        by logical bus name through ``runtime_config.bus_devices`` instead.
+        ``address`` is accepted for the coordinator's common adapter factory
+        convention, but one scalar cannot represent a multi-bus whole body.
+        Configure physical CAN devices by logical bus name through
+        ``runtime_config.bus_devices`` instead.
         """
         del domain_id
+        if address is not None:
+            raise ValueError("configure Damiao CAN buses through runtime_config.bus_devices")
         if runtime_config is None:
             config = DamiaoRuntimeConfig()
         elif isinstance(runtime_config, DamiaoRuntimeConfig):
             config = runtime_config
         else:
             config = DamiaoRuntimeConfig(**runtime_config)
-        if address is not None:
-            if len(self.bus_names) != 1 or config.bus_devices:
-                raise ValueError("configure Damiao CAN buses through runtime_config.bus_devices")
-            config = replace(config, bus_devices={self.bus_names[0]: str(address)})
         unknown_buses = config.bus_devices.keys() - set(self.bus_names)
         if unknown_buses:
             raise ValueError(f"unknown CAN bus overrides: {sorted(unknown_buses)}")

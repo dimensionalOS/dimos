@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Seeed Studio reBot B601-DM topology for the generic Damiao whole-body adapter.
+"""Seeed B601-DM topology for the generic Damiao whole-body adapter.
 
 SAFETY: the arm has no brakes. Disabling the motors (deactivate, disconnect, a
-feedback fault) lets a raised arm fall. Rest it first.
+feedback fault) lets a raised arm fall, and the arm motors carry no torque
+while activation calibrates the gripper. Rest the arm in its folded pose first.
 """
 
 from __future__ import annotations
@@ -26,10 +27,10 @@ from can_motor_control import damiao
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.seeedstudio.config import seeedstudio_model
-from dimos.robot.manipulators.seeedstudio.joints import (
-    SEEEDSTUDIO_ARM_JOINTS,
-    SEEEDSTUDIO_GRIPPER_JOINT,
+from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM_MODEL
+from dimos.robot.manipulators.seeed_b601_dm.joints import (
+    B601_DM_ARM_JOINTS,
+    B601_DM_GRIPPER_JOINT,
 )
 
 # Measured on the arm: the gripper motor travels 6.39 rad between its stops,
@@ -39,19 +40,20 @@ GRIPPER_CALIBRATION_TRAVEL_RAD = 7.0
 GRIPPER_CURRENT = 0.15
 
 
-class SeeedStudioB601DMAdapter(DamiaoWholeBodyAdapter):
+class SeeedB601DMAdapter(DamiaoWholeBodyAdapter):
     """Six arm motors and a calibrated gripper on one Damiao CAN bus.
 
-    The bus is SocketCAN (``can0``) by default. Point ``bus_devices`` at the
-    serial port of the Damiao USB-CAN bridge shipped with the arm, for
-    example ``{"b601_dm": "/dev/ttyACM0"}``.
+    DM4340 and DM4340P share the DM4340 driver profile. The bus is SocketCAN
+    (``can0``) by default; point ``bus_devices`` at the serial port of the
+    Damiao USB-CAN bridge shipped with the arm, for example
+    ``{"b601_dm": "/dev/ttyACM0"}``.
     """
 
     bus_name = "b601_dm"
-    arm_joints = {"arm": SEEEDSTUDIO_ARM_JOINTS}
-    gripper_joints = {"gripper": SEEEDSTUDIO_GRIPPER_JOINT}
+    arm_joints = {"arm": B601_DM_ARM_JOINTS}
+    gripper_joints = {"gripper": B601_DM_GRIPPER_JOINT}
     bus_names = (bus_name,)
-    kinematic_joint_names = SEEEDSTUDIO_ARM_JOINTS
+    kinematic_joint_names = B601_DM_ARM_JOINTS
 
     def get_limits(self) -> JointLimits:
         """Declare the calibrated gripper opening in its local 0-1 coordinate."""
@@ -65,11 +67,11 @@ class SeeedStudioB601DMAdapter(DamiaoWholeBodyAdapter):
     @property
     def kinematic_model(self) -> RobotModel:
         """Return the lazy arm model."""
-        return seeedstudio_model()
+        return B601_DM_MODEL
 
     def _build_robot(self) -> can_motor_control.Robot:
-        # Seeed's motor table: DM4340P at IDs 1-3 (same driver profile as the
-        # DM4340), DM4310 at IDs 4-7. Each motor replies on its ID + 0x10.
+        # Seeed's motor table: DM4340P at IDs 1-3, DM4310 at IDs 4-7. Each
+        # motor replies on its ID + 0x10.
         arm_motors = [
             can_motor_control.MotorSpec(
                 name,
@@ -77,7 +79,7 @@ class SeeedStudioB601DMAdapter(DamiaoWholeBodyAdapter):
                 motor_id,
                 motor_id + 0x10,
             )
-            for motor_id, name in enumerate(SEEEDSTUDIO_ARM_JOINTS, start=1)
+            for motor_id, name in enumerate(B601_DM_ARM_JOINTS, start=1)
         ]
         gripper_motor = can_motor_control.MotorSpec(
             "gripper_motor",

@@ -20,11 +20,10 @@ from types import SimpleNamespace
 from pydantic import TypeAdapter
 import pytest
 
-from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import global_config
-from dimos.hardware.spec import JointLimits
 from dimos.robot.manipulators.xarm.config import make_xarm_hardware, xarm7_hardware
 
 
@@ -105,28 +104,6 @@ def test_a_component_without_an_address_runs_its_mock_stand_in(
     # Without a stand-in the physical adapter keeps its missing address.
     needs_address = coordinator._resolve_component(xarm7_hardware("other"))
     assert (needs_address.adapter_type, needs_address.address) == ("xarm", None)
-
-
-def test_a_whole_body_component_without_an_address_runs_the_whole_body_mock(
-    make_coordinator: Callable[[str], ControlCoordinator],
-) -> None:
-    coordinator = make_coordinator("")
-    limits = JointLimits(position_lower=[None], position_upper=[None], velocity_max=[None])
-    component = HardwareComponent(
-        hardware_id="other",
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=["j1"],
-        adapter_type="openyam_damiao",
-        mock_limits=limits,
-    )
-
-    resolved = coordinator._resolve_component(component)
-
-    assert (resolved.adapter_type, resolved.address, resolved.limits) == (
-        "mock_whole_body",
-        None,
-        limits,
-    )
 
 
 def test_simulation_keeps_the_simulated_adapter_and_takes_the_sim_modules_scene(
