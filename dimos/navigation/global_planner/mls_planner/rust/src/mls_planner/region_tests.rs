@@ -549,7 +549,7 @@ pub(super) fn big_world() -> Vec<(f32, f32, f32)> {
     pts
 }
 
-fn slice(all: &[(f32, f32, f32)], b: &RegionBounds, vs: f32) -> Vec<(f32, f32, f32)> {
+pub(super) fn slice(all: &[(f32, f32, f32)], b: &RegionBounds, vs: f32) -> Vec<(f32, f32, f32)> {
     all.iter()
         .copied()
         .filter(|&p| b.contains_voxel(voxelize(p, vs), vs))

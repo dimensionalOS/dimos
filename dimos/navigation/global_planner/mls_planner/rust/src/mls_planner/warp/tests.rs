@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::super::region_tests::{
-    assert_chains_reach_their_nodes, big_world, path_len, surface_set, test_config, voxel_set,
+    assert_chains_reach_their_nodes, big_world, path_len, slice, surface_set, test_config,
+    voxel_set,
 };
 use super::*;
 use std::collections::BTreeSet;
@@ -159,6 +160,35 @@ fn a_region_update_rebins_only_what_it_reaches() {
         .unwrap();
     assert!(surface_set(&p).contains(&far_old));
     assert_chains_reach_their_nodes(&p);
+}
+
+#[test]
+fn region_updates_after_a_warp_keep_the_graph_whole() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let all = big_world();
+    let mut p = Planner::new(cfg.worker_threads);
+    p.track_voxel_times();
+    p.update_global_map(&all, &cfg);
+    let (start, goal) = ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05));
+    assert!(!p.plan_or_truncate(start, goal, &cfg).is_empty());
+    p.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut [], &cfg);
+    let moved = shifted(&all, 0.8, 0.3);
+    // The robot drives across the moved map, re-observing it region by region.
+    for i in 0..8 {
+        let bounds = RegionBounds {
+            origin_x: 1.3 + i as f32,
+            origin_y: 0.8 + i as f32,
+            radius: 1.5,
+            z_min: -1.0,
+            z_max: 1.0,
+        };
+        p.update_region(&slice(&moved, &bounds, vs), &bounds, &cfg);
+        assert_chains_reach_their_nodes(&p);
+        assert!(!p
+            .plan_or_truncate((1.3, 0.8, 0.05), (8.3, 7.8, 0.05), &cfg)
+            .is_empty());
+    }
 }
 
 #[test]

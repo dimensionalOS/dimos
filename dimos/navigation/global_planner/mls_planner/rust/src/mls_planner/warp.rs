@@ -308,7 +308,19 @@ impl Planner {
                 zs.insert(at, to.2);
             }
         }
+        let renamed: AHashMap<VoxelKey, VoxelKey> = moves
+            .iter()
+            .map(|&(id, to)| (graph.cells.coord(id), to))
+            .collect();
         graph.cells.rekey(&moves, vs);
+        graph.node_edges.rename_cells(&renamed);
+        if let Some((_, path)) = &mut self.last_path {
+            for c in path.iter_mut() {
+                if let Some(&to) = renamed.get(c) {
+                    *c = to;
+                }
+            }
+        }
         graph.nodes.rebin(&graph.cells, &config.placement_params());
     }
 

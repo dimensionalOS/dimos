@@ -173,6 +173,17 @@ impl NodeEdges {
         }
     }
 
+    /// Rename re-keyed cells in every corridor. Cell ids stay, so the indexes do.
+    pub fn rename_cells(&mut self, renamed: &AHashMap<VoxelKey, VoxelKey>) {
+        for e in &mut self.edges {
+            for c in &mut e.chain {
+                if let Some(&to) = renamed.get(c) {
+                    *c = to;
+                }
+            }
+        }
+    }
+
     pub fn between(&self, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx> {
         self.adj.get(&a)?.iter().copied().find(|&i| {
             let e = &self.edges[i as usize];
