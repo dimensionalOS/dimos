@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a simulated sensor sees: the world as Simulation describes it, posed only from world_change.
+"""What a simulated sensor sees: the world as Simulation describes it, posed only from world_observations.
 
 A sensor never reads a physics engine, so it works the same whichever backend steps the world.
 The renderer drawing the view is chosen by name, as backends are.
@@ -27,7 +27,7 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.sim2.spec import SimulatedSensor
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.mid360.lidar import Raycaster
 
 RENDERERS = {"mujoco": "dimos.sim2.mujoco_view.MujocoView"}

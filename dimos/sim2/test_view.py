@@ -19,7 +19,7 @@ import pytest
 
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 from dimos.sim2.view import open_view, sensor_frame
-from dimos.sim2.world_change import (
+from dimos.sim2.world_observations import (
     OBJECT,
     ROBOT,
     WorldMirror,
