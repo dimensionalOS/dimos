@@ -217,7 +217,27 @@ pub fn residual_ln_ratio(
     component: usize,
     prior_sd: f64,
 ) -> f64 {
-    let weight = prior_weight(component, prior_sd);
+    residual_ln_ratio_weighted(
+        sum,
+        redundancy,
+        dispatched,
+        prior_weight(component, prior_sd),
+    )
+}
+
+/// The kept closures' ln variance scale from their residuals, the same way, under a unit-information prior (one
+/// closure's six residuals: weight 3); and its posterior standard deviation.
+pub fn closure_residual_ln_ratio(sum: f64, redundancy: f64, dispatched: f64) -> (f64, f64) {
+    let weight = 3.0;
+    let u = residual_ln_ratio_weighted(sum, redundancy, dispatched, weight);
+    (
+        u,
+        (2.0 / (sum * (dispatched - u).exp() + 2.0 * weight)).sqrt(),
+    )
+}
+
+/// `residual_ln_ratio` with the prior's weight given.
+fn residual_ln_ratio_weighted(sum: f64, redundancy: f64, dispatched: f64, weight: f64) -> f64 {
     let f = |u: f64| redundancy * (u - dispatched) + sum * (dispatched - u).exp() + weight * u * u;
     // Newton on a convex function, from the likelihood's own maximum
     let mut u = dispatched + (sum / redundancy).max(f64::MIN_POSITIVE).ln();
@@ -235,6 +255,18 @@ pub fn residual_ln_ratio(
     } else {
         dispatched
     }
+}
+
+/// The posterior standard deviation of `residual_ln_ratio`'s result `u` (from the curvature of the same function).
+pub fn residual_ln_ratio_sd(
+    sum: f64,
+    dispatched: f64,
+    u: f64,
+    component: usize,
+    prior_sd: f64,
+) -> f64 {
+    let curvature = sum * (dispatched - u).exp() + 2.0 * prior_weight(component, prior_sd);
+    (2.0 / curvature).sqrt()
 }
 
 /// A component's prior weight on its ln ratio squared, in -2 ln units: 1 / sd^2 for a measured spread across

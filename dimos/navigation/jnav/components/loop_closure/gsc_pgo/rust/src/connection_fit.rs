@@ -413,6 +413,65 @@ pub fn observability(
 }
 
 /// The least-spread direction (unit surface normal) of `neighbours`.
+/// The covariance of an aligned pose from its point-to-plane fit (Censi 2007's Hessian form): `moved` is the source
+/// cloud already moved by the alignment, `origin` where the alignment puts the source keyframe. Each source point
+/// within the inlier distance of the target, on a local plane of normal n, constrains the pose by
+/// J = [(p - origin) x n, n] (a small turn about the origin, then a shift of it); the pose's covariance is
+/// sigma^2 (sum J^T J)^-1, sigma^2 the points' mean squared distance to their planes over the m - 6 redundant ones.
+/// Rows and columns: rotation x y z (rad), then the origin's translation x y z (m), world axes. None with too few
+/// matches or a direction no point constrains.
+pub fn alignment_covariance(
+    moved: &[[f32; 3]],
+    target: &[[f32; 3]],
+    target_tree: &KdTree,
+    inlier_squared_distance: f64,
+    origin: &Vec3,
+) -> Option<[[f64; 6]; 6]> {
+    let rows: Vec<([f64; 6], f64)> = moved
+        .par_iter()
+        .filter_map(|p| {
+            let (j, d) = target_tree.nearest(p)?;
+            if d as f64 > inlier_squared_distance {
+                return None;
+            }
+            let neighbours = target_tree.knn(&target[j], 10);
+            if neighbours.len() < 3 {
+                return None;
+            }
+            let n = least_spread_direction(target, &neighbours);
+            let (p, q) = (p.map(|v| v as f64), target[j].map(|v| v as f64));
+            let lever = mat3::sub(&p, origin);
+            let turn = [
+                lever[1] * n[2] - lever[2] * n[1],
+                lever[2] * n[0] - lever[0] * n[2],
+                lever[0] * n[1] - lever[1] * n[0],
+            ];
+            let distance = (0..3).map(|k| (p[k] - q[k]) * n[k]).sum::<f64>();
+            Some(([turn[0], turn[1], turn[2], n[0], n[1], n[2]], distance))
+        })
+        .collect();
+    if rows.len() < 12 {
+        return None;
+    }
+    let mut information = [[0.0; 6]; 6];
+    let mut squared = 0.0;
+    for (row, distance) in &rows {
+        squared += distance * distance;
+        for a in 0..6 {
+            for b in 0..6 {
+                information[a][b] += row[a] * row[b];
+            }
+        }
+    }
+    let sigma2 = squared / (rows.len() - 6) as f64;
+    let inverse = crate::landmarks::known_inverse(&information);
+    let covariance: [[f64; 6]; 6] =
+        std::array::from_fn(|a| std::array::from_fn(|b| sigma2 * inverse[a][b]));
+    (0..6)
+        .all(|k| covariance[k][k].is_finite() && covariance[k][k] > 0.0)
+        .then_some(covariance)
+}
+
 fn least_spread_direction(cloud: &[[f32; 3]], neighbours: &[(usize, f32)]) -> [f64; 3] {
     let n = neighbours.len() as f64;
     let mut mean = [0.0; 3];
@@ -698,6 +757,59 @@ pub fn dump_icp(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Three walls of a room corner, a 0.1 m grid over 4 m, each point pushed off its wall by `noise` (a fixed pattern).
+    fn corner(noise: f64) -> Vec<[f32; 3]> {
+        let mut cloud = Vec::new();
+        for i in 0..40 {
+            for j in 0..40 {
+                let (a, b) = (i as f32 * 0.1, j as f32 * 0.1);
+                let off = (noise * ((i * 7 + j * 13) % 11) as f64 / 5.0 - noise) as f32;
+                cloud.push([a, b, off]);
+                cloud.push([a, off, b]);
+                cloud.push([off, a, b]);
+            }
+        }
+        cloud
+    }
+
+    /// The fit's own covariance: a three-wall corner pins every axis, and its variances grow with the points' noise
+    /// (as noise squared); a single wall leaves sliding along it unconstrained.
+    #[test]
+    fn alignment_covariance_follows_the_geometry_and_the_noise() {
+        let target = corner(0.0);
+        let tree = KdTree::build(&target);
+        let origin = [2.0, 2.0, 1.0];
+        let quiet = alignment_covariance(&corner(0.005), &target, &tree, 0.15, &origin).unwrap();
+        let loud = alignment_covariance(&corner(0.02), &target, &tree, 0.15, &origin).unwrap();
+        for k in 0..6 {
+            let ratio = loud[k][k] / quiet[k][k];
+            assert!(
+                (8.0..32.0).contains(&ratio),
+                "axis {k}: noise x4 gave variance x{ratio}"
+            );
+        }
+        assert!(
+            quiet[3][3].sqrt() < 0.01,
+            "a corner pins translation: sd {}",
+            quiet[3][3].sqrt()
+        );
+        let wall: Vec<[f32; 3]> = corner(0.005)
+            .into_iter()
+            .filter(|p| p[2].abs() < 0.05)
+            .collect();
+        let floor: Vec<[f32; 3]> = target
+            .iter()
+            .copied()
+            .filter(|p| p[2].abs() < 0.05)
+            .collect();
+        let floor_tree = KdTree::build(&floor);
+        let slide = alignment_covariance(&wall, &floor, &floor_tree, 0.15, &origin);
+        assert!(
+            slide.is_none_or(|c| c[3][3] > 1e3 * quiet[3][3]),
+            "a single floor cannot pin sliding along it: {slide:?}"
+        );
+    }
 
     /// The overlap page's chair (seat, four legs, back) sampled at `density` points per m² with `sigma` noise, using the
     /// page's generator so the scores below match its checks.

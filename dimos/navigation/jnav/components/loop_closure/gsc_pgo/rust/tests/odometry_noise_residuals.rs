@@ -94,11 +94,14 @@ fn residuals_measure_translation_and_heading_noise_apart() {
         gnc_inlier_probability: 0.95,
         huber_k: 0.0,
         pcm_odometry_translation_variance: 0.0,
+        gnc_overtrust_check: false,
+        overtrust_noise_headroom: [1.0; 4],
+        gravity: Vec::new(),
     };
     // Helmert's iteration: rescale each source by its ratio and solve again until the ratios settle at 1
     let mut odometry = odometry;
     let mut scale = [1.0_f64; 4];
-    let mut evidence = [(0.0, 0.0); 4];
+    let mut evidence = [(0.0, 0.0); 6];
     for _ in 0..20 {
         let solution = solve(&rotations, &positions, &free, &odometry, &closures, &config);
         evidence = solution.odometry_noise_evidence.expect("factored");

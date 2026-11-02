@@ -19,10 +19,11 @@
 
 use std::sync::Arc;
 
-use crate::big_picture_fit::{closure_edges, Edge, Solving};
+use crate::big_picture_fit::{closure_edges, Edge};
 use crate::connection_fit::{self, dump_icp, icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
+use crate::pose_graph_solving::Solving;
 use crate::similarity_discovery;
 use crate::uniqueness;
 
@@ -82,6 +83,9 @@ pub struct CommittedClosure {
     pub score: f64,
     /// 1 kept, 0 rejected by the newest applied solve; NaN until a solve has judged it.
     pub gnc_weight: f64,
+    /// The closure's own variances from its ICP fit (`closure_icp_covariance`): rotation x y z (rad²), then translation
+    /// x y z (m²), in the target keyframe's frame; None where the closure's variance is its ICP fitness.
+    pub variances: Option<[f64; 6]>,
 }
 
 /// Per-search loop-closure diagnostics
@@ -118,6 +122,8 @@ pub struct ClosureCandidateDiag {
     /// The odometry noise when the search started, as ratios to the reported variances (xy, z, yaw, roll/pitch;
     /// `GscPgo::odometry_noise`).
     pub odometry_noise: [f64; 4],
+    /// The same as the uninformative gate measures the graph with (`GscPgo::odometry_noise_for_gate`).
+    pub odometry_noise_gate: [f64; 4],
     /// The closure noise scale when the search started (`GscPgo::closure_noise_scale`).
     pub closure_noise_scale: f64,
     /// The closure's innovation: the source keyframe's offset from where the graph put it, relative to the target, in
@@ -208,6 +214,7 @@ impl ClosureCandidateDiag {
             lowe_ratio: f32::NAN,
             pressure: 0.0,
             odometry_noise: [1.0; 4],
+            odometry_noise_gate: [1.0; 4],
             closure_noise_scale: 1.0,
             innovation: [f64::NAN; 3],
             innovation_covariance: [[f64::NAN; 3]; 3],
@@ -381,6 +388,21 @@ pub struct Config {
     /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
     /// passes the other gates is committed, and repeats of a kept closure count again.
     pub closure_uninformative_gate: bool,
+    /// When true, the uninformative gate measures the graph with the learned odometry noise's upper bound (at
+    /// `closure_gnc_inlier_probability`, from the learner's posterior spread; the prior's while evidence is thin) instead of
+    /// its estimate: a closure is only called uninformative when the graph is surely surer than ICP, so a few tight
+    /// early loops that shrink the estimate cannot shut the gate on the loops that would correct it.
+    pub closure_uninformative_noise_upper_bound: bool,
+    /// When true (with `odometry_noise_from_closures`), the closures' variance scale is learned with the odometry's
+    /// from the same solved-graph residuals (Helmert's variance components over every group at once) instead of from
+    /// their innovations: the solve splits each loop's misfit between the odometry and the closure by their stated
+    /// variances, so a closure variance stated too loose would otherwise read as odometry too good.
+    pub closure_noise_from_residuals: bool,
+    /// When true (with `odometry_noise_from_closures`), the pose graph is solved with the learned odometry noise's lower
+    /// bound (at `closure_gnc_inlier_probability`) instead of its estimate: the odometry is trusted at least as much as
+    /// the evidence surely allows, so from any start the closures it accepts are the ones a confident odometry agrees
+    /// with (a few wrong ones kept early cannot loosen it), and the bound rises to the estimate as evidence builds.
+    pub odometry_noise_solve_lower_bound: bool,
     /// Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five recordings (small_mid,
     /// gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all from turning.
     pub odom_xy_var_per_m: f64,
@@ -440,6 +462,22 @@ pub struct Config {
     /// When true, the solve holds the largest pairwise-consistent set of closures in through GNC (PCM; see
     /// `big_picture_fit::consistent_closures`), so a consistent group is not voted out by over-trusted odometry.
     pub closure_pcm: bool,
+    /// When true, each solve also runs GNC with the Geman-McClure surrogate, which starts at least squares rather than
+    /// at TLS's odometry-dominated start, and takes its verdict when it reaches the lower truncated-least-squares cost or
+    /// its odometry residuals reject the odometry's stated noise as too small (`SolveConfig::gnc_overtrust_check`): an
+    /// overtrusted odometry cannot vote out closures that agree once heard, and with `odometry_noise_from_closures` the
+    /// residuals of the closures it keeps raise the learned noise, so later solves and gates no longer need it.
+    pub closure_gnc_overtrust_check: bool,
+    /// When true, a closure's variances are its ICP fit's own pose covariance (`connection_fit::alignment_covariance`,
+    /// diagonal in the target keyframe's frame) instead of its ICP fitness on every axis: fitness is the points'
+    /// spread, not the aligned pose's, and as one number for rotation (rad²) and translation (m²) it leaves the odometry's
+    /// translation untestable by any closure, so its noise could never be learned.
+    pub closure_icp_covariance: bool,
+    /// When true, every solve holds each keyframe's tilt to the raw odometry's (`big_picture_fit::GravityPrior`): a
+    /// gravity-aligned IMU odometry's roll/pitch error is bounded by its accelerometer rather than growing per step, so
+    /// a look-alike floor cannot be fitted by tilting a chain of keyframes. The bound is the committed closures' own
+    /// (`odometry_gravity_variance`); the odometry frame's z must be up.
+    pub odometry_gravity_bound: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -509,6 +547,9 @@ impl Default for Config {
             odom_noise_per_motion: false,
             closure_informative_by_graph_covariance: false,
             closure_uninformative_gate: true,
+            closure_uninformative_noise_upper_bound: false,
+            closure_noise_from_residuals: false,
+            odometry_noise_solve_lower_bound: false,
             odom_xy_var_per_m: 1.53e-7,
             odom_xy_var_per_rad: 4.03e-5,
             odom_z_var_per_m: 4.12e-7,
@@ -535,6 +576,9 @@ impl Default for Config {
             closure_alternative_places: false,
             closure_skip_known: false,
             closure_pcm: false,
+            closure_gnc_overtrust_check: false,
+            closure_icp_covariance: false,
+            odometry_gravity_bound: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -567,11 +611,19 @@ pub struct GscPgo {
     pub(crate) closure_yank_z: Vec<f64>,
     /// Per committed closure: its innovation against the raw odometry, for `odometry_noise_from_closures`.
     pub(crate) closure_innovations: Vec<crate::odometry_noise::Innovation>,
+    /// Per pair of committed closures one submap apart at both ends (`closure_icp_covariance`): their disagreement in
+    /// rotation and in translation, squared and whitened by their two fits' own variances (chi-square, 3 DoF each).
+    pub(crate) closure_pair_disagreement: [Vec<f64>; 2],
     /// ln of each odometry variance's ratio to the reported one (0: the reported noise), set from the kept closures
     /// after each solve.
     pub(crate) odometry_noise_ln: [f64; 4],
+    /// Each `odometry_noise_ln`'s posterior standard deviation once the residuals have measured it (the prior's before).
+    pub(crate) odometry_noise_ln_sd: [Option<f64>; 4],
     /// ln of the closure noise scale (0: a closure's variance is its ICP fitness).
     pub(crate) closure_noise_ln_scale: f64,
+    /// ln of the closures' rotation variance scale apart from their translation's (`closure_noise_from_residuals`).
+    pub(crate) closure_noise_ln_rotation_scale: f64,
+    pub(crate) closure_noise_ln_rotation_scale_dispatched: f64,
     /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
     pub(crate) odometry_noise_ln_dispatched: [f64; 4],
     pub(crate) closure_noise_ln_scale_dispatched: f64,
@@ -621,6 +673,8 @@ pub struct GscPgo {
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// ICP fitness of every accepted closure: the variance a real closure is expected to add (`closure_skip_known`).
     pub(crate) scored_fitness: Vec<f64>,
+    /// The ICP cache every closure search's cloud computations go through (`set_icp_cache`), if any.
+    pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -671,13 +725,15 @@ pub struct ClosureSearch {
     pub(crate) judged_yanks: Vec<(f64, bool)>,
     pub(crate) alternatives: Vec<(f32, usize, i32)>,
     pub(crate) tries: usize,
+    /// The ICP cache the search's cloud computations go through (`icp_cache`), if any.
+    pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
 /// fitness), the yank it scored, and the time each stage took.
 pub struct ClosureSearchResult {
     diag: ClosureCandidateDiag,
-    accepted: Option<(Mat3, Vec3, f64)>,
+    accepted: Option<(Mat3, Vec3, f64, Option<[f64; 6]>)>,
     scored_yank: Option<(f64, f64)>,
     timing: TimingStats,
     /// The search's place-recognition inputs, for a retry on the next alternative (`closure_alternative_places`).
@@ -719,18 +775,34 @@ impl ClosureSearch {
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
         let mut scored_yank = None;
-        let t0 = std::time::Instant::now();
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
         let clearance = self.config.closure_ground_clearance_m;
-        let target_cloud = above_floor(
-            &self.stacked_cloud(
-                target_idx.saturating_sub(half_range)
-                    ..=(target_idx + half_range).min(self.key_poses.len() - 1),
-            ),
-            clearance,
-        );
-        let source_cloud = above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance);
-        timing.submap_s += t0.elapsed().as_secs_f64();
+        // the source scan, the target submap and its tree, built only when a computation needs them (never when every
+        // result comes from the ICP cache)
+        let clouds_cell = std::cell::OnceCell::new();
+        let clouds = || -> &(PointCloud, PointCloud, KdTree) {
+            clouds_cell.get_or_init(|| {
+                let target_cloud = above_floor(
+                    &self.stacked_cloud(
+                        target_idx.saturating_sub(half_range)
+                            ..=(target_idx + half_range).min(self.key_poses.len() - 1),
+                    ),
+                    clearance,
+                );
+                let source_cloud =
+                    above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance);
+                let target_tree = KdTree::build(&target_cloud);
+                (source_cloud, target_cloud, target_tree)
+            })
+        };
+        // a cloud computation, through the ICP cache when there is one
+        let cache = self.icp_cache.clone();
+        let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
+            match &cache {
+                Some(cache) => cache.get_or(format!("{cur_idx}:{target_idx}:{tag}"), compute),
+                None => compute(),
+            }
+        };
 
         // Observability gate: a planar/degenerate source scan leaves the alignment unconstrained in-plane, so fitness
         // lies. It reads only the source scan, so it runs before ICP (computed for every candidate, gate on or off)
@@ -741,7 +813,9 @@ impl ClosureSearch {
         };
         if !self.config.closure_hessian_observability {
             let t0 = std::time::Instant::now();
-            diag.degeneracy_min = uniqueness::degeneracy(&source_cloud);
+            diag.degeneracy_min = memo("deg", &mut || {
+                vec![uniqueness::degeneracy(&clouds().0) as f64]
+            })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
             if degenerate(diag.degeneracy_min) {
                 return rejected(diag, "degeneracy_reject", scored_yank, timing);
@@ -749,27 +823,30 @@ impl ClosureSearch {
         }
 
         let t0 = std::time::Instant::now();
-        let target_tree = KdTree::build(&target_cloud);
-        let icp = icp(
-            &source_cloud,
-            &target_cloud,
-            &target_tree,
-            &init_rotation,
-            &init_translation,
-            &IcpParams {
-                max_iterations: self.config.closure_icp_max_iterations as usize,
-                max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
-                inlier_squared_distance: self.config.closure_score_thresh,
-            },
-        );
+        let icp = crate::icp_cache::decode_icp(&memo("icp", &mut || {
+            let (source_cloud, target_cloud, target_tree) = clouds();
+            crate::icp_cache::encode_icp(&icp(
+                source_cloud,
+                target_cloud,
+                target_tree,
+                &init_rotation,
+                &init_translation,
+                &IcpParams {
+                    max_iterations: self.config.closure_icp_max_iterations as usize,
+                    max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
+                    inlier_squared_distance: self.config.closure_score_thresh,
+                },
+            ))
+        }));
         timing.icp_s += t0.elapsed().as_secs_f64();
-        if !self.config.closure_icp_dump_dir.is_empty() {
+        if !self.config.closure_icp_dump_dir.is_empty() && cache.is_none() {
+            let (source_cloud, target_cloud, _) = clouds();
             dump_icp(
                 &self.config.closure_icp_dump_dir,
                 cur_idx,
                 target_idx,
-                &source_cloud,
-                &target_cloud,
+                source_cloud,
+                target_cloud,
                 &icp,
                 "",
             );
@@ -782,12 +859,15 @@ impl ClosureSearch {
         // Observability gate, Hessian form: how well the ICP alignment pins x, y, z and yaw (needs the alignment)
         if self.config.closure_hessian_observability {
             let t0 = std::time::Instant::now();
-            diag.degeneracy_min = connection_fit::observability(
-                &transform_cloud(&source_cloud, &icp.rotation, &icp.translation),
-                &target_cloud,
-                &target_tree,
-                self.config.closure_score_thresh,
-            ) as f32;
+            diag.degeneracy_min = memo("obs", &mut || {
+                let (source_cloud, target_cloud, target_tree) = clouds();
+                vec![connection_fit::observability(
+                    &transform_cloud(source_cloud, &icp.rotation, &icp.translation),
+                    target_cloud,
+                    target_tree,
+                    self.config.closure_score_thresh,
+                )]
+            })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
             if degenerate(diag.degeneracy_min) {
                 return rejected(diag, "degeneracy_reject", scored_yank, timing);
@@ -797,27 +877,70 @@ impl ClosureSearch {
         if !icp.converged || icp.fitness > self.config.closure_score_thresh {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
+        // the closure's own variances from an alignment's fit, in the target keyframe's frame (`closure_icp_covariance`)
+        let closure_variances =
+            |tag: &str, rotation: &Mat3, translation: &Vec3| -> Option<[f64; 6]> {
+                if !self.config.closure_icp_covariance {
+                    return None;
+                }
+                let origin = mat3::add(
+                    &mat3::mat_vec(rotation, &self.key_poses[cur_idx].translation_global),
+                    translation,
+                );
+                let flat = memo(tag, &mut || {
+                    let (source_cloud, target_cloud, target_tree) = clouds();
+                    connection_fit::alignment_covariance(
+                        &transform_cloud(source_cloud, rotation, translation),
+                        target_cloud,
+                        target_tree,
+                        self.config.closure_score_thresh,
+                        &origin,
+                    )
+                    .map_or(Vec::new(), |c| c.iter().flatten().copied().collect())
+                });
+                if flat.len() != 36 {
+                    return None;
+                }
+                let world: [[f64; 6]; 6] =
+                    std::array::from_fn(|i| std::array::from_fn(|j| flat[6 * i + j]));
+                // each 3x3 block's diagonal turned into the target's frame: R^T C R
+                let frame = &self.key_poses[target_idx].rotation_global;
+                Some(std::array::from_fn(|k| {
+                    let (block, axis) = (3 * (k / 3), k % 3);
+                    (0..3)
+                        .flat_map(|i| (0..3).map(move |j| (i, j)))
+                        .map(|(i, j)| frame[i][axis] * world[block + i][block + j] * frame[j][axis])
+                        .sum()
+                }))
+            };
+        let mut variances = closure_variances("cov", &icp.rotation, &icp.translation);
         // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
         // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
         // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
         // kept would count the same evidence twice
-        let odometry_step = self.mean_step_xy_variance * diag.odometry_noise[0];
+        let gate_noise = diag.odometry_noise_gate;
+        let odometry_step = self.mean_step_xy_variance * gate_noise[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let known = if (self.config.odom_noise_per_motion
+        let by_graph = (self.config.odom_noise_per_motion
             || self.config.closure_informative_by_graph_covariance)
             && diag
                 .innovation_covariance
                 .iter()
                 .flatten()
-                .all(|v| v.is_finite())
-        {
+                .all(|v| v.is_finite());
+        // at the upper bound: scaled by the most any component's bound exceeds its estimate
+        let widen = (0..4)
+            .map(|c| gate_noise[c] / diag.odometry_noise[c])
+            .fold(1.0, f64::max);
+        let known = if by_graph {
             // the graph's own covariance of the two ends' relative position (its heading swing and the solved
             // closures included): the closure adds something only where it is surer than the graph in some direction.
             // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            mat3::jacobi_eigen(diag.innovation_covariance)
-                .0
-                .into_iter()
-                .fold(0.0, f64::max)
+            widen
+                * mat3::jacobi_eigen(diag.innovation_covariance)
+                    .0
+                    .into_iter()
+                    .fold(0.0, f64::max)
         } else {
             self.kept_closures
                 .iter()
@@ -828,27 +951,76 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        if self.config.closure_uninformative_gate && icp.fitness * diag.closure_noise_scale >= known
+        // the closure's translation variance as the graph will take it: its fit's own (largest axis), else its fitness
+        let closure_variance = variances.map_or(icp.fitness, |v| v[3].max(v[4]).max(v[5]));
+        // a closure is uninformative only if it also agrees with the graph: one that disagrees beyond the graph's own
+        // spread of its two ends plus its fit's (chi-square, 3 DOF, at `closure_gnc_inlier_probability`) says the
+        // odometry's noise is understated, the overtrust evidence the solve's check and the learner need, however
+        // tight the graph claims to be. The pull is how far ICP moved the source keyframe, in world axes
+        let pull = {
+            let at = &self.key_poses[cur_idx].translation_global;
+            mat3::sub(
+                &mat3::add(&mat3::mat_vec(&icp.rotation, at), &icp.translation),
+                at,
+            )
+        };
+        let spread: Mat3 = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                let graph = if by_graph {
+                    widen * diag.innovation_covariance[i][j]
+                } else if i == j {
+                    known
+                } else {
+                    0.0
+                };
+                graph
+                    + if i == j {
+                        closure_variance * diag.closure_noise_scale
+                    } else {
+                        0.0
+                    }
+            })
+        });
+        let disagrees = mat3::inverse(&spread).is_some_and(|information| {
+            let whitened = mat3::mat_vec(&information, &pull);
+            (0..3).map(|k| pull[k] * whitened[k]).sum::<f64>()
+                > crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability)
+        });
+        if self.config.closure_uninformative_gate
+            && closure_variance * diag.closure_noise_scale >= known
+            && !disagrees
         {
             return rejected(diag, "uninformative", scored_yank, timing);
         }
         if self.config.closure_sharpness_half > 0.0 {
-            diag.sharpness = self.sharpness(&source_cloud, &target_tree, &icp);
+            diag.sharpness = memo("sharp", &mut || {
+                let (source_cloud, _, target_tree) = clouds();
+                vec![self.sharpness(source_cloud, target_tree, &icp)]
+            })[0];
         }
         if self.config.closure_likelihood_confidence {
             let window: Vec<usize> = (target_idx.saturating_sub(half_range)
                 ..=(target_idx + half_range).min(self.key_poses.len() - 1))
                 .collect();
-            let (ratio, _, width) =
-                self.likelihood_ratio(&source_cloud, &target_cloud, &target_tree, &icp, &window);
+            let lr = memo("lr", &mut || {
+                let (source_cloud, target_cloud, target_tree) = clouds();
+                let (ratio, count, width) =
+                    self.likelihood_ratio(source_cloud, target_cloud, target_tree, &icp, &window);
+                vec![ratio, count as f64, width]
+            });
+            let (ratio, width) = (lr[0], lr[2]);
             diag.likelihood_ratio = ratio;
             diag.likelihood_width = width;
         }
         if self.config.closure_overlap_score {
-            let overlap = self.overlap_score(&source_cloud, &target_cloud, &icp);
-            diag.overlap_points = overlap.points;
-            diag.overlap_quality = overlap.quality;
-            diag.overlap_score = overlap.score;
+            let overlap = memo("ovl", &mut || {
+                let (source_cloud, target_cloud, _) = clouds();
+                let o = self.overlap_score(source_cloud, target_cloud, &icp);
+                vec![o.points, o.quality, o.score]
+            });
+            diag.overlap_points = overlap[0];
+            diag.overlap_quality = overlap[1];
+            diag.overlap_score = overlap[2];
         }
 
         let mut score = icp.fitness;
@@ -959,13 +1131,15 @@ impl ClosureSearch {
         diag.required_confidence = 1.0 - (-single_required).exp();
         if evidence < single_required {
             let t0 = std::time::Instant::now();
+            let source_points = memo("srcn", &mut || vec![clouds().0.len() as f64])[0] as usize;
             let extended = self.extended_icp(
                 cur_idx,
                 target_idx,
-                &source_cloud,
+                source_points,
                 &icp,
                 &mut diag,
                 &mut required,
+                &memo,
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
             let Some(extended) = extended else {
@@ -975,12 +1149,13 @@ impl ClosureSearch {
             (rotation_offset, translation_offset) =
                 measured(&extended.rotation, &extended.translation);
             score = extended.fitness;
+            variances = closure_variances("covx", &extended.rotation, &extended.translation);
         }
 
         diag.outcome = "accepted";
         ClosureSearchResult {
             diag,
-            accepted: Some((rotation_offset, translation_offset, score)),
+            accepted: Some((rotation_offset, translation_offset, score, variances)),
             scored_yank,
             timing,
             retry: None,
@@ -1006,6 +1181,12 @@ impl GscPgo {
         }
     }
 
+    /// Send every closure search's cloud computations through `cache` (`icp_cache`): recording them, or answering from
+    /// a recording.
+    pub fn set_icp_cache(&mut self, cache: Arc<crate::icp_cache::IcpCache>) {
+        self.icp_cache = Some(cache);
+    }
+
     /// The odometry noise in use as ratios to the reported variances (xy, z, yaw, roll/pitch;
     /// `odometry_noise_from_closures`); all 1 when off or before a kept closure.
     pub fn odometry_noise(&self) -> [f64; 4] {
@@ -1013,6 +1194,48 @@ impl GscPgo {
     }
 
     /// The prior spread of each noise source's ln (`odom_noise_prior_ln_sd_*`).
+    /// The factor on each odometry variance the uninformative gate uses: the estimate, or with
+    /// `closure_uninformative_noise_upper_bound` its upper bound at `closure_gnc_inlier_probability`.
+    pub(crate) fn odometry_noise_for_gate(&self) -> [f64; 4] {
+        if !self.config.closure_uninformative_noise_upper_bound {
+            return self.odometry_noise();
+        }
+        self.odometry_noise_bound(1.0)
+    }
+
+    /// The factor on each odometry variance the pose-graph solve uses: the estimate, or with
+    /// `odometry_noise_solve_lower_bound` its lower bound at `closure_gnc_inlier_probability`.
+    pub(crate) fn odometry_noise_for_solve(&self) -> [f64; 4] {
+        if !self.config.odometry_noise_solve_lower_bound {
+            return self.odometry_noise();
+        }
+        self.odometry_noise_bound(-1.0)
+    }
+
+    /// The learned odometry noise's one-sided bound at `closure_gnc_inlier_probability`, above (`side` 1) or below
+    /// (-1) the estimate, from its posterior spread. For a source no committed closure has measured yet, each bound errs
+    /// towards letting evidence in, so nothing starves the learner: the gate's upper bound takes the prior's spread (a
+    /// tight closure might still be news), the solve's lower bound is the estimate itself (the stated noise; a lower bound
+    /// from the prior alone solved huge overtrust at x0.03-0.2, voting 979 of 980 closures out before any was learned from).
+    pub(crate) fn odometry_noise_bound(&self, side: f64) -> [f64; 4] {
+        // one-sided normal quantile z: P(|Z| < z) = 2p - 1
+        let p = self.config.closure_gnc_inlier_probability;
+        let z = crate::landmarks::chi2_inverse(2.0 * p - 1.0, 1).sqrt();
+        let prior = self.odometry_noise_prior();
+        std::array::from_fn(|c| {
+            let sd = self.odometry_noise_ln_sd[c].unwrap_or_else(|| {
+                if side < 0.0 {
+                    0.0
+                } else if prior[c] > 0.0 {
+                    prior[c]
+                } else {
+                    crate::odometry_noise::standard_error(c, 0)
+                }
+            });
+            (self.odometry_noise_ln[c] + side * z * sd).exp()
+        })
+    }
+
     pub(crate) fn odometry_noise_prior(&self) -> [f64; 4] {
         let c = &self.config;
         [
@@ -1025,13 +1248,130 @@ impl GscPgo {
 
     /// The factor on a closure's ICP-fitness variance (`closure_noise_from_closures`); 1 when off or before a kept closure.
     pub fn closure_noise_scale(&self) -> f64 {
-        self.closure_noise_ln_scale.exp()
+        self.closure_noise_ln_scale.exp() * self.closure_disagreement_scale(1)
+    }
+
+    /// How far the closures' fit variances understate their real error (`closure_icp_covariance`; group 0 rotation, 1
+    /// translation), from the whitened disagreements of closure pairs one submap apart. Two closures of one revisit
+    /// that close the same place through a few keyframes of odometry should agree to within their fits' noise, and that
+    /// comparison never touches the long-loop odometry whose noise is in question, so it measures the closures' own
+    /// error (the fit's spread is per-point noise only; it misses submap distortion and partial overlap) even while that
+    /// odometry is over- or undertrusted. A pair with a wrong closure in it disagrees by anything, and wrong closures can
+    /// be most of them (athens undertrust: 85% wrong, 80% of pairs both wrong), so the disagreements are a mixture,
+    /// fitted by EM: a right pair's disagreement is s x chi-square(3), a wrong pair's uniform up to the largest seen;
+    /// the scale is the right component's s (at least 1). 1 before any pair.
+    pub(crate) fn closure_disagreement_scale(&self, group: usize) -> f64 {
+        let pairs = &self.closure_pair_disagreement[group];
+        if !self.config.closure_icp_covariance || pairs.is_empty() {
+            return 1.0;
+        }
+        right_component_scale(pairs, 3).max(1.0)
+    }
+
+    /// The bound on the odometry's tilt error (rad², each axis; `odometry_gravity_bound`), from the committed closures:
+    /// a closure's tilt innovation (the difference between the up direction it implies at its source, through the raw
+    /// odometry at its target, and the raw odometry's own there: `GravityPrior`'s residual) is the two keyframes' tilt errors' difference plus the
+    /// fit's, so for errors bounded and independent at its two ends its variance per axis is at least twice theirs. Half
+    /// the right component's scale (`right_component_scale`, 2 DOF: wrong closures can tilt anywhere) bounds it from
+    /// above. None before any closure (nothing to fit against).
+    pub(crate) fn odometry_gravity_variance(&self) -> Option<f64> {
+        let up = [0.0, 0.0, 1.0];
+        let squared: Vec<f64> = self
+            .committed_closures
+            .iter()
+            .filter_map(|c| {
+                let (source, target) = (
+                    self.key_poses.get(c.source_id)?,
+                    self.key_poses.get(c.target_id)?,
+                );
+                let implied = mat3::mat_vec(
+                    &mat3::transpose(&mat3::mat_mul(&target.rotation_local, &c.rotation_offset)),
+                    &up,
+                );
+                let own = mat3::mat_vec(&mat3::transpose(&source.rotation_local), &up);
+                Some(mat3::norm(&mat3::sub(&implied, &own)).powi(2))
+            })
+            .collect();
+        (!squared.is_empty())
+            .then(|| (right_component_scale(&squared, 2) / 2.0).max(f64::MIN_POSITIVE))
+    }
+
+    /// Record how the newest committed closure disagrees with each earlier one whose two ends lie within a submap
+    /// (`closure_submap_half_range` keyframes) of its own, through the raw odometry between them.
+    fn record_closure_pair_disagreement(&mut self) {
+        let Some(newest) = self.committed_closures.last().copied() else {
+            return;
+        };
+        let Some(v_new) = newest.variances else {
+            return;
+        };
+        let half = self.config.closure_submap_half_range.max(0) as usize;
+        let local = |k: usize| {
+            (
+                self.key_poses[k].rotation_local,
+                self.key_poses[k].translation_local,
+            )
+        };
+        // the odometry from keyframe a to b in a's frame
+        let between = |a: usize, b: usize| {
+            let ((ra, pa), (rb, pb)) = (local(a), local(b));
+            let back = mat3::transpose(&ra);
+            (
+                mat3::mat_mul(&back, &rb),
+                mat3::mat_vec(&back, &mat3::sub(&pb, &pa)),
+            )
+        };
+        let mut found = [Vec::new(), Vec::new()];
+        for earlier in &self.committed_closures[..self.committed_closures.len() - 1] {
+            let Some(v_old) = earlier.variances else {
+                continue;
+            };
+            if earlier.source_id.abs_diff(newest.source_id) > half
+                || earlier.target_id.abs_diff(newest.target_id) > half
+            {
+                continue;
+            }
+            // the newest closure predicted from the earlier one: target odometry back, earlier closure, source odometry
+            let (rt, pt) = between(newest.target_id, earlier.target_id);
+            let (rs, ps) = between(earlier.source_id, newest.source_id);
+            let (rc, pc) = (earlier.rotation_offset, earlier.translation_offset);
+            let rotation = mat3::mat_mul(&mat3::mat_mul(&rt, &rc), &rs);
+            let translation = mat3::add(
+                &pt,
+                &mat3::mat_vec(&rt, &mat3::add(&pc, &mat3::mat_vec(&rc, &ps))),
+            );
+            let turn = crate::big_picture_fit::log(&mat3::mat_mul(
+                &mat3::transpose(&rotation),
+                &newest.rotation_offset,
+            ));
+            let shift = mat3::sub(&newest.translation_offset, &translation);
+            for (group, d) in [(0, turn), (1, shift)] {
+                let q: f64 = (0..3)
+                    .map(|k| d[k] * d[k] / (v_new[3 * group + k] + v_old[3 * group + k]))
+                    .sum();
+                if q.is_finite() {
+                    found[group].push(q);
+                }
+            }
+        }
+        for group in 0..2 {
+            self.closure_pair_disagreement[group].append(&mut found[group]);
+        }
+    }
+    /// The factor on a closure's ICP-fitness variance for its rotation: its own with `closure_noise_from_residuals`,
+    /// else the translation's.
+    pub fn closure_noise_rotation_scale(&self) -> f64 {
+        if self.config.closure_noise_from_residuals {
+            self.closure_noise_ln_rotation_scale.exp() * self.closure_disagreement_scale(0)
+        } else {
+            self.closure_noise_ln_scale.exp() * self.closure_disagreement_scale(0)
+        }
     }
 
     /// After a solve: the odometry noise (and closure scale) from the closures it kept (`odometry_noise::fit`), and a
     /// re-solve when either moved by more than its own standard error since the solve began, so the graph is solved at
     /// the noise its closures imply.
-    pub(crate) fn update_odometry_noise_scale(&mut self, evidence: Option<[(f64, f64); 4]>) {
+    pub(crate) fn update_odometry_noise_scale(&mut self, evidence: Option<[(f64, f64); 6]>) {
         let (fit_odometry, fit_closure) = (
             self.config.odometry_noise_from_closures,
             self.config.closure_noise_from_closures,
@@ -1068,19 +1408,68 @@ impl GscPgo {
             })
             .product();
         // the closure scale from the closures' innovations (fitted with the odometry's noise held where it is)
-        let ln_closure = if fit_closure {
-            match crate::odometry_noise::fit(
-                &innovations,
-                self.odometry_noise_prior(),
-                false,
-                true,
-                1.0 / volume.max(f64::MIN_POSITIVE),
-            ) {
-                Some((_, ln_closure, _)) => ln_closure,
-                None => self.closure_noise_ln_scale,
-            }
+        // the closures' rotation and translation scales from the same residuals (`closure_noise_from_residuals`)
+        let mut closure_redundancy = [0.0; 2];
+        let joint =
+            |group: usize, dispatched: f64, current: f64, redundancy: &mut [f64; 2]| match evidence
+            {
+                Some(evidence)
+                    if evidence[4 + group].1 > 0.5 && evidence[4 + group].0.is_finite() =>
+                {
+                    redundancy[group] = evidence[4 + group].1;
+                    crate::odometry_noise::closure_residual_ln_ratio(
+                        evidence[4 + group].0,
+                        evidence[4 + group].1,
+                        dispatched,
+                    )
+                    .0
+                }
+                _ => current,
+            };
+        let mut ln_closure_rotation = self.closure_noise_ln_rotation_scale;
+        // the solved residuals split each loop's misfit between the closures and the odometry by their stated noises,
+        // so while no odometry source is measured (now or before) every misfit lands on the closures: an overtrusted
+        // odometry read as loose closures (huge overtrust: 4 kept closures, translation x4.3, then none kept and the
+        // learner never fed). Until then the closures keep their scale, as with no learner
+        let odometry_measured = self.odometry_noise_ln_sd.iter().any(Option::is_some)
+            || evidence.is_some_and(|e| e[..4].iter().any(|&(sum, r)| r > 0.5 && sum.is_finite()));
+        let ln_closure =
+            if self.config.closure_noise_from_residuals && fit_odometry && !odometry_measured {
+                self.closure_noise_ln_scale
+            } else if self.config.closure_noise_from_residuals && fit_odometry {
+                ln_closure_rotation = joint(
+                    0,
+                    self.closure_noise_ln_rotation_scale_dispatched,
+                    self.closure_noise_ln_rotation_scale,
+                    &mut closure_redundancy,
+                );
+                joint(
+                    1,
+                    self.closure_noise_ln_scale_dispatched,
+                    self.closure_noise_ln_scale,
+                    &mut closure_redundancy,
+                )
+            } else if fit_closure {
+                match crate::odometry_noise::fit(
+                    &innovations,
+                    self.odometry_noise_prior(),
+                    false,
+                    true,
+                    1.0 / volume.max(f64::MIN_POSITIVE),
+                ) {
+                    Some((_, ln_closure, _)) => ln_closure,
+                    None => self.closure_noise_ln_scale,
+                }
+            } else {
+                0.0
+            };
+        // with the closures' own covariance their scale is measured from closure pairs (`closure_disagreement_scale`),
+        // which never involve the long-loop odometry; the solved graph's residuals cannot tell a loose closure from a
+        // loose odometry (an undertrusted odometry read as loose closures: athens x7000), so they learn the odometry only
+        let (ln_closure, ln_closure_rotation) = if self.config.closure_icp_covariance {
+            (0.0, 0.0)
         } else {
-            0.0
+            (ln_closure, ln_closure_rotation)
         };
         // the odometry's noise from the solved graph's own residuals: how far the solve bent each source's part of the
         // odometry edges against how many independent checks the graph gave it (`odometry_noise_evidence`), which tells
@@ -1093,27 +1482,47 @@ impl GscPgo {
                     let (sum, r) = evidence[c];
                     redundancy[c] = r;
                     if r > 0.5 && sum.is_finite() {
-                        ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
-                            sum,
-                            r,
+                        let (dispatched, prior_sd) = (
                             self.odometry_noise_ln_dispatched[c],
-                            c,
                             self.odometry_noise_prior()[c],
                         );
+                        ln_odometry[c] = crate::odometry_noise::residual_ln_ratio(
+                            sum, r, dispatched, c, prior_sd,
+                        );
+                        self.odometry_noise_ln_sd[c] =
+                            Some(crate::odometry_noise::residual_ln_ratio_sd(
+                                sum,
+                                dispatched,
+                                ln_odometry[c],
+                                c,
+                                prior_sd,
+                            ));
                     }
                 }
             }
         }
+        // what the next solve would use (the estimate, or its lower bound) against what the last one did
+        let previous = std::mem::replace(&mut self.odometry_noise_ln, ln_odometry);
+        let next_solve = self.odometry_noise_for_solve().map(f64::ln);
+        self.odometry_noise_ln = previous;
         let moved = (0..4).any(|c| {
             redundancy[c] > 0.5
-                && (ln_odometry[c] - self.odometry_noise_ln_dispatched[c]).abs()
+                && (next_solve[c] - self.odometry_noise_ln_dispatched[c]).abs()
                     > (2.0 / redundancy[c]).sqrt()
         }) || (ln_closure - self.closure_noise_ln_scale_dispatched).abs()
-            > (2.0 / (3.0 * (innovations.len() + 1) as f64)).sqrt();
+            > if self.config.closure_noise_from_residuals {
+                (2.0 / closure_redundancy[1].max(0.5)).sqrt()
+            } else {
+                (2.0 / (3.0 * (innovations.len() + 1) as f64)).sqrt()
+            }
+            || (self.config.closure_noise_from_residuals
+                && (ln_closure_rotation - self.closure_noise_ln_rotation_scale_dispatched).abs()
+                    > (2.0 / closure_redundancy[0].max(0.5)).sqrt());
         if moved && !self.odometry_noise_rescaled {
             self.odometry_noise_rescale = true;
         }
         (self.odometry_noise_ln, self.closure_noise_ln_scale) = (ln_odometry, ln_closure);
+        self.closure_noise_ln_rotation_scale = ln_closure_rotation;
     }
 
     /// Cumulative wall seconds per stage: scan context, submaps, ICP, degeneracy, extended ICP, pose-graph solves.
@@ -1161,6 +1570,7 @@ impl GscPgo {
         // a search that ended before its proposal was built never saw the noise scales
         if diag.target_id < 0 {
             diag.odometry_noise = self.odometry_noise();
+            diag.odometry_noise_gate = self.odometry_noise_for_gate();
             diag.closure_noise_scale = self.closure_noise_scale();
         }
         if diag.target_id >= 0 {
@@ -1423,6 +1833,7 @@ impl GscPgo {
             .pressure
             .map_or(0.0, |(_, overlap)| overlap.unresolved_loop_probability);
         diag.odometry_noise = self.odometry_noise();
+        diag.odometry_noise_gate = self.odometry_noise_for_gate();
         diag.closure_noise_scale = self.closure_noise_scale();
         // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
         // the doubling step that covers max keyframes x that chance
@@ -1469,7 +1880,10 @@ impl GscPgo {
                 self.committed_closures
                     .iter()
                     .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5),
-                self.closure_noise_scale(),
+                [
+                    self.closure_noise_rotation_scale(),
+                    self.closure_noise_scale(),
+                ],
             ),
             diag,
             target_idx,
@@ -1487,6 +1901,7 @@ impl GscPgo {
                 .collect(),
             alternatives,
             tries: tries + 1,
+            icp_cache: self.icp_cache.clone(),
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
@@ -1517,7 +1932,7 @@ impl GscPgo {
         if accepted.is_some() && diag.icp_fitness.is_finite() {
             self.scored_fitness.push(diag.icp_fitness);
         }
-        let Some((rotation_offset, translation_offset, score)) = accepted else {
+        let Some((rotation_offset, translation_offset, score, variances)) = accepted else {
             if let Some((ranked, alternatives, tries)) = retry {
                 self.retry_alternative(&diag, ranked, alternatives, tries);
             }
@@ -1526,7 +1941,14 @@ impl GscPgo {
         };
         let (source, target) = (diag.source_id, diag.target_id as usize);
         self.record_search(diag);
-        self.commit_closure(source, target, rotation_offset, translation_offset, score);
+        self.commit_closure_with_variances(
+            source,
+            target,
+            rotation_offset,
+            translation_offset,
+            score,
+            variances,
+        );
     }
     /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 + ceil(1 /
     /// (1 - pressure)), at most scan_context_top_k (`closure_alternative_places`).
@@ -1629,13 +2051,33 @@ impl GscPgo {
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.
-    fn commit_closure(
+    pub fn commit_closure(
         &mut self,
         source_id: usize,
         target_id: usize,
         rotation_offset: Mat3,
         translation_offset: Vec3,
         score: f64,
+    ) {
+        self.commit_closure_with_variances(
+            source_id,
+            target_id,
+            rotation_offset,
+            translation_offset,
+            score,
+            None,
+        );
+    }
+
+    /// `commit_closure` with the closure's own variances (`CommittedClosure::variances`).
+    pub fn commit_closure_with_variances(
+        &mut self,
+        source_id: usize,
+        target_id: usize,
+        rotation_offset: Mat3,
+        translation_offset: Vec3,
+        score: f64,
+        variances: Option<[f64; 6]>,
     ) {
         self.committed_closures.push(CommittedClosure {
             source_id,
@@ -1644,7 +2086,9 @@ impl GscPgo {
             translation_offset,
             score,
             gnc_weight: f64::NAN,
+            variances,
         });
+        self.record_closure_pair_disagreement();
         self.closure_innovations
             .push(crate::odometry_noise::innovation(
                 &self.key_poses,
@@ -1652,8 +2096,83 @@ impl GscPgo {
                 target_id,
                 source_id,
                 &translation_offset,
-                score.max(1e-6),
+                // the closure's translation variance: its fit's own (mean over axes), else its fitness
+                variances.map_or(score.max(1e-6), |v| (v[3] + v[4] + v[5]) / 3.0),
             ));
         self.new_closure = true;
+    }
+}
+
+/// The scale s of the chi-square(`dof`, 2 or 3) component in a two-part mixture of `q` (s x chi-square(dof) for right
+/// ones, uniform on [0, max q] for wrong ones), by EM from the median's scale and an even split.
+pub(crate) fn right_component_scale(q: &[f64], dof: usize) -> f64 {
+    let mut sorted = q.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let (median, top) = (sorted[sorted.len() / 2], sorted[sorted.len() - 1]);
+    let chi2_median = crate::landmarks::chi2_inverse(0.5, dof);
+    let mut scale = (median / chi2_median).max(f64::MIN_POSITIVE);
+    let mut share = 0.5;
+    let uniform = 1.0 / top.max(f64::MIN_POSITIVE);
+    // chi-square(dof) density at x
+    let chi2 = |x: f64| {
+        let x = x.max(0.0);
+        if dof == 2 {
+            0.5 * (-x / 2.0).exp()
+        } else {
+            (x.sqrt() * (-x / 2.0).exp()) / (2.0 * std::f64::consts::PI).sqrt()
+        }
+    };
+    for _ in 0..200 {
+        let (mut weight, mut weighted) = (0.0, 0.0);
+        for &x in q {
+            let right = share * chi2(x / scale) / scale;
+            let r = right / (right + (1.0 - share) * uniform).max(f64::MIN_POSITIVE);
+            weight += r;
+            weighted += r * x;
+        }
+        if weight <= 0.0 {
+            break;
+        }
+        let next = (weighted / (dof as f64 * weight)).max(f64::MIN_POSITIVE);
+        share = (weight / q.len() as f64).clamp(1e-6, 1.0 - 1e-6);
+        let settled = (next / scale - 1.0).abs() < 1e-9;
+        scale = next;
+        if settled {
+            break;
+        }
+    }
+    scale
+}
+
+#[cfg(test)]
+mod right_component_tests {
+    /// Pairs whose disagreement is 40 x chi-square(3), drowned in three times as many wrong ones spread far wider: the
+    /// right component's scale comes back near 40 where the median of all of them is far off.
+    #[test]
+    fn the_right_component_scale_ignores_a_majority_of_wrong_pairs() {
+        let mut state = 7u64;
+        let mut uniform = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut q = Vec::new();
+        for _ in 0..300 {
+            // chi-square(3) as a sum of three squared normals
+            let x: f64 = (0..3)
+                .map(|_| {
+                    let (a, b) = (uniform().max(1e-12), uniform());
+                    let n = (-2.0 * a.ln()).sqrt() * (2.0 * std::f64::consts::PI * b).cos();
+                    n * n
+                })
+                .sum();
+            q.push(40.0 * x);
+        }
+        for _ in 0..900 {
+            q.push(1e6 * uniform());
+        }
+        let scale = super::right_component_scale(&q, 3);
+        assert!((25.0..60.0).contains(&scale), "scale {scale}");
     }
 }

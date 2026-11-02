@@ -103,6 +103,12 @@ class PGOConfig(NativeModuleConfig):
     closure_skip_known: bool = False
     # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
     closure_pcm: bool = False
+    # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
+    closure_gnc_overtrust_check: bool = False
+    # True: a closure's variances are its ICP fit's own pose covariance (point-to-plane Hessian) instead of its ICP fitness on every axis
+    closure_icp_covariance: bool = False
+    # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
+    odometry_gravity_bound: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
@@ -154,6 +160,12 @@ class PGOConfig(NativeModuleConfig):
     closure_informative_by_graph_covariance: bool = False
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
     closure_uninformative_gate: bool = True
+    # True: the uninformative gate uses the learned odometry noise's upper bound (thin evidence cannot shut the gate)
+    closure_uninformative_noise_upper_bound: bool = False
+    # True (with odometry_noise_from_closures): learn the closures' variance scale jointly with the odometry's from the solved graph's residuals
+    closure_noise_from_residuals: bool = False
+    # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
+    odometry_noise_solve_lower_bound: bool = False
     # defaults: Mid-360 + FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning)
     odom_xy_var_per_m: float = 1.53e-7
     odom_xy_var_per_rad: float = 4.03e-5

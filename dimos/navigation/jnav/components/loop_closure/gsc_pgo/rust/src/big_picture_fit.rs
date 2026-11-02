@@ -25,9 +25,7 @@ use faer::sparse::linalg::SupernodalThreshold;
 use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Par, Side};
 
-use std::thread::JoinHandle;
-
-use crate::gsc_pgo::{ClosureEdgeState, CommittedClosure, Config, GscPgo, KeyPoseWithCloud};
+use crate::gsc_pgo::{CommittedClosure, Config, KeyPoseWithCloud};
 use crate::landmarks::{self, Sighting};
 use crate::mat3::{self, Mat3, Vec3};
 
@@ -57,6 +55,39 @@ pub struct SolveConfig {
     /// Pairwise consistency (PCM, Mangelson 2018): the largest set of closures that all agree pairwise around the
     /// cycles they close with the odometry is held in through GNC (`consistent_closures`); 0 odometry variance = off.
     pub pcm_odometry_translation_variance: f64,
+    /// When true, GNC also runs with the Geman-McClure surrogate (Black & Rangarajan 1996; Yang et al. 2020), which
+    /// starts at least squares rather than at TLS's odometry-dominated mu near 0, keeping a factor whose whitened
+    /// residual at its solution is under the chi-square cutoff. Its verdict replaces TLS's when its solution has the
+    /// lower truncated-least-squares cost (the objective both minimise: TLS's path missed it), or when the odometry
+    /// residuals of its solution reject the odometry's stated noise as too small (`odometry_overtrusted`: the model, not
+    /// the path, is wrong, and the kept closures' residuals then teach the noise learner the larger noise).
+    pub gnc_overtrust_check: bool,
+    /// Per odometry noise source (xy, z, yaw, roll/pitch): how many times larger the most noise the evidence still allows
+    /// is than the noise the odometry edges carry (1 when the solve uses the stated noise). The overtrust test asks
+    /// whether the residuals reject even that, since a learner's solve noise (its lower bound) is low by design.
+    pub overtrust_noise_headroom: [f64; 4],
+    /// The odometry's attitude against gravity as absolute factors, always in (`GravityPrior`); empty for none.
+    pub gravity: Vec<GravityPrior>,
+}
+
+/// A gravity-referenced odometry's tilt as an absolute factor: keyframe `keyframe`'s up direction in its own frame,
+/// R_k^T `up` (`up` the solve frame's), should be `body_up`, each axis at `variance` (rad²). Rotation about up is left
+/// free, so only roll/pitch are held: an IMU-aided odometry's tilt error is bounded by its accelerometer, not a random
+/// walk, so a chain of tilt steps cannot add up to a floor's height.
+#[derive(Clone, Copy, Debug)]
+pub struct GravityPrior {
+    pub keyframe: usize,
+    pub up: Vec3,
+    pub body_up: Vec3,
+    pub variance: f64,
+}
+
+/// R_k^T up - body_up.
+fn gravity_residual(g: &GravityPrior, state: &State) -> Vec3 {
+    mat3::sub(
+        &mat3::mat_vec(&mat3::transpose(&state.rotation[g.keyframe]), &g.up),
+        &g.body_up,
+    )
 }
 
 pub struct Solution {
@@ -79,9 +110,9 @@ pub struct Solution {
     /// world axes, m²), from the solved graph; empty if the graph could not be factored.
     pub relative_position_covariance: Vec<Mat3>,
     /// Variance-component evidence on the odometry noise from the solved graph (`odometry_noise_evidence`): per source
-    /// (xy, z, yaw, roll/pitch), the sum of its odometry residuals squared and whitened, and its redundancy; None if the
-    /// graph could not be factored.
-    pub odometry_noise_evidence: Option<[(f64, f64); 4]>,
+    /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
+    /// redundancy; None if the graph could not be factored.
+    pub odometry_noise_evidence: Option<[(f64, f64); 6]>,
 }
 
 /// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
@@ -189,7 +220,22 @@ pub(crate) fn solve_core(
         unary,
         sightings,
         &landmark_dims,
+        &config.gravity,
     );
+    // the noise evidence never sees the gravity factors: they are the raw odometry's own tilt, not a second measurement
+    // of it, so as redundancy they would vouch for the odometry's tilt steps with the steps' own data (the learner then
+    // collapses the tilt noise towards 0); it reads the odometry and closures alone, re-solved without them
+    let evidence_pattern = (!config.gravity.is_empty()).then(|| {
+        Pattern::new(
+            free,
+            odometry.iter().chain(closures),
+            unary,
+            sightings,
+            &landmark_dims,
+            &[],
+        )
+    });
+    let evidence_pattern = evidence_pattern.as_ref().unwrap_or(&pattern);
 
     // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
     // until each closure is clearly in or out. Odometry is always in.
@@ -241,6 +287,20 @@ pub(crate) fn solve_core(
     let mut r2 = residual(&state);
     let mut u2 = unary_residuals(&state);
     let mut s2 = sighting_residuals(&state);
+    // the least-squares solve with every factor in: where GNC-GM starts (`gnc_overtrust_check`)
+    let least_squares = config.gnc_overtrust_check.then(|| {
+        (
+            State {
+                rotation: state.rotation.clone(),
+                position: state.position.clone(),
+                landmark: state.landmark.clone(),
+                landmark_rotation: state.landmark_rotation.clone(),
+            },
+            r2.clone(),
+            u2.clone(),
+            s2.clone(),
+        )
+    });
     if worst > threshold || unary_worst > unary_threshold || sighting_worst > 1.0 {
         // the gentlest start any factor kind that exceeds its own cutoff needs (a kind under its cutoff sets none)
         let start = |worst: f64, threshold: f64| {
@@ -297,6 +357,7 @@ pub(crate) fn solve_core(
             // stop like GTSAM's GncOptimizer: weights settled, or the weighted cost stopped changing
             let weighted_cost = cost(
                 &state,
+                &pattern.gravity,
                 odometry,
                 &scaled,
                 &weights,
@@ -316,6 +377,143 @@ pub(crate) fn solve_core(
             }
             previous_cost = weighted_cost;
             mu *= 1.4;
+        }
+    }
+    // TLS's convex start (mu near 0) weighs every closure at about cutoff x sqrt(mu) / residual against the always-in
+    // odometry, so how far the odometry is trusted decides its first steps: an overtrusted odometry takes the graph back
+    // before the closures are heard. GNC-GM starts at least squares instead (Black & Rangarajan 1996; Yang et al. 2020),
+    // and its verdict replaces TLS's only where the closures it keeps prove the odometry's noise understated
+    // only when TLS voted a closure out: with every one kept, GM has nothing to add
+    let least_squares = least_squares.filter(|_| weights.iter().any(|&w| w < 0.5));
+    let mut gm_taken = false;
+    if let Some((mut gm_state, mut r2, mut u2, mut s2)) = least_squares {
+        let max = |r: &[f64]| r.iter().copied().fold(0.0, f64::max);
+        // Remark 5: mu0 = 2 r_max^2 / cutoff over the residuals the least-squares solve leaves
+        let mut mu = [
+            2.0 * max(&r2) / threshold,
+            2.0 * max(&u2) / unary_threshold,
+            2.0 * max(&s2),
+        ]
+        .into_iter()
+        .fold(1.0, f64::max);
+        let gm = |r: f64, threshold: f64, mu: f64| (mu * threshold / (r + mu * threshold)).powi(2);
+        let (mut gm_weights, mut gm_unary, mut gm_sightings) = (
+            vec![1.0; closures.len()],
+            vec![1.0; unary.len()],
+            vec![1.0; sightings.len()],
+        );
+        loop {
+            for ((w, &r), &held) in gm_weights.iter_mut().zip(&r2).zip(&held) {
+                if !held {
+                    *w = gm(r, threshold, mu);
+                }
+            }
+            for (w, &r) in gm_unary.iter_mut().zip(&u2) {
+                *w = gm(r, unary_threshold, mu);
+            }
+            for (w, &r) in gm_sightings.iter_mut().zip(&s2) {
+                *w = gm(r, 1.0, mu);
+            }
+            levenberg_marquardt(
+                &mut gm_state,
+                &pattern,
+                odometry,
+                &scaled,
+                &gm_weights,
+                unary,
+                &gm_unary,
+                sightings,
+                &gm_sightings,
+                1e-5,
+            );
+            r2 = residual(&gm_state);
+            u2 = unary_residuals(&gm_state);
+            s2 = sighting_residuals(&gm_state);
+            if mu <= 1.0 {
+                break;
+            }
+            mu = (mu / 1.4).max(1.0);
+        }
+        // in or out by the chi-square test at the GM solution, as TLS's weights end
+        let classify = |r: f64, threshold: f64| if r < threshold { 1.0 } else { 0.0 };
+        for ((w, &r), &held) in gm_weights.iter_mut().zip(&r2).zip(&held) {
+            *w = if held { 1.0 } else { classify(r, threshold) };
+        }
+        for (w, &r) in gm_unary.iter_mut().zip(&u2) {
+            *w = classify(r, unary_threshold);
+        }
+        for (w, &r) in gm_sightings.iter_mut().zip(&s2) {
+            *w = classify(r, 1.0);
+        }
+        // the objective both GNCs minimise, truncated least squares, at each one's verdict: GM's path can find the lower
+        // minimum TLS's convex start missed (TLS voting out a consistent group from an odometry-dominated start)
+        let truncated_cost = |state: &State| {
+            let none = |n: usize| vec![0.0; n];
+            cost(
+                state,
+                &pattern.gravity,
+                odometry,
+                &scaled,
+                &none(closures.len()),
+                unary,
+                &none(unary.len()),
+                sightings,
+                &none(sightings.len()),
+            ) + residual(state)
+                .iter()
+                .map(|&r| r.min(threshold))
+                .sum::<f64>()
+                + unary_residuals(state)
+                    .iter()
+                    .map(|&r| r.min(unary_threshold))
+                    .sum::<f64>()
+                + sighting_residuals(state)
+                    .iter()
+                    .map(|&r| r.min(1.0))
+                    .sum::<f64>()
+        };
+        let lower = truncated_cost(&gm_state) < truncated_cost(&state);
+        // GM's verdict is new evidence that the odometry is overtrusted only where TLS's own verdict shows none: where
+        // TLS already keeps closures that bend the odometry past its noise (right or look-alike), the noise learner
+        // reads that from TLS's residuals, and swapping in GM's larger set would only add closures the evidence did
+        // not need (look-alike floors that agree with each other)
+        let overtrusted =
+            |state: &mut State, weights: &[f64], unary_w: &[f64], sighting_w: &[f64]| {
+                // the evidence's own re-solve, without the gravity factors, on a copy: the verdict's state keeps them
+                let mut without_gravity;
+                let state = if config.gravity.is_empty() {
+                    state
+                } else {
+                    without_gravity = state.clone();
+                    &mut without_gravity
+                };
+                odometry_overtrusted(
+                    state,
+                    evidence_pattern,
+                    odometry,
+                    closures,
+                    weights,
+                    unary,
+                    unary_w,
+                    sightings,
+                    sighting_w,
+                    config.gnc_inlier_probability,
+                    config.overtrust_noise_headroom,
+                )
+            };
+        let mut tls_state = State {
+            rotation: state.rotation.clone(),
+            position: state.position.clone(),
+            landmark: state.landmark.clone(),
+            landmark_rotation: state.landmark_rotation.clone(),
+        };
+        if lower
+            || (overtrusted(&mut gm_state, &gm_weights, &gm_unary, &gm_sightings)
+                && !overtrusted(&mut tls_state, &weights, &unary_weights, &sighting_weights))
+        {
+            (state, weights, unary_weights, sighting_weights) =
+                (gm_state, gm_weights, gm_unary, gm_sightings);
+            gm_taken = true;
         }
     }
     let kept: Vec<f64> = weights
@@ -358,6 +556,7 @@ pub(crate) fn solve_core(
     let error = 0.5
         * cost(
             &state,
+            &pattern.gravity,
             odometry,
             closures,
             &huber,
@@ -379,12 +578,57 @@ pub(crate) fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
+    // GM's verdict was reached without the odometry noise having its say, so only its mutually consistent core (the
+    // largest set of kept closures that agree pairwise around their cycles, PCM, at the noise the odometry edges carry)
+    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry noise and widen it
+    let evidence_weights: Vec<f64> = if gm_taken {
+        let kept_closures: Vec<(usize, Edge)> = closures
+            .iter()
+            .zip(&huber)
+            .enumerate()
+            .filter(|(_, (_, &w))| w > 0.0)
+            .map(|(i, (e, _))| (i, *e))
+            .collect();
+        let step_variance =
+            odometry.iter().map(|e| e.variances[3]).sum::<f64>() / odometry.len().max(1) as f64;
+        let pcm = SolveConfig {
+            pcm_odometry_translation_variance: step_variance,
+            ..config.clone()
+        };
+        let edges: Vec<Edge> = kept_closures.iter().map(|&(_, e)| e).collect();
+        let consistent = consistent_closures(&state, &edges, &pcm);
+        let mut weights = vec![0.0; closures.len()];
+        for ((i, _), held) in kept_closures.iter().zip(consistent) {
+            if held {
+                weights[*i] = huber[*i];
+            }
+        }
+        weights
+    } else {
+        huber.clone()
+    };
+    // without the gravity factors the evidence reads the odometry and closures' own solve
+    let mut without_gravity = state.clone();
+    if !config.gravity.is_empty() {
+        levenberg_marquardt(
+            &mut without_gravity,
+            evidence_pattern,
+            odometry,
+            closures,
+            &evidence_weights,
+            unary,
+            &unary_kept,
+            sightings,
+            &sighting_kept,
+            1e-5,
+        );
+    }
     let odometry_noise_evidence = odometry_noise_evidence(
-        &state,
-        &pattern,
+        &without_gravity,
+        evidence_pattern,
         odometry,
         closures,
-        &huber,
+        &evidence_weights,
         unary,
         &unary_kept,
         sightings,
@@ -428,7 +672,7 @@ fn odometry_noise_evidence(
     unary_weights: &[f64],
     sightings: &[Sighting],
     sighting_weights: &[f64],
-) -> Option<[(f64, f64); 4]> {
+) -> Option<[(f64, f64); 6]> {
     let size = pattern.size;
     let factor = |cw: &[f64], uw: &[f64], sw: &[f64]| {
         let (mut values, _, diagonal) = normal_equations(
@@ -449,7 +693,7 @@ fn odometry_noise_evidence(
     )?;
     let linear: Vec<([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> =
         odometry.iter().map(|e| linearize(e, state)).collect();
-    let mut evidence = [(0.0, 0.0); 4];
+    let mut evidence = [(0.0, 0.0); 6];
     for (e, (r, _, _)) in odometry.iter().zip(&linear) {
         for k in 0..6 {
             evidence[RESIDUAL_SOURCE[k]].0 += r[k] * r[k] / e.variances[k];
@@ -512,7 +756,129 @@ fn odometry_noise_evidence(
             evidence[source].1 += estimate / PROBES as f64;
         }
     }
+    // the kept closures' rotation and translation as two more sources: sum of their whitened residuals squared, and redundancy
+    // r = n - tr(K N^-1 K^T) = tr(M), M = I - K N^-1 K^T (K their weighted whitened rows): symmetric, eigenvalues in
+    // [0, 1], so the same +-1 probes estimate it to about sqrt(2 r / probes). With it, a closure variance reported too
+    // loose shows as closure residuals too small for their redundancy, instead of passing as odometry too good
+    let closure_linear: Vec<(usize, [f64; 6], [[f64; 6]; 6], [[f64; 6]; 6])> = closures
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| closure_weights[i] > 0.0)
+        .map(|(i, e)| {
+            let (r, jf, jt) = linearize(e, state);
+            (i, r, jf, jt)
+        })
+        .collect();
+    for &(i, r, _, _) in &closure_linear {
+        let e = &closures[i];
+        for k in 0..6 {
+            evidence[4 + k / 3].0 += closure_weights[i] * r[k] * r[k] / e.variances[k];
+        }
+    }
+    for group in 0..2 {
+        let rows: Vec<(usize, usize)> = (0..closure_linear.len())
+            .flat_map(|c| (3 * group..3 * group + 3).map(move |k| (c, k)))
+            .collect();
+        let row_weight = |c: usize, k: usize| {
+            let (i, ..) = closure_linear[c];
+            (closure_weights[i] / closures[i].variances[k]).sqrt()
+        };
+        for probe in 0..PROBES {
+            let mut u = Mat::<f64>::zeros(size, 1);
+            let mut norm = 0.0;
+            for (index, &(c, k)) in rows.iter().enumerate() {
+                let (i, _, jf, jt) = &closure_linear[c];
+                let edge = &closures[*i];
+                let s = sign(probe * 4 + 4 + group, index);
+                norm += s * s;
+                let weight = s * row_weight(c, k);
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for m in 0..6 {
+                            u[(6 * slot + m, 0)] += j[k][m] * weight;
+                        }
+                    }
+                }
+            }
+            let mut y = u;
+            full.solve_in_place_with_conj(Conj::No, y.as_mut());
+            let mut projected = 0.0;
+            for (index, &(c, k)) in rows.iter().enumerate() {
+                let (i, _, jf, jt) = &closure_linear[c];
+                let edge = &closures[*i];
+                let weight = sign(probe * 4 + 4 + group, index) * row_weight(c, k);
+                let mut jy = 0.0;
+                for (slot, j) in [(pattern.slot[edge.from], jf), (pattern.slot[edge.to], jt)] {
+                    if let Some(slot) = slot {
+                        for m in 0..6 {
+                            jy += j[k][m] * y[(6 * slot + m, 0)];
+                        }
+                    }
+                }
+                projected += weight * jy;
+            }
+            evidence[4 + group].1 += (norm - projected) / PROBES as f64;
+        }
+    }
     Some(evidence)
+}
+
+/// Whether the odometry is overtrusted at `state` with these factors in: after a least-squares solve with them at their
+/// own variances, the odometry's whitened residuals squared over its redundancy (`odometry_noise_evidence`, its four
+/// noise sources pooled, each at its `headroom` x the edges' noise) exceed what that noise allows at `probability`, a chi-square with that many degrees of
+/// freedom (Wilson-Hilferty's cube-root normal approximation, as the redundancy is not a whole number).
+#[allow(clippy::too_many_arguments)]
+fn odometry_overtrusted(
+    state: &mut State,
+    pattern: &Pattern,
+    odometry: &[Edge],
+    closures: &[Edge],
+    closure_weights: &[f64],
+    unary: &[Unary],
+    unary_weights: &[f64],
+    sightings: &[Sighting],
+    sighting_weights: &[f64],
+    probability: f64,
+    headroom: [f64; 4],
+) -> bool {
+    levenberg_marquardt(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+        1e-5,
+    );
+    let Some(evidence) = odometry_noise_evidence(
+        state,
+        pattern,
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    ) else {
+        return false;
+    };
+    // whitened at the largest noise still allowed, each source's sum shrinks by its headroom
+    let (sum, redundancy) = evidence[..4]
+        .iter()
+        .zip(headroom)
+        .fold((0.0, 0.0), |(s, r), (&(sc, rc), h)| {
+            (s + sc / h.max(1.0), r + rc)
+        });
+    if !(redundancy > 0.0 && sum.is_finite()) {
+        return false;
+    }
+    let z = landmarks::chi2_inverse(2.0 * probability - 1.0, 1).sqrt();
+    let spread = 2.0 / (9.0 * redundancy);
+    sum > redundancy * (1.0 - spread + z * spread.sqrt()).powi(3)
 }
 
 /// The largest set of closures that pairwise agree (PCM): two closures agree when keyframe A.to's position predicted
@@ -728,6 +1094,7 @@ fn relative_position_covariances(
     )
 }
 
+#[derive(Clone)]
 pub(crate) struct State {
     pub(crate) rotation: Vec<Mat3>,
     pub(crate) position: Vec<Vec3>,
@@ -824,6 +1191,7 @@ pub(crate) fn linearize_between(
 
 fn cost(
     state: &State,
+    gravity: &[GravityPrior],
     odometry: &[Edge],
     closures: &[Edge],
     closure_weights: &[f64],
@@ -832,11 +1200,15 @@ fn cost(
     sightings: &[Sighting],
     sighting_weights: &[f64],
 ) -> f64 {
-    sightings
+    gravity
         .iter()
-        .zip(sighting_weights)
-        .map(|(s, w)| w * s.whitened(state))
+        .map(|g| mat3::norm(&gravity_residual(g, state)).powi(2) / g.variance)
         .sum::<f64>()
+        + sightings
+            .iter()
+            .zip(sighting_weights)
+            .map(|(s, w)| w * s.whitened(state))
+            .sum::<f64>()
         + unary
             .iter()
             .zip(unary_weights)
@@ -862,6 +1234,8 @@ struct Pattern {
     landmark_at: Vec<usize>,
     landmark_dims: Vec<usize>,
     size: usize,
+    /// The gravity factors (`SolveConfig::gravity`): never reweighted, so part of the problem's structure.
+    gravity: Vec<GravityPrior>,
     symbolic: SymbolicSparseColMat<usize>,
     order: Argsort<usize>,
     llt: SymbolicLlt<usize>,
@@ -874,6 +1248,7 @@ impl Pattern {
         unary: &[Unary],
         sightings: &[Sighting],
         landmark_dims: &[usize],
+        gravity: &[GravityPrior],
     ) -> Pattern {
         let mut count = 0;
         let slot: Vec<Option<usize>> = free
@@ -901,6 +1276,12 @@ impl Pattern {
                     .map(|(_, _, r, c)| Pair::new(r, c)),
             );
         }
+        // gravity factors after those (their keyframe's own block)
+        for g in gravity {
+            if let Some(a) = slot[g.keyframe] {
+                indices.extend(block_entries(a, a).map(|(_, _, r, c)| Pair::new(r, c)));
+            }
+        }
         // the damping diagonal last, so the matrix is never structurally singular
         indices.extend((0..size).map(|i| Pair::new(i, i)));
         let (symbolic, order) = SymbolicSparseColMat::try_new_from_indices(size, size, &indices)
@@ -912,6 +1293,7 @@ impl Pattern {
             landmark_at,
             landmark_dims: landmark_dims.to_vec(),
             size,
+            gravity: gravity.to_vec(),
             symbolic,
             order,
             llt,
@@ -959,6 +1341,7 @@ fn levenberg_marquardt(
     let mut damping = 1e-6;
     let mut current = cost(
         state,
+        &pattern.gravity,
         odometry,
         closures,
         closure_weights,
@@ -1024,6 +1407,7 @@ fn levenberg_marquardt(
             }
             let trial_cost = cost(
                 &trial,
+                &pattern.gravity,
                 odometry,
                 closures,
                 closure_weights,
@@ -1166,6 +1550,33 @@ fn normal_equations(
             gradient[at + i] -= pull(6 + i);
         }
     }
+    // gravity factors: residual R_k^T up - body_up; perturbing R_k by exp(d) about its own axes moves it by
+    // [R_k^T up]x d, so rotation about up itself (yaw) is untouched
+    for g in &pattern.gravity {
+        let Some(slot) = pattern.slot[g.keyframe] else {
+            continue;
+        };
+        let r = gravity_residual(g, state);
+        let jacobian = mat3::skew(&mat3::mat_vec(
+            &mat3::transpose(&state.rotation[g.keyframe]),
+            &g.up,
+        ));
+        let w = 1.0 / g.variance;
+        for (i, j, row, col) in block_entries(slot, slot) {
+            let v = if i < 3 && j < 3 {
+                w * (0..3).map(|m| jacobian[m][i] * jacobian[m][j]).sum::<f64>()
+            } else {
+                0.0
+            };
+            if row == col {
+                diagonal[row] += v;
+            }
+            values.push(v);
+        }
+        for i in 0..3 {
+            gradient[6 * slot + i] -= w * (0..3).map(|m| jacobian[m][i] * r[m]).sum::<f64>();
+        }
+    }
     (values, gradient, diagonal)
 }
 
@@ -1197,7 +1608,7 @@ fn exp(w: Vec3) -> Mat3 {
 }
 
 /// Axis-angle of rotation `r`.
-fn log(r: &Mat3) -> Vec3 {
+pub(crate) fn log(r: &Mat3) -> Vec3 {
     let cos = ((r[0][0] + r[1][1] + r[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
     let angle = cos.acos();
     let v = [r[2][1] - r[1][2], r[0][2] - r[2][0], r[1][0] - r[0][1]];
@@ -1207,380 +1618,6 @@ fn log(r: &Mat3) -> Vec3 {
         angle / (2.0 * angle.sin())
     };
     v.map(|x| x * scale)
-}
-
-// ---- the pose graph GSC keeps, re-solved on a background thread whenever closures arrive ----
-
-/// A pose-graph solve running on another thread over the first `keyframes` keyframes (all but keyframe 0 free) and the
-/// first `closures_dispatched` committed closures, adopted once it finishes (`GscPgo::update`) or when waited for
-/// (`GscPgo::wait_for_solve`).
-pub(crate) struct Solving {
-    handle: JoinHandle<(Solution, f64, Vec<u64>)>,
-    keyframes: usize,
-}
-
-impl GscPgo {
-    /// Half the sum of squared whitened residuals of the newest applied solve (how much its
-    /// constraints conflict).
-    pub fn graph_error(&self) -> f64 {
-        self.graph_error
-    }
-    pub fn committed_closures(&self) -> &[CommittedClosure] {
-        &self.committed_closures
-    }
-    /// Apply the running solve if it has finished, and start one when closures have arrived since the
-    /// last. Never blocks. Returns whether keyframes moved.
-    pub fn update(&mut self) -> bool {
-        let finished = self
-            .solving
-            .as_ref()
-            .is_some_and(|solving| solving.handle.is_finished());
-        self.adopt(finished)
-    }
-    /// `update`, but waiting for the running solve to finish first.
-    pub fn wait_for_solve(&mut self) -> bool {
-        self.adopt(true)
-    }
-    /// The running solve's keyframe count and free keyframe count when it started, if one is running.
-    pub fn solve_started(&self) -> Option<(usize, usize)> {
-        self.solving
-            .as_ref()
-            .map(|s| (s.keyframes, s.keyframes - 1))
-    }
-    /// Call `solved` (from the solve's thread) whenever a solve finishes, so a caller can sleep until then.
-    pub fn notify_when_solved(&mut self, solved: impl Fn() + Send + Sync + 'static) {
-        self.solved = Some(std::sync::Arc::new(solved));
-    }
-    fn adopt(&mut self, ready: bool) -> bool {
-        self.new_closure = false;
-        let moved = ready && self.apply_solve();
-        if self.solving.is_none() && self.unsolved() {
-            self.dispatch_solve();
-        }
-        moved
-    }
-    /// Whether a closure or a world position arrived after the newest solve started.
-    fn unsolved(&self) -> bool {
-        // nothing to solve before the first keyframe (a fix or sighting can arrive before it)
-        !self.key_poses.is_empty()
-            && (self.committed_closures.len() > self.closures_dispatched
-                || self.world_positions.len() > self.world_positions_dispatched
-                || self.landmark_sightings.len() > self.landmark_sightings_dispatched
-                || self.odometry_noise_rescale)
-    }
-    /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
-    /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
-    /// keyframe nearest in time (`solve_with_priors`).
-    pub fn add_coordinate_factor(
-        &mut self,
-        time: f64,
-        frame: u32,
-        lever: Vec3,
-        position: Vec3,
-        covariance: Mat3,
-    ) {
-        self.world_positions
-            .push((time, frame, lever, position, covariance));
-    }
-    /// A landmark `landmark` (any id the caller keeps for it: a tag's number, a matched feature, another robot's
-    /// landmark) seen at `time` with pose (`rotation`, `position`) in the body frame (through the sensor's mount), with
-    /// that pose's 6x6 `information` (`LandmarkSighting`'s order; zero in an unknown dimension). It joins the next solve
-    /// as a sighting from the keyframe nearest in time.
-    pub fn add_landmark_factor(
-        &mut self,
-        time: f64,
-        landmark: u64,
-        rotation: Mat3,
-        position: Vec3,
-        information: [[f64; 6]; 6],
-    ) {
-        self.landmark_sightings
-            .push((time, landmark, rotation, position, information));
-    }
-    /// `add_landmark_factor` for a point: `position` with its 3x3 `covariance` (m²; `bearing_and_range` makes one from a
-    /// bearing and a rough range), the rotation unknown.
-    pub fn add_landmark_point(
-        &mut self,
-        time: f64,
-        landmark: u64,
-        position: Vec3,
-        covariance: Mat3,
-    ) {
-        let point = LandmarkSighting::point(0, 0, position, covariance);
-        self.add_landmark_factor(time, landmark, point.rotation, position, point.information);
-    }
-    /// The newest solve's landmarks: id, map rotation (identity for a point) and map position.
-    pub fn landmarks(&self) -> &[(u64, Mat3, Vec3)] {
-        &self.landmarks
-    }
-    /// The newest solve's map -> frame alignments (frame id, yaw about z, translation), one per world frame its
-    /// positions made observable.
-    pub fn world_alignment(&self) -> &[(u32, f64, Vec3)] {
-        &self.world_alignment
-    }
-    /// Each world position as a prior on the keyframe nearest its time, its covariance grown by how far the body moves in
-    /// that time gap (the keyframes' own speed there, squared, in each horizontal axis and up); fixes before the first or
-    /// after the last keyframe are left for later.
-    fn position_priors(&self) -> Vec<PositionPrior> {
-        self.world_positions
-            .iter()
-            .filter_map(|&(time, frame, lever, world, covariance)| {
-                let (keyframe, moved) = self.nearest_keyframe(time)?;
-                let mut grown = covariance;
-                for (axis, row) in grown.iter_mut().enumerate() {
-                    row[axis] += moved;
-                }
-                Some(PositionPrior {
-                    keyframe,
-                    frame,
-                    lever,
-                    world,
-                    covariance: grown,
-                })
-            })
-            .collect()
-    }
-    /// The keyframe nearest `time` and how far (squared, m²) the body moves in that gap at the keyframes' own speed there;
-    /// None before the first or after the last keyframe (left for later).
-    fn nearest_keyframe(&self, time: f64) -> Option<(usize, f64)> {
-        let n = self.key_poses.len();
-        let time_of = |k: usize| self.key_poses[k].time;
-        if n < 2 || time < time_of(0) || time > time_of(n - 1) {
-            return None;
-        }
-        let after = self
-            .key_poses
-            .partition_point(|k| k.time < time)
-            .clamp(1, n - 1);
-        let keyframe = if time - time_of(after - 1) <= time_of(after) - time {
-            after - 1
-        } else {
-            after
-        };
-        let gap = (time_of(after) - time_of(after - 1)).max(f64::EPSILON);
-        let speed = mat3::norm(&mat3::sub(
-            &self.key_poses[after].translation_local,
-            &self.key_poses[after - 1].translation_local,
-        )) / gap;
-        Some((keyframe, (speed * (time - time_of(keyframe)).abs()).powi(2)))
-    }
-    /// Each landmark sighting from the keyframe nearest its time, its known position variances grown by how far the body
-    /// moves in that gap; landmarks numbered densely in order of first sighting, with their ids.
-    fn sightings(&self) -> (Vec<LandmarkSighting>, Vec<u64>) {
-        let mut ids: Vec<u64> = Vec::new();
-        let sightings = self
-            .landmark_sightings
-            .iter()
-            .filter_map(|&(time, id, rotation, position, information)| {
-                let (keyframe, moved) = self.nearest_keyframe(time)?;
-                let landmark = ids.iter().position(|&i| i == id).unwrap_or_else(|| {
-                    ids.push(id);
-                    ids.len() - 1
-                });
-                let mut grown = crate::landmarks::known_inverse(&information);
-                for axis in 3..6 {
-                    if grown[axis][axis] > 0.0 {
-                        grown[axis][axis] += moved;
-                    }
-                }
-                Some(LandmarkSighting {
-                    keyframe,
-                    landmark,
-                    rotation,
-                    position,
-                    information: crate::landmarks::known_inverse(&grown),
-                })
-            })
-            .collect();
-        (sightings, ids)
-    }
-    /// Wait for the running solve, and solve again until every closure is in. Returns whether keyframes moved.
-    pub fn finish(&mut self) -> bool {
-        let mut moved = false;
-        loop {
-            moved |= self.apply_solve();
-            if !self.unsolved() {
-                return moved;
-            }
-            self.dispatch_solve();
-        }
-    }
-    /// Start a solve of every committed closure from the odometry (GNC must start from the dead-reckoned chain,
-    /// not an estimate earlier closures already bent).
-    fn dispatch_solve(&mut self) {
-        let n = self.key_poses.len();
-        let config = &self.config;
-        let closures = closure_edges(self.committed_closures.iter(), self.closure_noise_scale());
-        // keyframe 0 pins the map; the rest start from the odometry, riding its correction
-        let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
-        let pinned = &self.key_poses[0];
-        let offset_rotation = mat3::mat_mul(
-            &pinned.rotation_global,
-            &mat3::transpose(&pinned.rotation_local),
-        );
-        let offset_translation = mat3::sub(
-            &pinned.translation_global,
-            &mat3::mat_vec(&offset_rotation, &pinned.translation_local),
-        );
-        let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
-        rotations.push(pinned.rotation_global);
-        positions.push(pinned.translation_global);
-        for key_pose in &self.key_poses[1..] {
-            rotations.push(mat3::mat_mul(&offset_rotation, &key_pose.rotation_local));
-            positions.push(mat3::add(
-                &mat3::mat_vec(&offset_rotation, &key_pose.translation_local),
-                &offset_translation,
-            ));
-        }
-        // every odometry edge and closure has an end past keyframe 0, so all of them are in
-        let odometry = odometry_edges(&self.key_poses, config, self.odometry_noise());
-        let priors = self.position_priors();
-        let (sightings, landmark_ids) = self.sightings();
-        let solve_config = SolveConfig {
-            gnc_variance_scale: config.closure_gnc_var_scale,
-            gnc_inlier_probability: config.closure_gnc_inlier_probability,
-            huber_k: config.closure_robust_huber_k,
-            pcm_odometry_translation_variance: if config.closure_pcm {
-                mean_step_variances(&self.key_poses, config)[0] * self.odometry_noise()[0]
-            } else {
-                0.0
-            },
-        };
-        let solved = self.solved.clone();
-        let handle = std::thread::Builder::new()
-            .name("gsc-pose-graph".into())
-            .spawn(move || {
-                let started = std::time::Instant::now();
-                let solution = if priors.is_empty() && sightings.is_empty() {
-                    solve(
-                        &rotations,
-                        &positions,
-                        &free,
-                        &odometry,
-                        &closures,
-                        &solve_config,
-                    )
-                } else {
-                    solve_with_priors(
-                        &rotations,
-                        &positions,
-                        &free,
-                        &odometry,
-                        &closures,
-                        &priors,
-                        &sightings,
-                        &solve_config,
-                    )
-                };
-                let seconds = started.elapsed().as_secs_f64();
-                if let Some(solved) = solved {
-                    solved();
-                }
-                (solution, seconds, landmark_ids)
-            })
-            .expect("spawn pose graph thread");
-        // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
-        self.odometry_noise_rescaled = self.odometry_noise_rescale
-            && self.committed_closures.len() == self.closures_dispatched
-            && self.world_positions.len() == self.world_positions_dispatched
-            && self.landmark_sightings.len() == self.landmark_sightings_dispatched;
-        self.closures_dispatched = self.committed_closures.len();
-        self.world_positions_dispatched = self.world_positions.len();
-        self.landmark_sightings_dispatched = self.landmark_sightings.len();
-        self.odometry_noise_ln_dispatched = self.odometry_noise_ln;
-        self.closure_noise_ln_scale_dispatched = self.closure_noise_ln_scale;
-        self.odometry_noise_rescale = false;
-        self.solving = Some(Solving {
-            handle,
-            keyframes: n,
-        });
-    }
-    /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
-    /// ride on, and its closure verdicts. Returns whether there was one.
-    fn apply_solve(&mut self) -> bool {
-        let Some(solving) = self.solving.take() else {
-            return false;
-        };
-        let (solution, seconds, landmark_ids) =
-            solving.handle.join().expect("pose graph solve panicked");
-        if !landmark_ids.is_empty() {
-            self.landmarks = landmark_ids
-                .into_iter()
-                .zip(solution.landmark_rotations.iter().zip(&solution.landmarks))
-                .map(|(id, (&r, &p))| (id, r, p))
-                .collect();
-        }
-        self.timing.solve_s += seconds;
-        if !solution.world_alignment.is_empty() {
-            self.world_alignment = solution.world_alignment.clone();
-        }
-        let n = solving.keyframes;
-        self.solved_relative_covariance =
-            Some((n - 1, solution.relative_position_covariance.clone()))
-                .filter(|(_, covariance)| covariance.len() == n);
-        for (key_pose, (rotation, position)) in self.key_poses[..n]
-            .iter_mut()
-            .zip(solution.rotations.iter().zip(&solution.positions))
-        {
-            key_pose.rotation_global = *rotation;
-            key_pose.translation_global = *position;
-        }
-        // keyframes made since the solve started ride on its newest keyframe's correction
-        let newest = &self.key_poses[n - 1];
-        self.rotation_offset = mat3::mat_mul(
-            &newest.rotation_global,
-            &mat3::transpose(&newest.rotation_local),
-        );
-        self.translation_offset = mat3::sub(
-            &newest.translation_global,
-            &mat3::mat_vec(&self.rotation_offset, &newest.translation_local),
-        );
-        for key_pose in &mut self.key_poses[n..] {
-            key_pose.rotation_global =
-                mat3::mat_mul(&self.rotation_offset, &key_pose.rotation_local);
-            key_pose.translation_global = mat3::add(
-                &mat3::mat_vec(&self.rotation_offset, &key_pose.translation_local),
-                &self.translation_offset,
-            );
-        }
-        // the solve judged every closure dispatched to it; one committed while it ran was not in it, so it stays unjudged
-        for (index, weight) in solution.closure_weights.iter().copied().enumerate() {
-            let previous = self.committed_closures[index].gnc_weight;
-            self.committed_closures[index].gnc_weight = weight;
-            if previous == weight {
-                continue;
-            }
-            let (source, target) = (
-                self.committed_closures[index].source_id,
-                self.committed_closures[index].target_id,
-            );
-            let (confidence, yank_z) = (
-                self.closure_fit_confidence[index],
-                self.closure_yank_z[index],
-            );
-            if weight > 0.5 {
-                self.push_edge(
-                    source,
-                    target,
-                    ClosureEdgeState::Accepted,
-                    confidence,
-                    yank_z,
-                );
-                self.push_edge(
-                    source,
-                    target,
-                    ClosureEdgeState::Applied,
-                    confidence,
-                    yank_z,
-                );
-            } else {
-                self.push_edge(source, target, ClosureEdgeState::Rejected, 0.0, yank_z);
-            }
-        }
-        self.graph_error = solution.error;
-        self.update_odometry_noise_scale(solution.odometry_noise_evidence);
-        true
-    }
 }
 
 /// The odometry between consecutive keyframes, from their dead-reckoned poses, at the configured variances.
@@ -1658,11 +1695,12 @@ pub(crate) fn odometry_edges(
         .collect()
 }
 
-/// Committed closures as pose-graph edges; a closure's variance is its ICP fitness times `scale`
+/// Committed closures as pose-graph edges; a closure's variance is its fit's own (`CommittedClosure::variances`), else its ICP fitness, times `scale`
 /// (`GscPgo::closure_noise_scale`).
 pub(crate) fn closure_edges<'a>(
     closures: impl Iterator<Item = &'a CommittedClosure>,
-    scale: f64,
+    // [rotation, translation] factors on ICP fitness
+    scale: [f64; 2],
 ) -> Vec<Edge> {
     closures
         .map(|l| Edge {
@@ -1670,7 +1708,9 @@ pub(crate) fn closure_edges<'a>(
             to: l.source_id,
             rotation: l.rotation_offset,
             translation: l.translation_offset,
-            variances: [l.score.max(1e-6) * scale; 6],
+            variances: std::array::from_fn(|k| {
+                l.variances.map_or(l.score.max(1e-6), |v| v[k]) * scale[k / 3]
+            }),
         })
         .collect()
 }
