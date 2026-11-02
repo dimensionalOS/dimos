@@ -14,15 +14,12 @@
 
 """What a module sends Simulation, as {"simulated": ...} from a @shared_config(Simulation) method."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
+from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 import xml.etree.ElementTree as ET
-
-import numpy as np
-from numpy.typing import NDArray
-from scipy.spatial.transform import Rotation
 
 Vector = tuple[float, float, float]
 
@@ -30,9 +27,9 @@ Vector = tuple[float, float, float]
 @dataclass(frozen=True)
 class SimulatedRobot:
     robot_id: str
+    # Its MJCF: its sensors' frames are sites (or bodies) in it (mjcf_with_frames adds them).
+    model: Path
     root_body: str
-    # None: the model is the robot_description of the same name (a UrdfManager's), in the format the engine loads.
-    model: Path | None = None
     xyz: Vector = (0.0, 0.0, 0.0)
     rpy: Vector = (0.0, 0.0, 0.0)
     floating: bool = True
@@ -40,93 +37,43 @@ class SimulatedRobot:
 
 @dataclass(frozen=True)
 class SimulatedSensor:
-    """A sensor at a frame: one in a robot's URDF, or a body of the scene. The engine decides what each kind becomes.
+    """A sensor at a frame: a site or body of a robot's model, or of the scene. The engine decides what each kind becomes.
 
-    Simulation fills in where the frame sits: the robot and body it is fixed to, and its pose on that body.
+    Simulation fills in robot_id: the robot whose model names the frame (None: the scene's).
     """
 
     kind: Literal["camera", "lidar", "imu"]
     frame_id: str
     fovy: float = 60.0
     robot_id: str | None = None
-    body: str = "world"
-    xyz: Vector = (0.0, 0.0, 0.0)
-    rpy: Vector = (0.0, 0.0, 0.0)
 
 
 Simulated = SimulatedRobot | SimulatedSensor
 
 
-def resolve(
-    simulated: Iterable[Simulated], descriptions: Mapping[str, Mapping[str, Any]], model_format: str
-) -> list[Simulated]:
-    """Each robot's model from its robot_description, and each sensor placed at its frame in the robots' URDFs.
-
-    A frame is placed on the nearest link above it that a moving joint (or nothing) holds: a body of the model, as
-    a URDF made from it (mjcf_to_urdf) names them. A frame in no URDF is a body of the scene.
-    """
-    descriptions = dict(descriptions)
-    resolved: list[Simulated] = []
-    robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
-    frames: dict[str, tuple[str, str, NDArray[np.float64]]] = {}
-    for robot_id, robot in robots.items():
-        robot_description = descriptions.get(robot_id)
-        if robot_description is None:
-            continue
-        frames.update(_frames(robot_id, robot.root_body, robot_description["urdf"]))
-        if robot.model is None:
-            model = robot_description["formats"].get(model_format)
-            if model is None:
-                raise ValueError(f"{robot_id}'s robot_description has no {model_format!r} format")
-            robot = replace(robot, model=Path(model))
-            robots[robot_id] = robot
-    for description in simulated:
-        if isinstance(description, SimulatedRobot):
-            robot = robots[description.robot_id]
-            if robot.model is None:
-                raise ValueError(f"{robot.robot_id} has no model and no robot_description names it")
-            resolved.append(robot)
-        elif description.frame_id in frames:
-            robot_id, body, transform = frames[description.frame_id]
-            x, y, z = (float(v) for v in transform[:3, 3])
-            roll, pitch, yaw = (
-                float(v) for v in Rotation.from_matrix(transform[:3, :3]).as_euler("xyz")
-            )
-            xyz, rpy = (x, y, z), (roll, pitch, yaw)
-            resolved.append(replace(description, robot_id=robot_id, body=body, xyz=xyz, rpy=rpy))
-        else:
-            resolved.append(replace(description, robot_id=None, body=description.frame_id))
-    return resolved
+def resolve(simulated: Iterable[Simulated]) -> list[Simulated]:
+    """Each sensor with the robot whose model names its frame; one named by no robot's model is the scene's."""
+    descriptions = list(simulated)
+    frames: dict[str, str] = {}
+    for robot in descriptions:
+        if isinstance(robot, SimulatedRobot):
+            frames.update(dict.fromkeys(frame_names(robot.model), robot.robot_id))
+    return [
+        replace(d, robot_id=frames.get(d.frame_id)) if isinstance(d, SimulatedSensor) else d
+        for d in descriptions
+    ]
 
 
-def _frames(
-    robot_id: str, root_body: str, urdf: str
-) -> dict[str, tuple[str, str, NDArray[np.float64]]]:
-    """Every URDF link: (robot, the body it is fixed to, its pose on that body)."""
-    joints: dict[str, tuple[str, str, NDArray[np.float64]]] = {}
-    root = ET.fromstring(urdf)
-    for joint in root.findall("joint"):
-        element = joint.find("origin")
-        origin = np.eye(4)
-        if element is not None:
-            origin[:3, :3] = Rotation.from_euler("xyz", _triple(element.get("rpy"))).as_matrix()
-            origin[:3, 3] = _triple(element.get("xyz"))
-        child = joint.find("child").get("link", "")  # type: ignore[union-attr]
-        parent = joint.find("parent").get("link", "")  # type: ignore[union-attr]
-        joints[child] = (parent, joint.get("type", "fixed"), origin)
-    frames: dict[str, tuple[str, str, NDArray[np.float64]]] = {}
-    for link in root.findall("link"):
-        frame = name = link.get("name", "")
-        transform = np.eye(4)
-        while name in joints and joints[name][1] == "fixed":
-            parent, _, origin = joints[name]
-            name, transform = parent, origin @ transform
-        frames[frame] = (robot_id, name if name in joints else root_body, transform)
-    return frames
-
-
-def _triple(text: str | None) -> list[float]:
-    return [float(v) for v in text.split()] if text else [0.0, 0.0, 0.0]
+@cache
+def frame_names(mjcf: Path) -> frozenset[str]:
+    """The names of an MJCF's bodies and sites."""
+    root = ET.parse(mjcf).getroot()
+    return frozenset(
+        name
+        for tag in ("body", "site")
+        for element in root.iter(tag)
+        if (name := element.get("name"))
+    )
 
 
 def validate(simulated: Iterable[Simulated]) -> None:
