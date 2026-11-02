@@ -89,6 +89,7 @@ fn verdict(closure: Edge, gravity_variance: Option<f64>) -> f64 {
             gnc_overtrust_check: false,
             overtrust_noise_headroom: [1.0; 4],
             gravity,
+            committed: Vec::new(),
         },
     );
     solution.closure_weights[0]
@@ -176,6 +177,7 @@ fn the_noise_evidence_ignores_the_gravity_factors() {
                 gnc_overtrust_check: false,
                 overtrust_noise_headroom: [1.0; 4],
                 gravity,
+                committed: Vec::new(),
             },
         );
         assert_eq!(solution.closure_weights, vec![1.0]);

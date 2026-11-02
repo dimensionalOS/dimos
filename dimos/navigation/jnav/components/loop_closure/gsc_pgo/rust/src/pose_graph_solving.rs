@@ -296,32 +296,64 @@ impl GscPgo {
                 }
                 None => Vec::new(),
             },
+            committed: if config.closure_commitments {
+                self.committed_closures
+                    .iter()
+                    .map(|c| c.gnc_weight > 0.5)
+                    .collect()
+            } else {
+                Vec::new()
+            },
         };
         let solved = self.solved.clone();
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
                 let started = std::time::Instant::now();
-                let solution = if priors.is_empty() && sightings.is_empty() {
-                    solve(
-                        &rotations,
-                        &positions,
-                        &free,
-                        &odometry,
-                        &closures,
-                        &solve_config,
-                    )
+                let run = |solve_config: &SolveConfig| {
+                    if priors.is_empty() && sightings.is_empty() {
+                        solve(
+                            &rotations,
+                            &positions,
+                            &free,
+                            &odometry,
+                            &closures,
+                            solve_config,
+                        )
+                    } else {
+                        solve_with_priors(
+                            &rotations,
+                            &positions,
+                            &free,
+                            &odometry,
+                            &closures,
+                            &priors,
+                            &sightings,
+                            solve_config,
+                        )
+                    }
+                };
+                let held = run(&solve_config);
+                // the committed closures stand unless a cold solve finds a larger group that rejects one of them
+                let solution = if solve_config.committed.iter().any(|&c| c) {
+                    let cold = run(&SolveConfig {
+                        committed: Vec::new(),
+                        ..solve_config.clone()
+                    });
+                    let count =
+                        |s: &Solution| s.closure_weights.iter().filter(|&&w| w > 0.5).count();
+                    let contradicts = solve_config
+                        .committed
+                        .iter()
+                        .zip(&cold.closure_weights)
+                        .any(|(&c, &w)| c && w < 0.5);
+                    if count(&cold) > count(&held) && contradicts {
+                        cold
+                    } else {
+                        held
+                    }
                 } else {
-                    solve_with_priors(
-                        &rotations,
-                        &positions,
-                        &free,
-                        &odometry,
-                        &closures,
-                        &priors,
-                        &sightings,
-                        &solve_config,
-                    )
+                    held
                 };
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(solved) = solved {

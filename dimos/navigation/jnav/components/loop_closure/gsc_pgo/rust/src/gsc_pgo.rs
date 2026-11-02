@@ -478,6 +478,22 @@ pub struct Config {
     /// a look-alike floor cannot be fitted by tilting a chain of keyframes. The bound is the committed closures' own
     /// (`odometry_gravity_variance`); the odometry frame's z must be up.
     pub odometry_gravity_bound: bool,
+    /// When true, a closure the previous solve kept is a commitment: each solve holds the committed closures in, and
+    /// drops them only when a cold solve (every closure re-decided) keeps more closures and rejects some committed one,
+    /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
+    /// by newer wrong closures) no longer drops it (huge overtrust: 24 kept, 0, 24, 0).
+    pub closure_commitments: bool,
+    /// When true, the closure ICP's inlier distance (`closure_score_thresh`'s role) is measured instead of configured:
+    /// each keyframe's scan against the keyframes before it, placed by the odometry (an alignment known to be right),
+    /// gives nearest-neighbour distances fitted as half-normal (width w, the points the two see in common) plus uniform
+    /// out to the ICP match distance (the rest); the inlier distance is where the median keyframe's w puts a right
+    /// point with probability `closure_gnc_inlier_probability` (w^2 chi-square(1) quantile). The configured value holds
+    /// until a keyframe has been measured.
+    pub closure_inlier_distance_from_odometry: bool,
+    /// When true, a submap reaches as far as the sensor does instead of `closure_submap_half_range` keyframes each side:
+    /// as many keyframes as the keyframes' mean scan reach (`keyframe_reach`) spans at their mean spacing along the path,
+    /// at least the configured half range.
+    pub closure_submap_by_reach: bool,
     /// When true, the degeneracy gate reads `connection_fit::observability` (the point-to-plane ICP Hessian over the
     /// matched pairs, in x, y, z and yaw) of the ICP alignment instead of the source scan's own normal spread.
     pub closure_hessian_observability: bool,
@@ -579,6 +595,9 @@ impl Default for Config {
             closure_gnc_overtrust_check: false,
             closure_icp_covariance: false,
             odometry_gravity_bound: false,
+            closure_commitments: false,
+            closure_inlier_distance_from_odometry: false,
+            closure_submap_by_reach: false,
             closure_hessian_observability: false,
             closure_likelihood_visibility: false,
             closure_likelihood_beam: false,
@@ -655,6 +674,10 @@ pub struct GscPgo {
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
+    /// Each measured keyframe's right-alignment width against the keyframes before it (`closure_inlier_distance_from_odometry`).
+    pub(crate) odometry_alignment_widths: Vec<f64>,
+    /// The keyframes' path length so far (`closure_submap_by_reach`).
+    pub(crate) keyframe_path_length: f64,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
     /// Shared, so a closure search can count look-alike places without copying them.
@@ -795,13 +818,56 @@ impl ClosureSearch {
                 (source_cloud, target_cloud, target_tree)
             })
         };
-        // a cloud computation, through the ICP cache when there is one
+        // a cloud computation, through the ICP cache when there is one; a measured inlier distance changes every
+        // fit, so it is part of the key
         let cache = self.icp_cache.clone();
+        let mut key_suffix = String::new();
+        if self.config.closure_inlier_distance_from_odometry {
+            key_suffix += &format!(":{:x}", self.config.closure_score_thresh.to_bits());
+        }
+        if self.config.closure_submap_by_reach {
+            key_suffix += &format!(":h{}", self.config.closure_submap_half_range);
+        }
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
-                Some(cache) => cache.get_or(format!("{cur_idx}:{target_idx}:{tag}"), compute),
+                Some(cache) => {
+                    cache.get_or(format!("{cur_idx}:{target_idx}:{tag}{key_suffix}"), compute)
+                }
                 None => compute(),
             }
+        };
+        // an alignment through the cache: stored as the source's pose relative to the target (`relative_icp`), the
+        // computed value itself returned when it was computed here
+        let (source_pose, target_pose) = (
+            (
+                &self.key_poses[cur_idx].rotation_global,
+                &self.key_poses[cur_idx].translation_global,
+            ),
+            (
+                &self.key_poses[target_idx].rotation_global,
+                &self.key_poses[target_idx].translation_global,
+            ),
+        );
+        let memo_alignment = |tag: &str,
+                              at: usize,
+                              compute: &mut dyn FnMut() -> Vec<f64>|
+         -> Vec<f64> {
+            let Some(cache) = &cache else {
+                return compute();
+            };
+            let mut computed = None;
+            let stored = cache.get_or(format!("{cur_idx}:{target_idx}:{tag}{key_suffix}"), || {
+                let value = compute();
+                let mut relative = value.clone();
+                crate::icp_cache::relative_icp(&mut relative[at..], source_pose, target_pose, true);
+                computed = Some(value);
+                relative
+            });
+            computed.unwrap_or_else(|| {
+                let mut value = stored;
+                crate::icp_cache::relative_icp(&mut value[at..], source_pose, target_pose, false);
+                value
+            })
         };
 
         // Observability gate: a planar/degenerate source scan leaves the alignment unconstrained in-plane, so fitness
@@ -823,7 +889,7 @@ impl ClosureSearch {
         }
 
         let t0 = std::time::Instant::now();
-        let icp = crate::icp_cache::decode_icp(&memo("icp", &mut || {
+        let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
             crate::icp_cache::encode_icp(&icp(
                 source_cloud,
@@ -1139,7 +1205,7 @@ impl ClosureSearch {
                 &icp,
                 &mut diag,
                 &mut required,
-                &memo,
+                &memo_alignment,
             );
             timing.extended_icp_s += t0.elapsed().as_secs_f64();
             let Some(extended) = extended else {
@@ -1305,7 +1371,7 @@ impl GscPgo {
         let Some(v_new) = newest.variances else {
             return;
         };
-        let half = self.config.closure_submap_half_range.max(0) as usize;
+        let half = self.submap_half_range().max(0) as usize;
         let local = |k: usize| {
             (
                 self.key_poses[k].rotation_local,
@@ -1869,7 +1935,11 @@ impl GscPgo {
         );
         Some(ClosureSearch {
             key_poses: self.key_poses.clone(),
-            config: self.config.clone(),
+            config: Config {
+                closure_score_thresh: self.closure_inlier_squared_distance(),
+                closure_submap_half_range: self.submap_half_range(),
+                ..self.config.clone()
+            },
             scored_yanks: self.yank_scale_sample(),
             mean_step_xy_variance: crate::big_picture_fit::mean_step_variances(
                 &self.key_poses,
@@ -2013,6 +2083,8 @@ impl GscPgo {
                 self.keyframe_reach.1 += 1;
             }
         }
+        let measure = self.config.closure_inlier_distance_from_odometry;
+        let previous_position = self.key_poses.last().map(|k| k.translation_global);
         self.key_poses.push(KeyPoseWithCloud {
             time: pose.second,
             rotation_local: pose.rotation,
@@ -2024,6 +2096,16 @@ impl GscPgo {
                 &self.translation_offset,
             ),
         });
+
+        if let Some(previous) = previous_position {
+            self.keyframe_path_length += mat3::norm(&mat3::sub(
+                &self.key_poses.last().unwrap().translation_global,
+                &previous,
+            ));
+        }
+        if measure {
+            self.measure_odometry_alignment();
+        }
 
         // the scan context descriptor and ring key (empty without a cloud); a non-positive max range is set once from
         // the first cloud's extent, so every descriptor shares one binning
@@ -2048,6 +2130,94 @@ impl GscPgo {
         self.scan_context_ring_keys
             .push(similarity_discovery::make_ring_key(&descriptor));
         self.scan_context_descriptors.push(Arc::new(descriptor));
+    }
+
+    /// Keyframes each side of a submap's centre: `closure_submap_half_range`, or with `closure_submap_by_reach` as many
+    /// as the mean scan reach spans at the mean keyframe spacing (never fewer).
+    pub fn submap_half_range(&self) -> i32 {
+        let configured = self.config.closure_submap_half_range;
+        let (reach_sum, reach_count) = self.keyframe_reach;
+        let steps = self.key_poses.len().saturating_sub(1);
+        if !self.config.closure_submap_by_reach
+            || reach_count == 0
+            || steps == 0
+            || !(self.keyframe_path_length > 0.0)
+        {
+            return configured;
+        }
+        let spacing = self.keyframe_path_length / steps as f64;
+        let spanned = (reach_sum / reach_count as f64 / spacing).ceil();
+        (spanned.min(i32::MAX as f64) as i32).max(configured)
+    }
+    /// The closure ICP's inlier distance squared: measured (`closure_inlier_distance_from_odometry`) once a keyframe has
+    /// been, else `closure_score_thresh`.
+    pub fn closure_inlier_squared_distance(&self) -> f64 {
+        if !self.config.closure_inlier_distance_from_odometry
+            || self.odometry_alignment_widths.is_empty()
+        {
+            return self.config.closure_score_thresh;
+        }
+        let mut widths = self.odometry_alignment_widths.clone();
+        widths.sort_by(f64::total_cmp);
+        let width = widths[widths.len() / 2];
+        width
+            * width
+            * crate::landmarks::chi2_inverse(self.config.closure_gnc_inlier_probability, 1)
+    }
+    /// The newest keyframe's scan against the submap of the `closure_submap_half_range` x 2 keyframes before it, all
+    /// placed by the odometry: the width of a right alignment's nearest-neighbour distances
+    /// (`closure_inlier_distance_from_odometry`).
+    fn measure_odometry_alignment(&mut self) {
+        let newest = self.key_poses.len() - 1;
+        let before = 2 * self.config.closure_submap_half_range.max(1) as usize;
+        if newest < before {
+            return;
+        }
+        let place = |k: usize| -> PointCloud {
+            let key_pose = &self.key_poses[k];
+            key_pose
+                .body_cloud
+                .as_ref()
+                .map_or(PointCloud::new(), |cloud| {
+                    transform_cloud(
+                        cloud,
+                        &key_pose.rotation_global,
+                        &key_pose.translation_global,
+                    )
+                })
+        };
+        let clearance = self.config.closure_ground_clearance_m;
+        let source = above_floor(&place(newest), clearance);
+        let mut target = PointCloud::new();
+        for k in newest - before..newest {
+            target.extend(place(k));
+        }
+        let target = above_floor(
+            &voxel_downsample(&target, self.config.submap_resolution),
+            clearance,
+        );
+        if source.len() < 20 || target.len() < 20 {
+            return;
+        }
+        let tree = KdTree::build(&target);
+        let step = (source.len() / 1000).max(1);
+        let reach = self.config.closure_icp_max_correspondence_m;
+        let distances: Vec<f64> = source
+            .iter()
+            .step_by(step)
+            .filter_map(|p| tree.nearest(p))
+            .map(|(_, d)| (d as f64).sqrt().min(reach))
+            .collect();
+        if let Some(width) = crate::connection_fit::half_normal_width(&distances, reach) {
+            self.odometry_alignment_widths.push(width);
+            let measured = self.odometry_alignment_widths.len();
+            if measured.is_power_of_two() {
+                eprintln!(
+                    "closure inlier distance: {:.3} m from {measured} keyframes (newest width {width:.3} m)",
+                    self.closure_inlier_squared_distance().sqrt()
+                );
+            }
+        }
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.

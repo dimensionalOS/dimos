@@ -86,6 +86,7 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             gnc_overtrust_check: false,
             overtrust_noise_headroom: [1.0; 4],
             gravity: Vec::new(),
+            committed: Vec::new(),
         },
     );
     assert_eq!(solution.closure_weights, vec![1.0, 0.0]);
@@ -146,6 +147,7 @@ fn relative_covariance_of_a_chain_is_its_odometry_noise() {
         gnc_overtrust_check: false,
         overtrust_noise_headroom: [1.0; 4],
         gravity: Vec::new(),
+        committed: Vec::new(),
     };
     let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
     assert_eq!(solution.relative_position_covariance.len(), n);
@@ -259,6 +261,7 @@ fn overtrusted_square(gnc_overtrust_check: bool) -> (Vec<f64>, f64, f64) {
             gnc_overtrust_check,
             overtrust_noise_headroom: [1.0; 4],
             gravity: Vec::new(),
+            committed: Vec::new(),
         },
     );
     let gap = |positions: &[Vec3]| mat3::norm(&mat3::sub(&positions[4 * SIDE], &positions[0]));
@@ -324,6 +327,7 @@ fn the_overtrust_check_keeps_tls_verdict_on_an_honest_odometry() {
                 gnc_overtrust_check,
                 overtrust_noise_headroom: [1.0; 4],
                 gravity: Vec::new(),
+                committed: Vec::new(),
             },
         )
     };
@@ -331,4 +335,73 @@ fn the_overtrust_check_keeps_tls_verdict_on_an_honest_odometry() {
     assert_eq!(with.closure_weights, vec![1.0, 0.0]);
     assert_eq!(with.closure_weights, without.closure_weights);
     assert!(mat3::norm(&with.positions[last]) < 0.05);
+}
+
+/// The revisited square with its five true closures committed (the previous solve kept them), then nine look-alikes
+/// arrive that agree with each other and with the dead-reckoned graph (they claim the revisit is where the drifted
+/// odometry puts it, as a burst of wrong matches dragged along by the drift does). A cold solve, starting from the
+/// odometry, keeps the nine and drops the true five (`cold`); held as commitments, the five stay kept, the look-alikes,
+/// which contradict them, are voted out and the revisit lands on the first side (`closure_commitments`).
+fn committed_square(committed: bool) -> (Vec<f64>, f64, f64) {
+    let (yaw_sd, revisit, closure_var) = (0.003, 5, 1e-4);
+    let (truth, odometry) = revisited_square(yaw_sd, revisit);
+    let last = truth.len() - 1;
+    let honest = [1e-8, 1e-8, yaw_sd * yaw_sd, 1e-6, 1e-6, 1e-6];
+    let odometry_edges: Vec<Edge> = (1..=last)
+        .map(|k| between(&odometry, k - 1, k, honest))
+        .collect();
+    let mut closures: Vec<Edge> = (0..revisit)
+        .map(|j| between(&truth, j, 4 * SIDE + j, [closure_var; 6]))
+        .collect();
+    closures
+        .extend((0..9).map(|j| between(&odometry, j, 4 * SIDE + j % revisit, [closure_var; 6])));
+    let solution = solve(
+        &odometry.iter().map(|p| p.0).collect::<Vec<_>>(),
+        &odometry.iter().map(|p| p.1).collect::<Vec<_>>(),
+        &(0..odometry.len()).map(|k| k > 0).collect::<Vec<_>>(),
+        &odometry_edges,
+        &closures,
+        &SolveConfig {
+            gnc_variance_scale: 10.0,
+            gnc_inlier_probability: 0.95,
+            huber_k: 1.345,
+            pcm_odometry_translation_variance: 0.0,
+            gnc_overtrust_check: true,
+            overtrust_noise_headroom: [1.0; 4],
+            gravity: Vec::new(),
+            committed: if committed {
+                [vec![true; revisit], vec![false; 9]].concat()
+            } else {
+                Vec::new()
+            },
+        },
+    );
+    let gap = |positions: &[Vec3]| mat3::norm(&mat3::sub(&positions[4 * SIDE], &positions[0]));
+    (
+        solution.closure_weights,
+        gap(&odometry.iter().map(|p| p.1).collect::<Vec<_>>()),
+        gap(&solution.positions),
+    )
+}
+
+#[test]
+fn a_cold_solve_follows_a_larger_group_of_look_alikes_that_agree_with_the_drift() {
+    let (weights, drifted, solved) = committed_square(false);
+    eprintln!("cold {weights:?} drifted {drifted} solved {solved}");
+    assert_eq!(weights, [vec![0.0; 5], vec![1.0; 9]].concat());
+    assert!(
+        solved > 0.9 * drifted,
+        "the revisit should stay drifted: {solved} of {drifted}"
+    );
+}
+
+#[test]
+fn committed_closures_hold_against_a_larger_group_of_agreeing_look_alikes() {
+    let (weights, drifted, solved) = committed_square(true);
+    eprintln!("committed {weights:?} drifted {drifted} solved {solved}");
+    assert_eq!(weights, [vec![1.0; 5], vec![0.0; 9]].concat());
+    assert!(
+        solved < 0.25 * drifted,
+        "the revisit should land on the first side: {solved} of {drifted}"
+    );
 }

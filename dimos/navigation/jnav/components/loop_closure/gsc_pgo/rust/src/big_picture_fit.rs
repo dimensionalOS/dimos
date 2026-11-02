@@ -68,6 +68,10 @@ pub struct SolveConfig {
     pub overtrust_noise_headroom: [f64; 4],
     /// The odometry's attitude against gravity as absolute factors, always in (`GravityPrior`); empty for none.
     pub gravity: Vec<GravityPrior>,
+    /// Per closure: true where the previous adopted solve kept it, so GNC holds it in (as PCM's consistent set) instead
+    /// of re-deciding it cold; empty for none. A committed loop is dropped only by a verdict that contradicts it
+    /// (`closure_commitments`, decided by the caller).
+    pub committed: Vec<bool>,
 }
 
 /// A gravity-referenced odometry's tilt as an absolute factor: keyframe `keyframe`'s up direction in its own frame,
@@ -267,11 +271,14 @@ pub(crate) fn solve_core(
     };
     let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
     let mut sighting_weights = vec![1.0; sightings.len()];
-    let held = if config.pcm_odometry_translation_variance > 0.0 {
+    let mut held = if config.pcm_odometry_translation_variance > 0.0 {
         consistent_closures(&state, &scaled, config)
     } else {
         vec![false; closures.len()]
     };
+    for (h, &c) in held.iter_mut().zip(&config.committed) {
+        *h |= c;
+    }
     levenberg_marquardt(
         &mut state,
         &pattern,
@@ -472,6 +479,37 @@ pub(crate) fn solve_core(
                     .map(|&r| r.min(1.0))
                     .sum::<f64>()
         };
+        // each verdict's objective at its own least-squares solve (its kept closures in at weight 1, the rest out): the
+        // states GNC ends on still carry its last fractional weights, so comparing them flipped the verdict between
+        // solves on one consistent group (huge overtrust: 24 kept, 0, 24, as TLS's cost swung 45008 -> 6629)
+        let binary = |w: &[f64]| -> Vec<f64> {
+            w.iter()
+                .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
+                .collect()
+        };
+        let (tls_kept, tls_unary, tls_sightings) = (
+            binary(&weights),
+            binary(&unary_weights),
+            binary(&sighting_weights),
+        );
+        for (solve_state, (w, u, sw)) in [
+            (&mut state, (&tls_kept, &tls_unary, &tls_sightings)),
+            (&mut gm_state, (&gm_weights, &gm_unary, &gm_sightings)),
+        ] {
+            levenberg_marquardt(
+                solve_state,
+                &pattern,
+                odometry,
+                &scaled,
+                w,
+                unary,
+                u,
+                sightings,
+                sw,
+                1e-5,
+            );
+        }
+        (weights, unary_weights, sighting_weights) = (tls_kept, tls_unary, tls_sightings);
         let lower = truncated_cost(&gm_state) < truncated_cost(&state);
         // GM's verdict is new evidence that the odometry is overtrusted only where TLS's own verdict shows none: where
         // TLS already keeps closures that bend the odometry past its noise (right or look-alike), the noise learner
@@ -507,10 +545,34 @@ pub(crate) fn solve_core(
             landmark: state.landmark.clone(),
             landmark_rotation: state.landmark_rotation.clone(),
         };
-        if lower
-            || (overtrusted(&mut gm_state, &gm_weights, &gm_unary, &gm_sightings)
-                && !overtrusted(&mut tls_state, &weights, &unary_weights, &sighting_weights))
-        {
+        let (gm_over, tls_over) = (
+            overtrusted(&mut gm_state, &gm_weights, &gm_unary, &gm_sightings),
+            overtrusted(&mut tls_state, &weights, &unary_weights, &sighting_weights),
+        );
+        // `GSC_SOLVE_LOG=<path>`: per overtrust check, each verdict's kept closures and why one was taken
+        if let Ok(path) = std::env::var("GSC_SOLVE_LOG") {
+            use std::io::Write;
+            let kept =
+                |w: &[f64]| -> Vec<usize> { (0..w.len()).filter(|&i| w[i] >= 0.5).collect() };
+            let line = format!(
+                "{{\"closures\":{},\"tls\":{:?},\"gm\":{:?},\"tls_cost\":{},\"gm_cost\":{},\"gm_overtrusted\":{},\"tls_overtrusted\":{}}}\n",
+                closures.len(),
+                kept(&weights),
+                kept(&gm_weights),
+                truncated_cost(&state),
+                truncated_cost(&gm_state),
+                gm_over,
+                tls_over
+            );
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
+        if lower || (gm_over && !tls_over) {
             (state, weights, unary_weights, sighting_weights) =
                 (gm_state, gm_weights, gm_unary, gm_sightings);
             gm_taken = true;
