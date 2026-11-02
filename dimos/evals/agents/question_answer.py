@@ -103,8 +103,7 @@ class QuestionAnswer(SingleCallAgent):
                     )
             else:
                 header = (
-                    f"observations from stream {stream.name!r} "
-                    "(t is seconds from the first shown):"
+                    f"observations from stream {stream.name!r} (t is seconds from the first shown):"
                 )
             blocks.append({"type": "text", "text": header})
             blocks += _legend_block(observations[0])
