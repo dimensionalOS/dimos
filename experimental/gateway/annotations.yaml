@@ -474,7 +474,7 @@ robots:
           recommended_config: []
         hybrid-teleop-sim:
           title: xArm pick and place with operator hold (sim)
-          description: 'Simulated xArm7 pick and place that an operator can hold, release and e-stop: no robot needed.'
+          description: 'Simulated xArm7 pick and place that an operator can hold, jog by hand, release and e-stop: no robot needed.'
           recommended_config: []
         xarm-grasp-agent:
           title: xArm pick and place agent
