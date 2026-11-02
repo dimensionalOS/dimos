@@ -24,7 +24,7 @@
 
 use crate::big_picture_fit::odometry_edges;
 use crate::gsc_pgo::{Config, GscPgo, KeyPoseWithCloud};
-use crate::mat3::{self, Mat3, Vec3};
+use crate::mat3::{self, add_mat, det, skew, sub_mat, Mat3, Vec3};
 
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "native", derive(serde::Serialize))]
@@ -40,24 +40,6 @@ pub struct LoopOverlap {
 }
 
 pub(crate) type Sums = [Mat3; 4];
-
-fn skew(v: &Vec3) -> Mat3 {
-    [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]]
-}
-
-fn add_m(a: &Mat3, b: &Mat3) -> Mat3 {
-    std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] + b[i][j]))
-}
-
-fn sub_m(a: &Mat3, b: &Mat3) -> Mat3 {
-    std::array::from_fn(|i| std::array::from_fn(|j| a[i][j] - b[i][j]))
-}
-
-fn det(m: &Mat3) -> f64 {
-    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
-}
 
 /// `v^T m^-1 v` for a symmetric positive-definite `m` (Cramer's rule).
 fn quadratic_inverse(m: &Mat3, v: &Vec3) -> f64 {
@@ -115,10 +97,10 @@ pub(crate) fn odometry_noise_sums(key_poses: &[KeyPoseWithCloud], config: &Confi
         let lever_rotation_lever = mat3::mat_mul(&lever, &rotation_lever);
         let last = sums.last().unwrap();
         sums.push([
-            add_m(&last[0], &translation),
-            add_m(&last[1], &rotation),
-            add_m(&last[2], &rotation_lever),
-            add_m(&last[3], &lever_rotation_lever),
+            add_mat(&last[0], &translation),
+            add_mat(&last[1], &rotation),
+            add_mat(&last[2], &rotation_lever),
+            add_mat(&last[3], &lever_rotation_lever),
         ]);
     }
     sums
@@ -128,32 +110,36 @@ pub(crate) fn odometry_noise_sums(key_poses: &[KeyPoseWithCloud], config: &Confi
 /// them (see `odometry_noise_sums`).
 pub(crate) fn odometry_covariance(sums: &[Sums], j: usize, to: usize, newest: &Vec3) -> Mat3 {
     let last = &sums[to];
-    let between: Sums = std::array::from_fn(|k| sub_m(&last[k], &sums[j][k]));
+    let between: Sums = std::array::from_fn(|k| sub_mat(&last[k], &sums[j][k]));
     let lever = skew(newest);
     let cross = mat3::mat_mul(&lever, &between[2]);
-    let swing = sub_m(
-        &add_m(
+    let swing = sub_mat(
+        &add_mat(
             &mat3::mat_mul(
                 &mat3::mat_mul(&lever, &between[1]),
                 &mat3::transpose(&lever),
             ),
             &between[3],
         ),
-        &add_m(&cross, &mat3::transpose(&cross)),
+        &add_mat(&cross, &mat3::transpose(&cross)),
     );
-    add_m(&between[0], &swing)
+    add_mat(&between[0], &swing)
 }
 
 /// The squared Mahalanobis distance a 3-D Gaussian stays under with probability `p` (chi-square, 3 degrees of freedom:
 /// CDF = erf(sqrt(x / 2)) - sqrt(2x / pi) e^(-x / 2)).
 pub(crate) fn chi2_inverse_3dof(p: f64) -> f64 {
+    chi2_inverse(p, |x| {
+        1.0 - erfc((x / 2.0).sqrt()) - (2.0 * x / std::f64::consts::PI).sqrt() * (-x / 2.0).exp()
+    })
+}
+
+/// The x in [0, 200] where the increasing `cdf` reaches `p`, by 100 bisection steps.
+pub(crate) fn chi2_inverse(p: f64, cdf: impl Fn(f64) -> f64) -> f64 {
     let (mut lo, mut hi) = (0.0f64, 200.0f64);
     for _ in 0..100 {
         let x = 0.5 * (lo + hi);
-        let cdf = 1.0
-            - erfc((x / 2.0).sqrt())
-            - (2.0 * x / std::f64::consts::PI).sqrt() * (-x / 2.0).exp();
-        if cdf < p {
+        if cdf(x) < p {
             lo = x;
         } else {
             hi = x;
@@ -178,7 +164,7 @@ pub(crate) fn could_be_same_place(
         key_poses[from].translation_global,
         key_poses[to].translation_global,
     );
-    let covariance = add_m(
+    let covariance = add_mat(
         &odometry_covariance(sums, from, to, &p_to),
         &[
             [radius * radius, 0.0, 0.0],
@@ -190,7 +176,6 @@ pub(crate) fn could_be_same_place(
 }
 
 impl GscPgo {
-    /// See `LoopOverlap`; None until a keyframe's scan has given a sensor range (the mean of the keyframes' reaches).
     /// The uncertainty of each earlier keyframe as seen from keyframe `reference`, and the scans' reach; None until a
     /// keyframe's scan has given a reach (the mean of the keyframes' reaches).
     pub(crate) fn overlap_model(&self, reference: usize) -> Option<OverlapModel<'_>> {
@@ -275,12 +260,12 @@ impl OverlapModel<'_> {
     pub(crate) fn relative(&self, j: usize) -> Mat3 {
         match self.solved.get(j) {
             Some(covariance) if j <= self.solved_tip => {
-                let heading = sub_m(&self.sums[self.solved_tip][1], &self.sums[j][1]);
+                let heading = sub_mat(&self.sums[self.solved_tip][1], &self.sums[j][1]);
                 let swing = mat3::mat_mul(
                     &mat3::mat_mul(&self.tip_lever, &heading),
                     &mat3::transpose(&self.tip_lever),
                 );
-                add_m(&add_m(covariance, &self.since_solve), &swing)
+                add_mat(&add_mat(covariance, &self.since_solve), &swing)
             }
             _ => odometry_covariance(&self.sums, j, self.reference, &self.newest),
         }
@@ -291,7 +276,7 @@ impl OverlapModel<'_> {
     pub(crate) fn overlap(&self, j: usize) -> (f64, f64) {
         let covariance = self.relative(j);
         let sensor = self.sensor_range * self.sensor_range;
-        let blurred = add_m(
+        let blurred = add_mat(
             &covariance,
             &[[sensor, 0.0, 0.0], [0.0, sensor, 0.0], [0.0, 0.0, sensor]],
         );

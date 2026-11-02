@@ -98,10 +98,6 @@ impl KdTree {
         tree
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.points.is_empty()
-    }
-
     fn build_recursive(&mut self, indices: &mut [u32], depth: usize) -> i32 {
         if indices.is_empty() {
             return -1;

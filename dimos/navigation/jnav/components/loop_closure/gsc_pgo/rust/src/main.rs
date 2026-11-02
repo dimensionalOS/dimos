@@ -29,26 +29,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use dimos_gsc_pgo::gsc_pgo::{
-    CloudWithPose, Config as PgoConfig, GscPgo, KeyPoseWithCloud, PoseWithTime,
-};
+use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config as PgoConfig, GscPgo, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
+use dimos_gsc_pgo::records::{
+    append_pose_changes, build_closure_edge_records, build_loop_closure_records, build_odometry,
+    build_pose_graph_records, build_tf_message, extract_xyz, write_keyframes, HeardPoses,
+};
 use dimos_module::{native_config, run_with_transport, Input, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::std_msgs;
 use lcm_msgs::tf2_msgs::TFMessage;
-
-mod utils;
 use tracing::{error, info, warn};
-use utils::{
-    build_closure_edge_records, build_loop_closure_records, build_odometry,
-    build_pose_graph_records, build_tf_message, extract_xyz,
-};
-
-// A keyframe pose change smaller than this waits to add up before it is sent.
-const POSE_CHANGE_M: f64 = 1e-3;
-const POSE_CHANGE_RAD: f64 = 1e-4;
 
 /// The module's own fields, then every `gsc_pgo::Config` field (passed through by `pgo()`).
 macro_rules! config {
@@ -115,7 +107,6 @@ struct OdomSample {
     ts: f64,
     rotation: Mat3,
     translation: Vec3,
-    frame_id: String,
 }
 
 #[derive(Default)]
@@ -218,21 +209,18 @@ impl GscPgoModule {
         }
     }
 
-    /// Handle an incoming odometry message: record it as the latest sample
-    /// and push it onto the sliding interpolation buffer.
+    /// Handle an incoming odometry message: record it as the latest sample.
     async fn on_odometry(&mut self, msg: Odometry) {
         let q = &msg.pose.pose.orientation;
         let rotation = mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]);
         let p = &msg.pose.pose.position;
         let translation = [p.x, p.y, p.z];
         let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
-        let sample = OdomSample {
+        self.state.lock().expect("state").latest_odom = Some(OdomSample {
             ts,
             rotation,
             translation,
-            frame_id: msg.header.frame_id.clone(),
-        };
-        self.state.lock().expect("state").latest_odom = Some(sample);
+        });
     }
 
     /// Handle an incoming lidar scan: pair it with the latest odometry pose
@@ -263,7 +251,6 @@ impl GscPgoModule {
         state.cloud_buffer.push_back(CloudWithPose {
             cloud: Some(Arc::new(cloud)),
             pose,
-            frame_id: latest.frame_id,
         });
         let cap = self.config.max_scan_queue;
         while cap > 0 && state.cloud_buffer.len() as i32 > cap {
@@ -332,15 +319,12 @@ impl Worker {
         // if a notify is somehow missed; normal wakeups come from callbacks.
         let wake_timeout = Duration::from_secs(1);
 
-        // Each keyframe's pose as fast-reform consumers last heard it.
-        let mut published: Vec<(Mat3, Vec3)> = Vec::new();
+        let mut heard = HeardPoses::default();
         // The scan count of the last loop-overlap pressure sent on debug_log, and the closure searches sent there.
         let mut pressure_sent = 0usize;
         let mut closures_logged = 0usize;
         // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
-        // Search diagnostics already written to <dump_path>.closures.jsonl.
-        let mut diagnostics_written = 0usize;
         // The closure search running in the background, if any.
         let mut closure_search: Option<
             std::thread::JoinHandle<dimos_gsc_pgo::gsc_pgo::ClosureSearchResult>,
@@ -352,11 +336,10 @@ impl Worker {
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
             if solve_finished && pgo.wait_for_solve() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                self.publish_pose_changes(&pgo, &mut published, false, last_time, &frame_id);
+                self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
                 self.log_solve(&pgo, last_time);
             }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
-            self.dump_closure_diagnostics(&pgo, &mut diagnostics_written);
             self.log_closures(&pgo, &mut closures_logged);
             // Strict FIFO: process scans oldest-first (backlog bounded at
             // enqueue time). Loops back immediately when more remain, so a
@@ -402,12 +385,7 @@ impl Worker {
                 continue;
             }
 
-            // Keyframe added: consumers hold its scans where the current offset put them.
-            published.extend(
-                pgo.key_poses()[published.len()..]
-                    .iter()
-                    .map(|kp| (kp.rotation_global, kp.translation_global)),
-            );
+            heard.add_new(pgo.key_poses());
             // A closure search that finished in the background lands now, so its closure joins this keyframe's update.
             if closure_search
                 .as_ref()
@@ -432,7 +410,7 @@ impl Worker {
             }
             // a finished solve moves the keyframes
             let moved = pgo.update();
-            self.publish_pose_changes(&pgo, &mut published, moved, cur_time, &frame_id);
+            self.publish_pose_changes(&pgo, &mut heard, moved, cur_time, &frame_id);
             if moved {
                 self.log_solve(&pgo, cur_time);
             }
@@ -509,34 +487,10 @@ impl Worker {
         let records = build_pose_graph_records(pgo.key_poses(), ts, frame_id);
         self.publish(&self.pose_graph, &records, "pose_graph");
         if !self.config.dump_path.is_empty() {
-            if let Err(e) = dump_keyframes(&self.config.dump_path, pgo.key_poses()) {
+            if let Err(e) = write_keyframes(self.config.dump_path.as_ref(), pgo.key_poses()) {
                 warn!(error = %e, "Failed to dump the keyframes.");
             }
         }
-    }
-
-    /// Append every closure search since the last call to `<dump_path>.closures.jsonl`: the candidate,
-    /// its outcome and every input of the yank / confidence gate, for offline hypothesis tests.
-    fn dump_closure_diagnostics(&self, pgo: &GscPgo, written: &mut usize) {
-        let diagnostics = pgo.closure_diagnostics();
-        if self.config.dump_path.is_empty() || diagnostics.len() <= *written {
-            return;
-        }
-        let lines: String = diagnostics[*written..]
-            .iter()
-            .filter_map(|d| serde_json::to_string(d).ok())
-            .map(|line| line + "\n")
-            .collect();
-        use std::io::Write;
-        let appended = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(format!("{}.closures.jsonl", self.config.dump_path))
-            .and_then(|mut file| file.write_all(lines.as_bytes()));
-        if let Err(e) = appended {
-            warn!(error = %e, "Failed to dump the closure diagnostics.");
-        }
-        *written = diagnostics.len();
     }
 
     /// Send the closure-edge events since the last call, if any.
@@ -548,54 +502,34 @@ impl Worker {
         let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
         let msg = build_closure_edge_records(&events[*sent..], pgo.key_poses(), ts, frame_id);
         self.publish(&self.closure_edges, &msg, "closure_edges");
-        if !self.config.dump_path.is_empty() {
-            use std::io::Write;
-            let appended = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(format!("{}.edges", self.config.dump_path))
-                .and_then(|mut file| file.write_all(&msg.data));
-            if let Err(e) = appended {
-                warn!(error = %e, "Failed to dump the closure edges.");
-            }
-        }
         *sent = events.len();
     }
 
-    /// Send fast-reform consumers every keyframe pose change since they last heard (an adopted solve).
-    /// Changes too small to matter wait in `published` and add up.
+    /// Send fast-reform consumers every keyframe pose change since they last heard (an adopted solve), and append it to
+    /// `<dump_path>.closures`. Changes too small to matter wait in `heard` and add up.
     fn publish_pose_changes(
         &self,
         pgo: &GscPgo,
-        published: &mut Vec<(Mat3, Vec3)>,
+        heard: &mut HeardPoses,
         closure_closed: bool,
         ts: f64,
         frame_id: &str,
     ) {
-        let poses = pgo.key_poses();
-        let moved = poses
-            .iter()
-            .zip(published.iter())
-            .any(|(kp, (rotation, translation))| {
-                let shift = mat3::sub(&kp.translation_global, translation);
-                let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
-                let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
-                mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
-            });
-        if !closure_closed && !moved {
+        let Some(changes) = heard.take_changes(pgo.key_poses(), closure_closed) else {
             return;
-        }
-        let records = build_loop_closure_records(published, poses, ts, frame_id);
+        };
+        let records = build_loop_closure_records(changes, ts, frame_id);
         self.publish(&self.loop_closure_event, &records, "loop_closure_event");
         if !self.config.dump_path.is_empty() {
-            if let Err(e) = append_closure(&self.config.dump_path, ts, &records) {
+            let appended = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(format!("{}.closures", self.config.dump_path))
+                .and_then(|mut file| append_pose_changes(&mut file, ts, &records.data));
+            if let Err(e) = appended {
                 warn!(error = %e, "Failed to dump the loop closure.");
             }
         }
-        *published = poses
-            .iter()
-            .map(|kp| (kp.rotation_global, kp.translation_global))
-            .collect();
     }
 
     fn publish_corrected(
@@ -635,42 +569,4 @@ impl Worker {
 #[tokio::main]
 async fn main() {
     run_with_transport::<GscPgoModule>().await;
-}
-
-/// Each keyframe as little-endian f64s: ts, raw (local) x y z qx qy qz qw, then
-/// corrected (global) x y z qx qy qz qw, written atomically.
-fn dump_keyframes(path: &str, key_poses: &[KeyPoseWithCloud]) -> std::io::Result<()> {
-    let mut bytes = Vec::with_capacity(key_poses.len() * 15 * 8);
-    for kp in key_poses {
-        let mut values = vec![kp.time];
-        for (rotation, translation) in [
-            (&kp.rotation_local, &kp.translation_local),
-            (&kp.rotation_global, &kp.translation_global),
-        ] {
-            let q = mat3::quat_from_mat(rotation);
-            values.extend_from_slice(translation);
-            values.extend_from_slice(&[q[1], q[2], q[3], q[0]]);
-        }
-        for v in values {
-            bytes.extend_from_slice(&v.to_le_bytes());
-        }
-    }
-    let tmp = format!("{path}.tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
-}
-
-/// Append one closure to `<path>.closures`: f64 ts, u32 record count, then the
-/// loop_closure_records bytes (68 per keyframe), for offline replays of real closures.
-fn append_closure(path: &str, ts: f64, records: &PointCloud2) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(format!("{path}.closures"))?;
-    let mut bytes = Vec::with_capacity(12 + records.data.len());
-    bytes.extend_from_slice(&ts.to_le_bytes());
-    bytes.extend_from_slice(&(records.width as u32).to_le_bytes());
-    bytes.extend_from_slice(&records.data);
-    file.write_all(&bytes)
 }
