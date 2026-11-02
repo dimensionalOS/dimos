@@ -16,15 +16,17 @@
 //! lockstep, the way their modules run live, then score the final graph.
 //!
 //!     cargo run --release --example replay_bench -- <frames> <configs.json> <out.json> \
-//!         [--stair-frames FIRST LAST] [--frames N] [--dump DIR]
+//!         [--stair-frames FIRST LAST [--watch-climb]] [--frames N] [--dump DIR]
 //!
 //! `frames` comes from utils/export_frames.py and `configs.json` from
 //! utils/bench_configs.py. The score has per-frame latency, reach to goals
 //! spaced along the trajectory, each leg's path against its trajectory length,
-//! and, with --stair-frames, how the frames of one climb connect. --dump
-//! writes the final map for the viewers: `voxels.f32`, every voxel center
+//! and, with --stair-frames, how the frames of one climb connect. --watch-climb
+//! also checks, after every update past the climb, that its ends still connect
+//! along it. --dump writes the final map for the viewers: `voxels.f32`, every voxel center
 //! and plane as the tracer emits it, `cells.f32`, every surface cell's
-//! center, surface height, and wall clearance, and `meta.json`, the voxel size.
+//! center, surface height, wall clearance, and walkable region (largest first,
+//! -1 under clearance), and `meta.json`, the voxel size.
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -110,11 +112,17 @@ fn path_length(path: &[Xyz]) -> f32 {
     path.windows(2).map(|w| dist(w[0], w[1])).sum()
 }
 
-/// Cells that keep the hard wall clearance, reachable from `from` over edges.
-fn passable_component(planner: &Planner, from: u32, clearance: f32) -> Vec<bool> {
+/// Cells that keep the hard wall clearance and pass `keep`, reachable from `from` over edges.
+fn passable_component(
+    planner: &Planner,
+    from: u32,
+    clearance: f32,
+    keep: impl Fn(u32) -> bool,
+) -> Vec<bool> {
     let graph = planner.graph();
     let wall_dist = &graph.wall_state.dist;
-    let passable = |id: u32| wall_dist.get(id as usize).is_some_and(|&d| d >= clearance);
+    let passable =
+        |id: u32| wall_dist.get(id as usize).is_some_and(|&d| d >= clearance) && keep(id);
     let mut seen = vec![false; graph.cells.slot_capacity()];
     if !passable(from) {
         return seen;
@@ -132,6 +140,82 @@ fn passable_component(planner: &Planner, from: u32, clearance: f32) -> Vec<bool>
     seen
 }
 
+/// Whether a surface point lies in the corridor along the climb, at the climb's height there.
+fn in_corridor(point: Xyz, climb: &[Xyz], corridor_m: f32, step_m: f32) -> bool {
+    climb.iter().any(|g| {
+        (point.0 - g.0).hypot(point.1 - g.1) <= corridor_m && (point.2 - g.2).abs() <= step_m
+    })
+}
+
+/// Each cell slot's walkable region, numbered largest first, or -1 for a cell under clearance.
+fn walkable_regions(planner: &Planner, clearance: f32) -> Vec<i32> {
+    let graph = planner.graph();
+    let wall_dist = &graph.wall_state.dist;
+    let passable = |id: u32| wall_dist.get(id as usize).is_some_and(|&d| d >= clearance);
+    let mut region = vec![-1; graph.cells.slot_capacity()];
+    let mut sizes: Vec<usize> = Vec::new();
+    for seed in graph.cells.ids().filter(|&id| passable(id)) {
+        if region[seed as usize] >= 0 {
+            continue;
+        }
+        let label = sizes.len() as i32;
+        region[seed as usize] = label;
+        let mut queue = VecDeque::from([seed]);
+        let mut size = 0;
+        while let Some(id) = queue.pop_front() {
+            size += 1;
+            for e in graph.cells.neighbors(id) {
+                if region[e.dest as usize] < 0 && passable(e.dest) && e.cost.is_finite() {
+                    region[e.dest as usize] = label;
+                    queue.push_back(e.dest);
+                }
+            }
+        }
+        sizes.push(size);
+    }
+    let mut order: Vec<usize> = (0..sizes.len()).collect();
+    order.sort_unstable_by_key(|&label| std::cmp::Reverse(sizes[label]));
+    let mut rank = vec![0; sizes.len()];
+    for (r, &label) in order.iter().enumerate() {
+        rank[label] = r as i32;
+    }
+    region
+        .iter()
+        .map(|&l| if l < 0 { -1 } else { rank[l as usize] })
+        .collect()
+}
+
+/// Why the climb's first and last cells do not connect through passable cells
+/// within the corridor along it, so a route around through another stair does not count.
+fn climb_break(
+    planner: &Planner,
+    climb: &[Xyz],
+    config: &PlannerConfig,
+    corridor_m: f32,
+) -> Option<&'static str> {
+    let (Some(from), Some(to)) = (
+        cell_under(planner, climb[0], config),
+        cell_under(planner, climb[climb.len() - 1], config),
+    ) else {
+        return Some("no surface under an end");
+    };
+    let graph = planner.graph();
+    let wall_dist = &graph.wall_state.dist;
+    let clearance = config.wall_clearance_m;
+    if [from, to]
+        .iter()
+        .any(|&id| wall_dist.get(id as usize).is_none_or(|&d| d < clearance))
+    {
+        return Some("an end is under clearance");
+    }
+    let along = |id: u32| {
+        let point = graph.cells.point(id, config.voxel_size);
+        in_corridor(point, climb, corridor_m, config.step_threshold_m)
+    };
+    let reached = passable_component(planner, from, clearance, along);
+    (!reached[to as usize]).then_some("cut along the climb")
+}
+
 /// The surface cell in the ground point's column nearest it in z, if any lies
 /// within the robot height.
 fn cell_under(planner: &Planner, ground: Xyz, config: &PlannerConfig) -> Option<u32> {
@@ -145,13 +229,14 @@ fn cell_under(planner: &Planner, ground: Xyz, config: &PlannerConfig) -> Option<
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "replay_bench <frames> <configs.json> <out.json> [--stair-frames FIRST LAST] [--frames N] [--dump DIR]";
+    let usage = "replay_bench <frames> <configs.json> <out.json> [--stair-frames FIRST LAST [--watch-climb]] [--frames N] [--dump DIR]";
     let [_, frames_path, configs_path, out_path, rest @ ..] = args.as_slice() else {
         panic!("{usage}");
     };
     let mut stair: Option<(usize, usize)> = None;
     let mut max_frames = usize::MAX;
     let mut dump: Option<std::path::PathBuf> = None;
+    let mut watch_climb = false;
     let mut it = rest.iter();
     while let Some(flag) = it.next() {
         match flag.as_str() {
@@ -159,11 +244,16 @@ fn main() {
                 let mut value = || it.next().expect(usage).parse::<usize>().expect(usage);
                 stair = Some((value(), value()));
             }
+            "--watch-climb" => watch_climb = true,
             "--frames" => max_frames = it.next().expect(usage).parse().expect(usage),
             "--dump" => dump = Some(it.next().expect(usage).into()),
             _ => panic!("{usage}"),
         }
     }
+    assert!(
+        !watch_climb || stair.is_some(),
+        "--watch-climb needs --stair-frames: {usage}"
+    );
     let configs: BenchConfigs =
         serde_json::from_reader(File::open(configs_path).expect("configs")).expect("configs json");
     let (tracer_config, config) = (configs.tracer, configs.planner);
@@ -176,6 +266,8 @@ fn main() {
     let mut planner_ms: Vec<f64> = Vec::new();
     let mut total_ms: Vec<f64> = Vec::new();
     let mut ground: Vec<Xyz> = Vec::new();
+    // Each update's frame past the climb, and why the climb did not connect then, if it did not.
+    let mut watched: Vec<(usize, Option<&str>)> = Vec::new();
     while ground.len() < max_frames {
         let Some(frame) = read_frame(&mut reader) else {
             break;
@@ -213,6 +305,15 @@ fn main() {
         tracer_ms.push(traced);
         planner_ms.push(planned);
         total_ms.push(traced + planned);
+        if let Some((first, last)) = stair.filter(|&(_, last)| watch_climb && ground.len() > last) {
+            let broken = climb_break(
+                &planner,
+                &ground[first..=last],
+                &config,
+                configs.stair_corridor_m,
+            );
+            watched.push((ground.len() - 1, broken));
+        }
     }
 
     // Goals every goal_spacing_m of trajectory, each leg planned from the last goal.
@@ -251,8 +352,9 @@ fn main() {
     let stair_score = stair.map(|(first, last)| {
         let clearance = config.wall_clearance_m;
         let first_cell = cell_under(&planner, ground[first], &config);
-        let component =
-            first_cell.map_or_else(Vec::new, |id| passable_component(&planner, id, clearance));
+        let component = first_cell.map_or_else(Vec::new, |id| {
+            passable_component(&planner, id, clearance, |_| true)
+        });
         let frames: Vec<bool> = (first..=last)
             .map(|i| {
                 cell_under(&planner, ground[i], &config)
@@ -271,11 +373,12 @@ fn main() {
             .cells
             .ids()
             .filter(|&id| {
-                let (x, y, z) = graph.cells.point(id, v);
-                ground[first..=last].iter().any(|g| {
-                    (x - g.0).hypot(y - g.1) <= configs.stair_corridor_m
-                        && (z - g.2).abs() <= config.step_threshold_m
-                })
+                in_corridor(
+                    graph.cells.point(id, v),
+                    &ground[first..=last],
+                    configs.stair_corridor_m,
+                    config.step_threshold_m,
+                )
             })
             .collect();
         let corridor_blocked = corridor
@@ -320,11 +423,20 @@ fn main() {
         };
         let voxels = mapper.local_surfaces(&everywhere);
         let v = config.voxel_size;
+        let region = walkable_regions(&planner, config.wall_clearance_m);
+        let graph = planner.graph();
         let cells: Vec<f32> = planner
             .surface_clearance()
             .into_iter()
-            .flat_map(|((ix, iy, _), z, clearance)| {
-                [(ix as f32 + 0.5) * v, (iy as f32 + 0.5) * v, z, clearance]
+            .flat_map(|(key, z, clearance)| {
+                let r = graph.cells.id(key).map_or(-1, |id| region[id as usize]);
+                [
+                    (key.0 as f32 + 0.5) * v,
+                    (key.1 as f32 + 0.5) * v,
+                    z,
+                    clearance,
+                    r as f32,
+                ]
             })
             .collect();
         let bytes =
@@ -357,6 +469,11 @@ fn main() {
         "reached_from_start": reached,
         "leg_detours": detours,
         "stair": stair_score,
+        "climb_watch": watch_climb.then(|| json!({
+            "updates": watched.len(),
+            "connected": watched.iter().filter(|w| w.1.is_none()).count(),
+            "disconnected": watched.iter().filter(|w| w.1.is_some()).collect::<Vec<_>>(),
+        })),
         "goal_detail": goals,
     });
     std::fs::write(out_path, serde_json::to_string_pretty(&out).unwrap()).expect("write out");

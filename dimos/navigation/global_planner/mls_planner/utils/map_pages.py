@@ -16,7 +16,8 @@
 
 `scenes` draws the voxel_problem_scenes example: each synthetic world as whole
 voxels and as planes, with the path each one found. `surfaces` draws a
-replay_bench dump with every large planar surface in its own color.
+replay_bench dump with every walkable region, connected in the planner's graph,
+in its own color.
 
 Usage:
     uv run python -m dimos.navigation.global_planner.mls_planner.utils.map_pages \\
@@ -35,8 +36,6 @@ from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import connected_components
 import typer
 
 from dimos.navigation.global_planner.mls_planner.utils.surface_error import (
@@ -47,6 +46,8 @@ from dimos.navigation.global_planner.mls_planner.utils.surface_error import (
 )
 
 app = typer.Typer()
+# Floats per dumped cell: center x and y, surface height, wall clearance, walkable region.
+CELL_STRIDE = 5
 
 THREE = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
 ORBIT = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"
@@ -125,14 +126,17 @@ function makeView(canvas, center, radius) {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
   return {scene, render};
 }
-function boxes(view, centers, size, color, opacity, scaleZ) {
+function boxes(view, centers, size, color, opacity, scaleZ, normals) {
   const geo = new THREE.BoxGeometry(size, size, size * (scaleZ || 1));
   const mat = new THREE.MeshLambertMaterial({color, transparent: opacity < 1, opacity, depthWrite: opacity >= 1});
   const mesh = new THREE.InstancedMesh(geo, mat, centers.length / 3);
-  const m = new THREE.Matrix4();
+  const m = new THREE.Matrix4(), at = new THREE.Vector3(), turn = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 0, 1), normal = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
   for (let i = 0; i < centers.length / 3; i++) {
-    m.makeTranslation(centers[3 * i], centers[3 * i + 1], centers[3 * i + 2]);
-    mesh.setMatrixAt(i, m);
+    at.fromArray(centers, 3 * i);
+    // With normals, each box is turned from level to its normal.
+    if (normals) turn.setFromUnitVectors(up, normal.fromArray(normals, 3 * i));
+    mesh.setMatrixAt(i, m.compose(at, turn, one));
   }
   view.scene.add(mesh);
   return mesh;
@@ -171,23 +175,29 @@ for (const [i, s] of SCENES.entries()) {
 SURFACES_JS = """
 const bytes = Uint8Array.from(atob(DATA.cells), c => c.charCodeAt(0));
 const view_ = new DataView(bytes.buffer);
-const count = bytes.length / 12;
+const stride = 14, count = bytes.length / stride;
 const v = DATA.voxel_size;
-const centers = new Float32Array(count * 3), colors = new Float32Array(count * 3);
 const palette = DATA.palette.map(h => new THREE.Color(h));
-const rest = new THREE.Color(token('--voxel'));
-for (let i = 0; i < count; i++) {
-  centers[3 * i] = (view_.getInt16(12 * i, true) + 0.5) * v;
-  centers[3 * i + 1] = (view_.getInt16(12 * i + 2, true) + 0.5) * v;
-  centers[3 * i + 2] = view_.getFloat32(12 * i + 4, true);
-  const surface = view_.getInt32(12 * i + 8, true);
-  const c = surface < 0 ? rest : palette[surface % palette.length];
-  colors[3 * i] = c.r; colors[3 * i + 1] = c.g; colors[3 * i + 2] = c.b;
-}
 const c = DATA.center;
 const view = makeView(document.getElementById('map'), new THREE.Vector3(c[0], c[1], c[2]), DATA.radius);
-const mesh = boxes(view, centers, v * 0.95, 0xffffff, 1, 0.25);
-mesh.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
+// Walkable tiles and the rest, each as centers, normals and (walkable only) colors.
+const walk = {centers: [], normals: [], colors: []}, rest = {centers: [], normals: []};
+for (let i = 0; i < count; i++) {
+  const o = stride * i;
+  const region = view_.getInt32(o + 8, true);
+  const into = region < 0 ? rest : walk;
+  into.centers.push((view_.getInt16(o, true) + 0.5) * v, (view_.getInt16(o + 2, true) + 0.5) * v, view_.getFloat32(o + 4, true));
+  const nx = view_.getInt8(o + 12) / 127, ny = view_.getInt8(o + 13) / 127;
+  into.normals.push(nx, ny, Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny)));
+  if (region >= 0) {
+    const color = palette[region % palette.length];
+    walk.colors.push(color.r, color.g, color.b);
+  }
+}
+// Each voxel's plane as a thin tile at its height and tilt; what no robot walks on is faint.
+const mesh = boxes(view, walk.centers, v * 0.95, 0xffffff, 1, 0.125, walk.normals);
+mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(walk.colors), 3);
+boxes(view, rest.centers, v * 0.95, token('--voxel'), 0.18, 0.125, rest.normals);
 view.render();
 """
 
@@ -245,73 +255,64 @@ def scenes(scenes_json: Path, out: Path) -> None:
     print(f"{len(data)} scenes -> {out}")
 
 
-def segment(
-    voxels: NDArray[np.float32], voxel_size: float, max_angle_deg: float, max_gap_m: float
-) -> NDArray[np.int64]:
-    """Connected planar surfaces: voxels joined across xy neighbors whose
-    normals agree within `max_angle_deg` and whose planes meet within
-    `max_gap_m` at their shared edge."""
-    centers = voxels[:, :3]
-    keys = voxel_keys(centers, voxel_size)
-    order = np.argsort(keys)
-    sorted_keys = keys[order]
-    normals = voxels[:, 3:6]
-    height = plane_heights(voxels, voxel_size)
-    slope = -normals[:, :2] / normals[:, 2:3]
-    min_dot = np.cos(np.radians(max_angle_deg))
-    rows, cols = [], []
-    for dx, dy in ((1, 0), (0, 1), (1, 1), (1, -1)):
-        for dz in (-1, 0, 1):
-            want = voxel_keys(centers + voxel_size * np.array([dx, dy, dz]), voxel_size)
-            at = np.minimum(np.searchsorted(sorted_keys, want), len(sorted_keys) - 1)
-            found = sorted_keys[at] == want
-            a, b = np.flatnonzero(found), order[at[found]]
-            half = 0.5 * voxel_size * np.array([dx, dy], dtype=np.float32)
-            meet_a = height[a] + (slope[a] * half).sum(1)
-            meet_b = height[b] - (slope[b] * half).sum(1)
-            agree = ((normals[a] * normals[b]).sum(1) >= min_dot) & (
-                np.abs(meet_a - meet_b) <= max_gap_m
-            )
-            rows.append(a[agree])
-            cols.append(b[agree])
-    edges = coo_matrix(
-        (np.ones(sum(len(r) for r in rows)), (np.concatenate(rows), np.concatenate(cols))),
-        shape=(len(voxels), len(voxels)),
-    )
-    return connected_components(edges, directed=False)[1]
+def walkable_regions(
+    dump: Path, voxels: NDArray[np.float32], voxel_size: float
+) -> NDArray[np.int32]:
+    """Each voxel's walkable region from the dump's planner cells: the cell in its column nearest its plane, within a voxel, else -1."""
+    cells = np.fromfile(dump / "cells.f32", dtype="<f4").reshape(-1, CELL_STRIDE)
+    cell_keys = voxel_keys(np.c_[cells[:, :2], np.zeros(len(cells))], voxel_size)
+    order = np.argsort(cell_keys, kind="stable")
+    cell_keys, cells = cell_keys[order], cells[order]
+    keys = voxel_keys(np.c_[voxels[:, :2], np.zeros(len(voxels))], voxel_size)
+    heights = plane_heights(voxels, voxel_size)
+    lo, hi = np.searchsorted(cell_keys, keys, "left"), np.searchsorted(cell_keys, keys, "right")
+    best = np.full(len(voxels), voxel_size, dtype=np.float32)
+    region = np.full(len(voxels), -1, dtype=np.int32)
+    # Columns hold few cells, so step through each column's k-th cell at once.
+    for k in range(int((hi - lo).max(initial=0))):
+        has = lo + k < hi
+        at = np.minimum(lo + k, len(cells) - 1)
+        dz = np.where(has, np.abs(cells[at, 2] - heights), np.inf)
+        closer = dz <= best
+        best[closer] = dz[closer]
+        region[closer] = cells[at[closer], 4].astype(np.int32)
+    return region
 
 
 @app.command()
 def surfaces(
     dump: Path,
     out: Path,
-    min_area_m2: float = typer.Option(0.25, help="Smallest surface given its own color"),
-    max_angle_deg: float = typer.Option(20.0, help="Most two neighbors' planes may differ in tilt"),
-    max_gap_m: float = typer.Option(0.04, help="Most two neighbors' planes may miss at their edge"),
+    min_area_m2: float = typer.Option(0.25, help="Smallest walkable region given its own color"),
     title: str = typer.Option(..., help="The page's name, e.g. the dataset's"),
     focus: tuple[float, float, float] = typer.Option(
         ..., help="Point the view opens on, in the map frame"
     ),
     view_radius_m: float = typer.Option(3.5, help="How far the view opens from the focus"),
 ) -> None:
-    """A replay_bench dump with each large planar surface in its own color."""
+    """A replay_bench dump with each walkable region, connected in the planner's graph, in its own color."""
     voxel_size = dump_voxel_size(dump)
     voxels = np.fromfile(dump / "voxels.f32", dtype="<f4").reshape(-1, SURFACE_STRIDE)
     voxels = voxels[np.isfinite(voxels[:, 6])]
-    labels = segment(voxels, voxel_size, max_angle_deg, max_gap_m)
-    sizes = np.bincount(labels)
+    walkable = walkable_regions(dump, voxels, voxel_size)
+    sizes = np.bincount(walkable[walkable >= 0])
     large = sizes * voxel_size**2 >= min_area_m2
-    # Big surfaces first, so the largest get the most distinct palette slots.
-    rank = np.full(len(sizes), -1, dtype=np.int32)
-    by_size = np.flatnonzero(large)[np.argsort(-sizes[large])]
+    # Big regions first, so the largest get the most distinct palette slots.
+    rank = np.full(len(sizes) + 1, -1, dtype=np.int32)
+    by_size = np.flatnonzero(large)[np.argsort(-sizes[large], kind="stable")]
     rank[by_size] = np.arange(len(by_size), dtype=np.int32)
-    surface = rank[labels]
 
     ij = np.floor(voxels[:, :2] / voxel_size).astype(np.int16)
-    record = np.zeros(len(voxels), dtype=[("i", "<i2"), ("j", "<i2"), ("z", "<f4"), ("s", "<i4")])
+    record = np.zeros(
+        len(voxels),
+        dtype=[("i", "<i2"), ("j", "<i2"), ("z", "<f4"), ("w", "<i4"), ("nx", "i1"), ("ny", "i1")],
+    )
     record["i"], record["j"] = ij[:, 0], ij[:, 1]
     record["z"] = plane_heights(voxels, voxel_size)
-    record["s"] = surface
+    # Index -1 picks the last slot, which stays -1 for tiles on no walkable cell.
+    record["w"] = rank[walkable]
+    # The up-facing normal's x and y in 1/127ths; the page recovers z.
+    record["nx"], record["ny"] = (np.round(voxels[:, 3:5] * 127).astype(np.int8)).T
     golden = 0.61803398875
     palette = [
         "#{:02x}{:02x}{:02x}".format(
@@ -328,15 +329,16 @@ def surfaces(
     }
     body = (
         f"<header><h1>{title}</h1></header>"
-        f'<p class="lede">Every voxel the ray tracer fit a plane, at that plane\'s height. Each '
-        f"surface of {min_area_m2:g} m² or more, joined across voxels whose planes agree, has its own "
-        "color; the rest are grey. Drag to orbit, scroll to zoom.</p>"
-        f'<p class="stats">{len(voxels):,} voxels with planes · {len(by_size):,} large surfaces · '
+        f'<p class="lede">Every voxel the ray tracer fit a plane, as a tile at that plane\'s height and tilt, '
+        "colored by the planner's own graph: surfaces a robot can walk between, stairs included, share "
+        f"one color, each region of {min_area_m2:g} m² or more its own. Faint grey is under wall "
+        "clearance, not ground, or a smaller region. Drag to orbit, scroll to zoom.</p>"
+        f'<p class="stats">{len(voxels):,} voxels with planes · {len(by_size):,} walkable regions · '
         f"voxel {voxel_size * 100:.0f} cm</p>"
         '<figure><canvas class="view big" id="map"></canvas></figure>'
     )
     out.write_text(page(title, body, data, SURFACES_JS))
-    print(f"{len(voxels)} voxels, {len(by_size)} large surfaces -> {out}")
+    print(f"{len(voxels)} voxels, {len(by_size)} walkable regions -> {out}")
 
 
 if __name__ == "__main__":
