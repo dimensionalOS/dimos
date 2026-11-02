@@ -145,12 +145,12 @@ class PGOConfig(NativeModuleConfig):
     closure_search_hold_enabled: bool = True
     closure_search_estimate_lookup_s: float = 610e-6
     closure_search_estimate_lookup_per_keyframe_s: float = 5.7e-9
-    closure_search_estimate_build_per_point_s: float = 4.515e-6
-    closure_search_estimate_degeneracy_per_point_s: float = 8.881e-6
+    closure_search_estimate_build_per_point_s: float = 3.137e-6
+    closure_search_estimate_degeneracy_per_point_s: float = 7.808e-6
     closure_search_estimate_icp_s: float = 0.0
-    closure_search_estimate_gates_s: float = 0.05111
-    closure_search_estimate_extension_overhead_s: float = 0.1103
-    closure_search_estimate_extension_cloud_s: float = 0.09500
+    closure_search_estimate_gates_s: float = 0.05404
+    closure_search_estimate_extension_overhead_s: float = 0.1322
+    closure_search_estimate_extension_cloud_s: float = 0.08830
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
