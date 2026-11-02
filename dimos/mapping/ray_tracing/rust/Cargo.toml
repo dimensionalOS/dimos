@@ -74,7 +74,7 @@ tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
 nalgebra = "0.35.0"
 # Warps the map through a pose-graph correction (reform_ray_tracing).
-fast-reform = { git = "https://github.com/jeff-hykin/fast-reform", rev = "94164be" }
+fast-reform = "0.2.1"
 
 [workspace]
 members = ["py"]
