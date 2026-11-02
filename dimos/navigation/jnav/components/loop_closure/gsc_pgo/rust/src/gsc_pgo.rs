@@ -331,7 +331,22 @@ pub struct Config {
     pub keyframe_min_rotation_degrees: f64,
     pub keyframe_min_distance_meters: f64,
     pub closure_search_radius: f64,
-    pub closure_score_thresh: f64,
+    /// ICP pairs a source point with its nearest target point only within this distance (m); farther points are
+    /// treated as not seen by the other scan.
+    pub closure_icp_inlier_distance_m: f64,
+    /// A closure whose ICP fit has a larger rms inlier distance (m, sqrt of the fitness) is rejected.
+    pub closure_icp_max_fitness_m: f64,
+    /// Closure ICP steps minimise distances along the target's surface normals (point-to-plane); false is the old
+    /// point-to-point.
+    pub closure_icp_point_to_plane: bool,
+    /// Measure the lidar's per-point error from the recording (`GscPgo::scan_noise`): each keyframe's new points against
+    /// the keyframes just before it, placed by the odometry and re-aligned by a small point-to-plane ICP; each keyframe
+    /// is one witness (its points share errors), the estimate the rms of their gap widths, tightening as keyframes come.
+    pub scan_noise_from_keyframes: bool,
+
+    /// In that measurement, drop points a scan re-sends from earlier scans (the Go2 L1 republishes its last seconds of
+    /// points): placed by the scan's odometry pose, such a point lands exactly on its copy in the scan before.
+    pub scan_noise_drop_reseen_points: bool,
     pub closure_submap_half_range: i32,
     pub submap_resolution: f64,
     /// Structure-spread gate: minimum occupied Scan-Context cells. 0 disables.
@@ -352,7 +367,7 @@ pub struct Config {
     /// a second look on more data instead of an outright reject: each round seeded with the previous
     /// round's ICP (the first round with the single-scan ICP), the source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
     /// keyframes near the matched one in time that those land within `closure_search_radius` of.
-    /// Inliers are source points within sqrt(`closure_score_thresh`) of the target after ICP.
+    /// Inliers are source points within `closure_icp_inlier_distance_m` of the target after ICP.
     /// Each round counts as (extended inliers / single-scan inliers) independent checks, each as
     /// good as the single scan's confidence times how well the overlap held up (extended inlier
     /// fraction / single inlier fraction, at most 1): confidence = 1 - (1 - c_round)^checks.
@@ -485,7 +500,7 @@ pub struct Config {
     /// a larger consistent group contradicting it; a cold solve that merely loses track of a group (GNC's start dragged
     /// by newer wrong closures) no longer drops it (huge overtrust: 24 kept, 0, 24, 0).
     pub closure_commitments: bool,
-    /// When true, the closure ICP's inlier distance (`closure_score_thresh`'s role) is measured instead of configured:
+    /// When true, the closure ICP's inlier distance (`closure_icp_inlier_distance_m`) is measured instead of configured:
     /// each keyframe's scan against the keyframes before it, placed by the odometry (an alignment known to be right),
     /// gives nearest-neighbour distances fitted as half-normal (width w, the points the two see in common) plus uniform
     /// out to the ICP match distance (the rest); the inlier distance is where the median keyframe's w puts a right
@@ -524,6 +539,10 @@ pub struct Config {
     /// (the PCM core) on every solve: a bend two independent loops agree on is drift, a lone closure's may be a wrong
     /// one (huge: kept wrong closures read as yaw x41000). Without it only GM's verdict reads the core.
     pub odometry_noise_evidence_core: bool,
+    /// When true (with `odometry_noise_from_closures`), the noise is learned from the kept loops' innovations against
+    /// the raw odometry at the stated drift, each loop voting on a source by that source's share of its expected misfit
+    /// (its drift over the loop's length against the loop's own fit noise), instead of from the solved graph's residuals.
+    pub odometry_noise_from_loop_drift: bool,
     pub closure_overlap_score: bool,
     pub closure_overlap_sigma_m: f64,
     pub closure_overlap_reach_m: f64,
@@ -539,13 +558,25 @@ pub struct Config {
     pub soft_pressure_decades: f64,
 }
 
+impl Config {
+    /// `closure_icp_inlier_distance_m` squared, the form ICP compares against.
+    pub fn closure_inlier_squared_distance(&self) -> f64 {
+        self.closure_icp_inlier_distance_m.powi(2)
+    }
+}
+
 impl Default for Config {
     fn default() -> Config {
         Config {
             keyframe_min_rotation_degrees: 10.0,
             keyframe_min_distance_meters: 0.5,
             closure_search_radius: 3.0,
-            closure_score_thresh: 0.15,
+            closure_icp_inlier_distance_m: 0.3872983346207417,
+            closure_icp_max_fitness_m: 0.3872983346207417,
+            closure_icp_point_to_plane: true,
+            scan_noise_from_keyframes: false,
+
+            scan_noise_drop_reseen_points: true,
             closure_submap_half_range: 5,
             submap_resolution: 0.1,
             closure_min_occupancy: 80,
@@ -604,6 +635,7 @@ impl Default for Config {
             closure_noise_from_closures: false,
             closure_yank_gate_principled: false,
             odometry_noise_evidence_core: false,
+            odometry_noise_from_loop_drift: false,
             closure_overlap_score: false,
             closure_overlap_sigma_m: 0.03,
             closure_overlap_reach_m: 0.5,
@@ -674,6 +706,12 @@ pub struct GscPgo {
     pub(crate) keyframe_reach: (f64, usize),
     /// Each measured keyframe's right-alignment width against the keyframes before it (`closure_inlier_distance_from_odometry`).
     pub(crate) odometry_alignment_widths: Vec<f64>,
+    /// `scan_noise_from_keyframes`: the previous scan's points (odometry frame, 0.1 mm grid), the new points since the
+    /// last keyframe, the last keyframes' new points, and each measured keyframe's gap width.
+    pub(crate) scan_noise_previous: std::collections::HashSet<[i64; 3]>,
+    pub(crate) scan_noise_fresh: PointCloud,
+    pub(crate) scan_noise_recent: std::collections::VecDeque<PointCloud>,
+    pub(crate) scan_noise_widths: Vec<f64>,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Vec<Mat3>)>,
     /// Shared, so a closure search can count look-alike places without copying them.
@@ -817,11 +855,23 @@ impl ClosureSearch {
         // a cloud computation, through the ICP cache when there is one; a measured inlier distance changes every
         // fit, so it is part of the key
         let cache = self.icp_cache.clone();
-        let key_suffix = if self.config.closure_inlier_distance_from_odometry {
-            format!(":{:x}", self.config.closure_score_thresh.to_bits())
-        } else {
-            String::new()
-        };
+        let key_suffix = format!(
+            "{}{}",
+            if self.config.closure_inlier_distance_from_odometry {
+                format!(
+                    ":{:x}",
+                    self.config.closure_inlier_squared_distance().to_bits()
+                )
+            } else {
+                String::new()
+            },
+            // a point-to-plane alignment is a different result from a point-to-point one
+            if self.config.closure_icp_point_to_plane {
+                ":pl"
+            } else {
+                ""
+            }
+        );
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
                 Some(cache) => {
@@ -894,7 +944,8 @@ impl ClosureSearch {
                 &IcpParams {
                     max_iterations: self.config.closure_icp_max_iterations as usize,
                     max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
-                    inlier_squared_distance: self.config.closure_score_thresh,
+                    inlier_squared_distance: self.config.closure_inlier_squared_distance(),
+                    point_to_plane: self.config.closure_icp_point_to_plane,
                 },
             ))
         }));
@@ -925,7 +976,7 @@ impl ClosureSearch {
                     &transform_cloud(source_cloud, &icp.rotation, &icp.translation),
                     target_cloud,
                     target_tree,
-                    self.config.closure_score_thresh,
+                    self.config.closure_inlier_squared_distance(),
                 )]
             })[0] as f32;
             timing.degeneracy_s += t0.elapsed().as_secs_f64();
@@ -934,7 +985,7 @@ impl ClosureSearch {
             }
         }
 
-        if !icp.converged || icp.fitness > self.config.closure_score_thresh {
+        if !icp.converged || icp.fitness > self.config.closure_icp_max_fitness_m.powi(2) {
             return rejected(diag, "icp_reject", scored_yank, timing);
         }
         // the closure's own variances from an alignment's fit, in the target keyframe's frame (`closure_icp_covariance`)
@@ -953,7 +1004,7 @@ impl ClosureSearch {
                         &transform_cloud(source_cloud, rotation, translation),
                         target_cloud,
                         target_tree,
-                        self.config.closure_score_thresh,
+                        self.config.closure_inlier_squared_distance(),
                         &origin,
                     )
                     .map_or(Vec::new(), |c| c.iter().flatten().copied().collect())
@@ -1009,8 +1060,10 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // the closure's translation variance as the graph will take it: its fit's own (largest axis), else its fitness
-        let closure_variance = variances.map_or(icp.fitness, |v| v[3].max(v[4]).max(v[5]));
+        // the closure's translation variance as the graph will take it: its fit's own (largest axis), else its inliers'
+        // mean squared distance (`IcpResult::inlier_mean_square`)
+        let closure_variance =
+            variances.map_or(icp.inlier_mean_square(), |v| v[3].max(v[4]).max(v[5]));
         // a closure is uninformative only if it also agrees with the graph: one that disagrees beyond the graph's own
         // spread of its two ends plus its fit's (chi-square, 3 DOF, at `closure_gnc_inlier_probability`) says the
         // odometry's noise is understated, the overtrust evidence the solve's check and the learner need, however
@@ -1081,7 +1134,8 @@ impl ClosureSearch {
             diag.overlap_score = overlap[2];
         }
 
-        let mut score = icp.fitness;
+        // the closure's variance per axis: its inliers' mean squared distance, as LIO-SAM takes ICP's fitness score
+        let mut score = icp.inlier_mean_square();
         let (source, target) = (&self.key_poses[cur_idx], &self.key_poses[target_idx]);
         let closure_rotation_transpose = mat3::transpose(&target.rotation_global);
         // the closure measurement an alignment gives: the source keyframe moved by it, in the target's frame
@@ -1206,7 +1260,7 @@ impl ClosureSearch {
             // the closure measurement comes from the extended alignment, which saw more of both places
             (rotation_offset, translation_offset) =
                 measured(&extended.rotation, &extended.translation);
-            score = extended.fitness;
+            score = extended.inlier_mean_square();
             variances = closure_variances("covx", &extended.rotation, &extended.translation);
         }
 
@@ -1561,7 +1615,54 @@ impl GscPgo {
         // turning from sliding where a closure's single innovation cannot
         let mut ln_odometry = self.odometry_noise_ln;
         let mut redundancy = [0.0; 4];
-        if fit_odometry {
+        if fit_odometry && self.config.odometry_noise_from_loop_drift {
+            // each kept loop votes on each noise source as far as that source's drift over the loop's length explains
+            // its expected misfit (a short loop's is mostly its own ICP noise, so it barely votes), with how surprised
+            // it was: ln of its innovation's squared Mahalanobis distance per axis at the stated drift and its fit's
+            // noise, less that statistic's mean for a right loop, E[ln(chi2_3 / 3)] = digamma(3/2) - ln(3/2). The
+            // stated drift counts as `odom_error_stiffness` loops of no surprise; the spread of ln(chi2_3) is
+            // trigamma(3/2), so the estimate's sd is sqrt(trigamma(3/2) / (stiffness + votes))
+            const MEAN_LN_CHI2_3_OVER_3: f64 = -0.368_975_1;
+            const VAR_LN_CHI2_3: f64 = 0.934_802_2;
+            let closure_scale = self.closure_noise_scale();
+            let mut votes = [0.0; 4];
+            let mut weighted = [0.0; 4];
+            for n in &innovations {
+                let pieces: [f64; 4] =
+                    std::array::from_fn(|c| (0..3).map(|k| n.pieces[c][k][k]).sum::<f64>());
+                let fit = 3.0 * n.fitness * closure_scale;
+                let total = pieces.iter().sum::<f64>() + fit;
+                let covariance: crate::mat3::Mat3 = std::array::from_fn(|i| {
+                    std::array::from_fn(|j| {
+                        (0..4).map(|c| n.pieces[c][i][j]).sum::<f64>()
+                            + if i == j { fit / 3.0 } else { 0.0 }
+                    })
+                });
+                let Some(inverse) = crate::mat3::inverse(&covariance) else {
+                    continue;
+                };
+                let iv = crate::mat3::mat_vec(&inverse, &n.v);
+                let squared = n.v[0] * iv[0] + n.v[1] * iv[1] + n.v[2] * iv[2];
+                if !(total > 0.0 && squared > 0.0 && squared.is_finite()) {
+                    continue;
+                }
+                let surprise = (squared / 3.0).ln() - MEAN_LN_CHI2_3_OVER_3;
+                for c in 0..4 {
+                    let vote = pieces[c] / total;
+                    votes[c] += vote;
+                    weighted[c] += vote * surprise;
+                }
+            }
+            let stiffness = self.config.odom_error_stiffness;
+            for c in 0..4 {
+                redundancy[c] = votes[c];
+                if votes[c] > 0.0 {
+                    ln_odometry[c] = weighted[c] / (stiffness + votes[c]);
+                    self.odometry_noise_ln_sd[c] =
+                        Some((VAR_LN_CHI2_3 / (stiffness + votes[c])).sqrt());
+                }
+            }
+        } else if fit_odometry {
             if let Some(evidence) = evidence {
                 for c in 0..4 {
                     let (sum, r) = evidence[c];
@@ -1712,6 +1813,12 @@ impl GscPgo {
     /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
         let keyframe = self.is_key_pose(&cloud_with_pose.pose);
+        if self.config.scan_noise_from_keyframes {
+            self.collect_scan_noise_points(cloud_with_pose);
+            if keyframe {
+                self.measure_scan_noise();
+            }
+        }
         if keyframe {
             self.insert_keyframe(&cloud_with_pose.pose, cloud_with_pose.cloud.clone());
         }
@@ -1723,6 +1830,92 @@ impl GscPgo {
             }
         }
         keyframe
+    }
+    /// The scan's points in the odometry frame, the re-sent ones dropped (`scan_noise_drop_reseen_points`), added to the
+    /// new points since the last keyframe.
+    fn collect_scan_noise_points(&mut self, cloud_with_pose: &CloudWithPose) {
+        let Some(cloud) = &cloud_with_pose.cloud else {
+            return;
+        };
+        let pose = &cloud_with_pose.pose;
+        let placed: PointCloud = transform_cloud(cloud, &pose.rotation, &pose.translation);
+        let key = |p: &[f32; 3]| p.map(|v| (v as f64 * 1e4).round() as i64);
+        let keys: std::collections::HashSet<[i64; 3]> = placed.iter().map(key).collect();
+        let drop = self.config.scan_noise_drop_reseen_points;
+        let previous = &self.scan_noise_previous;
+        self.scan_noise_fresh.extend(
+            placed
+                .iter()
+                .filter(|p| !drop || !previous.contains(&key(p))),
+        );
+        self.scan_noise_previous = keys;
+    }
+    /// One witness of the lidar's error: the new points since the last keyframe against the last keyframes' new points
+    /// (`closure_submap_half_range` x 2 of them), re-aligned by point-to-plane ICP (pairs within the closure inlier
+    /// distance, so only drift between them is removed), then the width of their point-to-plane gaps.
+    fn measure_scan_noise(&mut self) {
+        let source = voxel_downsample(
+            &std::mem::take(&mut self.scan_noise_fresh),
+            self.config.submap_resolution / 4.0,
+        );
+        let before = 2 * self.config.closure_submap_half_range.max(1) as usize;
+        if self.scan_noise_recent.len() >= before && source.len() >= 20 {
+            let target: PointCloud = self.scan_noise_recent.iter().flatten().copied().collect();
+            let tree = KdTree::build(&target);
+            let reach = self.config.closure_inlier_squared_distance();
+            let step = (source.len() / 3000).max(1);
+            let sample: PointCloud = source.iter().step_by(step).copied().collect();
+            let fit = icp(
+                &sample,
+                &target,
+                &tree,
+                &mat3::identity(),
+                &[0.0; 3],
+                &IcpParams {
+                    max_iterations: 15,
+                    max_correspondence_distance: reach.sqrt(),
+                    inlier_squared_distance: reach,
+                    point_to_plane: true,
+                },
+            );
+            let gaps = crate::connection_fit::plane_gaps(
+                &transform_cloud(&sample, &fit.rotation, &fit.translation),
+                &target,
+                &tree,
+                reach,
+            );
+            if let Some(width) = crate::connection_fit::half_normal_width(&gaps, reach.sqrt()) {
+                self.scan_noise_widths.push(width);
+                let measured = self.scan_noise_widths.len();
+                if measured.is_power_of_two() {
+                    let (sd, uncertainty) = self.scan_noise().unwrap_or((f64::NAN, f64::NAN));
+                    eprintln!(
+                        "scan error: {:.2} cm +- {:.2} from {measured} keyframes (newest {:.2} cm)",
+                        sd * 100.0,
+                        uncertainty * 100.0,
+                        width * 100.0
+                    );
+                }
+            }
+        }
+        self.scan_noise_recent.push_back(source);
+        while self.scan_noise_recent.len() > before {
+            self.scan_noise_recent.pop_front();
+        }
+    }
+    /// The lidar's per-point error (m) measured so far (`scan_noise_from_keyframes`) and its standard error: the rms of
+    /// the keyframes' gap widths; None before any keyframe was measured.
+    pub fn scan_noise(&self) -> Option<(f64, f64)> {
+        let n = self.scan_noise_widths.len();
+        if n == 0 {
+            return None;
+        }
+        let squares: Vec<f64> = self.scan_noise_widths.iter().map(|w| w * w).collect();
+        let mean = squares.iter().sum::<f64>() / n as f64;
+        let spread = (squares.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64).sqrt();
+        let sd = mean.sqrt();
+        // standard error of the mean square, carried to its square root
+        Some((sd, spread / (n as f64).sqrt() / (2.0 * sd)))
     }
     /// The newest loop-overlap pressure and the scan count it was computed at (see `pressure_check_frequency`).
     pub fn pressure(&self) -> Option<(usize, crate::loop_overlap::LoopOverlap)> {
@@ -1955,7 +2148,7 @@ impl GscPgo {
         Some(ClosureSearch {
             key_poses: self.key_poses.clone(),
             config: Config {
-                closure_score_thresh: self.closure_inlier_squared_distance(),
+                closure_icp_inlier_distance_m: self.closure_inlier_squared_distance().sqrt(),
                 ..self.config.clone()
             },
             scored_yanks: self.yank_scale_sample(),
@@ -2144,12 +2337,12 @@ impl GscPgo {
     }
 
     /// The closure ICP's inlier distance squared: measured (`closure_inlier_distance_from_odometry`) once a keyframe has
-    /// been, else `closure_score_thresh`.
+    /// been, else `closure_icp_inlier_distance_m` squared.
     pub fn closure_inlier_squared_distance(&self) -> f64 {
         if !self.config.closure_inlier_distance_from_odometry
             || self.odometry_alignment_widths.is_empty()
         {
-            return self.config.closure_score_thresh;
+            return self.config.closure_inlier_squared_distance();
         }
         let mut widths = self.odometry_alignment_widths.clone();
         widths.sort_by(f64::total_cmp);

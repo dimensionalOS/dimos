@@ -48,7 +48,16 @@ class PGOConfig(NativeModuleConfig):
 
     # Loop closure knobs
     closure_search_radius: float = 3.0
-    closure_score_thresh: float = 0.15
+    # ICP pairs points only within this distance (m); the default is the old 0.15 m^2 squared cutoff
+    closure_icp_inlier_distance_m: float = 0.3872983346207417
+    # reject a closure whose ICP rms inlier distance (m) is larger
+    closure_icp_max_fitness_m: float = 0.3872983346207417
+    # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
+    closure_icp_point_to_plane: bool = True
+    # measure the lidar's per-point error from keyframes against the ones before them (logged, converges over time)
+    scan_noise_from_keyframes: bool = False
+    # in that measurement, drop points a scan re-sends from earlier scans (Go2 L1)
+    scan_noise_drop_reseen_points: bool = True
     closure_submap_half_range: int = 5
     submap_resolution: float = 0.1
     # higher=more strict, min number of Scan-Context cells
@@ -111,7 +120,7 @@ class PGOConfig(NativeModuleConfig):
     odometry_gravity_bound: bool = False
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
     closure_commitments: bool = False
-    # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_score_thresh
+    # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_icp_inlier_distance_m
     closure_inlier_distance_from_odometry: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
@@ -131,6 +140,8 @@ class PGOConfig(NativeModuleConfig):
     closure_yank_gate_principled: bool = False
     # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
     odometry_noise_evidence_core: bool = False
+    # True: the noise is learned from kept loops' innovations vs raw odometry, each voting by its drift share of its expected misfit (short loops barely vote)
+    odometry_noise_from_loop_drift: bool = False
     closure_overlap_score: bool = False
     closure_overlap_sigma_m: float = 0.03
     closure_overlap_reach_m: float = 0.5

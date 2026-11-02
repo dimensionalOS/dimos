@@ -128,7 +128,10 @@ fn measured_inlier_distance_follows_the_sensor_noise() {
     );
     // off, the configured value holds
     let configured = walk(Config::default(), 30, 0.6, 0.05, 12.0).closure_inlier_squared_distance();
-    assert_eq!(configured, Config::default().closure_score_thresh);
+    assert_eq!(
+        configured,
+        Config::default().closure_inlier_squared_distance()
+    );
 }
 
 #[test]

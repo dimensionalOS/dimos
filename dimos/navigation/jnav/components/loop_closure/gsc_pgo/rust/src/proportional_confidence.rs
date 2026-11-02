@@ -88,7 +88,14 @@ impl ClosureSearch {
         diag.icp_factor = if half > 0.0 {
             unit(diag.sharpness / (diag.sharpness + half))
         } else {
-            unit(1.0 - diag.icp_fitness / self.config.closure_score_thresh.max(f64::EPSILON))
+            unit(
+                1.0 - diag.icp_fitness
+                    / self
+                        .config
+                        .closure_icp_max_fitness_m
+                        .powi(2)
+                        .max(f64::EPSILON),
+            )
         };
         diag.degeneracy_factor =
             if self.config.closure_min_degeneracy > 0.0 && diag.degeneracy_min >= 0.0 {
@@ -116,7 +123,7 @@ impl ClosureSearch {
             &transform_cloud(source, &icp.rotation, &icp.translation),
             tree,
             self.config.submap_resolution,
-            self.config.closure_score_thresh,
+            self.config.closure_inlier_squared_distance(),
             self.config.closure_sharpness_nudge_m,
             self.config.closure_sharpness_nudge_deg,
         )
@@ -155,7 +162,7 @@ impl ClosureSearch {
             target,
             tree,
             self.config.closure_icp_max_correspondence_m,
-            self.config.closure_score_thresh,
+            self.config.closure_inlier_squared_distance(),
             &views,
             self.config.closure_likelihood_beam,
         )
@@ -237,7 +244,8 @@ impl ClosureSearch {
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
             max_correspondence_distance: max_distance,
-            inlier_squared_distance: self.config.closure_score_thresh,
+            inlier_squared_distance: self.config.closure_inlier_squared_distance(),
+            point_to_plane: self.config.closure_icp_point_to_plane,
         };
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
         let radius = self.config.closure_search_radius;
