@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! This process's resident memory, for the periodic memory log.
+//! This process's resident memory and state dumps, for the periodic memory log.
 
 /// Resident set size in MB, None when the platform can't say.
 #[cfg(target_os = "linux")]
@@ -46,4 +46,12 @@ pub fn rss_mb() -> Option<f64> {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn rss_mb() -> Option<f64> {
     None
+}
+
+/// Write flat little-endian f32s to `path` atomically: a temp file renamed over it.
+pub fn dump_f32(path: &str, values: &[f32]) -> std::io::Result<()> {
+    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
 }

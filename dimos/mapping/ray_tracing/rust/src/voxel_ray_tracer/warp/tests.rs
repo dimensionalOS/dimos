@@ -143,8 +143,47 @@ fn moves_land_by_the_warped_center() {
     let centers = voxel_centers(&keys, 0.5);
     assert_eq!(centers[1], [-0.25, 1.25, 1.75]);
     let warped = [[0.6, 0.2, 0.2], [-0.25, 1.25, 1.75]];
-    let moves = voxel_moves(&keys, &warped, 0.5);
+    let moves = voxel_moves(&keys, &centers, &warped, 0.5);
     assert_eq!(moves[0].to, (1, 0, 0));
     assert!((moves[0].offset - Vector3::new(-0.15, -0.05, -0.05)).norm() < 1e-6);
     assert_eq!((moves[1].from, moves[1].to), ((-1, 2, 3), (-1, 2, 3)));
+}
+
+/// Rebuild cost on a real map: RT_WARP_BENCH=<tracer dump, f32 xyz centers>
+/// cargo test --release --lib rebuild_bench -- --ignored --nocapture
+#[test]
+#[ignore = "needs RT_WARP_BENCH, a reform_ray_tracing dump"]
+fn rebuild_bench() {
+    let path = std::env::var("RT_WARP_BENCH").expect("RT_WARP_BENCH");
+    let raw = std::fs::read(path).unwrap();
+    let vs = 0.08_f32;
+    let load = || {
+        let mut map = VoxelMap::with_support_min(4);
+        for p in raw.as_chunks::<12>().0 {
+            let f = |i: usize| f32::from_le_bytes(p[i..i + 4].try_into().unwrap());
+            map.set_health(world_to_voxel(f(0), f(4), f(8), 1.0 / vs), 3);
+        }
+        map
+    };
+    let started = std::time::Instant::now();
+    let mut map = load();
+    let loaded = started.elapsed();
+    println!("voxels {}", map.voxels.len());
+    // Every voxel moves one key over, with a sub-voxel offset, like a closure that shifts the map.
+    let moves: Vec<VoxelMove> = map
+        .voxels
+        .iter()
+        .map(|(k, _)| VoxelMove {
+            from: k,
+            to: (k.0 + 1, k.1, k.2),
+            offset: Vector3::new(0.01, 0.0, 0.0),
+        })
+        .collect();
+    let mut rebuilt = load();
+    let started = std::time::Instant::now();
+    rebuilt.rebuild_moved(&moves);
+    println!("load {loaded:?}, rebuild_moved {:?}", started.elapsed());
+    let started = std::time::Instant::now();
+    map.move_voxels(&moves);
+    println!("move_voxels {:?}", started.elapsed());
 }

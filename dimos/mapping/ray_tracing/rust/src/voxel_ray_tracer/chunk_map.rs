@@ -16,6 +16,7 @@
 //! voxels packed in mask order.
 
 use ahash::AHashMap;
+use rayon::prelude::*;
 
 use super::{Voxel, VoxelHealth, VoxelKey};
 
@@ -373,6 +374,76 @@ impl ChunkMap {
         self.chunks
             .iter()
             .map(|(&key, chunk)| ChunkRef { key, chunk })
+    }
+
+    /// Build from voxels sorted by key's chunk then slot, each slot once, with
+    /// every support count recounted from the result.
+    pub fn from_sorted(entries: Vec<(VoxelKey, Voxel)>) -> Self {
+        let mut starts: Vec<usize> = (0..entries.len())
+            .filter(|&i| i == 0 || chunk_of(entries[i].0) != chunk_of(entries[i - 1].0))
+            .collect();
+        starts.push(entries.len());
+        let len = entries.len();
+        let mut entries: Vec<Option<(VoxelKey, Voxel)>> = entries.into_iter().map(Some).collect();
+        let mut runs: Vec<&mut [Option<(VoxelKey, Voxel)>]> = Vec::with_capacity(starts.len());
+        let mut rest = entries.as_mut_slice();
+        for pair in starts.windows(2) {
+            let (run, tail) = rest.split_at_mut(pair[1] - pair[0]);
+            runs.push(run);
+            rest = tail;
+        }
+        let chunks: AHashMap<ChunkKey, Chunk> = runs
+            .into_par_iter()
+            .map(|run| {
+                let mut chunk = Chunk::default();
+                let mut key = (0, 0, 0);
+                for entry in run.iter_mut() {
+                    let (k, voxel) = entry.take().expect("each entry is taken once");
+                    key = chunk_of(k);
+                    let slot = slot_of(k);
+                    chunk.occupied.set(slot, true);
+                    chunk.healthy.set(slot, voxel.health > 0);
+                    chunk.voxels.push(voxel);
+                    chunk.support.push(0);
+                }
+                (key, chunk)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect();
+        let mut map = Self { chunks, len };
+        let supports: Vec<(ChunkKey, Vec<u8>)> = map
+            .chunks
+            .par_iter()
+            .map(|(&ck, chunk)| {
+                let counts = chunk
+                    .occupied
+                    .ones()
+                    .map(|slot| {
+                        let k = key_of(ck, slot);
+                        let near = map.neighborhood(k, 1);
+                        let mut n = 0u8;
+                        for dx in -1..=1 {
+                            for dy in -1..=1 {
+                                for dz in -1..=1 {
+                                    if (dx, dy, dz) != (0, 0, 0)
+                                        && near.is_healthy((k.0 + dx, k.1 + dy, k.2 + dz))
+                                    {
+                                        n += 1;
+                                    }
+                                }
+                            }
+                        }
+                        n
+                    })
+                    .collect();
+                (ck, counts)
+            })
+            .collect();
+        for (ck, counts) in supports {
+            map.chunks.get_mut(&ck).expect("counted above").support = counts;
+        }
+        map
     }
 
     pub fn chunk_count(&self) -> usize {

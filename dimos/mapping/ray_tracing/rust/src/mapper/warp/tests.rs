@@ -14,7 +14,7 @@
 
 use super::*;
 use crate::reform::{KeyframeRecord, MovedRecord, Pose, ReformParams, ReformState};
-use crate::voxel_ray_tracer::Config;
+use crate::voxel_ray_tracer::{voxel_moves, Config};
 use fast_reform::{warp_positions, Quat, Vec3};
 
 const VOXEL: f32 = 0.1;
@@ -56,7 +56,7 @@ fn at(x: f64) -> Pose {
 }
 
 /// A drive along x, one keyframe a meter and a second, each frame seeing the
-/// wall at y = 1 beside it.
+/// wall at y = 1.03 beside it, inside its voxels rather than on their edge.
 fn driven() -> (Mapper, ReformState) {
     let mut mapper = Mapper::new(config());
     mapper.track_voxel_times();
@@ -65,7 +65,7 @@ fn driven() -> (Mapper, ReformState) {
         mapper.set_clock(i as f64);
         let wall: Vec<(f32, f32, f32)> = (0..20)
             .flat_map(|dx| {
-                (0..3).map(move |z| (i as f32 - 0.5 + dx as f32 * 0.05, 1.0, z as f32 * 0.1))
+                (0..3).map(move |z| (i as f32 - 0.5 + dx as f32 * 0.05, 1.03, z as f32 * 0.1))
             })
             .collect();
         mapper.add_frame_world(wall, (i as f32, 0.0, 0.1));
@@ -164,12 +164,9 @@ fn voxels_land_where_plain_fast_reform_puts_them() {
     let mut keys: Vec<VoxelKey> = mapper.map().voxels.iter().map(|(k, _)| k).collect();
     keys.sort();
     let times: Vec<f64> = keys.iter().map(|k| mapper.voxel_time(k)).collect();
-    let reference = warp_positions(
-        &voxel_centers(&keys, VOXEL),
-        Some(&times),
-        &warp.graph_delta().to_blend_arrays(),
-    );
-    let expected = voxel_moves(&keys, &reference, VOXEL);
+    let means = mapper.map().voxel_means(&keys, VOXEL);
+    let reference = warp_positions(&means, Some(&times), &warp.graph_delta().to_blend_arrays());
+    let expected = voxel_moves(&keys, &means, &reference, VOXEL);
     mapper.apply_warp(&warp);
     let landed = expected
         .iter()
@@ -180,4 +177,66 @@ fn voxels_land_where_plain_fast_reform_puts_them() {
         "{landed} of {} voxels are where fast-reform puts them",
         expected.len()
     );
+}
+
+#[test]
+fn shifts_smaller_than_a_voxel_add_up_over_closures() {
+    let mut mapper = Mapper::new(config());
+    mapper.track_voxel_times();
+    let mut state = ReformState::default();
+    for i in 0..10 {
+        mapper.set_clock(i as f64);
+        // A wall whose points sit at its voxels' centers, y = 1.05.
+        let wall: Vec<(f32, f32, f32)> = (0..10)
+            .flat_map(|dx| {
+                (0..3).map(move |z| {
+                    (
+                        i as f32 + 0.05 + dx as f32 * 0.1,
+                        1.05,
+                        0.05 + z as f32 * 0.1,
+                    )
+                })
+            })
+            .collect();
+        mapper.add_frame_world(wall, (i as f32, 0.0, 0.1));
+        state.add_keyframes(&[KeyframeRecord {
+            id: i,
+            ts: i as f64,
+            pose: at(i as f64),
+        }]);
+    }
+    let params = ReformParams {
+        blend_sigma_m: 1.0,
+        blend_time_sigma_s: 1.0,
+        min_shift_m: 0.02,
+        rebuild_fraction: 1.0,
+    };
+    // Each keyframe's pose before the nudge is where the last one left it.
+    let nudge = |state: &mut ReformState, done: f64| {
+        let moved: Vec<MovedRecord> = (0..10)
+            .map(|i| {
+                let mut pose = at(i as f64);
+                pose.translation.y += 0.03 * done;
+                MovedRecord {
+                    keyframe: KeyframeRecord {
+                        id: i,
+                        ts: i as f64,
+                        pose,
+                    },
+                    delta: Pose {
+                        rotation: Quat::IDENTITY,
+                        translation: Vec3::new(0.0, 0.03, 0.0),
+                    },
+                }
+            })
+            .collect();
+        state
+            .closure(&moved, &params)
+            .expect("a 3 cm shift passes min_shift_m")
+    };
+    // 3 cm keeps the wall in its voxels; another 3 cm takes it past their edge.
+    mapper.apply_warp(&nudge(&mut state, 0.0));
+    assert!(has(&mapper, 4.05, 1.05, 0.05) && !has(&mapper, 4.05, 1.15, 0.05));
+    mapper.apply_warp(&nudge(&mut state, 1.0));
+    assert!(has(&mapper, 4.05, 1.15, 0.05) && !has(&mapper, 4.05, 1.05, 0.05));
 }

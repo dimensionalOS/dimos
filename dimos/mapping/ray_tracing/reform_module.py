@@ -40,6 +40,8 @@ class ReformRayTracingVoxelMapConfig(RayTracingVoxelMapConfig):
     # rebuilt from the warped voxels instead of repaired around them: a repair
     # touches each mover's neighborhood about three times, a rebuild once.
     reform_rebuild_fraction: float = 0.25
+    # Where to write the module's map state every 10 s for offline checks, empty for never.
+    dump_path: str = ""
 
 
 class ReformRayTracingVoxelMap(RayTracingVoxelMap):

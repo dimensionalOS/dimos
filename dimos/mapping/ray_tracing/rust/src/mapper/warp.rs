@@ -22,7 +22,7 @@ use rayon::prelude::*;
 
 use super::Mapper;
 use crate::reform::{Tile, Warp};
-use crate::voxel_ray_tracer::{voxel_centers, voxel_moves, VoxelKey};
+use crate::voxel_ray_tracer::{voxel_moves, VoxelKey};
 
 /// A point's place before and after a warp.
 pub type Displacement = ([f32; 3], [f32; 3]);
@@ -120,6 +120,14 @@ impl Mapper {
         )
     }
 
+    /// Every healthy voxel's center, flat xyz triples.
+    pub fn healthy_centers(&self) -> Vec<f32> {
+        let live = ahash::AHashSet::new();
+        self.pool.install(|| {
+            crate::voxel_ray_tracer::emit_points_ungated(&self.map, self.config.voxel_size, &live)
+        })
+    }
+
     /// Record when each voxel lands, for warps. Costs a map entry per voxel.
     pub fn track_voxel_times(&mut self) {
         self.voxel_times.get_or_insert_with(VoxelTimes::default);
@@ -177,14 +185,14 @@ impl Mapper {
             return report;
         }
         let times: Vec<f64> = keys.iter().map(|k| self.voxel_time(k)).collect();
-        let centers = voxel_centers(&keys, vs);
-        let mut warped = warp.apply(&centers, &times);
+        let means = self.map.voxel_means(&keys, vs);
+        let mut warped = warp.apply(&means, &times);
         (report.implausible, report.worst_implausible) =
-            hold_implausible(&centers, &mut warped, warp.max_plausible_move_m());
+            hold_implausible(&means, &mut warped, warp.max_plausible_move_m());
         report.warp_ms = ms_since(stage);
 
         let stage = Instant::now();
-        let moves = voxel_moves(&keys, &warped, vs);
+        let moves = voxel_moves(&keys, &means, &warped, vs);
         report.voxels_moved = moves.par_iter().filter(|m| m.from != m.to).count();
         report.rebuilt =
             report.voxels_moved as f64 > warp.rebuild_fraction() * self.map.voxels.len() as f64;

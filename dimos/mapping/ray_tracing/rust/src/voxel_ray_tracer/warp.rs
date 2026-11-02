@@ -107,47 +107,47 @@ impl VoxelMap {
     }
 
     /// Rebuild the map with `moves` applied: every voxel taken out and put
-    /// back at its key, support counted once per voxel instead of updated
-    /// around each mover, for when most of the map moves.
+    /// back at its key in bulk, chunks built and supports counted in parallel,
+    /// for when most of the map moves.
     pub fn rebuild_moved(&mut self, moves: &[VoxelMove]) {
         let moving: AHashMap<VoxelKey, (VoxelKey, Vector3<f32>)> =
             moves.iter().map(|m| (m.from, (m.to, m.offset))).collect();
-        let mut landed: AHashMap<VoxelKey, Voxel> = AHashMap::with_capacity(self.voxels.len());
-        for chunk in self.voxels.chunks() {
-            for (key, v) in chunk.iter() {
-                let mut v = v.clone();
-                let to = match moving.get(&key) {
-                    Some(&(to, offset)) => {
-                        v.shift(offset);
-                        to
+        let chunks: Vec<ChunkRef> = self.voxels.chunks().collect();
+        let mut landed: Vec<(VoxelKey, Voxel)> = chunks
+            .par_iter()
+            .flat_map_iter(|chunk| {
+                let moving = &moving;
+                chunk.iter().map(move |(key, v)| {
+                    let mut v = v.clone();
+                    v.normal = NormalFit::Stale;
+                    match moving.get(&key) {
+                        Some(&(to, offset)) => {
+                            v.shift(offset);
+                            (to, v)
+                        }
+                        None => (key, v),
                     }
-                    None => key,
-                };
-                match landed.get_mut(&to) {
-                    Some(existing) => {
-                        existing.absorb(&v);
-                        existing.health = existing.health.max(v.health);
-                    }
-                    None => {
-                        landed.insert(to, v);
-                    }
+                })
+            })
+            .collect();
+        let old_chunks: Vec<ChunkKey> = chunks.iter().map(|c| c.key).collect();
+        drop(chunks);
+        landed.par_sort_unstable_by_key(|(k, _)| (chunk_of(*k), *k));
+        // Voxels that landed on one key merge into the first.
+        let mut merged: Vec<(VoxelKey, Voxel)> = Vec::with_capacity(landed.len());
+        for (key, v) in landed {
+            match merged.last_mut() {
+                Some((last, existing)) if *last == key => {
+                    existing.absorb(&v);
+                    existing.health = existing.health.max(v.health);
                 }
+                _ => merged.push((key, v)),
             }
         }
-        let old_chunks: Vec<ChunkKey> = self.voxels.chunks().map(|c| c.key).collect();
         self.changed_chunks.extend(old_chunks);
-        self.voxels.clear();
-        let keys: Vec<VoxelKey> = landed.keys().copied().collect();
-        for (key, mut v) in landed {
-            v.normal = NormalFit::Stale;
-            self.voxels.insert(key, v, 0);
-        }
-        for &key in &keys {
-            let support = self.count_healthy_neighbors(key);
-            self.voxels
-                .for_each_near_mut(key, 0, |_, _, s| *s = support);
-            self.changed_chunks.insert(chunk_of(key));
-        }
+        self.changed_chunks
+            .extend(merged.iter().map(|(k, _)| chunk_of(*k)));
+        self.voxels = ChunkMap::from_sorted(merged);
     }
 }
 
@@ -161,18 +161,49 @@ pub fn voxel_centers(keys: &[VoxelKey], voxel_size: f32) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// Where each voxel lands given its warped center.
-pub fn voxel_moves(keys: &[VoxelKey], warped: &[[f32; 3]], voxel_size: f32) -> Vec<VoxelMove> {
+impl VoxelMap {
+    /// Each voxel's mean point, its center when it holds none. Warping the mean
+    /// rather than the center keeps a sub-voxel shift: it accumulates in the
+    /// moments over closures until the mean crosses into another voxel.
+    pub fn voxel_means(&self, keys: &[VoxelKey], voxel_size: f32) -> Vec<[f32; 3]> {
+        keys.par_iter()
+            .map(|&k| {
+                let (x, y, z) = voxel_center(k, voxel_size);
+                let mean = self
+                    .voxels
+                    .get(&k)
+                    .filter(|v| v.num_pts > 0)
+                    .map_or(Vector3::zeros(), |v| v.sum / v.num_pts as f32);
+                [x + mean.x, y + mean.y, z + mean.z]
+            })
+            .collect()
+    }
+}
+
+/// Where each voxel lands when its point `from_points[i]` warps to `warped[i]`:
+/// the key of the warped point, and how far the old center lands from the new
+/// one, which re-centers the moments.
+pub fn voxel_moves(
+    keys: &[VoxelKey],
+    from_points: &[[f32; 3]],
+    warped: &[[f32; 3]],
+    voxel_size: f32,
+) -> Vec<VoxelMove> {
     let inv = 1.0 / voxel_size;
     keys.par_iter()
-        .zip(warped.par_iter())
-        .map(|(&from, w)| {
+        .zip(from_points.par_iter().zip(warped.par_iter()))
+        .map(|(&from, (p, w))| {
             let to = world_to_voxel(w[0], w[1], w[2], inv);
+            let (ox, oy, oz) = voxel_center(from, voxel_size);
             let (cx, cy, cz) = voxel_center(to, voxel_size);
             VoxelMove {
                 from,
                 to,
-                offset: Vector3::new(w[0] - cx, w[1] - cy, w[2] - cz),
+                offset: Vector3::new(
+                    w[0] - p[0] + ox - cx,
+                    w[1] - p[1] + oy - cy,
+                    w[2] - p[2] + oz - cz,
+                ),
             }
         })
         .collect()

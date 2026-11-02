@@ -93,6 +93,8 @@ pub struct ReformConfig {
     /// rebuilt from the warped voxels instead of repaired around them.
     #[validate(range(min = 0.0))]
     pub reform_rebuild_fraction: f64,
+    /// Where to write the healthy voxel centers (little-endian f32 xyz) every 10 s, empty for never.
+    pub dump_path: String,
 }
 
 fn validate_reform_config(config: &ReformConfig) -> Result<(), ValidationError> {
@@ -199,7 +201,14 @@ impl ReformRayTracingVoxelMap {
             seed_map: self.seed_map.clone(),
             seed_bounds: self.seed_bounds.clone(),
         };
-        self.worker = WorkerHandle::spawn(self.tf.clone(), self.config.base(), outputs, true);
+        let dump_path = (!self.config.dump_path.is_empty()).then(|| self.config.dump_path.clone());
+        self.worker = WorkerHandle::spawn(
+            self.tf.clone(),
+            self.config.base(),
+            outputs,
+            true,
+            dump_path,
+        );
     }
 
     async fn stop_worker(&mut self) {

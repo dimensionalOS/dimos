@@ -133,8 +133,15 @@ pub(crate) struct WorkerHandle {
 }
 
 impl WorkerHandle {
-    /// Start the worker. `track_voxel_times` stamps each voxel as it lands, for warps.
-    pub fn spawn(tf: Tf, config: Config, outputs: WorkerOutputs, track_voxel_times: bool) -> Self {
+    /// Start the worker. `track_voxel_times` stamps each voxel as it lands, for warps;
+    /// `dump_path` gets the healthy voxel centers every MEMORY_LOG_PERIOD, for offline checks.
+    pub fn spawn(
+        tf: Tf,
+        config: Config,
+        outputs: WorkerOutputs,
+        track_voxel_times: bool,
+        dump_path: Option<String>,
+    ) -> Self {
         let (tx, rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
         let worker = Worker {
             jobs: rx,
@@ -143,6 +150,7 @@ impl WorkerHandle {
             config,
             outputs,
             track_voxel_times,
+            dump_path,
         };
         Self {
             jobs: Some(tx),
@@ -184,8 +192,13 @@ impl RayTracingVoxelMap {
     }
 
     async fn spawn_worker(&mut self) {
-        self.worker =
-            WorkerHandle::spawn(self.tf.clone(), self.config.clone(), self.outputs(), false);
+        self.worker = WorkerHandle::spawn(
+            self.tf.clone(),
+            self.config.clone(),
+            self.outputs(),
+            false,
+            None,
+        );
     }
 
     async fn stop_worker(&mut self) {
@@ -326,6 +339,8 @@ fn warn_if_seed_starved(seed: &SeedState) {
 enum Turn {
     Job(Job),
     SeedTile,
+    /// Nothing arrived for a while.
+    Idle,
     Closed,
 }
 
@@ -333,7 +348,11 @@ enum Turn {
 /// waiting, and without a load the worker waits for a job.
 async fn next_turn(jobs: &mut mpsc::Receiver<Job>, loading: bool) -> Turn {
     if !loading {
-        return jobs.recv().await.map_or(Turn::Closed, Turn::Job);
+        // Wake at least once a period, so the memory log and dump keep up when idle.
+        return match tokio::time::timeout(MEMORY_LOG_PERIOD, jobs.recv()).await {
+            Ok(job) => job.map_or(Turn::Closed, Turn::Job),
+            Err(_) => Turn::Idle,
+        };
     }
     match jobs.try_recv() {
         Ok(job) => Turn::Job(job),
@@ -353,6 +372,7 @@ struct Worker {
     config: Config,
     outputs: WorkerOutputs,
     track_voxel_times: bool,
+    dump_path: Option<String>,
 }
 
 impl Worker {
@@ -380,6 +400,12 @@ impl Worker {
                     queued_jobs = self.jobs.len(),
                     "Ray tracer memory."
                 );
+                if let Some(path) = &self.dump_path {
+                    let centers = state.mapper.healthy_centers();
+                    if let Err(e) = crate::rss::dump_f32(path, &centers) {
+                        warn!(error = %e, path, "Failed to dump the voxel map.");
+                    }
+                }
             }
             let loading = matches!(state.seed, SeedState::Loading(_));
             match next_turn(&mut self.jobs, loading).await {
@@ -388,6 +414,7 @@ impl Worker {
                     self.seed_step(&mut state).await;
                     tokio::task::yield_now().await;
                 }
+                Turn::Idle => {}
                 Turn::Closed => return,
             }
         }
