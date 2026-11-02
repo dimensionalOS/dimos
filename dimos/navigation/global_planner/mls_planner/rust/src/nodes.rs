@@ -24,8 +24,8 @@ use rayon::prelude::*;
 use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
 use crate::columns::ColumnIz;
 use crate::dijkstra::{
-    chain_source, dijkstra, dijkstra_clusters, window_clusters, ClusterIndex, DijkstraState,
-    Frontier, RepairWindow, Weight,
+    all_clusters, chain_source, dijkstra, dijkstra_clusters, ClusterIndex, DijkstraState, Frontier,
+    RepairWindow, Weight,
 };
 use crate::surfaces::is_standable;
 use crate::voxel::{surface_point_xyz, VoxelKey};
@@ -302,7 +302,6 @@ pub fn place_nodes(
     by_col: &ColumnIz,
     params: &PlacementParams,
     state: &mut DijkstraState,
-    scratch: &mut NodeScratch,
     nodes: &mut Nodes,
 ) {
     nodes.clear();
@@ -328,8 +327,7 @@ pub fn place_nodes(
         .collect();
     place_from_candidates(cells, candidates, &state.dist, params, nodes);
 
-    let live: Vec<CellId> = cells.ids().collect();
-    let clusters = window_clusters(cells, &live, &mut scratch.seen);
+    let clusters = all_clusters(cells);
     ensure_node_per_component(cells, &state.dist, params, &clusters, None, nodes);
 
     apply_wall_safe_penalty(cells, &state.dist, params);
@@ -918,14 +916,12 @@ mod tests {
         cells_in.extend((0..3).map(|ix| (ix, 20, 0)));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.5, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert_eq!(nodes.len(), 1, "only the big strip gets a node");
@@ -936,14 +932,12 @@ mod tests {
     fn open_patch_places_at_least_one_node() {
         let mut sc = build_cells(&open_patch(0, 0, 10), 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.0, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert!(!nodes.is_empty());
@@ -962,14 +956,12 @@ mod tests {
         cells_in.extend((0..8).map(|ix| (ix, 20, 0)));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.5, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert_eq!(
@@ -987,14 +979,12 @@ mod tests {
         cells_in.extend(open_patch(20, 0, 10));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.0, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert!(nodes.len() >= 2);
@@ -1029,14 +1019,12 @@ mod tests {
         let cells_in: Vec<VoxelKey> = (0..10).map(|ix| (ix, 0, 0)).collect();
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.0, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         let id = sc.id((5, 0, 0)).unwrap();
@@ -1051,14 +1039,12 @@ mod tests {
         let cost_with = |step_weight: f32| {
             let mut sc = build_cells(&cells_in, 2);
             let mut state = DijkstraState::default();
-            let mut scratch = NodeScratch::default();
             let mut nodes = Nodes::default();
             place_nodes(
                 &mut sc,
                 &ColumnIz::default(),
                 &params(0.0, step_weight),
                 &mut state,
-                &mut scratch,
                 &mut nodes,
             );
             let id = sc.id((0, 0, 0)).unwrap();

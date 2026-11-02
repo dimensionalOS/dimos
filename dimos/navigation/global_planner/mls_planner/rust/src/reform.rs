@@ -735,8 +735,9 @@ impl Warp {
             ids.into_iter().partition(|&i| times[i].is_finite());
         timed.sort_by(|&a, &b| times[a].total_cmp(&times[b]));
 
-        let mut order = Vec::with_capacity(timed.len() + untimed.len());
-        let mut out = Vec::with_capacity(order.capacity());
+        // Runs spanning one time sigma, each warped against the anchors near it in time,
+        // in parallel.
+        let mut runs: Vec<&[usize]> = Vec::new();
         let mut run_start = 0;
         while run_start < timed.len() {
             let t0 = times[timed[run_start]];
@@ -744,26 +745,36 @@ impl Warp {
             while run_end < timed.len() && times[timed[run_end]] <= t0 + self.time_sigma {
                 run_end += 1;
             }
-            let run = &timed[run_start..run_end];
+            runs.push(&timed[run_start..run_end]);
             run_start = run_end;
-            let t1 = times[run[run.len() - 1]];
-            let reach = TIME_REACH_SIGMAS * self.time_sigma;
-            let lo = anchor_ts.partition_point(|&t| t < t0 - reach);
-            let hi = anchor_ts.partition_point(|&t| t <= t1 + reach);
-            // No anchor near in time leaves fast-reform's own fallback, the
-            // strongest anchor of all.
-            let near = if lo < hi {
-                &anchors[lo..hi]
-            } else {
-                &anchors[..]
-            };
-            if !self.any_moved(near) {
-                continue;
-            }
-            let pts: Vec<[f32; 3]> = run.iter().map(|&i| points[i]).collect();
-            let ts: Vec<f64> = run.iter().map(|&i| times[i]).collect();
-            out.extend(warp_positions(&pts, Some(&ts), &self.blend_of(near)));
+        }
+        let reach = TIME_REACH_SIGMAS * self.time_sigma;
+        let warped_runs: Vec<(&[usize], Vec<[f32; 3]>)> = runs
+            .into_par_iter()
+            .filter_map(|run| {
+                let (t0, t1) = (times[run[0]], times[run[run.len() - 1]]);
+                let lo = anchor_ts.partition_point(|&t| t < t0 - reach);
+                let hi = anchor_ts.partition_point(|&t| t <= t1 + reach);
+                // No anchor near in time leaves fast-reform's own fallback, the
+                // strongest anchor of all.
+                let near = if lo < hi {
+                    &anchors[lo..hi]
+                } else {
+                    &anchors[..]
+                };
+                if !self.any_moved(near) {
+                    return None;
+                }
+                let pts: Vec<[f32; 3]> = run.iter().map(|&i| points[i]).collect();
+                let ts: Vec<f64> = run.iter().map(|&i| times[i]).collect();
+                Some((run, warp_positions(&pts, Some(&ts), &self.blend_of(near))))
+            })
+            .collect();
+        let mut order = Vec::with_capacity(timed.len() + untimed.len());
+        let mut out = Vec::with_capacity(order.capacity());
+        for (run, warped) in warped_runs {
             order.extend_from_slice(run);
+            out.extend(warped);
         }
         if !untimed.is_empty() {
             let pts: Vec<[f32; 3]> = untimed.iter().map(|&i| points[i]).collect();

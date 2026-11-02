@@ -127,20 +127,34 @@ impl ColumnIz {
         self.tiles.clear();
     }
 
-    /// Rebuild from a set of voxels.
+    /// Rebuild from a set of voxels: sorted by tile, column and height, then
+    /// each tile's columns filled in parallel.
     pub fn from_voxels<'a>(voxels: impl IntoIterator<Item = &'a VoxelKey>) -> Self {
-        let mut out = Self::default();
-        for &(ix, iy, iz) in voxels {
-            out.tile_mut((ix, iy)).columns[slot_of((ix, iy))].push(iz);
+        let mut keys: Vec<VoxelKey> = voxels.into_iter().copied().collect();
+        let order = |&(ix, iy, iz): &VoxelKey| (tile_of((ix, iy)), slot_of((ix, iy)), iz);
+        keys.par_sort_unstable_by_key(order);
+        keys.dedup();
+        let mut starts: Vec<usize> = (0..keys.len())
+            .filter(|&i| {
+                i == 0 || tile_of((keys[i].0, keys[i].1)) != tile_of((keys[i - 1].0, keys[i - 1].1))
+            })
+            .collect();
+        starts.push(keys.len());
+        let tiles: Vec<(Tile, TileColumns)> = starts
+            .par_windows(2)
+            .map(|w| {
+                let run = &keys[w[0]..w[1]];
+                let mut tile = TileColumns::new();
+                for &(ix, iy, iz) in run {
+                    tile.columns[slot_of((ix, iy))].push(iz);
+                }
+                tile.voxels = run.len();
+                (tile_of((run[0].0, run[0].1)), tile)
+            })
+            .collect();
+        Self {
+            tiles: tiles.into_iter().collect(),
         }
-        out.tiles.par_iter_mut().for_each(|(_, tile)| {
-            for zs in tile.columns.iter_mut() {
-                zs.sort_unstable();
-                zs.dedup();
-                tile.voxels += zs.len();
-            }
-        });
-        out
     }
 
     /// Every occupied column with its z values, tile by tile in parallel.

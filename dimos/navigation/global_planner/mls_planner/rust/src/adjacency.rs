@@ -48,6 +48,84 @@ pub struct Edge {
     pub cost: f32,
 }
 
+/// Coordinate to cell id, split into shards by hash so a full build can index
+/// every cell in parallel; lookups and edits touch one shard.
+struct CoordIndex {
+    hasher: ahash::RandomState,
+    shards: Vec<AHashMap<VoxelKey, CellId>>,
+}
+
+const COORD_SHARDS: usize = 64;
+
+impl Default for CoordIndex {
+    fn default() -> Self {
+        Self {
+            hasher: ahash::RandomState::with_seeds(1, 2, 3, 4),
+            shards: (0..COORD_SHARDS).map(|_| AHashMap::new()).collect(),
+        }
+    }
+}
+
+impl CoordIndex {
+    #[inline]
+    fn shard(&self, k: &VoxelKey) -> usize {
+        (self.hasher.hash_one(k) >> 58) as usize
+    }
+
+    #[inline]
+    fn get(&self, k: &VoxelKey) -> Option<CellId> {
+        self.shards[self.shard(k)].get(k).copied()
+    }
+
+    fn insert(&mut self, k: VoxelKey, id: CellId) {
+        let s = self.shard(&k);
+        self.shards[s].insert(k, id);
+    }
+
+    fn remove(&mut self, k: &VoxelKey) -> Option<CellId> {
+        let s = self.shard(k);
+        self.shards[s].remove(k)
+    }
+
+    fn len(&self) -> usize {
+        self.shards.iter().map(|s| s.len()).sum()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.shards.iter().all(|s| s.is_empty())
+    }
+
+    fn keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
+        self.shards.iter().flat_map(|s| s.keys().copied())
+    }
+
+    fn clear(&mut self) {
+        for s in &mut self.shards {
+            s.clear();
+        }
+    }
+
+    /// Index every cell, its id its position in `coord`, each shard in parallel.
+    fn fill(&mut self, coord: &[VoxelKey]) {
+        let mut by_shard: Vec<Vec<(VoxelKey, CellId)>> = vec![Vec::new(); COORD_SHARDS];
+        let tagged: Vec<(u8, VoxelKey, CellId)> = coord
+            .par_iter()
+            .enumerate()
+            .map(|(id, k)| (self.shard(k) as u8, *k, id as CellId))
+            .collect();
+        for (s, k, id) in tagged {
+            by_shard[s as usize].push((k, id));
+        }
+        self.shards
+            .par_iter_mut()
+            .zip(by_shard)
+            .for_each(|(shard, entries)| {
+                shard.reserve(entries.len());
+                shard.extend(entries);
+            });
+    }
+}
+
 #[derive(Default)]
 pub struct SurfaceCells {
     coord: Vec<VoxelKey>,
@@ -59,7 +137,7 @@ pub struct SurfaceCells {
     spans: Vec<(u32, u32)>,
     /// Edges in `flat` no span covers.
     stranded: usize,
-    by_coord: AHashMap<VoxelKey, CellId>,
+    by_coord: CoordIndex,
     free: Vec<CellId>,
     /// Whether every id was appended in coordinate order, as a full build does,
     /// so ids order cells the way coordinates do. A reused slot breaks it.
@@ -89,7 +167,7 @@ impl SurfaceCells {
 
     /// Every live cell's voxel.
     pub fn live_coords(&self) -> impl Iterator<Item = VoxelKey> + '_ {
-        self.by_coord.keys().copied()
+        self.by_coord.keys()
     }
 
     /// Live cells, excluding tombstones.
@@ -157,7 +235,7 @@ impl SurfaceCells {
     /// Get or insert a cell, reusing a freed slot before growing.
     pub fn insert(&mut self, k: VoxelKey) -> CellId {
         debug_assert_ne!(k, TOMBSTONE, "voxel coord collides with tombstone sentinel");
-        if let Some(&id) = self.by_coord.get(&k) {
+        if let Some(id) = self.by_coord.get(&k) {
             return id;
         }
         let id = if let Some(free_id) = self.free.pop() {
@@ -209,7 +287,7 @@ impl SurfaceCells {
     /// Coord to cell ID.
     #[inline]
     pub fn id(&self, k: VoxelKey) -> Option<CellId> {
-        self.by_coord.get(&k).copied()
+        self.by_coord.get(&k)
     }
 
     /// Cell ID to coord.
@@ -313,14 +391,15 @@ pub fn build_surface_cells(
     let mut keys: Vec<(i32, i32)> = surface_lookup.keys().copied().collect();
     keys.par_sort_unstable();
     let total: usize = surface_lookup.values().map(Vec::len).sum();
-    cells.by_coord.reserve(total);
     cells.coord.reserve(total);
-    cells.spans.reserve(total);
     for &(ix, iy) in &keys {
         for &iz in &surface_lookup[&(ix, iy)] {
-            cells.insert((ix, iy, iz));
+            cells.coord.push((ix, iy, iz));
         }
     }
+    // Ids in coordinate order, indexed in parallel.
+    cells.spans.resize(cells.coord.len(), (0, 0));
+    cells.by_coord.fill(&cells.coord);
 
     // Count each cell's edges, lay the spans out in id order, then fill every
     // block of cells' slice of the buffer in parallel, with no temporaries.
@@ -361,7 +440,7 @@ pub fn build_surface_cells(
         slices.push(head);
         rest = tail;
     }
-    let by_coord: &AHashMap<VoxelKey, CellId> = &cells.by_coord;
+    let by_coord: &CoordIndex = &cells.by_coord;
     slices
         .into_par_iter()
         .zip(coord.par_chunks(BLOCK))
@@ -370,7 +449,7 @@ pub fn build_surface_cells(
             for &(ix, iy, iz) in block {
                 for (dx, dy, nz) in neighbors((ix, iy, iz)) {
                     let dz = nz - iz;
-                    let dest = *by_coord
+                    let dest = by_coord
                         .get(&(ix + dx, iy + dy, nz))
                         .expect("neighbor cell exists in lookup");
                     let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;

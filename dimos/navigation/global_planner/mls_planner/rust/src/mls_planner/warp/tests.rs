@@ -327,7 +327,6 @@ fn rebuild_stage_bench() {
             &p.by_col,
             &cfg.placement_params(),
             &mut p.graph.wall_state,
-            &mut p.graph.node_scratch,
             &mut p.graph.nodes,
         );
         let nodes = ms_since(t);
@@ -368,9 +367,11 @@ fn rebuild_rss_bench() {
             (f(0), f(4), f(8))
         })
         .collect();
-    let mut p = Planner::new(4);
+    let threads = std::env::var("MLS_BENCH_THREADS").map_or(4, |t| t.parse().unwrap());
+    let mut p = Planner::new(threads);
     p.track_voxel_times();
-    for i in 0..12 {
+    let rounds = std::env::var("MLS_BENCH_ROUNDS").map_or(12, |t| t.parse().unwrap());
+    for i in 0..rounds {
         let shifted: Vec<(f32, f32, f32)> = points
             .iter()
             .map(|q| (q.0 + 0.03 * i as f32, q.1, q.2))
@@ -384,4 +385,89 @@ fn rebuild_rss_bench() {
             p.sizes()
         );
     }
+}
+
+/// A whole closure on a real map: MLS_REBUILD_BENCH=<planner .voxels dump>
+/// MLS_KEYFRAMES=<gsc keyframes dump> cargo test --release --lib warp_bench -- --ignored --nocapture
+/// The closure moves the keyframes past MLS_BENCH_FROM (a fraction, default 0.5) from their
+/// corrected pose back to their raw one.
+#[test]
+#[ignore = "needs MLS_REBUILD_BENCH and MLS_KEYFRAMES dumps"]
+fn warp_bench() {
+    let raw = std::fs::read(std::env::var("MLS_REBUILD_BENCH").unwrap()).unwrap();
+    let kf_raw = std::fs::read(std::env::var("MLS_KEYFRAMES").unwrap()).unwrap();
+    let cfg = Config {
+        voxel_size: 0.08,
+        robot_height: 0.45,
+        start_z_offset_m: 0.287,
+        wall_clearance_m: 0.1,
+        wall_buffer_m: 0.75,
+        wall_buffer_weight: 100.0,
+        step_threshold_m: 0.16,
+        step_penalty_weight: 4.0,
+        ..test_config()
+    };
+    let points: Vec<(f32, f32, f32)> = raw
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .map(|p| {
+            let f = |i: usize| f32::from_le_bytes(p[i..i + 4].try_into().unwrap());
+            (f(0), f(4), f(8))
+        })
+        .collect();
+    let f64s: Vec<f64> = kf_raw
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| f64::from_le_bytes(*b))
+        .collect();
+    let pose = |v: &[f64]| Pose {
+        translation: Vec3::new(v[0], v[1], v[2]),
+        rotation: Quat::new(v[3], v[4], v[5], v[6]).normalized_or_identity(),
+    };
+    let keyframes: Vec<(f64, Pose, Pose)> = f64s
+        .as_chunks::<15>()
+        .0
+        .iter()
+        .map(|r| (r[0], pose(&r[1..8]), pose(&r[8..15])))
+        .collect();
+    let threads = std::env::var("MLS_BENCH_THREADS").map_or(8, |t| t.parse().unwrap());
+    let mut p = Planner::new(threads);
+    p.track_voxel_times();
+    p.set_clock(keyframes.last().unwrap().0);
+    p.update_global_map(&points, &cfg);
+    let records: Vec<KeyframeRecord> = keyframes
+        .iter()
+        .enumerate()
+        .map(|(i, (ts, corrected, _))| KeyframeRecord {
+            id: i as u32,
+            ts: *ts,
+            pose: *corrected,
+        })
+        .collect();
+    let mut state = ReformState::default();
+    state.add_keyframes(&records);
+    let from: f64 = std::env::var("MLS_BENCH_FROM").map_or(0.5, |t| t.parse().unwrap());
+    let half = (records.len() as f64 * from) as usize;
+    // The later half drifts back by the gap between raw and corrected, like a big closure.
+    let moved: Vec<MovedRecord> = records[half..]
+        .iter()
+        .zip(&keyframes[half..])
+        .map(|(k, (_, corrected, raw))| MovedRecord {
+            keyframe: *k,
+            delta: raw.compose(&corrected.inverse()),
+        })
+        .collect();
+    let params = ReformParams {
+        blend_sigma_m: 0.0,
+        blend_time_sigma_s: 5.0,
+        min_shift_m: 0.04,
+        rebuild_fraction: 0.25,
+    };
+    let warp = state
+        .closure(&moved, &params)
+        .expect("the closure moves keyframes");
+    let report = p.apply_warp(&warp, &mut [], &cfg);
+    println!("{report:?}");
 }

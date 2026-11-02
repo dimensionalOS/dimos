@@ -133,13 +133,27 @@ impl Planner {
 
         // Everything warps in one batch: voxel centers, nodes and path cells at
         // their surface, then the held points. Each takes its voxel's time.
-        let node_at: Vec<(usize, VoxelKey)> = self
+        // Whether the warp reaches a node is decided once per tile, as for the voxels.
+        let node_tile = |c: &VoxelKey| warp.tile((c.0 as f32 + 0.5) * vs, (c.1 as f32 + 0.5) * vs);
+        let all_nodes: Vec<(usize, VoxelKey)> = self
             .graph
             .nodes
             .iter()
             .enumerate()
             .map(|(i, n)| (i, self.graph.cells.coord(n.cell_id)))
-            .filter(|(_, c)| warp.affects((c.0 as f32 + 0.5) * vs, (c.1 as f32 + 0.5) * vs))
+            .collect();
+        let mut node_tiles: Vec<Tile> = all_nodes.iter().map(|(_, c)| node_tile(c)).collect();
+        node_tiles.sort_unstable();
+        node_tiles.dedup();
+        let nodes_reached: AHashSet<Tile> = node_tiles
+            .into_par_iter()
+            .filter(|&t| warp.affects_tile(t))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect();
+        let node_at: Vec<(usize, VoxelKey)> = all_nodes
+            .into_iter()
+            .filter(|(_, c)| nodes_reached.contains(&node_tile(c)))
             .collect();
         let path_cells: Vec<VoxelKey> = self
             .last_path
@@ -155,21 +169,27 @@ impl Planner {
             let (x, y, z) = surface_point_xyz(ix, iy, iz, vs);
             [x, y, z]
         };
-        let mut queries: Vec<[f32; 3]> = Vec::with_capacity(voxels.len() + node_at.len());
-        let mut times: Vec<f64> = Vec::with_capacity(queries.capacity());
-        for k in &voxels {
-            let r = self
-                .voxel_times
-                .as_ref()
-                .and_then(|t| t.residual.get(k).copied())
-                .unwrap_or([0.0; 3]);
-            queries.push([
-                (k.0 as f32 + 0.5) * vs + r[0],
-                (k.1 as f32 + 0.5) * vs + r[1],
-                (k.2 as f32 + 0.5) * vs + r[2],
-            ]);
-            times.push(time_of(k));
-        }
+        // Each voxel's point (its center plus residual) and time, looked up in parallel.
+        let (mut queries, mut times): (Vec<[f32; 3]>, Vec<f64>) = voxels
+            .par_iter()
+            .map(|k| {
+                let r = self
+                    .voxel_times
+                    .as_ref()
+                    .and_then(|t| t.residual.get(k).copied())
+                    .unwrap_or([0.0; 3]);
+                (
+                    [
+                        (k.0 as f32 + 0.5) * vs + r[0],
+                        (k.1 as f32 + 0.5) * vs + r[1],
+                        (k.2 as f32 + 0.5) * vs + r[2],
+                    ],
+                    time_of(k),
+                )
+            })
+            .unzip();
+        queries.reserve(node_at.len());
+        times.reserve(node_at.len());
         for (_, c) in &node_at {
             queries.push(surface(c));
             times.push(time_of(c));

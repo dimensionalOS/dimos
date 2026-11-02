@@ -834,7 +834,6 @@ impl Planner {
             &self.by_col,
             &config.placement_params(),
             &mut self.graph.wall_state,
-            &mut self.graph.node_scratch,
             &mut self.graph.nodes,
         );
 
