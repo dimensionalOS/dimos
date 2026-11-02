@@ -54,6 +54,8 @@ pub(crate) struct SolveDispatch {
 pub(crate) struct SolveSchedule {
     dispatch_scan: usize,
     estimate_scans: usize,
+    /// The estimate before rounding up (scans).
+    estimate_raw_scans: f64,
     finished_scan: Option<usize>,
     dispatch_time: f64,
     pub(crate) due_time: Option<f64>,
@@ -112,7 +114,7 @@ impl GscPgo {
     /// closures have arrived since the last. Never blocks. Returns whether keyframes moved.
     pub fn update(&mut self) -> bool {
         self.track_solve();
-        let hold = self.config.solve_hold_enabled;
+        let hold = self.config.deterministic();
         let scans = self.scans_seen;
         let ready = self.solving.as_ref().is_some_and(|solving| {
             solving.schedule.finished_scan.is_some()
@@ -124,7 +126,7 @@ impl GscPgo {
     /// machine (with the hold off, plain `update`).
     pub fn wait_for_due_solve(&mut self) -> bool {
         self.track_solve();
-        let due = self.config.solve_hold_enabled
+        let due = self.config.deterministic()
             && self
                 .solving
                 .as_ref()
@@ -154,7 +156,7 @@ impl GscPgo {
     }
     /// An upper bound on a solve's cost in scans over `keyframes` keyframes and every committed closure, from the
     /// newest adopted solve's rejections and the body's recent speed (`solve_hold_enabled`).
-    fn solve_estimate_scans(&self, keyframes: usize) -> usize {
+    fn solve_estimate_scans(&self, keyframes: usize) -> (f64, usize) {
         let config = &self.config;
         let closures = self.committed_closures.len() as f64;
         // a closure no solve has judged yet has a NaN weight, so it is not counted
@@ -163,23 +165,18 @@ impl GscPgo {
             .iter()
             .filter(|c| c.gnc_weight <= 0.5)
             .count() as f64;
-        let speed = self
-            .recent_speed()
-            .max(config.solve_estimate_speed_floor_mps);
-        // the graph change heat's cost on the solve's thread, in scans
-        let period = self.scan_period_s();
-        let change_cost = if config.graph_change_heat_enabled && period > 0.0 {
-            config.solve_estimate_change_cost_s_per_keyframe * keyframes as f64 / period
+        // the graph change heat's cost on the solve's thread (`debounce`)
+        let change_cost = if config.graph_change_heat_enabled {
+            config.deterministic_config.debounce_scans_per_keyframe * keyframes as f64
         } else {
             0.0
         };
-        (config.solve_estimate_scale
-            * (keyframes as f64).powf(config.solve_estimate_keyframe_power)
-            * (1.0 + closures).powf(config.solve_estimate_closure_power)
-            * (1.0 + rejected).powf(config.solve_estimate_rejected_power)
-            * speed.powf(config.solve_estimate_speed_power)
-            + change_cost)
-            .ceil() as usize
+        let estimate_raw_scans = config.deterministic_config.solve_scans_scale
+            * (keyframes as f64).powf(config.deterministic_config.solve_keyframe_power)
+            * (1.0 + closures).powf(config.deterministic_config.solve_closure_power)
+            * (1.0 + rejected).powf(config.deterministic_config.solve_rejected_power)
+            + change_cost;
+        (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans, config))
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
     pub fn solve_started(&self) -> Option<(usize, usize)> {
@@ -497,13 +494,15 @@ impl GscPgo {
             closures: self.closures_dispatched,
             closures_before,
         });
+        let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(n);
         self.solving = Some(Solving {
             handle,
             graph_version: self.adopted_solves,
             keyframes: n,
             schedule: SolveSchedule {
                 dispatch_scan: self.scans_seen,
-                estimate_scans: self.solve_estimate_scans(n),
+                estimate_scans,
+                estimate_raw_scans,
                 finished_scan: None,
                 dispatch_time: self.scan_time,
                 due_time: None,
@@ -543,6 +542,7 @@ impl GscPgo {
             );
         }
         self.timing.solve_s += seconds;
+        self.record_job_ratio("solve", seconds, solving.schedule.estimate_raw_scans);
         let dispatched_over = solving.keyframes;
         self.solve_records.push((
             dispatched_over,
@@ -968,6 +968,9 @@ impl GscPgo {
         match &finished.change {
             Some(scan) if finished.graph_version == self.adopted_solves => {
                 self.change_cost_calls.push((finished.keyframes, scan.seconds));
+                let estimate_raw_scans =
+                    self.config.deterministic_config.debounce_scans_per_keyframe * finished.keyframes as f64;
+                self.record_job_ratio("debounce", scan.seconds, estimate_raw_scans);
                 self.finish_graph_change_cost(scan.clone(), &finished.solution, finished.keyframes)
             }
             _ => {

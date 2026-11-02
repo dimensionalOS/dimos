@@ -38,20 +38,14 @@ pub struct PressureJob {
     slot: Arc<PressureSlot>,
     dispatch_scan: usize,
     dispatch_time: f64,
-    estimate_s: f64,
-    scan_period_s: f64,
+    estimate_raw_scans: f64,
     keyframes: usize,
     closures: usize,
 }
 
 impl PressureJob {
-    fn estimate_scans(&self) -> usize {
-        let scans = self.estimate_s / self.scan_period_s;
-        if scans.is_finite() {
-            (scans.ceil() as usize).max(1)
-        } else {
-            1
-        }
+    fn estimate_scans(&self, config: &crate::gsc_pgo::Config) -> usize {
+        crate::closure_search_schedule::hold_scans(self.estimate_raw_scans, config)
     }
 }
 
@@ -96,9 +90,9 @@ impl GscPgo {
         let snapshot = self.overlap_snapshot();
         let (keyframes, closures) = snapshot.size();
         let config = &self.config;
-        let estimate_s = config.pressure_estimate_s
-            + config.pressure_estimate_per_keyframe_s * keyframes as f64
-            + config.pressure_estimate_per_closure_s * closures as f64;
+        let estimate_raw_scans = config.deterministic_config.pressure_scans_fixed_overhead
+            + config.deterministic_config.pressure_scans_per_keyframe * keyframes as f64
+            + config.deterministic_config.pressure_scans_per_closure * closures as f64;
         let slot = Arc::new(PressureSlot::default());
         let finish = slot.clone();
         self.pressure_pool
@@ -114,8 +108,7 @@ impl GscPgo {
             slot,
             dispatch_scan: self.advancing_scans,
             dispatch_time: self.newest_scan_time(),
-            estimate_s,
-            scan_period_s: self.scan_period_s(),
+            estimate_raw_scans,
             keyframes,
             closures,
         });
@@ -127,10 +120,15 @@ impl GscPgo {
             return;
         };
         let spanned = self.newest_scan_time() - job.dispatch_time;
-        if self.advancing_scans < job.dispatch_scan + job.estimate_scans() || spanned < job.estimate_s {
+        let deterministic = self.config.deterministic();
+        if deterministic && self.advancing_scans < job.dispatch_scan + job.estimate_scans(&self.config) {
             return;
         }
         let mut done = job.slot.done.lock().expect("pressure slot");
+        // fast mode: it lands once it has finished, never waited for
+        if done.is_none() && !deterministic {
+            return;
+        }
         if done.is_none() {
             if !self.wait_for_due_jobs {
                 job.slot.changed.notify_all();
@@ -150,19 +148,20 @@ impl GscPgo {
         drop(done);
         let job = self.pressure_job.take().expect("checked above");
         // its work ran past the data time its hold spanned (first reached at the scan it became due), or it landed late
-        let overshoot = seconds > spanned || std::mem::take(&mut self.pressure_late);
+        let overshoot = deterministic && (seconds > spanned || std::mem::take(&mut self.pressure_late));
         if overshoot {
             self.pressure_overshoots += 1;
             eprintln!(
-                "gsc_pgo: PRESSURE OVERSHOOT #{}: over {} keyframes and {} closures it took {seconds:.4}s, past the {spanned:.4}s of data its estimate of {:.4}s ({} scans) spanned",
+                "gsc_pgo: PRESSURE OVERSHOOT #{}: over {} keyframes and {} closures it took {seconds:.4}s, past the {spanned:.4}s of data its estimate of {:.4} vs ({} scans) spanned",
                 self.pressure_overshoots,
                 job.keyframes,
                 job.closures,
-                job.estimate_s,
-                job.estimate_scans(),
+                job.estimate_raw_scans,
+                job.estimate_scans(&self.config),
             );
         }
         self.pressure_calls.push((job.keyframes, job.closures, seconds));
+        self.record_job_ratio("pressure", seconds, job.estimate_raw_scans);
         if let Some(overlap) = overlap {
             self.pressure = Some((self.scans_seen, overlap));
         }

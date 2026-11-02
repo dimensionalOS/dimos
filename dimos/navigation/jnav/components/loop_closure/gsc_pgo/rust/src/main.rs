@@ -71,6 +71,8 @@ config! {
     // threads closure search and solves may use, leaving the other cores to the rest of the robot (0 = every core)
     worker_threads: usize,
     ;
+    mode: dimos_gsc_pgo::gsc_pgo::Mode,
+    deterministic_config: dimos_gsc_pgo::gsc_pgo::DeterministicConfig,
     keyframe_min_rotation_degrees: f64,
     keyframe_min_distance_meters: f64,
     closure_search_radius: f64,
@@ -102,16 +104,6 @@ config! {
     graph_change_heat_threshold: f64,
     graph_change_heat_floor: f64,
     graph_change_heat_decay: f64,
-    solve_hold_enabled: bool,
-    solve_estimate_scale: f64,
-    solve_estimate_keyframe_power: f64,
-    solve_estimate_closure_power: f64,
-    solve_estimate_rejected_power: f64,
-    solve_estimate_speed_power: f64,
-    solve_estimate_speed_floor_mps: f64,
-    solve_estimate_change_cost_s_per_keyframe: f64,
-    closure_search_hold_enabled: bool,
-    scan_period_window: usize,
     closure_search_let_enabled: bool,
     closure_search_workers: usize,
     closure_search_two_stage: bool,
@@ -119,16 +111,6 @@ config! {
     sc_buffer_size: usize,
     verification_workers: usize,
     verification_buffer_slots: usize,
-    verification_estimate_overhead_s: f64,
-    verification_estimate_round_s: f64,
-    closure_search_estimate_lookup_s: f64,
-    closure_search_estimate_lookup_per_keyframe_s: f64,
-    closure_search_estimate_build_per_point_s: f64,
-    closure_search_estimate_degeneracy_per_point_s: f64,
-    closure_search_estimate_icp_s: f64,
-    closure_search_estimate_gates_s: f64,
-    closure_search_estimate_extension_overhead_s: f64,
-    closure_search_estimate_extension_cloud_s: f64,
     solve_speed_window_poses: usize,
     closure_icp_dump_dir: String,
     closure_extended_icp_max_keyframes: usize,
@@ -167,10 +149,6 @@ config! {
     learned_odometry_error_estimate_from_closures: bool,
     odometry_error_estimate_evidence_core: bool,
     pressure_check_frequency: usize,
-    pressure_let_enabled: bool,
-    pressure_estimate_s: f64,
-    pressure_estimate_per_keyframe_s: f64,
-    pressure_estimate_per_closure_s: f64,
     soft_pressure_half_log10_hazard: f64,
     soft_pressure_decades: f64,
 }
@@ -784,6 +762,16 @@ impl Worker {
                 );
                 fields.insert(format!("{source}_measured"), measured[k].into());
             }
+            // beside it, the deterministic_config this run measured (`GscPgo::suggested_deterministic_config`), the exact
+            // object to paste into the config, and each LET's measured / estimated (diagnostics only)
+            if let Ok(suggested) = serde_json::to_value(pgo.suggested_deterministic_config()) {
+                fields.insert("suggested_deterministic_config".into(), suggested);
+            }
+            let mut ratios = serde_json::Map::new();
+            for (name, ratio, jobs, _) in pgo.runtime_profile() {
+                ratios.insert(name.into(), serde_json::json!({ "measured_over_estimated_p99": ratio, "jobs": jobs }));
+            }
+            fields.insert("let_measured".into(), serde_json::Value::Object(ratios));
             self.log("odometry_drift", ts, serde_json::Value::Object(fields));
         }
     }
