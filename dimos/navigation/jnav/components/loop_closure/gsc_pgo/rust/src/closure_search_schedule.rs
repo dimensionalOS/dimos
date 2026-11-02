@@ -12,59 +12,114 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The deterministic closure-search schedule (`Config::closure_search_hold_enabled`): one search at a time runs on its
-//! own thread, and its result lands only once its estimated cost in scans has passed since its dispatch, the estimate
-//! of each piece of work fixed before that work starts (the search's at dispatch, each extension round's as it starts),
-//! so which searches run and when their closures land does not depend on how fast the machine is.
+//! The deterministic closure-search schedule (`Config::closure_search_hold_enabled`): a search's result lands only once
+//! its estimated cost has passed since its dispatch (in advancing scans and in data time), the estimate of each piece of
+//! work fixed before that work starts (the search's at dispatch, each extension round's as it starts), so which searches
+//! run and when their closures land does not depend on how fast the machine is.
+//!
+//! Logical execution time (`closure_search_let_enabled`, the default): every keyframe's search is its own job, dispatched
+//! (its graph snapshot taken) at the keyframe it is proposed, whatever other searches are doing, and run on a pool of
+//! `closure_search_workers` threads in dispatch order. Results land in due order (ties by dispatch order); a search reads
+//! only its snapshot, so what an in-flight search finds never reaches another until it lands. A rejected search's next
+//! alternative is dispatched at the keyframe its result lands at, as its own job. Off: one search at a time on its own
+//! thread, the next keyframes' proposals going stale while it is held.
 
 use crate::gsc_pgo::{ClosureSearch, ClosureSearchResult, GscPgo};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
-/// What a running search has reported: the extension rounds it has started and whether it has finished.
+/// What a search has reported: the extension rounds it has started, and its result once it has finished.
+#[derive(Default)]
+struct ProgressState {
+    rounds: usize,
+    result: Option<ClosureSearchResult>,
+}
+
+/// A search's progress, shared with the thread running it.
 #[derive(Default)]
 pub struct SearchProgress {
-    state: Mutex<(usize, bool)>,
+    state: Mutex<ProgressState>,
     changed: Condvar,
 }
 
 impl SearchProgress {
     pub(crate) fn round_started(&self) {
-        self.state.lock().expect("search progress").0 += 1;
+        self.state.lock().expect("search progress").rounds += 1;
         self.changed.notify_all();
     }
-    pub(crate) fn done(&self) {
-        self.state.lock().expect("search progress").1 = true;
+    fn finish(&self, result: ClosureSearchResult) {
+        self.state.lock().expect("search progress").result = Some(result);
         self.changed.notify_all();
     }
+    /// The rounds started and whether it has finished.
     fn snapshot(&self) -> (usize, bool) {
-        *self.state.lock().expect("search progress")
+        let state = self.state.lock().expect("search progress");
+        (state.rounds, state.result.is_some())
+    }
+    fn take_result(&self) -> Option<ClosureSearchResult> {
+        self.state.lock().expect("search progress").result.take()
     }
     /// Block until the progress differs from `seen`.
     fn wait_past(&self, seen: (usize, bool)) {
         let state = self.state.lock().expect("search progress");
         let _unchanged = self
             .changed
-            .wait_while(state, |now| *now == seen)
+            .wait_while(state, |now| (now.rounds, now.result.is_some()) == seen)
             .expect("search progress");
     }
 }
 
-/// A closure search on its thread, with its schedule: the advancing-scan count (`GscPgo::advancing_scans`) and recorded
-/// time at its dispatch, its estimate at
-/// dispatch (seconds) and the scan period its seconds are counted in.
-pub struct RunningSearch {
-    handle: JoinHandle<ClosureSearchResult>,
+/// The threads closure searches run on (`closure_search_workers`), taking them in dispatch order.
+pub struct SearchPool {
+    jobs: Sender<(ClosureSearch, Arc<SearchProgress>)>,
+    _workers: Vec<JoinHandle<()>>,
+}
+
+impl SearchPool {
+    fn new(workers: usize) -> SearchPool {
+        let (jobs, queue) = channel::<(ClosureSearch, Arc<SearchProgress>)>();
+        let queue: Arc<Mutex<Receiver<_>>> = Arc::new(Mutex::new(queue));
+        let workers = (0..workers.max(1))
+            .map(|i| {
+                let queue = queue.clone();
+                std::thread::Builder::new()
+                    .name(format!("gsc-closure-search-{i}"))
+                    .spawn(move || loop {
+                        let next = queue.lock().expect("search queue").recv();
+                        let Ok((search, progress)) = next else {
+                            return;
+                        };
+                        progress.finish(search.run());
+                    })
+                    .expect("spawn closure search worker")
+            })
+            .collect();
+        SearchPool {
+            jobs,
+            _workers: workers,
+        }
+    }
+}
+
+/// A dispatched closure search and its schedule: its dispatch number, the advancing-scan count (`GscPgo::advancing_scans`)
+/// and recorded time at its dispatch, its estimate at dispatch (seconds) and the scan period its seconds are counted in.
+pub struct SearchJob {
     progress: Arc<SearchProgress>,
+    /// The thread of a one-at-a-time search (`closure_search_let_enabled` off).
+    thread: Option<JoinHandle<()>>,
+    order: u64,
     dispatch_scan: usize,
     /// `scans_seen` at dispatch, for the diagnostics (whose scan indices count every scan).
     dispatch_scans_seen: usize,
     dispatch_time: f64,
     estimate_s: f64,
     scan_period_s: f64,
+    /// Its hold passed while it was still running, in a run that does not wait (live: it lands late).
+    late: std::cell::Cell<bool>,
 }
 
-impl RunningSearch {
+impl SearchJob {
     /// The estimate (seconds) with `rounds` extension rounds started.
     fn estimate_s(&self, rounds: usize, config: &crate::gsc_pgo::Config) -> f64 {
         if rounds == 0 {
@@ -86,12 +141,21 @@ impl RunningSearch {
 }
 
 impl GscPgo {
-    /// One keyframe's closure search under the deterministic schedule: land the running search once its estimate has
-    /// passed (waiting for it then when `wait`, as a lockstep replay does; else only once it has finished), start a
-    /// rejected search's next alternative first, then propose this keyframe's match and start it when the search thread
-    /// is free and `may_begin`. With `closure_search_hold_enabled` off, a search lands as soon as it has finished.
+    /// One keyframe's closure searches under the deterministic schedule: land those whose estimate has passed (waiting
+    /// for one then when `wait`, as a lockstep replay does; else only once it has finished), then propose this keyframe's
+    /// match and dispatch it. Logical execution time (`closure_search_let_enabled`): every due result lands, in due
+    /// order, a rejected one's next alternative dispatched as it lands, and every keyframe's match is dispatched
+    /// (`may_begin` is ignored: under a compute shortage searches overshoot rather than go unsearched). Else one search
+    /// at a time: a rejected search's next alternative goes before this keyframe's own match, and a match starts only
+    /// when no search is held and `may_begin`. With `closure_search_hold_enabled` off, a search lands once it finishes.
     pub fn step_closure_search(&mut self, wait: bool, may_begin: bool) {
-        let landed = self.land_closure_search(wait, false);
+        if self.let_searches() {
+            self.land_due_closure_searches(wait, false);
+            self.propose_closure();
+            self.dispatch_closure_search();
+            return;
+        }
+        let landed = self.land_due_closure_searches(wait, false) > 0;
         // a rejected search's next alternative goes before this keyframe's own match, as the inline search tries it
         if landed && may_begin && self.config.closure_search_hold_enabled {
             if self
@@ -107,9 +171,11 @@ impl GscPgo {
             self.dispatch_closure_search();
         }
     }
-    /// Land the running search whatever its estimate, waiting for it (the end of the data).
+    /// Land every search still out whatever its estimate, waiting for each (the end of the data).
     pub fn land_remaining_closure_search(&mut self) {
-        self.land_closure_search(true, true);
+        while !self.closure_searches.is_empty() {
+            self.land_due_closure_searches(true, true);
+        }
     }
     /// Searches that ran past the data time their estimate spanned, and the seconds a lockstep replay waited on searches
     /// whose estimate had passed.
@@ -121,11 +187,16 @@ impl GscPgo {
     }
     /// Whether a closure search is running or held for its estimate.
     pub fn closure_search_running(&self) -> bool {
-        self.closure_search.is_some()
+        !self.closure_searches.is_empty()
     }
-    /// Start the waiting proposal's search on its own thread if none is running.
+    fn let_searches(&self) -> bool {
+        self.config.closure_search_hold_enabled && self.config.closure_search_let_enabled
+    }
+    /// Dispatch the waiting proposal's search: onto the worker pool (`closure_search_let_enabled`), else on its own
+    /// thread if no search is out.
     fn dispatch_closure_search(&mut self) {
-        if self.closure_search.is_some() {
+        let pooled = self.let_searches();
+        if !pooled && !self.closure_searches.is_empty() {
             return;
         }
         let Some(mut search) = self.begin_closure_search() else {
@@ -136,58 +207,106 @@ impl GscPgo {
         let (estimate_s, source_points, target_points) = self.closure_search_estimate_s(&search);
         search.diag.dispatch_source_points = source_points;
         search.diag.dispatch_target_points = target_points;
-        let scan_period_s = self.scan_period_s();
-        self.search_scan_times.clear();
-        let handle = std::thread::Builder::new()
-            .name("gsc-closure-search".into())
-            .spawn(move || search.run())
-            .expect("spawn closure search thread");
-        self.closure_search = Some(RunningSearch {
-            handle,
+        let thread = if pooled {
+            let workers = self.config.closure_search_workers;
+            self.search_pool
+                .get_or_insert_with(|| SearchPool::new(workers))
+                .jobs
+                .send((search, progress.clone()))
+                .expect("closure search workers stopped");
+            None
+        } else {
+            let progress = progress.clone();
+            Some(
+                std::thread::Builder::new()
+                    .name("gsc-closure-search".into())
+                    .spawn(move || progress.finish(search.run()))
+                    .expect("spawn closure search thread"),
+            )
+        };
+        self.search_order += 1;
+        self.closure_searches.push_back(SearchJob {
             progress,
+            thread,
+            order: self.search_order,
             dispatch_scan: self.advancing_scans,
             dispatch_scans_seen: self.scans_seen,
             dispatch_time: self.newest_scan_time(),
             estimate_s,
-            scan_period_s,
+            scan_period_s: self.scan_period_s(),
+            late: std::cell::Cell::new(false),
         });
     }
-    /// Land the running search if its estimate has passed (or `now`) and it has finished, waiting for it to finish or
-    /// report another extension round when `wait`. Returns whether one landed.
-    fn land_closure_search(&mut self, wait: bool, now: bool) -> bool {
+    /// Whether `job`'s hold has passed with `rounds` rounds started: its scans and the data time its seconds span (an
+    /// early scan cannot end it).
+    fn hold_passed(&self, job: &SearchJob, rounds: usize) -> bool {
+        self.advancing_scans >= job.dispatch_scan + job.estimate_scans(rounds, &self.config)
+            && self.newest_scan_time() - job.dispatch_time >= job.estimate_s(rounds, &self.config)
+    }
+    /// Land the searches whose hold has passed (all, when `now`) and that have finished, waiting for one to finish or
+    /// report another extension round when `wait`, in due order (ties by dispatch order). Returns how many landed.
+    fn land_due_closure_searches(&mut self, wait: bool, now: bool) -> usize {
         let hold = self.config.closure_search_hold_enabled && !now;
-        let Some(running) = &self.closure_search else {
-            return false;
-        };
-        loop {
-            let seen = running.progress.snapshot();
-            let (rounds, done) = seen;
-            // held until both its scans and the data time its seconds span have passed (an early scan cannot end it)
-            if hold
-                && (self.advancing_scans < running.dispatch_scan + running.estimate_scans(rounds, &self.config)
-                    || self.newest_scan_time() - running.dispatch_time
-                        < running.estimate_s(rounds, &self.config))
-            {
-                return false;
+        // each finished search whose hold has passed, by its due scan and dispatch number
+        let mut due: Vec<(usize, u64)> = Vec::new();
+        let mut waited_s = 0.0;
+        for job in &self.closure_searches {
+            loop {
+                let seen = job.progress.snapshot();
+                let (rounds, done) = seen;
+                if hold && !self.hold_passed(job, rounds) {
+                    break;
+                }
+                if done {
+                    due.push((job.dispatch_scan + job.estimate_scans(rounds, &self.config), job.order));
+                    break;
+                }
+                if !wait {
+                    job.late.set(hold);
+                    break;
+                }
+                // the replay ran ahead of the search: wait for it to finish or start another round (which moves its hold)
+                let started = std::time::Instant::now();
+                job.progress.wait_past(seen);
+                waited_s += started.elapsed().as_secs_f64();
             }
-            if done {
+            // one at a time, a later search can only be out once this one landed
+            if !self.let_searches() {
                 break;
             }
-            if !wait {
-                return false;
-            }
-            // the replay ran ahead of the search: wait for it to finish or start another round (which moves its estimate)
-            let started = std::time::Instant::now();
-            running.progress.wait_past(seen);
-            self.closure_search_wait_s += started.elapsed().as_secs_f64();
         }
-        let running = self.closure_search.take().expect("checked above");
-        // finished, so its rounds are final
-        let (rounds, _) = running.progress.snapshot();
-        let estimate_scans = running.estimate_scans(rounds, &self.config);
-        let estimate_s = running.estimate_s(rounds, &self.config);
-        let (dispatch_scan, dispatch_time) = (running.dispatch_scans_seen, running.dispatch_time);
-        let mut result = running.handle.join().expect("closure search thread panicked");
+        self.closure_search_wait_s += waited_s;
+        due.sort();
+        for &(_, order) in &due {
+            let index = self
+                .closure_searches
+                .iter()
+                .position(|job| job.order == order)
+                .expect("a due search is out");
+            let job = self.closure_searches.remove(index).expect("index found above");
+            self.land_closure_search(job);
+            // a rejected search's next alternative is its own job, dispatched (its snapshot taken) as its result lands
+            if self.let_searches()
+                && self
+                    .waiting_proposal
+                    .as_ref()
+                    .is_some_and(|waiting| waiting.tries > 0)
+            {
+                self.dispatch_closure_search();
+            }
+        }
+        self.trim_search_scan_times();
+        due.len()
+    }
+    /// Apply a finished search's result: its schedule into its diagnostics, an overshoot logged and counted.
+    fn land_closure_search(&mut self, job: SearchJob) {
+        let (rounds, _) = job.progress.snapshot();
+        let estimate_scans = job.estimate_scans(rounds, &self.config);
+        let estimate_s = job.estimate_s(rounds, &self.config);
+        let mut result = job.progress.take_result().expect("a landing search has finished");
+        if let Some(thread) = job.thread {
+            thread.join().expect("closure search thread panicked");
+        }
         let diag = &mut result.diag;
         let seconds = if diag.cost_lookup_s.is_finite() {
             diag.cost_lookup_s
@@ -196,15 +315,17 @@ impl GscPgo {
         } + diag.cost_search_s;
         // the data time from dispatch to the first scan its hold could end at, its scans and seconds both passed (none
         // when the data ended first)
+        let first = (job.dispatch_scan + estimate_scans).saturating_sub(self.search_scan_base);
         let spanned = self
             .search_scan_times
             .iter()
-            .skip(estimate_scans - 1)
-            .map(|time| time - dispatch_time)
+            .skip(first)
+            .map(|time| time - job.dispatch_time)
             .find(|spanned| *spanned >= estimate_s);
+        // its own work ran past the data time its hold spanned, or (live) it was still running, queued or not, when due
         let overshoot = self.config.closure_search_hold_enabled
-            && spanned.is_some_and(|spanned| seconds > spanned);
-        diag.scan_index_dispatched = dispatch_scan;
+            && (spanned.is_some_and(|spanned| seconds > spanned) || job.late.get());
+        diag.scan_index_dispatched = job.dispatch_scans_seen;
         diag.estimate_s = estimate_s;
         diag.estimate_scans = estimate_scans;
         diag.search_overshoot = overshoot;
@@ -218,9 +339,19 @@ impl GscPgo {
                 spanned.unwrap_or(f64::NAN),
             );
         }
-        self.search_scan_times.clear();
         self.finish_closure_search(result);
-        true
+    }
+    /// Drop the scan times older than every out search's dispatch.
+    fn trim_search_scan_times(&mut self) {
+        let Some(oldest) = self.closure_searches.iter().map(|job| job.dispatch_scan).min() else {
+            self.search_scan_times.clear();
+            return;
+        };
+        // the first time kept is advancing scan oldest + 1
+        while self.search_scan_base <= oldest && !self.search_scan_times.is_empty() {
+            self.search_scan_times.pop_front();
+            self.search_scan_base += 1;
+        }
     }
     /// The search's estimated cost at dispatch (seconds): the scan-context lookup (none for a retry), building the
     /// source scan and single target submap, the degeneracy check, the single ICP at its most iterations, and the gates.
