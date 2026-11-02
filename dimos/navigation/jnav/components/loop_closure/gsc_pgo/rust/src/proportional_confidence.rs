@@ -13,7 +13,8 @@
 // limitations under the License.
 
 //! Stage 4, proportional confidence: how much evidence a connection needs grows with how hard it pulls
-//! the graph. The yank (how far the closure would move its source keyframe from where the graph has it) is scaled against the yanks of the candidates scored so far
+//! the graph. The yank (how far the closure would move its source keyframe from where the graph has it) is measured in
+//! standard deviations of its predicted spread (the graph's covariance of the two ends plus the closure's ICP variance)
 //! into z; the connection's confidence (scan context x ICP fitness x degeneracy) must reach
 //! 1 - exp(-required evidence) (yank, the solve's keep record, look-alike places), and one that falls short gets a second
 //! look with extended ICP on more keyframes, as many as the loop-overlap pressure allows.
@@ -28,45 +29,22 @@ use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, 
 impl ClosureSearch {
     /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, and
     /// return its yank for the scale.
-    pub(crate) fn score_candidate(&self, diag: &mut ClosureCandidateDiag) -> (f64, f64) {
-        let robust_scale = |values: Vec<f64>| -> f64 {
-            let mut values = values;
-            values.sort_by(f64::total_cmp);
-            (1.4826 * values[values.len() / 2]).max(f64::EPSILON)
-        };
-        // odometry drift is a random walk, so the yank a correct closure needs grows with sqrt(keyframes between its ends)
-        let drift = (diag.source_id.abs_diff(diag.target_id as usize) as f64)
-            .max(1.0)
-            .sqrt();
-        diag.yank_drift_scale = drift;
-        let predicted = self.config.closure_yank_gate_principled.then(|| {
-            let p = &diag.innovation_covariance;
-            let c = diag.closure_noise_scale * diag.icp_fitness.max(1e-6);
-            let covariance: Mat3 = std::array::from_fn(|i| {
-                std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
-            });
-            covariance
+    pub(crate) fn score_candidate(&self, diag: &mut ClosureCandidateDiag) {
+        // the innovation against its predicted spread: the graph's covariance of the two ends' relative position plus the
+        // closure's variance, its ICP inliers' mean square (`IcpResult::inlier_mean_square`)
+        let p = &diag.innovation_covariance;
+        let c = (diag.icp_fitness * diag.icp_overlap).max(1e-6);
+        let covariance: Mat3 = std::array::from_fn(|i| {
+            std::array::from_fn(|j| p[i][j] + if i == j { c } else { 0.0 })
         });
-        if let Some(covariance) = predicted {
-            // the innovation against its predicted spread (the graph's, both noise scales applied, plus the closure's)
-            let v = diag.innovation;
-            diag.yank_stdevs = match mat3::inverse(&covariance) {
-                Some(inverse) if v.iter().all(|x| x.is_finite()) => {
-                    let iv = mat3::mat_vec(&inverse, &v);
-                    (v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]).max(0.0).sqrt()
-                }
-                _ => f64::INFINITY,
-            };
-        } else if self.scored_yanks.is_empty() {
-            // no yank scale yet: nothing vouches for this yank, so no confidence clears it (it only seeds the scale)
-            diag.yank_stdevs = f64::INFINITY;
-        } else {
-            diag.sigma_rotation_deg = robust_scale(self.scored_yanks.iter().map(|y| y.0).collect());
-            diag.sigma_translation_m =
-                robust_scale(self.scored_yanks.iter().map(|y| y.1).collect());
-            diag.yank_stdevs = (diag.yank_rotation_deg / drift / diag.sigma_rotation_deg)
-                .hypot(diag.yank_translation / drift / diag.sigma_translation_m);
-        }
+        let v = diag.innovation;
+        diag.yank_stdevs = match mat3::inverse(&covariance) {
+            Some(inverse) if v.iter().all(|x| x.is_finite()) => {
+                let iv = mat3::mat_vec(&inverse, &v);
+                (v[0] * iv[0] + v[1] * iv[1] + v[2] * iv[2]).max(0.0).sqrt()
+            }
+            _ => f64::INFINITY,
+        };
         let unit = |v: f64| {
             if v.is_finite() {
                 v.clamp(0.0, 1.0)
@@ -112,10 +90,6 @@ impl ClosureSearch {
             diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor
         };
         diag.required_confidence = 1.0 - (-self.required_evidence(diag)).exp();
-        (
-            diag.yank_rotation_deg / drift,
-            diag.yank_translation / drift,
-        )
     }
     /// `connection_fit::sharpness` of `source` moved by `icp` onto the tree's cloud, by the configured nudge.
     pub(crate) fn sharpness(&self, source: &PointCloud, tree: &KdTree, icp: &IcpResult) -> f64 {

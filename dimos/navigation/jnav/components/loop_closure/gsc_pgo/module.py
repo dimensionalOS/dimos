@@ -104,42 +104,32 @@ class PGOConfig(NativeModuleConfig):
     # clouds share, evidence growing with log2 of its points / coin_flip) instead of scan-context x ICP x degeneracy
     # True: a closure's evidence is its likelihood ratio (mean log ratio per point: aligned half-normal of a width measured
     # from the clouds vs uniform out to the ICP match distance), in place of scan-context x ICP x degeneracy
-    closure_likelihood_confidence: bool = False
+    closure_likelihood_confidence: bool = True
     # True: a keyframe whose closure search is rejected tries its next scan-context match, up to 1 + ceil(1/(1 - pressure))
     # tries (2 at no pressure), at most scan_context_top_k
-    closure_alternative_places: bool = False
-    # True: skip a scan-context match whose relative position the graph already knows better than accepted closures' median ICP fit
-    closure_skip_known: bool = False
+    closure_alternative_places: bool = True
     # True: hold the largest pairwise-consistent set of closures (PCM) in through GNC
     closure_pcm: bool = False
     # True: each solve also runs GNC-GM (starts at least squares) and takes its verdict when its odometry residuals prove the odometry overtrusted
-    closure_gnc_overtrust_check: bool = False
-    # True: a closure's variances are its ICP fit's own pose covariance (point-to-plane Hessian) instead of its ICP fitness on every axis
-    closure_icp_covariance: bool = False
+    closure_gnc_overtrust_check: bool = True
     # True: each solve holds every keyframe's roll/pitch to the raw (gravity-aligned) odometry's, at a bound the committed closures' tilt disagreement sets
-    odometry_gravity_bound: bool = False
+    odometry_gravity_bound: bool = True
     # True: closures the previous solve kept are held in, dropped only when a cold solve keeps more and rejects one of them
-    closure_commitments: bool = False
+    closure_commitments: bool = True
     # True: the closure ICP's inlier distance is measured from each keyframe against the ones before it (a right alignment), not closure_icp_inlier_distance_m
     closure_inlier_distance_from_odometry: bool = False
     # True: the degeneracy gate reads the ICP alignment's point-to-plane Hessian (x, y, z, yaw) instead of the scan's normals
     closure_hessian_observability: bool = False
     # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
-    closure_likelihood_visibility: bool = False
+    closure_likelihood_visibility: bool = True
     # True (with visibility): count every source point a target scan could see (beam model), no inlier-distance gate
     closure_likelihood_beam: bool = False
     # True: try a keyframe's scan-context matches in order of how unsure the graph is of their relative position
     closure_rank_by_information: bool = False
-    # True: measure the yank scale from closures the solve kept instead of every ICP-scored candidate
-    closure_yank_scale_from_kept: bool = False
     # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
-    odometry_noise_from_closures: bool = False
-    # True: scale a closure's ICP-fitness variance the same way, fitted jointly with the odometry's
-    closure_noise_from_closures: bool = False
-    # True: yank_stdevs = the closure's innovation in standard deviations of its predicted spread (both noise scales)
-    closure_yank_gate_principled: bool = False
+    odometry_noise_from_closures: bool = True
     # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
-    odometry_noise_evidence_core: bool = False
+    odometry_noise_evidence_core: bool = True
     # True: the noise is learned from kept loops' innovations vs raw odometry, each voting by its drift share of its expected misfit (short loops barely vote)
     odometry_noise_from_loop_drift: bool = False
     closure_overlap_score: bool = False
@@ -164,15 +154,13 @@ class PGOConfig(NativeModuleConfig):
     closure_robust_huber_k: float = 1.345
 
     # True: a closure is uninformative only where the graph's own covariance of its ends is surer than ICP in every direction
-    closure_informative_by_graph_covariance: bool = False
+    closure_informative_by_graph_covariance: bool = True
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
     closure_uninformative_gate: bool = True
     # True: the uninformative gate uses the learned odometry noise's upper bound (thin evidence cannot shut the gate)
-    closure_uninformative_noise_upper_bound: bool = False
-    # True (with odometry_noise_from_closures): learn the closures' variance scale jointly with the odometry's from the solved graph's residuals
-    closure_noise_from_residuals: bool = False
+    closure_uninformative_noise_upper_bound: bool = True
     # True (with odometry_noise_from_closures): solve with the learned odometry noise's lower bound (any start behaves like a confident one)
-    odometry_noise_solve_lower_bound: bool = False
+    odometry_noise_solve_lower_bound: bool = True
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
     # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. Defaults: Mid-360 +
     # FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning). After each solve
@@ -186,12 +174,12 @@ class PGOConfig(NativeModuleConfig):
     odom_tilt_drift_per_sqrt_m: float = 6.91e-4
     odom_tilt_drift_per_sqrt_rad: float = 3.3e-3
     # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
-    odom_noise_prior_ln_sd_xy: float = 2.4
-    odom_noise_prior_ln_sd_z: float = 1.6
-    odom_noise_prior_ln_sd_yaw: float = 2.4
-    odom_noise_prior_ln_sd_tilt: float = 1.6
+    odom_noise_prior_ln_sd_xy: float = 1.72
+    odom_noise_prior_ln_sd_z: float = 2.05
+    odom_noise_prior_ln_sd_yaw: float = 1.15
+    odom_noise_prior_ln_sd_tilt: float = 0.96
     # how many closed loops' worth of evidence the stated drift counts as for the learner (its plasticity); 0 = the closures alone, inf = never learned (the config's drift is used)
-    odom_error_stiffness: float = 30.0
+    odom_error_stiffness: float = 10.0
 
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this the oldest scans are dropped, so a stall can't leave the module seconds stale

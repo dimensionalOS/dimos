@@ -49,7 +49,6 @@ fn run(reported_over_true: f64, overtrust_check: bool) -> (f64, f64) {
         odom_tilt_drift_per_sqrt_rad: 0.0,
         odometry_noise_from_closures: true,
         closure_uninformative_noise_upper_bound: true,
-        closure_noise_from_residuals: true,
         odometry_noise_solve_lower_bound: true,
         closure_gnc_overtrust_check: overtrust_check,
         odom_noise_prior_ln_sd_xy: 1.72,
