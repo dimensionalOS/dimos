@@ -98,6 +98,8 @@ config! {
     scan_context_match_threshold: f64,
     scan_context_lidar_height_m: f64,
     pressure_check_frequency: usize,
+    soft_pressure_half_log10_hazard: f64,
+    soft_pressure_decades: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------
