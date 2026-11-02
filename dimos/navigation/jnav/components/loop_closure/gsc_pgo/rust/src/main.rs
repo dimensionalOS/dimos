@@ -66,7 +66,7 @@ config! {
     body_frame: String,
     // where each pose graph snapshot's keyframes go, for offline checks; empty for never
     dump_path: String,
-    // bounded scan FIFO depth (<= 0 = unbounded)
+    // bounded scan FIFO depth for spikes; overflow drops all but the newest scan (<= 0 = unbounded)
     max_scan_queue: i32,
     // threads closure search and solves may use, leaving the other cores to the rest of the robot (0 = every core)
     worker_threads: usize,
@@ -496,8 +496,11 @@ impl GscPgoModule {
             pose,
         });
         let cap = self.config.max_scan_queue;
-        while cap > 0 && state.cloud_buffer.len() as i32 > cap {
-            state.cloud_buffer.pop_front(); // drop oldest stale scan
+        if cap > 0 && state.cloud_buffer.len() as i32 > cap {
+            // the queue only absorbs spikes: once it overflows, keep just the newest scan so latency stays low
+            let newest = state.cloud_buffer.pop_back();
+            state.cloud_buffer.clear();
+            state.cloud_buffer.extend(newest);
         }
         drop(state);
         self.wake.notify_one();
