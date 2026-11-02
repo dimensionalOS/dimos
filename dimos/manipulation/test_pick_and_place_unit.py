@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -31,7 +32,11 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
     PlanStatus,
 )
-from dimos.manipulation.pick_and_place_module import TARGET_BOX, PickAndPlaceModule
+from dimos.manipulation.pick_and_place_module import (
+    TARGET_BOX,
+    PickAndPlaceModule,
+    _approach_angle,
+)
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -668,3 +673,165 @@ def test_pick_and_place_work_without_a_box_filter(module: PickAndPlaceModule) ->
 
     assert module.pick_object("cup-1").message == "Pick complete"
     assert module.place_at(0.4, 0.0, 0.2).message == "Place complete"
+
+
+def _tilted(tilt_deg: float, score: float = 1.0) -> GraspCandidate:
+    """A grasp on the cup whose approach leans ``tilt_deg`` from straight down, towards +Y."""
+    roll = -np.pi + np.radians(tilt_deg)
+    return GraspCandidate(
+        Pose(Vector3(0.1, 0.0, 0.2), Quaternion.from_euler(Vector3(roll, 0, 0))), score
+    )
+
+
+def _provide(module: PickAndPlaceModule, *candidates: GraspCandidate) -> None:
+    grasp_generator: Any = module._grasp_generator
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), list(candidates)
+    )
+
+
+def test_a_straight_down_grasp_approaches_along_minus_z(module: PickAndPlaceModule) -> None:
+    """The heuristic's top-down grasp; the pick's pre-grasp sits above it."""
+    proposed = module.propose_grasps("cup-1", approach=[0.0, 0.0, -1.0])
+
+    assert proposed["grasps"][0]["angle_deg"] == pytest.approx(0.0, abs=1e-6)
+    assert module.propose_grasps("cup-1", approach=[0.0, 0.0, 1.0])["nearest_angle_deg"] == (
+        pytest.approx(180.0)
+    )
+    assert module.pick_object("cup-1").message == "Pick complete"
+    manipulation: Any = module._manipulation
+    pregrasp = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
+    assert pregrasp.position.to_tuple() == pytest.approx((0.1, 0.0, 0.3))
+
+
+def test_the_approach_angle_is_measured_along_the_pick_motion() -> None:
+    """For any tilt, the pre-grasp to grasp direction has an angle of 0 to the grasp's approach."""
+    grasp = PoseStamped(
+        frame_id="world",
+        position=Vector3(0.1, 0.0, 0.2),
+        orientation=Quaternion.from_euler(Vector3(-2.6, 0.4, 0.9)),
+    )
+    pregrasp = PickAndPlaceModule._offset_pose(grasp, 0.1)
+    motion = (grasp.position - pregrasp.position).normalize()
+
+    assert _approach_angle(grasp, motion) == pytest.approx(0.0, abs=1e-5)
+    assert _approach_angle(grasp, -motion) == pytest.approx(180.0, abs=1e-5)
+
+
+def test_the_cone_keeps_grasps_inside_the_angle_and_drops_the_rest(
+    module: PickAndPlaceModule,
+) -> None:
+    _provide(module, _tilted(0.0, 0.9), _tilted(50.0, 0.8), _tilted(20.0, 0.7), _tilted(90.0))
+
+    # Not unit length: the direction is what counts.
+    proposed = module.propose_grasps("cup-1", approach=[0.0, 0.0, -2.0], max_angle_deg=30.0)
+
+    assert [g["angle_deg"] for g in proposed["grasps"]] == pytest.approx([0.0, 20.0], abs=1e-6)
+    assert [g["score"] for g in proposed["grasps"]] == [0.9, 0.7]
+    assert (proposed["considered"], proposed["nearest_angle_deg"]) == (4, pytest.approx(0.0))
+    assert proposed["frame"] == "world"
+    json.dumps(proposed)
+
+
+def test_propose_grasps_returns_at_most_limit_best_first(
+    module: PickAndPlaceModule, fallback: Any
+) -> None:
+    _provide(module, _tilted(5.0, 0.9), _tilted(10.0, 0.6))
+
+    proposed = module.propose_grasps("cup-1", approach=[0.0, 0.0, -1.0], limit=3)
+    two = module.propose_grasps("cup-1", approach=[0.0, 0.0, -1.0], limit=2)
+
+    assert [(g["rank"], g["source"]) for g in proposed["grasps"]] == [
+        (0, "provider"),
+        (1, "provider"),
+        (2, "fallback"),
+    ]
+    assert [g["score"] for g in two["grasps"]] == [0.9, 0.6]
+    first = proposed["grasps"][0]
+    assert first["position"] == pytest.approx([0.1, 0.0, 0.2])
+    assert first["orientation"] == pytest.approx(list(_tilted(5.0).pose.orientation.to_tuple()))
+
+
+def test_an_empty_cone_says_how_near_the_nearest_grasp_is(module: PickAndPlaceModule) -> None:
+    _provide(module, _tilted(0.0), _tilted(40.0))
+
+    proposed = module.propose_grasps("cup-1", approach=[0.0, 1.0, 0.0], max_angle_deg=30.0)
+
+    assert proposed["grasps"] == []
+    assert proposed["nearest_angle_deg"] == pytest.approx(50.0)
+    assert proposed["considered"] == 2
+
+
+def test_without_an_approach_every_grasp_counts(module: PickAndPlaceModule) -> None:
+    _provide(module, _tilted(0.0), _tilted(90.0))
+
+    proposed = module.propose_grasps("cup-1")
+
+    assert [g["angle_deg"] for g in proposed["grasps"]] == [0.0, 0.0]
+
+
+def test_only_grasps_in_the_cone_go_through_the_contact_check(module: PickAndPlaceModule) -> None:
+    module.config.robot = MagicMock()
+    checker = MagicMock()
+    # Passes every grasp but the first it is given.
+    checker.keep_clear.side_effect = lambda grasps, *args: GraspCandidateArray(
+        grasps.header, grasps.candidates[1:]
+    )
+    module._contact_checkers["arm/tool"] = checker
+    manipulation: Any = module._manipulation
+    manipulation.get_state.return_value.groups["arm/tool"].joints = None
+    scene: Any = module._scene
+    scene.get_full_scene_pointcloud.return_value = PointCloud2.from_numpy(
+        np.zeros((1, 3), dtype=np.float32), frame_id="world", timestamp=1.0
+    )
+    _provide(module, _tilted(0.0, 0.9), _tilted(60.0, 0.8), _tilted(10.0, 0.7))
+
+    proposed = module.propose_grasps("cup-1", approach=[0.0, 0.0, -1.0])
+
+    checked = checker.keep_clear.call_args.args[0].candidates
+    assert [c.score for c in checked] == [0.9, 0.7]
+    assert [g["score"] for g in proposed["grasps"]] == [0.7]
+
+
+def test_propose_grasps_rejects_an_approach_without_a_direction(
+    module: PickAndPlaceModule,
+) -> None:
+    with pytest.raises(ValueError, match="approach must be a direction"):
+        module.propose_grasps("cup-1", approach=[0.0, 0.0, 0.0])
+
+
+def test_a_reachable_operator_grasp_is_picked_without_asking_the_grasp_modules(
+    module: PickAndPlaceModule, fallback: Any
+) -> None:
+    grasp_generator: Any = module._grasp_generator
+    chosen = {"rank": 2, "score": 0.4, "position": [0.12, 0.01, 0.2]}
+    chosen["orientation"] = list(_candidate(0.12).pose.orientation.to_tuple())
+
+    result = module.pick_object("cup-1", grasp=chosen)
+
+    assert result.message == "Pick complete"
+    assert (result.metadata["source"], result.metadata["rank"]) == ("operator", 2)
+    assert result.metadata["score"] == 0.4
+    assert module._selected_grasp is not None
+    assert module._selected_grasp.position.to_tuple() == pytest.approx((0.12, 0.01, 0.2))
+    grasp_generator.propose_grasps.assert_not_called()
+    fallback.propose_grasps.assert_not_called()
+
+
+def test_an_unreachable_operator_grasp_falls_back_to_the_generated_ones(
+    module: PickAndPlaceModule, fallback: Any
+) -> None:
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    manipulation.plan_to_poses.side_effect = [NO_PATH, PLANNED]
+    chosen = {"rank": 0, "score": 1.0, "position": [0.5, 0.5, 0.5], "orientation": [1, 0, 0, 0]}
+
+    result = module.pick_object("cup-1", grasp=chosen)
+
+    assert result.message == "Pick complete"
+    assert (result.metadata["source"], result.metadata["rank"]) == ("provider", 0)
+    assert module._selected_grasp is not None
+    assert module._selected_grasp.position.x == pytest.approx(0.1)
+    grasp_generator.propose_grasps.assert_called_once()
+    # The viewer shows the operator's grasp, then it and the generated ones.
+    assert [c.pose.position.x for c in module.get_grasp_candidates().candidates] == [0.5, 0.1, 0.3]

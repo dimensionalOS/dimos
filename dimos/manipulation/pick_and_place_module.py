@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+import math
 from typing import Any
 
 import numpy as np
@@ -42,6 +44,7 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
@@ -120,6 +123,21 @@ def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
     return TargetBox(Vector3(*((low + high) / 2.0)), Vector3(*(high - low)))
 
 
+def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
+    """Angle, in degrees, between the way the gripper moves into a grasp and ``approach``.
+
+    Args:
+        pose: The grasp's tool tip pose.
+        approach: Unit vector in the pose's frame, or None, which gives 0.
+    """
+    if approach is None:
+        return 0.0
+    # The pre-grasp sits back along the tip's -Z (_offset_pose), so the gripper
+    # travels along the tip's +Z into the grasp.
+    axis = pose.orientation.rotate_vector(Vector3(0.0, 0.0, 1.0))
+    return math.degrees(math.acos(max(-1.0, min(1.0, axis.dot(approach)))))
+
+
 def _same_module(first: Any, second: Any) -> bool:
     """Whether two module references call the same module instance."""
     names = getattr(first, "remote_name", None), getattr(second, "remote_name", None)
@@ -191,18 +209,23 @@ class PickAndPlaceModule(Module):
 
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(
-        self, object_id: str, planning_group: PlanningGroupID | None = None
+        self,
+        object_id: str,
+        planning_group: PlanningGroupID | None = None,
+        grasp: dict[str, Any] | None = None,
     ) -> SkillResult:
         """Generate ranked grasps and pick one object from the latest scan.
 
         ``contact_rejected`` in the result counts the grasps dropped because the
         arm cannot reach them, or the robot would touch the object off its finger
         pads or hit the scene. ``source`` says whether the grasp came from the
-        grasp provider or the fallback.
+        grasp provider, the fallback, or ``grasp`` ("operator").
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
+            grasp: One entry of propose_grasps' list, tried first; the other grasps
+                are generated only if the planner finds no path to it.
         """
         if self._holding_object:
             return SkillResult(
@@ -222,19 +245,26 @@ class PickAndPlaceModule(Module):
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
         group = self._gripper_group(planning_group)
-        proposals, facts = self._propose(object_id, pointcloud, group)
-        candidates = GraspCandidateArray(
-            proposals[0][1].header, [c for _, array in proposals for c in array.candidates]
-        )
-        self._grasp_candidates = candidates
-        self._manipulation.show_grasp_proposals(candidates)
-        for _, array in proposals:
-            if array.header.frame_id != self.config.planning_frame:
-                raise RuntimeError(
-                    f"Grasp candidates are in frame {array.header.frame_id!r}; "
-                    f"the planning frame is {self.config.planning_frame!r}"
-                )
-        if not candidates.candidates:
+        facts: dict[str, Any] = {}
+        proposals: Iterable[tuple[str, GraspCandidateArray]]
+        if grasp is None:
+            proposals = self._generate(object_id, pointcloud, group, facts)
+        else:
+            pose = Pose(Vector3(*grasp["position"]), Quaternion(*grasp["orientation"]))
+            chosen = GraspCandidateArray(
+                Header(self.config.planning_frame),
+                [GraspCandidate(pose, float(grasp.get("score", 0.0)))],
+            )
+            self._grasp_candidates = chosen
+            self._manipulation.show_grasp_proposals(chosen)
+
+            def operator_first() -> Iterator[tuple[str, GraspCandidateArray]]:
+                yield "operator", chosen
+                # Reached only when the planner finds no path to the operator's grasp.
+                yield from self._generate(object_id, pointcloud, group, facts, chosen.candidates)
+
+            proposals = operator_first()
+        if not self._grasp_candidates.candidates:
             note = ""
             if rejected := facts.get("contact_rejected"):
                 note = (
@@ -255,10 +285,128 @@ class PickAndPlaceModule(Module):
             if not self._holding_object:
                 self._clear_target_box()
         result.metadata = {**facts, **result.metadata}
+        if grasp is not None and result.metadata.get("source") == "operator":
+            result.metadata["rank"] = grasp.get("rank", 0)
         return result
 
+    @rpc
+    def propose_grasps(
+        self,
+        object_id: str,
+        approach: list[float] | None = None,
+        max_angle_deg: float = 30.0,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Find the best grasps on a scanned object that come in from about one direction.
+
+        Each grasp returned passes the reach and collision check a pick makes, and
+        its pose is where the gripper's tool tip goes; any of them can be given to
+        pick_object as ``grasp``, as is.
+
+        Args:
+            object_id: Exact object ID returned by the latest scan_objects call.
+            approach: The way the gripper should travel into the object, [x, y, z]
+                in the planning frame, any length but zero: [0, 0, -1] is straight
+                down. None takes grasps from every direction.
+            max_angle_deg: Largest angle, in degrees, between a grasp's approach
+                and ``approach``.
+            limit: Most grasps to return.
+
+        Returns a dict with ``object_id``; ``frame``, the planning frame the poses
+        are in; ``grasps``, best first, each with ``rank`` (0 for the best),
+        ``source`` ("provider" or "fallback"), ``score``, ``angle_deg`` (0 without
+        ``approach``), ``position`` ([x, y, z], metres) and ``orientation`` ([x,
+        y, z, w]); ``considered``, how many grasps were generated; and
+        ``nearest_angle_deg``, the smallest angle among those, or None when none
+        was. A nearest angle within ``max_angle_deg`` with no grasps means every
+        grasp in the cone failed the collision check.
+
+        Raises ValueError for an object not in the latest scan or without points,
+        an ``approach`` of zero length, or a ``limit`` below 1.
+        """
+        if object_id not in self._objects:
+            raise ValueError(f"No object with id {object_id} in the latest scan")
+        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+        if pointcloud is None:
+            raise ValueError(f"Object {object_id} has no point cloud in the latest scan")
+        if limit < 1:
+            raise ValueError(f"limit must be at least 1, got {limit}")
+        direction = None if approach is None else Vector3(*approach).normalize()
+        if direction is not None and not direction.length() > 0.0:
+            raise ValueError(f"approach must be a direction, got {approach}")
+        angles: list[float] = []
+
+        def in_cone(grasps: GraspCandidateArray) -> GraspCandidateArray:
+            found = [_approach_angle(c.pose, direction) for c in grasps.candidates]
+            angles.extend(found)
+            kept = zip(grasps.candidates, found, strict=True)
+            return GraspCandidateArray(grasps.header, [c for c, a in kept if a <= max_angle_deg])
+
+        proposals, _ = self._propose(object_id, pointcloud, self._gripper_group(None), in_cone)
+        self._check_frames(proposals)
+        best = [(source, c) for source, array in proposals for c in array.candidates][:limit]
+        return {
+            "object_id": object_id,
+            "frame": self.config.planning_frame,
+            "grasps": [
+                {
+                    "rank": rank,
+                    "source": source,
+                    "score": float(c.score),
+                    "angle_deg": _approach_angle(c.pose, direction),
+                    "position": list(c.pose.position.to_tuple()),
+                    "orientation": list(c.pose.orientation.to_tuple()),
+                }
+                for rank, (source, c) in enumerate(best)
+            ],
+            "nearest_angle_deg": min(angles, default=None),
+            "considered": len(angles),
+        }
+
+    def _generate(
+        self,
+        object_id: str,
+        pointcloud: PointCloud2,
+        group: PlanningGroupID,
+        facts: dict[str, Any],
+        ahead: list[GraspCandidate] | None = None,
+    ) -> list[tuple[str, GraspCandidateArray]]:
+        """Generate the pick's grasps with _propose and show them in the viewer.
+
+        Args:
+            object_id: The object to grasp, from the latest scan.
+            pointcloud: The target's points, planning frame, metres.
+            group: Planning group whose tool tip the grasps pose.
+            facts: The pick's result facts; _propose's are added to it.
+            ahead: Grasps already being tried, shown before the generated ones.
+
+        Raises RuntimeError when a source's grasps are not in the planning frame.
+        """
+        proposals, found = self._propose(object_id, pointcloud, group)
+        facts.update(found)
+        self._grasp_candidates = GraspCandidateArray(
+            proposals[0][1].header,
+            [*(ahead or []), *(c for _, array in proposals for c in array.candidates)],
+        )
+        self._manipulation.show_grasp_proposals(self._grasp_candidates)
+        self._check_frames(proposals)
+        return proposals
+
+    def _check_frames(self, proposals: list[tuple[str, GraspCandidateArray]]) -> None:
+        """Raise RuntimeError when any source's grasps are not in the planning frame."""
+        for _, array in proposals:
+            if array.header.frame_id != self.config.planning_frame:
+                raise RuntimeError(
+                    f"Grasp candidates are in frame {array.header.frame_id!r}; "
+                    f"the planning frame is {self.config.planning_frame!r}"
+                )
+
     def _propose(
-        self, object_id: str, pointcloud: PointCloud2, group: PlanningGroupID
+        self,
+        object_id: str,
+        pointcloud: PointCloud2,
+        group: PlanningGroupID,
+        select: Callable[[GraspCandidateArray], GraspCandidateArray] = lambda grasps: grasps,
     ) -> tuple[list[tuple[str, GraspCandidateArray]], dict[str, Any]]:
         """Ask the grasp provider, then the fallback, for grasps that pass the contact check.
 
@@ -266,6 +414,8 @@ class PickAndPlaceModule(Module):
             object_id: The object to grasp, from the latest scan.
             pointcloud: The target's points, planning frame, metres.
             group: Planning group whose tool tip the grasps pose.
+            select: Keeps some of each source's grasps before the contact check;
+                the default keeps all.
 
         Returns ("provider", grasps) and, with a fallback, ("fallback", grasps),
         and the facts for the pick's result: the provider's contact-check facts,
@@ -284,13 +434,13 @@ class PickAndPlaceModule(Module):
             error = f"{type(exc).__name__}: {exc}"
             logger.warning("Grasp provider failed; trying the fallback's grasps", error=error)
             provided = GraspCandidateArray(Header(self.config.planning_frame), [])
-        provided, facts = self._drop_touching(object_id, pointcloud, provided, group)
+        provided, facts = self._drop_touching(object_id, pointcloud, select(provided), group)
         proposals = [("provider", provided)]
         if error is not None:
             facts["grasp_provider_error"] = error
         if fallback is not None:
             grasps, fallback_facts = self._drop_touching(
-                object_id, pointcloud, fallback.propose_grasps(pointcloud), group
+                object_id, pointcloud, select(fallback.propose_grasps(pointcloud)), group
             )
             proposals.append(("fallback", grasps))
             facts.update({f"fallback_{key}": value for key, value in fallback_facts.items()})
@@ -352,7 +502,7 @@ class PickAndPlaceModule(Module):
 
     def _pick_from(
         self,
-        proposals: list[tuple[str, GraspCandidateArray]],
+        proposals: Iterable[tuple[str, GraspCandidateArray]],
         object_id: str,
         box: TargetBox | None,
         group: PlanningGroupID,
@@ -361,7 +511,8 @@ class PickAndPlaceModule(Module):
 
         Args:
             proposals: (source, grasps) per grasp source in the order to try
-                them, each source's grasps ranked best first, planning frame.
+                them, each source's grasps ranked best first, planning frame. A
+                generator is advanced only as far as the pick gets.
             object_id: ID of the object being picked, for the report.
             box: Bounds of the object's point cloud, or None when it has none.
             group: Gripper-capable planning group doing the pick.
@@ -370,12 +521,14 @@ class PickAndPlaceModule(Module):
             return not_open
 
         last_plan = ""
-        tries: list[tuple[str, int, GraspCandidate, Header]] = [
+        tried = 0
+        tries = (
             (source, rank, candidate, array.header)
             for source, array in proposals
             for rank, candidate in enumerate(array.candidates[: self.config.max_grasp_attempts])
-        ]
+        )
         for source, rank, candidate, header in tries:
+            tried += 1
             grasp = PoseStamped(
                 ts=header.timestamp,
                 frame_id=header.frame_id,
@@ -429,11 +582,11 @@ class PickAndPlaceModule(Module):
                     "source": source,
                     "rank": rank,
                     "score": candidate.score,
-                    "candidates": sum(len(array.candidates) for _, array in proposals),
+                    "candidates": len(self._grasp_candidates.candidates),
                 },
             )
         return SkillResult(
-            f"The planner found no path to any of the {len(tries)} grasp candidate(s) tried "
+            f"The planner found no path to any of the {tried} grasp candidate(s) tried "
             f"for object {object_id}; last planner result {last_plan}."
         )
 
