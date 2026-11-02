@@ -28,6 +28,7 @@ from dimos.evals.agents.lib.single_call import (
     SingleCallAgentConfig,
 )
 from dimos.evals.types import RunningEnvironment
+from dimos.msgs.sensor_msgs.Image import Image
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation
@@ -52,13 +53,18 @@ def _legend_block(obs: Observation[Any]) -> Blocks:
     return [{"type": "text", "text": f"format: {legend}"}] if isinstance(legend, str) else []
 
 
+def _is_camera_observation(obs: Observation[Any]) -> bool:
+    """Camera wording applies only to image streams, not odom / lidar / etc."""
+    return isinstance(obs.data, Image)
+
+
 class QuestionAnswerConfig(SingleCallAgentConfig):
     frames_per_stream: int = Field(default=8, ge=1)
     system_prompt: str = (
         "Answer using only the provided observations. "
-        "Multi-frame clips are the robot forward camera in time order: earlier frames are history; "
-        "the last frame is question time. Judge spatial relations in the robot body frame at that "
-        "last frame. Copy one Choice token exactly as written (e.g. left not turn left). Do not refuse."
+        "When multi-frame camera clips are shown, earlier frames are history and the last frame is "
+        "question time; judge spatial relations in the robot body frame at that last frame. "
+        "Copy one Choice token exactly as written (e.g. left not turn left). Do not refuse."
     )
 
 
@@ -84,24 +90,33 @@ class QuestionAnswer(SingleCallAgent):
                 ]
             t0 = observations[0].ts
             multi = len(observations) > 1
-            header = (
-                f"observations from stream {stream.name!r}: robot forward-camera frames "
-                f"in time order (t is seconds from the first shown)."
-            )
-            if multi:
-                header += (
-                    " The last frame below is question time (current robot pose); "
-                    "answer spatial questions relative to that frame."
+            camera = _is_camera_observation(observations[0])
+            if camera:
+                header = (
+                    f"observations from stream {stream.name!r}: robot forward-camera frames "
+                    f"in time order (t is seconds from the first shown)."
+                )
+                if multi:
+                    header += (
+                        " The last frame below is question time (current robot pose); "
+                        "answer spatial questions relative to that frame."
+                    )
+            else:
+                header = (
+                    f"observations from stream {stream.name!r} "
+                    "(t is seconds from the first shown):"
                 )
             blocks.append({"type": "text", "text": header})
             blocks += _legend_block(observations[0])
             last_i = len(observations) - 1
             for i, obs in enumerate(observations):
-                stamp = f"[t={obs.ts - t0:.1f}s] robot forward-camera"
-                if multi and i == last_i:
-                    stamp += " at question time (current pose)"
-                elif multi:
-                    stamp += " (earlier in the clip)"
+                stamp = f"[t={obs.ts - t0:.1f}s]"
+                if camera:
+                    stamp += " robot forward-camera"
+                    if multi and i == last_i:
+                        stamp += " at question time (current pose)"
+                    elif multi:
+                        stamp += " (earlier in the clip)"
                 blocks += _observation_blocks(obs, stamp)
         if not blocks:
             raise ValueError("nothing in the recording to encode; the run would be blind")

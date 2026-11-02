@@ -990,6 +990,12 @@ def test_format_case_inputs_adds_body_frame_rules_for_spatial_choices() -> None:
         question="Is there a chair?",
         choices=("yes", "no"),
     )
+    region_case = PublicCase(
+        id="horizontal",
+        image="assets/x.png",
+        question="Which third of the image contains the chair?",
+        choices=("left", "center", "right"),
+    )
     ego_case = PublicCase(
         id="ego",
         image="assets/x.png",
@@ -997,10 +1003,14 @@ def test_format_case_inputs_adds_body_frame_rules_for_spatial_choices() -> None:
         choices=("ahead", "behind"),
     )
     image_inputs = format_case_inputs(image_case)
+    region_inputs = format_case_inputs(region_case)
     ego_inputs = format_case_inputs(ego_case)
     assert "Choices: [" in image_inputs
     assert "Do not refuse" in image_inputs
     assert "Spatial answering rules" not in image_inputs
+    assert "Spatial answering rules" not in region_inputs
+    assert "ahead" not in region_inputs
+    assert "robot body" not in region_inputs
     assert "Spatial answering rules" in ego_inputs
     assert "question time" in ego_inputs
     assert "robot body" in ego_inputs
@@ -1019,6 +1029,7 @@ def test_format_case_inputs_adds_body_frame_rules_for_spatial_choices() -> None:
         choices=("left", "right", "turn around", "ahead"),
     )
     turn_inputs = format_case_inputs(turn_case)
+    assert "Spatial answering rules" in turn_inputs
     assert '"left"' in turn_inputs and "turn left" in turn_inputs
     assert "copied verbatim" in turn_inputs
 

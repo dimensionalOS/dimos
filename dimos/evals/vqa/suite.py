@@ -63,13 +63,12 @@ def grade_choice(choices: Sequence[str], answer: str) -> Callable[[Outcome], flo
     return grade
 
 
-_SPATIAL_CHOICE_HINTS = frozenset(
+# Image-region families (e.g. horizontal_direction) use left/center/right for thirds
+# of the image. Ego / robot-relative cases always include at least one of these tokens.
+_EGO_SPATIAL_CHOICE_HINTS = frozenset(
     {
         "ahead",
         "behind",
-        "left",
-        "right",
-        "center",
         "turn around",
         "turn left",
         "turn right",
@@ -77,13 +76,13 @@ _SPATIAL_CHOICE_HINTS = frozenset(
 )
 
 
-def _is_spatial_case(case: PublicCase) -> bool:
-    """True when choices are ego-spatial labels (ahead/behind/left/right/turn)."""
-    return any(choice.casefold() in _SPATIAL_CHOICE_HINTS for choice in case.choices)
+def _is_ego_spatial_case(case: PublicCase) -> bool:
+    """True for robot-body-frame questions, not image-region left/center/right."""
+    return any(choice.casefold() in _EGO_SPATIAL_CHOICE_HINTS for choice in case.choices)
 
 
 def format_case_inputs(case: PublicCase) -> str:
-    """Question + Choices + answering rules (extra body-frame rules for spatial)."""
+    """Question + Choices + answering rules (extra body-frame rules for ego spatial)."""
     choice_list = ", ".join(json.dumps(c) for c in case.choices)
     lines = [
         case.question,
@@ -96,7 +95,7 @@ def format_case_inputs(case: PublicCase) -> str:
             "Do not refuse or say you lack information."
         ),
     ]
-    if _is_spatial_case(case):
+    if _is_ego_spatial_case(case):
         lines += [
             "",
             "Spatial answering rules:",
