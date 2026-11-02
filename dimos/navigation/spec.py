@@ -16,7 +16,9 @@
 
 A local planner is blind or map-aware; both hand the follower the same ``path``.
 
-A ``path`` with one pose means "hold, no safe route"; with none, "stop".
+A ``path`` with one pose means "hold, no safe route"; with none, "stop". A ``path``
+whose ``header.seq`` is 1 ends on a pose whose yaw is the goal heading, and the
+follower arrives only once it faces it.
 
 tf is ``IO`` where the implementers are dimos-module natives (``#[tf]`` both
 subscribes and publishes) and their python twins; ``In`` on the global planner,

@@ -13,13 +13,15 @@
 // limitations under the License.
 
 use std::collections::{HashMap, VecDeque};
+use std::f32::consts::PI;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::goal_status::{
     clear_if_held, stop_on_arrival, Blocked, Goal, GoalId, LatestStatus, Report, Stall,
-    StatusReporter, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED, PREEMPT_REPLACED,
+    StatusReporter, HEADING_NOT_REACHED, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED,
+    PREEMPT_REPLACED,
 };
 use crate::mls_planner::{ms_since, Config, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::planner::snap_pose_to_cell;
@@ -37,6 +39,10 @@ use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
 type Xyzi = (f32, f32, f32, f32);
+
+/// `header.seq` of a path whose last pose's yaw is the goal heading, the value the
+/// local planner's `msg::HEADING_GOAL_SEQ` reads.
+const HEADING_GOAL_SEQ: i32 = 1;
 
 /// State shared between the handle loop and the worker.
 type Shared<T> = Arc<Mutex<Option<T>>>;
@@ -418,6 +424,13 @@ impl MlsPlanner {
     /// Set or cancel the active goal, then wake the worker. A goal this
     /// displaces is reported preempted under its own id.
     async fn on_goal(&mut self, msg: PoseStamped) {
+        let yaw = match goal_yaw(&msg.pose.orientation) {
+            Ok(yaw) => yaw,
+            Err(why) => {
+                warn!(why, "Ignored a goal");
+                return;
+            }
+        };
         match goal_position(&msg.pose.position) {
             Some(position) => {
                 let id = self.next_goal_id(&msg.header.stamp);
@@ -429,7 +442,7 @@ impl MlsPlanner {
                 self.status()
                     .report(Report::new(id, GoalStatus::PENDING, "planning"))
                     .await;
-                self.set_active_goal(Some(Goal { id, position }));
+                self.set_active_goal(Some(Goal { id, position, yaw }));
             }
             None => {
                 if let Some(held) = self.set_active_goal(None) {
@@ -475,6 +488,27 @@ fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> b
 fn goal_position(p: &Point) -> Option<Xyz> {
     let goal = (p.x as f32, p.y as f32, p.z as f32);
     (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
+}
+
+/// The goal heading: None for the all-zero quaternion, else its yaw. A quaternion
+/// that is neither zero nor unit is an error, so it is neither a heading nor a cancel.
+fn goal_yaw(q: &Quaternion) -> Result<Option<f32>, &'static str> {
+    let (x, y, z, w) = (q.x, q.y, q.z, q.w);
+    if !(x.is_finite() && y.is_finite() && z.is_finite() && w.is_finite()) {
+        return Err("non-finite quaternion");
+    }
+    if x == 0.0 && y == 0.0 && z == 0.0 && w == 0.0 {
+        return Ok(None);
+    }
+    if ((x * x + y * y + z * z + w * w).sqrt() - 1.0).abs() > 1e-3 {
+        return Err("non-unit quaternion");
+    }
+    let yaw = (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z));
+    Ok(Some(yaw as f32))
+}
+
+fn angle_diff(a: f32, b: f32) -> f32 {
+    (a - b + PI).rem_euclid(2.0 * PI) - PI
 }
 
 /// The worker's record of the active goal between passes.
@@ -844,6 +878,13 @@ impl Worker {
         Some((t.x as f32, t.y as f32, t.z as f32))
     }
 
+    fn base_yaw(&self) -> Option<f32> {
+        let t = self
+            .tf
+            .get_latest(&self.config.world_frame, &self.config.base_frame)?;
+        Some(t.rotation().euler_angles().2 as f32)
+    }
+
     /// Abort a goal that could not be planned for the whole timeout.
     async fn abort_if_timed_out(&self, progress: &mut GoalProgress) {
         let Some(timed_out) = progress.take_timed_out() else {
@@ -863,7 +904,8 @@ impl Worker {
     /// Abort a followed goal once the robot has not moved for the whole
     /// timeout, and stop the follower.
     async fn abort_if_stalled(&self, progress: &mut GoalProgress) {
-        if let (Some(stall), Some(position)) = (progress.stall, self.base_position()) {
+        let position = self.base_position();
+        if let (Some(stall), Some(position)) = (progress.stall, position) {
             progress.track(stall.goal, position);
         }
         let Some(stalled) = progress.take_stalled() else {
@@ -874,12 +916,11 @@ impl Worker {
         }
         progress.followed = None;
         publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+        let reason = position.map_or(NO_PROGRESS, |p| {
+            stall_reason(&stalled.goal, p, &self.config)
+        });
         self.status
-            .report(Report::new(
-                stalled.goal.id,
-                GoalStatus::ABORTED,
-                NO_PROGRESS,
-            ))
+            .report(Report::new(stalled.goal.id, GoalStatus::ABORTED, reason))
             .await;
     }
 
@@ -917,9 +958,11 @@ impl Worker {
         progress: &mut GoalProgress,
     ) {
         let plan_start = Instant::now();
+        let facing = self.base_yaw();
         let outcome =
-            tokio::task::block_in_place(|| replan(planner, start, goal.position, &self.config));
+            tokio::task::block_in_place(|| replan(planner, start, facing, &goal, &self.config));
         let (status, reason) = outcome.status();
+        let heading = path_heading(&outcome, &goal);
         let report =
             Report::new(goal.id, status, reason).with_remaining(distance(start, goal.position));
         let waypoints = match outcome {
@@ -939,6 +982,7 @@ impl Worker {
                 self.status.report(report).await;
                 return;
             }
+            Replan::Turning => vec![start, goal.position],
             Replan::Planned(Plan::Full(waypoints) | Plan::Truncated(waypoints)) => waypoints,
         };
         progress.unblock();
@@ -946,7 +990,8 @@ impl Worker {
         let since_last_ms = progress.follow(goal, start, Instant::now());
 
         let stamp = now();
-        let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
+        let path_msg =
+            build_path_from_waypoints(&waypoints, heading, &self.config.world_frame, stamp);
         debug_throttled!(
             DEBUG_LOG_PERIOD,
             waypoints = waypoints.len(),
@@ -999,6 +1044,8 @@ fn goal_step(
 #[derive(Debug, PartialEq)]
 enum Replan {
     Reached,
+    /// Within the goal tolerance but not yet facing the goal heading.
+    Turning,
     Planned(Plan),
 }
 
@@ -1007,6 +1054,7 @@ impl Replan {
     fn status(&self) -> (i8, &'static str) {
         match self {
             Replan::Reached => (GoalStatus::SUCCEEDED, "reached"),
+            Replan::Turning => (GoalStatus::ACTIVE, "at the goal, turning to its heading"),
             Replan::Planned(Plan::Full(_)) => (GoalStatus::ACTIVE, "following the path"),
             Replan::Planned(Plan::Truncated(_)) => (
                 GoalStatus::ACTIVE,
@@ -1017,13 +1065,48 @@ impl Replan {
     }
 }
 
-/// Decide a replan pass. A goal already within tolerance needs no path. A
-/// reached goal keeps its path out, so the follower settles on its own.
-fn replan(planner: &mut Planner, start: Xyz, goal: Xyz, config: &Config) -> Replan {
-    if is_at_goal(planner, start, goal, config) {
-        return Replan::Reached;
+/// Decide a replan pass. A goal already within tolerance needs no path, unless it
+/// carries a heading the robot does not face yet: then the path is the final turn,
+/// start to goal, with no graph search to snap it. A reached goal keeps its path
+/// out, so the follower settles on its own.
+fn replan(
+    planner: &mut Planner,
+    start: Xyz,
+    facing: Option<f32>,
+    goal: &Goal,
+    config: &Config,
+) -> Replan {
+    if !is_at_goal(planner, start, goal.position, config) {
+        return Replan::Planned(planner.plan_or_truncate(start, goal.position, config));
     }
-    Replan::Planned(planner.plan_or_truncate(start, goal, config))
+    match goal.yaw {
+        None => Replan::Reached,
+        Some(yaw) => match facing {
+            Some(f) if angle_diff(yaw, f).abs() < config.goal_yaw_tolerance => Replan::Reached,
+            _ => Replan::Turning,
+        },
+    }
+}
+
+/// The heading the published path carries: the goal's, except on a truncated path,
+/// which does not end at the goal.
+fn path_heading(outcome: &Replan, goal: &Goal) -> Option<f32> {
+    match outcome {
+        Replan::Planned(Plan::Truncated(_)) => None,
+        _ => goal.yaw,
+    }
+}
+
+/// Why a stalled goal is aborted: standing at a heading goal without facing it is
+/// the heading not reached, anything else is no progress.
+fn stall_reason(goal: &Goal, position: Xyz, config: &Config) -> &'static str {
+    let near =
+        (position.0 - goal.position.0).hypot(position.1 - goal.position.1) < config.goal_tolerance;
+    if goal.yaw.is_some() && near {
+        HEADING_NOT_REACHED
+    } else {
+        NO_PROGRESS
+    }
 }
 
 fn distance(a: Xyz, b: Xyz) -> f32 {
@@ -1150,6 +1233,20 @@ fn pose_at(xyz: (f32, f32, f32), orient_w: f64) -> Pose {
     }
 }
 
+/// A pose on the plane facing `yaw`.
+fn pose_facing(xyz: Xyz, yaw: f32) -> Pose {
+    let (s, c) = (yaw as f64 / 2.0).sin_cos();
+    Pose {
+        orientation: Quaternion {
+            x: 0.0,
+            y: 0.0,
+            z: s,
+            w: c,
+        },
+        ..pose_at(xyz, 1.0)
+    }
+}
+
 fn pose_stamped(xyz: (f32, f32, f32), orient_w: f64, frame_id: &str, stamp: Time) -> PoseStamped {
     PoseStamped {
         header: header(frame_id, stamp),
@@ -1164,15 +1261,31 @@ fn empty_path(frame_id: &str, stamp: Time) -> Path {
     }
 }
 
-fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Path {
+/// The route as a path. With a heading, the last pose faces it and the header is
+/// flagged, so the local planner and the follower end on that pose.
+fn build_path_from_waypoints(
+    waypoints: &[Xyz],
+    heading: Option<f32>,
+    frame_id: &str,
+    stamp: Time,
+) -> Path {
+    let last = waypoints.len().saturating_sub(1);
     let poses: Vec<PoseStamped> = waypoints
         .iter()
-        .map(|&w| pose_stamped(w, 1.0, frame_id, stamp.clone()))
+        .enumerate()
+        .map(|(k, &w)| PoseStamped {
+            header: header(frame_id, stamp.clone()),
+            pose: match heading {
+                Some(yaw) if k == last => pose_facing(w, yaw),
+                _ => pose_at(w, 1.0),
+            },
+        })
         .collect();
-    Path {
-        header: header(frame_id, stamp),
-        poses,
+    let mut header = header(frame_id, stamp);
+    if heading.is_some() {
+        header.seq = HEADING_GOAL_SEQ;
     }
+    Path { header, poses }
 }
 
 /// Emit edges as alternating PoseStamped pairs with orientation.w carrying
@@ -1353,7 +1466,87 @@ mod tests {
                 arrival: n as u64,
             },
             position,
+            yaw: None,
         }
+    }
+
+    fn goal_facing(n: i32, position: Xyz, yaw: f32) -> Goal {
+        Goal {
+            yaw: Some(yaw),
+            ..goal_at(n, position)
+        }
+    }
+
+    #[test]
+    fn a_heading_goal_is_reached_only_facing_it() {
+        let mut planner = Planner::new(1);
+        let config = test_config();
+        let goal = goal_facing(1, (0.1, 0.0, 0.0), PI);
+        let mut at = |facing: Option<f32>, goal: &Goal| {
+            replan(&mut planner, (0.0, 0.0, 0.0), facing, goal, &config)
+        };
+        assert_eq!(at(Some(0.0), &goal), Replan::Turning);
+        assert_eq!(at(None, &goal), Replan::Turning);
+        assert_eq!(at(Some(PI - 0.1), &goal), Replan::Reached);
+        assert_eq!(at(Some(-PI + 0.1), &goal), Replan::Reached);
+        assert_eq!(at(Some(0.0), &goal_at(1, (0.1, 0.0, 0.0))), Replan::Reached);
+    }
+
+    #[test]
+    fn the_path_carries_the_heading_unless_truncated() {
+        let goal = goal_facing(1, (5.0, 0.0, 0.0), 0.0);
+        let wp = vec![(0.0, 0.0, 0.0), (5.0, 0.0, 0.0)];
+        let full = Replan::Planned(Plan::Full(wp.clone()));
+        let cut = Replan::Planned(Plan::Truncated(wp.clone()));
+        assert_eq!(path_heading(&full, &goal), Some(0.0));
+        assert_eq!(path_heading(&Replan::Turning, &goal), Some(0.0));
+        assert_eq!(path_heading(&cut, &goal), None);
+        assert_eq!(path_heading(&full, &goal_at(1, (5.0, 0.0, 0.0))), None);
+
+        let stamp = Time { sec: 0, nsec: 0 };
+        let flagged = build_path_from_waypoints(
+            &wp,
+            Some(std::f32::consts::FRAC_PI_2),
+            "odom",
+            stamp.clone(),
+        );
+        assert_eq!(flagged.header.seq, HEADING_GOAL_SEQ);
+        let last = &flagged.poses[1].pose.orientation;
+        let half = std::f64::consts::FRAC_PI_4;
+        assert!((last.z - half.sin()).abs() < 1e-6 && (last.w - half.cos()).abs() < 1e-6);
+        assert_eq!(flagged.poses[0].pose.orientation.w, 1.0);
+        let plain = build_path_from_waypoints(&wp, None, "odom", stamp);
+        assert_eq!(plain.header.seq, 0);
+        assert_eq!(plain.poses[1].pose.orientation.w, 1.0);
+    }
+
+    #[test]
+    fn a_goal_quaternion_is_a_heading_a_placeholder_or_rejected() {
+        let q = |x, y, z, w| Quaternion { x, y, z, w };
+        assert_eq!(goal_yaw(&q(0.0, 0.0, 0.0, 0.0)), Ok(None));
+        assert_eq!(goal_yaw(&q(0.0, 0.0, 0.0, 1.0)), Ok(Some(0.0)));
+        let half = std::f64::consts::FRAC_PI_4;
+        let yaw = goal_yaw(&q(0.0, 0.0, half.sin(), half.cos()))
+            .unwrap()
+            .unwrap();
+        assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-6, "{yaw}");
+        assert!(goal_yaw(&q(0.0, 0.0, 0.5, 0.5)).is_err());
+        assert!(goal_yaw(&q(f64::NAN, 0.0, 0.0, 1.0)).is_err());
+    }
+
+    #[test]
+    fn a_stall_at_a_heading_goal_is_the_heading_not_reached() {
+        let config = test_config();
+        let facing = goal_facing(1, (5.0, 0.0, 0.0), 1.0);
+        assert_eq!(
+            stall_reason(&facing, (5.1, 0.0, 0.0), &config),
+            HEADING_NOT_REACHED
+        );
+        assert_eq!(stall_reason(&facing, (3.0, 0.0, 0.0), &config), NO_PROGRESS);
+        assert_eq!(
+            stall_reason(&goal_at(1, (5.0, 0.0, 0.0)), (5.1, 0.0, 0.0), &config),
+            NO_PROGRESS
+        );
     }
 
     #[test]
@@ -1365,6 +1558,7 @@ mod tests {
                 arrival,
             },
             position: (5.0, 0.0, 0.0),
+            yaw: None,
         };
         let timeout = Duration::from_secs(10);
         let t0 = Instant::now();
@@ -1403,7 +1597,8 @@ mod tests {
         let outcome = replan(
             &mut planner,
             (0.0, 0.0, 0.0),
-            (0.0, 0.0, 3.0),
+            None,
+            &goal_at(1, (0.0, 0.0, 3.0)),
             &test_config(),
         );
         assert_eq!(outcome, Replan::Planned(Plan::Blocked));
@@ -1415,7 +1610,8 @@ mod tests {
         let outcome = replan(
             &mut planner,
             (0.0, 0.0, 0.0),
-            (0.1, 0.0, 0.0),
+            None,
+            &goal_at(1, (0.1, 0.0, 0.0)),
             &test_config(),
         );
         assert_eq!(outcome, Replan::Reached);
@@ -1437,11 +1633,11 @@ mod tests {
         let mut planner = Planner::new(1);
         planner.update_global_map(&floor, &config);
         // Further above the floor than goal_z_tolerance, yet within the snap.
-        let goal = (5.0, 1.0, cell + 0.62);
+        let goal = goal_at(1, (5.0, 1.0, cell + 0.62));
 
-        let far = replan(&mut planner, (1.0, 1.0, cell), goal, &config);
+        let far = replan(&mut planner, (1.0, 1.0, cell), None, &goal, &config);
         assert!(matches!(far, Replan::Planned(Plan::Full(_))), "{far:?}");
-        let arrived = replan(&mut planner, (5.0, 1.0, cell), goal, &config);
+        let arrived = replan(&mut planner, (5.0, 1.0, cell), None, &goal, &config);
         assert_eq!(arrived, Replan::Reached);
     }
 

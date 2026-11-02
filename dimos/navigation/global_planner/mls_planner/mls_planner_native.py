@@ -74,6 +74,8 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     step_penalty_weight: float = 4.0
     goal_tolerance: float = 0.3
     goal_z_tolerance: float = 0.5
+    # Heading error under which a goal with a heading counts as reached.
+    goal_yaw_tolerance: float = 0.25
     # Seconds a goal may go without a safe path before the planner aborts it.
     blocked_timeout_s: float = 2.0
     # Seconds a followed goal may go without the robot moving before it is aborted.
