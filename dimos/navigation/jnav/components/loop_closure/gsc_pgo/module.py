@@ -43,22 +43,22 @@ class PGOConfig(NativeModuleConfig):
     # the deterministic mode's estimates, in scans (a job holds ceil(estimate) scans, at least one; exponents unitless)
     deterministic_config: dict[str, float] = Field(
         default_factory=lambda: {
-            "fast_match_scans_fixed_overhead": 0.5465,
-            "fast_match_scans_per_keyframe": 5.7e-8,
-            "fast_match_scans_per_point": 3.137e-5,
-            "fast_match_scans_per_source_point": 7.808e-5,
-            "verification_scans_fixed_overhead": 1.322,
-            "verification_scans_per_round": 0.1966,
-            "verification_scans_per_round_point": 1.723e-5,
-            "solve_scans_scale": 3.843e-5,
+            "fast_match_scans_fixed_overhead": 0.0,
+            "fast_match_scans_per_keyframe": 0.0,
+            "fast_match_scans_per_point": 6.267625912919913e-5,
+            "fast_match_scans_per_source_point": 1.2675975476838928e-4,
+            "verification_scans_fixed_overhead": 1.0,
+            "verification_scans_per_round": 0.0,
+            "verification_scans_per_round_point": 5.2425117558172026e-5,
+            "solve_scans_scale": 3.73753890537353e-5,
             "solve_keyframe_power": 2.017,
             "solve_closure_power": -0.215,
             "solve_rejected_power": 0.558,
-            "debounce_scans_per_keyframe": 2.56e-6,
-            "merge_scans_per_keyframe": 2.56e-6,
-            "pressure_scans_fixed_overhead": 1.21e-4,
-            "pressure_scans_per_keyframe": 1.355e-6,
-            "pressure_scans_per_closure": 1.957e-6,
+            "debounce_scans_per_keyframe": 2.364076069775802e-6,
+            "merge_scans_per_keyframe": 1.1181807013703922e-7,
+            "pressure_scans_fixed_overhead": 2.1110070286537613e-4,
+            "pressure_scans_per_keyframe": 2.3639789453106166e-6,
+            "pressure_scans_per_closure": 3.414248557913563e-6,
         }
     )
     source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"

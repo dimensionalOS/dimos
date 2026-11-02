@@ -516,25 +516,25 @@ pub struct DeterministicConfig {
 
 impl Default for DeterministicConfig {
     fn default() -> DeterministicConfig {
+        // fitted on an M-series Mac over nine maps' deterministic runs, at most 1% overshoots per kind; a Jetson's come
+        // from the R1 battery
         DeterministicConfig {
-            fast_match_scans_fixed_overhead: 0.5465,
-            fast_match_scans_per_keyframe: 5.7e-8,
-            fast_match_scans_per_point: 3.137e-5,
-            fast_match_scans_per_source_point: 7.808e-5,
-            verification_scans_fixed_overhead: 1.322,
-            // a 99%-of-rounds upper bound over Mac rounds of huge L1, gir1 and small L1 (their per-round points
-            // logged), until the Jetson battery's fit
-            verification_scans_per_round: 0.1966,
-            verification_scans_per_round_point: 1.723e-5,
-            solve_scans_scale: 3.843e-5,
+            fast_match_scans_fixed_overhead: 0.0,
+            fast_match_scans_per_keyframe: 0.0,
+            fast_match_scans_per_point: 6.267625912919913e-5,
+            fast_match_scans_per_source_point: 1.2675975476838928e-4,
+            verification_scans_fixed_overhead: 1.0,
+            verification_scans_per_round: 0.0,
+            verification_scans_per_round_point: 5.2425117558172026e-5,
+            solve_scans_scale: 3.73753890537353e-5,
             solve_keyframe_power: 2.017,
             solve_closure_power: -0.215,
             solve_rejected_power: 0.558,
-            debounce_scans_per_keyframe: 2.56e-6,
-            merge_scans_per_keyframe: 2.56e-6,
-            pressure_scans_fixed_overhead: 1.21e-4,
-            pressure_scans_per_keyframe: 1.355e-6,
-            pressure_scans_per_closure: 1.957e-6,
+            debounce_scans_per_keyframe: 2.364076069775802e-6,
+            merge_scans_per_keyframe: 1.1181807013703922e-7,
+            pressure_scans_fixed_overhead: 2.1110070286537613e-4,
+            pressure_scans_per_keyframe: 2.3639789453106166e-6,
+            pressure_scans_per_closure: 3.414248557913563e-6,
         }
     }
 }
