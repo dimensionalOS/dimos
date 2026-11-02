@@ -55,6 +55,11 @@ production patch. The current DimOS generic codec is **CBOR, not pickle**.
   10% of props, 2 ms steps and 50 Hz publication. Every path receives the exact
   same deterministic trajectory; compare checksums. Include physics-only control.
 - Articulation-count supplement: increase the number of 29-joint chains.
+- Factorial control: all-link versus root-only rows crossed with per-body
+  `np.roll` versus direct slice assignment, holding dict schema, codec and dense
+  consumer fixed. This separates representation savings from constant-factor
+  velocity conversion. Five shuffled trials at (chains, props) = (1,32),
+  (32,32), (1,2048). These are experimental captures, not shipped modes.
 - Delivery sweep: actual DimOS Zenoh, localhost TCP, separate spawned processes,
   1 / 4 readers, 50 / 200 Hz requested publication, repeated trials. No renderer.
   Matching reliable/block QoS and a decoded-baseline handshake are used in every
@@ -123,6 +128,18 @@ python -m dimos.sim2.experiments.demo_state_scaling --name articulations-8 \
 python -m dimos.sim2.experiments.demo_state_scaling --name articulations-32 \
   --props 32 --robots 32 --fractions .01 --physics
 python -m dimos.sim2.experiments.demo_state_delivery --name delivery
+python -m dimos.sim2.experiments.demo_state_scaling --name validation \
+  --repeats 1 --fractions .01 --frames 16 --physics
+python -m dimos.sim2.experiments.demo_representation --name representation
+python -m dimos.sim2.experiments.demo_state_delivery --name bandwidth-10 \
+  --props 512 --hz 50 --readers 1 --bandwidth-mbps 10
+python -m dimos.sim2.experiments.demo_state_delivery --name bandwidth-100 \
+  --props 512 --hz 50 --readers 1 --bandwidth-mbps 100
+python -m dimos.sim2.experiments.demo_state_delivery --name delivery-all-moving \
+  --props 512 --fraction 1
+python -m dimos.sim2.experiments.demo_report primary articulations-8 \
+  articulations-32 delivery validation representation bandwidth-10 \
+  bandwidth-100 delivery-all-moving --output docs/experiments/sim2-state-scaling.html
 ```
 
 The source dependency directories are intentionally outside version control.
@@ -138,3 +155,19 @@ pinned revision. They are not silently skipped or reported as passes. A changed
 revision that fixes the behavior must update this experiment's source pin and
 expectations. Full samples alone do not reject stale out-of-order packets or
 recover historical events; this experiment does not claim otherwise.
+
+## Recorded result, 2026-11-02
+
+936 trials across the controlled experiments above; 20 pytest checks pass and
+three strict expected failures expose the pinned mirror's recovery defects.
+The standalone HTML report contains the raw data, profiles, traces, harness and
+test XML in a downloadable ZIP. The generated HTML is stored through Git LFS;
+it is not production source or a model/scene asset.
+
+At 2,048 props / 1% activity, compact-full local capture/encode/consume takes
+1.93 ms versus 37.07 ms for Jeff's deltas, while payload falls from 214,042 bytes
+to 3,325 bytes. Root-only state and direct velocity slices are separate wins;
+the factorial control quantifies each. The delta approach wins with the
+synthetic 10 Mbps constraint, but that delay model includes timer overshoot and
+does not measure WAN behavior. Neither the primary state sweep nor local TCP
+delivery is a whole-blueprint, robot-policy or rendered-sensor benchmark.
