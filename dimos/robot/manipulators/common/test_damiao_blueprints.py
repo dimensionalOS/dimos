@@ -16,18 +16,22 @@
 
 import pytest
 
+from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
+from dimos.core.global_config import global_config
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.manipulators.common._damiao_test_helpers import mock_connection_rig
+from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
 from dimos.robot.manipulators.common.damiao_connection import DamiaoConnection
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     coordinator_dual_openyam,
     dual_openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
+from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.makermods_metal.blueprints.connection import (
     makermods_metal_connection_control,
 )
@@ -120,3 +124,20 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         rig.tick()
         assert rig.positions["arm/joint2"] == pytest.approx(-0.02)
         assert rig.positions["arm/gripper"] == pytest.approx(0.6)
+
+
+def test_simulation_composes_an_independent_dual_arm_mock(mocker):
+    mocker.patch.object(global_config, "simulation", "mujoco")
+    blueprint = damiao_connection_control(DualOpenYamConnection)
+    assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
+    [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
+    assert mock.kwargs["source"] == "arm"
+    assert list(mock.kwargs["initial_positions"]) == [
+        *[f"left_joint{i}" for i in range(1, 7)],
+        *[f"right_joint{i}" for i in range(1, 7)],
+        "left_gripper",
+        "right_gripper",
+    ]
+    assert mock.kwargs["initial_positions"]["left_gripper"] == 0.0
+    assert mock.kwargs["initial_positions"]["right_gripper"] == 0.0
+    assert blueprint.remapping_map[(mock.name, "position_command")] == "arm_position_command"

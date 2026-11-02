@@ -16,10 +16,9 @@
 
 from __future__ import annotations
 
-import importlib
-
 import numpy as np
 from numpy.typing import NDArray
+import pinocchio
 
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
@@ -41,9 +40,6 @@ class PhysicalModel:
         self._gravity_comp = gravity_comp
         self._margin = feedback_margin_rad
         self._names = tuple(joint_names)
-        # Physical model support is only needed when a native session is opened.
-        pinocchio = importlib.import_module("pinocchio")
-        self._pinocchio = pinocchio
         model = pinocchio.buildModelFromXML(robot_model.load().xml)
         locked = [
             index
@@ -75,7 +71,7 @@ class PhysicalModel:
             raise ValueError("arm feedback contains non-finite or invalid positions")
         gravity = (
             np.asarray(
-                self._pinocchio.computeGeneralizedGravity(self._model, self._data, positions),
+                pinocchio.computeGeneralizedGravity(self._model, self._data, positions),
                 dtype=np.float64,
             )
             if self._gravity_comp

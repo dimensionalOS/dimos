@@ -7,25 +7,22 @@ adapters.
 
 ## Run without hardware
 
-All shipped YAM blueprints use an in-memory connection when no CAN selector is
-supplied. Single YAM starts at zero; Dual YAM starts at its configured home
-posture. These initial positions apply only to the in-memory robot.
+Use `--simulation` to compose a separate `MockJointConnection`. Its initial
+arm positions come from the planning model's home posture, or zero when none
+is configured. Grippers start closed. Native startup requires CAN selectors.
 
 ```bash
-dimos run coordinator-openyam
-dimos run openyam-planner-coordinator
-dimos run keyboard-teleop-openyam
-dimos run keyboard-teleop-openyam-planner
-dimos run teleop-webxr-openyam
-dimos run coordinator-dual-openyam
-dimos run dual-openyam-planner-coordinator
-dimos run teleop-webxr-dual-openyam
+dimos --simulation run coordinator-openyam
+dimos --simulation run openyam-planner-coordinator
+dimos --simulation run keyboard-teleop-openyam
+dimos --simulation run keyboard-teleop-openyam-planner
+dimos --simulation run teleop-webxr-openyam
+dimos --simulation run coordinator-dual-openyam
+dimos --simulation run dual-openyam-planner-coordinator
+dimos --simulation run teleop-webxr-dual-openyam
 ```
 
 `openyam-connection-control` exposes trajectory and normalized-gripper control.
-`openyam-quest-collection` adds a wrist webcam, episode monitor and recorder to
-the WebXR stack. Its seven-dimensional state and action schemas use the same
-ordered joint names as the deployed connection.
 
 ## CAN transport
 
@@ -59,8 +56,8 @@ dimos run teleop-webxr-dual-openyam \
 ```
 
 Dual YAM requires both selectors, and they must differ. Blank selectors are
-rejected before connection. `--simulation` always selects the in-memory robot,
-even when selectors are supplied. Module-qualified overrides are also available,
+rejected before connection. `--simulation` composes a separate
+`MockJointConnection` without starting a native CAN connection. Module-qualified overrides are also available,
 for example `--openyamconnection.can-port can0` or
 `--dualopenyamconnection.left-can-port can0`.
 

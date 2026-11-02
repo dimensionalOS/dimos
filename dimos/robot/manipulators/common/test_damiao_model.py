@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
-import importlib
 from pickle import dumps as encode, loads as decode
 from types import SimpleNamespace
 
 import numpy as np
+import pinocchio
 import pytest
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -74,7 +74,7 @@ def test_physical_model_order_must_match_even_without_gravity(
 
 @pytest.mark.parametrize("invalid", ["dimensions", "lower", "upper", "inverted"])
 def test_physical_model_rejects_invalid_ranges_and_dimensions(make_physical, mocker, invalid):
-    pin = importlib.import_module("pinocchio")
+    pin = pinocchio
     model = SimpleNamespace(
         nq=3,
         nv=3,
@@ -98,7 +98,7 @@ def test_physical_model_rejects_invalid_ranges_and_dimensions(make_physical, moc
 def test_gravity_rejects_nonfinite_calculation(make_physical, mocker):
     physical = make_physical(gravity_comp=True)
     mocker.patch.object(
-        physical._pinocchio,
+        pinocchio,
         "computeGeneralizedGravity",
         return_value=np.array([float("nan"), 0.0, 0.0]),
     )

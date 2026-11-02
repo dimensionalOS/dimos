@@ -27,7 +27,6 @@ from dimos.robot.manipulators.common.damiao_connection import (
     DamiaoConnectionConfig,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_HOME_JOINTS,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
@@ -85,7 +84,6 @@ class DualOpenYamConnection(DamiaoConnection):
     kd = {side: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5] for side in ["left_arm", "right_arm"]}
     kinematic_model = DUAL_OPENYAM_MODEL
     planning = dual_openyam_model_config()
-    mock_positions = [*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0]
 
     def _can_devices(self) -> dict[str, str] | None:
         if self.config.left_can_port is None or self.config.right_can_port is None:

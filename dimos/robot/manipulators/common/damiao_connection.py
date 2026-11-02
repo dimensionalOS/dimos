@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 import sys
 import threading
 import time
@@ -48,19 +48,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-@dataclass
-class _NativeSession:
-    robot: can_motor_control.Robot
-    arms: dict[str, can_motor_control.Arm] = field(default_factory=dict)
-    grippers: dict[str, can_motor_control.Gripper] = field(default_factory=dict)
-    active: bool = False
-
-
-@dataclass
-class _MockSession:
-    positions: list[float]
-
-
 class DamiaoConnectionConfig(ConnectionConfig):
     joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
@@ -84,7 +71,6 @@ class DamiaoConnection(ConnectionModule):
     kinematic_model: ClassVar[RobotModel]
     kinematic_joint_names: ClassVar[list[str]]
     planning: ClassVar[RobotModelConfig]
-    mock_positions: ClassVar[list[float]]
     gravity_comp: ClassVar[bool] = True
     feedback_clamp_margin_rad: ClassVar[float] = 0.05
     config: DamiaoConnectionConfig
@@ -94,7 +80,10 @@ class DamiaoConnection(ConnectionModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._bus_devices: dict[str, str] = {}
-        self._session: _NativeSession | _MockSession | None = None
+        self._robot: can_motor_control.Robot | None = None
+        self._arms: dict[str, can_motor_control.Arm] = {}
+        self._grippers: dict[str, can_motor_control.Gripper] = {}
+        self._active = False
         self._physical: PhysicalModel | None = None
         self._targets: dict[str, float] = {}
         self._fault: str | None = None
@@ -151,7 +140,7 @@ class DamiaoConnection(ConnectionModule):
 
     @abstractmethod
     def _can_devices(self) -> dict[str, str] | None:
-        """Return explicit logical-bus selectors, or None for an in-memory session."""
+        """Return the explicitly configured logical-bus selectors."""
 
     @abstractmethod
     def _build_robot(self) -> can_motor_control.Robot:
@@ -173,9 +162,8 @@ class DamiaoConnection(ConnectionModule):
             raise ValueError("connection model joints must match the vendor topology")
         self._state_frame = self.frame(self.config.model.load().root_link)
         devices = self._can_devices()
-        if devices is None or self.config.g.simulation:
-            self._session = _MockSession(list(self.mock_positions))
-            return
+        if devices is None:
+            raise ValueError("CAN selectors are required; use a mock connection for simulation")
         if set(devices) != set(self.bus_names) or any(
             not device.strip() for device in devices.values()
         ):
@@ -190,19 +178,18 @@ class DamiaoConnection(ConnectionModule):
             feedback_margin_rad=self.feedback_clamp_margin_rad,
         )
         native = self._build_robot()
-        session = _NativeSession(native)
-        self._session = session
+        self._robot = native
         native.connect()
         for name in self.arm_joints:
             group = native[name]
             if not isinstance(group, can_motor_control.Arm):
                 raise TypeError(f"native group {name!r} is not an Arm")
-            session.arms[name] = group
+            self._arms[name] = group
         for name in self.gripper_joints:
             group = native[name]
             if not isinstance(group, can_motor_control.Gripper):
                 raise TypeError(f"native group {name!r} is not a Gripper")
-            session.grippers[name] = group
+            self._grippers[name] = group
         self._read_state()
 
     @rpc
@@ -213,19 +200,18 @@ class DamiaoConnection(ConnectionModule):
             self._limits = limits_of(self.config)
             self.connect()
             with self._hardware_lock:
-                session = self._session
-                if isinstance(session, _NativeSession):
-                    assert self._physical is not None
-                    self._physical.gravity(self._arm_positions(session))
-                    for arm in session.arms.values():
-                        arm.set_mode("mit")
-                    logger.info(
-                        "Enabling robot and calibrating grippers",
-                        connection=type(self).__name__,
-                        source=self.config.source,
-                    )
-                    session.robot.enable()
-                    session.active = True
+                assert self._robot is not None
+                assert self._physical is not None
+                self._physical.gravity(self._arm_positions())
+                for arm in self._arms.values():
+                    arm.set_mode("mit")
+                logger.info(
+                    "Enabling robot and calibrating grippers",
+                    connection=type(self).__name__,
+                    source=self.config.source,
+                )
+                self._robot.enable()
+                self._active = True
                 self._read_state()
                 self.register_disposable(
                     Disposable(self.position_command.subscribe(self._on_position))
@@ -263,16 +249,14 @@ class DamiaoConnection(ConnectionModule):
                 super().stop()
             finally:
                 with self._hardware_lock:
-                    session, self._session = self._session, None
+                    robot, self._robot = self._robot, None
                     try:
-                        if isinstance(session, _NativeSession):
-                            try:
-                                session.robot.disable()
-                            finally:
-                                session.active = False
-                                session.arms.clear()
-                                session.grippers.clear()
+                        if robot is not None:
+                            robot.disable()
                     finally:
+                        self._active = False
+                        self._arms.clear()
+                        self._grippers.clear()
                         self._physical = None
                         self._targets.clear()
         finally:
@@ -310,20 +294,16 @@ class DamiaoConnection(ConnectionModule):
         self._send_targets()
 
     def _send_targets(self) -> None:
-        session = self._session
         positions = [self._targets[name] for name in self.joint_names]
         if not np.isfinite(positions).all():
             raise ValueError("position command contains non-finite values")
         arm_count = sum(map(len, self.arm_joints.values()))
         if any(not 0 <= q <= 1 for q in positions[arm_count:]):
             raise ValueError("gripper opening must be in [0, 1]")
-        if isinstance(session, _MockSession):
-            session.positions[:] = positions
-            return
-        if not isinstance(session, _NativeSession) or not session.active:
+        if self._robot is None or not self._active:
             raise RuntimeError("Damiao robot is inactive")
         assert self._physical is not None
-        gravity = self._physical.gravity(self._arm_positions(session))
+        gravity = self._physical.gravity(self._arm_positions())
         offset = 0
         arm_rows: list[tuple[str, NDArray[np.float64]]] = []
         for name, joints in self.arm_joints.items():
@@ -345,21 +325,20 @@ class DamiaoConnection(ConnectionModule):
             arm_rows.append((name, rows))
             offset += len(joints)
         for name, rows in arm_rows:
-            session.arms[name].mit_control(rows)
+            self._arms[name].mit_control(rows)
         for name in self.gripper_joints:
-            session.grippers[name].set_opening(positions[offset])
+            self._grippers[name].set_opening(positions[offset])
             offset += 1
-        session.robot.tick(1_000)
+        self._robot.tick(1_000)
 
     def halt(self) -> None:
-        if self._session is None or self._fault is not None:
+        if self._robot is None or self._fault is not None:
             return
         self._targets = dict(zip(self.joint_names, self._read_state()[0], strict=True))
         self._send_targets()
 
-    @staticmethod
-    def _arm_positions(session: _NativeSession) -> NDArray[np.float64]:
-        return np.concatenate([arm.positions().astype(np.float64) for arm in session.arms.values()])
+    def _arm_positions(self) -> NDArray[np.float64]:
+        return np.concatenate([arm.positions().astype(np.float64) for arm in self._arms.values()])
 
     def _read_state(self) -> tuple[list[float], list[float], list[float]]:
         try:
@@ -372,22 +351,15 @@ class DamiaoConnection(ConnectionModule):
     def _sample_state(self) -> tuple[list[float], list[float], list[float]]:
         if self._fault is not None:
             raise RuntimeError(self._fault)
-        session = self._session
-        if isinstance(session, _MockSession):
-            return (
-                list(session.positions),
-                [0.0] * len(session.positions),
-                [0.0] * len(session.positions),
-            )
-        if not isinstance(session, _NativeSession):
+        if self._robot is None:
             raise RuntimeError("Damiao robot is disconnected")
-        session.robot.refresh()
-        session.robot.tick(1_000)
+        self._robot.refresh()
+        self._robot.tick(1_000)
         q: list[float] = []
         dq: list[float] = []
         tau: list[float] = []
         for name, joints in self.arm_joints.items():
-            group = session.arms[name]
+            group = self._arms[name]
             arrays = [group.positions(), group.velocities(), group.torques()]
             if any(len(array) != len(joints) for array in arrays):
                 raise RuntimeError(f"native arm {name!r} returned the wrong state length")
@@ -396,7 +368,7 @@ class DamiaoConnection(ConnectionModule):
         assert self._physical is not None
         q = self._physical.normalize(q)
         for name in self.gripper_joints:
-            opening = float(session.grippers[name].opening) if session.active else 0.0
+            opening = float(self._grippers[name].opening) if self._active else 0.0
             if not np.isfinite(opening) or not 0 <= opening <= 1:
                 raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")
             q.append(opening)
@@ -409,11 +381,10 @@ class DamiaoConnection(ConnectionModule):
     def _feedback_failed(self, error: Exception) -> None:
         self._fault = f"feedback failed: {type(error).__name__}: {error}"
         self._report(self._fault)
-        session = self._session
-        if isinstance(session, _NativeSession):
-            session.active = False
+        if self._robot is not None:
+            self._active = False
             try:
-                session.robot.disable()
+                self._robot.disable()
             except Exception as disable_error:
                 self._report(f"{self._fault}; disable failed: {disable_error}")
 
@@ -423,7 +394,7 @@ class DamiaoConnection(ConnectionModule):
             started = time.monotonic()
             try:
                 with self._hardware_lock:
-                    if self._session is None or not self._connected:
+                    if self._robot is None or not self._connected:
                         return
                     q, dq, tau = self._read_state()
                 if self._stop_reading.is_set():

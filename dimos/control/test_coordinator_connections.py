@@ -533,17 +533,18 @@ def test_a_joint_port_without_a_model_is_refused_at_start(rig: Callable[..., Rig
     assert rig(BaseOnly, model=None).coordinator.list_hardware() == ["go2"]
 
 
-def test_a_robot_still_starting_is_logged_as_waiting_and_never_commanded(
+def test_a_robot_that_never_reports_is_logged_once_and_never_commanded(
     rig: Callable[..., Rig], mocker: Any
 ) -> None:
-    waiting = mocker.patch.object(tick_mod.logger, "info")
+    error = mocker.patch.object(tick_mod.logger, "error")
     r = rig(ArmCoordinator, reading_timeout_s=0.01)
 
-    assert r.tick_until(lambda: waiting.called)
+    assert r.tick_until(lambda: error.called)
     r.tick()
 
-    waiting.assert_called_once_with(
-        "Waiting for initial connection readings", source="mock", ports="mock_joint_state"
+    error.assert_called_once_with(
+        "robot 'mock' has not reported on mock_joint_state; is the connection module's "
+        "joint_state remapped onto it?"
     )
     assert r.sent == []
 

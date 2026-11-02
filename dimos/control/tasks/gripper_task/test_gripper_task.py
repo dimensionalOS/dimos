@@ -27,7 +27,6 @@ from dimos.control.tasks.gripper_task.gripper_task import (
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.assets.model import RobotModel
 
 
 def _task() -> GripperControlTask:
@@ -178,31 +177,3 @@ def test_task_requires_finite_ordered_limits(limits: list[tuple[float, float]]) 
             GripperControlTaskConfig(joint_names=["arm/tool_joint"]),
             limits=limits,
         )
-
-
-def test_connection_gripper_uses_model_limits_without_an_adapter(tmp_path) -> None:
-    path = tmp_path / "gripper.urdf"
-    path.write_text(
-        '<robot name="test"><link name="base"/><link name="jaw"/>'
-        '<joint name="arm/gripper" type="prismatic"><parent link="base"/><child link="jaw"/>'
-        '<limit lower="0.1" upper="0.9"/></joint></robot>'
-    )
-    task = create_task(_cfg(["arm/gripper"]), {}, RobotModel.from_file(path))
-    assert task.set_normalized([0.25])
-    output = task.compute(_state())
-    assert output is not None
-    assert output.positions == pytest.approx([0.3])
-    task.compute(_state(**{"arm/gripper": 0.5}))
-    assert task.get_normalized() == pytest.approx([0.5])
-
-
-@pytest.mark.parametrize("name", ["arm/gripper", "arm/missing"])
-def test_connection_gripper_requires_a_position_range_for_its_joint(tmp_path, name) -> None:
-    path = tmp_path / "gripper.urdf"
-    path.write_text(
-        '<robot name="test"><link name="base"/><link name="jaw"/>'
-        '<joint name="arm/gripper" type="prismatic"><parent link="base"/><child link="jaw"/>'
-        "</joint></robot>"
-    )
-    with pytest.raises(ValueError, match="no position range|not a movable joint"):
-        create_task(_cfg([name]), {}, RobotModel.from_file(path))

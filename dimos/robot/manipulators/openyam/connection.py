@@ -57,7 +57,6 @@ class OpenYamConnection(DamiaoConnection):
         LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
     )
     planning = make_openyam_model_config()
-    mock_positions = [0.0] * 7
 
     def _can_devices(self) -> dict[str, str] | None:
         return None if self.config.can_port is None else {"openyam": self.config.can_port}

@@ -86,7 +86,6 @@ class OpenArmConnection(DamiaoConnection):
     kd = {side: [1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8] for side in ["left_arm", "right_arm"]}
     kinematic_model = OPENARM_BIMANUAL_MODEL
     planning = openarm_bimanual_model_config()
-    mock_positions = [0.0] * 16
 
     def _can_devices(self) -> dict[str, str] | None:
         if self.config.left_can_port is None or self.config.right_can_port is None:

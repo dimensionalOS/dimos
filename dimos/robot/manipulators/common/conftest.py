@@ -70,7 +70,6 @@ def connection_class():
         )
         kp = {"left_arm": [80.0, 10.0], "right_arm": [20.0]}
         kd = {"left_arm": [5.0, 1.5], "right_arm": [0.6]}
-        mock_positions = [0.2, 0.2, 0.2, 0.4, 0.4]
         gravity_comp = False
 
         def _can_devices(self):

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Connection ports, command acceptance and session shutdown."""
+"""Connection ports, command acceptance and robot shutdown."""
 
 from __future__ import annotations
 
@@ -58,12 +58,11 @@ def test_measured_hold_replaces_prior_targets_and_next_command_recovers(make_rig
 
 def test_stop_disables_releases_views_and_is_idempotent(make_rig, boundary):
     module, _, _ = make_rig()
-    session = module._session
     module.stop()
     module.stop()
     assert boundary[0].events.count("disable") == 1
-    assert session.arms == session.grippers == {}
-    assert module._session is None
+    assert module._arms == module._grippers == {}
+    assert module._robot is None
     assert not module._reader.is_alive()
     assert not module.status().connected
 
@@ -102,7 +101,7 @@ def test_failed_enable_rolls_back_and_preserves_error(connection_class, boundary
     module = connection_class()
     with pytest.raises(RuntimeError, match="calibration failed"):
         module.start()
-    assert module._session is None
+    assert module._robot is None
     assert module._reader is None
     module.command({"arm/joint1/position": 0.7})
     assert native.groups["left_arm"].commands == []
@@ -120,7 +119,7 @@ def test_initial_bad_feedback_never_enables(connection_class, boundary, mocker):
     with pytest.raises(RuntimeError, match="invalid initial feedback"):
         module.start()
     assert "enable" not in boundary[0].events
-    assert module._session is None
+    assert module._robot is None
 
 
 def test_connect_does_not_enable_or_accept_commands(connection_class, boundary):
@@ -134,20 +133,14 @@ def test_connect_does_not_enable_or_accept_commands(connection_class, boundary):
         module.stop()
 
 
-def test_mock_session_never_constructs_native_bus(make_rig, boundary):
-    module, commands, readings = make_rig(native=False)
-    commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
-    wait_until(lambda: readings.sent[-1].position[0] == 0.8, timeout=2)
-    boundary[1].assert_not_called()
-    assert boundary[0].events == []
-
-
-def test_simulation_ignores_explicit_devices(connection_class, boundary, monkeypatch):
-    module = connection_class()
-    monkeypatch.setattr(module.config.g, "simulation", "mujoco")
+def test_missing_can_selectors_fail_before_native_construction(connection_class, boundary):
+    module = connection_class(native=False)
     try:
-        module.connect()
+        with pytest.raises(ValueError, match="CAN selectors are required"):
+            module.start()
         boundary[1].assert_not_called()
+        assert boundary[0].events == []
+        assert not module.status().connected
     finally:
         module.stop()
 
@@ -161,31 +154,13 @@ def test_topology_mismatch_fails_before_bus(connection_class, boundary):
 
 def test_disable_failure_still_releases_all_session_handles(make_rig, boundary):
     module, _, _ = make_rig()
-    session = module._session
     boundary[0].disable_error = RuntimeError("disable failed")
     with pytest.raises(RuntimeError, match="disable failed"):
         module.stop()
-    assert session.arms == session.grippers == {}
-    assert module._session is None
+    assert module._arms == module._grippers == {}
+    assert module._robot is None
     assert not module.status().connected
     module.stop()
-
-
-def test_mock_session_needs_no_native_robot_or_physical_model(connection_class, mocker):
-    native = mocker.patch.object(
-        common.can_motor_control.Robot, "builder", side_effect=AssertionError("native robot")
-    )
-    physical = mocker.patch.object(
-        common, "PhysicalModel", side_effect=AssertionError("physical import")
-    )
-    module = connection_class(native=False)
-    try:
-        module.connect()
-        assert module._read_state()[0] == [0.2, 0.2, 0.2, 0.4, 0.4]
-        native.assert_not_called()
-        physical.assert_not_called()
-    finally:
-        module.stop()
 
 
 def test_blocked_read_cannot_publish_after_stop_requested(make_rig, monkeypatch):
@@ -241,7 +216,7 @@ def test_reader_timeout_is_visible_after_native_cleanup(make_rig, boundary, monk
     try:
         with pytest.raises(RuntimeError, match="reader did not stop"):
             module.stop()
-        assert module._session is None
+        assert module._robot is None
         assert "disable" in boundary[0].events
         assert not module.status().connected
         assert "shutdown timeout" in module.status().last_error
@@ -272,4 +247,4 @@ def test_reader_callback_can_stop_without_joining_itself(make_rig):
     module._reader.join(timeout=2)
     assert failures == []
     assert not module._reader.is_alive()
-    assert module._session is None
+    assert module._robot is None

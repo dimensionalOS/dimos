@@ -72,7 +72,7 @@ def test_gross_feedback_fault_disables_even_if_disable_fails(make_rig, boundary)
     boundary[0].disable_error = RuntimeError("unplugged")
     boundary[0].groups["left_arm"].q[0] = 4
     wait_until(lambda: module._fault is not None, timeout=2)
-    assert not module._session.active
+    assert not module._active
     boundary[0].disable_error = None
 
 
@@ -171,7 +171,7 @@ def test_gravity_preflight_fails_before_enable(connection_class, boundary, mocke
     with pytest.raises(ValueError, match="invalid gravity"):
         module.start()
     assert "enable" not in boundary[0].events
-    assert module._session is None
+    assert module._robot is None
 
 
 def test_normalize_keeps_velocity_and_effort(make_rig, boundary):

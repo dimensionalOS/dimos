@@ -45,7 +45,7 @@ def test_failed_stream_setup_never_reports_ready(connection_class, boundary, moc
         assert observed == [False]
         assert readings.sent == []
         assert not module.status().connected
-        assert module._session is None
+        assert module._robot is None
         assert "disable" in boundary[0].events
     finally:
         module.stop()

@@ -109,14 +109,13 @@ def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
     assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
 
 
-def test_openyam_connection_defaults_to_mock_and_accepts_explicit_selector() -> None:
+def test_openyam_connection_requires_an_explicit_selector() -> None:
     default = OpenYamConnection()
     physical = OpenYamConnection(can_port="can1")
     try:
         assert default.config.source == "yam"
         assert default._can_devices() is None
         assert physical._can_devices() == {"openyam": "can1"}
-        assert default.mock_positions == [0.0] * 7
     finally:
         default.stop()
         physical.stop()

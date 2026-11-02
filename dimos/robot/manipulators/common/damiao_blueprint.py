@@ -16,10 +16,13 @@
 
 from collections.abc import Sequence
 
+from dimos.control.connection.connection_module import ConnectionModule
+from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -60,16 +63,35 @@ def connect_damiao(
     tasks: Sequence[TaskConfig],
 ) -> Blueprint:
     """Wire one connection and coordinator using the same deployed model."""
+    connection_module: type[ConnectionModule] = connection
+    connection_blueprint = connection.blueprint(source="arm")
+    if global_config.simulation:
+        connection_module = MockJointConnection
+        positions = [
+            *(connection.planning.home_joints or [0.0] * len(connection.planning.joint_names)),
+            *([0.0] * len(connection.gripper_joints)),
+        ]
+        connection_blueprint = MockJointConnection.blueprint(
+            source="arm",
+            model=connection.control_model(),
+            initial_positions=dict(
+                zip(
+                    [*connection.planning.joint_names, *connection.gripper_joints.values()],
+                    positions,
+                    strict=True,
+                )
+            ),
+        )
     return autoconnect(
         coordinator.blueprint(
             instance_name="ControlCoordinator",
             model=connection.control_model("arm"),
             tasks=list(tasks),
         ),
-        connection.blueprint(source="arm"),
+        connection_blueprint,
     ).remappings(
         [
-            (connection, "position_command", "arm_position_command"),
+            (connection_module, "position_command", "arm_position_command"),
             (coordinator, "arm_joint_state", "joint_state"),
         ]
     )

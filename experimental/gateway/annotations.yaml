@@ -666,13 +666,295 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
-    makermods-metal:
-      name: MakerMods Metal
-      description: The MakerMods Metal arm, over CAN.
+        openyam-teach-collection:
+          title: OpenYAM hand-guided recording
+          description: Guide an OpenYAM arm by hand and record demonstrations.
+        openyam-lerobot-rollout:
+          title: OpenYAM policy rollout
+          description: Run a trained LeRobot policy on an OpenYAM arm.
+        openyam-lerobot-quest-rollout:
+          title: OpenYAM VR policy rollout
+          description: Run a trained policy with VR control for an OpenYAM arm.
+        keyboard-teleop-openyam:
+          title: OpenYAM keyboard driving
+          description: Move an OpenYAM arm with this computer's keyboard.
+        keyboard-teleop-openyam-planner:
+          title: OpenYAM keyboard + planner
+          description: Keyboard driving of an OpenYAM arm through the motion planner.
+        openyam-planner-coordinator:
+          title: OpenYAM motion planning
+          description: Motion planning and execution for an OpenYAM arm.
+        coordinator-openyam:
+          title: OpenYAM coordinator
+          description: An OpenYAM arm behind a ControlCoordinator (a building block).
+        openyam-quest-collection:
+          title: OpenYAM demonstration recording
+          description: Teleoperate an OpenYAM arm in VR and record demonstrations.
+        teleop-webxr-openyam:
+          title: OpenYAM VR teleop
+          description: Move an OpenYAM arm with a VR headset's right controller.
+    dual_openyam:
+      name: Dual OpenYAM
+      description: Two OpenYAM arms as one robot.
       type: arm
-      manufacturer: MakerMods
-      dirs: [dimos/robot/manipulators/makermods_metal]
+      manufacturer: null
+      dirs: [dimos/robot/manipulators/dual_openyam]
       blueprints:
-        makermods-metal-connection-control:
-          title: Metal connection control
-          description: Direct CAN connection and joint trajectory control for a Metal arm; mock unless a CAN selector is set.
+        dual-openyam-planner-coordinator:
+          title: Dual OpenYAM motion planning
+          description: Motion planning for the two-arm OpenYAM.
+        coordinator-dual-openyam:
+          title: Dual OpenYAM coordinator
+          description: Both OpenYAM arms behind one coordinator (a building block).
+        teleop-webxr-dual-openyam:
+          title: Dual OpenYAM VR teleop
+          description: Coupled VR teleoperation of both OpenYAM arms.
+    openarm:
+      name: OpenArm
+      description: The bimanual OpenArm, over CAN.
+      type: arm
+      manufacturer: null
+      dirs: [dimos/robot/manipulators/openarm]
+      blueprints:
+        openarm-planner-coordinator:
+          title: OpenArm motion planning
+          description: Motion planning and execution for the bimanual OpenArm.
+        coordinator-openarm:
+          title: OpenArm coordinator
+          description: The OpenArm behind a ControlCoordinator (a building block).
+        teleop-webxr-openarm:
+          title: OpenArm VR teleop
+          description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+    seeed_b601_dm:
+      name: Seeed reBot B601-DM
+      description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
+      type: arm
+      manufacturer: Seeed Studio
+      dirs: [dimos/robot/manipulators/seeed_b601_dm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - module: controlcoordinator
+          field: can_port
+          label: CAN port
+          placeholder: /dev/ttyACM0
+          when: {simulation: ''}
+      blueprints:
+        seeed-b601-dm-planner-coordinator:
+          title: B601-DM motion planning
+          description: Motion planning and execution for a Seeed reBot B601-DM arm.
+        coordinator-seeed-b601-dm:
+          title: B601-DM coordinator
+          description: A B601-DM behind a ControlCoordinator (a building block).
+    a1z:
+      name: Galaxea A1Z
+      description: Galaxea's A1Z arm, over CAN.
+      type: arm
+      manufacturer: Galaxea
+      dirs: [dimos/robot/manipulators/a1z]
+      defaults:
+        recommended_config: *can_arm_config
+      blueprints:
+        keyboard-teleop-a1z:
+          title: A1Z keyboard driving
+          description: Move a Galaxea A1Z arm with this computer's keyboard.
+        a1z-planner-coordinator:
+          title: A1Z motion planning
+          description: Motion planning and execution for a Galaxea A1Z arm.
+        coordinator-a1z:
+          title: A1Z coordinator
+          description: An A1Z behind a ControlCoordinator (a building block).
+        coordinator-teleop-a1z:
+          title: A1Z teleop coordinator
+          description: The A1Z teleop coordinator (a building block).
+        teleop-webxr-a1z:
+          title: A1Z VR teleop
+          description: Move an A1Z with a VR headset's left controller.
+    a750:
+      name: A-750
+      description: The A-750 arm, over a serial port.
+      type: arm
+      manufacturer: null
+      dirs: [dimos/robot/manipulators/a750]
+      blueprints:
+        keyboard-teleop-a750:
+          title: A-750 keyboard driving
+          description: Move an A-750 arm with this computer's keyboard.
+          recommended_config:
+          - module: controlcoordinator
+            field: addresses.arm
+            label: Device
+            placeholder: /dev/ttyUSB0
+    coordinators:
+      name: Coordinators and mocks
+      description: Arm combinations, mobile bases and mock hardware behind dimos's ControlCoordinator.
+      type: null
+      manufacturer: null
+      dirs: [dimos/robot/manipulators/common, dimos/control/blueprints]
+      blueprints:
+        coordinator-piper-xarm:
+          title: Piper + xArm6 coordinator
+          description: A Piper and an xArm6 behind one coordinator.
+          recommended_config: &piper_xarm6_config
+          - *robot_or_simulator
+          - {<<: *xarm6_ip, field: addresses.xarm_arm}
+          - {<<: *can_port, field: addresses.piper_arm}
+        coordinator-teleop-dual:
+          title: Dual-arm teleop coordinator
+          description: Teleop coordinator for a Piper and an xArm6 together (a building block).
+          recommended_config: *piper_xarm6_config
+        teleop-webxr-dual:
+          title: Piper + xArm6 VR teleop
+          description: 'VR teleop of two arms: right controller to a Piper, left to an xArm6.'
+          recommended_config: *piper_xarm6_config
+        coordinator-mock:
+          title: Mock arm coordinator
+          description: 'A ControlCoordinator on a mock arm: no robot needed.'
+        coordinator-dual-mock:
+          title: Dual mock arm coordinator
+          description: 'Two mock arms behind one coordinator: no robot needed.'
+        coordinator-basic:
+          title: Basic coordinator
+          description: A bare ControlCoordinator with no hardware.
+        coordinator-mock-twist-base:
+          title: Mock mobile base coordinator
+          description: A ControlCoordinator on a mock holonomic base.
+        coordinator-mobile-manip-mock:
+          title: Mock mobile manipulator
+          description: A ControlCoordinator on a mock base with an arm.
+        coordinator-flowbase:
+          title: FlowBase coordinator
+          description: A FlowBase holonomic base (vx, vy, wz) over Portal RPC, behind a ControlCoordinator.
+          hidden: false
+        coordinator-flowbase-keyboard-teleop:
+          title: FlowBase keyboard driving
+          description: Drive a FlowBase holonomic base with this computer's keyboard.
+          hidden: false
+    sensors:
+      name: Sensors
+      description: 'Sensors on their own: Livox Mid-360 lidars, RealSense and other cameras, and the rigs that carry them.'
+      type: null
+      manufacturer: null
+      dirs: [dimos/robot/assembly, dimos/hardware/sensors]
+      blueprints:
+        real-sense-camera-vis:
+          title: RealSense viewer
+          description: A RealSense's color, depth and RGBD cloud in Rerun.
+          starter: 21
+        demo-camera:
+          title: Webcam demo
+          description: 'This computer''s camera as a dimos stream: the smallest blueprint there is.'
+          starter: 22
+        mid360:
+          title: Mid-360 lidar
+          description: A Livox Mid-360's point cloud and IMU.
+        mid360-pointlio:
+          title: Mid-360 SLAM (Point-LIO)
+          description: Live Point-LIO SLAM from a Livox Mid-360.
+        mid360-pointlio-ray-trace:
+          title: Mid-360 Point-LIO + ray-traced map
+          description: Point-LIO SLAM feeding a ray-traced voxel map.
+        mid360-pointlio-voxels:
+          title: Mid-360 Point-LIO + voxel map
+          description: Point-LIO SLAM feeding a voxel grid map.
+        mid360-pointlio-replay:
+          title: Mid-360 Point-LIO (pcap replay)
+          description: Point-LIO on a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap).
+        demo-mid360-pcap-replay:
+          title: Mid-360 pcap replay
+          description: Replays a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap) through the live driver.
+        demo-virtual-mid360-pointlio:
+          title: Virtual Mid-360 + Point-LIO
+          description: Point-LIO fed by a virtual Mid-360 replaying a capture.
+        mid360-realsense-record:
+          title: Mid-360 + RealSense recording
+          description: 'The RealSense D435i + Mid-360 rig: record both, with their mount frames.'
+        mid360-realsense-record-with-pcap:
+          title: Mid-360 + RealSense recording (+ pcap)
+          description: The same rig, also capturing the Mid-360's raw packets to a .pcap.
+        relocalize-mid360:
+          title: Mid-360 relocalization (recording)
+          description: Relocalization against a saved map, driven by a recording instead of a robot.
+          recommended_config: [*recording]
+        demo-dim-slam-realsense:
+          title: dimSLAM on a RealSense
+          description: dimSLAM visual SLAM on a RealSense stereo camera.
+        desk-marker-tf:
+          title: Desk marker tracking
+          description: A desk webcam that detects fiducial markers and mirrors them into TF.
+    habitat:
+      name: Habitat simulator
+      description: 'A simulated robot in Meta''s Habitat scenes: no hardware.'
+      type: null
+      manufacturer: null
+      dirs: [dimos/simulation/habitat]
+      blueprints:
+        habitat-nav:
+          title: Habitat navigation
+          description: Click the floor in a Habitat scene to send the simulated robot there.
+        habitat-teleop:
+          title: Habitat driving
+          description: Drive a simulated robot through a Habitat scene.
+        habitat-raycaster:
+          title: Habitat ray-traced map
+          description: A simulated robot in Habitat building a ray-traced voxel map.
+        habitat-voxel:
+          title: Habitat voxel map
+          description: A simulated robot in Habitat building a voxel grid map.
+        habitat-typesafe:
+          title: Habitat go-to-object
+          description: 'Say `go to the chair`: the simulated robot finds it and walks there.'
+    demos:
+      name: Demos
+      description: 'No robot needed: agents, skills and tools to try dimos.'
+      type: null
+      manufacturer: null
+      dirs: []
+      blueprints:
+        demo-agent:
+          title: Agent demo
+          description: 'An AI agent with no robot: try MCP skills and the chat.'
+          starter: 23
+        demo-agent-camera:
+          title: Agent with a camera
+          description: An AI agent that can look through this computer's camera.
+        demo-capabilities:
+          title: Capabilities demo
+          description: A pretend robot's sensors, actions and monitoring, behind an agent.
+        demo-skill:
+          title: Skill demo
+          description: 'An agent with a calculator skill: the smallest skill example.'
+        demo-google-maps-skill:
+          title: Google Maps skill demo
+          description: An agent on a pretend robot with a Google Maps skill.
+        demo-gps-nav:
+          title: GPS navigation demo
+          description: An agent on a pretend robot with GPS navigation skills.
+        demo-osm:
+          title: OpenStreetMap skill demo
+          description: An agent on a pretend robot with an OpenStreetMap skill.
+        teleop-phone:
+          title: Phone driving
+          description: 'Drive from a phone''s touch controls: publishes cmd_vel for any robot.'
+        teleop-webxr-rerun:
+          title: VR arm teleop (viewer only)
+          description: 'Press-and-hold VR arm teleop shown in Rerun: no arm needed.'
+        demo-pico-body-tracking:
+          title: PICO body tracking test
+          description: Checks a PICO 4 Ultra's WebXR body tracking (joint poses in the debug log).
+          hidden: true
+        replay:
+          title: Replay a recording
+          description: Plays every stream of a dimos recording back onto the bus, with the viewer.
+          recommended_config: [*recording]
+        demo-mcp-stress-test:
+          title: MCP stress test
+          description: Stresses the MCP server with a test module.
+        demo-error-on-name-conflicts:
+          title: Name conflict error demo
+          description: Shows the error dimos gives when two modules' streams collide.
+          hidden: true
+        demo-object-scene-registration:
+          title: Object scene registration demo
+          description: Registers objects into a scene from a ZED camera (needs the ZED SDK).
+          hidden: true
