@@ -25,6 +25,7 @@ import html
 import io
 import json
 from pathlib import Path
+import re
 import statistics
 from string import Template
 from typing import Any
@@ -290,6 +291,36 @@ def result_table(headers: list[str], rows: list[list[str]]) -> str:
     return f'<div class="tablewrap"><table class="numeric"><thead><tr>{headings}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
+def source_excerpt(
+    revision: str, path: str, first: int, last: int, highlights: dict[int, str] | None = None
+) -> tuple[str, dict[str, Any]]:
+    """Read proof excerpts from immutable Git objects, preserving source text and line numbers."""
+    source = command("git", "-C", str(ROOT), "show", f"{revision}:{path}")
+    lines = source.splitlines()
+    if not 1 <= first <= last <= len(lines):
+        raise ValueError(f"Invalid source excerpt: {path}:{first}-{last}")
+    url = f"https://github.com/dimensionalOS/dimos/blob/{revision}/{path}"
+    spans = []
+    for number in range(first, last + 1):
+        style = (highlights or {}).get(number, "")
+        spans.append(
+            f'<span class="source-line {style}" data-line="{number}"><a href="{url}#L{number}">{number}</a>'
+            f"{html.escape(lines[number - 1])}</span>"
+        )
+    rendered = (
+        f'<div class="source"><div class="source-head"><a href="{url}#L{first}-L{last}">'
+        f"{html.escape(path)} · lines {first}&ndash;{last}</a> · {revision[:12]} · verbatim source excerpt</div>"
+        "<pre><code>" + "".join(spans) + "</code></pre></div>"
+    )
+    return rendered, {
+        "revision": revision,
+        "path": path,
+        "first_line": first,
+        "last_line": last,
+        "text": "\n".join(lines[first - 1 : last]),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs", nargs="+")
@@ -370,6 +401,103 @@ def main() -> None:
         profiles.append(
             f"<details><summary>{LABELS[kind]} · cumulative call profile</summary><pre>{html.escape(p.read_text())}</pre></details>"
         )
+    harness_revision = command("git", "-C", str(ROOT), "rev-parse", "df76448032")
+    backend_path = "dimos/sim2/mujoco_backend.py"
+    world_path = "dimos/sim2/world_change.py"
+    harness_path = "dimos/sim2/experiments/demo_state_scaling.py"
+    root_highlights = {
+        **dict.fromkeys(range(395, 403), "read"),
+        **dict.fromkeys(range(403, 405), "compare"),
+        **dict.fromkeys(range(405, 407), "send"),
+    }
+    source_specs = {
+        "source_roots": (JEFF_SHA, backend_path, 395, 406, root_highlights),
+        "source_close": (JEFF_SHA, backend_path, 468, 469, None),
+        "source_pack": (JEFF_SHA, world_path, 85, 90, None),
+        "source_joints": (JEFF_SHA, backend_path, 407, 419, None),
+        "source_joint_bytes": (JEFF_SHA, world_path, 123, 125, None),
+        "source_apply": (JEFF_SHA, world_path, 345, 351, None),
+        "source_dense_read": (JEFF_SHA, world_path, 435, 440, None),
+        "source_consumer": (harness_revision, harness_path, 402, 407, None),
+        "source_ablation": (harness_revision, harness_path, 354, 357, None),
+    }
+    source_blocks = {}
+    source_evidence = {}
+    for key, spec in source_specs.items():
+        source_blocks[key], source_evidence[key] = source_excerpt(*spec)
+
+    # Means are linear: the stage differences must add to the total difference.
+    stage_means = {
+        kind: [
+            statistics.mean(
+                statistics.mean(s[column] for s in run["samples"]) for run in subset(kind)
+            )
+            / 1000
+            for column in (1, 2, 3)
+        ]
+        for kind in ("jeff_full", "jeff_delta")
+    }
+    full_stages, delta_stages = stage_means["jeff_full"], stage_means["jeff_delta"]
+    capture_extra = delta_stages[0] - full_stages[0]
+    later_saved = sum(full_stages[1:]) - sum(delta_stages[1:])
+    net_extra = sum(delta_stages) - sum(full_stages)
+    if abs(capture_extra - later_saved - net_extra) > 1e-10:
+        raise ValueError("Stage differences do not sum to the total difference")
+    cost_table = result_table(
+        ["Jeff path", "Capture / build", "Outer encoding", "Receiver", "Total"],
+        [
+            [LABELS[kind], *[f"{v:.2f}" for v in values], f"{sum(values):.2f}"]
+            for kind, values in stage_means.items()
+        ],
+    )
+    call_counts = {}
+    for kind in ("jeff_full", "jeff_delta"):
+        profile_text = (paths[runs.index(primary)].parent / f"{kind}.profile.txt").read_text()
+        match = re.search(
+            r"^\s+(\d+)\s+.*mujoco\._functions\.mj_objectVelocity", profile_text, re.MULTILINE
+        )
+        if match is None:
+            raise ValueError(f"Missing velocity-query profile evidence for {kind}")
+        call_counts[kind] = int(match[1])
+    delta_profile = (paths[runs.index(primary)].parent / "jeff_delta.profile.txt").read_text()
+    close_match = re.search(
+        r"^\s+(\d+)\s+\S+\s+\S+\s+(\S+)\s+\S+\s+.*\(_close\)", delta_profile, re.MULTILINE
+    )
+    elapsed_match = re.search(r"function calls in ([\d.]+) seconds", delta_profile)
+    if close_match is None or elapsed_match is None:
+        raise ValueError("Missing comparison profile evidence")
+    close_percent = 100 * float(close_match[2]) / float(elapsed_match[1])
+    calls_table = result_table(
+        ["Profiled operation", "Jeff always-send", "Jeff delta"],
+        [
+            [
+                "Native body-velocity query",
+                f"{call_counts['jeff_full']:,}",
+                f"{call_counts['jeff_delta']:,}",
+            ],
+            [
+                "Comparison helper _close",
+                "Skipped by the control branch",
+                f"{int(close_match[1]):,}",
+            ],
+        ],
+    )
+    ledger_evidence = {
+        "condition": {
+            "props": maximum,
+            "moving_fraction": 0.01,
+            "trials": 5,
+            "frames_per_trial": 16,
+        },
+        "method": "Mean of per-trial sample means, milliseconds; stages are capture/build, outer encoding, receiver.",
+        "stage_means_ms": stage_means,
+        "capture_extra_ms": capture_extra,
+        "later_saved_ms": later_saved,
+        "net_extra_ms": net_extra,
+        "velocity_query_counts": call_counts,
+        "comparison_calls": int(close_match[1]),
+        "comparison_profile_percent": close_percent,
+    }
     bundle = io.BytesIO()
     with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in paths:
@@ -385,6 +513,8 @@ def main() -> None:
         archive.write(
             Path(__file__).with_name("report_template.html"), "harness/report_template.html"
         )
+        archive.writestr("source-excerpts.json", json.dumps(source_evidence, indent=2))
+        archive.writestr("cost-ledger.json", json.dumps(ledger_evidence, indent=2))
         original = (
             command(
                 "git",
@@ -541,6 +671,34 @@ def main() -> None:
         ["Synthetic transfer setting", "Path", "Achieved Hz", "p95 usable-state latency (ms)"],
         constrained_rows,
     )
+    delivery_comparison_rows = []
+    for props, hz, cap, label in (
+        (2048, 200, 0, "Actual local TCP · 2,048 props · target 200 Hz"),
+        (512, 50, 10, "Synthetic 10 Mbps delay · 512 props · target 50 Hz"),
+    ):
+        for kind in ("compact_full", "jeff_delta"):
+            group = [
+                r
+                for r in delivery
+                if r["props"] == props
+                and r["hz"] == hz
+                and r["readers"] == 1
+                and r["fraction"] == 0.01
+                and r["synthetic_bandwidth_mbps"] == cap
+                and r["kind"] == kind
+            ]
+            delivery_comparison_rows.append(
+                [
+                    label,
+                    "Compact full sample" if kind == "compact_full" else "Jeff delta",
+                    f"{med(group, 'achieved_hz'):.1f}",
+                    f"{statistics.median(r['latency_us']['p95'] for r in group) / 1000:.2f}",
+                ]
+            )
+    delivery_comparison = result_table(
+        ["Condition · 1% moving · one receiver", "Path", "Achieved Hz", "p95 usable state (ms)"],
+        delivery_comparison_rows,
+    )
     fault_rows = []
     for case, label in [
         ("late_join", "Join after initial declarations"),
@@ -581,6 +739,18 @@ def main() -> None:
 <tr><th>Power and order</th><td>AC / High Power. Heavy sweeps ran serially. Path order shuffled with seed 20261102. Desktop apps remained active; light editing/report preparation occurred during sweeps.</td></tr>
 </tbody></table></div>"""
     values = {
+        **source_blocks,
+        "jeff_sha": JEFF_SHA,
+        "pim_sha": PIM_SHA,
+        "cost_table": cost_table,
+        "calls_table": calls_table,
+        "capture_extra": f"{capture_extra:.2f}",
+        "later_saved": f"{later_saved:.2f}",
+        "net_extra": f"{net_extra:.2f}",
+        "mean_full_ms": f"{sum(full_stages):.2f}",
+        "mean_delta_ms": f"{sum(delta_stages):.2f}",
+        "close_percent": f"{close_percent:.1f}",
+        "delivery_comparison": delivery_comparison,
         "controls_table": controls_table,
         "links_32_ms": f"{control_ms(32, 32, True, False):.3f}",
         "roots_32_ms": f"{control_ms(32, 32, False, False):.3f}",

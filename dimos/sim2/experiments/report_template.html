@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Should sim2 send snapshots or deltas?</title>
+<title>Deltas: detecting changes versus communicating them</title>
 <style>
 :root{--ink:#183044;--muted:#586b7b;--teal:#087f70;--line:#dce5eb;--paper:#f4f7f9}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.7 system-ui,-apple-system,sans-serif}
@@ -25,202 +25,204 @@ svg{display:block;width:100%;height:auto}.filters{display:flex;align-items:cente
 ol.recommendations{padding-left:23px;max-width:83ch}ol.recommendations li{padding-left:7px;margin:16px 0}footer{font-size:12px;color:var(--muted);padding-top:15px}[hidden]{display:none!important}
 @media(max-width:760px){main{padding:22px 12px}section{padding:20px}.steps{grid-template-columns:1fr}.steps li:not(:last-child)::after{content:'↓';top:auto;bottom:-20px;right:20px}.chart>svg,.activity>svg{min-width:640px}h2{font-size:25px}h3{font-size:21px}nav{position:static}}
 @media print{body{background:white}main{max-width:none;padding:0}nav,.filters,button{display:none}section{border:0;padding:15px 0}article{break-before:auto}table,.finding{break-inside:avoid}}
+
+figure{margin:24px 0}figcaption{font-size:13px;color:var(--muted);margin-top:14px;line-height:1.6}
+.state-example{padding:22px;background:#f3f7f9;border:1px solid var(--line);border-radius:8px}.state-row{display:grid;grid-template-columns:210px 1fr;gap:18px;align-items:center;margin:12px 0;font-size:14px}.cells{display:grid;grid-template-columns:repeat(4,65px);gap:8px}.cells span{padding:8px 12px;background:#e3ebf1;text-align:center;font:500 20px ui-monospace,monospace}.cells .changed,.cells.sent span{background:#d6eee8;color:#075d52}.patch{padding:10px 15px;background:#d6eee8;width:fit-content;color:#075d52}
+.proof{padding:20px 24px;border-left:4px solid #527b9a;background:#edf3f8;max-width:85ch;margin:22px 0}.flow-figure{overflow-x:auto}.pipeline{display:grid;grid-template-columns:170px 1fr 24px 1fr 24px 1fr;gap:10px;align-items:stretch;min-width:720px;margin:14px 0}.pipeline>b{padding:12px 0;line-height:1.45;font-size:14px}.pipeline small{font-size:12px;font-weight:400;color:var(--muted)}.step{padding:16px 10px;border-radius:5px;text-align:center;font-size:14px;line-height:1.5;display:flex;align-items:center;justify-content:center}.scan{background:#e3edf5;color:#234c6c}.sparse{background:#daf0e9;color:#0a6557}.arrow{align-self:center;text-align:center;font-size:24px;color:#6c8798}
+.equations{padding:18px 24px;background:#f0f5f7;border-left:4px solid #527b9a;margin:22px 0;overflow-x:auto}.equations math{font-size:25px;margin:16px auto;min-width:max-content}.equation-label{text-align:center;font-size:13px;color:var(--muted)}.balance{display:grid;grid-template-columns:1fr 48px 1fr;align-items:center;gap:10px;margin:25px 0;max-width:85ch}.balance>div{padding:18px;background:#f1f5f7}.balance b,.balance span:not(.balance-sign){display:block}.balance span{font-size:14px}.balance-sign{text-align:center;font-size:32px!important}
+.source{margin:22px 0;border-radius:8px;background:#132d40;overflow:hidden}.source-head{padding:10px 16px;background:#e9f0f4;font-size:12px;line-height:1.6}.source pre{margin:0;border-radius:0;padding:12px 0;tab-size:4}.source code{display:block;padding:0;background:none;color:inherit;font:inherit;overflow-wrap:normal}.source-line{display:block;min-width:max-content;padding-right:20px}.source-line>a{display:inline-block;min-width:52px;text-align:right;padding-right:16px;margin-right:14px;user-select:none;color:#9ab8cb;text-decoration:none;border-right:1px solid #3d5667}.source-line.read{background:#457aa42b}.source-line.compare{background:#ae833d33}.source-line.send{background:#208c7040}.code-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px}.code-legend span{padding:6px 10px}.read-key{background:#e3edf5}.compare-key{background:#f8ebd4}.send-key{background:#daf0e9}
+.ledger,.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:24px 0}.ledger>div,.choices>div{padding:20px;background:#f1f5f7;border:1px solid var(--line);border-radius:7px}.ledger span,.choices span{display:block;font-size:14px;line-height:1.6}.ledger strong{display:block;font-size:27px;margin-top:10px;font-variant-numeric:tabular-nums}.ledger-total{background:#fff3e2!important}.choices b{display:block;margin-bottom:8px}
+@media(max-width:760px){.state-row{grid-template-columns:1fr;gap:7px}.cells{grid-template-columns:repeat(4,1fr)}.ledger,.choices{grid-template-columns:1fr}.balance{grid-template-columns:1fr}.balance-sign{transform:rotate(90deg)}.equations{padding:12px}.equations math{font-size:22px}.source-line>a{min-width:40px;padding-right:8px;margin-right:8px}}
 </style>
 </head>
 <body><main>
 <header>
-<div class="eyebrow">DimOS sim2 · experimental report · 2 November 2026</div>
-<h1>Should sim2 send snapshots or deltas?</h1>
-<p class="lead">We want a small, general simulation interface. Jeff proposes sending only changes to world state to avoid unnecessary work. Before that becomes the core interface, we need to establish which work it saves, which work it adds, and when that trade is worthwhile.</p>
-<p>This report starts with the terms and the decision, explains the tests, then follows the evidence to a recommendation. It compares the reviewed implementations with two experimental controls. It does not assume that either existing implementation is the best possible version of its approach.</p>
-<p class="muted">Reading order: concepts → hypotheses and method → five results → decision. Raw measurements and reproduction instructions are at the end.</p>
+<div class="eyebrow">DimOS sim2 · first principles, source code, measurements</div>
+<h1>Deltas save communication.<br>Finding them costs work.</h1>
+<p class="lead">A delta reuses information the receiver already has. Jeff's implementation first reads the exported state to find changes, then sends only changed groups. The question is whether the work avoided after detection exceeds the cost of detection and bookkeeping.</p>
+<div class="finding"><p><strong>The central test:</strong> does saving encoding, transfer and receiver work pay for scanning, comparison and maintaining history?</p></div>
+<p class="muted">Follow the argument: what is saved → what must be inspected → proof in the code → break-even equation → measured costs → implication for sim2. The existing experimental data is unchanged.</p>
 </header>
-<nav aria-label="Report sections"><a href="#concepts">1. Concepts</a><a href="#plan">2. Test plan</a><a href="#results">3. Results</a><a href="#conclusion">4. Conclusion</a><a href="#evidence">Evidence</a></nav>
+<nav aria-label="Report sections"><a href="#reuse">1. What is saved</a><a href="#detect">2. Detection cost</a><a href="#code">3. Code proof</a><a href="#equation">4. Break-even</a><a href="#measurements">5. Measurements</a><a href="#decision">6. Decision</a><a href="#evidence">Evidence</a></nav>
 
-<section id="concepts">
-<div class="eyebrow">1 · The problem we are solving</div>
-<h2>The simulator has the state. Other processes need to read it.</h2>
-<p>Imagine a robot standing beside a cup. Physics already maintains the robot's configuration and the cup's location. A camera renderer, controller or task evaluator may run in another process and need some of those values. The question here is how to turn native simulator data into a usable observation in that process.</p>
-<p>That creates two separate choices: <strong>which physical facts to expose</strong>, and <strong>how to keep another process up to date</strong>. Sending fewer fields and sending fewer updates are different optimizations. We need to test them separately.</p>
-
-<h3>First, define the state we are talking about</h3>
-<div class="tablewrap"><table><thead><tr><th>Term</th><th>Meaning in this report</th></tr></thead><tbody>
-<tr><td>Robot model / layout</td><td>The relatively fixed description: body and joint identities, how links connect, and which array row belongs to which body or joint. Both sender and receiver need this context.</td></tr>
-<tr><td>Link, joint and root</td><td>A <strong>link</strong> is a rigid part of a robot. A <strong>joint</strong> constrains motion between links; these experiments use hinge joints. The <strong>root</strong> locates a whole articulated robot in the world. A separate movable prop also has a root pose.</td></tr>
-<tr><td>Pose and velocity</td><td>Pose means position and orientation. Body velocity contains linear and angular velocity; code often calls this a <em>twist</em>. Joint state here contains angle, angular velocity and actuator effort.</td></tr>
-<tr><td>World-state sample / snapshot</td><td>The current values of an agreed set of fields at one simulation time. Here, consumers need root poses, root velocities and joint arrays. “Full” means complete for those fields, not every internal simulator variable, solver checkpoint, image or contact.</td></tr>
-<tr><td>Delta / WorldChange</td><td>A message containing only the fields or groups selected as changed. Jeff sends their <strong>new absolute values</strong>. The receiver stores a local copy, called a <strong>mirror</strong>, and replaces those fields.</td></tr>
-</tbody></table></div>
-
-<h3>One change, two ways to communicate it</h3>
-<p>Suppose both processes already know that the robot base is at x = 0 m and the cup is at x = 1.0 m. The cup moves to x = 1.1 m; the robot stays still. To keep this example readable, the table shows just one position coordinate.</p>
-<div class="tablewrap"><table><thead><tr><th>Message strategy</th><th>Next message contains</th><th>What the receiver does</th></tr></thead><tbody>
-<tr><td>Full sample</td><td>Robot x = 0; cup x = 1.1</td><td>Use this complete current sample, with the known layout.</td></tr>
-<tr><td>Delta</td><td>Cup x = 1.1</td><td>Replace the cup field in its mirror; retain the previously known robot field.</td></tr>
-</tbody></table></div>
-<p>The delta does not say “add 0.1 m”, and it does not command physics to move the cup. It reports a value that physics already produced. Its advantage is fewer transmitted fields. Its dependency is the receiver's existing mirror: it must already have the other values and their identities. The initial complete copy is called a <strong>baseline</strong>.</p>
-
-<h3>A smaller full sample is a third option</h3>
-<p>Our current snapshot includes poses and velocities for every robot link. But given the robot model, its root pose and its joint angles, a reader can calculate its link poses. This calculation is called <strong>forward kinematics</strong>. A consumer needing roots and joints can therefore receive a compact full sample without receiving every derived link pose.</p>
-<p>That leaves a precise architectural question: <strong>after removing unnecessary fields, does suppressing unchanged updates improve the service we need enough to justify its processing and synchronization requirements?</strong></p>
+<section id="reuse">
+<div class="eyebrow">1 · A delta is a caching optimization</div>
+<h2>The receiver already knows most of the answer</h2>
+<p>Think of the exported world state as an ordered collection of records: object poses, robot-root velocities and joint values. A <strong>full sample</strong> contains all agreed records at a particular simulation time. A <strong>delta</strong> identifies changed records and supplies their new values. Jeff's receiver stores the accumulated state in a <strong>mirror</strong>.</p>
+<figure class="state-example" aria-label="Four cached values, one changed value, and the two possible messages">
+<div class="state-row"><b>Receiver already has</b><div class="cells"><span>10</span><span>20</span><span>30</span><span>40</span></div></div>
+<div class="state-row"><b>Simulator now has</b><div class="cells"><span>10</span><span class="changed">21</span><span>30</span><span>40</span></div></div>
+<div class="state-row"><b>Full sample sends</b><div class="cells sent"><span>10</span><span>21</span><span>30</span><span>40</span></div></div>
+<div class="state-row"><b>Delta sends</b><div class="patch">Replace slot 2 with <strong>21</strong></div></div>
+<figcaption>The receiver retains the other three values. “21” is an absolute replacement, not “add 1” and not a command to physics.</figcaption>
+</figure>
+<p>Assume a known layout, separate sender/receiver copies and fixed-size records. Let <strong>N</strong> be the number of records, <strong>k</strong> the number changed, <strong>b</strong> the bytes per value and <strong>h</strong> the identity/metadata bytes per changed record. After the initial baseline, this simple indexed format sends:</p>
+<div class="equations">
+<math display="block" aria-label="Full sample bytes equal N times b"><msub><mi>B</mi><mtext>full</mtext></msub><mo>=</mo><mi>N</mi><mi>b</mi></math>
+<math display="block" aria-label="Delta bytes equal k times b plus h"><msub><mi>B</mi><mtext>delta</mtext></msub><mo>=</mo><mi>k</mi><mo>(</mo><mi>b</mi><mo>+</mo><mi>h</mi><mo>)</mo></math>
+</div>
+<p>For a teaching example with 1,000 records of 64 bytes, ten changes and an 8-byte identity per update: a full sample sends <strong>64,000 bytes</strong>; a delta sends <strong>720 bytes</strong>, before message headers. Those other 990 values are already known. This is the communication saving.</p>
+<p>The mirror still stores N records. It needs an initial baseline of the relevant state and identities. Over many updates, the saving is repeatedly avoiding unchanged transfers, not eliminating the initial copy or the state itself. If everything changes, this indexed format sends all values plus identities; a hybrid could instead fall back to a full sample.</p>
+<p class="caption">These byte equations explain a format, not Jeff's exact wire layout. His updates have variable-sized groups and headers. The measurements below use his actual encoder.</p>
 </section>
 
-<section id="plan">
-<div class="eyebrow">2 · How we test that question</div>
-<h2>Separate representation, suppression and delivery</h2>
-<p>A direct race between Pim's code and Jeff's code would mix several changes: different fields, encoding formats, Python operations and receiver structures. It tells us which tested path is faster, but not why. We therefore use four paths, with stable names throughout the report.</p>
-<div class="tablewrap"><table><thead><tr><th>Path</th><th>Fields and delivery</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>A · Pim full</td><td>Current snapshot: all link poses/velocities and joint arrays. Existing CBOR encoding, which converts the Python data into bytes.</td><td>Measure our reviewed implementation.</td></tr>
-<tr><td>B · Compact full</td><td>Experimental full sample of root poses/velocities and joint arrays. The same CBOR encoder.</td><td>Test a smaller complete representation. This is a benchmark control, not a production change.</td></tr>
-<tr><td>C · Jeff always-send</td><td>Jeff's actual frame builder, generated LCM byte encoding and mirror, with comparison history cleared before every capture so groups are sent again.</td><td>Control for D: removes change suppression, including its comparisons. It is not a shipped mode or a recovery fix.</td></tr>
-<tr><td>D · Jeff delta</td><td>Jeff's actual frame builder, change comparisons, LCM encoding and mirror. Unchanged groups are suppressed.</td><td>Measure the reviewed delta implementation.</td></tr>
-</tbody></table></div>
-<p><strong>C versus D tests the net cost of suppression within Jeff's implementation.</strong> A versus B is useful but also changes velocity-conversion code. After a profile revealed that difference, we added a separate control that varies link coverage and conversion code independently. The original hypotheses preceded the timing sweep; that additional control is a follow-up investigation.</p>
+<section id="detect">
+<div class="eyebrow">2 · Communication and detection are different computations</div>
+<h2>To discover arbitrary changes by comparison, you must inspect the state</h2>
+<p>Suppose the publisher has the old and current arrays, but receives no list of changes. Can it correctly identify all changed entries while inspecting only k entries?</p>
+<div class="proof"><strong>Proof by an unseen entry.</strong> Pick an entry the algorithm did not inspect. Consider two current states that agree everywhere it did inspect, but differ at that entry. The algorithm sees the same observations in both cases. It cannot reliably decide whether that entry should be omitted. To identify all arbitrary changes, it must inspect every entry in the worst case.</div>
+<p>For fixed-size records, that is an <strong>Ω(N) lower bound</strong>: at least work proportional to N. Comparing a full current array with a previous array is normally O(N). Sending k changed records afterward does not undo that scan. An algorithm can conservatively send uninspected records, but then it loses the guarantee of sending only the changes.</p>
 
-<h3>The hypotheses and the evidence needed to assess them</h3>
-<div class="tablewrap"><table><thead><tr><th>Hypothesis</th><th>Test and measurement</th><th>How to interpret the result</th></tr></thead><tbody>
-<tr><td>H1 · Fewer derived link rows reduce work.</td><td>Compare all-link and root-only samples while holding encoding, receiver output and velocity-conversion method fixed. Increase articulated robot count.</td><td>A consistent reduction isolates a representation benefit. A difference caused only by conversion code cannot establish this claim.</td></tr>
-<tr><td>H2 · Suppression saves bytes in a mostly stationary world.</td><td>Compare C and D on the same values. Vary object count and the fraction moving. Measure payload size and local processing time.</td><td>Smaller payloads support the bandwidth claim. Longer processing time means the saving has a local cost; it does not establish a speedup.</td></tr>
-<tr><td>H3 · That byte saving helps delivery when communication is expensive.</td><td>Send to separate processes over actual local transport, then add a clearly labeled synthetic transfer delay. Measure achieved rate and time until usable state.</td><td>Faster usable delivery supports the claim for that condition. A local result cannot establish remote-network performance.</td></tr>
-<tr><td>H4 · A delta-only mirror needs a recovery mechanism.</td><td>Attach after startup, omit the last movement update, and deliver an older message. Check the reconstructed current state.</td><td>A stale or incomplete mirror establishes a correctness gap even if normal delivery is fast.</td></tr>
-<tr><td>H5 · Faster state handling only helps the portion of the loop it occupies.</td><td>Run identical integrated physics with A–D and with export disabled. Measure simulated time per second of physics-plus-state work.</td><td>If disabling export barely helps, physics is the limit in that workload. If it helps substantially, state handling deserves attention.</td></tr>
-</tbody></table></div>
-
-<h3>What is timed, and what stays equal?</h3>
-<ol class="steps">
-<li><b>1. Capture</b>Read simulator values and construct the sample or updates. For D, also compare with previously sent values.</li>
-<li><b>2. Encode</b>Convert those values into the actual bytes sent by that path.</li>
-<li><b>3. Deliver</b>In the process experiment, send through DimOS's existing Zenoh transport over TCP on this Mac.</li>
-<li><b>4. Make usable</b>Decode, apply to a mirror where needed, then produce the same root and joint arrays for the consumer.</li>
-</ol>
-<p>The local test measures steps 1, 2 and 4 in one process. The delivery test includes all four across processes. Timings are <strong>elapsed time</strong>, not a count of copied bytes. A message arriving at the socket is not yet a usable observation.</p>
-<div class="tablewrap"><table><thead><tr><th>Experiment condition</th><th>What was varied or controlled</th></tr></thead><tbody>
-<tr><td>World size</td><td>0, 32, 128, 512 or 2,048 movable collision boxes, plus a synthetic 29-joint robot chain. A separate test uses 1, 8 or 32 chains with 32 boxes. “Props” below means these boxes.</td></tr>
-<tr><td>Activity</td><td>0%, 1%, 10% or 100% of props move; joints always move. In the state and delivery tests, motion is prescribed and kinematics refreshed. Only H5 advances collision dynamics.</td></tr>
-<tr><td>Receiver workload</td><td>Every path produces root poses, root velocities and a dense array of all scalar joint values. These are whole-world readers, not a controller selecting just one robot. They do not request derived link poses, so receiver-side forward kinematics is not included.</td></tr>
-<tr><td>Equality checks</td><td>Both backends are constructed from equivalent models, then read the same native MuJoCo model/data. Reconstructed samples are checked against a reference. Separate physics validation compares hashes of every sampled position/velocity array across paths.</td></tr>
-<tr><td>Repetition and host</td><td>Five trials per main local/physics condition; three per delivery condition, with shuffled path order. Apple M4 Max, AC / High Power. Desktop applications remained active. This is one host, not a population of machines.</td></tr>
-</tbody></table></div>
-<p class="caption">Local figures report the median of each trial's median; shaded ranges span the five trial summaries. There are 16–120 measured frames per main local trial after warmup. Delivery p95 is a trial's 95th-percentile latency, summarized by the median across three trials. It describes these short runs, not a guaranteed worst-case latency. Native module schedulers, policies and rendered sensors are outside this comparison.</p>
+<figure class="flow-figure" aria-label="Full samples scan N and send N; comparison deltas scan N and send k; native change lists can avoid a publication-time full scan">
+<div class="pipeline"><b>Full sample</b><div class="step scan">Read N records</div><span class="arrow">→</span><div class="step scan">Encode / send N</div><span class="arrow">→</span><div class="step scan">Load N values</div></div>
+<div class="pipeline"><b>Comparison delta<br><small>Jeff's approach</small></b><div class="step scan">Read N<br>+ compare N</div><span class="arrow">→</span><div class="step sparse">Encode / send k</div><span class="arrow">→</span><div class="step sparse">Patch k values</div></div>
+<div class="pipeline"><b>Known changes<br><small>Different algorithm</small></b><div class="step sparse">Visit a maintained<br>list of k changes</div><span class="arrow">→</span><div class="step sparse">Encode / send k</div><span class="arrow">→</span><div class="step sparse">Patch k values</div></div>
+<figcaption>Blue boxes scale with the exported state; green boxes can scale with changed values. The last row requires the engine or writer to maintain change information. Its maintenance cost is not free, and this design was not benchmarked.</figcaption>
+</figure>
+<p>A simulator that records changed objects while updating them can provide that list. A publisher may then do O(k) incremental work. But a solver can rewrite an array without changing its numerical values: “was written” and “changed enough to publish” are not the same condition.</p>
+<p>The consumer also matters. If it turns the mirror back into a fresh complete N-record array every sample, that output construction is again Ω(N). Incremental messages provide the greatest processing benefit when the receiver can retain and use state incrementally.</p>
 </section>
 
-<section id="results">
-<div class="eyebrow">3 · Results, in the order of the hypotheses</div>
-<h2>What the experiments establish</h2>
+<section id="code">
+<div class="eyebrow">3 · Evidence from the actual implementation</div>
+<h2>Jeff's conditional comes after extraction</h2>
+<p>The following are verbatim excerpts from the reviewed commit, not pseudocode. Each line links to that exact Git revision. Here “the exported world” means Jeff's selected robot/movable-object roots and their scalar joints, not every internal MuJoCo array or every mesh. <a href="https://github.com/dimensionalOS/dimos/blob/$jeff_sha/dimos/sim2/mujoco_backend.py#L376-L388">The root-selection code defines that set.</a></p>
+$source_roots
+<div class="code-legend"><span class="read-key">Extract every root: 395–402</span><span class="compare-key">Compare with history: 403–404</span><span class="send-key">Only if changed: 405–406</span></div>
+<p>Line 395 iterates over every selected root. Pose construction, the velocity query and velocity-array construction all happen <strong>before</strong> line 404 decides whether to publish. An unchanged root avoids the body of the <code>if</code>; it does not avoid the earlier extraction.</p>
+<p>The <code>np.array</code>, <code>np.zeros</code> and <code>np.concatenate</code> calls create new candidate arrays before that decision. Suppression does not eliminate those allocations. The retained <code>_sent</code> entries are the sender's comparison history; the receiver separately retains its mirror.</p>
+$source_close
+<p>The comparison is numerical, with a 1e-6 tolerance in this revision. It is not an engine-provided dirty flag. A changed pose can short-circuit the velocity comparison, but every root has already had both candidate arrays built.</p>
 
-<article id="h1">
-<p class="experiment">H1 · Representation</p>
-<h3>Sending fewer link rows helps when there are many links to remove</h3>
-<p><strong>Test.</strong> We cross two independent choices: all-link versus root-only rows, and the original per-body <code>numpy.roll</code> velocity rearrangement versus direct slice assignment. Both conversion methods produce the same ordering. All four combinations use the same data format, encoder and consumer.</p>
-$controls_table
-<p class="caption">Elapsed milliseconds for capture, encoding and usable output; median of five trial medians. Each world also contains moving joints. “Roll” and “slices” differ in conversion code, not represented physical state.</p>
-<p><strong>Observation.</strong> With 32 chains, the same slice-based implementation takes $links_32_ms ms for all links and $roots_32_ms ms for roots only: about $representation_gain times less processing time. With one chain and 2,048 props, those two times are nearly the same. Almost every prop needs its own root row anyway.</p>
-<p>The other comparison matters just as much: with 2,048 props, changing only the all-link velocity conversion reduces time from $roll_large_ms ms to $slice_large_ms ms. Therefore, attributing the entire A-to-B improvement to “compact world state” would be wrong.</p>
-<div class="finding"><p><strong>Conclusion for H1:</strong> reducing derived link rows is a demonstrated benefit for the many-chain workload. A separate Python implementation cost explains most of the gain in the prop-heavy workload. We should improve both without confusing them.</p></div>
-<details><summary>See the 1 / 8 / 32 robot-chain scaling experiment</summary><div class="chart">$articulation_plot</div><p class="caption">A–D as defined above, with 32 props and 1% prop activity. The chains exercise articulation size; they do not run G1 policies.</p></details>
-</article>
+<h3>What the conditional actually saves</h3>
+$source_pack
+<p>Those packing functions are called on line 405, inside the conditional. Unchanged roots therefore avoid this payload packing, the outer message payload and the corresponding mirror updates. This is a real saving. It also means our measured <em>capture/build</em> stage includes some byte packing, not just extraction and comparison.</p>
+<details><summary>The joint path does the same thing at group granularity</summary>
+$source_joints
+$source_joint_bytes
+<p>The whole position/velocity/effort matrix is gathered before comparison. If the group differs, the whole group is passed to the writer and converted to bytes. One changed joint can therefore cause a complete joint group to be sent. The useful k is the amount of data in selected groups, not merely the count of changed scalar values.</p>
+</details>
+<details><summary>The receiver patches changes, but a dense read can allocate again</summary>
+$source_apply
+$source_dense_read
+<p><code>apply()</code> visits received changes. <code>joints()</code> subsequently assembles a new dense array for the requested robot. Our benchmark also constructs root arrays for the whole exported world:</p>
+$source_consumer
+<p>This is an explicit consumer workload, not a mandatory property of every delta consumer. A reader that updates retained arrays in place or queries only one object may have different costs.</p>
+</details>
+<div class="finding"><p><strong>What the code proves:</strong> the reviewed implementation performs a full scan of its exported roots/joints to discover changes, then suppresses later work for unchanged groups. It implements “scan N, communicate changes,” not “visit only the changed objects.”</p></div>
+</section>
 
-<article id="h2">
-<p class="experiment">H2 · Change suppression</p>
-<h3>Jeff's suppression saves bytes, but costs more local processing in this test</h3>
-<p><strong>Test.</strong> C and D read the same root/joint values and use the same encoder and mirror. C sends groups every sample; D compares with its last-sent values first. The table shows the largest world with 1% of props moving.</p>
-$primary_table
-<p class="caption">One moving 29-joint chain + 2,048 props. Payload excludes the one-time identity declarations and network framing. A and B use a different byte format from C and D, so their differences are not a pure suppression comparison.</p>
-<p><strong>Observation.</strong> C → D reduces payload by <strong>$suppression_reduction%</strong>, from $jeff_full_bytes to $delta_bytes bytes. But elapsed local processing rises from <strong>$jeff_full_ms to $delta_ms ms</strong>, about $suppression_cost times as long. Against B, D sends $compact_reduction% fewer bytes but takes $compact_cost times as long locally. That second comparison evaluates the complete tested paths, including their implementation differences.</p>
-<div class="filters"><label for="activity">Explore how prop activity changes the result</label><select id="activity"><option value="0">0% moving</option><option value="0.01" selected>1% moving</option><option value="0.1">10% moving</option><option value="1">100% moving</option></select></div>
+<section id="equation">
+<div class="eyebrow">4 · The condition for a win</div>
+<h2>Less output wins only when it saves more work than detection adds</h2>
+<p>For a simple linear, serial model after initial synchronization, define three time costs. <strong>a</strong> is the per-record cost through the full-sample path. <strong>c</strong> is the per-record cost of the delta path's N-sized work: extraction, comparison/history and any full-array receiver projection. <strong>d</strong> is its remaining cost per changed record: encoding, transfer and patch application.</p>
+<div class="equations">
+<math display="block" aria-label="Full time equals a times N"><msub><mi>T</mi><mtext>full</mtext></msub><mo>=</mo><mi>a</mi><mi>N</mi></math>
+<math display="block" aria-label="Delta time equals c times N plus d times k"><msub><mi>T</mi><mtext>delta</mtext></msub><mo>=</mo><mi>c</mi><mi>N</mi><mo>+</mo><mi>d</mi><mi>k</mi></math>
+<div class="equation-label">Delta is faster exactly when, within this model:</div>
+<math display="block" aria-label="c N plus d k is less than a N, equivalently k over N is less than a minus c over d"><mi>c</mi><mi>N</mi><mo>+</mo><mi>d</mi><mi>k</mi><mo>&lt;</mo><mi>a</mi><mi>N</mi><mspace width="1em"/><mo>⟺</mo><mspace width="1em"/><mfrac><mi>k</mi><mi>N</mi></mfrac><mo>&lt;</mo><mfrac><mrow><mi>a</mi><mo>−</mo><mi>c</mi></mrow><mi>d</mi></mfrac></math>
+</div>
+<p>Three consequences follow directly. <strong>If c ≥ a, this scanning delta path cannot win</strong> for any nonnegative k. If transfer is expensive, avoiding unchanged transfers can make the trade favorable. And <strong>making N larger at a fixed changed fraction does not itself guarantee a win: N cancels out</strong>.</p>
+<p class="caption">Assumptions: N &gt; 0, d &gt; 0, fixed-size records, constant per-record costs, no stage overlap, and startup/repair/fixed message costs excluded. Jeff's comparison can short-circuit, so its effective cost can vary with activity. Cache effects, batching, variable groups and parallelism also require care. We have not fitted a, c and d; the measured ledger below does not assume they are constant.</p>
+<div class="balance"><div><b>Work added</b><span>Detection + history maintenance + extra patch bookkeeping</span></div><span class="balance-sign">&lt;</span><div><b>Work avoided</b><span>Encoding + transfer + replacement of unchanged receiver values</span></div></div>
+<p>This is the precise interpretation of “less copying.” We must identify which allocations, serializations or receiver writes disappear, and compare their cost with the new work. The name <code>WorldChange</code> alone establishes none of those costs.</p>
+</section>
+
+<section id="measurements">
+<div class="eyebrow">5 · Connect the proof to our measurements</div>
+<h2>We can see both sides of the trade in the recorded timings</h2>
+<p><strong>Hypothesis:</strong> suppressing unchanged groups saves payload and downstream work, but detection can cost more than it saves. <strong>Test:</strong> run Jeff's actual implementation twice against the same native state, codec and receiver workload. The control clears comparison history before every capture, so it sends all groups; the normal path preserves history and suppresses unchanged groups.</p>
+$source_ablation
+<p class="caption">This intervention removes comparisons as well as suppression and pays for clearing the caches. It measures the net effect of that strategy, not an isolated timer around <code>allclose</code>. It is an experimental control, not a shipped full-sample mode.</p>
+
+<h3>2,048 props, 1% moving: the local cost ledger</h3>
+<p>Both paths export the same types of physical facts. The receiver produces root poses, root velocities and dense joint arrays. This local test includes capture, outer message encoding and receiver processing; it does not include network transfer or physics stepping.</p>
+$cost_table
+<p class="caption">Mean elapsed milliseconds per sample, averaged over five trials of 16 measured samples each, after warmup. Arithmetic means are used so stage costs add exactly before rounding; all differences use unrounded data. The broader plots and tables retain their original median-of-trial-medians summaries.</p>
+<div class="ledger">
+<div><span>Added capture/build time</span><strong>+$capture_extra ms</strong></div>
+<div><span>Saved outer encoding + receiver time</span><strong>−$later_saved ms</strong></div>
+<div class="ledger-total"><span>Net extra local time</span><strong>+$net_extra ms</strong></div>
+</div>
+<p><strong>The saving exists, but it is too small here.</strong> Capture/build rises by $capture_extra ms, while the later stages save $later_saved ms. Total local time rises from $mean_full_ms to $mean_delta_ms ms. Payload falls from $jeff_full_bytes to $delta_bytes bytes, a $suppression_reduction% reduction.</p>
+<p>The capture increase is a <em>net stage difference</em>: comparison/history costs minus any packing savings inside <code>frame()</code>, plus other stage effects. It is not a direct measurement of comparison alone.</p>
+
+<h3>The call trace confirms that extraction still happens</h3>
+$calls_table
+<p class="caption">Separate 40-frame profiles at the same scene size/activity. 81,960 velocity queries means 2,049 selected roots per frame in both modes: 2,048 props plus one robot chain. The <code>_close</code> helper accounts for about $close_percent% of the delta profile's elapsed time. Profiling overhead is excluded from the timing ledger.</p>
+<p>That links the claim to three independent kinds of evidence: the loop in the source, actual call counts, and an end-to-end timing difference. We do not infer “scans N” merely because the delta path happens to be slower.</p>
+
+<h3>Does transfer change the answer?</h3>
+<p><strong>Prediction:</strong> increasing the cost of transferring unchanged bytes can reverse the trade. We tested real local TCP through DimOS Zenoh with separate processes, then separately added a synthetic per-payload transfer delay.</p>
+$delivery_comparison
+<p class="caption">These comparisons use the experimental compact full sample and Jeff's delta path, so they compare complete implementations, not suppression alone. Achieved rate is actual publications per second; p95 is capture-to-usable-state latency's 95th percentile, summarized by the median across three trials.</p>
+<p>On actual local transport, smaller packets did not offset Jeff's processing cost. Under the synthetic 10 Mbps delay, avoiding unchanged transfers did pay. The imposed delay is payload bytes divided by configured bytes/second, with OS timer overshoot; it is not a remote-network or Desktop benchmark.</p>
+<div class="finding"><p><strong>Measured conclusion:</strong> this delta implementation demonstrably saves communication and downstream work. In the local workload, detection/build overhead outweighs that saving. Under the imposed slow-transfer condition, the communication saving is large enough to win.</p></div>
+<details><summary>How the result changes with world size and activity</summary>
+<p>One moving 29-joint chain plus 0 / 32 / 128 / 512 / 2,048 props. Joints move in every condition. A is our current all-link snapshot; B is an experimental compact full sample; C is Jeff always-send; D is Jeff delta. Both vertical axes below are logarithmic.</p>
+<div class="filters"><label for="activity">Moving props</label><select id="activity"><option value="0">0%</option><option value="0.01" selected>1%</option><option value="0.1">10%</option><option value="1">100%</option></select></div>
 $activity_plots
-<p class="caption">Both vertical axes are logarithmic: equal vertical steps represent multiplicative changes. Horizontal positions are the five tested scene sizes, equally spaced. The left plot measures elapsed local processing; the right measures bytes per sample. With all props moving, D's payload saving over C nearly disappears.</p>
-<h4>Why does sending less take longer?</h4>
-<p>D still visits every root, extracts its pose and velocity, and compares those arrays before deciding whether to send them. In the separate 40-frame profile at 2,048 props, it called <code>numpy.allclose</code> 163,123 times. The comparison subtree accounted for roughly 84% of profiled elapsed time. The normal timing results above come from runs without that profiling overhead.</p>
-<p>This is the difference between <strong>work proportional to the world size</strong> and <strong>output proportional to the changed values</strong>. If N is the number of roots and J the total scalar joint values, this implementation still scans work of order N + J. Its output may shrink to the changed groups. A large changed joint group still sends all of that group's values.</p>
-<div class="formula">Full: extract current values → encode them<br>Delta: extract current values → compare with history → encode changed groups</div>
-<div class="finding"><p><strong>Conclusion for H2:</strong> the bandwidth claim is supported. A local processing speedup is not supported for this implementation and workload. These measurements do not establish an inherent cost for every delta design: vectorized comparisons or native change tracking were not tested.</p></div>
-<details><summary>See capture, encoding and receiver costs separately</summary><div class="chart">$stages_plot</div><p class="caption">Fixed condition: 2,048 props, 1% moving. Bars sum stage medians, so rounding and aggregation can differ slightly from total-time medians in the table.</p></details>
-</article>
-
-<article id="h3">
-<p class="experiment">H3 · Delivery to another process</p>
-<h3>The byte saving becomes useful when transfer cost is large enough</h3>
-<p><strong>Test.</strong> We send real encoded messages through the existing DimOS Zenoh implementation, with separate receiver processes. Every receiver acknowledges a decoded initial baseline before timing starts. Tests request 50 or 200 publications per second and use one or four receivers.</p>
-<p>Here, <strong>achieved rate</strong> means how many publications the producer actually completes per second. <strong>Capture-to-usable latency</strong> starts before extraction and ends after the receiving process has decoded and reconstructed the requested arrays. The p95 column is the 95th-percentile latency described in the test plan.</p>
-$local_delivery_table
-<p class="caption">Actual local TCP, 2,048 props, 1% moving, one receiver, target 200 Hz. Median trial rate and median trial p95 across three repetitions. Motion is prescribed here; this is not the contact-physics experiment.</p>
-<p><strong>Observation.</strong> B sustains $compact_local_hz Hz; D reaches $delta_local_hz Hz. Smaller messages did not offset D's processing cost on this local connection. A 200 Hz target permits only 5 ms per publication. A serial producer doing substantially more work cannot meet that target.</p>
-<p>Across all delivery tests, $received_samples receiver deliveries completed with $missing_samples missing samples. That does not mean all requested rates were met: the producer was allowed to slow down. In a system with a separate producer that keeps generating work, the same mismatch would need a queue, backpressure or a dropping policy.</p>
-<details><summary>See achieved rates and latency as the local world grows</summary><div class="chart">$delivery_plot</div></details>
-
-<h4>Now make transferring bytes expensive</h4>
-<p>To test the other side of the tradeoff, we repeat delivery with 512 props and a 50 Hz target, adding a delay before each send equal to <strong>payload bytes ÷ configured bytes per second</strong>. This is a synthetic serial transfer model over the same actual local transport. It is not a measurement of a remote network.</p>
-$constrained_table
-<p><strong>Observation.</strong> At the synthetic 10 Mbps setting, D sustains approximately 50 Hz while B falls to approximately 20 Hz. At 100 Mbps both sustain approximately 50 Hz, with p95 near 10 ms. The larger transfer saving at 10 Mbps outweighs D's local processing cost.</p>
-<p>The simplest cost model makes the condition explicit. If processing and transfer happen serially, deltas help when the transfer time they save exceeds their extra processing time:</p>
-<div class="formula">(full bytes − delta bytes) / link bytes per second<br>&gt; delta processing time − full processing time</div>
-<p class="caption">This is a conditional model, not a measured bandwidth crossover. Real systems can overlap stages. The synthetic delay also includes OS timer overshoot; it does not reproduce network latency, congestion, packet loss or Desktop behavior.</p>
-<div class="finding"><p><strong>Conclusion for H3:</strong> a bandwidth-dependent benefit is demonstrated under the imposed delay model. The local-process measurements favor B. Choosing between them requires a real consumer's rate, latency and bandwidth budget, rather than assuming fewer bytes always means faster feedback.</p></div>
-</article>
-
-<article id="h4">
-<p class="experiment">H4 · Correctness after interruption</p>
-<h3>A mirror can be fast and still contain the wrong world</h3>
-<p><strong>Test.</strong> We use the actual writer, encoded messages and mirror, but deliberately change delivery: attach a receiver after the initial declarations, omit the cup's final movement update, or apply an older frame after a newer one. Full-sample readers are supplied the known model/layout.</p>
-$recovery_table
-<p>The missed-update case illustrates the dependency. The sender announces that the cup moved by 10 cm, but the receiver does not get that announcement. The cup then stays still. Jeff's comparison is against what the sender last <em>sent</em>, not what the receiver successfully applied, so later messages need not repeat the new cup pose. The tested mirror remains wrong by 10 cm.</p>
-<p>These are controlled failures, not observed random loss in the transport benchmarks. The $passed_tests passing checks cover normal reconstruction, integrated physics and other experiment gates. The three recovery cases are marked as expected failures in the tests, meaning they demonstrate acknowledged defects rather than successful recovery.</p>
-<div class="finding"><p><strong>Conclusion for H4:</strong> this delta stream needs a baseline and a recovery protocol before consumers can rely on it after interruption. Full samples repair the tested missing-current-state cases, but do not automatically reject older packets or recover historical events. Those requirements must be stated separately.</p></div>
-<p class="caption">A practical precedent for initial full state followed by differences is <a href="https://moveit.picknik.ai/main/api/html/classplanning__scene__monitor_1_1PlanningSceneMonitor.html">MoveIt's planning-scene monitor</a>. The experiments here test our pinned code, not MoveIt.</p>
-</article>
-
-<article id="h5">
-<p class="experiment">H5 · Effect on the simulation loop</p>
-<h3>Optimizing state handling cannot remove the cost of physics</h3>
-<p><strong>Test.</strong> We now advance actual MuJoCo dynamics: settle the scene, drive joints and apply side forces to 10% of the props. Every path uses the same 2 ms integration step and derived-state refresh, exporting once per ten steps. A fifth run disables state export.</p>
-<p>We measure <strong>real-time factor</strong>: simulated time divided by elapsed time spent in the measured physics and state-processing work. A value of 1 means those kernels keep pace with simulated time; 0.2 means five seconds of measured work for one simulated second. Setup and validation are excluded.</p>
-<div class="chart">$physics_plot</div>
-<p><strong>Observation.</strong> At 2,048 props, the physics-only control reaches $bare_rtf× real time; B reaches $compact_rtf× and D reaches $delta_rtf×. B already spends little of this heavy loop on state handling. Matching the physics-only control would improve its throughput by about $max_compact_gain%.</p>
-<p>This is <strong>Amdahl's law</strong>: the effect of an optimization is limited by the fraction of total work it changes. If state handling occupies fraction f of a serial loop and becomes s times faster, overall speedup is:</p>
-<div class="formula">overall speedup = 1 / ((1 − f) + f / s)</div>
-<p class="caption"><a href="https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#strong-scaling-and-amdahl-s-law">Amdahl's law reference</a>. The graph shows that the fraction changes with workload and implementation; the approximately $max_compact_gain% estimate applies to B in this large contact-heavy case, not every simulation.</p>
-<div class="finding"><p><strong>Conclusion for H5:</strong> the large contact-heavy world is already physics-limited with B. D adds avoidable processing in this shared loop, but improving state delivery alone would not make the largest scene real-time.</p></div>
-<p class="caption">The maximum observed contact count was $peak_contacts. Separate validation produced identical hashes of sampled native position/velocity arrays for all five paths at all five sizes. This is a common coherent physics loop, not either project's unmodified module scheduler. Jeff's native loop does not perform the same derived-state refresh, so these numbers cannot rank complete shipped stacks.</p>
-</article>
+<p>At 0% prop movement, the moving joint group still produces updates; root scanning remains. At 100%, almost all prop values must be sent, so the payload saving nearly disappears. These trends follow the N-scan versus changed-output distinction.</p>
+</details>
 </section>
 
-<section id="conclusion">
-<div class="eyebrow">4 · The decision supported by the evidence</div>
-<h2>Start with compact full samples. Treat delta delivery as a conditional optimization.</h2>
-<p class="decision">These experiments justify reducing unnecessary state and keeping a measurable full-sample baseline. They do not justify making a delta-only stream the definition of world state.</p>
-<p>H1 shows that representation and implementation efficiency deserve separate attention. H2 shows that Jeff's current suppression saves bandwidth at a local processing cost. H3 demonstrates a condition where that trade pays off. H4 establishes recovery requirements. H5 prevents us from treating a state-path improvement as a whole-simulation speedup.</p>
-<ol class="recommendations">
-<li><strong>Define the readable state first.</strong> Agree on fields, units, frame conventions, model/layout revision and coherent simulation time. For the tested consumers, roots plus joint arrays are a useful starting point. Other consumers may require additional fields.</li>
-<li><strong>Use B as the performance baseline for the next implementation.</strong> It was the fastest local path tested here. Remove the redundant link work and costly per-body conversion independently. For consumers that need derived link poses, include the cost of calculating those poses before extending this conclusion to them.</li>
-<li><strong>Make delta delivery answer an explicit requirement.</strong> If a consumer's bandwidth budget warrants it, compare an optimized delta implementation against that same baseline, including usable-state latency. Require successful attach, interruption and reset recovery before using the mirror for control or grading.</li>
-</ol>
-<p>A readable <code>WorldState</code> contract does not require allocating every field or publishing the whole world on every physics tick. The choice of sample fields, publication rate and transport representation can be made separately. That keeps the backend interface understandable while leaving room for a justified optimization.</p>
-<div class="note limit"><p><strong>What remains unresolved:</strong> the best possible delta implementation; the bandwidth and freshness requirements of the actual Desktop/G1 consumers; full-stack policy and sensor performance; GPU or other physics backends; and total memory-copy traffic. We measured elapsed processing, payloads, delivery and a controlled physics loop on one Mac. Those limits prevent a universal verdict on snapshots versus deltas.</p></div>
+<section id="decision">
+<div class="eyebrow">6 · What follows for sim2</div>
+<h2>WorldState, ownership and synchronization are three separate choices</h2>
+<div class="choices"><div><b>State contract</b><span>Which physical facts can a reader observe, in which frames and at what simulation time?</span></div><div><b>Storage and lifetime</b><span>Can it read an existing buffer? How long are those values valid, and who may change them?</span></div><div><b>Synchronization</b><span>Does a separate copy receive complete samples, changed fields, or a combination?</span></div></div>
+<p>A <code>WorldState</code> API does not itself force a copy. A borrowed view of an existing buffer can avoid copying, provided its validity and concurrent access are defined. Keeping an immutable historical snapshot after the producer changes its data is a different storage requirement.</p>
+<p>Our current snapshot does make new arrays: <a href="https://github.com/dimensionalOS/dimos/blob/$pim_sha/dimos/sim2/mujoco.py#L316-L344">the actual <code>snapshot()</code> implementation</a> shows that. But replacing its public state contract with a delta protocol is not the only way to change its allocation behavior. We measured elapsed time and message bytes, not total memory-copy traffic.</p>
+
+<h3>A cached world also needs a correctness contract</h3>
+<p>If a receiver misses “cup position = 1.1” and the cup then stops, later deltas may never mention the cup. Those later messages are compatible with both an unchanged cup at 1.0 and a moved cup at 1.1. The missing information cannot be recovered from those messages alone.</p>
+<p>Therefore, a delta mirror needs an initial baseline and a way to preserve or restore a valid continuation. Our injected late-join, missed-final-update and old-frame tests reproduce three recovery failures in the pinned mirror. Reliable delivery during an established connection does not itself initialize a late joiner.</p>
+<details><summary>Inspect the recovery results and relevant source</summary>$recovery_table<p>Full-sample tests assume a known layout. Old-frame rejection was not tested for those paths. <a href="https://github.com/dimensionalOS/dimos/blob/$jeff_sha/dimos/sim2/mujoco_backend.py#L432-L449">Initial declarations are sent once</a>; <a href="https://github.com/dimensionalOS/dimos/blob/$jeff_sha/dimos/sim2/world_change.py#L345-L386">the mirror applies messages without a sequence-gap/order guard and ignores unknown identities</a>. These were intentional faults, not observed random loss in the transport sweep.</p></details>
+
+<div class="finding"><p><strong>The decision these experiments support:</strong> define readable state independently of its delivery format. Use compact full samples as the measured local baseline. Adopt incremental delivery where its avoided work exceeds detection/bookkeeping, and include the recovery cost in that decision.</p></div>
+<p>To make publication truly proportional to changed data, the next investigation would need engine-provided change information or another justified way to avoid a full scan, plus consumers that preserve incremental state. That approach was not measured here. Vectorizing the current comparisons could instead reduce the scan's constant cost without changing its O(N) scaling.</p>
+<p class="caption">The experiments do not establish the best possible delta implementation, full G1 policy/sensor behavior, GPU scaling or actual deployment bandwidth needs. Whole-world dense readers were tested; consumers reading only one robot or needing all derived link poses need their own cost accounting.</p>
 </section>
 
 <section id="evidence">
-<div class="eyebrow">Evidence and reproducibility</div>
-<h2>Follow a claim back to its measurements</h2>
-<p>The $trial_count trials belong to different controlled experiments, not one pooled statistical population. This revision changes the explanation and presentation; it reuses the original measurements. The archive contains the raw results, exact commands, original and current harness sources, test output, call profiles and timing traces.</p>
-<p><button id="download">Download evidence ZIP</button> <span class="muted">$archive_mb MiB · embedded in this HTML</span></p>
+<div class="eyebrow">Reproducibility and the rest of the evidence</div>
+<h2>Every number has a source</h2>
+<p>The $trial_count original trials are preserved. This report adds derivation, source excerpts and arithmetic over saved samples; no physics or transport benchmark was rerun. The $passed_tests passing checks and three expected recovery failures remain unchanged.</p>
+<p><button id="download">Download measurements, code excerpts and traces</button> <span class="muted">$archive_mb MiB · embedded ZIP</span></p>
 <p class="caption">Archive SHA-256: <code>$archive_hash</code></p>
 $sources_table
-<details><summary>All cross-process delivery results: filter by scene, rate and readers</summary>
-<p>These rows also include four-reader fan-out and all-moving-prop trials. CPU cores is aggregate producer/subscriber CPU seconds divided by publication wall time; receiver drain can extend beyond that interval. Payload and missing counts exclude startup declarations. p95 aggregates receiver samples within each trial, then takes the median across trials.</p>
+<details><summary>Experimental controls, hypotheses and measurement limits</summary>
+<p>The original protocol tests representation cost, suppression cost, delivery, recovery and physics-loop impact. Existing source implementations ran against the same native model/data; both were constructed normally before sharing that state. All receivers produce root poses, root velocities and joint arrays. Forward kinematics to reconstruct all receiver-side link poses is not included.</p>
+<p>The local/transport tests prescribe motion and refresh kinematics. The separate physics test integrates collisions. Five repeated main local/physics trials and three repeated transport trials use shuffled path order. These are short experiments on one M4 Max in AC / High Power with ordinary desktop activity, not guaranteed worst-case bounds.</p>
+$primary_table
+<p class="caption">2,048 props / 1% moving; original median-of-trial-median local elapsed times. A: current Pim full links. B: experimental compact full. C: Jeff always-send control. D: Jeff delta. These summaries differ from the arithmetic means in the additive ledger above.</p>
+<pre>$protocol</pre>
+</details>
+<details><summary>Representation: fewer link rows versus cheaper velocity conversion</summary>
+<p>Compact full samples change two things in the baseline: which link rows are exported and how each velocity is rearranged. The controlled 2 × 2 test separates them, holding schema, codec and receiver output fixed.</p>
+$controls_table
+<p class="caption">Milliseconds per sample, median of five trial medians. At 32 chains, removing derived link rows is a separate win; at 2,048 props, changing <code>numpy.roll</code> to slices accounts for most of the improvement. Sending fewer rows is independent of sending deltas.</p>
+<div class="chart">$articulation_plot</div>
+</details>
+<details><summary>Physics: Amdahl's law limits whole-loop improvement</summary>
+<p>Identical integrated dynamics run at a 2 ms step with a coherent derived-state refresh, exporting once per ten steps. A physics-only control removes export. Real-time factor is simulated time divided by measured physics-plus-state processing time, excluding setup/validation.</p>
+<div class="chart">$physics_plot</div>
+<p>At 2,048 props, physics alone reaches $bare_rtf× real time; compact full reaches $compact_rtf×. Removing that compact export entirely would improve measured throughput by only about $max_compact_gain%. This is Amdahl's law: making a small part faster cannot remove the rest of the work.</p>
+<p class="caption">A separate hash check validates identical sampled position/velocity trajectories across paths. The largest world had $peak_contacts contacts. This common loop does not compare the unmodified native module schedulers, G1 policies or sensor renderers.</p>
+</details>
+<details><summary>All actual-process delivery measurements</summary>
+<p>Rate means completed producer publications per second. p95 is the median of each trial's pooled-reader 95th-percentile latency. Aggregate CPU cores divides process CPU seconds by publication wall time; subscriber drain may extend beyond it. $received_samples receiver deliveries completed with $missing_samples missing, but some producer rates were below target.</p>
 <div class="filters"><label>Props <select data-filter="props"><option value="all">All</option>$prop_options</select></label><label>Target Hz <select data-filter="hz"><option value="all">All</option><option>50</option><option selected>200</option></select></label><label>Readers <select data-filter="readers"><option value="all">All</option><option selected>1</option><option>4</option></select></label><label>Moving <select data-filter="fraction"><option value="all">All</option><option value="0.01" selected>1%</option><option value="1">100%</option></select></label><label>Transfer <select data-filter="cap"><option value="all">All</option><option value="0" selected>Actual local TCP</option>$cap_options</select></label></div>
 $all_delivery_table
 </details>
-<details><summary>Call profiles and allocation measurements</summary>
-<p>Profiles identify where the tested code spends time; they were collected separately from the reported timing sweep. The ZIP also contains capture/encode/consume spans for Chrome or Perfetto tracing.</p>
+<details><summary>Call profiles and peak traced allocation</summary>
 $profiles
 $memory_table
-<p class="caption">Memory columns report peak traced live bytes above the start and retained bytes, in KiB, from a separate 20-frame run including input preparation. Tracking starts after the initial baseline, so pre-existing caches are excluded. This is not total process memory, allocation bandwidth or copied-byte traffic. See <a href="https://docs.python.org/3/library/tracemalloc.html">tracemalloc's scope</a> and <a href="https://numpy.org/doc/stable/user/basics.copies.html">NumPy's copies and views</a>.</p>
+<p class="caption">Profiles were collected separately. Memory figures are a single instrumented 20-frame run per path, including input preparation, starting after the initial baseline. They exclude pre-existing caches and untracked allocations; they are not total memory or copied-byte traffic. <a href="https://docs.python.org/3/library/tracemalloc.html">tracemalloc scope</a> · <a href="https://numpy.org/doc/stable/user/basics.copies.html">NumPy copies/views</a>.</p>
 </details>
-<details><summary>Exact run commands</summary><pre>$run_commands</pre></details>
-<details><summary>Full experimental protocol and source normalization</summary><pre>$protocol</pre></details>
-<p class="caption">Normal-state numerical checks passed within the chosen 1e-6 tolerance; maximum checked physical delivered-state error was $physical_error. Browser charts, filters and embedded download are verified separately from the experiment correctness tests.</p>
+<details><summary>Exact commands to reproduce the original experiments</summary><pre>$run_commands</pre></details>
+<p class="caption">Normal-state checks passed within the chosen 1e-6 tolerance; maximum checked physical delivered-state error was $physical_error. Source excerpts are read directly from pinned Git objects and included in the evidence archive.</p>
 </section>
+
 <footer>Report generated from saved measurements · $generated_at · no external scripts, fonts or chart services.</footer>
 </main>
 <script id="archive" type="application/octet-stream">$archive_base64</script>
