@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "voxel_ray_tracing"
 path = "src/main.rs"
 
+[[bin]]
+name = "reform_ray_tracing"
+path = "src/reform_main.rs"
+
 # Bake registry entry, cross-checked at compile time by the module macro.
 # threads = 2 keeps per-scan map compute from serializing with publish work.
 [package.metadata.dimos.module.ray_tracing]
@@ -34,7 +38,31 @@ seed_bounds = "geometry_msgs.PoseStamped"
 region_bounds = "geometry_msgs.PoseStamped"
 map_regions = "sensor_msgs.PointCloud2"
 
+# The ray tracer that warps its map through each loop closure in place.
+[package.metadata.dimos.module.reform_ray_tracing]
+path = "dimos_voxel_ray_tracing::reform_module::ReformRayTracingVoxelMap"
+python = "dimos.mapping.ray_tracing.reform_module:ReformRayTracingVoxelMap"
+threads = 2
+
+[package.metadata.dimos.module.reform_ray_tracing.inputs]
+lidar = "sensor_msgs.PointCloud2"
+loaded_map = "sensor_msgs.PointCloud2"
+pose_graph = "sensor_msgs.PointCloud2"
+loop_closure_event = "sensor_msgs.PointCloud2"
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.reform_ray_tracing.outputs]
+global_map = "sensor_msgs.PointCloud2"
+local_map = "sensor_msgs.PointCloud2"
+local_map_fine = "sensor_msgs.PointCloud2"
+seed_map = "sensor_msgs.PointCloud2"
+seed_bounds = "geometry_msgs.PoseStamped"
+region_bounds = "geometry_msgs.PoseStamped"
+map_regions = "sensor_msgs.PointCloud2"
+
 [dependencies]
+# Resident memory for the periodic memory log.
+libc = "0.2"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
@@ -45,6 +73,8 @@ rayon = "1"
 tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
 nalgebra = "0.35.0"
+# Warps the map through a pose-graph correction (reform_ray_tracing).
+fast-reform = { git = "https://github.com/jeff-hykin/fast-reform", rev = "94164be" }
 
 [workspace]
 members = ["py"]

@@ -22,9 +22,11 @@ mod chunk_map;
 mod normals;
 #[cfg(test)]
 mod tests;
+mod warp;
 
 use chunk_map::{chunk_of, ChunkCursor, ChunkRef, HealthyVoxel};
 pub use chunk_map::{ChunkKey, ChunkMap, CHUNK_EDGE};
+pub use warp::{voxel_centers, voxel_moves, VoxelMove};
 
 #[cfg(test)]
 use normals::fit_normal;
@@ -135,7 +137,7 @@ pub struct Config {
     pub viz_sweep_cells: u32,
 }
 
-fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
+pub(crate) fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
     if cfg.min_health >= cfg.max_health {
         return Err(ValidationError::new("min_health_lt_max_health"));
     }

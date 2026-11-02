@@ -18,6 +18,11 @@ use ahash::AHashSet;
 use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
+mod warp;
+
+use warp::VoxelTimes;
+pub use warp::WarpReport;
+
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
     global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
@@ -47,6 +52,9 @@ pub struct Mapper {
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
+    // When each voxel landed, for warps that tell overlapping passes apart.
+    // Off unless asked for.
+    voxel_times: Option<VoxelTimes>,
 }
 
 impl Mapper {
@@ -62,6 +70,7 @@ impl Mapper {
             last_registered: Vec::new(),
             last_origin: (0.0, 0.0, 0.0),
             frame_count: 0,
+            voxel_times: None,
         }
     }
 
@@ -113,6 +122,9 @@ impl Mapper {
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
         let pool = Arc::clone(&self.pool);
         self.live = pool.install(|| update_map(&mut self.map, origin, &points, &self.config));
+        if let Some(times) = &mut self.voxel_times {
+            times.stamp_hits(&self.live.coarse);
+        }
 
         // The batch only feeds the local region bounds, so skip it when the
         // local cadence is disabled.
@@ -243,6 +255,9 @@ impl Mapper {
         self.last_registered.clear();
         self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
+        if let Some(times) = &mut self.voxel_times {
+            times.clear();
+        }
     }
 }
 

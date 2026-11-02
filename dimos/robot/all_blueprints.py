@@ -342,6 +342,7 @@ all_modules = {
     "receiver-module": "dimos.utils.demo_image_encoding.ReceiverModule",
     "recorder": "dimos.memory.module.Recorder",
     "recording-player": "dimos.mapping.relocalization.blueprints.RecordingPlayer",
+    "reform-ray-tracing-voxel-map": "dimos.mapping.ray_tracing.reform_module.ReformRayTracingVoxelMap",
     "reid-module": "dimos.perception.detection.reid.module.ReidModule",
     "relay-bridge-module": "dimos.web.relay_bridge.relay_bridge_module.RelayBridgeModule",
     "relocalization-module": "dimos.mapping.relocalization.module.RelocalizationModule",
