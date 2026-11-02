@@ -143,37 +143,58 @@ pub fn plan(
 
     let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
 
+    // The goal's Voronoi owner, or for a sub-clearance goal it cannot own, the nearest node by hops.
+    let mut goal_segment = walk_live_preds(plg, goal_cell);
+    let mut owner = *goal_segment
+        .last()
+        .expect("the goal cell is live, so the walk keeps at least it");
+    let mut owner_cost = plg.cell_state.dist[goal_cell as usize];
+    if !node_cells.contains(&owner) {
+        // A node with no edges yet carries no route, so look past it.
+        let routable: AHashSet<NodeId> = node_cells
+            .iter()
+            .copied()
+            .filter(|&n| !plg.node_edges.adjacent(n).is_empty())
+            .collect();
+        let targets = if routable.is_empty() {
+            &node_cells
+        } else {
+            &routable
+        };
+        let Some((node, path)) = nearest_node(&plg.cells, goal_cell, targets) else {
+            tracing::debug!(
+                ?goal_coord,
+                "plan failed: goal's connected component has no graph node"
+            );
+            return None;
+        };
+        owner = node;
+        goal_segment = path;
+        owner_cost = 0.0;
+    }
+
     let radius = (config.node_spacing_m * CANDIDATE_RADIUS_FACTOR).max(voxel_size);
-    // Every node near the goal seeds the search at its cost from the goal, not only its Voronoi owner.
+    // The owner and every node near the goal seed the search at their cost from the goal, so the
+    // goal attaches as freely as the start, and a nearby node the graph has cut off is not its only way in.
     let (goal_dist, goal_pred) = robot_search(&plg.cells, &[goal_cell], radius);
     let mut seeds: Vec<(NodeId, f32)> = goal_dist
         .iter()
         .filter(|(cell, _)| node_cells.contains(cell))
         .map(|(&cell, &cost)| (cell, cost))
         .collect();
-    seeds.sort_unstable_by_key(|&(cell, _)| cell);
-    // No node within reach: use the Voronoi owner, or the nearest node by hops for a sub-clearance goal.
-    let mut goal_segment = Vec::new();
-    if seeds.is_empty() {
-        goal_segment = walk_live_preds(plg, goal_cell);
-        let mut goal_node = *goal_segment
-            .last()
-            .expect("the goal cell is live, so the walk keeps at least it");
-        if !node_cells.contains(&goal_node) {
-            let Some((node, path)) = nearest_node(&plg.cells, goal_cell, &node_cells) else {
-                tracing::debug!(
-                    ?goal_coord,
-                    "plan failed: goal's connected component has no graph node"
-                );
-                return None;
-            };
-            goal_node = node;
-            goal_segment = path;
-        }
-        seeds.push((goal_node, 0.0));
+    if !goal_dist.contains_key(&owner) {
+        seeds.push((
+            owner,
+            if owner_cost.is_finite() {
+                owner_cost
+            } else {
+                0.0
+            },
+        ));
     }
+    seeds.sort_unstable_by_key(|&(cell, _)| cell);
 
-    // Seeded at the nodes near the goal so one pass covers every node's cost-to-go.
+    // Seeded at the goal's nodes so one pass covers every node's cost-to-go.
     let (cost_to_go, pred_to_goal) = node_dijkstra(plg, &seeds);
     // Nearest candidate first so the lead-in anchors at the robot's own cell.
     // The rest are only a fallback when it cannot connect.
@@ -1245,6 +1266,50 @@ mod tests {
         assert!(
             length < 7.0,
             "goal reached via its owner: {length} m, {wp:?}"
+        );
+    }
+
+    #[test]
+    fn plan_reaches_goal_whose_only_nearby_node_has_no_edges_yet() {
+        // A node next to the goal that a region update has not joined to the graph yet
+        // must not be the goal's only way in; its Voronoi owner still is one.
+        let mut plg = graph_with_nodes(&strip(101), &[(0, 0, 0), (100, 0, 0)]);
+        let list = [(0, 0, 0), (100, 0, 0), (62, 0, 0)]
+            .iter()
+            .map(|&c| NodeData {
+                cell_id: plg.cells.id(c).unwrap(),
+                pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
+            })
+            .collect();
+        plg.nodes = Nodes::from_list(&plg.cells, list, &truncate_config().placement_params());
+        let start = surface_point_xyz(0, 0, 0, VOXEL);
+        let goal = surface_point_xyz(60, 0, 0, VOXEL);
+        assert!(
+            plan_simple(&plg, start, goal).is_some(),
+            "goal attached only to an edgeless node"
+        );
+    }
+
+    #[test]
+    fn unowned_goal_falls_back_to_a_node_with_edges() {
+        // A goal the Voronoi does not own falls back to the nearest node by hops, which
+        // must be one in the graph, not an edgeless node beside it.
+        let mut plg = graph_with_nodes(&strip(101), &[(0, 0, 0), (100, 0, 0)]);
+        let list = [(0, 0, 0), (100, 0, 0), (62, 0, 0)]
+            .iter()
+            .map(|&c| NodeData {
+                cell_id: plg.cells.id(c).unwrap(),
+                pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
+            })
+            .collect();
+        plg.nodes = Nodes::from_list(&plg.cells, list, &truncate_config().placement_params());
+        let goal_cell = plg.cells.id((60, 0, 0)).unwrap();
+        plg.cell_state.pred[goal_cell as usize] = crate::adjacency::NO_CELL;
+        let start = surface_point_xyz(0, 0, 0, VOXEL);
+        let goal = surface_point_xyz(60, 0, 0, VOXEL);
+        assert!(
+            plan_simple(&plg, start, goal).is_some(),
+            "fell back to an edgeless node"
         );
     }
 
