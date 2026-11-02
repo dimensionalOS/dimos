@@ -23,9 +23,9 @@ from dimos.core.global_config import global_config
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.all_blueprints import all_blueprints
-from dimos.robot.manipulators.common._damiao_test_helpers import mock_connection_rig
-from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
-from dimos.robot.manipulators.common.damiao_connection import DamiaoConnection
+from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
+from dimos.robot.manipulators.damiao.damiao_blueprint import damiao_connection_control
+from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     coordinator_dual_openyam,
     dual_openyam_planner_coordinator,

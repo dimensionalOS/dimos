@@ -20,12 +20,12 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.common.blueprints import planner
-from dimos.robot.manipulators.common.damiao_blueprint import (
+from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     DamiaoTwistCoordinator,
     connect_damiao,
 )
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.openyam.blueprints.basic import _gripper_task, _trajectory_task
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver

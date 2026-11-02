@@ -27,7 +27,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
-from dimos.robot.manipulators.common.damiao_connection import DamiaoConnection
+from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
 from dimos.robot.urdf_manager import UrdfManager
 
 

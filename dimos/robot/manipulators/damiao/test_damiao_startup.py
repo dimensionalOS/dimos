@@ -16,8 +16,8 @@
 
 import pytest
 
-from dimos.robot.manipulators.common import damiao_connection as common
-from dimos.robot.manipulators.common._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 
 

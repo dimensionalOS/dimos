@@ -18,9 +18,9 @@ from can_motor_control import damiao
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.common import damiao_connection as common
-from dimos.robot.manipulators.common._damiao_native_test_helpers import LocalTransport
-from dimos.robot.manipulators.common._damiao_test_helpers import _local_test_model
+from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection

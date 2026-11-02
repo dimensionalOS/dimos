@@ -19,7 +19,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
-from dimos.robot.manipulators.common.damiao_blueprint import connect_damiao
+from dimos.robot.manipulators.damiao.damiao_blueprint import connect_damiao
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 _dual_openyam = DualOpenYamConnection.planning_model("arm")

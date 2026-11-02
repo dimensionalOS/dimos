@@ -14,7 +14,7 @@
 
 """Metal trajectory and normalized gripper control over connection streams."""
 
-from dimos.robot.manipulators.common.damiao_blueprint import damiao_connection_control
+from dimos.robot.manipulators.damiao.damiao_blueprint import damiao_connection_control
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 
 makermods_metal_connection_control = damiao_connection_control(MetalConnection).remappings([])

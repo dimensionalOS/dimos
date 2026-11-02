@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.common import damiao_connection as common
+from dimos.robot.manipulators.damiao import damiao_connection as common
 from dimos.utils.testing.waiting import wait_until
 
 

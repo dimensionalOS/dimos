@@ -12,10 +12,10 @@ From the checkout of [PR #4960](https://github.com/dimensionalOS/dimos/pull/4960
 
 ```bash
 gh pr checkout 4960
-uv run pytest dimos/robot/manipulators/common/test_damiao_connection.py \
-    dimos/robot/manipulators/common/test_damiao_native.py \
-    dimos/robot/manipulators/common/test_damiao_startup.py \
-    dimos/robot/manipulators/common/test_damiao_model.py
+uv run pytest dimos/robot/manipulators/damiao/test_damiao_connection.py \
+    dimos/robot/manipulators/damiao/test_damiao_native.py \
+    dimos/robot/manipulators/damiao/test_damiao_startup.py \
+    dimos/robot/manipulators/damiao/test_damiao_model.py
 ```
 
 These tests use authored URDF fixtures and fake native APIs. They cover partial

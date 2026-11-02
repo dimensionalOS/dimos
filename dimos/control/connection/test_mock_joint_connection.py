@@ -19,7 +19,7 @@ import pytest
 from dimos.control._control_test_helpers import fake_arm_model
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.common._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 
 
