@@ -410,6 +410,80 @@ impl ClosureEdgeEvent {
     }
 }
 
+/// `Config::mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "native",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "lowercase")
+)]
+pub enum Mode {
+    Fast,
+    Deterministic,
+}
+
+/// The deterministic mode's estimates (`Config::deterministic_config`), in scans: a job holds `ceil(estimate)` scans, at
+/// least one. The defaults are the Jetson (R1) fit: each job's measured seconds turned into scans by its recording's scan
+/// rate, bounded at >= 99% of each recording's jobs.
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "native",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default, deny_unknown_fields)
+)]
+pub struct DeterministicConfig {
+    /// The fast match (a search up to the extension), at dispatch: fixed, per keyframe (the scan-context lookup; none for
+    /// a retry), per point (the voxelized source keyframe's and the single target submap's keyframes' before merging)
+    /// and per source point.
+    pub fast_match_scans_fixed_overhead: f64,
+    pub fast_match_scans_per_keyframe: f64,
+    pub fast_match_scans_per_point: f64,
+    pub fast_match_scans_per_source_point: f64,
+    /// The verification (the extension, in a whole search or its own job): fixed as it starts, and per round before each.
+    pub verification_scans_fixed_overhead: f64,
+    pub verification_scans_per_round: f64,
+    /// The solve: `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power * (1 +
+    /// rejected)^solve_rejected_power`, the closures in the solve and the ones the newest adopted solve rejected.
+    pub solve_scans_scale: f64,
+    pub solve_keyframe_power: f64,
+    pub solve_closure_power: f64,
+    pub solve_rejected_power: f64,
+    /// The graph change heat's cost the solve's thread measures after it, per keyframe (added to the solve's).
+    pub debounce_scans_per_keyframe: f64,
+    /// The loop-overlap pressure: fixed, per keyframe and per committed closure.
+    pub pressure_scans_fixed_overhead: f64,
+    pub pressure_scans_per_keyframe: f64,
+    pub pressure_scans_per_closure: f64,
+}
+
+impl Default for DeterministicConfig {
+    fn default() -> DeterministicConfig {
+        DeterministicConfig {
+            fast_match_scans_fixed_overhead: 0.5465,
+            fast_match_scans_per_keyframe: 5.7e-8,
+            fast_match_scans_per_point: 3.137e-5,
+            fast_match_scans_per_source_point: 7.808e-5,
+            verification_scans_fixed_overhead: 1.322,
+            verification_scans_per_round: 0.883,
+            solve_scans_scale: 3.843e-5,
+            solve_keyframe_power: 2.017,
+            solve_closure_power: -0.215,
+            solve_rejected_power: 0.558,
+            debounce_scans_per_keyframe: 2.56e-6,
+            pressure_scans_fixed_overhead: 1.21e-4,
+            pressure_scans_per_keyframe: 1.355e-6,
+            pressure_scans_per_closure: 1.957e-6,
+        }
+    }
+}
+
+impl Config {
+    /// Whether every LET job is held to its estimate (`Mode::Deterministic`).
+    pub fn deterministic(&self) -> bool {
+        self.mode == Mode::Deterministic
+    }
+}
+
 /// Tunable configuration for the PGO core.
 #[derive(Debug, Clone)]
 #[cfg_attr(
@@ -418,6 +492,13 @@ impl ClosureEdgeEvent {
     serde(default)
 )]
 pub struct Config {
+    /// `deterministic` (the default): every logical-execution-time job (solve, closure search, verification, pressure) is
+    /// held to its estimate (`deterministic_config`), so a replay gives the same graph on any machine. `fast` (a real-life
+    /// run): every job lands as soon as it finishes, no holds; the run measures what each job cost in scans and prints the
+    /// `deterministic_config` it suggests (`GscPgo::runtime_profile`), ready to paste.
+    pub mode: Mode,
+    /// The deterministic mode's estimates, every coefficient in scans (the exponents unitless).
+    pub deterministic_config: DeterministicConfig,
     pub keyframe_min_rotation_degrees: f64,
     pub keyframe_min_distance_meters: f64,
     pub closure_search_radius: f64,
@@ -509,12 +590,6 @@ pub struct Config {
     /// * (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe * keyframes`: the closures in the solve, the
     /// ones the newest adopted solve rejected (GNC takes longer with outliers in), and the graph change heat's cost the
     /// solve's thread measures after it (`debounce`). The graph change heat acts on adoption after the hold.
-    pub solve_hold_enabled: bool,
-    pub solve_scans_scale: f64,
-    pub solve_keyframe_power: f64,
-    pub solve_closure_power: f64,
-    pub solve_rejected_power: f64,
-    pub debounce_scans_per_keyframe: f64,
     /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
     /// once `ceil(estimate)` scans (at least one) have passed since its dispatch, an upper bound on its cost in scans fixed
     /// before each piece of work starts, so which searches run and when their closures land is the same however fast the
@@ -525,7 +600,6 @@ pub struct Config {
     /// voxelized source keyframe's, and the single target submap's keyframes' before merging); the verification (the
     /// extension, in a whole search or its own job) `verification_scans_fixed_overhead` as it starts and
     /// `verification_scans_per_round` before each round.
-    pub closure_search_hold_enabled: bool,
     /// Logical execution time for closure searches (with `closure_search_hold_enabled`): every keyframe's search is its own
     /// job, started (its graph snapshot taken) at the keyframe it is proposed and landing at its own dispatch + estimate,
     /// whatever other searches are doing, run on `closure_search_workers` threads first-dispatched first; results land in
@@ -551,12 +625,6 @@ pub struct Config {
     pub sc_buffer_size: usize,
     pub verification_workers: usize,
     pub verification_buffer_slots: usize,
-    pub fast_match_scans_fixed_overhead: f64,
-    pub fast_match_scans_per_keyframe: f64,
-    pub fast_match_scans_per_point: f64,
-    pub fast_match_scans_per_source_point: f64,
-    pub verification_scans_fixed_overhead: f64,
-    pub verification_scans_per_round: f64,
     /// The body's recent speed (`recent_speed`: the solve estimate's speed, each closure diagnostic's) is the median over
     /// the newest this many steps between distinct odometry poses.
     pub solve_speed_window_poses: usize,
@@ -687,10 +755,6 @@ pub struct Config {
     /// `pressure_scans_per_keyframe` x keyframes + `pressure_scans_per_closure` x committed closures, rounded up (scans). Off: computed inline on the scan thread. The coefficients
     /// are the cheapest nonnegative ones bounding every Mac pressure computation of small L1, gir1 and huge L1 but each
     /// recording's hardest 1% (re-chosen over 3 refits), 99% of each one's under it.
-    pub pressure_let_enabled: bool,
-    pub pressure_scans_fixed_overhead: f64,
-    pub pressure_scans_per_keyframe: f64,
-    pub pressure_scans_per_closure: f64,
     /// `soft_pressure` (display only, the same probability without the cliff): 50% where log10 of the loop hazard
     /// (unresolved_loop_probability = 1 - e^-hazard) is this, and 0% this many decades below it (log-compressed).
     pub soft_pressure_half_log10_hazard: f64,
@@ -718,17 +782,17 @@ impl Config {
             ));
         }
         let estimates = [
-            ("fast_match_scans_fixed_overhead", self.fast_match_scans_fixed_overhead),
-            ("fast_match_scans_per_keyframe", self.fast_match_scans_per_keyframe),
-            ("fast_match_scans_per_point", self.fast_match_scans_per_point),
-            ("fast_match_scans_per_source_point", self.fast_match_scans_per_source_point),
-            ("verification_scans_fixed_overhead", self.verification_scans_fixed_overhead),
-            ("verification_scans_per_round", self.verification_scans_per_round),
-            ("pressure_scans_fixed_overhead", self.pressure_scans_fixed_overhead),
-            ("pressure_scans_per_keyframe", self.pressure_scans_per_keyframe),
-            ("pressure_scans_per_closure", self.pressure_scans_per_closure),
-            ("solve_scans_scale", self.solve_scans_scale),
-            ("debounce_scans_per_keyframe", self.debounce_scans_per_keyframe),
+            ("fast_match_scans_fixed_overhead", self.deterministic_config.fast_match_scans_fixed_overhead),
+            ("fast_match_scans_per_keyframe", self.deterministic_config.fast_match_scans_per_keyframe),
+            ("fast_match_scans_per_point", self.deterministic_config.fast_match_scans_per_point),
+            ("fast_match_scans_per_source_point", self.deterministic_config.fast_match_scans_per_source_point),
+            ("verification_scans_fixed_overhead", self.deterministic_config.verification_scans_fixed_overhead),
+            ("verification_scans_per_round", self.deterministic_config.verification_scans_per_round),
+            ("pressure_scans_fixed_overhead", self.deterministic_config.pressure_scans_fixed_overhead),
+            ("pressure_scans_per_keyframe", self.deterministic_config.pressure_scans_per_keyframe),
+            ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
+            ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
+            ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
         ];
         for (name, count) in [
             ("closure_search_workers", self.closure_search_workers),
@@ -755,6 +819,8 @@ impl Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
+            mode: Mode::Deterministic,
+            deterministic_config: DeterministicConfig::default(),
             keyframe_min_rotation_degrees: 10.0,
             keyframe_min_distance_meters: 0.5,
             closure_search_radius: 3.0,
@@ -785,13 +851,6 @@ impl Default for Config {
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
             graph_change_heat_decay: 0.995,
-            solve_hold_enabled: true,
-            solve_scans_scale: 3.843e-5,
-            solve_keyframe_power: 2.017,
-            solve_closure_power: -0.215,
-            solve_rejected_power: 0.558,
-            debounce_scans_per_keyframe: 2.56e-6,
-            closure_search_hold_enabled: true,
             closure_search_let_enabled: true,
             closure_search_workers: 2,
             closure_search_two_stage: false,
@@ -799,13 +858,6 @@ impl Default for Config {
             sc_buffer_size: 4,
             verification_workers: 2,
             verification_buffer_slots: 2,
-            // provisional (the Mac fit at 10 scans per Mac second) until the Jetson fit
-            fast_match_scans_fixed_overhead: 0.5465,
-            fast_match_scans_per_keyframe: 5.7e-8,
-            fast_match_scans_per_point: 3.137e-5,
-            fast_match_scans_per_source_point: 7.808e-5,
-            verification_scans_fixed_overhead: 1.322,
-            verification_scans_per_round: 0.883,
             solve_speed_window_poses: 500,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
@@ -845,10 +897,6 @@ impl Default for Config {
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,
             pressure_check_frequency: 5,
-            pressure_let_enabled: true,
-            pressure_scans_fixed_overhead: 1.21e-4,
-            pressure_scans_per_keyframe: 1.355e-6,
-            pressure_scans_per_closure: 1.957e-6,
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
         }
@@ -2037,21 +2085,8 @@ impl GscPgo {
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
         let check_due = frequency > 0 && self.scans_seen.is_multiple_of(frequency);
-        if self.config.pressure_let_enabled {
-            self.step_pressure(check_due);
-        } else if check_due && self.pressure_version != Some(self.graph_version) {
-            self.pressure_version = Some(self.graph_version);
-            let started = std::time::Instant::now();
-            let overlap = self.loop_overlap();
-            self.pressure_calls.push((
-                self.key_poses.len(),
-                self.committed_closures.len(),
-                started.elapsed().as_secs_f64(),
-            ));
-            if let Some(overlap) = overlap {
-                self.pressure = Some((self.scans_seen, overlap));
-            }
-        }
+        // the pressure is a job on its own worker (`pressure_schedule`), held to its estimate in deterministic mode
+        self.step_pressure(check_due);
         self.timing.pressure_s += checked.elapsed().as_secs_f64();
         keyframe
     }
@@ -2309,7 +2344,7 @@ impl GscPgo {
     /// (`closure_search_hold_enabled`) on the search thread, waiting for a search only once its estimate has passed
     /// (`step_closure_search`); else all on this thread.
     pub fn search_for_closure_pairs(&mut self) {
-        if self.config.closure_search_hold_enabled {
+        if self.config.deterministic() {
             self.step_closure_search(true, true);
             return;
         }

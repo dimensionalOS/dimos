@@ -18,6 +18,8 @@ gated so a closure does no harm, and a pose graph re-solved with GNC on a backgr
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -31,6 +33,29 @@ logger = setup_logger()
 
 
 class PGOConfig(NativeModuleConfig):
+    # "deterministic" (default): every LET job (solve, closure search, verification, pressure) is held to its estimate in
+    # deterministic_config, so a replay gives the same graph on any machine; "fast" (a real-life run): every job lands as
+    # soon as it finishes, and the run prints the deterministic_config it measured, ready to paste here
+    mode: str = "deterministic"
+    # the deterministic mode's estimates, in scans (a job holds ceil(estimate) scans, at least one; exponents unitless)
+    deterministic_config: dict[str, float] = Field(
+        default_factory=lambda: {
+            "fast_match_scans_fixed_overhead": 0.5465,
+            "fast_match_scans_per_keyframe": 5.7e-8,
+            "fast_match_scans_per_point": 3.137e-5,
+            "fast_match_scans_per_source_point": 7.808e-5,
+            "verification_scans_fixed_overhead": 1.322,
+            "verification_scans_per_round": 0.883,
+            "solve_scans_scale": 3.843e-5,
+            "solve_keyframe_power": 2.017,
+            "solve_closure_power": -0.215,
+            "solve_rejected_power": 0.558,
+            "debounce_scans_per_keyframe": 2.56e-6,
+            "pressure_scans_fixed_overhead": 1.21e-4,
+            "pressure_scans_per_keyframe": 1.355e-6,
+            "pressure_scans_per_closure": 1.957e-6,
+        }
+    )
     source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"
     executable: str = "result/bin/gsc-pgo"
     build_command: str | None = "nix build .#default --no-write-lock-file"
@@ -91,10 +116,6 @@ class PGOConfig(NativeModuleConfig):
     pressure_check_frequency: int = 5
     # The pressure off the scan thread: a job on one worker (newest request pending), landing at dispatch + estimate
     # (scans: fixed overhead + per keyframe + per committed closure, rounded up); off = inline on the scan thread
-    pressure_let_enabled: bool = True
-    pressure_scans_fixed_overhead: float = 1.21e-4
-    pressure_scans_per_keyframe: float = 1.355e-6
-    pressure_scans_per_closure: float = 1.957e-6
     # soft_pressure (display only: the same probability without the cliff) is 50% where log10 of the loop hazard
     # (pressure = 1 - e^-hazard) is soft_pressure_half_log10_hazard, falling log-compressed to 0% soft_pressure_decades below
     soft_pressure_half_log10_hazard: float = -0.5
@@ -136,17 +157,10 @@ class PGOConfig(NativeModuleConfig):
     # keyframes) scans after its dispatch (an upper bound on its cost in scans; rejected = closures the newest adopted
     # solve rejected; debounce = the graph change heat's cost its thread measures); one still running then is an
     # overshoot, logged and adopted as it finishes
-    solve_hold_enabled: bool = True
-    solve_scans_scale: float = 3.843e-5
-    solve_keyframe_power: float = 2.017
-    solve_closure_power: float = -0.215
-    solve_rejected_power: float = 0.558
-    debounce_scans_per_keyframe: float = 2.56e-6
     # Deterministic closure-search schedule: a search's result lands only once ceil(its estimate) scans have passed since
     # its dispatch: the fast match (fast_match_scans_fixed_overhead + per keyframe, the scan-context lookup, + per point,
     # source and target, + per source point) at dispatch, then the verification's fixed overhead as the extension
     # starts and one round's scans before each round (verification_scans_*)
-    closure_search_hold_enabled: bool = True
     # Logical execution time: each keyframe's search is its own job (snapshot at its keyframe, lands at its own estimate),
     # run on this many worker threads in dispatch order; off = one held search at a time, later proposals going stale
     closure_search_let_enabled: bool = True
@@ -160,13 +174,6 @@ class PGOConfig(NativeModuleConfig):
     sc_buffer_size: int = 4
     verification_workers: int = 2
     verification_buffer_slots: int = 2
-    # provisional (the Mac fit at 10 scans per Mac second) until the Jetson fit
-    fast_match_scans_fixed_overhead: float = 0.5465
-    fast_match_scans_per_keyframe: float = 5.7e-8
-    fast_match_scans_per_point: float = 3.137e-5
-    fast_match_scans_per_source_point: float = 7.808e-5
-    verification_scans_fixed_overhead: float = 1.322
-    verification_scans_per_round: float = 0.883
     # The body's recent speed (solve estimate, closure diagnostics): median over the newest this many distinct-pose steps
     solve_speed_window_poses: int = 500
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp

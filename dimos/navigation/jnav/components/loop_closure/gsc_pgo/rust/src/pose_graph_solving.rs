@@ -114,7 +114,7 @@ impl GscPgo {
     /// closures have arrived since the last. Never blocks. Returns whether keyframes moved.
     pub fn update(&mut self) -> bool {
         self.track_solve();
-        let hold = self.config.solve_hold_enabled;
+        let hold = self.config.deterministic();
         let scans = self.scans_seen;
         let ready = self.solving.as_ref().is_some_and(|solving| {
             solving.schedule.finished_scan.is_some()
@@ -126,7 +126,7 @@ impl GscPgo {
     /// machine (with the hold off, plain `update`).
     pub fn wait_for_due_solve(&mut self) -> bool {
         self.track_solve();
-        let due = self.config.solve_hold_enabled
+        let due = self.config.deterministic()
             && self
                 .solving
                 .as_ref()
@@ -167,14 +167,14 @@ impl GscPgo {
             .count() as f64;
         // the graph change heat's cost on the solve's thread (`debounce`)
         let change_cost = if config.graph_change_heat_enabled {
-            config.debounce_scans_per_keyframe * keyframes as f64
+            config.deterministic_config.debounce_scans_per_keyframe * keyframes as f64
         } else {
             0.0
         };
-        let estimate_raw_scans = config.solve_scans_scale
-            * (keyframes as f64).powf(config.solve_keyframe_power)
-            * (1.0 + closures).powf(config.solve_closure_power)
-            * (1.0 + rejected).powf(config.solve_rejected_power)
+        let estimate_raw_scans = config.deterministic_config.solve_scans_scale
+            * (keyframes as f64).powf(config.deterministic_config.solve_keyframe_power)
+            * (1.0 + closures).powf(config.deterministic_config.solve_closure_power)
+            * (1.0 + rejected).powf(config.deterministic_config.solve_rejected_power)
             + change_cost;
         (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans, config))
     }
@@ -969,7 +969,7 @@ impl GscPgo {
             Some(scan) if finished.graph_version == self.adopted_solves => {
                 self.change_cost_calls.push((finished.keyframes, scan.seconds));
                 let estimate_raw_scans =
-                    self.config.debounce_scans_per_keyframe * finished.keyframes as f64;
+                    self.config.deterministic_config.debounce_scans_per_keyframe * finished.keyframes as f64;
                 self.record_job_ratio("debounce", scan.seconds, estimate_raw_scans);
                 self.finish_graph_change_cost(scan.clone(), &finished.solution, finished.keyframes)
             }

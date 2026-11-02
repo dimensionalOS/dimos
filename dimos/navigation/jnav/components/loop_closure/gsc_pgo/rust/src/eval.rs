@@ -174,6 +174,9 @@ struct Args {
     odom_stream: String,
     lidar_stream: String,
     config_path: Option<PathBuf>,
+    /// `--mode fast|deterministic` and `--deterministic-config <JSON object or path>`, over the config file's.
+    mode: Option<String>,
+    deterministic_config: Option<String>,
     output: PathBuf,
     scan_stride: usize,
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
@@ -307,6 +310,8 @@ fn parse_args() -> Result<Args, String> {
     let mut odom_stream = None;
     let mut lidar_stream = None;
     let mut config_path = None;
+    let mut mode = None;
+    let mut deterministic_config = None;
     let mut output = None;
     let mut scan_stride = 1usize;
     let mut event_dump = None;
@@ -327,6 +332,8 @@ fn parse_args() -> Result<Args, String> {
             "--odom-stream" => odom_stream = Some(value()?),
             "--lidar-stream" => lidar_stream = Some(value()?),
             "--config" => config_path = Some(PathBuf::from(value()?)),
+            "--mode" => mode = Some(value()?),
+            "--deterministic-config" => deterministic_config = Some(value()?),
             "--output" => output = Some(PathBuf::from(value()?)),
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
@@ -370,6 +377,8 @@ fn parse_args() -> Result<Args, String> {
         odom_stream: odom_stream.ok_or("--odom-stream is required")?,
         lidar_stream: lidar_stream.ok_or("--lidar-stream is required")?,
         config_path,
+        mode,
+        deterministic_config,
         output: output.ok_or("--output is required")?,
         scan_stride: scan_stride.max(1),
         event_dump,
@@ -464,6 +473,8 @@ const ODOMETRY_ERROR_ESTIMATE_KEYS: [[&str; 2]; 4] = [
 fn load_config(
     path: Option<&std::path::Path>,
     odom_child_frame: &str,
+    mode: Option<&str>,
+    deterministic_config: Option<&str>,
 ) -> Result<EvalConfig, String> {
     let mut overlay = match path {
         Some(path) => {
@@ -475,6 +486,20 @@ fn load_config(
     let fields = overlay
         .as_object_mut()
         .ok_or("--config must be a JSON object")?;
+    // `--mode` and `--deterministic-config` (a JSON object, or a path to one) over the config file's
+    if let Some(mode) = mode {
+        fields.insert("mode".into(), mode.into());
+    }
+    if let Some(given) = deterministic_config {
+        let text = if given.trim_start().starts_with('{') {
+            given.to_string()
+        } else {
+            std::fs::read_to_string(given).map_err(|e| format!("--deterministic-config {given:?}: {e}"))?
+        };
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("--deterministic-config: {e}"))?;
+        fields.insert("deterministic_config".into(), value);
+    }
     // older configs name these odom_<source>_drift_per_sqrt_<unit>: move them to the new names before filling the rest
     for (keys, source) in ODOMETRY_ERROR_ESTIMATE_KEYS
         .iter()
@@ -551,7 +576,12 @@ fn run() -> Result<(), String> {
         odoms.iter().map(|row| row.child_frame_id.clone()),
         "odom child",
     )?;
-    let config = load_config(args.config_path.as_deref(), &odom_child_frame)?;
+    let config = load_config(
+        args.config_path.as_deref(),
+        &odom_child_frame,
+        args.mode.as_deref(),
+        args.deterministic_config.as_deref(),
+    )?;
     let tf_tree = memory2::TfTree::read(&connection)?;
     // the body's pose in the odom child frame: each odom pose (odom -> child) becomes odom -> child * child -> body. A
     // PoseStamped odom names no child, so it is taken as the body already (and its clouds as in the body frame).
@@ -1031,7 +1061,12 @@ fn run() -> Result<(), String> {
             }
         }
         eprintln!("pgo-eval: LET measured / estimated scans, 99th percentile: {}", ratios.join(", "));
-        eprintln!("pgo-eval: suggested LET config: {{{}}}", block.join(", "));
+        let _ = block;
+        // the exact `deterministic_config` object to paste (diagnostics only)
+        eprintln!(
+            "pgo-eval: suggested deterministic_config: {}",
+            serde_json::to_string(&pgo.suggested_deterministic_config()).unwrap_or_default()
+        );
     }
     eprintln!(
         "pgo-eval: closure searches: {} overshot their estimate ({} verifications); the buffers dropped {} scan-context candidates and {} matches waiting for verification; this replay waited {:.1}s for searches",

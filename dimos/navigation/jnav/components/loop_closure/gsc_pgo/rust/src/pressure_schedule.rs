@@ -90,9 +90,9 @@ impl GscPgo {
         let snapshot = self.overlap_snapshot();
         let (keyframes, closures) = snapshot.size();
         let config = &self.config;
-        let estimate_raw_scans = config.pressure_scans_fixed_overhead
-            + config.pressure_scans_per_keyframe * keyframes as f64
-            + config.pressure_scans_per_closure * closures as f64;
+        let estimate_raw_scans = config.deterministic_config.pressure_scans_fixed_overhead
+            + config.deterministic_config.pressure_scans_per_keyframe * keyframes as f64
+            + config.deterministic_config.pressure_scans_per_closure * closures as f64;
         let slot = Arc::new(PressureSlot::default());
         let finish = slot.clone();
         self.pressure_pool
@@ -120,10 +120,15 @@ impl GscPgo {
             return;
         };
         let spanned = self.newest_scan_time() - job.dispatch_time;
-        if self.advancing_scans < job.dispatch_scan + job.estimate_scans(&self.config) {
+        let deterministic = self.config.deterministic();
+        if deterministic && self.advancing_scans < job.dispatch_scan + job.estimate_scans(&self.config) {
             return;
         }
         let mut done = job.slot.done.lock().expect("pressure slot");
+        // fast mode: it lands once it has finished, never waited for
+        if done.is_none() && !deterministic {
+            return;
+        }
         if done.is_none() {
             if !self.wait_for_due_jobs {
                 job.slot.changed.notify_all();
@@ -143,7 +148,7 @@ impl GscPgo {
         drop(done);
         let job = self.pressure_job.take().expect("checked above");
         // its work ran past the data time its hold spanned (first reached at the scan it became due), or it landed late
-        let overshoot = seconds > spanned || std::mem::take(&mut self.pressure_late);
+        let overshoot = deterministic && (seconds > spanned || std::mem::take(&mut self.pressure_late));
         if overshoot {
             self.pressure_overshoots += 1;
             eprintln!(
