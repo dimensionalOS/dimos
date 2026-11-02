@@ -148,7 +148,7 @@ struct EvalOutput {
     change_cost_recomputed: usize,
     /// The LET coefficients this run measured (`GscPgo::runtime_profile`): per LET the 99th percentile of measured /
     /// estimated scans, its jobs, and its coefficients scaled by it (a config block ready to paste; diagnostics only).
-    runtime_profile: Vec<(String, f64, usize, Vec<(String, f64)>)>,
+    runtime_profile: Vec<RuntimeProfileRow>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
     /// How much faster than real each part of the module runs (`Speed`).
@@ -277,10 +277,17 @@ fn rotation_vector(w: [f64; 3]) -> [[f64; 3]; 3] {
     ])
 }
 
+/// A `runtime_profile` row in a.json: a job kind, its 99th-percentile measured / estimated scans, its count and its
+/// coefficients scaled by it.
+type RuntimeProfileRow = (String, f64, usize, Vec<(String, f64)>);
+
+/// A `--world-positions` fix: time, frame, sensor lever, position and covariance.
+type WorldPositionFix = (f64, u32, [f64; 3], [f64; 3], [[f64; 3]; 3]);
+
 /// The fixes of a `--world-positions` file, in time order.
 fn read_world_positions(
     path: &PathBuf,
-) -> Result<Vec<(f64, u32, [f64; 3], [f64; 3], [[f64; 3]; 3])>, String> {
+) -> Result<Vec<WorldPositionFix>, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut fixes = Vec::new();
     for line in text
