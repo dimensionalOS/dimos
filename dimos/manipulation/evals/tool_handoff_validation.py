@@ -22,14 +22,17 @@ then for each trial: puts the scene back, asks the decision-maker to pick the
 apple, breaks the pick as the trial plan says, and watches whether the
 coordinator's operator hold comes on. Writes handoff_validation_<date>.md and
 .csv to ``--out``. ``llm`` needs OPENAI_API_KEY (from the environment or
-.env); without it the run uses ``scripted``.
+.env); without it, or when the model does not answer, the run uses ``scripted``.
 """
 
 from __future__ import annotations
 
 import argparse
 from collections import deque
+from collections.abc import Callable, Sequence
+import contextlib
 from datetime import datetime
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -40,15 +43,22 @@ from typing import Any
 from dotenv import load_dotenv
 import numpy as np
 from numpy.typing import NDArray
-import requests
 from scipy.spatial.transform import Rotation
 
+from dimos.agents.mcp.mcp_adapter import McpAdapter
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skill_result import SkillResult
+from dimos.cli.commands.lifecycle import DEFAULT_CONFIG_PATH
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
     OperatorHoldStatus,
 )
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.manipulation.evals.handoff_validation import (
+    PICK_COMPLETE,
     TRIAL_PLAN,
     AgentDecisionMaker,
     Attempt,
@@ -56,20 +66,23 @@ from dimos.manipulation.evals.handoff_validation import (
     DecisionMaker,
     ScriptedDecisionMaker,
     Trial,
-    render_csv,
-    render_markdown,
-    summarize,
+    write_report,
 )
+from dimos.robot.manipulators.common.agent_prompts import MANIPULATION_AGENT_SYSTEM_PROMPT
+from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import hybrid_teleop_sim
+from dimos.utils.logging_config import set_run_log_dir, setup_logger
 
-BLUEPRINT = "hybrid-teleop-sim"
+logger = setup_logger()
+
+TARGET = "apple"  # the sim body to pick
+PROMPT = "red ball"  # what to ask for: the detector finds the sim's apple as a red ball
 OBJECTS = ("apple", "orange", "cup")
 GRIPPER_BODY = "xarm_gripper_base_link"
 TCP_OFFSET = np.array([0.0, 0.0, 0.172])  # link_tcp in the gripper base frame, metres
-PREGRASP_OFFSET = 0.10  # PickAndPlaceModule's default pregrasp_offset, metres
 TABLE_X = (0.32, 0.58)  # table top, world frame, metres, less a 2 cm border
 TABLE_Y = (-0.18, 0.18)
 REMOVE_DISTANCE = 2.0  # "removed" puts the object this far (metres, +x) off the table
-MOVE_TO = {"apple": (0.36, -0.13)}  # "moved": a free spot on the table, world x, y
+MOVE_TO = (0.36, -0.13)  # "moved": a free spot on the table, world x, y, metres
 MISS_OFFSETS = (0.05, 0.06, 0.04, 0.05)  # "missed grasp" sideways shifts, metres, in turn
 
 AGENT_PROMPT_EXTRA = """
@@ -81,10 +94,6 @@ request_operator once with a short plain reason that says what failed (quote wha
 the pick reported), then stop. Do not retry the pick and do not move the arm
 yourself. After "Pick complete", do not call request_operator; reply "done".
 """
-
-
-def _status(value: Any) -> OperatorHoldStatus | None:
-    return value if isinstance(value, OperatorHoldStatus) else None
 
 
 class Bodies:
@@ -100,9 +109,8 @@ class Bodies:
         with self._lock:
             for tf in msg.transforms:
                 position = np.array([tf.translation.x, tf.translation.y, tf.translation.z])
-                rotation = Rotation.from_quat(
-                    [tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w]
-                )
+                q = tf.rotation
+                rotation = Rotation.from_quat([q.x, q.y, q.z, q.w])
                 self._poses[tf.child_frame_id] = (position, rotation)
                 if tf.child_frame_id == GRIPPER_BODY:
                     self._tcp.append((now, position + rotation.apply(TCP_OFFSET)))
@@ -126,9 +134,7 @@ class Bodies:
         """Mean tool-tip speed over the last ``window_s`` seconds, m/s."""
         with self._lock:
             samples = list(self._tcp)
-        if len(samples) < 2:
-            return None
-        recent = [s for s in samples if s[0] >= samples[-1][0] - window_s]
+        recent = [s for s in samples if s[0] >= samples[-1][0] - window_s] if samples else []
         if len(recent) < 2 or recent[-1][0] - recent[0][0] < 0.1:
             return None
         return float(np.linalg.norm(recent[-1][1] - recent[0][1]) / (recent[-1][0] - recent[0][0]))
@@ -144,28 +150,14 @@ class Stack:
         self.agent: AgentDecisionMaker | None = None
         self._coordinator: Any = None
         self._proxies: dict[str, Any] = {}
-        self._unsubscribe: list[Any] = []
+        self._unsubscribe: list[Callable[[], None]] = []
 
     def start(self) -> None:
-        from dimos.cli.commands.lifecycle import DEFAULT_CONFIG_PATH
-        from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-        from dimos.core.coordination.blueprints import autoconnect
-        from dimos.core.coordination.module_coordinator import ModuleCoordinator
-        from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import hybrid_teleop_sim
-        from dimos.utils.logging_config import set_run_log_dir
-
         set_run_log_dir(self.log_dir)
-        os.environ["MUJOCOSIMMODULE__TRACKED_BODIES"] = repr([*OBJECTS, GRIPPER_BODY]).replace(
-            "'", '"'
-        )
+        bodies = [*OBJECTS, GRIPPER_BODY]
+        os.environ["MUJOCOSIMMODULE__TRACKED_BODIES"] = repr(bodies).replace("'", '"')
         blueprint = hybrid_teleop_sim
         if self.with_agent:
-            from dimos.agents.mcp.mcp_client import McpClient
-            from dimos.agents.mcp.mcp_server import McpServer
-            from dimos.robot.manipulators.common.agent_prompts import (
-                MANIPULATION_AGENT_SYSTEM_PROMPT,
-            )
-
             # The detector and segmenter need room once the agent joins (see
             # xarm_grasp_agent in xarm/blueprints/agentic.py).
             blueprint = autoconnect(
@@ -189,18 +181,16 @@ class Stack:
         self._proxies["ControlCoordinator"] = self._proxies["HybridTeleopCoordinator"]
         self._subscribe("body_poses", self.bodies.on_message)
         if self.with_agent:
-            self.agent = AgentDecisionMaker(
-                lambda text: self.call("McpServer", "agent_send", text), timeout_s=300.0
-            )
+            self.agent = AgentDecisionMaker(lambda text: self.call("McpServer", "agent_send", text))
             self._subscribe("agent", self.agent.on_message)
             self._subscribe("agent_idle", self.agent.on_idle)
         deadline = time.monotonic() + 60.0
-        while self.bodies.position("apple") is None or self.bodies.tcp() is None:
+        while self.bodies.position(TARGET) is None or self.bodies.tcp() is None:
             if time.monotonic() > deadline:
                 raise TimeoutError("no body poses from the sim after 60 s")
             time.sleep(0.2)
 
-    def _subscribe(self, stream: str, callback: Any) -> None:
+    def _subscribe(self, stream: str, callback: Callable[[Any], None]) -> None:
         transports = [t for (name, _), t in self._coordinator.transports.items() if name == stream]
         if not transports:
             raise RuntimeError(f"the stack has no {stream!r} stream")
@@ -208,114 +198,96 @@ class Stack:
 
     def stop(self) -> None:
         for unsubscribe in self._unsubscribe:
-            try:
+            with contextlib.suppress(Exception):
                 unsubscribe()
-            except Exception:
-                pass
         self._unsubscribe = []
         if self._coordinator is not None:
             self._coordinator.stop()
             self._coordinator = None
 
-    def call(
-        self, module: str, method: str, *args: Any, timeout: float = 60.0, **kwargs: Any
-    ) -> Any:
+    def call(self, module: str, method: str, *args: Any, timeout: float = 60.0) -> Any:
         """Call an @rpc on a module by class name and wait up to ``timeout`` seconds."""
         proxy = self._proxies[module]
-        result, _ = proxy.rpc.call_sync(
-            f"{proxy.remote_name}/{method}", (list(args), kwargs), rpc_timeout=timeout
-        )
-        return result
+        name = f"{proxy.remote_name}/{method}"
+        return proxy.rpc.call_sync(name, (list(args), {}), rpc_timeout=timeout)[0]
 
     def hold_status(self) -> OperatorHoldStatus | None:
-        return _status(
-            self.call("ControlCoordinator", "task_invoke", OPERATOR_HOLD_TASK_NAME, "get_status")
+        status = self.call(
+            "ControlCoordinator", "task_invoke", OPERATOR_HOLD_TASK_NAME, "get_status"
         )
+        return status if isinstance(status, OperatorHoldStatus) else None
 
     def restart_agent(self) -> None:
         """A fresh agent, so one trial's chat does not steer the next."""
-        from dimos.agents.mcp.mcp_client import McpClient
-
         self._proxies["McpClient"] = self._coordinator.restart_module(
             McpClient, reload_source=False
         )
 
-    def mcp_tools(self) -> list[str]:
-        url = self.call("McpServer", "mcp_url")
-        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-        tools = requests.post(url, json=body, timeout=30).json()["result"]["tools"]
-        return sorted(tool["name"] for tool in tools)
-
-
-class RpcPickSkills:
-    def __init__(self, stack: Stack) -> None:
-        self._stack = stack
+    # The skills the scripted decision-maker uses.
 
     def scan_objects(self, prompts: list[str]) -> SkillResult:
-        return self._stack.call("PickAndPlaceModule", "scan_objects", prompts, timeout=120.0)
+        return self.call("PickAndPlaceModule", "scan_objects", prompts, timeout=120.0)
 
     def pick_object(self, object_id: str) -> SkillResult:
-        return self._stack.call("PickAndPlaceModule", "pick_object", object_id, timeout=600.0)
+        return self.call("PickAndPlaceModule", "pick_object", object_id, timeout=600.0)
 
     def request_operator(self, reason: str) -> SkillResult:
-        return self._stack.call("TeleopSkills", "request_operator", reason)
+        return self.call("TeleopSkills", "request_operator", reason)
 
 
-class HoldWatcher(threading.Thread):
-    """Polls the coordinator's hold status at 5 Hz and keeps the first time it is on."""
+class _Watcher(threading.Thread):
+    """A background thread that watches the stack during one trial until ``stop``."""
 
     def __init__(self, stack: Stack) -> None:
         super().__init__(daemon=True)
         self._stack = stack
         self._stop_event = threading.Event()
-        self.t_on: float | None = None
-        self.status: OperatorHoldStatus | None = None
-
-    def run(self) -> None:
-        while not self._stop_event.is_set() and self.t_on is None:
-            try:
-                status = self._stack.hold_status()
-            except Exception:
-                status = None
-            if status is not None and status.on:
-                self.t_on, self.status = time.time(), status
-            self._stop_event.wait(0.2)
 
     def stop(self) -> None:
         self._stop_event.set()
         self.join(timeout=2.0)
 
 
-class Injector(threading.Thread):
-    """Breaks the pick at the trial's moment by moving the target in the sim.
+class HoldWatcher(_Watcher):
+    """Polls the coordinator's hold status at 5 Hz and keeps the first time it is on."""
+
+    t_on: float | None = None
+    status: OperatorHoldStatus | None = None
+
+    def run(self) -> None:
+        while self.t_on is None and not self._stop_event.wait(0.2):
+            with contextlib.suppress(Exception):
+                status = self._stack.hold_status()
+                if status is not None and status.on:
+                    self.t_on, self.status = time.time(), status
+
+
+class Injector(_Watcher):
+    """Breaks the pick at the trial's moment by moving the target with the sim's move_object.
 
     Moved and removed: when the tool tip first comes within 12 cm of the
     object, which is when the arm reaches the pregrasp pose and turns down.
-    Missed grasp: in the last 3 cm of that descent, the object shifts sideways
-    (across the jaws' travel) so the jaws close on air.
+    Missed grasp: in the last 3 cm of that descent, the object shifts
+    ``miss_offset`` metres sideways (across the jaws' travel) so the jaws
+    close on air.
     """
 
-    def __init__(self, stack: Stack, case: Case, target: str, miss_offset: float) -> None:
-        super().__init__(daemon=True)
-        self._stack = stack
+    def __init__(self, stack: Stack, case: Case, miss_offset: float) -> None:
+        super().__init__(stack)
         self._case = case
-        self._target = target
         self._miss_offset = miss_offset
-        self._stop_event = threading.Event()
         self.t_inject: float | None = None
         self.detail = ""
-        self.lowest_tcp_z: float | None = None
+        self.lowest_tcp_z = math.inf  # world z, metres
 
     def run(self) -> None:
         bodies = self._stack.bodies
         approached = False
         while not self._stop_event.wait(0.05):
-            tcp, target, speed = bodies.tcp(), bodies.position(self._target), bodies.tcp_speed()
+            tcp, target, speed = bodies.tcp(), bodies.position(TARGET), bodies.tcp_speed()
             if tcp is None or target is None:
                 continue
-            self.lowest_tcp_z = (
-                tcp[2] if self.lowest_tcp_z is None else min(self.lowest_tcp_z, tcp[2])
-            )
+            self.lowest_tcp_z = min(self.lowest_tcp_z, float(tcp[2]))
             if self._case is Case.CLEAN or self.t_inject is not None:
                 continue
             distance = float(np.linalg.norm(tcp - target))
@@ -325,108 +297,93 @@ class Injector(threading.Thread):
             if not approached:
                 continue
             if self._case is Case.MOVED:
-                x, y = MOVE_TO[self._target]
+                x, y = MOVE_TO
                 where = f"({target[0]:.2f}, {target[1]:.2f}) to ({x:.2f}, {y:.2f})"
-                self._move(x, y, f"moved from {where} as the arm reached the pregrasp pose")
+                self._move(x, y, f"moved from {where} at the pregrasp pose")
             elif self._case is Case.REMOVED:
                 x, y = target[0] + REMOVE_DISTANCE, target[1]
-                self._move(
-                    x, y, f"removed to ({x:.2f}, {y:.2f}) as the arm reached the pregrasp pose"
-                )
+                self._move(x, y, f"removed to ({x:.2f}, {y:.2f}) at the pregrasp pose")
             # Missed grasp: the descent ends 1-2 cm from the object's centre and
             # the jaws close right after, so shift it in the last few centimetres,
             # or as soon as the tip stops short of that.
             elif distance < 0.03 or (distance < 0.05 and speed is not None and speed < 0.02):
                 x, y = self._sideways(target)
-                self._move(
-                    x,
-                    y,
-                    f"shifted {self._miss_offset * 100:.0f} cm sideways to ({x:.2f}, {y:.2f}) "
-                    f"with the tool tip {distance * 100:.1f} cm from it, jaws still open",
-                )
+                shift = f"shifted {self._miss_offset * 100:.0f} cm sideways to ({x:.2f}, {y:.2f})"
+                self._move(x, y, f"{shift} with the tool tip {distance * 100:.1f} cm from it")
 
     def _sideways(self, target: NDArray[np.float64]) -> tuple[float, float]:
         """A spot ``miss_offset`` away along the gripper's x axis, on the side with more room."""
-        axes = self._stack.bodies.gripper_axes()
+        bodies = self._stack.bodies
+        axes = bodies.gripper_axes()
         assert axes is not None
-        across = np.array([axes[0, 0], axes[1, 0]])
-        across /= max(float(np.linalg.norm(across)), 1e-9)
-        others = [
-            p[:2]
-            for name in OBJECTS
-            if name != self._target and (p := self._stack.bodies.position(name)) is not None
-        ]
+        across = axes[:2, 0] / max(float(np.linalg.norm(axes[:2, 0])), 1e-9)
+        others = [p[:2] for n in OBJECTS if n != TARGET and (p := bodies.position(n)) is not None]
 
         def room(spot: NDArray[np.float64]) -> float:
+            # Distance to the nearest other object; a spot off the table loses by 10 m.
             on_table = TABLE_X[0] <= spot[0] <= TABLE_X[1] and TABLE_Y[0] <= spot[1] <= TABLE_Y[1]
-            return (min(float(np.linalg.norm(spot - o)) for o in others) if others else 1.0) - (
-                0 if on_table else 10
-            )
+            nearest = min((float(np.linalg.norm(spot - o)) for o in others), default=1.0)
+            return nearest - (0 if on_table else 10)
 
-        spots = [target[:2] + sign * self._miss_offset * across for sign in (1.0, -1.0)]
-        best = max(spots, key=room)
+        best = max((target[:2] + sign * self._miss_offset * across for sign in (1, -1)), key=room)
         return float(best[0]), float(best[1])
 
     def _move(self, x: float, y: float, detail: str) -> None:
-        moved = self._stack.call("MujocoSimModule", "move_object", self._target, x, y)
+        moved = self._stack.call("MujocoSimModule", "move_object", TARGET, x, y)
         self.t_inject = time.time()
         self.detail = detail if moved else f"move_object refused: {detail}"
 
-    def stop(self) -> None:
-        self._stop_event.set()
-        self.join(timeout=2.0)
-
 
 class Runner:
-    def __init__(self, args: argparse.Namespace, out_dir: Path) -> None:
-        self.args = args
+    """Runs the trials on one stack, restarting it when a trial or the scene reset breaks."""
+
+    def __init__(self, decision_maker: str, out_dir: Path) -> None:
+        self.dm_name = decision_maker
         self.out_dir = out_dir
-        self.dm_name = args.decision_maker
-        self.fallback_note = ""
-        self.stack = Stack(with_agent=self.dm_name == "llm", log_dir=out_dir / "stack")
+        self.stack = Stack(with_agent=decision_maker == "llm", log_dir=out_dir / "stack")
         self.spawn: dict[str, NDArray[np.float64]] = {}
         self.trials: list[Trial] = []
-        self.date = datetime.now().strftime("%Y-%m-%d")
-
-    # Stack and scene
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True
+        )
+        self.run_facts = f"Commit {sha.stdout.strip()}, target {TARGET} asked for as {PROMPT!r}."
+        self.stem = out_dir / f"handoff_validation_{datetime.now():%Y-%m-%d}"
 
     def start_stack(self) -> None:
-        print("starting the stack", flush=True)
         self.stack.start()
         if not self.spawn:
-            self.spawn = {
-                name: p for name in OBJECTS if (p := self.stack.bodies.position(name)) is not None
-            }
+            bodies = self.stack.bodies
+            self.spawn = {n: p for n in OBJECTS if (p := bodies.position(n)) is not None}
         # The first scans after start-up can miss the camera's pose and find nothing.
         deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
-            scan = self.stack.call("PickAndPlaceModule", "scan_objects", [self.args.prompt])
-            if scan.metadata.get("objects"):
+        while not self.stack.scan_objects([PROMPT]).metadata.get("objects"):
+            if time.monotonic() > deadline:
                 break
             time.sleep(2.0)
-        if self.stack.with_agent:
-            self._check_agent()
+        if self.stack.agent is not None:
+            self._check_agent(self.stack.agent)
 
     def restart_stack(self, why: str) -> None:
-        print(f"restarting the stack: {why}", flush=True)
+        logger.warning(f"restarting the stack: {why}")
         self.stack.stop()
         time.sleep(5.0)
         self.stack = Stack(with_agent=self.dm_name == "llm", log_dir=self.out_dir / "stack")
         self.start_stack()
 
-    def _check_agent(self) -> None:
-        """Fail over to scripted when the agent cannot see the tools or the model does not answer."""
-        tools = self.stack.mcp_tools()
-        missing = {"scan_objects", "pick_object", "request_operator"} - set(tools)
-        error = f"the MCP server lacks {sorted(missing)}" if missing else ""
-        if not error:
-            assert self.stack.agent is not None
-            reply = self.stack.agent.ask("Reply with the single word ready. Do not call any tools.")
-            if not reply or "failed with" in reply.lower():
-                error = f"the model did not answer: {reply[:300] or 'no reply in 120 s'}"
-        print(f"agent check: tools {tools}; {error or 'model answered'}", flush=True)
-        if error:
-            self.fallback_note = f"LLM run could not start ({error}); used scripted."
+    def _check_agent(self, agent: AgentDecisionMaker) -> None:
+        """Fall back to scripted when the agent cannot see the tools or the model does not answer."""
+        adapter = McpAdapter(self.stack.call("McpServer", "mcp_url"))
+        missing = {"scan_objects", "pick_object", "request_operator"}
+        missing -= {tool["name"] for tool in adapter.list_tools()}
+        reply = (
+            "" if missing else agent.ask("Reply with the single word ready. Do not call any tools.")
+        )
+        if missing or not reply or "failed with" in reply.lower():
+            why = (
+                f"tools missing: {sorted(missing)}" if missing else f"model reply: {reply[:300]!r}"
+            )
+            logger.warning(f"LLM run could not start ({why}); using scripted")
+            self.run_facts += f" LLM run could not start ({why}); used scripted."
             self.dm_name = "scripted"
 
     def decision_maker(self) -> DecisionMaker:
@@ -434,36 +391,35 @@ class Runner:
             try:
                 self.stack.restart_agent()
             except Exception as exc:
-                print(f"agent restart failed, keeping the old one: {exc}", flush=True)
+                logger.warning(f"agent restart failed, keeping the old one: {exc}")
             return self.stack.agent
-        skills = RpcPickSkills(self.stack)
-        return ScriptedDecisionMaker(skills, skills, pick_timeout_s=self.args.pick_timeout)
+        return ScriptedDecisionMaker(self.stack)
 
-    def put_back(self, trial: Trial | None, lowest_tcp_z: float | None) -> None:
+    def put_back(self, trial: Trial | None = None, lowest_tcp_z: float = math.inf) -> None:
         """Release the hold, put a held object down, send the arm home, and put the objects back.
 
         The sim's own reset is not used: its "home" keyframe puts the scene's
         loose objects at the world origin, inside the robot's pedestal, and
         they fly off. Sending the arm home through the planner also keeps the
         coordinator's last command where the arm is.
+
+        Args:
+            trial: The trial just run; a complete pick's object is put down with place_at.
+            lowest_tcp_z: Lowest tool-tip height in that trial, world z, metres (the grasp height).
         """
         call = self.stack.call
         status = self.stack.hold_status()
         if status is not None and status.on:
             call("ControlCoordinator", "task_invoke", OPERATOR_HOLD_TASK_NAME, "acknowledge")
-        if trial is not None and trial.attempt.pick_message.startswith("Pick complete"):
-            x, y = self.spawn[self.args.target][:2]
-            z = (lowest_tcp_z or 0.17) + 0.01
-            placed = call(
-                "PickAndPlaceModule", "place_at", float(x), float(y), float(z), timeout=300.0
-            )
+        if trial is not None and trial.attempt.pick_message.startswith(PICK_COMPLETE):
+            x, y = self.spawn[TARGET][:2]
+            z = (lowest_tcp_z if lowest_tcp_z < math.inf else 0.17) + 0.01
+            placed = call("PickAndPlaceModule", "place_at", float(x), float(y), z, timeout=300.0)
             if not str(placed).startswith("Place complete"):
-                self.restart_stack(f"place_at did not finish: {placed}")
-                return
+                return self.restart_stack(f"place_at did not finish: {placed}")
         home = call("ManipulationSkills", "go_init", timeout=120.0)
         if str(home).startswith(("No plan", "Execution ended")):
-            self.restart_stack(f"go_init: {home}")
-            return
+            return self.restart_stack(f"go_init: {home}")
         call("ManipulationModule", "set_gripper_position", 1.0, None)
         for name, spawn in self.spawn.items():
             now = self.stack.bodies.position(name)
@@ -471,48 +427,38 @@ class Runner:
                 call("MujocoSimModule", "move_object", name, *map(float, spawn))
         time.sleep(2.0)
 
-    # Trials
-
-    def run_trial(self, number: int, case: Case) -> Trial:
-        target = self.args.target
-        injected_failures = sum(t.case is case for t in self.trials)
-        miss_offset = MISS_OFFSETS[injected_failures % len(MISS_OFFSETS)]
+    def run_trial(self, number: int, case: Case) -> tuple[Trial, float]:
+        """One trial, and the lowest tool-tip height in it (world z, metres)."""
+        miss_offset = MISS_OFFSETS[sum(t.case is case for t in self.trials) % len(MISS_OFFSETS)]
         dm = self.decision_maker()
         watcher = HoldWatcher(self.stack)
-        injector = Injector(self.stack, case, target, miss_offset)
-        t_start = time.time()
+        injector = Injector(self.stack, case, miss_offset)
         watcher.start()
         injector.start()
-        note = ""
+        notes = []
         try:
-            attempt = dm.attempt(self.args.prompt)
+            attempt = dm.attempt(PROMPT)
         except Exception as exc:
-            attempt = Attempt(log=[f"decision-maker raised {type(exc).__name__}: {exc}"])
-            note = f"decision-maker raised {type(exc).__name__}: {exc}"
-        if attempt.requested:
+            attempt = Attempt()
+            notes.append(f"decision-maker raised {type(exc).__name__}: {exc}")
+        if attempt.requested:  # give the coordinator 10 s to show the hold on
             deadline = time.time() + 10.0
             while watcher.t_on is None and time.time() < deadline:
                 time.sleep(0.1)
         injector.stop()
         watcher.stop()
-        if time.time() - t_start > self.args.trial_limit:
-            note = (
-                note + " " if note else ""
-            ) + f"trial ran {time.time() - t_start:.0f} s, over the limit"
-        target_now = self.stack.bodies.position(target)
-        tcp = self.stack.bodies.tcp()
+        target, tcp = self.stack.bodies.position(TARGET), self.stack.bodies.tcp()
+        # Held: the object is 3 cm above where it started and within 8 cm of the tool tip.
         held = bool(
-            target_now is not None
+            target is not None
             and tcp is not None
-            and target_now[2] > self.spawn[target][2] + 0.03
-            and np.linalg.norm(target_now - tcp) < 0.08
+            and target[2] > self.spawn[TARGET][2] + 0.03
+            and np.linalg.norm(target - tcp) < 0.08
         )
         if case is not Case.CLEAN and injector.t_inject is None:
-            note = (note + " " if note else "") + "the injection never fired"
+            notes.append("the injection never fired")
         if attempt.requested and watcher.t_on is None:
-            note = (
-                note + " " if note else ""
-            ) + "asked for the hold but the coordinator never showed it on"
+            notes.append("asked for the hold but the coordinator never showed it on")
         status = watcher.status
         trial = Trial(
             number=number,
@@ -520,71 +466,33 @@ class Runner:
             decision_maker=dm.name,
             held=held,
             attempt=attempt,
-            t_start=t_start,
             t_inject=injector.t_inject,
             t_hold=watcher.t_on,
             route=status.route if status else "",
             hold_reason=status.reason if status else "",
             injection=injector.detail,
-            note=note,
+            note="; ".join(notes),
         )
-        self._lowest_tcp_z = injector.lowest_tcp_z
-        return trial
+        return trial, injector.lowest_tcp_z
 
-    def run(self) -> None:
-        plan = list(TRIAL_PLAN)[: self.args.trials]
-        if self.args.cases:
-            plan = [Case(c) for c in self.args.cases.split(",")]
+    def run(self, plan: Sequence[Case]) -> None:
         self.start_stack()
-        self.put_back(None, None)
+        self.put_back()
         for number, case in enumerate(plan, start=1):
-            print(f"trial {number}/{len(plan)}: {case.value}", flush=True)
+            logger.info(f"trial {number}/{len(plan)}: {case.value}")
             try:
-                trial = self.run_trial(number, case)
+                trial, lowest_tcp_z = self.run_trial(number, case)
             except Exception as exc:
-                print(f"trial {number} crashed: {exc}", flush=True)
                 self.restart_stack(f"trial {number} crashed: {exc}")
                 continue
             self.trials.append(trial)
-            print(
-                f"  held={trial.held} hold={'on' if trial.t_hold else 'off'} "
-                f"route={trial.route} pick={trial.attempt.pick_message[:120]!r} "
-                f"stuck->hold={trial.stuck_to_hold_s} inject->hold={trial.inject_to_hold_s}",
-                flush=True,
-            )
-            self.write_report()
+            logger.info(write_report(self.trials, self.stem, self.run_facts))
             if number < len(plan):
                 try:
-                    self.put_back(trial, self._lowest_tcp_z)
+                    self.put_back(trial, lowest_tcp_z)
                 except Exception as exc:
                     self.restart_stack(f"putting the scene back failed: {exc}")
-        self.write_report()
-        self.stack.stop()
-
-    def write_report(self) -> None:
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
-        ).stdout.strip()
-        used = sorted({t.decision_maker for t in self.trials}) or [self.dm_name]
-        header = {
-            "Date": self.date,
-            "Commit": sha,
-            "Blueprint": BLUEPRINT
-            + (" + McpServer + McpClient (default model)" if "llm" in used else ""),
-            "Decision-maker": ", ".join(used),
-            "Target": f"{self.args.target} (asked for as {self.args.prompt!r})",
-            "Trials": str(len(self.trials)),
-            "Stack log": str(self.out_dir / "stack"),
-        }
-        if self.fallback_note:
-            header["Note"] = self.fallback_note
-        stem = self.out_dir / f"handoff_validation_{self.date}"
-        stem.with_suffix(".md").write_text(render_markdown(self.trials, header))
-        stem.with_suffix(".csv").write_text(render_csv(self.trials))
-        for check in summarize(self.trials):
-            print(
-                f"  {check.name}: {check.value} ({'pass' if check.passed else 'fail'})", flush=True
-            )
+        write_report(self.trials, self.stem, self.run_facts)
 
 
 def main() -> None:
@@ -592,31 +500,19 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--decision-maker", choices=("scripted", "llm"), default="scripted")
-    parser.add_argument("--trials", type=int, default=len(TRIAL_PLAN))
     parser.add_argument("--cases", default="", help="comma-separated cases instead of the plan")
-    parser.add_argument("--target", default="apple", help="sim body to pick")
-    parser.add_argument(
-        "--prompt",
-        default="red ball",
-        help="what to ask for; the detector finds the sim's apple as a red ball, not an apple",
-    )
-    parser.add_argument("--pick-timeout", type=float, default=180.0, help="seconds")
-    parser.add_argument("--trial-limit", type=float, default=300.0, help="seconds")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
-
     load_dotenv()
     if args.decision_maker == "llm" and not os.environ.get("OPENAI_API_KEY"):
-        print("OPENAI_API_KEY is not set; using the scripted decision-maker", flush=True)
+        logger.warning("OPENAI_API_KEY is not set; using the scripted decision-maker")
         args.decision_maker = "scripted"
-    out_dir = args.out or Path.home() / "handoff-validation" / datetime.now().strftime(
-        "%Y%m%d-%H%M%S"
-    )
+    out_dir = args.out or Path.home() / "handoff-validation" / f"{datetime.now():%Y%m%d-%H%M%S}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"output: {out_dir}", flush=True)
-    runner = Runner(args, out_dir)
+    logger.info(f"output: {out_dir}")
+    runner = Runner(args.decision_maker, out_dir)
     try:
-        runner.run()
+        runner.run([Case(c) for c in args.cases.split(",")] if args.cases else TRIAL_PLAN)
     finally:
         runner.stack.stop()
 
