@@ -18,7 +18,8 @@ The same modules as xarm-perception-sim, plus the operator hold task, the
 request_operator skill an agent calls to ask for the hold, on/off streams for
 the hold and the e-stop, the operator event log (OperatorLog), a point cloud of
 the scene on ``scene_pointcloud`` and the arm's URDF, so a Desktop page can
-show the arm and the scene and stop or hold it.
+show the arm and the scene and stop or hold it. Picks try GraspGenX's grasps
+first and the heuristic grasp module's after them.
 
 ``hybrid_teleop_sim_collect`` is hybrid-teleop-sim plus a collection session
 (wrist camera and joint positions, recorded from launch to
@@ -51,6 +52,7 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import FeatureSpec
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
@@ -61,6 +63,10 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
+from dimos.robot.manipulators.xarm.blueprints.grasp import (
+    XARM_GRASP_FRAME_TO_TCP,
+    XARM_GRIPPER_SWEEP_VOLUME,
+)
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     XARM_HEURISTIC_AIM,
@@ -183,6 +189,12 @@ hybrid_teleop_sim = autoconnect(
     TeleopSkills.blueprint(),
     OperatorLog.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
+    GraspGenXModule.blueprint(
+        gripper=XARM_GRIPPER_SWEEP_VOLUME,
+        grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+        # Return every sample: the pick's contact check chooses among them.
+        max_candidates=500,
+    ),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
     # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
     # world-frame points at 5 Hz. Renamed so they do not mix with the object
@@ -224,6 +236,11 @@ hybrid_teleop_sim = autoconnect(
     # Serves the URDF and its meshes; the planner already puts the links on tf.
     UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
     RerunBridgeModule.blueprint(),
+).remappings(
+    [
+        (PickAndPlaceModule, "_grasp_generator", GraspGenXModule),
+        (PickAndPlaceModule, "_fallback_grasp_generator", HeuristicGraspModule),
+    ]
 )
 
 hybrid_teleop_sim_collect = autoconnect(
