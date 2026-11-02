@@ -493,8 +493,9 @@ pub struct Config {
     pub solve_estimate_speed_power: f64,
     pub solve_estimate_speed_floor_mps: f64,
     /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
-    /// once `estimate` scans have passed since its dispatch, an upper bound on its cost in scans fixed before each piece
-    /// of work starts, and the search thread takes no other search until then, so which searches run and when their
+    /// once `estimate` scans have passed since its dispatch and the data time since has reached the estimate's seconds (an
+    /// early scan cannot end a hold before the data time its estimate spans), an upper bound on its cost fixed before
+    /// each piece of work starts, and the search thread takes no other search until then, so which searches run and when their
     /// closures land is the same however fast the machine is; one still running then is an overshoot (logged loudly,
     /// counted) and lands as soon as it finishes. At dispatch (seconds): the scan-context lookup (the bench curve
     /// `lookup_s + lookup_per_keyframe_s * keyframes`, none for a retry) + `build_per_point_s * (source + target points)`
@@ -502,9 +503,10 @@ pub struct Config {
     /// the points the voxelized source keyframe's and the single target submap's keyframes' (before merging); the
     /// extension adds `extension_overhead_s` as it starts and `extension_cloud_s` before each cloud's round. Seconds are
     /// turned into scans by the median of the newest 50 scan periods (recorded times), rounded up. The coefficients are
-    /// the largest of six recordings' (huge, huge L1, gir1, gir2, small L1, small Mid-360; Mac) 95th percentiles of each
-    /// step's seconds per its feature, the lowest percentile at which the whole estimate bounds >= 99% of every
-    /// recording's searches.
+    /// one joint fit of the whole search's seconds over six recordings' Mac searches (huge, huge L1, gir1, gir2, small
+    /// L1, small Mid-360): the cheapest nonnegative ones (each recording's mean estimate summed) bounding every search
+    /// but each recording's hardest 1% (re-chosen over 3 refits), so >= 99% of each recording's searches are under it;
+    /// the fit put no weight on the single ICP's term (the build term's points carry it), `icp_s` 0.
     pub closure_search_hold_enabled: bool,
     pub closure_search_estimate_lookup_s: f64,
     pub closure_search_estimate_lookup_per_keyframe_s: f64,
@@ -726,12 +728,12 @@ impl Default for Config {
             closure_search_hold_enabled: true,
             closure_search_estimate_lookup_s: 610e-6,
             closure_search_estimate_lookup_per_keyframe_s: 5.7e-9,
-            closure_search_estimate_build_per_point_s: 7.894e-7,
-            closure_search_estimate_degeneracy_per_point_s: 2.533e-6,
-            closure_search_estimate_icp_s: 6.913e-8,
-            closure_search_estimate_gates_s: 0.0122,
-            closure_search_estimate_extension_overhead_s: 0.02828,
-            closure_search_estimate_extension_cloud_s: 0.2604,
+            closure_search_estimate_build_per_point_s: 4.515e-6,
+            closure_search_estimate_degeneracy_per_point_s: 8.881e-6,
+            closure_search_estimate_icp_s: 0.0,
+            closure_search_estimate_gates_s: 0.05111,
+            closure_search_estimate_extension_overhead_s: 0.1103,
+            closure_search_estimate_extension_cloud_s: 0.09500,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,

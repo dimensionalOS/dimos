@@ -145,7 +145,7 @@ impl GscPgo {
             progress,
             dispatch_scan: self.advancing_scans,
             dispatch_scans_seen: self.scans_seen,
-            dispatch_time: self.scan_time,
+            dispatch_time: self.newest_scan_time(),
             estimate_s,
             scan_period_s,
         });
@@ -160,7 +160,12 @@ impl GscPgo {
         loop {
             let seen = running.progress.snapshot();
             let (rounds, done) = seen;
-            if hold && self.advancing_scans < running.dispatch_scan + running.estimate_scans(rounds, &self.config) {
+            // held until both its scans and the data time its seconds span have passed (an early scan cannot end it)
+            if hold
+                && (self.advancing_scans < running.dispatch_scan + running.estimate_scans(rounds, &self.config)
+                    || self.newest_scan_time() - running.dispatch_time
+                        < running.estimate_s(rounds, &self.config))
+            {
                 return false;
             }
             if done {
@@ -187,11 +192,14 @@ impl GscPgo {
         } else {
             0.0
         } + diag.cost_search_s;
-        // the data time from dispatch to the scan the estimate ends at (none when the data ended first)
+        // the data time from dispatch to the first scan its hold could end at, its scans and seconds both passed (none
+        // when the data ended first)
         let spanned = self
             .search_scan_times
-            .get(estimate_scans - 1)
-            .map(|due_time| due_time - dispatch_time);
+            .iter()
+            .skip(estimate_scans - 1)
+            .map(|time| time - dispatch_time)
+            .find(|spanned| *spanned >= estimate_s);
         let overshoot = self.config.closure_search_hold_enabled
             && spanned.is_some_and(|spanned| seconds > spanned);
         diag.scan_index_dispatched = dispatch_scan;
@@ -245,6 +253,13 @@ impl GscPgo {
                 * target.log2()
                 * config.closure_icp_max_iterations as f64
             + config.closure_search_estimate_gates_s
+    }
+    /// The newest advancing scan's recorded time (`advancing_scans`; -inf before any).
+    fn newest_scan_time(&self) -> f64 {
+        self.recent_scan_times
+            .back()
+            .copied()
+            .unwrap_or(f64::NEG_INFINITY)
     }
     /// The median of the newest 50 scan periods by recorded time (NaN before two scans).
     fn scan_period_s(&self) -> f64 {
