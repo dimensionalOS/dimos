@@ -2413,11 +2413,11 @@ impl GscPgo {
             },
         })
     }
-    /// Search for a closure at the newest keyframe as a lockstep replay does: under the deterministic schedule
-    /// (`closure_search_hold_enabled`) on the search thread, waiting for a search only once its estimate has passed
-    /// (`step_closure_search`); else all on this thread.
+    /// Search for a closure at the newest keyframe as a lockstep replay does (`step_closure_search`): deterministic, it
+    /// waits for a job only once its hold has passed; fast, it waits for none, the searches landing as they finish, as
+    /// live (the keyframe thread only dispatches).
     pub fn search_for_closure_pairs(&mut self) {
-        self.step_closure_search(true);
+        self.step_closure_search(self.config.deterministic());
     }
     /// Apply a `ClosureSearch`'s result: record its diagnostics and commit the closure it accepted.
     pub fn finish_closure_search(&mut self, result: ClosureSearchResult) {

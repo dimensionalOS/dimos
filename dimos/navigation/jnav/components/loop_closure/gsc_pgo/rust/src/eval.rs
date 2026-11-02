@@ -951,7 +951,18 @@ fn run() -> Result<(), String> {
             .sum::<f64>()
             + finish_s
     };
-    let speed = Speed::new(&pgo, data_duration_s, runtime_s, replay_solve_wait_s);
+    let keyframe_thread_s = recorder
+        .scan_thread_ms
+        .iter()
+        .map(|&ms| ms as f64 / 1e3)
+        .sum::<f64>();
+    let speed = Speed::new(
+        &pgo,
+        data_duration_s,
+        keyframe_thread_s,
+        runtime_s,
+        replay_solve_wait_s,
+    );
     let (odometry_drift, odometry_drift_measured) = pgo.odometry_error_estimate_for_next_run();
     let output = EvalOutput {
         odometry_drift,
@@ -1018,13 +1029,12 @@ fn run() -> Result<(), String> {
         .map(|(part, seconds)| format!("{part} {seconds:.1}s"))
         .collect();
     eprintln!(
-        "pgo-eval: keyframe thread {:.1}x real ({:.1}s): scan work {:.1}x ({:.1}s), closure search {:.1}x ({:.1}s: {})",
+        "pgo-eval: keyframe thread {:.1}x real ({:.1}s measured, waits left out; scan work {:.1}s of it); closure search workers {:.1}s of jobs ({:.1}x real summed over the pools: {})",
         speed.keyframe_thread.x_real,
         speed.keyframe_thread.seconds,
-        speed.scan.x_real,
         speed.scan.seconds,
-        speed.search.x_real,
-        speed.search.seconds,
+        speed.search_workers.seconds,
+        speed.search_workers.x_real,
         parts.join(", "),
     );
     eprintln!(
@@ -1148,16 +1158,17 @@ impl Pace {
     }
 }
 
-/// The module's speed by thread. The keyframe thread does the per-scan work (`scan`: drop-reseen, aggregation,
-/// voxelizing, the keyframe and its scan-context descriptor, plus the degeneracy check) and the closure search (`search`:
-/// the scan-context lookup, proposals, the loop-overlap pressure, ICP and extension); `keyframe_thread` is both, the
-/// headline, never counting a solve. The solver is its own thread live: its solves' seconds, and each solve's lag, the
+/// The module's speed by thread. `keyframe_thread`, the headline, is the keyframe thread's measured work (every scan's,
+/// waits left out): the per-scan work (`scan`: drop-reseen, aggregation, voxelizing, the keyframe and its scan-context
+/// descriptor, plus the degeneracy check), the scan-context lookup and proposals, and dispatching the jobs, never a
+/// solve. `search_workers` is the closure search's job seconds (the fast-match and verification pools, the pressure),
+/// summed over the jobs: off the keyframe thread, so over its pools' threads it can pass the wall time. The solver is its own thread live: its solves' seconds, and each solve's lag, the
 /// keyframes and data seconds from its dispatch to the first keyframe that arrives after it would have finished live.
 /// `replay_solve_wait_s` is what this deterministic replay spent waiting for solves (not a cost live).
 #[derive(Serialize)]
 struct Speed {
     scan: Pace,
-    search: Pace,
+    search_workers: Pace,
     keyframe_thread: Pace,
     /// The search's parts in seconds: scan-context lookup, the rest of proposing, pressure checks, single ICP, extension
     /// and everything else a search does (submaps, gates, likelihoods).
@@ -1186,7 +1197,13 @@ fn median(mut values: Vec<f64>) -> f64 {
 }
 
 impl Speed {
-    fn new(pgo: &GscPgo, data_s: f64, replay_wall_s: f64, replay_solve_wait_s: f64) -> Speed {
+    fn new(
+        pgo: &GscPgo,
+        data_s: f64,
+        keyframe_thread_s: f64,
+        replay_wall_s: f64,
+        replay_solve_wait_s: f64,
+    ) -> Speed {
         let stage: BTreeMap<&str, f64> = pgo.stage_seconds().into_iter().collect();
         let at = |name: &str| stage.get(name).copied().unwrap_or(0.0);
         let scan = at("scan") + at("degeneracy");
@@ -1213,8 +1230,8 @@ impl Speed {
         let solve_s: Vec<f64> = pgo.solve_records().iter().map(|r| r.2).collect();
         Speed {
             scan: Pace::of(scan, data_s),
-            search: Pace::of(search, data_s),
-            keyframe_thread: Pace::of(scan + search, data_s),
+            search_workers: Pace::of(search, data_s),
+            keyframe_thread: Pace::of(keyframe_thread_s, data_s),
             search_parts,
             solves: solve_s.len(),
             solve_median_s: median(solve_s.clone()),
