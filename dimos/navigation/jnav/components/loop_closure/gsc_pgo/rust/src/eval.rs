@@ -54,7 +54,7 @@ use memory2::{for_each_scan, read_odometry, OdomRow, Rigid};
 struct EvalConfig {
     #[serde(flatten)]
     pgo: PgoConfig,
-    /// `--live`: scans waiting past this many are dropped, oldest first (the module's max_scan_queue; <= 0 = unbounded).
+    /// `--live`: once more than this many scans wait, all but the newest are dropped (the module's max_scan_queue; <= 0 = unbounded).
     max_scan_queue: i32,
     /// Multiplies every stated odometry_error_estimate_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
     #[serde(alias = "odom_drift_scale")]
@@ -173,7 +173,7 @@ struct Args {
     /// Multiplies every odometry position, for an odometry that reads distance short or long (Go2 leg odometry ~0.76).
     odom_scale: f64,
     /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
-    /// max_scan_queue (oldest dropped when full), and the closure search and solves run in the background.
+    /// max_scan_queue (all but the newest dropped when it overflows), and the closure search and solves run in the background.
     live: bool,
     /// World-frame position fixes to feed as the scans reach their times (`GscPgo::add_coordinate_factor`), a CSV with one
     /// fix per line: time, frame id, x, y, z, the 3x3 covariance row-major (m²), the sensor's offset in the body frame
@@ -687,7 +687,7 @@ fn run() -> Result<(), String> {
         Ok(Some((cloud_with_pose, latest.ts)))
     };
     if args.live {
-        // as the module runs: scans arrive at their recorded times into a queue of max_scan_queue (oldest dropped when
+        // as the module runs: scans arrive at their recorded times into a queue of max_scan_queue (all but the newest dropped when
         // full), the closure search runs on its own thread and only starts while no scans wait, solves adopt when done
         let queue = std::sync::Mutex::new((std::collections::VecDeque::new(), false));
         let arrived = std::sync::Condvar::new();
@@ -721,9 +721,12 @@ fn run() -> Result<(), String> {
                         }
                         let mut queued = queue.lock().expect("queue");
                         queued.0.push_back((cloud_with_pose, ts, Instant::now()));
-                        while live_queue > 0 && queued.0.len() > live_queue as usize {
-                            queued.0.pop_front();
-                            scans_dropped += 1;
+                        if live_queue > 0 && queued.0.len() > live_queue as usize {
+                            // overflow keeps only the newest scan, as the module does
+                            scans_dropped += queued.0.len() - 1;
+                            let newest = queued.0.pop_back();
+                            queued.0.clear();
+                            queued.0.extend(newest);
                         }
                         drop(queued);
                         arrived.notify_one();
