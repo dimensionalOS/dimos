@@ -143,6 +143,8 @@ class PGOConfig(NativeModuleConfig):
     # recent scan period). One joint upper-bound fit of whole Mac searches over six recordings (>= 99% of each one's
     # searches under; it put no weight on the single ICP's term, which the build term's points carry)
     closure_search_hold_enabled: bool = True
+    # Closure-search estimates turn seconds into scans by the median of the newest this many scan periods
+    scan_period_window: int = 50
     # Logical execution time: each keyframe's search is its own job (snapshot at its keyframe, lands at its own estimate),
     # run on this many worker threads in dispatch order; off = one held search at a time, later proposals going stale
     closure_search_let_enabled: bool = True

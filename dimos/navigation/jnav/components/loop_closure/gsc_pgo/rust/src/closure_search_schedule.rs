@@ -597,7 +597,7 @@ impl GscPgo {
             .copied()
             .unwrap_or(f64::NEG_INFINITY)
     }
-    /// The median of the newest 50 scan periods by recorded time (NaN before two scans).
+    /// The median of the newest `scan_period_window` scan periods by recorded time (NaN before two scans).
     fn scan_period_s(&self) -> f64 {
         let mut periods: Vec<f64> = self
             .recent_scan_times

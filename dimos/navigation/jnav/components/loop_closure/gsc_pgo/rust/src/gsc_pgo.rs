@@ -525,13 +525,16 @@ pub struct Config {
     /// + `degeneracy_per_point_s * source` + `icp_s * source * log2(target) * closure_icp_max_iterations` + `gates_s`,
     /// the points the voxelized source keyframe's and the single target submap's keyframes' (before merging); the
     /// extension adds `extension_overhead_s` as it starts and `extension_cloud_s` before each cloud's round. Seconds are
-    /// turned into scans by the median of the newest 50 scan periods (recorded times), rounded up. The coefficients are
+    /// turned into scans by the median of the newest `scan_period_window` scan periods (recorded times), rounded up. The coefficients are
     /// one joint fit of the whole search's seconds over six recordings' Mac searches (huge, huge L1, gir1, gir2, small
     /// L1, small Mid-360) on the point counts it reads at dispatch (small L1's and gir1's logged, the others' merged
     /// counts scaled by those logs' median dispatch / merged ratio for their sensor, 1.69 L1, 1.49 Mid-360): the cheapest nonnegative ones (each recording's mean estimate summed) bounding every search
     /// but each recording's hardest 1% (re-chosen over 3 refits), so >= 99% of each recording's searches are under it;
     /// the fit put no weight on the single ICP's term (the build term's points carry it), `icp_s` 0.
     pub closure_search_hold_enabled: bool,
+    /// The scan period closure-search estimates turn seconds into scans by: the median of the newest this many periods
+    /// between advancing scans (recorded times).
+    pub scan_period_window: usize,
     /// Logical execution time for closure searches (with `closure_search_hold_enabled`): every keyframe's search is its own
     /// job, started (its graph snapshot taken) at the keyframe it is proposed and landing at its own dispatch + estimate,
     /// whatever other searches are doing, run on `closure_search_workers` threads first-dispatched first; results land in
@@ -730,6 +733,7 @@ impl Config {
         ];
         for (name, count) in [
             ("closure_search_workers", self.closure_search_workers),
+            ("scan_period_window", self.scan_period_window),
             ("fast_match_workers", self.fast_match_workers),
             ("sc_buffer_size", self.sc_buffer_size),
             ("verification_workers", self.verification_workers),
@@ -794,6 +798,7 @@ impl Default for Config {
             solve_estimate_speed_power: 0.0,
             solve_estimate_speed_floor_mps: 0.05,
             closure_search_hold_enabled: true,
+            scan_period_window: 50,
             closure_search_let_enabled: true,
             closure_search_workers: 2,
             closure_search_two_stage: true,
@@ -911,7 +916,8 @@ pub struct GscPgo {
     /// Solves slower than the data their estimate spanned (`solve_hold_enabled`), and the newest scan's recorded time.
     pub(crate) solve_overshoots: usize,
     pub(crate) scan_time: f64,
-    /// The newest 51 scans' recorded times, for the scan period closure-search estimates are counted in, and the scans
+    /// The newest `scan_period_window` + 1 scans' recorded times, for the scan period closure-search estimates are
+    /// counted in, and the scans
     /// whose recorded time advanced past every earlier one's, the count closure-search schedules run on (a scan repeating
     /// an earlier stamp spans no data time).
     pub(crate) recent_scan_times: std::collections::VecDeque<f64>,
@@ -1943,7 +1949,7 @@ impl GscPgo {
             .is_none_or(|newest| pose.second > *newest)
         {
             self.advancing_scans += 1;
-            if self.recent_scan_times.len() > 50 {
+            if self.recent_scan_times.len() > self.config.scan_period_window {
                 self.recent_scan_times.pop_front();
             }
             self.recent_scan_times.push_back(pose.second);
