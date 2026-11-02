@@ -17,8 +17,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dimos.sim2.spec import Mount, SimulatedRobot, SimulatedSensor
-from dimos.sim2.view import open_view
+from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
+from dimos.sim2.view import open_view, sensor_frame
 from dimos.sim2.world_change import (
     OBJECT,
     ROBOT,
@@ -56,10 +56,10 @@ def description(tmp_path: Path) -> dict:
     return {
         "scene": str(scene),
         "simulated": [
-            SimulatedRobot("dog", robot, "base"),
-            SimulatedSensor("eye", "camera", Mount("head"), "dog"),
-            SimulatedSensor("imu", "imu", Mount("base"), "dog"),
-            SimulatedSensor("lidar", "lidar", Mount("head"), "dog"),
+            SimulatedRobot("dog", "base", robot),
+            SimulatedSensor("camera", "eye", robot_id="dog", body="head"),
+            SimulatedSensor("imu", "imu", robot_id="dog", body="base"),
+            SimulatedSensor("lidar", "lidar", robot_id="dog", body="head"),
         ],
     }
 
@@ -96,6 +96,7 @@ def test_the_view_is_posed_by_the_world_alone(description):
         np.array([5.0, 0.0, 1.0]), np.array([[0.0, 0.0, -1.0]]), 10.0
     )
     assert distance[0] == pytest.approx(1.0)
+    assert sensor_frame(description, "eye") == "dog/eye"
     assert view.render("dog/eye", 32, 24).shape == (24, 32, 3)
     view.close()
 
