@@ -34,7 +34,7 @@ from dimos.sim2.mujoco_backend import MujocoBackend
 from dimos.sim2.spec import Servo, SimulatedRobot, SimulatedSensor, resolve
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.world import compile_world
-from dimos.sim2.world_change import OBJECT, WorldMirror
+from dimos.sim2.world_observations import OBJECT, WorldMirror
 
 
 @pytest.fixture
@@ -143,9 +143,9 @@ class _Collect:
         self.frames: list[Any] = []
         self.events: list[tuple[int, int, Any]] = []
 
-    def offer(self, change: Any) -> None:
-        self.world.apply(change)
-        self.frames.append(change)
+    def offer(self, frame: Any) -> None:
+        self.world.apply(frame)
+        self.frames.append(frame)
         self.events += self.world.events
 
 
@@ -241,8 +241,8 @@ def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model,
     class _Controller(_Collect):
         """Acts only through actions, on each frame that waits for it, as a robot module does."""
 
-        def offer(self, change: Any) -> None:
-            super().offer(change)
+        def offer(self, frame: Any) -> None:
+            super().offer(frame)
             if self.world.has_event("dog", "events/act"):
                 tick_times.append(self.world.time)
                 asyncio.get_running_loop().call_later(
