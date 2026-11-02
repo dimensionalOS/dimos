@@ -33,11 +33,8 @@ const SNAP_SEARCH_RADIUS_M: f32 = 1.5;
 /// Max snap candidates tried when connecting the start.
 const MAX_SNAP_ATTEMPTS: usize = 64;
 
-/// On a blocked path, stop this far short of the last traversable point.
-const BEST_EFFORT_DISTANCE_M: f32 = 1.0;
-
 /// World-frame waypoints paired with the string-pulled cell path that produced
-/// them. The cell path is cached for later safe truncation.
+/// them. The cell path is cached so a warp can re-key along it.
 type PlannedPath = (Vec<(f32, f32, f32)>, Vec<VoxelKey>);
 
 /// Surface cells near the pose, nearest first in xy.
@@ -218,96 +215,30 @@ pub fn plan(
     Some((waypoints, path_cells))
 }
 
-/// Re-validate a cached path against the current surface. Returns the route
-/// ahead up to a standoff short of the first blockage, or empty when nothing
-/// ahead is safe, which the follower reads as a stop.
-pub fn truncate_to_safe(
+/// Whether each leg of `waypoints` walks over traversable surface (the chord walk
+/// at surface resolution), each waypoint snapped to its surface cell.
+pub fn legs_traversable(
     plg: &PlannerGraph,
-    cached: &[VoxelKey],
-    start_pose: (f32, f32, f32),
+    waypoints: &[(f32, f32, f32)],
     config: &Config,
-) -> Vec<(f32, f32, f32)> {
-    if cached.len() < 2 {
-        return Vec::new();
-    }
+) -> Vec<bool> {
     let voxel_size = config.voxel_size;
-    let step_cells = config.step_cells();
     let wall_cost = WallCost {
         clearance_m: config.wall_clearance_m,
         buffer_m: config.wall_buffer_m,
         buffer_weight: config.wall_buffer_weight,
         voxel_size,
     };
-
-    // The cached path's head is the stale original start. Resume from where the
-    // robot sits on it so the follower is pulled forward, never back to it.
-    let resume = resume_segment(cached, start_pose, voxel_size);
-
-    // Walk each chord ahead at surface resolution. On a blockage, keep up to the
-    // last traversable cell so the path ends at the obstacle, not the prior anchor.
-    let mut waypoints = vec![start_pose];
-    let mut blocked = false;
-    for j in resume..cached.len() - 1 {
-        let (last_safe, cut) = last_safe_on_chord(
-            plg,
-            cached[j],
-            cached[j + 1],
-            step_cells,
-            &wall_cost,
-            voxel_size,
-        );
-        if cut {
-            if let Some(p) = last_safe {
-                if waypoints.last() != Some(&p) {
-                    waypoints.push(p);
-                }
-            }
-            blocked = true;
-            break;
-        }
-        let (ix, iy, iz) = cached[j + 1];
-        waypoints.push(surface_point_xyz(ix, iy, iz, voxel_size));
-    }
-
-    if waypoints.len() < 2 {
-        return Vec::new();
-    }
-
-    // Hold the standoff only when blocked. A clean run to the goal has nothing
-    // to stand off from.
-    if blocked {
-        return back_off_tail(&waypoints, BEST_EFFORT_DISTANCE_M);
-    }
-    waypoints
-}
-
-/// Trim `distance` off the goal end, measured in the ground plane.
-fn back_off_tail(waypoints: &[(f32, f32, f32)], distance: f32) -> Vec<(f32, f32, f32)> {
-    let mut remaining = distance;
-    for i in (1..waypoints.len()).rev() {
-        let (b, a) = (waypoints[i], waypoints[i - 1]);
-        let seg = (b.0 - a.0).hypot(b.1 - a.1);
-        if seg < remaining {
-            remaining -= seg;
-            continue;
-        }
-        let t = if seg == 0.0 {
-            0.0
-        } else {
-            (seg - remaining) / seg
-        };
-        let cut = (
-            a.0 + (b.0 - a.0) * t,
-            a.1 + (b.1 - a.1) * t,
-            a.2 + (b.2 - a.2) * t,
-        );
-        let mut out = waypoints[..i].to_vec();
-        if out.last() != Some(&cut) {
-            out.push(cut);
-        }
-        return if out.len() >= 2 { out } else { Vec::new() };
-    }
-    Vec::new()
+    let keys: Vec<Option<VoxelKey>> = waypoints
+        .iter()
+        .map(|&w| snap_pose_to_cell(&plg.surface_lookup, w, voxel_size, config.robot_height))
+        .collect();
+    keys.windows(2)
+        .map(|pair| match (pair[0], pair[1]) {
+            (Some(a), Some(b)) => walkable(plg, a, b, config.step_cells(), &wall_cost, voxel_size),
+            _ => false,
+        })
+        .collect()
 }
 
 /// Walk the straight chord a -> b at surface resolution, the same sampling the
@@ -386,41 +317,20 @@ fn last_safe_on_chord(
     (last_safe, false)
 }
 
-/// Index of the cached segment the robot is on, by nearest-point projection in
-/// the ground plane. The route ahead resumes at the following cell.
-fn resume_segment(cached: &[VoxelKey], start: (f32, f32, f32), voxel_size: f32) -> usize {
-    let p = (start.0, start.1);
-    let mut best = 0usize;
-    let mut best_d2 = f32::INFINITY;
-    for i in 0..cached.len() - 1 {
-        let a = surface_point_xyz(cached[i].0, cached[i].1, cached[i].2, voxel_size);
-        let b = surface_point_xyz(
-            cached[i + 1].0,
-            cached[i + 1].1,
-            cached[i + 1].2,
-            voxel_size,
-        );
-        let d2 = point_segment_dist2((a.0, a.1), (b.0, b.1), p);
-        if d2 < best_d2 {
-            best_d2 = d2;
-            best = i;
-        }
+/// Whether a -> b is walkable: a step within one column (two surface cells a
+/// step apart, as smoothed waypoints can land), else the chord walk reaches b.
+fn walkable(
+    plg: &PlannerGraph,
+    a: VoxelKey,
+    b: VoxelKey,
+    step_cells: i32,
+    wc: &WallCost,
+    voxel_size: f32,
+) -> bool {
+    if (a.0, a.1) == (b.0, b.1) {
+        return (a.2 - b.2).abs() <= step_cells;
     }
-    best
-}
-
-/// Squared distance from point p to segment a-b in the plane.
-fn point_segment_dist2(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
-    let (abx, aby) = (b.0 - a.0, b.1 - a.1);
-    let denom = abx * abx + aby * aby;
-    let t = if denom == 0.0 {
-        0.0
-    } else {
-        (((p.0 - a.0) * abx + (p.1 - a.1) * aby) / denom).clamp(0.0, 1.0)
-    };
-    let (cx, cy) = (a.0 + t * abx, a.1 + t * aby);
-    let (dx, dy) = (p.0 - cx, p.1 - cy);
-    dx * dx + dy * dy
+    !last_safe_on_chord(plg, a, b, step_cells, wc, voxel_size).1
 }
 
 /// Pick the entry node by connect cost plus cost-to-go, with its on-surface
@@ -909,13 +819,6 @@ mod tests {
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
     }
 
-    fn surface_graph(cells: &[VoxelKey]) -> PlannerGraph {
-        let mut plg = PlannerGraph::new();
-        build_surface_lookup(cells, &mut plg.surface_lookup);
-        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
-        plg
-    }
-
     fn truncate_config() -> Config {
         Config {
             world_frame: "world".into(),
@@ -937,97 +840,6 @@ mod tests {
             viz_sweep_cells: 0,
             worker_threads: 4,
         }
-    }
-
-    #[test]
-    fn truncate_keeps_the_full_clear_route_ahead() {
-        let cfg = truncate_config();
-        // Cached route 0 -> 39 (cells), still fully traversable, robot at start.
-        let cached: Vec<VoxelKey> = (0..40).map(|x| (x, 0, 0)).collect();
-        let start = surface_point_xyz(0, 0, 0, VOXEL);
-
-        // No blockage, so no standoff: start pose plus every cell ahead, where
-        // the robot's own cell 0 is dropped.
-        let full = truncate_to_safe(&surface_graph(&cached), &cached, start, &cfg);
-        assert_eq!(full.len(), cached.len(), "start pose + cells 1..=39");
-        assert_eq!(full[1], surface_point_xyz(1, 0, 0, VOXEL));
-        assert_eq!(*full.last().unwrap(), surface_point_xyz(39, 0, 0, VOXEL));
-    }
-
-    #[test]
-    fn truncate_holds_standoff_ahead_of_advanced_robot() {
-        let cfg = truncate_config();
-        // Robot has advanced to x=20 along a 0 -> 39 route, and the surface is
-        // now gone at x=35 (a door closed ahead).
-        let cached: Vec<VoxelKey> = (0..40).map(|x| (x, 0, 0)).collect();
-        let robot = surface_point_xyz(20, 0, 0, VOXEL);
-        let blocked: Vec<VoxelKey> = (0..40).filter(|&x| x != 35).map(|x| (x, 0, 0)).collect();
-
-        let wp = truncate_to_safe(&surface_graph(&blocked), &cached, robot, &cfg);
-        assert_eq!(wp[0], robot);
-
-        // Never behind the robot, always forward toward the goal.
-        let xs: Vec<f32> = wp.iter().map(|w| w.0).collect();
-        assert!(
-            xs.iter().all(|&x| x >= robot.0 - 1e-4),
-            "backtracked: {xs:?}"
-        );
-        assert!(xs.windows(2).all(|p| p[1] >= p[0]), "not forward: {xs:?}");
-
-        // Stops a standoff short of the last traversable cell (x=34).
-        let last_safe = surface_point_xyz(34, 0, 0, VOXEL);
-        let last = *wp.last().unwrap();
-        let gap = (last_safe.0 - last.0).hypot(last_safe.1 - last.1);
-        assert!(
-            (gap - BEST_EFFORT_DISTANCE_M).abs() < VOXEL,
-            "standoff is {gap} m, expected ~{BEST_EFFORT_DISTANCE_M}"
-        );
-    }
-
-    #[test]
-    fn truncate_walks_into_a_sparse_chord_to_the_blockage() {
-        let cfg = truncate_config();
-        // Sparse cached route: one 0 -> 39 chord, as string_pull leaves a
-        // straight approach. The surface is gone at x=20, mid-chord, where the
-        // old anchor-level cut would have discarded the whole chord and stopped
-        // back at x=0.
-        let cached: Vec<VoxelKey> = vec![(0, 0, 0), (39, 0, 0)];
-        let surface: Vec<VoxelKey> = (0..40).filter(|&x| x != 20).map(|x| (x, 0, 0)).collect();
-        let robot = surface_point_xyz(0, 0, 0, VOXEL);
-
-        let wp = truncate_to_safe(&surface_graph(&surface), &cached, robot, &cfg);
-
-        // It advances well into the chord and stops a standoff short of the gap.
-        let last = *wp.last().unwrap();
-        assert!(last.0 > 0.5, "did not walk into the chord: {last:?}");
-        let last_safe = surface_point_xyz(19, 0, 0, VOXEL);
-        let gap = (last_safe.0 - last.0).hypot(last_safe.1 - last.1);
-        assert!(
-            (gap - BEST_EFFORT_DISTANCE_M).abs() < VOXEL,
-            "standoff is {gap} m from the last safe cell, expected ~{BEST_EFFORT_DISTANCE_M}"
-        );
-    }
-
-    #[test]
-    fn truncate_stops_inside_standoff_or_at_blockage() {
-        let cfg = truncate_config();
-        let cached: Vec<VoxelKey> = (0..40).map(|x| (x, 0, 0)).collect();
-        let robot = surface_point_xyz(0, 0, 0, VOXEL);
-
-        // Blockage at the next step: nothing safe ahead, stop.
-        let at_robot: Vec<VoxelKey> = (0..40).filter(|&x| x != 1).map(|x| (x, 0, 0)).collect();
-        assert!(
-            truncate_to_safe(&surface_graph(&at_robot), &cached, robot, &cfg).is_empty(),
-            "blockage at the next step -> stop"
-        );
-
-        // Blockage only ~0.4 m ahead, inside the standoff: the best-effort point
-        // is behind the robot, so stop.
-        let near: Vec<VoxelKey> = (0..40).filter(|&x| x != 5).map(|x| (x, 0, 0)).collect();
-        assert!(
-            truncate_to_safe(&surface_graph(&near), &cached, robot, &cfg).is_empty(),
-            "inside the standoff -> stop"
-        );
     }
 
     #[test]
@@ -1309,24 +1121,6 @@ mod tests {
             xs.windows(2).all(|p| p[1] >= p[0]),
             "path stepped backward: {xs:?}"
         );
-    }
-
-    #[test]
-    fn back_off_tail_trims_from_the_goal_end() {
-        let path = vec![
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (2.0, 0.0, 0.0),
-            (3.0, 0.0, 0.0),
-        ];
-        // Trim within the last segment.
-        assert_eq!(*back_off_tail(&path, 0.5).last().unwrap(), (2.5, 0.0, 0.0));
-        // Trim exactly to a vertex without leaving a duplicate point.
-        let to_vertex = back_off_tail(&path, 1.0);
-        assert_eq!(*to_vertex.last().unwrap(), (2.0, 0.0, 0.0));
-        assert_eq!(to_vertex.len(), 3);
-        // Trimming more than the path length stops (empty).
-        assert!(back_off_tail(&path, 5.0).is_empty());
     }
 
     #[test]

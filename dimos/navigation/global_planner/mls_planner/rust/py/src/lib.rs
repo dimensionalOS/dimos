@@ -320,6 +320,28 @@ impl MLSPlanner {
         )
     }
 
+    /// As the module replans: re-key along the route a warp moved, then plan. `(W, 3)`, empty when no full route exists.
+    fn replan<'py>(
+        &mut self,
+        py: Python<'py>,
+        start: (f32, f32, f32),
+        goal: (f32, f32, f32),
+    ) -> Bound<'py, PyArray2<f32>> {
+        let config = &self.config;
+        let planner = &mut self.planner;
+        let waypoints = py.allow_threads(|| planner.replan(start, goal, config));
+        let flat: Vec<f32> = waypoints.iter().flat_map(|&(x, y, z)| [x, y, z]).collect();
+        Array2::from_shape_vec((waypoints.len(), 3), flat)
+            .expect("3 elements pushed per waypoint")
+            .into_pyarray(py)
+    }
+
+    /// Whether each leg of `waypoints` (W, 3) walks over traversable surface (the planner's chord check).
+    fn legs_traversable(&self, waypoints: &Bound<'_, PyAny>) -> PyResult<Vec<bool>> {
+        let pts = extract_points(waypoints)?;
+        Ok(self.planner.legs_traversable(&pts, &self.config))
+    }
+
     fn voxel_count(&self) -> usize {
         self.planner.voxel_count()
     }

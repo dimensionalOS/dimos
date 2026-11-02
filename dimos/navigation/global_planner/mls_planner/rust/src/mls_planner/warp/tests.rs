@@ -150,7 +150,7 @@ fn a_rigid_shift_places_everything_where_a_rebuild_of_the_shifted_map_has_it() {
         ((1.3, 7.8, 0.05), (8.3, 0.8, 0.05)),
     ];
     for (s, g) in pairs {
-        let a = warped.plan_or_truncate(s, g, &cfg);
+        let a = warped.replan(s, g, &cfg);
         assert!(!a.is_empty(), "warped plans");
         let b = rebuilt.plan(s, g, &cfg).expect("rebuilt plans");
         let (la, lb) = (path_len(&a), path_len(&b));
@@ -200,7 +200,7 @@ fn region_updates_after_a_warp_keep_the_graph_whole() {
     p.track_voxel_times();
     p.update_global_map(&all, &cfg);
     let (start, goal) = ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05));
-    assert!(!p.plan_or_truncate(start, goal, &cfg).is_empty());
+    assert!(!p.replan(start, goal, &cfg).is_empty());
     p.apply_warp(&warp_of(shift(0.8, 0.3), |_| true), &mut [], &cfg);
     let moved = shifted(&all, 0.8, 0.3);
     // The robot drives across the moved map, re-observing it region by region.
@@ -215,7 +215,7 @@ fn region_updates_after_a_warp_keep_the_graph_whole() {
         p.update_region(&slice(&moved, &bounds, vs), &bounds, &cfg);
         assert_chains_reach_their_nodes(&p);
         assert!(!p
-            .plan_or_truncate((1.3, 0.8, 0.05), (8.3, 7.8, 0.05), &cfg)
+            .replan((1.3, 0.8, 0.05), (8.3, 7.8, 0.05), &cfg)
             .is_empty());
     }
 }
@@ -226,7 +226,7 @@ fn the_goal_and_the_cached_path_move_with_the_map() {
     let all = big_world();
     let mut p = built(&cfg, &all);
     let (start, goal) = ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05));
-    assert!(!p.plan_or_truncate(start, goal, &cfg).is_empty());
+    assert!(!p.replan(start, goal, &cfg).is_empty());
     let cached: Vec<VoxelKey> = p.last_path.as_ref().unwrap().1.clone();
 
     let mut held = [goal];

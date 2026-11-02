@@ -884,10 +884,9 @@ impl Worker {
         };
 
         let plan_start = Instant::now();
-        let waypoints =
-            tokio::task::block_in_place(|| planner.plan_or_truncate(start, goal, &self.config));
+        let waypoints = tokio::task::block_in_place(|| planner.replan(start, goal, &self.config));
         if waypoints.is_empty() {
-            // No full path and nothing safe ahead on the cached path, so stop.
+            // No full path: publish an empty path, so stop.
             *path_out = false;
             publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             return;

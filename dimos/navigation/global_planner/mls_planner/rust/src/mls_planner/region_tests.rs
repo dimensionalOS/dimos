@@ -1499,3 +1499,59 @@ fn far_and_non_finite_points_in_a_sane_region_are_dropped() {
     clean.update_region(&cloud[..n], &bounds, &cfg);
     assert_eq!(p.sizes().voxels, clean.sizes().voxels);
 }
+
+/// Floor 6 x 4 m; a wall along y = 2 with a door at x 1..2 (`door_open`), and a
+/// wall along x = 3 for y < 2 that splits the near side into two rooms.
+fn door_world(door_open: bool) -> Vec<(f32, f32, f32)> {
+    let vs = 0.1_f32;
+    let half = vs * 0.5;
+    let mut pts = Vec::new();
+    for ix in 0..60 {
+        for iy in 0..40 {
+            pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
+        }
+    }
+    let wall = |pts: &mut Vec<(f32, f32, f32)>, ix: i32, iy: i32| {
+        for iz in 0..7 {
+            pts.push((
+                ix as f32 * vs + half,
+                iy as f32 * vs + half,
+                iz as f32 * vs + half,
+            ));
+        }
+    };
+    for ix in 0..60 {
+        if !(door_open && (10..20).contains(&ix)) {
+            wall(&mut pts, ix, 20);
+        }
+    }
+    for iy in 0..20 {
+        wall(&mut pts, 30, iy);
+    }
+    pts
+}
+
+/// The door to the goal closes after a route through it was planned, and the
+/// robot is in the other room: no full route exists, so the planner returns no
+/// path at all (no partial route, no line back to the stale route through a wall).
+#[test]
+fn an_unreachable_goal_gets_no_path() {
+    let mut cfg = test_config();
+    cfg.wall_clearance_m = 0.1;
+    let goal = (1.5, 3.5, 0.1);
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&door_world(true), &cfg);
+    assert!(
+        !p.replan((1.5, 0.5, 0.1), goal, &cfg).is_empty(),
+        "the open door gives a route"
+    );
+
+    p.update_global_map(&door_world(false), &cfg);
+    let robot = (4.5, 1.0, 0.1);
+    assert!(
+        p.plan(robot, goal, &cfg).is_none(),
+        "the closed door leaves no route"
+    );
+    let wp = p.replan(robot, goal, &cfg);
+    assert!(wp.is_empty(), "no route must give no path, got {wp:?}");
+}

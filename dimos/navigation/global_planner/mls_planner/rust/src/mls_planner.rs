@@ -256,8 +256,8 @@ pub struct Planner {
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
-    // Last successful path and its goal, for safe truncation when a later
-    // replan finds no full path.
+    // Last successful path and its goal: a warp moves it and a replan re-keys
+    // along it. Cleared when a replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
@@ -967,16 +967,16 @@ impl Planner {
             .collect()
     }
 
-    /// Plan to the goal, or follow the cached path as far as it is still safe.
-    /// Returns the waypoints, empty when nothing ahead is traversable (stop).
-    pub fn plan_or_truncate(
+    /// Plan to the goal, re-keying along a route a warp moved. Empty when no
+    /// full route exists: there is no partial or cached-route fallback.
+    pub fn replan(
         &mut self,
         start: (f32, f32, f32),
         goal: (f32, f32, f32),
         config: &Config,
     ) -> Vec<(f32, f32, f32)> {
         self.rebin_for_plan(start, goal, config);
-        let mut waypoints = self.plan_or_truncate_keys(start, goal, config);
+        let mut waypoints = self.replan_keys(start, goal, config);
         // A route through cells a warp moved without re-keying: re-key along it and plan again,
         // so the route's geometry reads one consistent grid.
         for _ in 0..PLAN_REBIN_PASSES {
@@ -986,7 +986,7 @@ impl Planner {
             }
             let pool = Arc::clone(&self.pool);
             pool.install(|| self.rebin_around(&displaced, PLAN_REBIN_M, config));
-            waypoints = self.plan_or_truncate_keys(start, goal, config);
+            waypoints = self.replan_keys(start, goal, config);
         }
         let path = self
             .last_path
@@ -996,7 +996,7 @@ impl Planner {
         self.placed_waypoints(waypoints, &path, config.voxel_size)
     }
 
-    fn plan_or_truncate_keys(
+    fn replan_keys(
         &mut self,
         start: (f32, f32, f32),
         goal: (f32, f32, f32),
@@ -1013,18 +1013,17 @@ impl Planner {
             }
         }
         if self.last_result != Some((goal, false)) {
-            tracing::warn!(
-                ?goal,
-                "no full path to goal, following any cached path while safe"
-            );
+            tracing::warn!(?goal, "no full path to goal, no path");
         }
         self.last_result = Some((goal, false));
-        match &self.last_path {
-            Some((cached_goal, cells)) if *cached_goal == goal => {
-                planner::truncate_to_safe(&self.graph, cells, start, config)
-            }
-            _ => Vec::new(),
-        }
+        // No route: nothing to follow, so no stale route stays cached either.
+        self.last_path = None;
+        Vec::new()
+    }
+
+    /// Whether each leg of `waypoints` walks over traversable surface (the chord walk, cell to cell).
+    pub fn legs_traversable(&self, waypoints: &[(f32, f32, f32)], config: &Config) -> Vec<bool> {
+        planner::legs_traversable(&self.graph, waypoints, config)
     }
 
     pub fn graph(&self) -> &PlannerGraph {
