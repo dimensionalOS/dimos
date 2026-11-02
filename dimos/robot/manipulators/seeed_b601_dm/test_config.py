@@ -24,6 +24,7 @@ from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -81,6 +82,28 @@ def test_can_port_and_gravity_comp_are_blueprint_cli_options() -> None:
     coordinator = parsed.module_kwargs("ControlCoordinator")
     assert coordinator["can_port"] == "/dev/ttyACM0"
     assert coordinator["gravity_comp"] is False
+
+
+def test_coordinator_rejects_the_generic_addresses_map() -> None:
+    coordinator = SeeedB601DMCoordinator(addresses={"b601_dm": "/dev/ttyACM0"})
+    try:
+        with pytest.raises(ValueError, match="--can-port"):
+            coordinator._setup_from_config()
+    finally:
+        coordinator.stop()
+
+
+def test_simulation_runs_mock_hardware_even_with_a_can_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+    # A path that is never a device, so a regression cannot reach a real arm.
+    coordinator = SeeedB601DMCoordinator(can_port="/dev/null/b601-test")
+    try:
+        coordinator._setup_from_config()
+        assert coordinator.config.hardware[0].adapter_type == "mock_whole_body"
+    finally:
+        coordinator.stop()
 
 
 def test_planner_coordinator_drives_arm_and_gripper() -> None:

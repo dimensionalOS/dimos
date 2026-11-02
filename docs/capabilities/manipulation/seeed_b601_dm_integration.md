@@ -51,6 +51,7 @@ gripper from [`dimos shell`](/docs/capabilities/manipulation/python_api.md) with
 `Arm.from_app(app).set_gripper_position(...)`, from 0.0 (closed) to 1.0 (open).
 
 `coordinator-seeed-b601-dm` runs the same coordinator without the planner.
+With `--simulation`, both run mock hardware and ignore `--can-port`.
 
 ## Behavior
 
