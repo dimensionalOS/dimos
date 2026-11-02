@@ -50,8 +50,8 @@ names, allowing cross-arm collision checks.
 ## Bring-up
 
 ```bash
-dimos run openarm-planner-coordinator # in-memory connection
-dimos run teleop-webxr-openarm
+dimos --simulation run openarm-planner-coordinator # independent mock connection
+dimos --simulation run teleop-webxr-openarm
 
 dimos hardware can setup can0
 dimos hardware can setup can1
@@ -59,9 +59,8 @@ dimos run openarm-planner-coordinator --left-can-port can1 --right-can-port can0
 dimos run teleop-webxr-openarm --left-can-port can1 --right-can-port can0
 ```
 
-All OpenArm blueprints use in-memory positions unless both CAN selectors are
-explicit. `--simulation` also selects in-memory operation. Empty, repeated, or
-partial selectors are rejected. Linux assigns interface names by enumeration;
+Native OpenArm connections require both CAN selectors. `--simulation` composes
+a separate `MockJointConnection`. Empty, repeated, or partial selectors are rejected. Linux assigns interface names by enumeration;
 select the interfaces that correspond to the rig's left and right arms.
 
 Starting a physical connection enables the motors and runs the native gripper
@@ -100,10 +99,10 @@ firmware behavior or confirm that every motor supplied fresh feedback.
 
 | Path | Role |
 |---|---|
-| `dimos/robot/manipulators/openarm/connection.py` | immutable topology, gains, CAN selection, and direct connection |
+| `dimos/robot/manipulators/openarm/connection.py` | native motor declarations, gains, CAN selection, and direct connection |
 | `dimos/robot/manipulators/openarm/config.py` | pinned model, canonical joints and planning configuration |
 | `dimos/robot/manipulators/openarm/blueprints/` | connection, coordinator, planner, and WebXR compositions |
-| `dimos/robot/manipulators/common/damiao_connection.py` | shared native lifecycle and in-memory operation |
+| `dimos/robot/manipulators/common/damiao_connection.py` | shared native lifecycle |
 
 ## Validation
 

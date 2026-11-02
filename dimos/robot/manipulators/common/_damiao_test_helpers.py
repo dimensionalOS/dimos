@@ -23,6 +23,7 @@ from typing import Any, Generic, TypeVar
 from unittest.mock import PropertyMock, patch
 import xml.etree.ElementTree as ET
 
+from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import Stream, Transport
@@ -76,7 +77,7 @@ class LocalTransport(Transport[T], Generic[T]):
 @dataclass
 class MockConnectionRig:
     coordinator: ControlCoordinator
-    connection: DamiaoConnection
+    connection: MockJointConnection
     inputs: dict[str, LocalTransport[Any]]
     readings: LocalTransport[JointState]
     sent_commands: LocalTransport[JointState]
@@ -144,7 +145,28 @@ def mock_connection_rig(
         connection = None
         try:
             model = _local_test_model(connection_type, tmp_path / "control.urdf")
-            connection = connection_type(model=model, source="arm", deadman_timeout_s=10)
+            positions = [
+                *(
+                    connection_type.planning.home_joints
+                    or [0.0] * len(connection_type.planning.joint_names)
+                ),
+                *([0.0] * len(connection_type.gripper_joints)),
+            ]
+            connection = MockJointConnection(
+                model=model,
+                source="arm",
+                deadman_timeout_s=10,
+                initial_positions=dict(
+                    zip(
+                        [
+                            *connection_type.planning.joint_names,
+                            *connection_type.gripper_joints.values(),
+                        ],
+                        positions,
+                        strict=True,
+                    )
+                ),
+            )
             coordinator.config.model = model.with_renamed_joints(
                 {
                     name: f"arm/{name}"

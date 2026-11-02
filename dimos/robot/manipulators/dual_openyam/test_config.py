@@ -40,7 +40,7 @@ def test_dual_openyam_reuses_the_single_arm_home_posture() -> None:
     assert DUAL_OPENYAM_HOME_JOINTS == [*OPENYAM_HOME_JOINTS, *OPENYAM_HOME_JOINTS]
 
 
-def test_dual_openyam_connection_defaults_to_complete_mock() -> None:
+def test_dual_openyam_connection_declares_both_arms_and_grippers() -> None:
     connection = DualOpenYamConnection()
     try:
         assert connection.config.source == "dual_openyam"
@@ -50,7 +50,6 @@ def test_dual_openyam_connection_defaults_to_complete_mock() -> None:
             "left_gripper",
             "right_gripper",
         ]
-        assert connection.mock_positions == [*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0]
     finally:
         connection.stop()
 

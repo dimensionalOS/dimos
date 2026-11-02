@@ -38,12 +38,12 @@ both-grip policy, and the seven-coordinate Quest collection profile.
 
 ## Start a mock robot
 
-Run one command at a time, without CAN selectors:
+Select the independent mock connection explicitly with `--simulation`:
 
 ```bash
-uv run dimos run makermods-metal-connection-control --daemon
-# Or: uv run dimos run openyam-connection-control --daemon
-# Or: uv run dimos run openarm-connection-control --daemon
+uv run dimos --simulation run makermods-metal-connection-control --daemon
+# Or: uv run dimos --simulation run openyam-connection-control --daemon
+# Or: uv run dimos --simulation run openarm-connection-control --daemon
 uv run dimos status
 uv run dimos shell
 ```
@@ -53,11 +53,11 @@ Inspect the connection and coordinator there:
 
 ```python skip
 modules()
-app.MetalConnection.status()
+app.MockJointConnection.status()
 app.ControlCoordinator.get_joint_positions()
 ```
 
-For YAM or OpenArm, use `app.OpenYamConnection` or `app.OpenArmConnection`.
+Every simulated arm uses `app.MockJointConnection`; no native connection is started.
 The connection status must report `connected=True`, with no error or rejection.
 The coordinator must return 7 coordinates for Metal/YAM, or 16 for OpenArm.
 Mock mode echoes commanded positions. It does not simulate dynamics or contact.
@@ -103,7 +103,7 @@ To exercise the actual coordinator/deadman path:
 
 ```python skip
 app.ControlCoordinator.set_estop(True)
-app.MetalConnection.status()
+app.MockJointConnection.status()
 ```
 
 The coordinator stops publishing commands. After the configured deadman
@@ -135,7 +135,8 @@ uv run dimos run teleop-webxr-dual-openyam --left-can-port can0 --right-can-port
 Run only the command for your robot. OpenArm and dual YAM require both selectors,
 and they must differ. On macOS, selectors are gs_usb serial numbers. The modules
 do not configure interfaces or request sudo. They add no startup home motion.
-No selectors, or a nonempty global simulation mode, selects mock operation.
+Native startup requires explicit CAN selectors. `--simulation` composes a separate
+`MockJointConnection`; it never opens the native connection.
 
 Check live `status()` and joint readings before issuing motion. Confirm left/right
 mapping and measured positions. Use a supported small motion within the actual

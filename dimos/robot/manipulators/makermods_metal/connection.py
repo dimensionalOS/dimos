@@ -55,7 +55,6 @@ class MetalConnection(DamiaoConnection):
     kd = {"arm": [5.0, 5.0, 5.0, 5.0, 0.6, 0.6]}
     kinematic_model = METAL_MODEL
     planning = make_metal_model_config()
-    mock_positions = [0.0] * 7
     gravity_comp = False
     # The encoder reports -0.05050 rad at joint3's nominal zero stop.
     feedback_clamp_margin_rad = 0.06
