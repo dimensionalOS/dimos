@@ -73,6 +73,7 @@ config! {
     ;
     mode: dimos_gsc_pgo::gsc_pgo::Mode,
     deterministic_config: dimos_gsc_pgo::gsc_pgo::DeterministicConfig,
+    overshoot_warning_interval_s: f64,
     keyframe_min_rotation_degrees: f64,
     keyframe_min_distance_meters: f64,
     closure_search_radius: f64,
@@ -498,6 +499,112 @@ impl GscPgoModule {
     }
 }
 
+// ---- the graph's publisher: pose_graph, loop_closure_event and the keyframe dumps, off the scan thread ----------------
+
+/// What the publisher sends next: a snapshot of the graph version (O(1), `store::KeyFrames`), whether a closure closed
+/// since the last one it sent (or-ed over any it skipped), and the data time.
+struct Publish {
+    keys: dimos_gsc_pgo::store::KeyFrames,
+    closure_closed: bool,
+    ts: f64,
+}
+
+/// The thread that publishes each keyframe's graph (every keyframe's pose: O(map)) and the pose changes consumers have
+/// not heard (`HeardPoses`: O(map)), so the scan thread only hands it a snapshot; a newer snapshot replaces one not yet
+/// sent, so a slow publish never queues stale graphs.
+struct GraphPublisher {
+    pending: Arc<(Mutex<(Option<Publish>, bool)>, Condvar)>,
+}
+
+impl GraphPublisher {
+    fn spawn(worker: &Worker, frame_id: String) -> GraphPublisher {
+        let pending: Arc<(Mutex<(Option<Publish>, bool)>, Condvar)> = Arc::default();
+        let (shared, stop) = (Arc::clone(&pending), Arc::clone(&worker.stop));
+        let (pose_graph, loop_closure_event) = (worker.pose_graph.clone(), worker.loop_closure_event.clone());
+        let (rt, dump_path) = (worker.rt.clone(), worker.config.dump_path.clone());
+        std::thread::Builder::new()
+            .name("gsc-publish".into())
+            .spawn(move || {
+                let mut heard = HeardPoses::default();
+                let publish = |out: &dyn Fn() -> Result<(), String>, what: &str| {
+                    if let Err(e) = out() {
+                        error!(error = %e, "{what} failed to publish");
+                    }
+                };
+                loop {
+                    let next = {
+                        let (lock, ready) = &*shared;
+                        let mut state = lock.lock().expect("publisher");
+                        while state.0.is_none() && !state.1 {
+                            let (guard, _) = ready
+                                .wait_timeout(state, Duration::from_secs(1))
+                                .expect("publisher");
+                            state = guard;
+                            if stop.load(Ordering::Relaxed) && state.0.is_none() {
+                                return;
+                            }
+                        }
+                        match state.0.take() {
+                            Some(next) => next,
+                            None => return,
+                        }
+                    };
+                    let Publish { keys, closure_closed, ts } = next;
+                    heard.add_new(&keys);
+                    if let Some(changes) = heard.take_changes(&keys, closure_closed) {
+                        let records = build_loop_closure_records(changes, ts, &frame_id);
+                        publish(
+                            &|| rt.block_on(loop_closure_event.publish(&records)).map_err(|e| e.to_string()),
+                            "loop_closure_event",
+                        );
+                        if !dump_path.is_empty() {
+                            let appended = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(format!("{dump_path}.closures"))
+                                .and_then(|mut file| append_pose_changes(&mut file, ts, &records.data));
+                            if let Err(e) = appended {
+                                warn!(error = %e, "Failed to dump the loop closure.");
+                            }
+                        }
+                    }
+                    let records = build_pose_graph_records(&keys, ts, &frame_id);
+                    publish(
+                        &|| rt.block_on(pose_graph.publish(&records)).map_err(|e| e.to_string()),
+                        "pose_graph",
+                    );
+                    if !dump_path.is_empty() {
+                        if let Err(e) = write_keyframes(dump_path.as_ref(), &keys) {
+                            warn!(error = %e, "Failed to dump the keyframes.");
+                        }
+                    }
+                }
+            })
+            .expect("spawn graph publisher thread");
+        GraphPublisher { pending }
+    }
+    /// Hand the publisher the graph as it is now (O(1)); an unsent older one is replaced, its closure flag kept.
+    fn send(&self, pgo: &GscPgo, closure_closed: bool, ts: f64) {
+        let (lock, ready) = &*self.pending;
+        let mut state = lock.lock().expect("publisher");
+        let closed = closure_closed || state.0.as_ref().is_some_and(|p| p.closure_closed);
+        state.0 = Some(Publish {
+            keys: pgo.key_poses().clone(),
+            closure_closed: closed,
+            ts,
+        });
+        ready.notify_one();
+    }
+}
+
+impl Drop for GraphPublisher {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.pending;
+        lock.lock().expect("publisher").1 = true;
+        ready.notify_all();
+    }
+}
+
 // ---- worker (the PGO main loop) -----------------------------------------------------
 
 struct Worker {
@@ -555,7 +662,9 @@ impl Worker {
         // if a notify is somehow missed; normal wakeups come from callbacks.
         let wake_timeout = Duration::from_secs(1);
 
-        let mut heard = HeardPoses::default();
+        // the graph's publishing (pose_graph, loop_closure_event, the keyframe dumps) runs on its own thread off O(1)
+        // snapshots of the graph version (`GraphPublisher`), the newest pending one replacing an unsent older one
+        let publisher = GraphPublisher::spawn(&self, frame_id.clone());
         // The scan count of the last loop-overlap pressure sent on debug_log, and the closure searches sent there.
         let mut pressure_sent = 0usize;
         let mut closures_logged = 0usize;
@@ -568,7 +677,7 @@ impl Worker {
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
             if solve_finished && pgo.update() {
                 let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
+                publisher.send(&pgo, false, last_time);
                 self.log_solve(&pgo, last_time);
             }
             // world-position fixes and landmark sightings join the graph as they arrive; one alone starts a solve
@@ -594,7 +703,7 @@ impl Worker {
                 }
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
-                    self.publish_pose_changes(&pgo, &mut heard, false, last_time, &frame_id);
+                    publisher.send(&pgo, false, last_time);
                     self.log_solve(&pgo, last_time);
                 }
             }
@@ -648,7 +757,6 @@ impl Worker {
                 continue;
             }
 
-            heard.add_new(pgo.key_poses());
             // A closure search that finished in the background lands now (once its estimate has passed,
             // `closure_search_hold_enabled`), so its closure joins this keyframe's update; stages 1-2 run here on every
             // keyframe, and the best waiting proposal goes to the search thread when it is free and no scans are waiting.
@@ -656,7 +764,8 @@ impl Worker {
             pgo.step_closure_search(false, !behind);
             // a finished solve moves the keyframes
             let moved = pgo.update();
-            self.publish_pose_changes(&pgo, &mut heard, moved, cur_time, &frame_id);
+            // every keyframe's current pose and the pose changes since consumers last heard, published off this thread
+            publisher.send(&pgo, moved, cur_time);
             if moved {
                 self.log_solve(&pgo, cur_time);
             }
@@ -670,8 +779,6 @@ impl Worker {
                 &child_frame_id,
             );
 
-            // every keyframe's current pose, each keyframe
-            self.publish_graph(&pgo, cur_time, &frame_id);
             let scan_queue = self.state.lock().expect("state").cloud_buffer.len();
             self.log(
                 "keyframe",
@@ -687,6 +794,7 @@ impl Worker {
         }
         // stopping: settle the graph and report the odometry error estimate its kept loops measured, once
         pgo.finish();
+        pgo.overshoot_report();
         let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
         self.log_odometry_drift(&pgo, last_time);
     }
@@ -776,17 +884,6 @@ impl Worker {
         }
     }
 
-    /// Publish every keyframe's current pose (and dump them with `dump_path`).
-    fn publish_graph(&self, pgo: &GscPgo, ts: f64, frame_id: &str) {
-        let records = build_pose_graph_records(pgo.key_poses(), ts, frame_id);
-        self.publish(&self.pose_graph, &records, "pose_graph");
-        if !self.config.dump_path.is_empty() {
-            if let Err(e) = write_keyframes(self.config.dump_path.as_ref(), pgo.key_poses()) {
-                warn!(error = %e, "Failed to dump the keyframes.");
-            }
-        }
-    }
-
     /// Send the closure-edge events since the last call, if any.
     fn publish_closure_edges(&self, pgo: &GscPgo, sent: &mut usize, frame_id: &str) {
         let events = pgo.closure_edge_events();
@@ -797,33 +894,6 @@ impl Worker {
         let msg = build_closure_edge_records(&events[*sent..], pgo.key_poses(), ts, frame_id);
         self.publish(&self.closure_edges, &msg, "closure_edges");
         *sent = events.len();
-    }
-
-    /// Send fast-reform consumers every keyframe pose change since they last heard (an adopted solve), and append it to
-    /// `<dump_path>.closures`. Changes too small to matter wait in `heard` and add up.
-    fn publish_pose_changes(
-        &self,
-        pgo: &GscPgo,
-        heard: &mut HeardPoses,
-        closure_closed: bool,
-        ts: f64,
-        frame_id: &str,
-    ) {
-        let Some(changes) = heard.take_changes(pgo.key_poses(), closure_closed) else {
-            return;
-        };
-        let records = build_loop_closure_records(changes, ts, frame_id);
-        self.publish(&self.loop_closure_event, &records, "loop_closure_event");
-        if !self.config.dump_path.is_empty() {
-            let appended = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(format!("{}.closures", self.config.dump_path))
-                .and_then(|mut file| append_pose_changes(&mut file, ts, &records.data));
-            if let Err(e) = appended {
-                warn!(error = %e, "Failed to dump the loop closure.");
-            }
-        }
     }
 
     fn publish_corrected(

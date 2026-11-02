@@ -183,7 +183,7 @@ impl GscPgo {
     }
     fn adopt(&mut self, ready: bool) -> bool {
         self.new_closure = false;
-        let mut moved = self.step_adoption(false);
+        let mut moved = std::mem::take(&mut self.adopted_since_update) | self.step_adoption(false);
         moved |= ready && self.apply_solve();
         if self.solving.is_none() && self.unsolved() {
             self.dispatch_solve();
@@ -505,6 +505,7 @@ impl GscPgo {
                 .is_some_and(|due| seconds > due - solving.schedule.dispatch_time),
             ..solving.schedule
         };
+        self.note_overshoot("solve", schedule.overshoot);
         if schedule.overshoot {
             self.solve_overshoots += 1;
             eprintln!(

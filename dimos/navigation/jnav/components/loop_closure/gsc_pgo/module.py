@@ -37,6 +37,9 @@ class PGOConfig(NativeModuleConfig):
     # deterministic_config, so a replay gives the same graph on any machine; "fast" (a real-life run): every job lands as
     # soon as it finishes, and the run prints the deterministic_config it measured, ready to paste here
     mode: str = "deterministic"
+    # a job past its estimate logs a warning at most once per this many seconds of data, with each LET kind's overshoots
+    # since the last (a warning only: a slower machine running a faster one's deterministic_config just waits)
+    overshoot_warning_interval_s: float = 10.0
     # the deterministic mode's estimates, in scans (a job holds ceil(estimate) scans, at least one; exponents unitless)
     deterministic_config: dict[str, float] = Field(
         default_factory=lambda: {
@@ -238,8 +241,9 @@ class PGOConfig(NativeModuleConfig):
     # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
     # this every queued scan but the newest is dropped, so a stall can't leave the module stale
     max_scan_queue: int = 5
-    # threads closure search and solves may use, leaving the other cores to the nav stack (0 = every core)
-    worker_threads: int = 2
+    # threads closure search and solves may use (the rayon pool): 0 (default) = every core, so GSC never runs itself
+    # handicapped; set a number to leave cores to the rest of the robot where measurements show it pays
+    worker_threads: int = 0
 
 
 class GscPGO(NativeModule):
