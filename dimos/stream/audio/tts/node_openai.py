@@ -57,7 +57,6 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         api_key: str | None = None,
         voice: Voice = Voice.ECHO,
         model: str = "tts-1",
-        buffer_size: int = 1024,
         speed: float = 1.0,
     ) -> None:
         """
@@ -67,12 +66,10 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
             api_key: OpenAI API key (if None, will try to use environment variable)
             voice: TTS voice to use
             model: TTS model to use
-            buffer_size: Audio buffer size in samples
         """
         self.voice = voice
         self.model = model
         self.speed = speed
-        self.buffer_size = buffer_size
 
         # Initialize OpenAI client
         self.client = OpenAI(api_key=api_key)
@@ -218,41 +215,3 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         # Complete the subjects
         self.audio_subject.on_completed()
         self.text_subject.on_completed()
-
-
-if __name__ == "__main__":
-    import time
-
-    from reactivex import Subject
-
-    from dimos.stream.audio.node_output import SounddeviceAudioOutput
-    from dimos.stream.audio.text.node_stdout import TextPrinterNode
-    from dimos.stream.audio.utils import keepalive
-
-    # Create a simple text subject that we can push values to
-    text_subject = Subject()  # type: ignore[var-annotated]
-
-    tts_node = OpenAITTSNode(voice=Voice.ALLOY)
-    tts_node.consume_text(text_subject)
-
-    # Create and connect an audio output node - explicitly set sample rate
-    audio_output = SounddeviceAudioOutput(sample_rate=24000)
-    audio_output.consume_audio(tts_node.emit_audio())
-
-    stdout = TextPrinterNode(prefix="[Spoken Text] ")
-
-    stdout.consume_text(tts_node.emit_text())
-
-    # Emit some test messages
-    test_messages = [
-        "Hello!",
-        "This is a test of the OpenAI text to speech system.",
-    ]
-
-    print("Starting OpenAI TTS test...")
-    print("-" * 60)
-
-    for _i, message in enumerate(test_messages):
-        text_subject.on_next(message)
-
-    keepalive()

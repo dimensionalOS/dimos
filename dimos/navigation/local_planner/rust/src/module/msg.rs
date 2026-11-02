@@ -20,6 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dimos_module::{error_throttled, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion, Vector3};
 use lcm_msgs::nav_msgs::Path;
+use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 
 /// A plan waypoint as the laws and the planner see it: `(x, y, yaw)`.
@@ -110,6 +111,33 @@ pub fn build_path(
     Path {
         header: header(frame_id, t0),
         poses,
+    }
+}
+
+/// An xyz float32 cloud.
+pub fn build_cloud(points: &[[f32; 3]], frame_id: &str, ts: f64) -> PointCloud2 {
+    let mut data = Vec::with_capacity(points.len() * 12);
+    for p in points {
+        for v in p {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let field = |name: &str, offset: i32| PointField {
+        name: name.into(),
+        offset,
+        datatype: PointField::FLOAT32 as u8,
+        count: 1,
+    };
+    PointCloud2 {
+        header: header(frame_id, ts),
+        height: 1,
+        width: points.len() as i32,
+        fields: vec![field("x", 0), field("y", 4), field("z", 8)],
+        is_bigendian: false,
+        point_step: 12,
+        row_step: 12 * points.len() as i32,
+        data,
+        is_dense: true,
     }
 }
 

@@ -6,7 +6,7 @@
 
 ```bash
 # 1. dimos drives DimSim (production / agentic / CI)
-uv run dimos --simulation dimsim --dimsim-scene=apartment run unitree-go2-agentic
+uv run dimos --simulation dimsim run unitree-go2-agentic --go2connection.dimsim.scene=apartment
 
 # 2. DimSim runs standalone (engine dev / scene authoring)
 cd misc/DimSim/cli

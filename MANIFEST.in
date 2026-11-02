@@ -19,6 +19,12 @@ recursive-exclude dimos/mapping/google_maps/fixtures *
 # Native (C++/nix) build tree — built separately, mid360.json is not Python data.
 recursive-exclude dimos/hardware/sensors/lidar/fastlio2/cpp *.json
 
+# The on-robot agent's Node package runs from a checkout, never from the package.
+prune dimos/agents/node_modules
+prune dimos/agents/dist
+exclude dimos/agents/package.json dimos/agents/package-lock.json
+exclude dimos/agents/tsconfig.json dimos/agents/.prettierrc.json
+
 # Exclude web development directories
 recursive-exclude dimos/web/command-center-extension *
 recursive-exclude dimos/web/websocket_vis/node_modules *

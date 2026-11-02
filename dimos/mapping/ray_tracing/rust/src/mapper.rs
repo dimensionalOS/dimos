@@ -281,6 +281,7 @@ mod tests {
             min_health: 0,
             max_health: 1,
             graze_cos: 0.5,
+            graze_recent_frames: u32::MAX,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
@@ -291,8 +292,9 @@ mod tests {
             tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
+            viz_cell_m: 4.0,
             viz_emit_every: 0,
-            viz_sweep_regions: 0,
+            viz_sweep_cells: 0,
         }
     }
 

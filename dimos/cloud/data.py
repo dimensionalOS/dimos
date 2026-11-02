@@ -16,7 +16,7 @@
 
 `CloudData` is a thin facade over `MultipartBackend` (today)
 speaks the /v1/data blob API; a sync backend plugs in beside it without touching
-callers. Every knob lives on GlobalConfig; nothing here is hardcoded."""
+callers. Transfer settings live on CloudConfig."""
 
 from __future__ import annotations
 
@@ -38,8 +38,8 @@ from typing import Any
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
+from dimos.cloud.config import CloudConfig
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
-from dimos.core.global_config import global_config
 from dimos.core.run_registry import blueprint_from_run_id
 from dimos.memory.cli.dataset import open_store
 
@@ -280,19 +280,20 @@ class MultipartBackend:
 class CloudData:
     """Facade: resolves auth + config once, delegates to the configured backend."""
 
-    def __init__(self, backend: MultipartBackend | None = None) -> None:
+    def __init__(
+        self, backend: MultipartBackend | None = None, *, config: CloudConfig | None = None
+    ) -> None:
+        self.config = config if config is not None else CloudConfig()
         if backend is None:
-            key = global_config.dimos_api_key or api_key()
+            key = api_key(self.config)
             if not key:
                 raise RuntimeError("not logged in — run `dimos login`")
-            request = HttpCloudRequest(
-                global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
-            )
+            request = HttpCloudRequest(self.config.url, key, self.config.http_timeout)
             backend = MultipartBackend(
                 DataApi(request),
-                global_config.dimos_upload_codec,
-                global_config.dimos_staging_dir,
-                global_config.dimos_upload_retries,
+                self.config.upload_codec,
+                self.config.staging_dir,
+                self.config.upload_retries,
             )
         self.backend = backend
 
@@ -310,9 +311,9 @@ class CloudData:
             raise FileNotFoundError(path)
         if _is_sidecar(path):
             raise RuntimeError(f"{path.name} is a SQLite sidecar, not the data file")
-        if skip_recent and time.time() - path.stat().st_mtime < global_config.dimos_upload_quiet_s:
+        if skip_recent and time.time() - path.stat().st_mtime < self.config.upload_quiet_s:
             raise RuntimeError("file still being written — skipped")
-        chunk_mb = chunk_mb if chunk_mb is not None else global_config.dimos_upload_chunk_mb
+        chunk_mb = chunk_mb if chunk_mb is not None else self.config.upload_chunk_mb
         return self.backend.upload(
             path,
             robot_id=robot_id,
@@ -387,13 +388,13 @@ def kind_of(path: Path) -> str:
 
 
 def _require_space(where: Path, need: int) -> None:
-    """Uploads and pulls stage copies beside the file (or in dimos_staging_dir); fail
+    """Uploads and pulls stage copies beside the file (or in DIMOS_CLOUD_STAGING_DIR); fail
     before starting rather than at 99% of a 100 GB transfer."""
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(
             f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage — "
-            "set dimos_staging_dir to a larger partition"
+            "set DIMOS_CLOUD_STAGING_DIR to a larger partition"
         )
 
 

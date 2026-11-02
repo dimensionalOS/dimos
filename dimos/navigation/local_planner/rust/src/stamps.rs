@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The precision profile the planner stamps into the path's own timestamps.
-//! Wire dialect, not a law: `control/profile.py` (`encode_precision` / `decode_ceilings`) is the specification.
+//! Wire dialect, not a law: `profile.py` decodes the same stamps on the python side.
 
 use crate::geom::Params;
 
@@ -33,7 +33,7 @@ pub struct Governor {
     pub max_yaw_rate: f64,
 }
 
-/// Clearance (m) -> speed ceiling (m/s), `profile.governor_speed`; infinite clearance means cruise.
+/// Clearance (m) -> speed ceiling (m/s); infinite clearance means cruise.
 // `max` then `min` rather than `clamp`: f64::clamp panics on NaN.
 #[allow(clippy::manual_clamp)]
 pub fn governor_speed(clearance: f64, gov: &Governor) -> f64 {
@@ -41,7 +41,14 @@ pub fn governor_speed(clearance: f64, gov: &Governor) -> f64 {
     gov.min_speed + (gov.max_speed - gov.min_speed) * frac.max(0.0).min(1.0)
 }
 
-/// The path's timestamps carrying its precision profile: `profile.encode_precision`, the inverse of `decode_ceilings`.
+/// Speed (m/s) -> the clearance the governor grants it at, the inverse of `governor_speed`.
+#[allow(clippy::manual_clamp)]
+pub fn governor_clearance(speed: f64, gov: &Governor) -> f64 {
+    let frac = (speed - gov.min_speed) / (gov.max_speed - gov.min_speed);
+    gov.floor + (gov.speed_clearance - gov.floor) * frac.max(0.0).min(1.0)
+}
+
+/// The path's timestamps carrying its precision profile, the inverse of `decode_ceilings`.
 /// `clearance` of the wrong length gives every segment cruise; fan segments are priced by yaw span.
 pub fn encode_precision(path: &[[f64; 3]], clearance: &[f64], t0: f64, gov: &Governor) -> Vec<f64> {
     let n = path.len();

@@ -20,7 +20,7 @@ stub, and runner environments implement the same lifecycle as real environments.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 import json
 from pathlib import Path
@@ -36,8 +36,10 @@ from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.agents.mcp.constants import TURN_FAILED_KEY
+from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
@@ -48,7 +50,6 @@ from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
-from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -144,7 +145,7 @@ class FakeEnvironment(Environment):
         super().stop()
 
 
-class FakeAgent(Agent):
+class FakeAgent(EvalSubject):
     """Replies with a canned answer or timeout."""
 
     def __init__(self, answer: str = "", timed_out: bool = False) -> None:
@@ -222,13 +223,18 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    launched = mocker.patch(
+        "dimos.evals.environments.dataset.launched_mcp_url",
+        return_value="http://127.0.0.1:9993/mcp",
+    )
     adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     env = Dataset(dataset)
 
     try:
         running = env.start(("mcp-server", "mcp-client"))
-        assert running.mcp_url == default_mcp_url()
+        # The endpoint is the one the launched process registered, not a guess.
+        assert running.mcp_url == "http://127.0.0.1:9993/mcp"
     finally:
         env.stop()
 
@@ -236,11 +242,13 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     assert proc.simulator is None
     proc.start.assert_called_once_with()
     proc.stop.assert_called_once_with()
-    adapter.assert_called_once_with(default_mcp_url())
+    assert launched.call_args.args[0] is proc.process
+    adapter.assert_called_once_with("http://127.0.0.1:9993/mcp")
 
 
 def test_dataset_cleans_up_when_mcp_is_not_ready(dataset: str, mocker: MockerFixture) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.dataset.launched_mcp_url", return_value="http://x/mcp")
     adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = False
     env = Dataset(dataset)
@@ -256,6 +264,7 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
     dataset: str, mocker: MockerFixture
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.dataset.launched_mcp_url", return_value="http://x/mcp")
     mocker.patch("dimos.evals.environments.dataset.McpAdapter")
     store = mocker.patch("dimos.evals.environments.dataset.open_dataset").return_value
     store.stop.side_effect = RuntimeError("cleanup failed")
@@ -277,8 +286,11 @@ def test_sim_attach_rejects_added_modules() -> None:
 def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     dataset: str, mocker: MockerFixture
 ) -> None:
-    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
-    adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.global_args = []
+    proc.extra_env = {}
+    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    adapter = mocker.patch("dimos.evals.environments.live.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
     setup = mocker.Mock()
@@ -304,7 +316,8 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "--disable",
             "patrolling-module",
         ]
-        assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
+        assert proc.global_args == ["--record"]
+        assert proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] == "empty"
         adapter.return_value.wait_for_ready.assert_called_once()
         ready_call = adapter.return_value.wait_for_ready.call_args
         assert 0 < ready_call.kwargs["timeout"] <= 1.0
@@ -349,7 +362,7 @@ def test_sim_settle_stops_at_rest_or_at_the_budget(
                 odom.append(_pose(elapsed, 0.0), ts=elapsed)
 
         monkeypatch.setattr(
-            "dimos.evals.environments.sim.time",
+            "dimos.evals.environments.live.time",
             SimpleNamespace(monotonic=lambda: elapsed, sleep=advance),
         )
         env = _sim(at_rest_m=0.01, at_rest_s=0.1, settle_poll_s=0.02)
@@ -360,7 +373,7 @@ def test_sim_settle_stops_at_rest_or_at_the_budget(
 
 
 def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixture) -> None:
-    sleep = mocker.patch("dimos.evals.environments.sim.time.sleep")
+    sleep = mocker.patch("dimos.evals.environments.live.time.sleep")
     env = _sim()
     env.settle(10.0)
     with MemoryStore() as store:
@@ -751,6 +764,7 @@ def test_suites_and_agents_importable() -> None:
         "mcp_client_adapter",
         "pi",
         "dimcode",
+        "dimos_agent",
     }
     for module_name in agents:
         assert callable(load_agent(module_name).run), module_name
@@ -783,16 +797,21 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
         load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
 
-@pytest.mark.parametrize("goes_idle", [True, False])
-def test_mcp_client_adapter_drives_a_turn_over_real_transports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
-) -> None:
-    """The production agent points the McpClient's raw capture at run_dir/raw,
-    publishes on /human_input, reads the turn back on /agent until
-    /agent_idle or its budget runs out, and links every model call to the
-    McpClient's trace files (the message must arrive with no flush sleep: LCM
-    publish is a synchronous send)."""
+def _write_trace_pair(trace_dir: Path, seq: int, *, response: bool = True) -> None:
+    (trace_dir / f"{seq:03d}-request.json").write_text(
+        json.dumps({"started_at": 1_700_000_000.0 + seq})
+    )
+    if response:
+        (trace_dir / f"{seq:03d}-response.json").write_text(json.dumps({"latency_s": 0.25 + seq}))
 
+
+def _run_mcp_client_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_mcp_client: Callable[[str, Path, PubSubTransport[Any], PubSubTransport[Any]], None],
+    timeout_s: float,
+) -> Trajectory:
+    """Run McpClientAdapter over real transports, with `fake_mcp_client` as McpClient."""
     trace_dir = tmp_path / "case" / "raw"
     trace_dir.mkdir(parents=True)
 
@@ -810,14 +829,47 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     for t in (human, agent_t, idle):
         t.start()
 
-    def fake_mcp_client(text: str) -> None:
+    workers: list[threading.Thread] = []
+
+    def on_human(msg: str) -> None:
+        worker = threading.Thread(target=fake_mcp_client, args=(msg, trace_dir, agent_t, idle))
+        workers.append(worker)
+        worker.start()
+
+    unsubscribe = human.subscribe(on_human)
+    try:
+        env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
+        trajectory = McpClientAdapter().run(
+            "go to the bed", env, tmp_path / "case", timeout_s=timeout_s
+        )
+    finally:
+        unsubscribe()
+        for worker in workers:  # a publish still in flight would race the undeclare below
+            worker.join(timeout=5.0)
+        for t in (human, agent_t, idle):
+            t.stop()
+
+    assert repointed == [str(trace_dir)]
+    return trajectory
+
+
+@pytest.mark.parametrize("goes_idle", [True, False])
+def test_mcp_client_adapter_drives_a_turn_over_real_transports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
+) -> None:
+    """The production agent points the McpClient's raw capture at run_dir/raw,
+    publishes on /human_input, reads the turn back on /agent until
+    /agent_idle or its budget runs out, and links every model call to the
+    McpClient's trace files (the message must arrive with no flush sleep: LCM
+    publish is a synchronous send)."""
+
+    def fake_mcp_client(
+        text: str, trace_dir: Path, agent_t: PubSubTransport[Any], idle: PubSubTransport[Any]
+    ) -> None:
         idle.publish(False)
         agent_t.publish(HumanMessage(content=text))
         for i in range(2):
-            (trace_dir / f"{i:03d}-request.json").write_text(
-                json.dumps({"started_at": 1_700_000_000.0 + i})
-            )
-            (trace_dir / f"{i:03d}-response.json").write_text(json.dumps({"latency_s": 0.25 + i}))
+            _write_trace_pair(trace_dir, i)
         agent_t.publish(
             AIMessage(
                 content=[{"type": "reasoning", "summary": [{"text": "Navigate to the bed."}]}],
@@ -831,28 +883,10 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
         if goes_idle:
             idle.publish(True)
 
-    workers: list[threading.Thread] = []
+    trajectory = _run_mcp_client_adapter(
+        tmp_path, monkeypatch, fake_mcp_client, timeout_s=10.0 if goes_idle else 0.5
+    )
 
-    def on_human(msg: str) -> None:
-        worker = threading.Thread(target=fake_mcp_client, args=(msg,))
-        workers.append(worker)
-        worker.start()
-
-    unsubscribe = human.subscribe(on_human)
-    try:
-        env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
-        agent = McpClientAdapter()
-        trajectory = agent.run(
-            "go to the bed", env, tmp_path / "case", timeout_s=10.0 if goes_idle else 0.5
-        )
-    finally:
-        unsubscribe()
-        for worker in workers:  # a publish still in flight would race the undeclare below
-            worker.join(timeout=5.0)
-        for t in (human, agent_t, idle):
-            t.stop()
-
-    assert repointed == [str(trace_dir)]
     assert trajectory.extra.ended_by == ("answer" if goes_idle else "timeout")
     assert trajectory.final_answer == "I am at the bed"
     assert len(trajectory.steps) == 3 and trajectory.final_metrics.total_prompt_tokens == 10
@@ -871,6 +905,39 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     assert last.extra.latency_s == 1.25
     assert datetime.fromisoformat(first.timestamp).timestamp() == 1_700_000_000.0
     assert datetime.fromisoformat(last.timestamp).timestamp() == 1_700_000_001.0
+
+
+@pytest.mark.parametrize("error_response", [False, True], ids=["no_response", "http_error"])
+def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_response: bool
+) -> None:
+    """McpClient's failure note is not a model call, so it ends the case as an error.
+
+    An HTTP error leaves a trace pair for the failed request; a connection error doesn't.
+    """
+    note = "This turn failed with AuthenticationError: Error code: 401"
+
+    def fake_mcp_client(
+        text: str, trace_dir: Path, agent_t: PubSubTransport[Any], idle: PubSubTransport[Any]
+    ) -> None:
+        idle.publish(False)
+        agent_t.publish(HumanMessage(content=text))
+        _write_trace_pair(trace_dir, 0)
+        agent_t.publish(
+            AIMessage(content="", tool_calls=[{"name": "move_to", "args": {}, "id": "c1"}])
+        )
+        agent_t.publish(ToolMessage(content="arrived", tool_call_id="c1"))
+        _write_trace_pair(trace_dir, 1, response=error_response)
+        agent_t.publish(AIMessage(content=note, additional_kwargs={TURN_FAILED_KEY: True}))
+        idle.publish(True)
+
+    trajectory = _run_mcp_client_adapter(tmp_path, monkeypatch, fake_mcp_client, timeout_s=10.0)
+
+    assert (trajectory.extra.ended_by, trajectory.extra.error) == ("error", note)
+    user, first = trajectory.steps
+    assert first.observation == Observation(
+        results=(ObservationResult(source_call_id="c1", content="arrived"),)
+    )
 
 
 def test_agents_report_every_available_tool() -> None:

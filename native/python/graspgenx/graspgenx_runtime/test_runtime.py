@@ -119,6 +119,19 @@ def test_adapter_sorts_stably_truncates_and_applies_tcp_transform(runtime: Any) 
         module.stop()
 
 
+def test_proposals_sample_the_configured_count(runtime: Any) -> None:
+    module = GraspGenXRuntimeModule(
+        _isolated_python_runtime=True, **module_args(config(num_samples=500))
+    )
+    try:
+        module.start()
+        module.propose_grasps(cloud())
+
+        assert runtime.return_value.infer.call_args.args[1] == 500
+    finally:
+        module.stop()
+
+
 def test_empty_backend_result_preserves_input_header(runtime: Any) -> None:
     runtime.return_value.infer.return_value = (
         np.empty((0, 4, 4), dtype=np.float32),

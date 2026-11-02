@@ -122,6 +122,7 @@ this rejects a colliding segment rather than finding a detour.
 | `move_linear(...)` | Existing `MoveResult`, including trajectory generation and execution outcomes |
 | `set_gripper_position(position)`, `open_gripper()`, `close_gripper()` | `CommandResult` |
 | `home()`, `move_to_preset(name)` | `ExecutionResult` after moving to an existing preset |
+| `reset()` | `CommandResult` after stopping motion and clearing a failed state |
 
 Gripper positions are normalized travel: `0.0` closed, `1.0` open. Movement calls
 accept `speed_scale` and execution `timeout` options. Ordinary calls block and
@@ -194,7 +195,11 @@ replacement is rejected without dispatching or consuming it. SDK moves always
 pass this ID. Calling `execute()` without an ID explicitly consumes whichever
 plan is pending. Previewing a plan does not select it for execution.
 `clear_planned_path()` discards pending work without
-cancelling active execution. Use one motion-commanding client per module;
+cancelling active execution. The module no longer exposes `reset()`. Use
+`arm.rpc.cancel()` to cancel planning or execution, or
+`arm.rpc.clear_planned_path()` to discard a pending plan without cancelling
+execution. Cancellation failures remain in the returned result; these calls do
+not clear hardware errors. Use one motion-commanding client per module;
 separate `Arm` objects do not own independent plans or executions.
 
 `execute()` blocks by default. With `blocking=False`, success means dispatch was

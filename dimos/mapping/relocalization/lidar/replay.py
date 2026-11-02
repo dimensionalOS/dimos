@@ -31,7 +31,7 @@ from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
 from dimos.mapping.relocalization.lidar.module import LocalMapConfig
 from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESETS, LidarRelocalizer
-from dimos.mapping.relocalization.module import yaw_deg
+from dimos.mapping.relocalization.module import fix_error, yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
@@ -63,12 +63,6 @@ class Replay(NamedTuple):
     fix: Transform | None
     fix_ts: float
     recorded: Transform | None
-
-
-def fix_error(fix: Transform, recorded: Transform) -> tuple[float, float]:
-    """Yaw in degrees and translation in meters between two fixes of the same frame pair."""
-    dyaw = (yaw_deg(fix) - yaw_deg(recorded) + 180.0) % 360.0 - 180.0
-    return dyaw, (fix.translation - recorded.translation).length()
 
 
 def recorded_fix(store: SqliteStore, world_frame: str, map_frame: str) -> Transform | None:

@@ -667,7 +667,7 @@ dependencies = [
  "cdr",
  "cyclonedds-rs",
  "dimos-module",
- "lcm-msgs",
+ "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?tag=v0.1.6)",
  "serde",
  "serde-big-array",
  "serde_json",
@@ -693,7 +693,7 @@ source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
- "lcm-msgs",
+ "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen)",
  "nalgebra",
  "rayon",
  "serde",
@@ -1504,6 +1504,14 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "lcm-msgs"
+version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?tag=v0.1.6#260db4ebe125b4eeafcb6ac62015c2f4ff3e09c2"
+dependencies = [
+ "byteorder",
+]
 
 [[package]]
 name = "lcm-msgs"

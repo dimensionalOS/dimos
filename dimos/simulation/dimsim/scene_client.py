@@ -232,24 +232,16 @@ class SceneClient:
 
         Use ``return`` to send a value back to Python.
 
-        Parameters
-        ----------
-        code : str
-            JavaScript code to execute.
-        timeout : float, optional
-            Seconds to wait for result (default: ``self.timeout``).
+        Args:
+            code: JavaScript code to execute.
+            timeout: Seconds to wait for result (default: ``self.timeout``).
 
-        Returns
-        -------
-        Any
+        Returns:
             The serialized return value from the JS code.
 
-        Raises
-        ------
-        SceneExecError
-            If the JS execution fails.
-        TimeoutError
-            If no result within timeout.
+        Raises:
+            SceneExecError: If the JS execution fails.
+            TimeoutError: If no result within timeout.
         """
         timeout = timeout if timeout is not None else self.timeout
         msg_id = str(uuid.uuid4())
@@ -283,28 +275,19 @@ class SceneClient:
     ) -> dict[str, Any]:
         """Load a GLTF/GLB map into the scene.
 
-        Parameters
-        ----------
-        url : str
-            URL or path to the .glb/.gltf file (can be absolute URL,
-            ``/local-assets/...``, or ``/proxy?url=...`` for CORS).
-        position : tuple
-            (x, y, z) world position.
-        scale : float
-            Uniform scale factor (applied before auto_scale).
-        collider : str or None
-            Collider shape: ``"trimesh"`` (default), ``"box"``, ``"sphere"``,
-            or ``None`` to skip collider.
-        name : str, optional
-            Name for the loaded model (for later lookup via ``scene.getObjectByName``).
-        auto_scale : bool or float
-            If True, auto-detect cm/m mismatch and normalize (default 50m max).
-            If a number, use that as the max dimension in meters.
-            If False, skip auto-scaling.
+        Args:
+            url: URL or path to the .glb/.gltf file (can be absolute URL,
+                ``/local-assets/...``, or ``/proxy?url=...`` for CORS).
+            position: (x, y, z) world position.
+            scale: Uniform scale factor (applied before auto_scale).
+            collider: Collider shape: ``"trimesh"`` (default), ``"box"``, ``"sphere"``,
+                or ``None`` to skip collider.
+            name: Name for the loaded model (for later lookup via ``scene.getObjectByName``).
+            auto_scale: If True, auto-detect cm/m mismatch and normalize (default 50m max).
+                If a number, use that as the max dimension in meters.
+                If False, skip auto-scaling.
 
-        Returns
-        -------
-        dict
+        Returns:
             ``{name, uuid, collider, scaleFactor}`` info about the loaded model.
         """
         name_js = f"model.name = {json.dumps(name)};" if name else ""
@@ -338,14 +321,10 @@ return {{ name: model.name, uuid: model.uuid, collider: col, scaleFactor }};
 
         Disposes geometry/materials and removes any associated collider.
 
-        Parameters
-        ----------
-        name : str
-            The ``object.name`` to find and remove.
+        Args:
+            name: The ``object.name`` to find and remove.
 
-        Returns
-        -------
-        bool
+        Returns:
             True if object was found and removed.
         """
         code = f"""
@@ -371,26 +350,16 @@ return true;
     ) -> dict[str, Any]:
         """Add an animated NPC character to the scene.
 
-        Parameters
-        ----------
-        url : str
-            URL to animated GLTF/GLB model.
-        name : str, optional
-            NPC name (auto-generated if omitted).
-        position : tuple
-            (x, y, z) world position.
-        rotation : float, optional
-            Y-axis rotation in radians.
-        scale : float, optional
-            Uniform scale factor.
-        animation : str or int
-            Animation clip name (substring match) or index (default: 0).
-        collider : bool
-            Whether to add a trimesh collider (default: True).
+        Args:
+            url: URL to animated GLTF/GLB model.
+            name: NPC name (auto-generated if omitted).
+            position: (x, y, z) world position.
+            rotation: Y-axis rotation in radians.
+            scale: Uniform scale factor.
+            animation: Animation clip name (substring match) or index (default: 0).
+            collider: Whether to add a trimesh collider (default: True).
 
-        Returns
-        -------
-        dict
+        Returns:
             ``{name, animations, activeAnimation, collider}``
         """
         opts: dict[str, Any] = {
@@ -410,14 +379,10 @@ return true;
     def remove_npc(self, name: str) -> bool:
         """Remove an NPC by name. Stops animation and removes collider.
 
-        Parameters
-        ----------
-        name : str
-            NPC name (as returned by ``add_npc``).
+        Args:
+            name: NPC name (as returned by ``add_npc``).
 
-        Returns
-        -------
-        bool
+        Returns:
             True if NPC was found and removed.
         """
         return cast("bool", self.exec(f"return removeNPC({json.dumps(name)});"))
@@ -429,16 +394,11 @@ return true;
     ) -> dict[str, Any]:
         """Add a physics collider to a named scene object.
 
-        Parameters
-        ----------
-        name : str
-            Object name to find in scene.
-        shape : str
-            ``"trimesh"`` (default), ``"box"``, or ``"sphere"``.
+        Args:
+            name: Object name to find in scene.
+            shape: ``"trimesh"`` (default), ``"box"``, or ``"sphere"``.
 
-        Returns
-        -------
-        dict
+        Returns:
             ``{shape, uuid, size}``
         """
         code = f"""
@@ -451,14 +411,10 @@ return addCollider(obj, {json.dumps(shape)});
     def remove_collider(self, name: str) -> bool:
         """Remove collider from a named scene object.
 
-        Parameters
-        ----------
-        name : str
-            Object name to find in scene.
+        Args:
+            name: Object name to find in scene.
 
-        Returns
-        -------
-        bool
+        Returns:
             True if a collider existed and was removed.
         """
         code = f"""
@@ -482,31 +438,19 @@ return removeCollider(obj);
     ) -> dict[str, Any]:
         """Add a primitive object to the scene with optional physics.
 
-        Parameters
-        ----------
-        geometry : str
-            ``"box"`` (default), ``"sphere"``, or ``"cylinder"``.
-        size : tuple
-            Dimensions — (w, h, d) for box, (radius,) for sphere,
-            (radiusTop, radiusBottom, height) for cylinder.
-        color : int
-            Hex color (e.g. ``0xFF0000`` for red).
-        position : tuple
-            (x, y, z) world position.
-        name : str, optional
-            Object name.
-        dynamic : bool
-            If True, object responds to gravity and collisions.
-        mass : float
-            Mass in kg (only for dynamic objects).
-        restitution : float
-            Bounciness 0-1 (only for dynamic objects).
-        collider : str or None
-            Collider shape, or None to skip.
+        Args:
+            geometry: ``"box"`` (default), ``"sphere"``, or ``"cylinder"``.
+            size: Dimensions — (w, h, d) for box, (radius,) for sphere,
+                (radiusTop, radiusBottom, height) for cylinder.
+            color: Hex color (e.g. ``0xFF0000`` for red).
+            position: (x, y, z) world position.
+            name: Object name.
+            dynamic: If True, object responds to gravity and collisions.
+            mass: Mass in kg (only for dynamic objects).
+            restitution: Bounciness 0-1 (only for dynamic objects).
+            collider: Collider shape, or None to skip.
 
-        Returns
-        -------
-        dict
+        Returns:
             ``{name, uuid, collider}``
         """
         if geometry == "sphere":
@@ -561,25 +505,19 @@ return {{ name: mesh.name, uuid: mesh.uuid, collider: col }};
     ) -> dict[str, Any]:
         """Add a 2 m tall, 0.2 m thick wall along the floor segment ``(x1, y1) → (x2, y2)``.
 
-        Parameters
-        ----------
-        x1, y1, x2, y2 : float
-            Endpoints of the wall on the floor (Three.js x, z).
-        height : float
-            Wall height in meters (default 2.0).
-        thickness : float
-            Wall thickness in meters (default 0.2).
-        color : int
-            Hex color (default ``0x888888``).
-        name : str, optional
-            Object name.
-        refresh_lidar : bool
-            Resend the Rapier snapshot to the bridge so server-side LiDAR
-            sees the new wall (default ``True``).
+        Args:
+            x1: Endpoints of the wall on the floor (Three.js x, z).
+            y1: Endpoints of the wall on the floor (Three.js x, z).
+            x2: Endpoints of the wall on the floor (Three.js x, z).
+            y2: Endpoints of the wall on the floor (Three.js x, z).
+            height: Wall height in meters (default 2.0).
+            thickness: Wall thickness in meters (default 0.2).
+            color: Hex color (default ``0x888888``).
+            name: Object name.
+            refresh_lidar: Resend the Rapier snapshot to the bridge so server-side LiDAR
+                sees the new wall (default ``True``).
 
-        Returns
-        -------
-        dict
+        Returns:
             ``{name, uuid, lidarRefreshed}``.
         """
         dx = x2 - x1
@@ -664,9 +602,7 @@ return {{ name: mesh.name || null, uuid: mesh.uuid, lidarRefreshed }};
         otherwise invisible to LiDAR.  Call this once after a batch of wall
         additions to make them visible.
 
-        Returns
-        -------
-        bool
+        Returns:
             ``True`` if a snapshot was sent, ``False`` if the dimos sensor
             socket wasn't available (e.g. running standalone without the
             bridge).
@@ -727,52 +663,34 @@ return true;
         - Local asset: ``"/local-assets/my-drone.glb"`` (see :meth:`upload_asset`)
         - Any URL: ``"https://example.com/robot.glb"``
 
-        Parameters
-        ----------
-        preset : str, optional
-            Named preset to start from.
-        radius : float, optional
-            Agent capsule radius in meters.
-        half_height : float, optional
-            Agent capsule half-height in meters.
-        lidar_mount_height : float, optional
-            Height of lidar sensor in meters.
-        avatar_url : str or list[str], optional
-            GLTF model URL(s).
-        physics : str, optional
-            ``"ground"`` or ``"flight"``.
-        max_speed : float, optional
-            Linear speed multiplier (default varies by preset).
-        turn_rate : float, optional
-            Angular speed multiplier (default: same as max_speed).
-        gravity : float, optional
-            Gravity in m/s² (default -9.81 for ground, 0 for flight).
-        max_step_height : float, optional
-            Max step-up height in meters (ground only, default 0.25).
-        ground_snap_dist : float, optional
-            Ground snap distance in meters (ground only, default 0.5).
-        max_slope_angle : float, optional
-            Max climbable slope in degrees (ground only, default 45).
-        friction : float, optional
-            Capsule friction coefficient (default 0.8).
-        max_altitude : float, optional
-            Altitude ceiling in meters (flight only).
+        Args:
+            preset: Named preset to start from.
+            radius: Agent capsule radius in meters.
+            half_height: Agent capsule half-height in meters.
+            lidar_mount_height: Height of lidar sensor in meters.
+            avatar_url: GLTF model URL(s).
+            physics: ``"ground"`` or ``"flight"``.
+            max_speed: Linear speed multiplier (default varies by preset).
+            turn_rate: Angular speed multiplier (default: same as max_speed).
+            gravity: Gravity in m/s² (default -9.81 for ground, 0 for flight).
+            max_step_height: Max step-up height in meters (ground only, default 0.25).
+            ground_snap_dist: Ground snap distance in meters (ground only, default 0.5).
+            max_slope_angle: Max climbable slope in degrees (ground only, default 45).
+            friction: Capsule friction coefficient (default 0.8).
+            max_altitude: Altitude ceiling in meters (flight only).
 
-        Returns
-        -------
-        dict
+        Returns:
             The final embodiment config that was sent.
 
-        Examples
-        --------
-        >>> scene.set_embodiment("drone")
-        >>> scene.set_embodiment("differential-drive", max_speed=1.5)
-        >>> scene.set_embodiment("ackermann", turn_rate=0.8, max_slope_angle=15)
-        >>> scene.set_embodiment(
-        ...     radius=0.3, half_height=0.5, physics="ground",
-        ...     avatar_url="/local-assets/my-robot.glb",
-        ...     max_speed=2.0, max_step_height=0.1,
-        ... )
+        Examples:
+            >>> scene.set_embodiment("drone")
+            >>> scene.set_embodiment("differential-drive", max_speed=1.5)
+            >>> scene.set_embodiment("ackermann", turn_rate=0.8, max_slope_angle=15)
+            >>> scene.set_embodiment(
+            ...     radius=0.3, half_height=0.5, physics="ground",
+            ...     avatar_url="/local-assets/my-robot.glb",
+            ...     max_speed=2.0, max_step_height=0.1,
+            ... )
         """
         # Start from preset defaults
         if preset:
@@ -844,9 +762,7 @@ return true;
         Preserves the agent, camera, lights, and renderer. Removes everything
         else (loaded maps, NPCs, etc.).
 
-        Returns
-        -------
-        int
+        Returns:
             Number of objects removed.
         """
         code = """
@@ -876,9 +792,7 @@ return count;
     def get_scene_info(self) -> dict[str, Any]:
         """Get info about the current scene (object names, counts).
 
-        Returns
-        -------
-        dict
+        Returns:
             ``{objectCount, objects: [{name, type, uuid}]}``
         """
         code = """
@@ -916,9 +830,7 @@ return { objectCount: objects.length, objects: objects.slice(0, 100) };
     def get_agent_position(self) -> dict[str, Any]:
         """Get the agent's current world position.
 
-        Returns
-        -------
-        dict
+        Returns:
             ``{x, y, z}``
         """
         code = """

@@ -23,9 +23,10 @@ from typing import TYPE_CHECKING, Any
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.vl.create import create
+from dimos.models.vl.types import VlModelName
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -41,7 +42,12 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+class PerceiveLoopSkillConfig(ModuleConfig):
+    detection_model: VlModelName = "moondream"
+
+
 class PerceiveLoopSkill(Module):
+    config: PerceiveLoopSkillConfig
     color_image: In[Image]
 
     _agent_spec: AgentSpec
@@ -57,7 +63,7 @@ class PerceiveLoopSkill(Module):
         # Importing the model stack (torch, transformers) takes seconds; on a
         # thread so it overlaps the rest of the startup instead of holding up
         # this worker's deploys.
-        self._vl_model = run_in_thread(lambda: create(self.config.g.detection_model), "vl-model")
+        self._vl_model = run_in_thread(lambda: create(self.config.detection_model), "vl-model")
 
     @rpc
     def start(self) -> None:

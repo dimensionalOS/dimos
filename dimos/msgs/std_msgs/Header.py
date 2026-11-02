@@ -76,6 +76,12 @@ class Header(LCMHeader):  # type: ignore[misc]
             raise ValueError(f"Cannot create Header from {type(header)}")
 
     @classmethod
+    def lcm_decode(cls, data: bytes) -> Header:
+        # The generated decoder resolves nested field types from the decoding class's
+        # own annotations, which here hold only ``ts``: decode as the LCM type and wrap.
+        return cls(LCMHeader.lcm_decode(data))
+
+    @classmethod
     def now(cls, frame_id: str = "", seq: int = 1) -> Header:
         """Create a Header with current timestamp."""
         ts = time.time()

@@ -59,5 +59,5 @@ def test_legacy_inspect_preserves_automatic_and_explicit_formats(
 def test_retained_example_has_an_explicit_feature_schema() -> None:
     path = Path(__file__).with_name("example_config.json")
     config = DataPrepConfig.model_validate_json(path.read_text())
-    assert config.observation["joint_state"].names[-1] == "arm/gripper"
-    assert config.action["joint_target"].shape == (8,)
+    assert config.recording_schema.observation["joint_state"].names[-1] == "arm/gripper"
+    assert config.recording_schema.action["joint_target"].shape == (8,)
