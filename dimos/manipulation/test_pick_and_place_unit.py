@@ -205,6 +205,70 @@ def test_pick_reports_no_reachable_candidate_when_every_attempt_fails(
     assert not module._holding_object
 
 
+@pytest.fixture
+def fallback(module: PickAndPlaceModule) -> Any:
+    """A second grasp module whose one grasp, at x = 0.3, is tried after the provider's."""
+    module._fallback_grasp_generator = MagicMock()
+    module._fallback_grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_candidate(0.3)]
+    )
+    return module._fallback_grasp_generator
+
+
+def test_pick_tries_the_fallback_after_the_providers_unreachable_grasps(
+    module: PickAndPlaceModule, fallback: Any
+) -> None:
+    manipulation: Any = module._manipulation
+    manipulation.plan_to_poses.side_effect = [NO_PATH, PLANNED, PLANNED, PLANNED]
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert (result.metadata["source"], result.metadata["rank"]) == ("fallback", 0)
+    assert module._selected_grasp is not None
+    assert module._selected_grasp.position.x == pytest.approx(0.3)
+    assert [c.pose.position.x for c in module.get_grasp_candidates().candidates] == [0.1, 0.3]
+
+
+def test_pick_uses_the_providers_grasp_first(module: PickAndPlaceModule, fallback: Any) -> None:
+    result = module.pick_object("cup-1")
+
+    assert (result.metadata["source"], result.metadata["rank"]) == ("provider", 0)
+    assert module._selected_grasp is not None
+    assert module._selected_grasp.position.x == pytest.approx(0.1)
+
+
+def test_a_provider_error_leaves_the_fallbacks_grasps(
+    module: PickAndPlaceModule, fallback: Any
+) -> None:
+    module._grasp_generator.propose_grasps.side_effect = RuntimeError("CUDA out of memory")
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert result.metadata["source"] == "fallback"
+    assert result.metadata["grasp_provider_error"] == "RuntimeError: CUDA out of memory"
+
+
+def test_a_provider_error_without_a_fallback_is_raised(module: PickAndPlaceModule) -> None:
+    module._grasp_generator.propose_grasps.side_effect = RuntimeError("CUDA out of memory")
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        module.pick_object("cup-1")
+
+
+def test_a_fallback_that_is_the_provider_is_not_asked_twice(module: PickAndPlaceModule) -> None:
+    """A stack with one grasp module resolves both references to it."""
+    module._grasp_generator.remote_name = "heuristicgraspmodule"
+    module._fallback_grasp_generator = MagicMock(remote_name="heuristicgraspmodule")
+    module._manipulation.plan_to_poses.return_value = NO_PATH
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.startswith("The planner found no path to any of the 1 grasp")
+    module._fallback_grasp_generator.propose_grasps.assert_not_called()
+
+
 def test_proposals_reach_the_viewer_as_they_are_generated(module: PickAndPlaceModule) -> None:
     """get_grasp_candidates only answers after the fact, which is no help live."""
     manipulation: Any = module._manipulation

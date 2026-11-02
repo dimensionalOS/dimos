@@ -46,6 +46,8 @@ from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionModule
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -192,6 +194,15 @@ def test_request_operator_reaches_the_coordinator() -> None:
     assert resolve_module_refs(hybrid_teleop_sim)["teleopskills", "_coordinator"] == (
         "ControlCoordinator"
     )
+
+
+@pytest.mark.parametrize("blueprint", [hybrid_teleop_sim, hybrid_teleop_sim_collect])
+def test_picks_use_graspgenx_then_the_heuristic(blueprint: Blueprint) -> None:
+    refs = resolve_module_refs(blueprint)
+
+    assert refs["pickandplacemodule", "_grasp_generator"] == "graspgenxmodule"
+    assert refs["pickandplacemodule", "_fallback_grasp_generator"] == "heuristicgraspmodule"
+    assert {GraspGenXModule, HeuristicGraspModule} <= _modules(blueprint)
 
 
 def test_blueprint_ranks_hold_over_jog_over_autonomy():
