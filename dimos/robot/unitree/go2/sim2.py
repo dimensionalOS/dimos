@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_change and sending joint commands.
+"""A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_observations and sending joint commands.
 
 Go2Sim.mjcf is the Go2's MJCF with the rig's sensor frames as sites: a sensor names one (Go2Sim.lidar_mount_frame, ...)
 as its frame_id, and UrdfManager.blueprint(model=mjcf_to_urdf(Go2Sim.mjcf)) poses the same frames on tf.
@@ -25,7 +25,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from dimos_lcm.world_msgs import WorldAction, WorldChange
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
 import numpy as np
 
 from dimos.core.module import Module, ModuleConfig
@@ -50,7 +50,7 @@ from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.view import rotation_matrix
-from dimos.sim2.world_change import WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
 from dimos.utils.data import get_data
@@ -86,7 +86,7 @@ class Go2Sim(Module):
 
     config: Go2SimConfig
     cmd_vel: In[Twist]
-    world_change: In[WorldChange]
+    world_observations: In[WorldObservations]
     actions: Out[WorldAction]
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
@@ -128,7 +128,7 @@ class Go2Sim(Module):
                 loop.call_soon_threadsafe(self._act)
 
         self._world.on_frame(on_frame)
-        self._world.subscribe(self.world_change)
+        self._world.subscribe(self.world_observations)
         yield
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
