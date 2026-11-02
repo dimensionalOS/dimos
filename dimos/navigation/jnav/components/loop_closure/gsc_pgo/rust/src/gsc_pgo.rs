@@ -516,25 +516,25 @@ pub struct DeterministicConfig {
 
 impl Default for DeterministicConfig {
     fn default() -> DeterministicConfig {
+        // the R1 Jetson's (gsc_stable_0.0.3 fast mode at 1x under MLS + raytracer load): each key's largest suggested
+        // value over nine maps, solve powers from the Mac fit; a faster machine replays a Jetson run with these
         DeterministicConfig {
-            fast_match_scans_fixed_overhead: 0.5465,
-            fast_match_scans_per_keyframe: 5.7e-8,
-            fast_match_scans_per_point: 3.137e-5,
-            fast_match_scans_per_source_point: 7.808e-5,
-            verification_scans_fixed_overhead: 1.322,
-            // a 99%-of-rounds upper bound over Mac rounds of huge L1, gir1 and small L1 (their per-round points
-            // logged), until the Jetson battery's fit
-            verification_scans_per_round: 0.1966,
-            verification_scans_per_round_point: 1.723e-5,
-            solve_scans_scale: 3.843e-5,
+            fast_match_scans_fixed_overhead: 1.3885433563125162,
+            fast_match_scans_per_keyframe: 1.448251991030438e-07,
+            fast_match_scans_per_point: 7.970467536600849e-05,
+            fast_match_scans_per_source_point: 0.00019838511484150277,
+            verification_scans_fixed_overhead: 5.036066465159226,
+            verification_scans_per_round: 0.7489339387672495,
+            verification_scans_per_round_point: 6.563647896724165e-05,
+            solve_scans_scale: 9.097483642429608e-05,
             solve_keyframe_power: 2.017,
             solve_closure_power: -0.215,
             solve_rejected_power: 0.558,
-            debounce_scans_per_keyframe: 2.56e-6,
-            merge_scans_per_keyframe: 2.56e-6,
-            pressure_scans_fixed_overhead: 1.21e-4,
-            pressure_scans_per_keyframe: 1.355e-6,
-            pressure_scans_per_closure: 1.957e-6,
+            debounce_scans_per_keyframe: 6.093487031356368e-06,
+            merge_scans_per_keyframe: 2.56e-06,
+            pressure_scans_fixed_overhead: 0.0007777038336858567,
+            pressure_scans_per_keyframe: 8.708997476399469e-06,
+            pressure_scans_per_closure: 1.2578234731596874e-05,
         }
     }
 }
@@ -2413,11 +2413,11 @@ impl GscPgo {
             },
         })
     }
-    /// Search for a closure at the newest keyframe as a lockstep replay does: under the deterministic schedule
-    /// (`closure_search_hold_enabled`) on the search thread, waiting for a search only once its estimate has passed
-    /// (`step_closure_search`); else all on this thread.
+    /// Search for a closure at the newest keyframe as a lockstep replay does (`step_closure_search`): deterministic, it
+    /// waits for a job only once its hold has passed; fast, it waits for none, the searches landing as they finish, as
+    /// live (the keyframe thread only dispatches).
     pub fn search_for_closure_pairs(&mut self) {
-        self.step_closure_search(true);
+        self.step_closure_search(self.config.deterministic());
     }
     /// Apply a `ClosureSearch`'s result: record its diagnostics and commit the closure it accepted.
     pub fn finish_closure_search(&mut self, result: ClosureSearchResult) {
