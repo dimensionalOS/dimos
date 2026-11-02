@@ -91,6 +91,19 @@ class PGOConfig(NativeModuleConfig):
     closure_yank_gate_width: float = 1.0
     # How many times the stated odometry error estimate (sd) the true drift may be; the yank gate averages over it (1 = trust it)
     closure_yank_drift_range: float = 100.0
+    # Extension stops: skip a candidate a full stack could not carry, stop when a step's evidence stops rising, stop when
+    # a step's fit leaves the single fit's place
+    closure_extension_skip_unreachable: bool = True
+    # Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give
+    closure_yank_pre_check: bool = False
+    closure_extension_stop_when_flat: bool = True
+    closure_extension_stop_on_swing: bool = True
+    # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail
+    # reject, extend the match in between (barely_fail < 1 < barely_pass)
+    barely_fail_uncertainty_range: float = 0.8
+    barely_pass_uncertainty_range: float = 1.05
+    # The uncertainty range narrows over the extension's steps, slowed by 1 / (1 - pressure)^this
+    decisive_pressure_rate: float = 1.0
     # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
     closure_icp_dump_dir: str = ""
     # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off

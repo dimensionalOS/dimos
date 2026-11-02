@@ -178,7 +178,7 @@ pub struct ClosureCandidateDiag {
     /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
     pub sharpness: f64,
     pub extended_sharpness: f64,
-    /// `connection_fit::likelihood_ratio` (mean log ratio, nats) of the single-scan and the last extended alignment, and
+    /// `connection_fit::likelihood_ratio` (mean log ratio, yank units) of the single-scan and the last extended alignment, and
     /// the aligned-distance width it measured (NaN when not scored).
     pub likelihood_ratio: f64,
     pub extended_likelihood_ratio: f64,
@@ -343,6 +343,23 @@ pub struct Config {
     /// (`proportional_confidence::yank_evidence`): a candidate's yank is priced averaged over it, so a large jump costs
     /// about 3 ln z of evidence instead of z^2 / 2 and GNC judges it. 1 = the stated odometry error estimate is trusted exactly.
     pub closure_yank_drift_range: f64,
+    /// Don't extend a candidate whose required evidence a full stack could not reach at its single scan's evidence per
+    /// keyframe.
+    pub closure_extension_skip_unreachable: bool,
+    /// Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give.
+    pub closure_yank_pre_check: bool,
+    /// Stop extending once a step's evidence is no higher than the step before.
+    pub closure_extension_stop_when_flat: bool,
+    /// Stop extending once a step's fit moves a stacked keyframe farther than the search radius from the single fit.
+    pub closure_extension_stop_on_swing: bool,
+    /// The uncertainty range, as ratios of a candidate's evidence to its bar (the required evidence; both in yank units):
+    /// at or above `barely_pass_uncertainty_range` (> 1) the single scan accepts, at or below
+    /// `barely_fail_uncertainty_range` (< 1) it rejects, and in between the match is extended until the ratio leaves the
+    /// range, which narrows toward 1 each step (`proportional_confidence::UncertaintyRange`).
+    pub barely_fail_uncertainty_range: f64,
+    pub barely_pass_uncertainty_range: f64,
+    /// How much the pressure keeps the uncertainty range wide: its narrowing is stretched by 1 / (1 - pressure)^this.
+    pub decisive_pressure_rate: f64,
     /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
     /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
     /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
@@ -437,7 +454,7 @@ pub struct Config {
     /// The nudge `sharpness` measures against: this far (m) along x and y, and this many degrees about z.
     pub closure_sharpness_nudge_m: f64,
     pub closure_sharpness_nudge_deg: f64,
-    /// When true, a closure's evidence (nats) is its likelihood ratio (`connection_fit::likelihood_ratio`, scales measured
+    /// When true, a closure's evidence (yank units) is its likelihood ratio (`connection_fit::likelihood_ratio`, scales measured
     /// from the clouds, misfit reach = `closure_icp_max_correspondence_m`), as confidence 1 - e^-ratio, in place of scan
     /// context x ICP x degeneracy, and an extended stack's is the stack's own ratio. It also sets the extension budget: the keyframes the still-needed evidence takes at the
     /// single scan's evidence per keyframe (at least one bit), up to the next doubling, at most
@@ -475,6 +492,22 @@ pub struct Config {
 }
 
 impl Config {
+    /// An error naming the first setting out of its allowed range, if any.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(self.barely_fail_uncertainty_range < 1.0) {
+            return Err(format!(
+                "barely_fail_uncertainty_range must be < 1 (got {})",
+                self.barely_fail_uncertainty_range
+            ));
+        }
+        if !(self.barely_pass_uncertainty_range > 1.0) {
+            return Err(format!(
+                "barely_pass_uncertainty_range must be > 1 (got {})",
+                self.barely_pass_uncertainty_range
+            ));
+        }
+        Ok(())
+    }
     /// `closure_icp_inlier_distance_m` squared, the form ICP compares against.
     pub fn closure_inlier_squared_distance(&self) -> f64 {
         self.closure_icp_inlier_distance_m.powi(2)
@@ -498,6 +531,13 @@ impl Default for Config {
             closure_min_degeneracy: 0.05,
             closure_yank_gate_width: 1.0,
             closure_yank_drift_range: 100.0,
+            closure_extension_skip_unreachable: true,
+            closure_yank_pre_check: false,
+            closure_extension_stop_when_flat: true,
+            closure_extension_stop_on_swing: true,
+            barely_fail_uncertainty_range: 0.8,
+            barely_pass_uncertainty_range: 1.05,
+            decisive_pressure_rate: 1.0,
             closure_icp_dump_dir: String::new(),
             closure_extended_icp_max_keyframes: 16,
             closure_robust_huber_k: 1.345,
@@ -605,6 +645,8 @@ pub struct GscPgo {
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// The ICP cache every closure search's cloud computations go through (`set_icp_cache`), if any.
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
+    /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
+    pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -656,6 +698,10 @@ pub struct ClosureSearch {
     pub(crate) tries: usize,
     /// The ICP cache the search's cloud computations go through (`icp_cache`), if any.
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
+    /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
+    pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
+    /// Seconds spent writing debug dumps (`closure_icp_dump_dir`), taken out of the stage timings.
+    pub(crate) debug_io_s: std::cell::Cell<f64>,
 }
 
 /// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
@@ -704,6 +750,13 @@ impl ClosureSearch {
         let clearance = self.config.closure_ground_clearance_m;
         // the source scan, the target submap and its tree, built only when a computation needs them (never when every
         // result comes from the ICP cache)
+        // the source scan alone (all the degeneracy gate reads), built apart from the target and its tree
+        let source_cell = std::cell::OnceCell::new();
+        let source_cloud = || -> &PointCloud {
+            source_cell.get_or_init(|| {
+                above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance)
+            })
+        };
         let clouds_cell = std::cell::OnceCell::new();
         let clouds = || -> &(PointCloud, PointCloud, KdTree) {
             clouds_cell.get_or_init(|| {
@@ -714,10 +767,8 @@ impl ClosureSearch {
                     ),
                     clearance,
                 );
-                let source_cloud =
-                    above_floor(&self.stacked_cloud(std::iter::once(cur_idx)), clearance);
                 let target_tree = KdTree::build(&target_cloud);
-                (source_cloud, target_cloud, target_tree)
+                (source_cloud().clone(), target_cloud, target_tree)
             })
         };
         // a cloud computation, through the ICP cache when there is one; a point-to-plane alignment is a different
@@ -779,13 +830,85 @@ impl ClosureSearch {
         };
         let t0 = std::time::Instant::now();
         diag.degeneracy_min = memo("deg", &mut || {
-            vec![uniqueness::degeneracy(&clouds().0) as f64]
+            vec![uniqueness::degeneracy(source_cloud()) as f64]
         })[0] as f32;
         timing.degeneracy_s += t0.elapsed().as_secs_f64();
         if degenerate(diag.degeneracy_min) {
             return rejected(diag, "degeneracy_reject", timing);
         }
 
+        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
+        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
+        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
+        // kept would count the same evidence twice
+        let gate_error_estimate = diag.odometry_error_estimate_gate;
+        let odometry_step = self.mean_step_xy_variance * gate_error_estimate[0];
+        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
+        let by_graph = diag
+            .innovation_covariance
+            .iter()
+            .flatten()
+            .all(|v| v.is_finite());
+        // at the upper bound: scaled by the most any component's bound exceeds its estimate
+        let widen = (0..4)
+            .map(|c| gate_error_estimate[c] / diag.learned_odometry_error_estimate[c])
+            .fold(1.0, f64::max);
+        let known = if by_graph {
+            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
+            // closures included): the closure adds something only where it is surer than the graph in some direction.
+            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
+            widen
+                * mat3::jacobi_eigen(diag.innovation_covariance)
+                    .0
+                    .into_iter()
+                    .fold(0.0, f64::max)
+        } else {
+            self.kept_closures
+                .iter()
+                .fold(step(cur_idx, target_idx), |known, l| {
+                    let via = |a: usize, b: usize| {
+                        step(target_idx, a) + l.variances[3] + step(cur_idx, b)
+                    };
+                    known.min(via(l.from, l.to)).min(via(l.to, l.from))
+                })
+        };
+        // no alignment of two voxelized scans fits tighter than the spread of a surface's voxel centroids between them
+        // (two independent offsets within a voxel of the submap resolution r: variance r^2 / 6 along the normal), so a
+        // graph surer than that makes the closure uninformative whatever ICP returns: it is not aligned at all
+        let closure_variance_floor = self.config.submap_resolution.powi(2) / 6.0;
+        if self.config.closure_uninformative_gate && closure_variance_floor >= known {
+            return rejected(diag, "uninformative", timing);
+        }
+        // a candidate whose least yank ICP could leave still needs more evidence than any stack of scans could give is
+        // rejected unaligned: ICP pairs points only within its match distance, so it moves the source from the seed (the
+        // target's position) by about that much at most; the closure's own variance is at most the fitness limit squared;
+        // and a point's likelihood ratio is at most ln(2 reach / (width sqrt(2 pi))) with width no less than a quarter
+        // voxel, times the largest stack
+        if self.config.closure_likelihood_confidence && self.config.closure_yank_pre_check {
+            let reach = self.config.closure_icp_max_correspondence_m;
+            let source_position = self.key_poses[cur_idx].translation_global;
+            let seeded = self.key_poses[target_idx].translation_global;
+            let jump = mat3::norm(&mat3::sub(&seeded, &source_position));
+            let spread = mat3::jacobi_eigen(diag.innovation_covariance)
+                .0
+                .into_iter()
+                .fold(0.0, f64::max)
+                + self.config.closure_icp_max_fitness_m.powi(2);
+            if spread.is_finite() && spread > 0.0 && jump > reach {
+                let least_yank = (jump - reach) / spread.sqrt();
+                let width = self.config.submap_resolution / 4.0;
+                let most_evidence = (2.0 * reach / (width * (2.0 * std::f64::consts::PI).sqrt()))
+                    .ln()
+                    * self.config.closure_extended_icp_max_keyframes.max(1) as f64;
+                let least_required = crate::proportional_confidence::yank_evidence(
+                    least_yank / self.config.closure_yank_gate_width.max(f64::EPSILON),
+                    self.config.closure_yank_drift_range,
+                );
+                if least_required > most_evidence {
+                    return rejected(diag, "yank_confidence_reject", timing);
+                }
+            }
+        }
         let t0 = std::time::Instant::now();
         let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
@@ -824,41 +947,6 @@ impl ClosureSearch {
         if !icp.converged || icp.fitness > self.config.closure_icp_max_fitness_m.powi(2) {
             return rejected(diag, "icp_reject", timing);
         }
-        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
-        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
-        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
-        // kept would count the same evidence twice
-        let gate_error_estimate = diag.odometry_error_estimate_gate;
-        let odometry_step = self.mean_step_xy_variance * gate_error_estimate[0];
-        let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
-        let by_graph = diag
-            .innovation_covariance
-            .iter()
-            .flatten()
-            .all(|v| v.is_finite());
-        // at the upper bound: scaled by the most any component's bound exceeds its estimate
-        let widen = (0..4)
-            .map(|c| gate_error_estimate[c] / diag.learned_odometry_error_estimate[c])
-            .fold(1.0, f64::max);
-        let known = if by_graph {
-            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
-            // closures included): the closure adds something only where it is surer than the graph in some direction.
-            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
-            widen
-                * mat3::jacobi_eigen(diag.innovation_covariance)
-                    .0
-                    .into_iter()
-                    .fold(0.0, f64::max)
-        } else {
-            self.kept_closures
-                .iter()
-                .fold(step(cur_idx, target_idx), |known, l| {
-                    let via = |a: usize, b: usize| {
-                        step(target_idx, a) + l.variances[3] + step(cur_idx, b)
-                    };
-                    known.min(via(l.from, l.to)).min(via(l.to, l.from))
-                })
-        };
         // the closure's translation variance as the graph will take it: its inliers' mean squared distance
         // (`IcpResult::inlier_mean_square`)
         let closure_variance = icp.inlier_mean_square();
@@ -984,28 +1072,51 @@ impl ClosureSearch {
         };
         let evidence = -(1.0 - diag.confidence).ln();
         let single_required = required(evidence, &mut diag);
+        // evidence over its bar, both in yank units (an unmet bar of 0 counts as passed)
+        let ratio = if single_required > 0.0 {
+            evidence / single_required
+        } else {
+            f64::INFINITY
+        };
+        let (low, high) = (
+            self.config.barely_fail_uncertainty_range,
+            self.config.barely_pass_uncertainty_range,
+        );
         if self.config.closure_likelihood_confidence {
-            // extend as far as the evidence still needed takes at this scan's own evidence per keyframe (at least one bit):
+            // extend as far as reaching the uncertainty range's top takes at this scan's own evidence per keyframe (at least one bit):
             // the yank and the look-alike places it matched set what is needed, not the pressure
             let per_keyframe = evidence.max(std::f64::consts::LN_2);
-            diag.extension_budget = ((single_required / per_keyframe).ceil().max(1.0) as usize)
+            diag.extension_budget = ((single_required * high / per_keyframe).ceil().max(2.0)
+                as usize)
                 .next_power_of_two()
                 .min(self.config.closure_extended_icp_max_keyframes);
         }
         diag.required_confidence = 1.0 - (-single_required).exp();
-        if evidence < single_required {
+        // a stack of keyframes earns about the single scan's evidence per keyframe at best: one that could not climb to
+        // its bar even at the full stack is decided now
+        let reachable = !self.config.closure_extension_skip_unreachable
+            || !self.config.closure_likelihood_confidence
+            || evidence.max(std::f64::consts::LN_2)
+                * self.config.closure_extended_icp_max_keyframes as f64
+                >= single_required;
+        // outside the uncertainty range the single scan decides; inside it the match is extended until it does
+        if ratio <= low || (ratio < 1.0 && !reachable) {
+            return rejected(diag, "yank_confidence_reject", timing);
+        }
+        if ratio < high {
             let t0 = std::time::Instant::now();
-            let source_points = memo("srcn", &mut || vec![clouds().0.len() as f64])[0] as usize;
+            let source_points = memo("srcn", &mut || vec![source_cloud().len() as f64])[0] as usize;
             let extended = self.extended_icp(
                 cur_idx,
                 target_idx,
                 source_points,
                 &icp,
+                ratio,
                 &mut diag,
                 &mut required,
                 &memo_alignment,
             );
-            timing.extended_icp_s += t0.elapsed().as_secs_f64();
+            timing.extended_icp_s += t0.elapsed().as_secs_f64() - self.debug_io_s.take();
             let Some(extended) = extended else {
                 return rejected(diag, "yank_confidence_reject", timing);
             };
@@ -1027,6 +1138,9 @@ impl ClosureSearch {
 
 impl GscPgo {
     pub fn new(config: Config) -> GscPgo {
+        if let Err(e) = config.validate() {
+            panic!("gsc_pgo config: {e}");
+        }
         let scan_context_config = similarity_discovery::Config {
             n_rings: config.scan_context_num_rings.max(0) as usize,
             n_sectors: config.scan_context_num_sectors.max(0) as usize,
@@ -1491,6 +1605,8 @@ impl GscPgo {
             alternatives,
             tries: tries + 1,
             icp_cache: self.icp_cache.clone(),
+            keyframe_clouds: self.keyframe_clouds.clone(),
+            debug_io_s: std::cell::Cell::new(0.0),
         })
     }
     /// Search for a closure at the newest keyframe, all on this thread.
@@ -1643,5 +1759,30 @@ impl GscPgo {
             gnc_weight: f64::NAN,
         });
         self.new_closure = true;
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::Config;
+
+    /// The uncertainty range must straddle the bar: barely_fail below 1, barely_pass above it.
+    #[test]
+    fn the_uncertainty_range_must_straddle_one() {
+        assert!(Config::default().validate().is_ok());
+        for (fail, pass) in [
+            (1.0, 1.05),
+            (1.2, 1.5),
+            (0.95, 1.0),
+            (0.95, 0.9),
+            (f64::NAN, 1.05),
+        ] {
+            let config = Config {
+                barely_fail_uncertainty_range: fail,
+                barely_pass_uncertainty_range: pass,
+                ..Config::default()
+            };
+            assert!(config.validate().is_err(), "{fail} {pass}");
+        }
     }
 }

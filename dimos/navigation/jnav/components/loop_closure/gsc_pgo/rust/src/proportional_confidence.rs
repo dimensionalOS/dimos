@@ -22,7 +22,151 @@
 use crate::connection_fit::{self, dump_icp, icp, IcpParams, IcpResult};
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
 use crate::mat3::{self, Mat3, Vec3};
-use crate::pointcloud::{above_floor, transform_cloud, voxel_downsample, KdTree, PointCloud};
+use crate::pointcloud::{
+    above_floor, transform_cloud, voxel_downsample, KdForest, KdTree, NearestIndex, PointCloud,
+};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// One keyframe's scan as every closure search uses it, built once: voxelized in its own frame (placed by its pose when
+/// stacked) and its range image (`connection_fit::RangeBins`). Neither depends on the pose, so solves never stale them.
+pub struct KeyframeCloud {
+    body: Arc<PointCloud>,
+    voxelized: OnceLock<PointCloud>,
+    bins: OnceLock<Arc<connection_fit::RangeBins>>,
+    reach: OnceLock<f64>,
+}
+
+impl KeyframeCloud {
+    pub(crate) fn voxelized(&self, resolution: f64) -> &PointCloud {
+        self.voxelized
+            .get_or_init(|| voxel_downsample(&self.body, resolution))
+    }
+    /// How far the scan sees across the ground: its points' 95th-percentile planar range.
+    pub(crate) fn reach(&self) -> f64 {
+        *self.reach.get_or_init(|| {
+            let mut ranges: Vec<f64> = self
+                .body
+                .iter()
+                .map(|p| (p[0] as f64).hypot(p[1] as f64))
+                .collect();
+            if ranges.is_empty() {
+                return 0.0;
+            }
+            let k = (ranges.len() * 95 / 100).min(ranges.len() - 1);
+            *ranges.select_nth_unstable_by(k, f64::total_cmp).1
+        })
+    }
+    pub(crate) fn bins(&self) -> Arc<connection_fit::RangeBins> {
+        self.bins
+            .get_or_init(|| Arc::new(connection_fit::RangeBins::build(&self.body)))
+            .clone()
+    }
+}
+
+/// The keyframes' `KeyframeCloud`s, shared by the searches.
+#[derive(Default)]
+pub struct KeyframeClouds {
+    entries: Mutex<std::collections::HashMap<usize, Arc<KeyframeCloud>>>,
+}
+
+impl KeyframeClouds {
+    pub(crate) fn get(&self, k: usize, body: &Arc<PointCloud>) -> Arc<KeyframeCloud> {
+        self.entries
+            .lock()
+            .unwrap()
+            .entry(k)
+            .or_insert_with(|| {
+                Arc::new(KeyframeCloud {
+                    body: body.clone(),
+                    voxelized: OnceLock::new(),
+                    bins: OnceLock::new(),
+                    reach: OnceLock::new(),
+                })
+            })
+            .clone()
+    }
+}
+
+/// A stack of keyframes grown in place: their voxelized points, merged per world voxel (centroid), and for a target
+/// the index searched against (a `KdForest`, so a step adds only the new keyframes' points).
+#[derive(Default)]
+struct Stack {
+    keyframes: std::collections::BTreeSet<usize>,
+    voxels: std::collections::HashMap<(i64, i64, i64), usize>,
+    sums: Vec<([f64; 3], u32)>,
+    /// target only: the floor (5th-percentile height of the first step) and the indexed points above it
+    floor: Option<f32>,
+    index: KdForest,
+}
+
+impl Stack {
+    /// Add the keyframes not yet in the stack; returns the target points added (above the floor).
+    fn add(&mut self, search: &ClosureSearch, ids: &[usize], target: bool) -> usize {
+        let resolution = search.config.submap_resolution;
+        let inverse = (1.0 / resolution) as f32;
+        let mut placed = PointCloud::new();
+        for &k in ids {
+            if !self.keyframes.insert(k) {
+                continue;
+            }
+            let key_pose = &search.key_poses[k];
+            let Some(body) = &key_pose.body_cloud else {
+                continue;
+            };
+            let cloud = search.keyframe_clouds.get(k, body);
+            placed.extend(transform_cloud(
+                cloud.voxelized(resolution),
+                &key_pose.rotation_global,
+                &key_pose.translation_global,
+            ));
+        }
+        let mut fresh = PointCloud::new();
+        for p in placed {
+            if !p.iter().all(|v| v.is_finite()) {
+                continue;
+            }
+            let key = (
+                (p[0] * inverse).floor() as i64,
+                (p[1] * inverse).floor() as i64,
+                (p[2] * inverse).floor() as i64,
+            );
+            match self.voxels.get(&key) {
+                Some(&i) if !target => {
+                    let (sum, count) = &mut self.sums[i];
+                    (0..3).for_each(|a| sum[a] += p[a] as f64);
+                    *count += 1;
+                }
+                Some(_) => {}
+                None => {
+                    self.voxels.insert(key, self.sums.len());
+                    self.sums.push((p.map(|v| v as f64), 1));
+                    fresh.push(p);
+                }
+            }
+        }
+        if !target {
+            return 0;
+        }
+        let clearance = search.config.closure_ground_clearance_m;
+        if self.floor.is_none() && clearance > 0.0 && !fresh.is_empty() {
+            let mut heights: Vec<f32> = fresh.iter().map(|p| p[2]).collect();
+            let k = heights.len() / 20;
+            self.floor = Some(*heights.select_nth_unstable_by(k, f32::total_cmp).1);
+        }
+        if let Some(floor) = self.floor {
+            fresh.retain(|p| (p[2] - floor) as f64 > clearance);
+        }
+        self.index.push(&fresh);
+        fresh.len()
+    }
+    /// The source stack's points (voxel centroids).
+    fn points(&self) -> PointCloud {
+        self.sums
+            .iter()
+            .map(|(sum, count)| sum.map(|v| (v / *count as f64) as f32))
+            .collect()
+    }
+}
 
 impl ClosureSearch {
     /// Fill in the yank / confidence gate's inputs and outputs for a candidate ICP has scored, and
@@ -88,7 +232,12 @@ impl ClosureSearch {
         diag.required_confidence = 1.0 - (-self.required_evidence(diag)).exp();
     }
     /// `connection_fit::sharpness` of `source` moved by `icp` onto the tree's cloud, by the configured nudge.
-    pub(crate) fn sharpness(&self, source: &PointCloud, tree: &KdTree, icp: &IcpResult) -> f64 {
+    pub(crate) fn sharpness(
+        &self,
+        source: &PointCloud,
+        tree: &impl NearestIndex,
+        icp: &IcpResult,
+    ) -> f64 {
         connection_fit::sharpness(
             &transform_cloud(source, &icp.rotation, &icp.translation),
             tree,
@@ -101,18 +250,19 @@ impl ClosureSearch {
     /// `connection_fit::likelihood_ratio` of `source` moved by `icp` against `target`, out to the ICP match distance.
     pub(crate) fn likelihood_ratio(
         &self,
-        source: &PointCloud,
-        target: &PointCloud,
-        tree: &KdTree,
+        source: &[[f32; 3]],
+        target: &[[f32; 3]],
+        tree: &impl NearestIndex,
         icp: &IcpResult,
         target_ids: &[usize],
     ) -> (f64, usize, f64) {
         let moved = transform_cloud(source, &icp.rotation, &icp.translation);
         if !self.config.closure_likelihood_visibility {
+            let tree_points = KdTree::build(target);
             return connection_fit::likelihood_ratio(
                 &moved,
                 target,
-                tree,
+                &tree_points,
                 self.config.closure_icp_max_correspondence_m,
             );
         }
@@ -120,8 +270,9 @@ impl ClosureSearch {
             .iter()
             .filter_map(|&k| {
                 let key_pose = &self.key_poses[k];
-                Some(connection_fit::RangeImage::build(
-                    key_pose.body_cloud.as_ref()?,
+                let cloud = self.keyframe_clouds.get(k, key_pose.body_cloud.as_ref()?);
+                Some(connection_fit::RangeImage::at(
+                    cloud.bins(),
                     &key_pose.rotation_global,
                     &key_pose.translation_global,
                 ))
@@ -152,31 +303,38 @@ impl ClosureSearch {
             self.config.closure_yank_drift_range,
         ) + record
     }
-    /// Global-frame cloud of keyframes `ids` (body clouds moved by their global poses, in order), voxel-downsampled at the
-    /// submap resolution.
+    /// Global-frame cloud of keyframes `ids` (each keyframe's shared voxelized scan moved by its global pose, in order),
+    /// voxel-downsampled at the submap resolution.
     pub(crate) fn stacked_cloud(&self, ids: impl Iterator<Item = usize>) -> PointCloud {
+        let resolution = self.config.submap_resolution;
         let mut cloud = PointCloud::new();
         for k in ids {
             let key_pose = &self.key_poses[k];
             if let Some(body_cloud) = &key_pose.body_cloud {
                 cloud.extend(transform_cloud(
-                    body_cloud,
+                    self.keyframe_clouds
+                        .get(k, body_cloud)
+                        .voxelized(resolution),
                     &key_pose.rotation_global,
                     &key_pose.translation_global,
                 ));
             }
         }
-        voxel_downsample(&cloud, self.config.submap_resolution)
+        voxel_downsample(&cloud, resolution)
     }
-    /// Extended ICP on 2, 4, 8, ... keyframes, up to `diag.extension_budget` (closure_extended_icp_max_keyframes x
-    /// pressure). Returns the extended ICP of the first round whose evidence reaches `required(evidence)` (which may
-    /// count more look-alike places now that the evidence could cover them), or None.
+    /// Extended ICP: stacks of 2, 4, 8, ... keyframes per side up to `diag.extension_budget`, chosen by how close they
+    /// sit to the match under the single-scan fit (`extension_pools`, any time order, the sides kept apart), grown in
+    /// place (each step adds only its new keyframes' points to the stacks and the target's index) and warm-started from
+    /// the previous step. Returns the extended ICP of the first step whose evidence reaches `required(evidence)`, or
+    /// None; it stops once a step's evidence stops growing or its fit leaves the single fit's place (moves any stacked
+    /// source point farther than the search radius from where the single fit put it).
     pub(crate) fn extended_icp(
         &self,
         cur_idx: usize,
         target_idx: usize,
         source_points: usize,
         first: &IcpResult,
+        first_ratio: f64,
         diag: &mut ClosureCandidateDiag,
         required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
         // an alignment's cloud computation through the cache, its encoded alignment starting at the given index
@@ -185,96 +343,130 @@ impl ClosureSearch {
         let max_keyframes = diag
             .extension_budget
             .min(self.config.closure_extended_icp_max_keyframes);
-        if max_keyframes < 2 || !first.converged {
+        if !first.converged {
             return None;
         }
-        let max_distance = self.config.closure_icp_max_correspondence_m;
         let single = (first.overlap * source_points as f64).round() as usize;
         diag.single_inliers = single;
-        if single == 0 {
-            return None;
+        if max_keyframes < 2 || single == 0 {
+            return (first_ratio >= 1.0).then(|| first.clone());
         }
         let params = IcpParams {
             max_iterations: self.config.closure_icp_max_iterations as usize,
-            max_correspondence_distance: max_distance,
+            max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
             inlier_squared_distance: self.config.closure_inlier_squared_distance(),
             point_to_plane: self.config.closure_icp_point_to_plane,
         };
         let half_range = self.config.closure_submap_half_range.max(0) as usize;
         let radius = self.config.closure_search_radius;
-        // each round starts from the previous round's alignment, which saw more of both places than the first ICP
-        let (mut seed_rotation, mut seed_translation) = (first.rotation, first.translation);
-        // recording an ICP cache, every round up to the budget is computed (so a replay that extends further, or
-        // differently, still finds it), but the result and the diagnostics stay those of the first round that passed
+        let positions: Vec<Vec3> = self
+            .key_poses
+            .iter()
+            .map(|k| k.translation_global)
+            .collect();
+        let placed_cur = mat3::add(
+            &mat3::mat_vec(&first.rotation, &positions[cur_idx]),
+            &first.translation,
+        );
+        // a keyframe can add to a stack wherever its scan overlaps the match's: two scans of reach r cover discs that
+        // meet while their centres are within 2r
+        let reach = 2.0
+            * self.key_poses[cur_idx]
+                .body_cloud
+                .as_ref()
+                .map_or(radius, |body| {
+                    self.keyframe_clouds.get(cur_idx, body).reach()
+                })
+                .max(radius);
+        let (source_pool, target_pool, base_len) = extension_pools(
+            &positions,
+            target_idx,
+            cur_idx,
+            half_range,
+            max_keyframes,
+            reach,
+            &placed_cur,
+        );
+        // recording an ICP cache, every step up to the budget is computed (so a replay that extends further, or
+        // differently, still finds it), but the result and the diagnostics stay those of the first step that passed
         let record_all = self
             .icp_cache
             .as_ref()
             .is_some_and(|c| c.mode == crate::icp_cache::Mode::Record);
-        let mut found: Option<(IcpResult, ClosureCandidateDiag)> = None;
+        let sharp = self.config.closure_sharpness_half > 0.0;
+        let likelihood = self.config.closure_likelihood_confidence;
+        // what is decided when the extension cannot go on: the newest converged step (the single fit before any) on
+        // which side of its bar it fell
+        let mut last = (first.clone(), diag.clone(), first_ratio);
+        let decide = |last: (IcpResult, ClosureCandidateDiag, f64),
+                      diag: &mut ClosureCandidateDiag| {
+            let (icp, kept, ratio) = last;
+            *diag = kept;
+            (ratio >= 1.0).then_some(icp)
+        };
+        if target_pool.is_empty() {
+            return decide(last, diag);
+        }
+        let range = UncertaintyRange::new(&self.config, max_keyframes, diag.pressure);
+        let mut source = Stack::default();
+        let mut target = Stack::default();
+        let (mut seed_rotation, mut seed_translation) = (first.rotation, first.translation);
+        let mut found: Option<Option<(IcpResult, ClosureCandidateDiag)>> = None;
+        let mut previous_evidence = f64::NEG_INFINITY;
         let mut keyframes = 2;
+        let mut step = 0;
         while keyframes <= max_keyframes {
-            // never stack source keyframes into the stretch the target side is drawn from
-            let window = half_range + keyframes;
-            let source_first = cur_idx
-                .saturating_sub(keyframes)
-                .max(target_idx + window + 1);
-            if source_first >= cur_idx {
+            step += 1;
+            let source_ids: Vec<usize> = std::iter::once(cur_idx)
+                .chain(source_pool.iter().copied())
+                .take(keyframes)
+                .collect();
+            let target_ids: Vec<usize> = target_pool
+                .iter()
+                .copied()
+                .take(base_len + keyframes)
+                .collect();
+            if keyframes > 2
+                && source_ids.len() + target_ids.len()
+                    <= source.keyframes.len() + target.keyframes.len()
+            {
                 break;
             }
-            // where the seed puts each stacked source keyframe
-            let placed: Vec<Vec3> = (source_first..=cur_idx)
-                .map(|k| {
-                    mat3::add(
-                        &mat3::mat_vec(&seed_rotation, &self.key_poses[k].translation_global),
-                        &seed_translation,
-                    )
-                })
-                .collect();
-            let target_ids =
-                target_idx.saturating_sub(window)..=(target_idx + window).min(source_first - 1);
-            let near = |j: usize| {
-                j.abs_diff(target_idx) <= half_range
-                    || placed.iter().any(|p| {
-                        mat3::norm(&mat3::sub(p, &self.key_poses[j].translation_global)) < radius
-                    })
-            };
-            // the round's clouds and every score of them, through the ICP cache: the stack's and the target's sizes,
-            // the ICP, then its sharpness and likelihood ratio where configured (NaN otherwise)
-            let target_ids: Vec<usize> = target_ids.filter(|&j| near(j)).collect();
-            let sharp = self.config.closure_sharpness_half > 0.0;
-            let likelihood = self.config.closure_likelihood_confidence;
-            let round = memo(&format!("xr{keyframes}"), 2, &mut || {
-                // the stacked source is thinned to about the single scan's size, so a round costs about what the first
-                // ICP did; the target keeps full resolution so the inlier test below means the same thing in every round
+            let round = memo(&format!("xo{keyframes}"), 2, &mut || {
+                source.add(self, &source_ids, false);
+                target.add(self, &target_ids, true);
+                // the stacked source is thinned to about the single scan's size, so a step costs about what the first
+                // ICP did; the target keeps full resolution so the inlier test means the same thing in every step
                 let clearance = self.config.closure_ground_clearance_m;
-                let stacked = above_floor(&self.stacked_cloud(source_first..=cur_idx), clearance);
+                let stacked = above_floor(&source.points(), clearance);
                 let thinning = (stacked.len() as f64 / source_points.max(1) as f64).max(1.0);
-                let source = if thinning > 1.0 {
+                let thinned = if thinning > 1.0 {
                     voxel_downsample(&stacked, self.config.submap_resolution * thinning.sqrt())
                 } else {
                     stacked.clone()
                 };
-                let target =
-                    above_floor(&self.stacked_cloud(target_ids.iter().copied()), clearance);
-                let tree = KdTree::build(&target);
+                let target_points = target.index.points();
                 let icp = icp(
-                    &source,
-                    &target,
-                    &tree,
+                    &thinned,
+                    target_points,
+                    &target.index,
                     &seed_rotation,
                     &seed_translation,
                     &params,
                 );
                 if !self.config.closure_icp_dump_dir.is_empty() {
+                    let t0 = std::time::Instant::now();
                     dump_icp(
                         &self.config.closure_icp_dump_dir,
                         cur_idx,
                         target_idx,
-                        &source,
-                        &target,
+                        &thinned,
+                        target_points,
                         &icp,
                         &format!("_x{keyframes}"),
                     );
+                    self.debug_io_s
+                        .set(self.debug_io_s.get() + t0.elapsed().as_secs_f64());
                 }
                 let score = |on: bool, f: &dyn Fn() -> f64| {
                     if on && icp.converged {
@@ -283,11 +475,13 @@ impl ClosureSearch {
                         f64::NAN
                     }
                 };
-                let mut v = vec![stacked.len() as f64, target.len() as f64];
+                let mut v = vec![stacked.len() as f64, target_points.len() as f64];
                 v.extend(crate::icp_cache::encode_icp(&icp));
-                v.push(score(sharp, &|| self.sharpness(&source, &tree, &icp)));
+                v.push(score(sharp, &|| {
+                    self.sharpness(&thinned, &target.index, &icp)
+                }));
                 v.push(score(likelihood, &|| {
-                    self.likelihood_ratio(&source, &target, &tree, &icp, &target_ids)
+                    self.likelihood_ratio(&thinned, target_points, &target.index, &icp, &target_ids)
                         .0
                 }));
                 v
@@ -310,12 +504,10 @@ impl ClosureSearch {
             if likelihood && icp.converged {
                 diag.extended_likelihood_ratio = round[18];
             }
-            // evidence = -ln(1 - confidence); compared with the required evidence without rounding to 1. Scored by
-            // sharpness, the stack earns its own confidence (more scans count only as far as they line up better);
-            // otherwise its evidence grows with its inlier count
-            // the stack adds evidence as far as it covers surface the single scan did not: its per-point ratio times its
-            // size over the single scan's (both voxelized at the submap resolution, so a keyframe seeing the same ground
-            // again adds nothing)
+            // evidence = -ln(1 - confidence); the stack adds evidence as far as it covers surface the single scan did
+            // not: its per-point ratio times its size over the single scan's (both voxelized at the submap resolution, so
+            // a keyframe seeing the same ground again adds nothing). Scored by sharpness, the stack earns its own
+            // confidence; otherwise its evidence grows with its inlier count
             let evidence = if likelihood {
                 diag.extended_likelihood_ratio.max(0.0) * stacked_len as f64
                     / source_points.max(1) as f64
@@ -332,7 +524,7 @@ impl ClosureSearch {
             };
             let required = required(evidence, diag);
             let confidence = 1.0 - (-evidence).exp();
-            diag.extended_keyframes = cur_idx - source_first + 1;
+            diag.extended_keyframes = source_ids.len();
             diag.extended_source_points = stacked_len;
             diag.extended_target_points = target_len;
             diag.extended_inliers = extended;
@@ -345,21 +537,269 @@ impl ClosureSearch {
             if !icp.converged {
                 break;
             }
-            if evidence >= required && found.is_none() {
+            // a step that moves the stack off the single fit's place found a different place, not more of this one
+            let moved = source_ids.iter().any(|&k| {
+                let p = &positions[k];
+                let a = mat3::add(&mat3::mat_vec(&icp.rotation, p), &icp.translation);
+                let b = mat3::add(&mat3::mat_vec(&first.rotation, p), &first.translation);
+                mat3::norm(&mat3::sub(&a, &b)) > radius
+            }) && self.config.closure_extension_stop_on_swing;
+            let ratio = if required > 0.0 {
+                evidence / required
+            } else {
+                f64::INFINITY
+            };
+            let flat =
+                self.config.closure_extension_stop_when_flat && evidence <= previous_evidence;
+            let (low, high) = range.at(step);
+            let verdict = if moved {
+                Some(None)
+            } else if ratio >= high {
+                Some(Some((icp.clone(), diag.clone())))
+            } else if ratio <= low {
+                Some(None)
+            } else if flat {
+                // no new information: decide by which side of the bar it sits
+                Some((ratio >= 1.0).then(|| (icp.clone(), diag.clone())))
+            } else {
+                None
+            };
+            last = (icp.clone(), diag.clone(), ratio);
+            if let Some(verdict) = verdict {
                 if !record_all {
-                    return Some(icp);
+                    return verdict.map(|(icp, kept)| {
+                        *diag = kept;
+                        icp
+                    });
                 }
-                found = Some((icp.clone(), diag.clone()));
+                found.get_or_insert(verdict);
             }
+            previous_evidence = evidence;
             if !sharp {
                 (seed_rotation, seed_translation) = (icp.rotation, icp.translation);
             }
             keyframes *= 2;
         }
-        found.map(|(icp, kept)| {
-            *diag = kept;
-            icp
-        })
+        match found {
+            Some(verdict) => verdict.map(|(icp, kept)| {
+                *diag = kept;
+                icp
+            }),
+            None => decide(last, diag),
+        }
+    }
+}
+
+/// The uncertainty range: ratios of a candidate's evidence to its bar (both in yank units). At or above `high` it accepts,
+/// at or below `low` it rejects, and in between the stack grows. Both ratios move linearly to 1 over the extension's
+/// steps, stretched by 1 / (1 - pressure)^`decisive_pressure_rate` (50% pressure: twice as long at the default rate 1),
+/// so the budget's end forces a decision at ratio >= 1 while a high pressure keeps the uncertainty range wide longer.
+pub(crate) struct UncertaintyRange {
+    low: f64,
+    high: f64,
+    steps: f64,
+}
+
+impl UncertaintyRange {
+    pub(crate) fn new(
+        config: &crate::gsc_pgo::Config,
+        max_keyframes: usize,
+        pressure: f64,
+    ) -> UncertaintyRange {
+        let doublings = (max_keyframes.max(2) as f64).log2().floor().max(1.0);
+        let pressure = if pressure.is_finite() {
+            pressure.clamp(0.0, 0.999)
+        } else {
+            0.0
+        };
+        UncertaintyRange {
+            low: config.barely_fail_uncertainty_range,
+            high: config.barely_pass_uncertainty_range,
+            steps: doublings
+                * (1.0 / (1.0 - pressure)).powf(config.decisive_pressure_rate.max(0.0)),
+        }
+    }
+    /// (low, high) after `step` extension steps (0: the single scan).
+    pub(crate) fn at(&self, step: usize) -> (f64, f64) {
+        let left = (1.0 - step as f64 / self.steps).max(0.0);
+        (
+            1.0 - (1.0 - self.low) * left,
+            1.0 + (self.high - 1.0) * left,
+        )
+    }
+}
+
+/// The keyframes an extension may stack, each list nearest first (the target's own submap ahead of the rest; the third
+/// value is its size). Source: the newer side, keyframes from `split` to `cur_idx` within `reach` (how far a scan
+/// overlaps another) of the current keyframe. Target: the older side, any keyframe up to `split - 1 - half_range`
+/// (either side of `target_idx` in time) within `reach` of where the single fit puts the current keyframe. The sides
+/// never share a keyframe, and `half_range` keyframes separate them so neighbouring scans (which share points) cannot
+/// land on both; `split` leaves room for the target's own submap (`target_idx` +- `half_range`) and at most twice the
+/// budget of newer keyframes.
+pub(crate) fn extension_pools(
+    positions: &[Vec3],
+    target_idx: usize,
+    cur_idx: usize,
+    half_range: usize,
+    max_keyframes: usize,
+    reach: f64,
+    placed_cur: &Vec3,
+) -> (Vec<usize>, Vec<usize>, usize) {
+    let split = (target_idx + 2 * half_range + 1)
+        .max(cur_idx.saturating_sub(2 * max_keyframes))
+        .min(cur_idx);
+    let near = |ids: std::ops::Range<usize>, to: &Vec3| -> Vec<usize> {
+        let mut found: Vec<(f64, usize)> = ids
+            .map(|k| (mat3::norm(&mat3::sub(&positions[k], to)), k))
+            .filter(|&(d, _)| d < reach)
+            .collect();
+        found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        found.into_iter().map(|(_, k)| k).collect()
+    };
+    let source = near(split..cur_idx, &positions[cur_idx]);
+    let target_end = split.saturating_sub(half_range);
+    // the target's own submap first (as far as it is old enough), then the rest nearest first
+    let base: Vec<usize> = (target_idx.saturating_sub(half_range)..=target_idx + half_range)
+        .filter(|&j| j < target_end)
+        .collect();
+    let target = base
+        .iter()
+        .copied()
+        .chain(
+            near(0..target_end, placed_cur)
+                .into_iter()
+                .filter(|j| !base.contains(j)),
+        )
+        .collect();
+    (source, target, base.len())
+}
+
+#[cfg(test)]
+mod uncertainty_range_tests {
+    use super::UncertaintyRange;
+
+    /// The uncertainty range starts at the configured ratios, is shut (both at 1) by the budget's last step at no pressure, and at
+    /// 50% pressure takes twice as many steps to close.
+    #[test]
+    fn pressure_keeps_the_uncertainty_range_open_longer() {
+        let config = crate::gsc_pgo::Config::default();
+        let calm = UncertaintyRange::new(&config, 16, 0.0);
+        assert_eq!(
+            calm.at(0),
+            (
+                config.barely_fail_uncertainty_range,
+                config.barely_pass_uncertainty_range
+            )
+        );
+        assert_eq!(calm.at(4), (1.0, 1.0));
+        let pressed = UncertaintyRange::new(&config, 16, 0.5);
+        let half = 1.0 + (config.barely_pass_uncertainty_range - 1.0) / 2.0;
+        assert!((pressed.at(4).1 - half).abs() < 1e-12);
+        assert_eq!(pressed.at(8), (1.0, 1.0));
+        for step in 0..8 {
+            assert!(pressed.at(step).0 <= calm.at(step).0 && pressed.at(step).1 >= calm.at(step).1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::extension_pools;
+    use crate::connection_fit::{icp, IcpParams};
+    use crate::mat3;
+    use crate::pointcloud::{KdForest, KdTree, NearestIndex, PointCloud};
+
+    /// A short-gap revisit (the current keyframe a few after the target): the source and target sides share no keyframe and
+    /// stay half_range apart, however close in space their scans are.
+    #[test]
+    fn the_sides_never_share_a_keyframe() {
+        // a robot standing still: every keyframe at the origin, so every keyframe is near every other
+        let positions = vec![[0.0; 3]; 60];
+        for (target_idx, cur_idx) in [(20, 22), (20, 30), (20, 59), (0, 5), (40, 59)] {
+            let half_range = 5;
+            let (source, target, _) = extension_pools(
+                &positions, target_idx, cur_idx, half_range, 16, 3.0, &[0.0; 3],
+            );
+            let Some(&target_top) = target.iter().max() else {
+                continue;
+            };
+            for &s in source.iter().chain([&cur_idx]) {
+                assert!(
+                    !target.contains(&s),
+                    "{target_idx}->{cur_idx}: {s} on both sides"
+                );
+                assert!(
+                    s > target_top + half_range,
+                    "{target_idx}->{cur_idx}: source {s} within {half_range} of target {target_top}"
+                );
+            }
+            assert!(source.iter().all(|&s| s < cur_idx));
+        }
+    }
+
+    /// The growing index answers exactly as one tree over the same points, and ICP against it lands where ICP against a
+    /// tree built from scratch does.
+    #[test]
+    fn a_grown_index_matches_a_rebuilt_one() {
+        let mut points = PointCloud::new();
+        let mut seed = 12345u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64 / (1u64 << 31) as f64 * 4.0 - 2.0) as f32
+        };
+        for _ in 0..3000 {
+            points.push([next(), next(), next() * 0.5]);
+        }
+        let mut forest = KdForest::default();
+        for chunk in points.chunks(173) {
+            forest.push(chunk);
+        }
+        let tree = KdTree::build(&points);
+        for q in points.iter().step_by(37) {
+            let probe = [q[0] + 0.01, q[1] - 0.02, q[2]];
+            assert_eq!(
+                forest.nearest(&probe).unwrap().1,
+                tree.nearest(&probe).unwrap().1
+            );
+            let a: Vec<f32> = forest.knn(&probe, 10).iter().map(|x| x.1).collect();
+            let b: Vec<f32> = tree.knn(&probe, 10).iter().map(|x| x.1).collect();
+            assert_eq!(a, b);
+        }
+        let source: PointCloud = points
+            .iter()
+            .step_by(3)
+            .map(|p| [p[0] + 0.05, p[1] - 0.03, p[2]])
+            .collect();
+        let params = IcpParams {
+            max_iterations: 30,
+            max_correspondence_distance: 1.0,
+            inlier_squared_distance: 0.04,
+            point_to_plane: false,
+        };
+        let a = icp(
+            &source,
+            forest.points(),
+            &forest,
+            &mat3::identity(),
+            &[0.0; 3],
+            &params,
+        );
+        let b = icp(
+            &source,
+            &points,
+            &tree,
+            &mat3::identity(),
+            &[0.0; 3],
+            &params,
+        );
+        assert!(mat3::norm(&mat3::sub(&a.translation, &b.translation)) < 1e-9);
+        assert!(
+            mat3::norm(&mat3::sub(&a.translation, &[-0.05, 0.03, 0.0])) < 0.01,
+            "{:?}",
+            a.translation
+        );
     }
 }
 
@@ -392,7 +832,7 @@ mod yank_evidence_tests {
     use super::yank_evidence;
 
     /// Trusting the stated odometry error estimate exactly prices a yank as z^2 / 2; an unknown drift up to 100x prices a 79-sigma jump
-    /// (huge's missed return to the start) at a dozen nats, and leaves no yank more expensive than z^2 / 2.
+    /// (huge's missed return to the start) at a dozen yank units, and leaves no yank more expensive than z^2 / 2.
     #[test]
     fn a_wide_drift_range_caps_large_yanks() {
         assert!((yank_evidence(3.0, 1.0) - 4.5).abs() < 1e-12);
