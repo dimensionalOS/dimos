@@ -296,6 +296,7 @@ impl Planner {
             self.rebuild_region_graph(
                 Vec::new(),
                 dropped,
+                &[],
                 &VoxelEdits::default(),
                 &[],
                 config.node_window_cells(),
@@ -332,6 +333,18 @@ impl Planner {
             }
         }
         graph.nodes.rebin(&graph.cells, &config.placement_params());
+        // A re-keyed cell keeps the hops of its old key, and its old neighbors keep their hop to it, so the
+        // adjacency around both keys is rebuilt, or a later partial rebuild leaves hops one way only.
+        let rekeyed: Vec<VoxelKey> = renamed.iter().flat_map(|(&from, &to)| [from, to]).collect();
+        self.rebuild_region_graph(
+            Vec::new(),
+            Vec::new(),
+            &rekeyed,
+            &VoxelEdits::default(),
+            &[],
+            config.node_window_cells(),
+            config,
+        );
     }
 
     /// Bucket every voxel and surface cell a warp left off its key, by its point and

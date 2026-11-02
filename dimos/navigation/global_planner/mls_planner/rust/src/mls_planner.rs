@@ -516,7 +516,7 @@ impl Planner {
             let (cells_added, cells_removed) = (added.len(), removed.len());
 
             let stage = Instant::now();
-            self.rebuild_region_graph(added, removed, &edits, &[], window_steps, config);
+            self.rebuild_region_graph(added, removed, &[], &edits, &[], window_steps, config);
             debug_throttled!(
                 DEBUG_LOG_PERIOD,
                 diff_ms,
@@ -536,11 +536,15 @@ impl Planner {
     /// Patch changed cells, then repair nodes and edges around the change.
     /// A voxel edit can change a wall scan without changing any surface cell,
     /// so the repair runs for the edits too. `moves` are nodes, by list index,
-    /// to carry to a target cell, as a warp does.
+    /// to carry to a target cell, as a warp does. `rekeyed` are the keys cells
+    /// were re-keyed off and onto: the cells keep their ids, and the repair
+    /// rebuilds the adjacency around both keys.
+    #[allow(clippy::too_many_arguments)]
     fn rebuild_region_graph(
         &mut self,
         added: Vec<VoxelKey>,
         removed: Vec<VoxelKey>,
+        rekeyed: &[VoxelKey],
         edits: &VoxelEdits,
         moves: &[(usize, VoxelKey)],
         window_steps: i32,
@@ -558,6 +562,7 @@ impl Planner {
         let patch = self.patch_cells(&added, &removed);
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
+        seeds.extend_from_slice(rekeyed);
         if seeds.is_empty() && edits.is_empty() && moves.is_empty() {
             return;
         }

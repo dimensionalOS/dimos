@@ -86,6 +86,34 @@ fn shifted(points: &[(f32, f32, f32)], dx: f32, dy: f32) -> Vec<(f32, f32, f32)>
     points.iter().map(|p| (p.0 + dx, p.1 + dy, p.2)).collect()
 }
 
+/// Every pair of key-adjacent surface cells within a step has a hop each way, as a full build gives them.
+fn assert_adjacency_matches_keys(p: &Planner, cfg: &Config) {
+    let g = p.graph();
+    let step = cfg.step_cells();
+    for u in g.cells.ids() {
+        let k = g.cells.coord(u);
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let Some(zs) = g.surface_lookup.get(&(k.0 + dx, k.1 + dy)) else {
+                continue;
+            };
+            for &nz in zs {
+                if (nz - k.2).abs() > step {
+                    continue;
+                }
+                let v = g
+                    .cells
+                    .id((k.0 + dx, k.1 + dy, nz))
+                    .expect("a lookup cell exists");
+                assert!(
+                    g.cells.neighbors(u).iter().any(|e| e.dest == v),
+                    "{k:?} has no hop to its key neighbor {:?}",
+                    (k.0 + dx, k.1 + dy, nz)
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn a_rigid_shift_places_everything_where_a_rebuild_of_the_shifted_map_has_it() {
     let cfg = test_config();
@@ -160,6 +188,7 @@ fn a_region_update_rebins_only_what_it_reaches() {
         .unwrap();
     assert!(surface_set(&p).contains(&far_old));
     assert_chains_reach_their_nodes(&p);
+    assert_adjacency_matches_keys(&p, &cfg);
 }
 
 #[test]
