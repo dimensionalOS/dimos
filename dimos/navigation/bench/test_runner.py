@@ -203,6 +203,7 @@ def test_run_scores_every_episode_and_rescores_the_same(
             overrides=(
                 f"--fake-recordings={tmp_path / 'recordings'}",
                 "--set-x=1",
+                "--fake.policy=/overridden/policy.bin",
                 "--fake.policy=/some/policy.bin",
             ),
             command=(sys.executable, str(tmp_path / "fake.py")),
