@@ -267,7 +267,6 @@ all_modules = {
     "go2-mid360-recorder": "dimos.robot.unitree.go2.go2_mid360_recorder.Go2Mid360Recorder",
     "go2-mid360-static-tf": "dimos.robot.unitree.go2.go2_mid360_static_transforms.Go2Mid360StaticTf",
     "go2-teleop-module": "dimos.teleop.webxr.extensions.Go2TeleopModule",
-    "go2-urdf-root": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_sim2_l1.Go2UrdfRoot",
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
     "grasp-gen-x-module": "dimos.manipulation.grasping.grasp_gen_x.module.GraspGenXModule",
