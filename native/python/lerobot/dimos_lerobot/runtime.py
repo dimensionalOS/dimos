@@ -516,10 +516,12 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
     def _wait_for_newer_joint_state(self, previous_ts: float) -> None:
         with self._observation_changed:
             self._observation_changed.wait_for(
-                lambda: self._stop_event.is_set()
-                or (
-                    self._latest_joint_state is not None
-                    and self._latest_joint_state.ts > previous_ts
+                lambda: (
+                    self._stop_event.is_set()
+                    or (
+                        self._latest_joint_state is not None
+                        and self._latest_joint_state.ts > previous_ts
+                    )
                 )
             )
 

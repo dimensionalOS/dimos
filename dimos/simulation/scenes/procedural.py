@@ -940,6 +940,6 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
 }
 
 
-def generate(family: Family, seed: int, **params: bool | int | float) -> Scene:
+def generate(family: Family, seed: int, **params: bool | float) -> Scene:
     """The family's scene for the seed, with any of its named parameters overridden."""
     return FAMILIES[family](seed, **params)

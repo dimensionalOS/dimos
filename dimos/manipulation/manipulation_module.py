@@ -907,7 +907,7 @@ class ManipulationModule(Module):
         if not targets:
             return None
         auxiliary_ids = tuple(auxiliary_groups)
-        group_ids = tuple((*targets.keys(), *auxiliary_ids))
+        group_ids = (*targets.keys(), *auxiliary_ids)
         with self._planning_request(group_ids, speed_scale) as planning:
             if planning is None:
                 return None

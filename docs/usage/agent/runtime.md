@@ -30,9 +30,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 if __name__ == "__main__":
-    ModuleCoordinator.build(
-        autoconnect(HarnessRuntime.blueprint(), mcp_server_blueprint())
-    ).loop()
+    ModuleCoordinator.build(autoconnect(HarnessRuntime.blueprint(), mcp_server_blueprint())).loop()
 ```
 
 ### Inspect modules and RPCs

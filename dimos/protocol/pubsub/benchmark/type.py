@@ -141,8 +141,8 @@ class BenchmarkResults:
         if not self.results:
             return
 
-        transports = sorted(set(r.transport for r in self.results))
-        sizes = sorted(set(r.msg_size_bytes for r in self.results))
+        transports = sorted({r.transport for r in self.results})
+        sizes = sorted({r.msg_size_bytes for r in self.results})
 
         # Build matrix
         matrix: list[list[float]] = []

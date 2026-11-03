@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", cate
 from functools import cached_property
 
 import torch
-import torch.nn.functional as functional
+from torch.nn import functional
 from torchreid import utils as torchreid_utils
 
 from dimos.models.base import LocalModel

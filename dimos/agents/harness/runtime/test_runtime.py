@@ -359,8 +359,9 @@ def mcp_url(system: subprocess.Popen[bytes], port: int) -> str:
     url = f"http://127.0.0.1:{port}/mcp"
     client = Client(url)
     _until(
-        lambda: _try(lambda: client.call_raw("echo", {"text": "up"}, {})["content"][0]["text"])
-        == "up",
+        lambda: (
+            _try(lambda: client.call_raw("echo", {"text": "up"}, {})["content"][0]["text"]) == "up"
+        ),
         "McpServer",
         60.0,
     )

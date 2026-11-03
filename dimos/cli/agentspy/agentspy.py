@@ -61,7 +61,6 @@ class AgentMessageMonitor:
         self.transport = make_transport(self.topic)
         self.transport.start()
         self.callbacks: list[callable] = []  # type: ignore[valid-type]
-        pass
 
     def start(self) -> None:
         """Start monitoring messages."""

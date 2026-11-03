@@ -43,10 +43,10 @@ from dimos.robot.manipulators.dual_makermods_metal.model import (
 @pytest.mark.parametrize(
     "ports",
     [
-        dict(left_can_port="left"),
-        dict(right_can_port="right"),
-        dict(left_can_port="same", right_can_port="same"),
-        dict(left_can_port="", right_can_port="right"),
+        {"left_can_port": "left"},
+        {"right_can_port": "right"},
+        {"left_can_port": "same", "right_can_port": "same"},
+        {"left_can_port": "", "right_can_port": "right"},
     ],
 )
 def test_rejects_incomplete_or_ambiguous_can_selection(ports) -> None:
