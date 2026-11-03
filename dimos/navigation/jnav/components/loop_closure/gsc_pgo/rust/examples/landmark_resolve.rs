@@ -30,7 +30,11 @@ fn main() {
     );
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run.join("a.json")).unwrap()).unwrap();
-    let mut config_json = json["config"]["pgo"].clone();
+    // pgo-eval writes its config flattened (older runs nest it under "pgo")
+    let mut config_json = match &json["config"]["pgo"] {
+        serde_json::Value::Null => json["config"].clone(),
+        nested => nested.clone(),
+    };
     if let Some(overlay) = args.get(4).filter(|a| a.starts_with('{')) {
         let overlay: serde_json::Value = serde_json::from_str(overlay).unwrap();
         for (k, v) in overlay.as_object().unwrap() {
@@ -127,15 +131,17 @@ fn main() {
             learned_evidence: false,
             seed_closure_weights: Vec::new(),
             seed_start: Vec::new(),
+            landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
         },
     );
     let kept = solution.sighting_weights.iter().filter(|&&w| w > 0.5).count();
     eprintln!(
-        "landmark_resolve: {n} keyframes, {} closures ({} kept), {} sightings ({kept} kept), converged {}, {:.2}s",
+        "landmark_resolve: {n} keyframes, {} closures ({} kept), {} sightings ({kept} kept), converged {}, error {:.4e}, {:.2}s",
         closures.len(),
         solution.closure_weights.iter().filter(|&&w| w > 0.5).count(),
         sightings.len(),
         solution.converged,
+        solution.error,
         started.elapsed().as_secs_f64()
     );
     std::fs::create_dir_all(out).unwrap();

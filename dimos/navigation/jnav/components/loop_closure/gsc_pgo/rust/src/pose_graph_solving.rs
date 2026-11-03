@@ -451,6 +451,7 @@ impl GscPgo {
             } else {
                 Vec::new()
             },
+            landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
         };
         let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(m, &closure_index);
         // a simplified solve's nodes expand back to every keyframe (and its closures to every committed one) on its thread

@@ -149,6 +149,8 @@ config! {
     // "scan_context" (default) or "inputs_only": no place recognition, landmarks/world positions only, landmark-seeded ICP closures
     closure_sources: dimos_gsc_pgo::gsc_pgo::ClosureSources,
     landmark_closure_icp: bool,
+    // a solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off)
+    landmark_warm_start_xy_variance_scale: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------

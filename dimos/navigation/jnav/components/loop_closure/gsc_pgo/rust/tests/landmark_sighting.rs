@@ -86,6 +86,7 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
+        landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default().landmark_warm_start_xy_variance_scale,
     };
     let solution = solve_with_priors(
         &rotations,
@@ -182,6 +183,7 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
+        landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default().landmark_warm_start_xy_variance_scale,
     };
     let solution = solve_with_priors(
         &rotations,

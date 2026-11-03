@@ -655,6 +655,9 @@ pub struct Config {
     pub closure_sources: ClosureSources,
     /// With `inputs_only`: a landmark re-seen on a later visit proposes an ICP closure between its two sighting keyframes.
     pub landmark_closure_icp: bool,
+    /// A solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off): a long
+    /// loop's re-sighting is otherwise out of reach of a solve from the drifted odometry, and GNC drops it as an outlier.
+    pub landmark_warm_start_xy_variance_scale: f64,
 }
 
 impl Config {
@@ -812,6 +815,7 @@ impl Default for Config {
             graph_simplify_chain_fold_max_m: 30.0,
             closure_sources: ClosureSources::ScanContext,
             landmark_closure_icp: true,
+            landmark_warm_start_xy_variance_scale: 1000.0,
         }
     }
 }

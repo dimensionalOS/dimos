@@ -205,6 +205,9 @@ class PGOConfig(NativeModuleConfig):
     closure_sources: str = "scan_context"
     # with inputs_only: run that landmark-seeded ICP closure (false = landmarks and world positions alone)
     landmark_closure_icp: bool = True
+    # a solve with landmark sightings first solves with the odometry's xy variances times this (<= 1 = off), so a re-sighting
+    # across a long drifted loop can pull it shut; the real solve (and its outlier verdicts) starts from that shape
+    landmark_warm_start_xy_variance_scale: float = 1000.0
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0

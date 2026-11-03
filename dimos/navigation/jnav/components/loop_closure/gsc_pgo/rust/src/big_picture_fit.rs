@@ -59,6 +59,8 @@ pub struct SolveConfig {
     pub seed_closure_weights: Vec<f64>,
     /// Per keyframe, the accepted graph as an alternate start used where it fits (`solve_seed_from_accepted`); empty = none.
     pub seed_start: Vec<(Mat3, Vec3)>,
+    /// With landmark sightings, the solve starts from one with the odometry's xy variances times this; <= 1 = off.
+    pub landmark_warm_start_xy_variance_scale: f64,
 }
 
 pub struct Solution {
@@ -245,6 +247,48 @@ pub(crate) fn solve_core(
     sightings: &[LandmarkSighting],
     config: &SolveConfig,
 ) -> Solution {
+    // a re-sighting across a drifted loop needs big heading changes, which a solve from the odometry cannot reach through
+    // its stiff xy edges (each turned segment would stretch them); with xy loosened the sightings pull the loop shut almost
+    // linearly in position, and the real solve (and its GNC verdicts) starts from that shape (`landmark_warm_start_*`)
+    if !sightings.is_empty() && config.landmark_warm_start_xy_variance_scale > 1.0 {
+        let loosened: Vec<Edge> = odometry
+            .iter()
+            .map(|e| {
+                let mut variances = e.variances;
+                for axis in [3, 4] {
+                    variances[axis] *= config.landmark_warm_start_xy_variance_scale;
+                }
+                Edge { variances, ..*e }
+            })
+            .collect();
+        let config = SolveConfig {
+            landmark_warm_start_xy_variance_scale: 0.0,
+            ..config.clone()
+        };
+        let warm = solve_core(
+            rotations,
+            positions,
+            free,
+            &loosened,
+            closures,
+            unary,
+            sightings,
+            &SolveConfig {
+                learned_evidence: false,
+                ..config.clone()
+            },
+        );
+        return solve_core(
+            &warm.rotations,
+            &warm.positions,
+            free,
+            odometry,
+            closures,
+            unary,
+            sightings,
+            &config,
+        );
+    }
     // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
     let seeded_out: Vec<bool> = (0..closures.len())
         .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))

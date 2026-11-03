@@ -143,6 +143,7 @@ fn main() {
                 learned_evidence: false,
                 seed_closure_weights,
                 seed_start,
+                landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
             };
             let started = std::time::Instant::now();
             let solution = solve(
