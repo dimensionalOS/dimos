@@ -144,6 +144,8 @@ fn main() {
                 seed_closure_weights,
                 seed_start,
                 planar: config.planar_pose_graph,
+                landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
+                landmark_warm_start_xy_variance_ladder: config.landmark_warm_start_xy_variance_ladder,
             };
             let started = std::time::Instant::now();
             let solution = solve(

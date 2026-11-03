@@ -155,10 +155,15 @@ impl GscPgo {
             .iter()
             .filter(|&&i| self.committed_closures.weight(i) <= 0.5)
             .count() as f64;
-        let estimate_raw_scans = config.deterministic_config.solve_scans_scale
-            * (keyframes as f64).powf(config.deterministic_config.solve_keyframe_power)
-            * (1.0 + closures).powf(config.deterministic_config.solve_closure_power)
-            * (1.0 + rejected).powf(config.deterministic_config.solve_rejected_power);
+        let d = &config.deterministic_config;
+        let estimate_raw_scans = if closure_index.is_empty() {
+            d.solve_closure_free_scans_scale * (keyframes as f64).powf(d.solve_closure_free_keyframe_power)
+        } else {
+            d.solve_scans_scale
+                * (keyframes as f64).powf(d.solve_keyframe_power)
+                * (1.0 + closures).powf(d.solve_closure_power)
+                * (1.0 + rejected).powf(d.solve_rejected_power)
+        };
         (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans))
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
@@ -490,6 +495,8 @@ impl GscPgo {
                 Vec::new()
             },
             planar: config.planar_pose_graph,
+            landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
+            landmark_warm_start_xy_variance_ladder: config.landmark_warm_start_xy_variance_ladder,
         };
         let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(m, &closure_index);
         // a simplified solve's nodes expand back to every keyframe (and its closures to every committed one) on its thread

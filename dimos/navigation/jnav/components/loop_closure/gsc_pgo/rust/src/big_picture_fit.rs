@@ -62,6 +62,10 @@ pub struct SolveConfig {
     /// `planar_pose_graph`: every keyframe's roll, pitch and z are held, and edges and priors weigh only x, y and yaw; GNC's
     /// cutoffs stay the 3D ones (a 3-DoF cutoff on the stated odometry error estimate drops the true loop on huge_fastlio).
     pub planar: bool,
+    /// With landmark sightings, the solve starts from solves with the odometry's xy variances times this, then divided by
+    /// `landmark_warm_start_xy_variance_ladder` stage by stage down to the stated ones; either <= 1 = off.
+    pub landmark_warm_start_xy_variance_scale: f64,
+    pub landmark_warm_start_xy_variance_ladder: f64,
 }
 
 /// An edge's roll, pitch and z components (`Edge` order), which a planar solve holds.
@@ -272,6 +276,67 @@ pub(crate) fn solve_core(
     sightings: &[LandmarkSighting],
     config: &SolveConfig,
 ) -> Solution {
+    // a re-sighting across a drifted loop needs big heading changes, which a solve from the odometry cannot reach through
+    // its stiff xy edges (each turned segment would stretch them); with xy loosened and every sighting in (a tag's id makes
+    // a wrong match rare) they pull the loop shut almost linearly in position, then xy stiffens stage by stage (each from
+    // the last, so LM converges in each) and the real solve, GNC verdicts on the sightings included, starts from that shape
+    let (mut scale, ladder) = (
+        config.landmark_warm_start_xy_variance_scale,
+        config.landmark_warm_start_xy_variance_ladder,
+    );
+    if sightings.is_empty() || scale <= 1.0 || ladder <= 1.0 {
+        return solve_from(
+            rotations, positions, free, odometry, closures, unary, sightings, config, true,
+        );
+    }
+    let warm_config = SolveConfig {
+        learned_evidence: false,
+        ..config.clone()
+    };
+    let (mut rotations, mut positions) = (rotations.to_vec(), positions.to_vec());
+    while scale > 1.0 {
+        let loosened: Vec<Edge> = odometry
+            .iter()
+            .map(|e| {
+                let mut variances = e.variances;
+                for axis in [3, 4] {
+                    variances[axis] *= scale;
+                }
+                Edge { variances, ..*e }
+            })
+            .collect();
+        let warm = solve_from(
+            &rotations,
+            &positions,
+            free,
+            &loosened,
+            closures,
+            unary,
+            sightings,
+            &warm_config,
+            false,
+        );
+        (rotations, positions) = (warm.rotations, warm.positions);
+        scale /= ladder;
+    }
+    solve_from(
+        &rotations, &positions, free, odometry, closures, unary, sightings, config, true,
+    )
+}
+
+/// `solve_core` from the given start; `judge_sightings` false keeps every sighting in (no GNC on them).
+#[allow(clippy::too_many_arguments)]
+fn solve_from(
+    rotations: &[Mat3],
+    positions: &[Vec3],
+    free: &[bool],
+    odometry: &[Edge],
+    closures: &[Edge],
+    unary: &[Unary],
+    sightings: &[LandmarkSighting],
+    config: &SolveConfig,
+    judge_sightings: bool,
+) -> Solution {
     let planar_edges;
     let (odometry, closures) = if config.planar {
         planar_edges = (in_plane(odometry), in_plane(closures));
@@ -387,7 +452,11 @@ pub(crate) fn solve_core(
             .map(|(s, t)| s.whitened(state) / t)
             .collect()
     };
-    let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
+    let sighting_worst = if judge_sightings {
+        sighting_residuals(&state).into_iter().fold(0.0, f64::max)
+    } else {
+        0.0
+    };
     let mut sighting_weights = vec![1.0; sightings.len()];
     let tracing = solve_log_path().is_some();
     let initial_cost = if tracing {
@@ -456,8 +525,10 @@ pub(crate) fn solve_core(
             for (w, &r) in unary_weights.iter_mut().zip(&u2) {
                 *w = tls(r, unary_threshold, mu);
             }
-            for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
-                *w = tls(r, 1.0, mu);
+            if judge_sightings {
+                for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
+                    *w = tls(r, 1.0, mu);
+                }
             }
             converged = levenberg_marquardt(
                 &mut state,

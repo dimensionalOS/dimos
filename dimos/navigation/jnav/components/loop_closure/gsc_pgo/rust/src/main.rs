@@ -152,6 +152,10 @@ config! {
     landmark_closure_icp: bool,
     // 2D: odometry as x, y, yaw and the solve holding z, roll, pitch at 0
     planar_pose_graph: bool,
+    // a solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off)
+    landmark_warm_start_xy_variance_scale: f64,
+    // ...and each later stage's scale is the last one's divided by this, down to the stated variances
+    landmark_warm_start_xy_variance_ladder: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------

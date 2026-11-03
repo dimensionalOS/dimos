@@ -65,6 +65,8 @@ class PGOConfig(NativeModuleConfig):
             "solve_keyframe_power": 2.017,
             "solve_closure_power": -0.215,
             "solve_rejected_power": 0.558,
+            "solve_closure_free_scans_scale": 6.606e-4,
+            "solve_closure_free_keyframe_power": 1.651,
             "debounce_scans_per_keyframe": 6.093487031356368e-06,
             "merge_scans_per_keyframe": 3.0032671115943386e-07,
             "pressure_scans_fixed_overhead": 0.0007777038336858567,
@@ -209,6 +211,11 @@ class PGOConfig(NativeModuleConfig):
     # 2D: odometry taken as x, y, yaw (z, roll, pitch dropped, clouds levelled) and the solve holds every keyframe's
     # z, roll and pitch at 0; closures, landmark sightings and world positions count only in the plane
     planar_pose_graph: bool = False
+    # a solve with landmark sightings first solves with the odometry's xy variances times this (<= 1 = off), so a re-sighting
+    # across a long drifted loop can pull it shut; the real solve (and its outlier verdicts) starts from that shape
+    landmark_warm_start_xy_variance_scale: float = 1000.0
+    # ...then xy stiffens stage by stage (scale divided by this each time) so every stage's LM converges
+    landmark_warm_start_xy_variance_ladder: float = 10.0
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0
