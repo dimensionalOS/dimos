@@ -180,10 +180,30 @@ def _run(
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
+        readings = coordinator.get_instance(_Readings)
+        # At least `seconds` of wall time, then until every sensor has steady stamps: on a loaded machine
+        # a sensor's first point cloud (it imports open3d) can take most of that.
+        deadline = time.monotonic() + seconds + MAX_EXTRA_WALL
         time.sleep(seconds)
-        return coordinator.get_instance(_Readings).readings()
+        while time.monotonic() < deadline and not _steady(readings.readings()["stamps"]):
+            time.sleep(1.0)
+        return readings.readings()
     finally:
         coordinator.stop()
+
+
+# Wall seconds a run may go on past its own, waiting for every sensor to be steady.
+MAX_EXTRA_WALL = 60.0
+STEADY_STAMPS = 8
+
+
+def _steady(stamps: dict[str, list[float]]) -> bool:
+    if not all(stamps[name] for name in RATES):
+        return False
+    start = min(stamps[name][0] for name in RATES)
+    return all(
+        sum(stamp >= start + WARM_UP for stamp in stamps[name]) >= STEADY_STAMPS for name in RATES
+    )
 
 
 # Sim seconds at the start in which a sensor may stall once, warming up (its first point cloud imports open3d).
