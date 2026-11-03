@@ -12,25 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The odometry error estimate from a solved graph's residuals (`Solution::odometry_error_estimate_evidence`): odometry whose translation
-//! noise is reported 25x too high and heading noise 7x too low, closed by exact loops; the evidence gives each back.
+//! `odometry_error_estimate_evidence` recovers odometry noise stated 25x too high (xy) and 7x too low (yaw).
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
-fn uniform(k: usize, salt: f64) -> f64 {
-    ((k as f64 * 12.9898 + salt * 78.233).sin() * 43758.5453)
-        .rem_euclid(1.0)
-        .max(1e-12)
-}
-
-fn normal(k: usize, salt: f64) -> f64 {
-    (-2.0 * uniform(k, salt).ln()).sqrt() * (std::f64::consts::TAU * uniform(k, salt + 0.5)).cos()
-}
+mod common;
+use common::normal;
 
 #[test]
 fn residuals_measure_translation_and_heading_noise_apart() {
-    // laps of a 20 m square, a keyframe every metre, closed by an exact loop at every corner after the first lap
+    // laps of a 20 m square, 1 m keyframes, exact closures at every corner after the first lap
     let (true_xy, true_yaw) = (4e-6_f64, 2e-5_f64);
     let (reported_xy, reported_yaw) = (true_xy * 25.0, true_yaw / 7.0);
     let n = 400;
@@ -98,7 +90,7 @@ fn residuals_measure_translation_and_heading_noise_apart() {
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
     };
-    // Helmert's iteration: rescale each source by its ratio and solve again until the ratios settle at 1
+    // Helmert's iteration: rescale each source by its ratio and re-solve until the ratios settle at 1
     let mut odometry = odometry;
     let mut scale = [1.0_f64; 4];
     let mut evidence = [(0.0, 0.0); 6];
