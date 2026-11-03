@@ -82,7 +82,13 @@ def _collection_components(
             Only for an arm whose teleop stack places the camera on the arm.
     """
     real_camera = _camera_if_real(pointcloud=headset_view)
-    feed = (HeadsetFeedModule.blueprint(),) if headset_view else ()
+    # Half the feed's default grids: a tabletop at 1 cm still fits its 150,000-point
+    # map, and the map's message size, so the Quest's Wi-Fi load, stays the same.
+    feed = (
+        (HeadsetFeedModule.blueprint(cloud_voxel_m=0.0075, map_voxel_m=0.01),)
+        if headset_view
+        else ()
+    )
     producers = autoconnect(teleop, *real_camera, *feed)
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
