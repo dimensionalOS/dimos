@@ -127,6 +127,7 @@ fn main() {
             learned_evidence: false,
             seed_closure_weights: Vec::new(),
             seed_start: Vec::new(),
+            planar: false,
         },
     );
     let kept = solution.sighting_weights.iter().filter(|&&w| w > 0.5).count();

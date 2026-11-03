@@ -60,6 +60,11 @@ pub struct CloudWithPose {
     pub cloud: Option<Arc<PointCloud>>,
     pub pose: PoseWithTime,
 }
+
+/// `planar_pose_graph`: a pose on the floor plane (x, y, yaw; z, roll and pitch dropped).
+pub fn planar(rotation: &Mat3, translation: &Vec3) -> (Mat3, Vec3) {
+    (mat3::yaw_and_tilt(rotation).0, [translation[0], translation[1], 0.0])
+}
 /// A keyframe: its local and global poses, time, and body-frame cloud.
 #[derive(Debug, Clone)]
 pub struct KeyPoseWithCloud {
@@ -655,6 +660,9 @@ pub struct Config {
     pub closure_sources: ClosureSources,
     /// With `inputs_only`: a landmark re-seen on a later visit proposes an ICP closure between its two sighting keyframes.
     pub landmark_closure_icp: bool,
+    /// 2D: odometry is taken as x, y, yaw (z, roll, pitch dropped, the cloud levelled), closures, sightings and world positions
+    /// are measured in that level frame, and the solve holds every keyframe's z, roll and pitch at 0 (no z or tilt drift).
+    pub planar_pose_graph: bool,
 }
 
 impl Config {
@@ -812,6 +820,7 @@ impl Default for Config {
             graph_simplify_chain_fold_max_m: 30.0,
             closure_sources: ClosureSources::ScanContext,
             landmark_closure_icp: true,
+            planar_pose_graph: false,
         }
     }
 }
@@ -849,6 +858,8 @@ pub struct GscPgo {
     /// `inputs_only`: how many sightings were placed on their nearest keyframes, and each landmark's visits (`LandmarkVisits`).
     pub(crate) sightings_placed: usize,
     pub(crate) landmark_visits: std::collections::BTreeMap<u64, LandmarkVisits>,
+    /// `planar_pose_graph`: per keyframe, the tilt (body -> level frame) dropped from its odometry; empty when off.
+    pub(crate) keyframe_tilts: Vec<Mat3>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
     /// Per finished solve: dispatched keyframes, newest keyframe time, seconds on its thread.
@@ -1307,7 +1318,7 @@ impl ClosureSearch {
             &mat3::mat_vec(rotation, &source.translation_global),
             translation,
         );
-        (
+        let measured = (
             mat3::mat_mul(
                 &closure_rotation_transpose,
                 &mat3::mat_mul(rotation, &source.rotation_global),
@@ -1316,7 +1327,13 @@ impl ClosureSearch {
                 &closure_rotation_transpose,
                 &mat3::sub(&moved, &target.translation_global),
             ),
-        )
+        );
+        // planar_pose_graph: ICP's z, roll and pitch are projected out of the measurement
+        if self.config.planar_pose_graph {
+            planar(&measured.0, &measured.1)
+        } else {
+            measured
+        }
     }
     /// Evidence a match needs (yank units): `base` + ln(look-alike places fitting as well), counted only as far as `evidence` needs.
     pub(crate) fn bar_with_places(
@@ -1894,7 +1911,20 @@ impl GscPgo {
                 self.follow_lidar_range(cloud);
             }
         }
-        let pose = &cloud_with_pose.pose;
+        // planar_pose_graph: the pose on the floor plane, and the tilt that levels its body-frame cloud
+        let level;
+        let (pose, tilt) = if self.config.planar_pose_graph {
+            let (turn, tilt) = mat3::yaw_and_tilt(&cloud_with_pose.pose.rotation);
+            let t = &cloud_with_pose.pose.translation;
+            level = PoseWithTime {
+                rotation: turn,
+                translation: [t[0], t[1], 0.0],
+                ..cloud_with_pose.pose.clone()
+            };
+            (&level, Some(tilt))
+        } else {
+            (&cloud_with_pose.pose, None)
+        };
         // an odometry that repeats each pose with a fresh stamp (huge's fastlio_odometry, ~2.7x) counts each pose once
         if self
             .recent_motion
@@ -1907,19 +1937,25 @@ impl GscPgo {
             self.recent_motion
                 .push_back((pose.second, pose.translation));
         }
-        let due = self.is_key_pose(&cloud_with_pose.pose);
+        let due = self.is_key_pose(pose);
+        // re-sent points are matched where the odometry as given places them
         let cloud = if self.config.drop_reseen_points {
             self.drop_reseen(cloud_with_pose)
         } else {
             cloud_with_pose.cloud.clone()
         };
+        let cloud = match (&tilt, cloud) {
+            (Some(tilt), Some(cloud)) => Some(Arc::new(transform_cloud(&cloud, tilt, &[0.0; 3]))),
+            (_, cloud) => cloud,
+        };
         let (keyframe, cloud) = if self.config.auto_aggregate_cloud_size > 0 {
-            self.gather(&cloud_with_pose.pose, cloud, due)
+            self.gather(pose, cloud, due)
         } else {
             (due, cloud)
         };
         if keyframe {
-            self.insert_keyframe(&cloud_with_pose.pose, cloud);
+            self.insert_keyframe(pose, cloud);
+            self.keyframe_tilts.extend(tilt);
         }
         self.scans_seen += 1;
         self.scan_time = pose.second;
@@ -2121,7 +2157,7 @@ impl GscPgo {
         let half_range = self.config.target_half_range(1);
         let mut candidate: Option<LandmarkPair> = None;
         // a sighting after the newest keyframe waits: a later keyframe may be nearer
-        while let Some(&(time, landmark, _, position, information)) =
+        while let Some(&(time, landmark, rotation, position, information)) =
             self.landmark_sightings.get(self.sightings_placed)
         {
             if time > newest_time {
@@ -2130,6 +2166,11 @@ impl GscPgo {
             self.sightings_placed += 1;
             let Some((keyframe, moved)) = self.nearest_keyframe(time) else {
                 continue;
+            };
+            // planar_pose_graph: seen from the keyframe's level frame
+            let (_, position, information) = match self.keyframe_tilts.get(keyframe) {
+                Some(tilt) => crate::landmarks::leveled(tilt, &rotation, &position, &information),
+                None => (rotation, position, information),
             };
             let full = crate::landmarks::known_inverse(&information);
             // the position block only (a rotation-only sighting places nothing)
@@ -2469,6 +2510,11 @@ impl GscPgo {
     ) {
         // a closure committed directly (no search) has no search confidence or yank recorded
         let (fit_confidence, yank_stdevs) = self.committed_stats.take().unwrap_or((f64::NAN, f64::NAN));
+        let (rotation_offset, translation_offset) = if self.config.planar_pose_graph {
+            planar(&rotation_offset, &translation_offset)
+        } else {
+            (rotation_offset, translation_offset)
+        };
         self.committed_closures.push(crate::store::ClosureFixed {
             source_id,
             target_id,

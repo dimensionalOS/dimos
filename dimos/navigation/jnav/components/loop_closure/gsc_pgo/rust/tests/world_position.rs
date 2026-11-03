@@ -61,6 +61,7 @@ fn config() -> SolveConfig {
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
+        planar: false,
     }
 }
 

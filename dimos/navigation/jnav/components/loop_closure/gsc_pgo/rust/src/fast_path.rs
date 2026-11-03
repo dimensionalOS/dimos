@@ -227,6 +227,7 @@ impl GscPgo {
                     learned_evidence: false,
                     seed_closure_weights: Vec::new(),
                     seed_start: Vec::new(),
+                    planar: config.planar_pose_graph,
                 };
                 let steps = config.solver_fast_path_max_lm_steps;
                 let fast = solve_fast_path(&rotations, &positions, &free, &odometry, &closures, &new, &solve_config, steps);

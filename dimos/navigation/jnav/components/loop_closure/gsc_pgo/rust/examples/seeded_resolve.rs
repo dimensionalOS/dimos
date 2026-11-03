@@ -143,6 +143,7 @@ fn main() {
                 learned_evidence: false,
                 seed_closure_weights,
                 seed_start,
+                planar: config.planar_pose_graph,
             };
             let started = std::time::Instant::now();
             let solution = solve(

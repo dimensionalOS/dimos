@@ -233,6 +233,11 @@ impl GscPgo {
                 for (axis, row) in grown.iter_mut().enumerate() {
                     row[axis] += moved;
                 }
+                // planar_pose_graph: the mount in the keyframe's level frame
+                let lever = match self.keyframe_tilts.get(keyframe) {
+                    Some(tilt) => mat3::mat_vec(tilt, &lever),
+                    None => lever,
+                };
                 Some(PositionPrior {
                     keyframe,
                     frame,
@@ -281,6 +286,11 @@ impl GscPgo {
             .iter()
             .filter_map(|&(time, id, rotation, position, information)| {
                 let (keyframe, moved) = self.nearest_keyframe(time)?;
+                // planar_pose_graph: seen from the keyframe's level frame
+                let (rotation, position, information) = match self.keyframe_tilts.get(keyframe) {
+                    Some(tilt) => crate::landmarks::leveled(tilt, &rotation, &position, &information),
+                    None => (rotation, position, information),
+                };
                 let landmark = ids.iter().position(|&i| i == id).unwrap_or_else(|| {
                     ids.push(id);
                     ids.len() - 1
@@ -319,7 +329,9 @@ impl GscPgo {
         self.adoption_inline = true;
         moved |= self.settle();
         // the learned estimate for the next run's config: one more solve of the final graph with the evidence on
+        // (a planar solve measures none)
         if self.config.learned_odometry_error_estimate_from_closures
+            && !self.config.planar_pose_graph
             && self.committed_closures.iter().any(|c| c.gnc_weight > 0.5)
         {
             self.learned_evidence_requested = true;
@@ -451,6 +463,7 @@ impl GscPgo {
             } else {
                 Vec::new()
             },
+            planar: config.planar_pose_graph,
         };
         let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(m, &closure_index);
         // a simplified solve's nodes expand back to every keyframe (and its closures to every committed one) on its thread

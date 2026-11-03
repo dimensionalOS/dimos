@@ -138,7 +138,11 @@ pub fn solve_with_priors(
                 keyframe: p.keyframe,
                 lever: p.lever,
                 position,
-                information: mat3::inverse(&covariance).unwrap_or([[0.0; 3]; 3]),
+                information: if config.planar {
+                    horizontal_information(&covariance)
+                } else {
+                    mat3::inverse(&covariance).unwrap_or([[0.0; 3]; 3])
+                },
             });
         }
         (used, unary)
@@ -222,6 +226,22 @@ pub fn solve_with_priors(
         .collect();
     solution.prior_weights = weights;
     solution
+}
+
+/// A planar solve's prior information: the inverse of the x-y block, nothing on z (the map is level, its height free).
+fn horizontal_information(covariance: &Mat3) -> Mat3 {
+    let [[a, b, _], [c, d, _], _] = *covariance;
+    let determinant = a * d - b * c;
+    // the negated comparison rejects NaN too
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    if !(determinant > 0.0) {
+        return [[0.0; 3]; 3];
+    }
+    [
+        [d / determinant, -b / determinant, 0.0],
+        [-c / determinant, a / determinant, 0.0],
+        [0.0, 0.0, 0.0],
+    ]
 }
 
 /// Weighted yaw + translation putting `points` on the priors' world positions; None while spread sd <= 2x noise sd.

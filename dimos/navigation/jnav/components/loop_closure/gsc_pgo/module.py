@@ -205,6 +205,9 @@ class PGOConfig(NativeModuleConfig):
     closure_sources: str = "scan_context"
     # with inputs_only: run that landmark-seeded ICP closure (false = landmarks and world positions alone)
     landmark_closure_icp: bool = True
+    # 2D: odometry taken as x, y, yaw (z, roll, pitch dropped, clouds levelled) and the solve holds every keyframe's
+    # z, roll and pitch at 0; closures, landmark sightings and world positions count only in the plane
+    planar_pose_graph: bool = False
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0

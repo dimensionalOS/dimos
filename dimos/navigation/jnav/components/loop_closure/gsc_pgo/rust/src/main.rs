@@ -149,6 +149,8 @@ config! {
     // "scan_context" (default) or "inputs_only": no place recognition, landmarks/world positions only, landmark-seeded ICP closures
     closure_sources: dimos_gsc_pgo::gsc_pgo::ClosureSources,
     landmark_closure_icp: bool,
+    // 2D: odometry as x, y, yaw and the solve holding z, roll, pitch at 0
+    planar_pose_graph: bool,
 }
 
 // ---- shared state ---------------------------------------------------------------
