@@ -12,9 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fixed topic profiles. Importing this table never loads a media dependency."""
+"""Fixed topic profiles and their updatable settings. Importing this table
+never loads a media dependency.
 
+A profile is the ceiling and the default of every setting a viewer may change:
+sizes, quality and rates come back clamped to it, a point stride never falls
+below it. ``normalize_settings`` is mirrored by ``normalizeTopicSettings`` in
+web/shared/topics.ts, which the relay runs against ``PROFILE_OPTIONS`` as
+advertised in the provider's capabilities.
+"""
+
+from collections.abc import Mapping
 from dataclasses import dataclass
+import math
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -36,3 +47,108 @@ MEDIA_PROFILES = {
     "cloud.q16.balanced.v1": MediaProfile("cloud", 20),
     "cloud.q16.full.v1": MediaProfile("cloud", 30),
 }
+
+SETTING_NAMES = ("maxHz", "maxResolution", "quality", "keepEvery", "fields")
+CLOUD_FIELDS = ["intensity", "color"]
+MAX_RATE = 1000
+
+
+def _options(profile: MediaProfile | None) -> dict[str, dict[str, Any]]:
+    options: dict[str, dict[str, Any]] = {
+        "maxHz": {
+            "kind": "number",
+            "max": MAX_RATE,
+            "default": profile.max_hz if profile else MAX_RATE,
+        }
+    }
+    if profile is not None and profile.kind == "jpeg":
+        options["maxResolution"] = {
+            "kind": "size",
+            "min": 16,
+            "max": 4096,
+            "default": [profile.width, profile.height],
+        }
+        options["quality"] = {"kind": "int", "min": 1, "max": 100, "default": profile.quality}
+    elif profile is not None and profile.kind == "cloud":
+        options["keepEvery"] = {"kind": "int", "min": 1, "max": 64, "default": profile.keep_every}
+        options["fields"] = {"kind": "enum", "values": CLOUD_FIELDS, "default": CLOUD_FIELDS}
+    return options
+
+
+# Advertised in TopicCapabilities.profileOptions; the relay validates against it.
+PROFILE_OPTIONS: dict[str, dict[str, dict[str, Any]]] = {
+    "raw": _options(None),
+    **{name: _options(profile) for name, profile in MEDIA_PROFILES.items()},
+}
+
+
+def _number(value: Any, integer: bool) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError("option_out_of_range")
+    number: int | float = value
+    if integer:
+        if int(number) != number:
+            raise ValueError("option_out_of_range")
+        return int(number)
+    return number
+
+
+def _clamp(name: str, option: Mapping[str, Any], value: Any) -> Any:
+    default = option.get("default")
+    kind = option["kind"]
+    if kind in ("number", "int"):
+        number = _number(value, kind == "int")
+        if (
+            (name == "maxHz" and number <= 0)
+            or ("min" in option and number < option["min"])
+            or ("max" in option and number > option["max"])
+        ):
+            raise ValueError("option_out_of_range")
+        if not isinstance(default, (int, float)):
+            return number
+        # The profile bounds the data: a coarser stride is a smaller output.
+        return max(number, default) if name == "keepEvery" else min(number, default)
+    if kind == "size":
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError("option_out_of_range")
+        sides = [_number(side, True) for side in value]
+        if any(side < option["min"] or side > option["max"] for side in sides):
+            raise ValueError("option_out_of_range")
+        limits: list[int] = option["default"]
+        return [min(side, limit) for side, limit in zip(sides, limits, strict=True)]
+    if kind == "enum":
+        values = option["values"]
+        if (
+            not isinstance(value, list)
+            or len(set(value)) != len(value)
+            or any(item not in values for item in value)
+        ):
+            raise ValueError("option_out_of_range")
+        return [item for item in values if item in value]
+    if not isinstance(value, bool):
+        raise ValueError("option_out_of_range")
+    return value
+
+
+def normalize_settings(profile_name: str, requested: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The settings in force for a request on one profile.
+
+    Raises ``ValueError("unsupported_option")`` for a name the profile does not
+    offer and ``ValueError("option_out_of_range")`` for a value outside its
+    advertised range. ``None`` values count as absent (a reset).
+    """
+    options = PROFILE_OPTIONS[profile_name]
+    requested = {name: value for name, value in (requested or {}).items() if value is not None}
+    for name in requested:
+        if name not in options:
+            raise ValueError("unsupported_option")
+    settings: dict[str, Any] = {}
+    for name in SETTING_NAMES:
+        option = options.get(name)
+        if option is None:
+            continue
+        value = requested.get(name, option.get("default"))
+        if value is None:
+            continue
+        settings[name] = _clamp(name, option, value)
+    return settings
