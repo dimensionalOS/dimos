@@ -22,6 +22,7 @@ from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
+from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
@@ -264,7 +265,16 @@ def test_keyboard_mock_hardware_without_simulation(monkeypatch) -> None:
     configured = _coordinator_kwargs(keyboard_teleop_openyam_mock)["hardware"]
 
     assert hardware.adapter_type == "mock_whole_body"
-    assert hardware.adapter_kwargs == {}
+    assert "runtime_config" not in hardware.adapter_kwargs
     assert hardware.limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
     assert [component.adapter_type for component in configured] == ["mock_whole_body"]
-    assert configured[0].adapter_kwargs == {}
+    adapter = MockWholeBodyAdapter(dof=len(configured[0].joints), **configured[0].adapter_kwargs)
+    assert [state.q for state in adapter.read_motor_states()] == [
+        0.0,
+        1.047,
+        1.047,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ]

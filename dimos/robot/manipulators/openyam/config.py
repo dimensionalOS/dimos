@@ -57,6 +57,7 @@ def openyam_hardware(
     adapter_kwargs: dict[str, object] = {}
     limits: JointLimits | None = None
     if use_mock:
+        adapter_kwargs["initial_positions"] = [*OPENYAM_HOME_JOINTS, 0.0]
         limits = JointLimits(
             position_lower=[*([None] * OPENYAM_DOF), 0.0],
             position_upper=[*([None] * OPENYAM_DOF), 1.0],
