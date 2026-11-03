@@ -300,7 +300,7 @@ planning = [
     "dimos[control]",
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-    "roboplan>=0.7.0,<0.8.0",
+    "roboplan>=0.8.0,<0.9.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
@@ -468,7 +468,7 @@ tests = [
     # RoboPlan 0.7 splits its bindings into packages. The roboplan meta-package
     # in the manipulation extra includes core, RRT, Cartesian and TOPPRA.
     # Tests-only installs need core for native point-cloud Narrowphase queries.
-    "roboplan-core>=0.7.0,<0.8.0",
+    "roboplan-core>=0.8.0,<0.9.0",
     "mujoco>=3.3.4",
     "mjcf-to-urdf>=0.1.1",
     "pygame>=2.6.1",
@@ -500,7 +500,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan>=0.7.0,<0.8.0",
+    "roboplan>=0.8.0,<0.9.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -547,7 +547,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, roboplan-cartesian-planning = false, roboplan-common = false, roboplan-core = false, roboplan-example-models = false, roboplan-oink = false, roboplan-rrt = false, roboplan-simple-ik = false, roboplan-toppra = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10

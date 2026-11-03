@@ -110,8 +110,8 @@ class FakeCartesianPlannerOptions:
         self.max_angular_speed = 0.5
         self.max_linear_acceleration = 0.5
         self.max_angular_acceleration = 2.5
-        self.max_position_error = 0.005
-        self.max_orientation_error = 0.01
+        self.position_tolerance = 0.005
+        self.orientation_tolerance = 0.01
         self.position_cost = 1.0
         self.orientation_cost = 1.0
         self.task_gain = 1.0
@@ -1810,8 +1810,14 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
     assert result.path[1].velocity == pytest.approx([0.5, 0.5])
     planner = FakeCartesianPathPlanner.instances[-1]
     assert planner.options.speed_mode == FakeCartesianSpeedMode.TimeOptimal
+    # RoboPlan 0.8 renamed the two path tolerances.
+    renamed = {
+        "max_position_error": "position_tolerance",
+        "max_orientation_error": "orientation_tolerance",
+    }
     for field_name, expected in option_overrides.items():
-        assert getattr(planner.options, field_name) == pytest.approx(expected)
+        option = renamed.get(field_name, field_name)
+        assert getattr(planner.options, option) == pytest.approx(expected)
     assert planner.paths[0].base_frames == ["dimos_world"]
     np.testing.assert_allclose(planner.paths[0].tforms[0][0], np.eye(4), atol=1e-12)
     expected_rotation = np.array(
