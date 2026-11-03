@@ -63,6 +63,10 @@ impl KeyframeClouds {
             })
             .clone()
     }
+    /// Drop keyframe `k`'s entry (it was simplified away and no search can ask for it again).
+    pub(crate) fn forget(&self, k: usize) {
+        self.entries.lock().unwrap().remove(&k);
+    }
 }
 
 /// A target stack of keyframes grown in place: voxelized points deduplicated per world voxel in a growing `KdForest`.
@@ -313,7 +317,7 @@ impl ClosureSearch {
             target_ids.extend(added);
             // report this round's estimated cost to the deterministic schedule before its ICP starts
             if let Some(progress) = &self.progress {
-                let source_points = self.key_poses.fixed(j).body_cloud.as_ref().map_or(0, |body| {
+                let source_points = self.key_poses.body_cloud(j).as_ref().map_or(0, |body| {
                     self.keyframe_clouds
                         .get(j, body)
                         .voxelized(self.config.submap_resolution)

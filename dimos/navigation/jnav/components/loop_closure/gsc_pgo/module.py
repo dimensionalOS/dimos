@@ -69,6 +69,9 @@ class PGOConfig(NativeModuleConfig):
             "pressure_scans_fixed_overhead": 0.0007777038336858567,
             "pressure_scans_per_keyframe": 8.708997476399469e-06,
             "pressure_scans_per_closure": 1.2578234731596874e-05,
+            "fast_path_scans_fixed_overhead": 0.42,
+            "fast_path_scans_per_window_keyframe": 1.7e-3,
+            "fast_path_scans_per_keyframe": 8.4e-5,
         }
     )
     source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"
@@ -128,6 +131,24 @@ class PGOConfig(NativeModuleConfig):
     # display-only soft_pressure is 50% at this log10 loop hazard, log-compressed to 0% soft_pressure_decades below
     soft_pressure_half_log10_hazard: float = -0.5
     soft_pressure_decades: float = 100.0
+    # reduced pose graph for very long runs: once a keyframe is graph_simplify_frontier_keyframes behind the newest, it rides
+    # a keyframe kept on an older pass within graph_simplify_place_radius_m (cloud and descriptor freed) when a kept closure
+    # is within graph_simplify_localized_keyframes of it; a closure folded onto riding keyframes goes to the solve only while
+    # its pair of places has fewer than graph_simplify_closures_per_pair
+    graph_simplify: bool = False
+    graph_simplify_frontier_keyframes: int = 1000
+    # a keyframe revisits a place only if the kept keyframe there is at least this many keyframes older
+    graph_simplify_pass_gap_keyframes: int = 200
+    graph_simplify_place_radius_m: float = 1.0
+    graph_simplify_localized_keyframes: int = 50
+    graph_simplify_closures_per_pair: int = 1
+    # one sd of how far a removed keyframe's frozen offset may be off: edges and closures through one carry this much more variance
+    graph_simplify_offset_sd_m: float = 0.05
+    graph_simplify_offset_sd_rad: float = 0.005
+    # odometry folds between consecutive kept keyframes (else it follows the nodes removed keyframes ride)
+    graph_simplify_chain_odometry: bool = True
+    # past this much folded odometry (m) the walk rides the current place's node instead
+    graph_simplify_chain_fold_max_m: float = 30.0
 
     # k in the yank gate: confidence must clear 1 - exp(-z^2/2k^2), z = yank in robust std devs of yanks so far
     closure_yank_gate_width: float = 1.0
@@ -152,6 +173,12 @@ class PGOConfig(NativeModuleConfig):
     # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
     solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
+    # solver fast path: a new closure whose older end is within max_keyframes of the newest is applied at once by a local
+    # least squares (no GNC) over those keyframes, until the GNC solve covering it lands and supersedes it
+    solver_fast_path_enabled: bool = False
+    solver_fast_path_max_keyframes: int = 1000
+    # each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate
+    solver_fast_path_max_lm_steps: int = 10
     # closure search pipeline: SC buffer (most similar first) -> fast-match workers -> verification buffer -> workers
     fast_match_workers: int = 2
     sc_buffer_size: int = 4
