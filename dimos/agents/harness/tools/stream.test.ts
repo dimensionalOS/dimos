@@ -22,7 +22,6 @@ import { readChannel, streamTool } from "#dimos/agents/harness/tools/lib/stream.
 
 const dimos = dimosFixture();
 
-/** A session whose store keeps its last slot after the read unsubscribes, like the SDK's. */
 function fakeSession(t: TestContext, spec: ChannelSpec) {
   // AbortSignal.timeout() does not keep Node alive; the real relay connection does.
   const alive = setInterval(() => {}, 1_000);

@@ -59,7 +59,6 @@ const LATEST_REFRESH_MS = 2_000;
 
 export interface ChannelRead {
   readonly slot: Slot;
-  /** False when latest fell back to a frame cached by an earlier read. */
   readonly fresh: boolean;
 }
 
@@ -70,7 +69,6 @@ export async function readChannel(
   signal: AbortSignal,
 ): Promise<ChannelRead> {
   const previous = session.store.get(spec.ch);
-  // The store stops updating between reads, so a cached slot can be stale.
   if (mode === "latest" && previous !== null) {
     try {
       return await readChannel(
@@ -149,8 +147,7 @@ export function streamTool(options: {
     "stream_get",
     {
       name: "stream_get",
-      description:
-        "Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame, waiting up to 2 s for a live one and otherwise returning the last frame with fresh=false (only latest can return fresh=false); next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.",
+      description: `Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame, waiting up to ${LATEST_REFRESH_MS / 1000} s for a live one and otherwise returning the last frame with fresh=false (only latest can return fresh=false); next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.`,
       parameters: Parameters,
       execute: async (args, _api, context) => {
         try {
