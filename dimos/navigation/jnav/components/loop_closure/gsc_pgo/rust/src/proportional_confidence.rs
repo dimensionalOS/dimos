@@ -133,19 +133,8 @@ impl ClosureSearch {
                 1.0 - diag.candidate_distance / self.config.closure_search_radius.max(f64::EPSILON),
             )
         };
-        let half = self.config.closure_sharpness_half;
-        diag.icp_factor = if half > 0.0 {
-            unit(diag.sharpness / (diag.sharpness + half))
-        } else {
-            unit(
-                1.0 - diag.icp_fitness
-                    / self
-                        .config
-                        .closure_icp_max_fitness_m
-                        .powi(2)
-                        .max(f64::EPSILON),
-            )
-        };
+        diag.icp_factor =
+            unit(1.0 - diag.icp_fitness / self.config.closure_icp_max_fitness_m.powi(2).max(f64::EPSILON));
         diag.degeneracy_factor =
             if self.config.closure_min_degeneracy > 0.0 && diag.degeneracy_min >= 0.0 {
                 unit(diag.degeneracy_min as f64 / self.config.closure_min_degeneracy)
@@ -159,22 +148,6 @@ impl ClosureSearch {
             diag.scan_context_factor * diag.icp_factor * diag.degeneracy_factor
         };
         diag.required_confidence = 1.0 - (-self.required_evidence(diag)).exp();
-    }
-    /// `connection_fit::sharpness` of `source` moved by `icp` onto the tree's cloud, by the configured nudge.
-    pub(crate) fn sharpness(
-        &self,
-        source: &PointCloud,
-        tree: &impl NearestIndex,
-        icp: &IcpResult,
-    ) -> f64 {
-        connection_fit::sharpness(
-            &transform_cloud(source, &icp.rotation, &icp.translation),
-            tree,
-            self.config.submap_resolution,
-            self.config.closure_inlier_squared_distance(),
-            self.config.closure_sharpness_nudge_m,
-            self.config.closure_sharpness_nudge_deg,
-        )
     }
     /// `connection_fit::likelihood_ratio` of `source` moved by `icp` against `target`, out to the ICP match distance.
     pub(crate) fn likelihood_ratio(

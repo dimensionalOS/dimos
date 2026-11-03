@@ -171,10 +171,6 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_dump_dir: str = ""
     # re-check a weak match on the last 2, 4, 8, ... (up to this many) keyframes (0 = off)
     closure_extended_icp_max_keyframes: int = 16
-    # > 0: score a fit by sharpness s (overlap drop when nudged by nudge_m / _deg) as s / (s + this); 0 = fitness
-    closure_sharpness_half: float = 0.0
-    closure_sharpness_nudge_m: float = 1.0
-    closure_sharpness_nudge_deg: float = 5.0
     # closure evidence = per-point likelihood ratio, instead of scan-context x ICP x degeneracy
     closure_likelihood_confidence: bool = True
     # after a rejection, try the next scan-context match (up to 1 + floor(sqrt(min(ceil(1/(1-pressure)), top_k-1))))
