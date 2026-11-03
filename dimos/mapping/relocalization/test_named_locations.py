@@ -21,7 +21,6 @@ import pytest
 
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.mapping.relocalization.named_locations import load_locations, location_frame
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -50,17 +49,15 @@ def make(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     def build(
         **config: Any,
-    ) -> tuple[RelocalizationModule, list[InteractiveMarkerUpdate], list[PointStamped]]:
+    ) -> tuple[RelocalizationModule, list[InteractiveMarkerUpdate]]:
         config.setdefault("save_locations_to", str(tmp_path / "named_locations.db"))
         module = RelocalizationModule(**config)
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         snapshots: list[InteractiveMarkerUpdate] = []
-        goals: list[PointStamped] = []
         monkeypatch.setattr(module.named_locations, "publish", snapshots.append)
-        monkeypatch.setattr(module.goal, "publish", goals.append)
         monkeypatch.setattr(module.tf, "publish", module.__dict__.setdefault("sent_tf", []).append)
         built.append(module)
-        return module, snapshots, goals
+        return module, snapshots
 
     yield build
     for module in built:
@@ -84,13 +81,20 @@ def at(x: float, y: float, frame_id: str, yaw: float = 0.0) -> PoseStamped:
     )
 
 
-def listing(poses: dict[str, PoseStamped]) -> InteractiveMarkerUpdate:
-    """A whole list of named locations, as a viewer publishes it."""
-    return InteractiveMarkerUpdate([named_pose(name, pose) for name, pose in poses.items()])
+def listing(
+    poses: dict[str, PoseStamped], edited_from: InteractiveMarkerUpdate
+) -> InteractiveMarkerUpdate:
+    """A whole list of named locations, as a viewer publishes it after editing *edited_from*."""
+    return InteractiveMarkerUpdate(
+        [named_pose(name, pose) for name, pose in poses.items()],
+        server_id=edited_from.server_id,
+        seq_num=edited_from.seq_num,
+    )
 
 
 def publish(module: RelocalizationModule, poses: dict[str, PoseStamped]) -> None:
-    asyncio.run(module.handle_named_locations(listing(poses)))
+    """A viewer that is up to date edits the module's current list."""
+    asyncio.run(module.handle_named_locations(listing(poses, module.locations_snapshot())))
 
 
 def names(snapshot: InteractiveMarkerUpdate) -> list[str]:
@@ -111,8 +115,8 @@ def saved(path: str) -> list[list[str]]:
         return [names(obs.data) for obs in store.stream("named_locations").order_by("ts")]
 
 
-def test_a_published_list_replaces_the_locations_without_a_reply(make, tmp_path):
-    module, published, _ = make()
+def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revision(make, tmp_path):
+    module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map"), "desk": at(3, 4, "map")})
     # rename dock, move desk
@@ -122,8 +126,9 @@ def test_a_published_list_replaces_the_locations_without_a_reply(make, tmp_path)
     publish(module, {"charger": at(1, 2, "map")})
     assert names(module.locations_snapshot()) == ["charger"]
 
-    # the module never answers a list: the publisher already has what it sent
-    assert published == []
+    # every adopted list goes out, one revision on, so every viewer's cache follows
+    assert [names(p) for p in published] == [["dock", "desk"], ["charger", "desk"], ["charger"]]
+    assert [p.seq_num for p in published] == [1, 2, 3]
     assert saved(str(tmp_path / "named_locations.db")) == [
         ["dock", "desk"],
         ["charger", "desk"],
@@ -132,21 +137,56 @@ def test_a_published_list_replaces_the_locations_without_a_reply(make, tmp_path)
 
 
 def test_its_own_list_coming_back_changes_nothing(make, tmp_path):
-    module, published, _ = make()
+    module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map", yaw=0.3)})
-    asyncio.run(module.handle_named_locations_request(String("")))
 
     asyncio.run(module.handle_named_locations(published[-1]))
     assert saved(str(tmp_path / "named_locations.db")) == [["dock"]]
+    assert len(published) == 1
+
+
+def test_a_stale_cache_cannot_bring_back_a_renamed_location(make, tmp_path):
+    """Two viewers edit the same revision: the second is dropped and resynced, no duplicate."""
+    module, published = make()
+    begin(module)
+    publish(module, {"dock": at(1, 2, "map")})
+    both_saw = published[-1]
+
+    asyncio.run(module.handle_named_locations(listing({"charger": at(1, 2, "map")}, both_saw)))
+    stale = listing({"dock": at(1, 2, "map"), "desk": at(3, 4, "map")}, both_saw)
+    asyncio.run(module.handle_named_locations(stale))
+
+    assert names(module.locations_snapshot()) == ["charger"]
+    # the stale viewer gets the current list back to replace its cache with
+    assert names(published[-1]) == ["charger"]
+    assert published[-1].seq_num == 2
+    assert saved(str(tmp_path / "named_locations.db")) == [["dock"], ["charger"]]
+
+
+def test_a_list_from_another_run_is_dropped(make):
+    """A viewer that outlived a restart holds the old run's revisions, which never match."""
+    old_run, _ = make()
+    begin(old_run)
+    publish(old_run, {"dock": at(1, 2, "map")})
+
+    module, published = make()
+    begin(module)
+    cached = listing(
+        {"dock": at(1, 2, "map"), "desk": at(3, 4, "map")}, old_run.locations_snapshot()
+    )
+    asyncio.run(module.handle_named_locations(cached))
+    assert names(module.locations_snapshot()) == []
+    assert names(published[-1]) == []
 
 
 def test_a_request_resends_every_location(make):
     """A viewer that starts after the module asks once and gets them all."""
-    module, published, _ = make()
+    module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map")})
 
+    published.clear()
     asyncio.run(module.handle_named_locations_request(String("")))
     assert len(published) == 1
     assert positions(published[-1]) == {"dock": (1, 2)}
@@ -154,7 +194,7 @@ def test_a_request_resends_every_location(make):
 
 
 def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
-    module, _, _ = make(locations_from="none_yet.db")
+    module, _ = make(locations_from="none_yet.db")
     module.submit(FIX)
 
     # 1 m in front of the old map's origin: map x points along world y
@@ -163,43 +203,22 @@ def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
 
 
 def test_a_list_without_a_map_transform_is_ignored(make):
-    module, _, _ = make(locations_from="none_yet.db")
+    module, _ = make(locations_from="none_yet.db")
     publish(module, {"door": at(10, 1, "world")})
     assert names(module.locations_snapshot()) == []
 
 
-def test_go_to_sends_the_goal_in_the_world_frame_through_the_fix(make):
-    module, _, goals = make(locations_from="none_yet.db")
-    module.submit(FIX)
-    publish(module, {"door": at(1, 0, "map")})
-
-    asyncio.run(module.handle_go_to_named_location(String("door")))
-    asyncio.run(module.handle_go_to_named_location(String("nowhere")))
-
-    assert len(goals) == 1
-    assert goals[0].frame_id == "world"
-    assert (round(goals[0].x, 6), round(goals[0].y, 6)) == (10, 1)
-
-
-def test_go_to_waits_for_relocalization(make):
-    module, _, goals = make(locations_from="none_yet.db")
-    module._locations = {"door": at(1, 0, "map")}
-    asyncio.run(module.handle_go_to_named_location(String("door")))
-    assert goals == []
-
-
 def test_a_new_map_is_the_world_frame(make):
-    """Nothing to load: this run's world frame is the map, so locations and goals coincide."""
-    module, _, goals = make(new_map=True)
+    """Nothing to load: this run's world frame is the map, so a location's pose is the same in both."""
+    module, _ = make(new_map=True)
     begin(module)
     publish(module, {"door": at(4, 5, "world")})
-    asyncio.run(module.handle_go_to_named_location(String("door")))
-    assert (goals[0].x, goals[0].y) == (4, 5)
+    assert positions(module.locations_snapshot()) == {"door": (4, 5)}
 
 
 def test_locations_are_loaded_from_the_saved_file_at_startup(make, tmp_path):
     run1 = str(tmp_path / "run1.db")
-    first, _, _ = make(save_locations_to=run1)
+    first, _ = make(save_locations_to=run1)
     begin(first)
     publish(first, {"dock": at(1, 2, "map", yaw=0.5), "desk": at(3, 4, "map")})
     publish(first, {"dock": at(1, 2, "map", yaw=0.5)})
@@ -207,7 +226,7 @@ def test_locations_are_loaded_from_the_saved_file_at_startup(make, tmp_path):
 
     assert list(load_locations(run1, "named_locations")) == ["dock"]
 
-    second, published, _ = make(locations_from=run1, save_locations_to=str(tmp_path / "run2.db"))
+    second, published = make(locations_from=run1, save_locations_to=str(tmp_path / "run2.db"))
     begin(second)
     assert published == []
     asyncio.run(second.handle_named_locations_request(String("")))
@@ -226,7 +245,7 @@ def test_a_missing_file_loads_nothing(tmp_path):
 
 def test_a_list_in_another_frame_goes_through_tf(make):
     """Only world/map come from the module's own fix; any other frame is looked up in tf."""
-    module, _, _ = make(locations_from="none_yet.db")
+    module, _ = make(locations_from="none_yet.db")
     module.tfbuffer.receive_transform(
         Transform(translation=Vector3(0.0, 2.0, 0.0), frame_id="map", child_frame_id="desk_frame")
     )
@@ -236,7 +255,7 @@ def test_a_list_in_another_frame_goes_through_tf(make):
 
 def test_locations_hang_off_the_map_frame_and_follow_every_fix(make):
     """Each location is a tf frame under map, so a new world -> map moves it with the old map."""
-    module, _, _ = make(locations_from="none_yet.db", relocalize_once=False)
+    module, _ = make(locations_from="none_yet.db", relocalize_once=False)
     module.submit(FIX)
     publish(module, {"door": at(1, 0, "map")})
     sent: list[TFMessage] = module.__dict__["sent_tf"]
@@ -270,9 +289,9 @@ def test_a_premap_recording_also_seeds_its_named_locations(make, tmp_path):
             PointCloud2.from_numpy(np.ones((7, 3), dtype=np.float32), timestamp=2.0), ts=2.0
         )
         store.stream("named_locations", InteractiveMarkerUpdate).append(
-            listing({"dock": at(1, 2, "map")}), ts=2.0
+            InteractiveMarkerUpdate([named_pose("dock", at(1, 2, "map"))]), ts=2.0
         )
-    module, _, _ = make(map_file=recording)
+    module, _ = make(map_file=recording)
     module.register_disposable = lambda d: d
     module.open_locations()
     module._load_premap(recording)
