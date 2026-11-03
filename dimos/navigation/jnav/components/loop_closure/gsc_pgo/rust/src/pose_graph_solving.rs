@@ -670,35 +670,6 @@ impl GscPgo {
             self.learned_evidence_gap = longest;
             self.learned_evidence_requested = true;
         }
-        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (kept closures, learned estimate, evidence)
-        if let Ok(path) = std::env::var("GSC_LEARN_LOG") {
-            use std::io::Write;
-            let kept: Vec<usize> = self
-                .committed_closures
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.gnc_weight > 0.5)
-                .map(|(i, _)| i)
-                .collect();
-            let line = format!(
-                "{{\"keyframes\":{},\"committed\":{},\"kept\":{:?},\"noise\":{:?},\"evidence\":{:?}}}\n",
-                n,
-                self.committed_closures.len(),
-                kept,
-                self.learned_odometry_error_estimate(),
-                solution
-                    .odometry_error_estimate_evidence
-                    .map(|e| e.map(|(sum, r)| [sum, r]))
-                    .unwrap_or([[f64::NAN; 2]; 6])
-            );
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                let _ = file.write_all(line.as_bytes());
-            }
-        }
         true
     }
     /// One `GSC_SOLVE_LOG` line for an adopted solve (`solve_log_path`).

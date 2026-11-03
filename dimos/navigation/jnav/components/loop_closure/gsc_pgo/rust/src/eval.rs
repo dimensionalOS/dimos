@@ -172,21 +172,26 @@ struct Args {
     until_s: f64,
 }
 
+/// A CSV file's non-blank, non-`#` lines, each with its numbers.
+fn csv_rows(path: &PathBuf) -> Result<Vec<(String, Vec<f64>)>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .map(|line| {
+            let v: Result<Vec<f64>, String> =
+                line.split(',').map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}"))).collect();
+            Ok((line.to_string(), v?))
+        })
+        .collect()
+}
+
 /// The sightings of a `--landmark-sightings` file, in time order.
 #[allow(clippy::type_complexity)]
 fn read_landmark_sightings(
     path: &PathBuf,
 ) -> Result<Vec<(f64, u64, [[f64; 3]; 3], [f64; 3], [[f64; 6]; 6])>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut sightings = Vec::new();
-    for line in text
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-    {
-        let v: Vec<f64> = line
-            .split(',')
-            .map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}")))
-            .collect::<Result<_, _>>()?;
+    for (line, v) in csv_rows(path)? {
         let position = [v[2], v[3], v[4]];
         let (rotation, information) = match v.len() {
             14 => {
@@ -243,16 +248,8 @@ type WorldPositionFix = (f64, u32, [f64; 3], [f64; 3], [[f64; 3]; 3]);
 fn read_world_positions(
     path: &PathBuf,
 ) -> Result<Vec<WorldPositionFix>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut fixes = Vec::new();
-    for line in text
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-    {
-        let v: Vec<f64> = line
-            .split(',')
-            .map(|x| x.trim().parse::<f64>().map_err(|e| format!("{line}: {e}")))
-            .collect::<Result<_, _>>()?;
+    for (line, v) in csv_rows(path)? {
         if v.len() != 17 {
             return Err(format!(
                 "{line}: needs 17 values (time, frame, xyz, 3x3 covariance, lever xyz)"
