@@ -201,9 +201,6 @@ pub struct ClosureCandidateDiag {
     pub extension_rounds_source_points: Vec<usize>,
     pub extension_rounds_target_points: Vec<usize>,
     pub agreement_multiplier: f64,
-    /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
-    pub sharpness: f64,
-    pub extended_sharpness: f64,
     /// `connection_fit::likelihood_ratio` (mean log ratio, yank units) of the single and last extended alignment, and its width; NaN unscored.
     pub likelihood_ratio: f64,
     pub extended_likelihood_ratio: f64,
@@ -298,8 +295,6 @@ impl ClosureCandidateDiag {
             extension_rounds_source_points: Vec::new(),
             extension_rounds_target_points: Vec::new(),
             agreement_multiplier: 1.0,
-            sharpness: f64::NAN,
-            extended_sharpness: f64::NAN,
             likelihood_ratio: f64::NAN,
             extended_likelihood_ratio: f64::NAN,
             likelihood_width: f64::NAN,
@@ -600,11 +595,6 @@ pub struct Config {
     pub scan_context_top_k: i32,
     pub scan_context_match_threshold: f64,
     pub scan_context_lidar_height_m: f64,
-    /// Above 0: ICP factor is sharpness s / (s + this) (`connection_fit::sharpness`); 0 keeps the fitness factor.
-    pub closure_sharpness_half: f64,
-    /// The nudge `sharpness` measures against: this far (m) along x and y, and this many degrees about z.
-    pub closure_sharpness_nudge_m: f64,
-    pub closure_sharpness_nudge_deg: f64,
     /// Evidence (yank units) is the likelihood ratio (`connection_fit::likelihood_ratio`) not scan context x ICP x degeneracy; sets the budget.
     pub closure_likelihood_confidence: bool,
     /// On rejection, try the keyframe's next scan-context match, up to 1 + floor(sqrt(min(ceil(1 / (1 - pressure)), top_k - 1))) tries.
@@ -759,9 +749,6 @@ impl Default for Config {
             scan_context_top_k: 10,
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
-            closure_sharpness_half: 0.0,
-            closure_sharpness_nudge_m: 1.0,
-            closure_sharpness_nudge_deg: 5.0,
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
             closure_alternative_places_min_pressure: 0.8,
@@ -1494,12 +1481,6 @@ impl ClosureSearch {
         let closure_variance = icp.inlier_mean_square();
         if self.config.closure_uninformative_gate && closure_variance >= known {
             return SearchStage::Done(rejected(diag, "uninformative", timing));
-        }
-        if self.config.closure_sharpness_half > 0.0 {
-            diag.sharpness = memo("sharp", &mut || {
-                let (source_cloud, _, target_tree) = clouds();
-                vec![self.sharpness(source_cloud, target_tree, &icp)]
-            })[0];
         }
         if self.config.closure_likelihood_confidence {
             let window: Vec<usize> = (target_idx.saturating_sub(half_range)

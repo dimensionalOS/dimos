@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Stage 3, connection fit quality: how well a connection's two places line up without the graph (ICP of the
-//! source scan onto the target submap, its fitness, sharpness and likelihood ratio).
+//! source scan onto the target submap, its fitness and likelihood ratio).
 
 use rayon::prelude::*;
 
@@ -294,58 +294,6 @@ pub fn fit_quality(
         inliers.iter().sum::<f64>() / inliers.len() as f64 / overlap,
         overlap,
     )
-}
-
-/// Share of aligned `points` within `close` (m) x how much overlap drops when nudged ±`nudge_m` in x/y and ±`nudge_deg`.
-pub fn sharpness(
-    points: &[[f32; 3]],
-    tree: &impl NearestIndex,
-    close: f64,
-    inlier_squared_distance: f64,
-    nudge_m: f64,
-    nudge_deg: f64,
-) -> f64 {
-    if points.is_empty() {
-        return 0.0;
-    }
-    let close_squared = (close * close) as f32;
-    let near = points
-        .par_iter()
-        .filter(|p| tree.nearest(p).is_some_and(|(_, d)| d <= close_squared))
-        .count() as f64
-        / points.len() as f64;
-    let overlap = |moved: &[[f32; 3]]| fit_quality(moved, tree, inlier_squared_distance).1;
-    let at = overlap(points);
-    if at <= 0.0 {
-        return 0.0;
-    }
-    let n = points.len() as f64;
-    let centre = points.iter().fold([0.0; 3], |c, p| {
-        [
-            c[0] + p[0] as f64 / n,
-            c[1] + p[1] as f64 / n,
-            c[2] + p[2] as f64 / n,
-        ]
-    });
-    let shift = |d: Vec3| transform_cloud(points, &mat3::identity(), &d);
-    let turn = |degrees: f64| {
-        let rotation = mat3::rot_z(degrees.to_radians());
-        transform_cloud(
-            points,
-            &rotation,
-            &mat3::sub(&centre, &mat3::mat_vec(&rotation, &centre)),
-        )
-    };
-    let nudged = [
-        overlap(&shift([nudge_m, 0.0, 0.0])),
-        overlap(&shift([-nudge_m, 0.0, 0.0])),
-        overlap(&shift([0.0, nudge_m, 0.0])),
-        overlap(&shift([0.0, -nudge_m, 0.0])),
-        overlap(&turn(nudge_deg)),
-        overlap(&turn(-nudge_deg)),
-    ];
-    let drop = 1.0 - nudged.iter().sum::<f64>() / nudged.len() as f64 / at;
-    near * drop.max(0.0)
 }
 
 /// (median local thickness over 10-NN, median NN spacing) in meters, sampled on ~500 points.
