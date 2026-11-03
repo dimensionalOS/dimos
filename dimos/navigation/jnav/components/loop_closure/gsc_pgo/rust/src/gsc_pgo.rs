@@ -454,6 +454,9 @@ pub struct DeterministicConfig {
     pub solve_keyframe_power: f64,
     pub solve_closure_power: f64,
     pub solve_rejected_power: f64,
+    /// A solve with no closures (only landmark sightings or world positions): closure_free_scale * keyframes^closure_free_power.
+    pub solve_closure_free_scans_scale: f64,
+    pub solve_closure_free_keyframe_power: f64,
     /// The debounce (`adoption_schedule`): the graph change heat's cost of a finished solve, per keyframe.
     pub debounce_scans_per_keyframe: f64,
     /// The merge (`adoption_schedule`): preparing the adoption's new graph version, per keyframe.
@@ -483,6 +486,11 @@ impl Default for DeterministicConfig {
             solve_keyframe_power: 2.017,
             solve_closure_power: -0.215,
             solve_rejected_power: 0.558,
+            // the battery's Mac solve-cost fit at zero closures (17 maps: 3.585e-5 n^1.651 scans), times the margin the
+            // closure model above keeps over those measured solves (its 1st percentile, 18.4x); the closure model, fit where
+            // every solve has closures, overstates a closure-free one (huge_fastlio tags-only: 105 s modeled, 1.4 s on the Mac)
+            solve_closure_free_scans_scale: 6.606e-4,
+            solve_closure_free_keyframe_power: 1.651,
             debounce_scans_per_keyframe: 6.093487031356368e-06,
             merge_scans_per_keyframe: 3.0032671115943386e-07,
             pressure_scans_fixed_overhead: 0.0007777038336858567,
@@ -699,6 +707,7 @@ impl Config {
             ("pressure_scans_per_keyframe", self.deterministic_config.pressure_scans_per_keyframe),
             ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
             ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
+            ("solve_closure_free_scans_scale", self.deterministic_config.solve_closure_free_scans_scale),
             ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
             ("fast_path_scans_fixed_overhead", self.deterministic_config.fast_path_scans_fixed_overhead),
             ("fast_path_scans_per_window_keyframe", self.deterministic_config.fast_path_scans_per_window_keyframe),

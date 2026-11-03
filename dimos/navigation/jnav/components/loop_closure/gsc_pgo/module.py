@@ -65,6 +65,8 @@ class PGOConfig(NativeModuleConfig):
             "solve_keyframe_power": 2.017,
             "solve_closure_power": -0.215,
             "solve_rejected_power": 0.558,
+            "solve_closure_free_scans_scale": 6.606e-4,
+            "solve_closure_free_keyframe_power": 1.651,
             "debounce_scans_per_keyframe": 6.093487031356368e-06,
             "merge_scans_per_keyframe": 3.0032671115943386e-07,
             "pressure_scans_fixed_overhead": 0.0007777038336858567,
