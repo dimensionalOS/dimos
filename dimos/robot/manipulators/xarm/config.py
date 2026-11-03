@@ -90,9 +90,11 @@ XARM_HEURISTIC_AIM = {
 # nothing resolves into world, and every cloud the camera produces is silently
 # unusable. A ManipulationModule given it in static_transforms, with link7 in its
 # model's tf_extra_links, emits the whole chain from one loop at one rate.
+# The pitch is set so the table the camera sees comes out level, at the height of
+# the arm's base.
 XARM_WRIST_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+    translation=Vector3(x=0.06685201, y=-0.03095927, z=0.00688431),
+    rotation=Quaternion(0.59138443, 0.00099956, 0.80629644, -0.01222741),  # xyzw
     frame_id="link7",
     child_frame_id="camera_link",
 )

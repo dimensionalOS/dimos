@@ -333,6 +333,7 @@ all_modules = {
     "point-cloud-box-filter": "dimos.mapping.pointclouds.box_filter.PointCloudBoxFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
+    "preset-buttons-module": "dimos.teleop.webxr.preset_buttons.PresetButtonsModule",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-lio": "dimos.robot.galaxea.r1pro.lio.R1ProLio",
     "raw-robot-bridge": "dimos.robot.raw_robot_bridge.RawRobotBridge",
