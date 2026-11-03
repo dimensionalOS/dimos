@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-27T21:35:48.052941548Z"
+exclude-newer = "2026-10-27T22:14:43.113122307Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2676,7 +2676,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = "==0.32.0" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0" },
     { name = "rich", specifier = ">=14.3" },
-    { name = "roboplan", marker = "extra == 'planning'", specifier = ">=0.8.0,<0.9.0" },
+    { name = "roboplan", marker = "extra == 'planning'", specifier = "==0.8.0" },
     { name = "safetensors", marker = "extra == 'perception'", specifier = ">=0.8" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
@@ -2756,7 +2756,7 @@ lint = [
     { name = "pytest", specifier = "==8.3.5" },
     { name = "python-can", specifier = ">=4" },
     { name = "python-socketio", specifier = ">=5.16.1" },
-    { name = "roboplan", specifier = ">=0.8.0,<0.9.0" },
+    { name = "roboplan", specifier = "==0.8.0" },
     { name = "ruff", specifier = "==0.14.3" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "sounddevice", specifier = ">=0.5.5" },
@@ -2844,7 +2844,7 @@ tests = [
     { name = "python-lsp-ruff", specifier = "==2.3.0" },
     { name = "python-lsp-server", extras = ["all"], specifier = "==1.14.0" },
     { name = "requests-mock", specifier = "==1.12.1" },
-    { name = "roboplan-core", specifier = ">=0.8.0,<0.9.0" },
+    { name = "roboplan-core", specifier = "==0.8.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "tokenizers", specifier = ">=0.21" },
@@ -2907,7 +2907,7 @@ tests-self-hosted = [
     { name = "python-lsp-ruff", specifier = "==2.3.0" },
     { name = "python-lsp-server", extras = ["all"], specifier = "==1.14.0" },
     { name = "requests-mock", specifier = "==1.12.1" },
-    { name = "roboplan-core", specifier = ">=0.8.0,<0.9.0" },
+    { name = "roboplan-core", specifier = "==0.8.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "tokenizers", specifier = ">=0.21" },
