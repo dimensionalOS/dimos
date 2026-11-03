@@ -726,7 +726,7 @@ impl Default for Config {
             odometry_error_estimate_yaw_per_sqrt_rad: 8.66e-3,
             odometry_error_estimate_tilt_per_sqrt_m: 6.91e-4,
             odometry_error_estimate_tilt_per_sqrt_rad: 3.3e-3,
-            odometry_error_estimate_from_lidar_range: false,
+            odometry_error_estimate_from_lidar_range: true,
             lidar_range: crate::lidar_range::LidarRangeConfig::default(),
             learned_odometry_error_estimate_stiffness: 10.0,
             scan_context_num_rings: 20,
