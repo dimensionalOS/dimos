@@ -278,7 +278,6 @@ class PGOConfig(NativeModuleConfig):
     # handicapped; set a number to leave cores to the rest of the robot where measurements show it pays
     worker_threads: int = 0
 
-
     @model_validator(mode="after")
     def _odometry_error_estimate(self) -> PGOConfig:
         given = {name: getattr(self, name) for name in MID360_ODOMETRY_ERROR_ESTIMATE}
