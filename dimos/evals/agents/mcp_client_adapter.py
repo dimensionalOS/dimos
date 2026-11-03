@@ -67,13 +67,9 @@ class _Turn:
     def _maybe_done(self) -> None:
         if self._expected is None:
             return
-        # McpClient ends a failed turn with a failure note, an AIMessage with no
-        # trace pair of its own. An HTTP error response leaves a complete pair
-        # with no AIMessage, so the count never reaches the expected number and
-        # only the note ends the turn. A call that got no response at all (a
-        # connection error) leaves a request with no response file, which the
-        # pairs don't count, so the count is met by the earlier AIMessages and
-        # the idle flip would end the turn before the note arrives: wait for it.
+        # A failed call leaves no AIMessage, so the failure note must end the turn.
+        # An HTTP error still leaves a trace pair, keeping the count short; a call
+        # with no response leaves none, so the count alone would end the turn early.
         failed = any(_is_failure_note(m) for m in self.received)
         if failed or (
             not self._last_call_unanswered
