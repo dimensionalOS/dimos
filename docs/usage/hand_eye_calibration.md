@@ -25,7 +25,7 @@ cv2.imwrite("charuco_8x5_30mm.png", board.generateImage((2400, 1500), marginSize
 
 - Wrist camera: tape the board flat about 0.45 m in front of the base. Jog the arm with teleop to the home pose: tool pointing down about 0.4 m over the board, board in the middle of the frame. The default `home_joints` are a starting point; what matters is the view.
 - Fixed camera: fix the board in the gripper, set `camera_frame` to `base`, and put the camera's tape-measured position in `nominal_translation`. The planner keeps the arm `camera_keepout_m` away from it.
-- Clear the table within the arm's reach. The planner's floor obstacle (`floor_z`) and its own collision model are what keep the arm off the table; nothing on the table is known to it.
+- Clear the table within the arm's reach. Tell the module where the table is: `--handeyecalibrationmodule.table-top-z <m>` is the table top in the base frame (positive when the table is above the base plate), `--handeyecalibrationmodule.table-x-m` and `.table-y-m` its extent (defaults 0.25 to 1.0 and -0.6 to 0.6). The module adds it to the planner as a box for the run. The planner's own floor obstacle (`floor_z`) starts 0.4 m from the base and does not cover a table butted against it. Nothing else on the table is known to the planner.
 
 ## Run `xarm6-handeye-calibrate`
 

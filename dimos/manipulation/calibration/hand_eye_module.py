@@ -74,6 +74,8 @@ FRAME_TIMEOUT_S = 5.0
 TF_TOLERANCE_S = 0.2
 EXECUTE_TIMEOUT_S = 60.0
 KEEPOUT_OBSTACLE = "hand_eye_camera_keepout"
+TABLE_OBSTACLE = "hand_eye_table"
+TABLE_THICKNESS_M = 0.2
 
 
 class ObstacleSpec(Spec, Protocol):
@@ -140,6 +142,11 @@ class HandEyeCalibrationConfig(ModuleConfig):
     dry_run: bool = False
     # For a fixed camera: no part of the arm plans within this of the nominal camera position.
     camera_keepout_m: float = Field(default=0.15, ge=0.0)
+    # The bench the board lies on, as a box the planner keeps the arm above for the run: its
+    # top in the base frame (None adds nothing) and its extent along x and y.
+    table_top_z: float | None = None
+    table_x_m: tuple[float, float] = (0.25, 1.0)
+    table_y_m: tuple[float, float] = (-0.6, 0.6)
 
 
 @dataclass
@@ -210,7 +217,7 @@ class HandEyeCalibrationModule(Module):
             self._abort.clear()
             self._approve.clear()
             self._run = _Run(t0=time.monotonic())
-            keepout = self._add_keepout()
+            obstacles = self._add_obstacles()
             try:
                 result = solve_hand_eye(
                     _Robot(self),
@@ -222,8 +229,8 @@ class HandEyeCalibrationModule(Module):
                     self.config.max_seconds,
                 )
             finally:
-                if keepout is not None:
-                    self._obstacles.remove_obstacle(keepout)
+                for obstacle in obstacles:
+                    self._obstacles.remove_obstacle(obstacle)
             self._result = result
             return self._report(result)
         finally:
@@ -270,14 +277,30 @@ class HandEyeCalibrationModule(Module):
             self.config.nominal_tolerance_deg,
         )
 
-    def _add_keepout(self) -> str | None:
-        """A fixed camera becomes a sphere the planner keeps the arm out of, for this run."""
-        if self.config.camera_frame != "base" or self.config.camera_keepout_m <= 0.0:
-            return None
-        pose = Pose(Vector3(*self.config.nominal_translation), Quaternion())
-        return self._obstacles.add_obstacle(
-            KEEPOUT_OBSTACLE, pose, "sphere", [self.config.camera_keepout_m]
-        )
+    def _add_obstacles(self) -> list[str]:
+        """The bench and, for a fixed camera, the camera itself, as planner obstacles for this
+        run: a box under the table top and a sphere the arm keeps out of."""
+        added: list[str] = []
+        cfg = self.config
+        if cfg.table_top_z is not None:
+            (x0, x1), (y0, y1) = cfg.table_x_m, cfg.table_y_m
+            centre = Vector3((x0 + x1) / 2, (y0 + y1) / 2, cfg.table_top_z - TABLE_THICKNESS_M / 2)
+            added.append(
+                self._obstacles.add_obstacle(
+                    TABLE_OBSTACLE,
+                    Pose(centre, Quaternion()),
+                    "box",
+                    [x1 - x0, y1 - y0, TABLE_THICKNESS_M],
+                )
+            )
+        if cfg.camera_frame == "base" and cfg.camera_keepout_m > 0.0:
+            pose = Pose(Vector3(*cfg.nominal_translation), Quaternion())
+            added.append(
+                self._obstacles.add_obstacle(
+                    KEEPOUT_OBSTACLE, pose, "sphere", [cfg.camera_keepout_m]
+                )
+            )
+        return added
 
     def read_joints(self) -> FloatArray:
         state = self._manipulation.get_state().groups.get(self.config.planning_group)

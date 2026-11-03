@@ -234,3 +234,21 @@ def test_first_moves_wait_for_approval_and_abort_cancels(
     assert planner.cancelled == 1
     assert results and results[0]["passed"] is False
     assert not runner.is_alive()
+
+
+def test_the_table_is_a_planner_obstacle_for_the_run_only(
+    module: HandEyeCalibrationModule, planner: FakePlanner, frames: threading.Event
+) -> None:
+    module.config.table_top_z = 0.075
+    module.config.table_x_m = (0.3, 0.9)
+    module.config.table_y_m = (-0.5, 0.5)
+    module._obstacles.add_obstacle.return_value = "table-id"
+
+    module.calibrate()
+
+    module._obstacles.add_obstacle.assert_called_once()
+    name, pose, shape, dims = module._obstacles.add_obstacle.call_args.args
+    assert (name, shape) == ("hand_eye_table", "box")
+    assert np.allclose(dims, [0.6, 1.0, 0.2])
+    assert np.allclose([pose.position.x, pose.position.y, pose.position.z], [0.6, 0.0, -0.025])
+    module._obstacles.remove_obstacle.assert_called_once_with("table-id")
