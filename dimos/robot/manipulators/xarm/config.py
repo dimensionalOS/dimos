@@ -92,7 +92,7 @@ XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_dev
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 
 XArmType = Literal["xarm5", "xarm6", "xarm7", "lite6", "uf850"]
-XArmGripper = Literal["xarm", "bio"]
+XArmGripperType = Literal["xarm"]
 
 #: Each arm's joint count and the ``robot_type`` the xarm_ros2 description takes for it.
 XARM_ARMS: dict[XArmType, tuple[int, str]] = {
@@ -104,7 +104,7 @@ XARM_ARMS: dict[XArmType, tuple[int, str]] = {
 }
 
 # The joints each gripper adds that move: the one driven, then those that copy it.
-_GRIPPER_JOINTS: dict[XArmGripper, tuple[str, ...]] = {
+_GRIPPER_JOINTS: dict[XArmGripperType, tuple[str, ...]] = {
     "xarm": (
         "drive_joint",
         "left_finger_joint",
@@ -113,13 +113,12 @@ _GRIPPER_JOINTS: dict[XArmGripper, tuple[str, ...]] = {
         "right_finger_joint",
         "right_inner_knuckle_joint",
     ),
-    "bio": ("right_finger_joint", "left_finger_joint"),
 }
 
 
 def xarm_model(
     arm: XArmType,
-    gripper: XArmGripper | None = None,
+    gripper: XArmGripperType | None = None,
     *,
     robot: str | None = None,
     prefix: str = "",
@@ -129,7 +128,7 @@ def xarm_model(
     Args:
         arm: Which arm, e.g. "xarm7".
         gripper: What is on its flange: "xarm" for the xArm Gripper (on a Lite 6,
-            the Lite 6's own gripper, which has no joint), "bio" for the BIO gripper.
+            the Lite 6's own gripper, which has no joint).
         robot: Name the moving joints under this robot, as the coordinator
             wants them, e.g. "arm" gives "arm/joint1". Links keep their names.
         prefix: Put in front of every link and joint name, e.g. "left/" for one
@@ -137,8 +136,6 @@ def xarm_model(
     """
     if robot and prefix:
         raise ValueError("name the joints with robot or prefix, not both")
-    if arm == "lite6" and gripper == "bio":
-        raise ValueError("the xArm description has no BIO gripper for the Lite 6")
     dof, robot_type = XARM_ARMS[arm]
     xacro_args = {
         "dof": str(dof),
@@ -150,8 +147,6 @@ def xarm_model(
     }
     if gripper == "xarm":
         xacro_args["add_gripper"] = "true"
-    elif gripper == "bio":
-        xacro_args["add_bio_gripper"] = "true"
     model = RobotModel.from_file(
         XARM_MODEL_PATH, package_paths=XARM_PACKAGE_PATHS, xacro_args=xacro_args
     )

@@ -17,11 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import ipaddress
 import threading
 import time
 from typing import Any
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
 
@@ -36,7 +37,12 @@ from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.xarm.config import XARM_ARMS, XArmGripper, XArmType, xarm_model
+from dimos.robot.manipulators.xarm.config import (
+    XARM_ARMS,
+    XArmGripperType,
+    XArmType,
+    xarm_model,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -76,9 +82,12 @@ class XArmConfig(ConnectionConfig):
 
     Attributes:
         arm: Which arm, e.g. "xarm7". Its URDF is the robot model.
-        ip: The arm's address, e.g. "192.168.1.185".
-        gripper: The gripper on its flange, if any. Only "xarm", the xArm
-            Gripper, is driven so far.
+        ip: The arm's IP address, e.g. "192.168.1.185".
+        gripper: The gripper on its flange, if any: "xarm", the xArm Gripper.
+        source: The robot's name, in front of each joint's name, e.g. "arm"
+            gives "arm/joint1".
+        joint_commands: What the joints are told: positions (rad) and
+            speeds (rad/s).
         jump_limit_s: How far a joint target may be from where the joint is,
             in seconds at the joint's top speed (its URDF velocity limit). A
             target further away is refused.
@@ -86,15 +95,19 @@ class XArmConfig(ConnectionConfig):
 
     arm: XArmType
     ip: str
-    gripper: XArmGripper | None = None
+    gripper: XArmGripperType | None = None
     source: str = "arm"
     joint_commands: tuple[Interface, ...] = (Interface.POSITION, Interface.VELOCITY)
     jump_limit_s: float = 0.1
 
+    @field_validator("ip")
+    @classmethod
+    def _ip_is_an_address(cls, ip: str) -> str:
+        ipaddress.ip_address(ip)
+        return ip
+
     @model_validator(mode="after")
     def _model_from_arm(self) -> Self:
-        if self.gripper == "bio":
-            raise ValueError("XArmConnection drives only the xArm Gripper so far, not the BIO")
         if self.gripper is not None and self.arm == "lite6":
             raise ValueError("the Lite 6 gripper has no joint, so XArmConnection cannot drive it")
         if self.model is None:

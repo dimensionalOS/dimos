@@ -454,9 +454,9 @@ def test_stopping_stops_the_arm_and_lets_go_of_it(rig: Callable[..., Rig]) -> No
     assert not r.module.status().connected
 
 
-def test_only_the_xarm_gripper_is_driven() -> None:
-    with pytest.raises(ValidationError, match="not the BIO"):
-        XArmConfig(arm="xarm7", ip=IP, gripper="bio")
+def test_a_lite6_with_a_gripper_or_a_bad_address_is_refused() -> None:
+    with pytest.raises(ValidationError, match="ip"):
+        XArmConfig(arm="xarm7", ip="not-an-address")
     with pytest.raises(ValidationError, match="Lite 6 gripper"):
         XArmConfig(arm="lite6", ip=IP, gripper="xarm")
 
