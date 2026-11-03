@@ -1,7 +1,7 @@
 # Seeed reBot B601-DM
 
 The reBot B601-DM is a six-axis arm with a motorized parallel gripper, driven by
-seven Damiao motors. DimOS runs it on the shared Damiao whole-body adapter and
+seven Damiao motors. dimOS runs it on the shared Damiao whole-body adapter and
 the [`can-motor-control`](https://github.com/dimensionalOS/can-motor-control)
 driver, through the Damiao USB-CAN bridge shipped with the arm or any SocketCAN
 interface.
@@ -26,7 +26,7 @@ user to that group and log in again.
 
 ## Safety
 
-The arm has no brakes. Stopping DimOS disables the motors, and a raised arm
+The arm has no brakes. Stopping dimOS disables the motors, and a raised arm
 falls. Activation also leaves the arm motors without torque for about three
 seconds while it calibrates the gripper. Start and stop with the arm resting in
 its folded pose, clear the workspace and keep the 24 V switch within reach.
