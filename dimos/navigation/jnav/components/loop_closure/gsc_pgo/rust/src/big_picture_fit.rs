@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A pose graph over keyframe poses: Levenberg-Marquardt on a sparse Cholesky, with graduated non-convexity (truncated least squares) deciding which closures are inliers by
-//! how well they agree with the odometry and with each other, then a Huber pass on the kept ones.
+//! Pose graph over keyframe poses: Levenberg-Marquardt on a sparse Cholesky, GNC (truncated least squares) picking inlier
+//! closures by agreement with the odometry and each other, then a Huber pass on the kept ones.
 
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::linalg::solvers::SolveCore;
@@ -26,16 +26,14 @@ use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Par, Side};
 
 use crate::store::KeyFrames;
-use crate::gsc_pgo::{CommittedClosure, Config, KeyPoseWithCloud};
+use crate::gsc_pgo::{CommittedClosure, Config};
 use crate::landmarks::{self, Sighting};
 use crate::mat3::{self, Mat3, Vec3};
 
-pub use crate::landmarks::{bearing_and_range, LandmarkSighting};
+pub use crate::landmarks::LandmarkSighting;
 pub use crate::world_positions::{solve_with_priors, PositionPrior};
 
-/// A relative-pose measurement from keyframe `from` to keyframe `to`, in `from`'s body frame
-/// (R_to = R_from * rotation, p_to = p_from + R_from * translation), with variances for the rotation
-/// (about x, y, z, radians²) and the translation (x, y, z, m²).
+/// Relative pose `from` -> `to` in `from`'s frame (R_to = R_from rotation, p_to = p_from + R_from translation).
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {
     pub from: usize,
@@ -55,15 +53,11 @@ pub struct SolveConfig {
     pub huber_k: f64,
     /// The noise evidence reads only the kept closures' PCM core (`odometry_error_estimate_evidence_core`).
     pub evidence_core: bool,
-    /// Compute that evidence at all (a polishing solve and Hutchinson traces each solve); it only feeds the learned
-    /// odometry error estimate, which is only logged.
+    /// Compute that evidence (a polishing solve plus Hutchinson traces); it only feeds the logged learned estimate.
     pub learned_evidence: bool,
-    /// Per closure, the newest adopted solve's verdict (1 kept, 0 rejected, NaN not yet judged) to start GNC from, or
-    /// empty to start every closure in (`solve_seed_gnc_verdicts`).
+    /// Per closure, the verdict (1 kept, 0 out, NaN unjudged) GNC starts from; empty = all in (`solve_seed_gnc_verdicts`).
     pub seed_closure_weights: Vec<f64>,
-    /// Per keyframe, a second starting estimate (the accepted graph, `solve_seed_from_accepted`), taken instead of the
-    /// given one when it already fits every closure that does not start out (so GNC has nothing to decide), the
-    /// solve has no position priors or sightings, and it covers every keyframe; empty for none.
+    /// Per keyframe, the accepted graph as an alternate start used where it fits (`solve_seed_from_accepted`); empty = none.
     pub seed_start: Vec<(Mat3, Vec3)>,
 }
 
@@ -72,25 +66,20 @@ pub struct Solution {
     pub positions: Vec<Vec3>,
     /// Per closure: 1 kept, 0 rejected (GNC's final weight, rounded at 0.5).
     pub closure_weights: Vec<f64>,
-    /// Per position prior (`solve_with_priors`): 1 kept, 0 rejected; and per world frame the priors made observable,
-    /// its map -> frame alignment (frame id, yaw about z, then translation).
+    /// Per position prior: 1 kept, 0 rejected; per observable world frame: (frame id, yaw about z, translation).
     pub prior_weights: Vec<f64>,
     pub world_alignment: Vec<(u32, f64, Vec3)>,
-    /// Per landmark (`LandmarkSighting::landmark`), where the solve put it (and its rotation, identity for a landmark
-    /// no sighting gave one); per sighting, 1 kept, 0 rejected.
+    /// Per landmark, its solved position and rotation (identity if never sighted with one); per sighting, 1 kept, 0 out.
     pub landmarks: Vec<Vec3>,
     pub landmark_rotations: Vec<Mat3>,
     pub sighting_weights: Vec<f64>,
     /// Half the sum of squared whitened residuals of everything kept.
     pub error: f64,
-    /// The newest keyframe's position covariance as seen from each keyframe (its offset in that keyframe's frame, in
-    /// world axes, m²), from the solved graph; empty if the graph could not be factored.
+    /// The newest keyframe's position covariance seen from each keyframe (m², world axes); empty if unfactorable.
     pub relative_position_covariance: Vec<Mat3>,
     /// Whether GNC's last Levenberg-Marquardt pass reached a minimum.
     pub converged: bool,
-    /// Variance-component evidence on the odometry error estimate from the solved graph (`odometry_error_estimate_evidence`): per source
-    /// (xy, z, yaw, roll/pitch, then the kept closures' rotation and translation), the sum of its residuals squared and whitened, and its
-    /// redundancy; None if the graph could not be factored.
+    /// Per source (xy, z, yaw, tilt, closure rotation, translation): (whitened sum of squares, redundancy).
     pub odometry_error_estimate_evidence: Option<[(f64, f64); 6]>,
     /// How GNC reached this solution, only when `GSC_SOLVE_LOG` is set (`solve_log_path`).
     pub trace: Option<SolveTrace>,
@@ -104,13 +93,11 @@ pub struct SolveTrace {
     pub gnc_iterations: usize,
     /// The mu of GNC's last iteration (NaN when nothing exceeded its cutoff, so GNC never ran).
     pub gnc_mu: f64,
-    /// "under_cutoff" (GNC never ran), "converged" (every weight settled at 0 or 1), "cost_change" (the weighted cost
-    /// stopped changing first) or "max_iterations".
+    /// "under_cutoff" (GNC never ran), "converged" (weights settled at 0/1), "cost_change" or "max_iterations".
     pub gnc_stop: &'static str,
     /// Per closure, GNC's final weight before rounding at 0.5.
     pub gnc_weights: Vec<f64>,
-    /// Cost (sum of squared whitened residuals) as [odometry, closures, priors and sightings]: at the starting estimate
-    /// with every closure in at its own variance, and at the solution with its kept, Huber-weighted closures.
+    /// Whitened cost [odometry, closures, priors+sightings] at the start (all closures in) and solution (kept, Huber).
     pub initial_cost: [f64; 3],
     pub final_cost: [f64; 3],
 }
@@ -122,8 +109,7 @@ pub fn solve_log_path() -> Option<&'static std::path::Path> {
         .as_deref()
 }
 
-/// Solve for the pose of every keyframe marked `free`, from the starting estimate `rotations` /
-/// `positions`; the rest are held where they are (at least one must be, to pin the map).
+/// Solve every `free` keyframe's pose from `rotations`/`positions`; the rest are held (at least one, to pin the map).
 pub fn solve(
     rotations: &[Mat3],
     positions: &[Vec3],
@@ -144,8 +130,7 @@ pub fn solve(
     )
 }
 
-/// A position prior placed in the solve frame: keyframe `keyframe`'s sensor at `lever` (body frame) should be at
-/// `position`, with information (inverse covariance) `information`.
+/// A position prior in the solve frame: `keyframe`'s sensor at `lever` (body frame) should be at `position`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Unary {
     pub(crate) keyframe: usize,
@@ -191,8 +176,7 @@ pub(crate) fn solve_core(
             ..*e
         })
         .collect();
-    // the seed only where it already fits what GNC would weigh: elsewhere GNC's whole schedule runs either way, and
-    // from the odometry as it always has
+    // use the seed only where it already fits what GNC would weigh; otherwise start from the odometry
     let seeded = config.seed_start.len() == rotations.len() && unary.is_empty() && sightings.is_empty() && {
         let (rotation, position) = config.seed_start.iter().copied().unzip();
         let probe = State {
@@ -259,12 +243,10 @@ pub(crate) fn solve_core(
         sightings,
         &landmark_dims,
     );
-    // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
-    // until each closure is clearly in or out. Odometry is always in.
+    // GNC with truncated least squares (Yang et al. 2020): start convex, tighten until each closure is in or out
     let residual =
         |state: &State| -> Vec<f64> { scaled.iter().map(|e| whitened_squared(e, state)).collect() };
-    // GNC's starting mu comes from the residuals at the starting estimate, before any solve (as GTSAM's
-    // GncOptimizer does): the worse the start, the more gently it tightens; a closure that starts out sets none
+    // GNC's starting mu from the start's residuals (as GTSAM's GncOptimizer): worse start, gentler tightening
     let worst = residual(&state)
         .into_iter()
         .zip(&seeded_out)
@@ -277,8 +259,7 @@ pub(crate) fn solve_core(
         |state: &State| -> Vec<f64> { unary.iter().map(|u| unary_whitened(u, state)).collect() };
     let unary_worst = unary_residuals(&state).into_iter().fold(0.0, f64::max);
     let mut unary_weights = vec![1.0; unary.len()];
-    // landmark sightings: the same, each against the cutoff for its known dimensions (a sighting matched to the wrong
-    // landmark is an outlier); residuals kept as fractions of that cutoff
+    // landmark sightings: the same, each against the cutoff for its known dims; residuals as fractions of that cutoff
     let sighting_thresholds: Vec<f64> = sightings
         .iter()
         .map(|s| landmarks::chi2_inverse(config.gnc_inlier_probability, s.known.max(1)))
@@ -393,8 +374,7 @@ pub(crate) fn solve_core(
                 .chain(&unary_weights)
                 .chain(&sighting_weights)
                 .all(|&w| !(1e-4..=1.0 - 1e-4).contains(&w));
-            // below mu 1 the surrogate is still the convex start (every weight tiny next to the worst residual), so
-            // neither stop applies until GNC has graduated to where a weight can reach 1
+            // below mu 1 the surrogate is still convex, so neither stop applies until a weight can reach 1
             if mu >= 1.0 && (settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost) {
                 gnc_stop = if settled { "converged" } else { "cost_change" };
                 break;
@@ -488,8 +468,7 @@ pub(crate) fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
-    // only the kept closures' mutually consistent core (the largest set that agree pairwise around their cycles, PCM)
-    // speaks for the noise: a kept closure the others contradict would otherwise read as odometry error estimate and widen it
+    // only the kept closures' PCM core speaks for the noise: a contradicted kept closure would read as odometry error
     let evidence_weights: Vec<f64> = if !config.learned_evidence {
         Vec::new()
     } else if config.evidence_core {
@@ -512,8 +491,7 @@ pub(crate) fn solve_core(
     } else {
         huber.clone()
     };
-    // the evidence reads the solve of what it weighs (the odometry at its noise, the core's closures), and only at
-    // that solve's minimum: residuals a solve stopped short of removing are no one's noise (only when `learned_evidence`)
+    // evidence is read only at the minimum of a solve of what it weighs: residuals a solve left are no one's noise
     let odometry_error_estimate_evidence = if config.learned_evidence {
         let mut evidence_state = state.clone();
         let converged = levenberg_marquardt_steps(
@@ -584,18 +562,10 @@ pub(crate) fn solve_core(
     }
 }
 
-/// The noise source (xy, z, yaw, roll/pitch) of each component of an odometry edge's residual [rotation x, y, z,
-/// translation x, y, z].
+/// The noise source (xy, z, yaw, roll/pitch) of each odometry residual component [rotation x, y, z, translation x, y, z].
 const RESIDUAL_SOURCE: [usize; 6] = [3, 3, 2, 0, 0, 1];
 
-/// Variance-component evidence on the odometry error estimate from the solved graph (Förstner's estimator): for each noise source,
-/// how far the solve had to bend its parts of the odometry edges (their residuals squared, whitened by the variances
-/// the solve used) and how many independent checks the graph gave it, its redundancy r_c = n_c - tr(N^-1 N_c) (n_c its
-/// residual count; N the solve's information matrix, N_c the source's own share of it). A source's variance times
-/// sum / r_c is the variance that explains the residuals. The odometry alone determines the graph exactly (a chain),
-/// so n_c = tr(N_odo^-1 N_c) and r_c = tr((N_odo^-1 - N^-1) N_c): the difference has rank at most the kept constraints',
-/// so Hutchinson's estimator (the mean of z^T (N_odo^-1 - N^-1) N_c z over fixed random +-1 vectors z, two solves each)
-/// is accurate to a few percent of r_c, and exactly 0 with nothing kept. None if a matrix cannot be factored.
+/// Förstner variance components per source: (whitened residual sum of squares, Hutchinson-estimated redundancy).
 #[allow(clippy::too_many_arguments)]
 fn odometry_error_estimate_evidence(
     state: &State,
@@ -643,9 +613,7 @@ fn odometry_error_estimate_evidence(
             1.0
         }
     };
-    // r_c = tr(K_c D K_c^T) with K_c the source's whitened odometry rows (N_c = K_c^T K_c) and D = N_odo^-1 - N^-1:
-    // symmetric, eigenvalues in [0, 1], rank at most the kept constraints', so +-1 probes over those rows estimate it
-    // to about sqrt(2 r_c / probes)
+    // r_c = tr(K_c D K_c^T), D = N_odo^-1 - N^-1 (eigenvalues in [0, 1]): ±1 probes estimate it to ~sqrt(2 r_c / probes)
     const PROBES: usize = 32;
     for (source, source_evidence) in evidence.iter_mut().enumerate().take(4) {
         let rows: Vec<(usize, usize)> = (0..odometry.len())
@@ -691,10 +659,7 @@ fn odometry_error_estimate_evidence(
             source_evidence.1 += estimate / PROBES as f64;
         }
     }
-    // the kept closures' rotation and translation as two more sources: sum of their whitened residuals squared, and redundancy
-    // r = n - tr(K N^-1 K^T) = tr(M), M = I - K N^-1 K^T (K their weighted whitened rows): symmetric, eigenvalues in
-    // [0, 1], so the same +-1 probes estimate it to about sqrt(2 r / probes). With it, a closure variance reported too
-    // loose shows as closure residuals too small for their redundancy, instead of passing as odometry too good
+    // closure rotation/translation as two more sources (redundancy tr(I - K N^-1 K^T), same probes)
     let closure_linear: Vec<ClosureLinearized> = closures
         .iter()
         .enumerate()
@@ -758,14 +723,7 @@ fn odometry_error_estimate_evidence(
     Some(evidence)
 }
 
-/// The largest set of closures that pairwise agree (PCM, Mangelson 2018): two closures agree when the cycle they close
-/// with the raw odometry (A.from through A to A.to, against A.from along the odometry to B.from, through B to B.to,
-/// along the odometry to A.to) lands A.to where A says, within the chi-square cutoff of `gnc_inlier_probability` (3
-/// DOF). The cycle's covariance is the first-order propagation of every noise on it at the variances its edges carry:
-/// both closures' translations, B's rotation swinging the path after it, and each odometry step's translation plus its
-/// rotation swinging the path's end about it (a heading error reaches as far as the loop is from where it was made).
-/// The set is grown greedily from the best-agreeing closure (an approximate maximum clique); a set of one is no
-/// evidence of agreement, so it holds nothing.
+/// Largest pairwise-agreeing closure set (PCM: odometry cycles within the 3-DoF cutoff), grown greedily; none if only one.
 pub fn consistent_closures(
     closures: &[Edge],
     odometry: &[Edge],
@@ -793,10 +751,7 @@ pub fn consistent_closures(
         let skew = mat3::skew(lever);
         mat3::mat_mul(&mat3::mat_mul(&skew, covariance), &mat3::transpose(&skew))
     };
-    // the raw odometry chain's poses, and prefix sums over its steps (step k from keyframe k to k + 1) of, in the
-    // chain's frame, the translation covariance T, the rotation covariance A, A P^T and P A P^T (P = skew of the step's
-    // end), so a stretch's covariance at a point q, sum T + [q - p]x A [q - p]x^T, is
-    // Q S_A Q^T - Q S_AP - (Q S_AP)^T + S_PAP + S_T
+    // odometry prefix sums: a stretch's covariance at q = Q S_A Q^T - Q S_AP - (Q S_AP)^T + S_PAP + S_T (Q = [q]x)
     let keyframes = odometry.iter().map(|e| e.to + 1).max().unwrap_or(0);
     let mut chain: Vec<Pose> = vec![(mat3::identity(), [0.0; 3]); keyframes];
     let mut steps = vec![[[[0.0; 3]; 3]; 4]; keyframes];
@@ -894,11 +849,7 @@ pub fn consistent_closures(
     held
 }
 
-/// The covariance of keyframe `tip`'s position as seen from each keyframe (its offset in that keyframe's own frame, in world
-/// axes, m²) at `state`, so the map's overall heading uncertainty does not count. Σ, the inverse of the normal equations'
-/// matrix, is needed at each keyframe's own 6x6 block, from the Takahashi recursion over its sparse Cholesky factor (the
-/// entries the factor's pattern holds, one backward pass), and at its cross blocks with the tip's position, from one solve
-/// against the tip's position columns. A held keyframe has no uncertainty of its own.
+/// Keyframe `tip`'s position covariance seen from each keyframe (m², world axes), via Takahashi on the Cholesky factor.
 #[allow(clippy::too_many_arguments)]
 fn relative_position_covariances(
     state: &State,
@@ -1013,9 +964,7 @@ fn relative_position_covariances(
             .enumerate()
             .map(|(k, slot)| {
                 let Some(s) = *slot else { return tip_block };
-                // the tip's offset in keyframe k's own frame, turned back to world axes:
-                // δ = δp_tip - δp_k + skew(p_tip - p_k) R_k δθ_k (k's own heading uncertainty does not move the tip
-                // relative to k)
+                // the tip's offset in k's frame, in world axes: δ = δp_tip - δp_k + skew(p_tip - p_k) R_k δθ_k
                 let lever = mul(
                     &mat3::skew(&mat3::sub(&state.position[tip], &state.position[k])),
                     &state.rotation[k],
@@ -1092,9 +1041,7 @@ fn whitened_squared(e: &Edge, state: &State) -> f64 {
     (0..6).map(|k| r[k] * r[k] / e.variances[k]).sum()
 }
 
-/// The residual and its Jacobians with respect to `from`'s and `to`'s 6-vector perturbations
-/// (rotation about the keyframe's own axes, then world position).
-/// An edge's residual and its Jacobians at its two ends.
+/// An edge's residual and Jacobians at its two ends (rotation about each keyframe's own axes, then world position).
 type Linearized = ([f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]);
 /// A kept closure's index with its residual and Jacobians.
 type ClosureLinearized = (usize, [f64; 6], [[f64; 6]; 6], [[f64; 6]; 6]);
@@ -1116,8 +1063,7 @@ pub(crate) fn linearize_between(
     let residual = edge_residual(e, (ri, pi), (rj, pj));
     let ri_t = mat3::transpose(ri);
     let local = mat3::mat_vec(&ri_t, &mat3::sub(pj, pi));
-    // rotation error phi = Log(E), E = (Ri Rm)^T Rj; to first order d phi = Jr^-1 (d theta_j - E^T Rm^T d theta_i),
-    // with Jr^-1 ~ I + [phi]x / 2
+    // phi = Log(E), E = (Ri Rm)^T Rj; d phi ≈ (I + [phi]x / 2)(d theta_j - E^T Rm^T d theta_i)
     let phi = [residual[0], residual[1], residual[2]];
     let mut jr_inv = mat3::skew(&phi);
     for row in jr_inv.iter_mut() {
@@ -1208,9 +1154,7 @@ fn cost(
             .sum::<f64>()
 }
 
-/// The normal equations' sparsity: a 6x6 block per free keyframe (`slot`, its place among them; held
-/// keyframes have none), with every entry's place fixed once, so each iteration only fills values (in
-/// `blocks` order) instead of re-sorting.
+/// Normal-equation sparsity: a 6x6 block per free keyframe (`slot`), entry places fixed once so iterations only fill values.
 struct Pattern {
     slot: Vec<Option<usize>>,
     /// Per landmark, where its block starts (after every keyframe's) and its size: 6 for a pose, 3 for a point.
@@ -1326,13 +1270,7 @@ fn levenberg_marquardt(
     )
 }
 
-/// Gauss-Newton steps, damped (and retried) whenever a step would raise the cost; done once a step lowers the cost
-/// (whitened squared residuals) by less than `tolerance` of it plus one, the variance of one residual, so a cost near
-/// zero is done instead of shrinking forever, or no step lowers it at all where the quadratic model expects no more
-/// than that either. With `to_minimum` a small drop counts only from a step as undamped as the first one tried (a
-/// heavily damped step drops little anywhere): the noise evidence must be read at the minimum, but the solves stop at
-/// the first small drop, as they always have (holding them to the minimum too moved athens' map 2.5 -> 6.2 cm off the
-/// ground truth). False if `steps` steps did not get there, or it stalled short of a minimum.
+/// LM steps until a drop < `tolerance` x (cost + 1); `to_minimum` counts only near-undamped drops. False if stalled.
 #[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt_steps(
     state: &mut State,
@@ -1447,8 +1385,7 @@ fn levenberg_marquardt_steps(
     false
 }
 
-/// The Gauss-Newton normal equations at `state`: J^T W J's entries in `Pattern` fill order (damping
-/// diagonal not included), -J^T W r, and J^T W J's diagonal.
+/// Gauss-Newton normal equations at `state`: J^T W J in `Pattern` fill order (no damping), -J^T W r, and its diagonal.
 #[allow(clippy::too_many_arguments)]
 fn normal_equations(
     state: &State,
@@ -1494,8 +1431,7 @@ fn normal_equations(
             }
         }
     }
-    // position priors: residual p_k + R_k lever - z; Jacobian -R_k [lever]x on the rotation perturbation (entries 0..3),
-    // identity on the position (entries 3..6)
+    // position priors: residual p_k + R_k lever - z; Jacobian -R_k [lever]x on rotation, identity on position
     for (u, w) in unary.iter().zip(unary_weights) {
         let Some(slot) = pattern.slot[u.keyframe] else {
             continue;
@@ -1610,17 +1546,8 @@ pub(crate) fn log(r: &Mat3) -> Vec3 {
     v.map(|x| x * scale)
 }
 
-/// The reported odometry variance of one keyframe step from `from` to `to` (xy, z, yaw, roll/pitch): each source's
-/// drift per square root of metre travelled, squared, times the distance, plus its drift per square root of radian
-/// turned, squared, times the angle.
-pub fn step_variances(config: &Config, from: &KeyPoseWithCloud, to: &KeyPoseWithCloud) -> [f64; 4] {
-    let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
-    let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
-    motion_variances(config, distance, turn)
-}
-
-/// `step_variances` from the keyframes' fixed data (`store::KeyFixed`).
-pub(crate) fn local_step_variances(
+/// The reported odometry variance of one keyframe step (xy, z, yaw, roll/pitch) from the keyframes' fixed data.
+pub(crate) fn step_variances(
     config: &Config,
     from: &crate::store::KeyFixed,
     to: &crate::store::KeyFixed,
@@ -1665,7 +1592,7 @@ pub(crate) fn mean_step_variances(key_poses: &KeyFrames, config: &Config) -> [f6
     }
     let mut sum = [0.0; 4];
     for k in 1..key_poses.len() {
-        let step = local_step_variances(config, key_poses.fixed(k - 1), key_poses.fixed(k));
+        let step = step_variances(config, key_poses.fixed(k - 1), key_poses.fixed(k));
         for c in 0..4 {
             sum[c] += step[c];
         }
@@ -1673,8 +1600,7 @@ pub(crate) fn mean_step_variances(key_poses: &KeyFrames, config: &Config) -> [f6
     sum.map(|s| s / (key_poses.len() - 1) as f64)
 }
 
-/// The odometry as pose-graph edges, each step's reported variances (`step_variances`) times `noise` (xy, z, yaw,
-/// roll/pitch ratios).
+/// The odometry as pose-graph edges: each step's `step_variances` times `noise` (xy, z, yaw, roll/pitch ratios).
 pub(crate) fn odometry_edges(
     key_poses: &KeyFrames,
     config: &Config,
@@ -1684,7 +1610,7 @@ pub(crate) fn odometry_edges(
         .map(|k| (k - 1, [key_poses.fixed(k - 1), key_poses.fixed(k)]))
         .map(|(i, pair)| {
             let back = mat3::transpose(&pair[0].rotation_local);
-            let step = local_step_variances(config, pair[0], pair[1]);
+            let step = step_variances(config, pair[0], pair[1]);
             let [xy, z, yaw, tilt]: [f64; 4] = std::array::from_fn(|c| step[c] * noise[c]);
             Edge {
                 from: i,

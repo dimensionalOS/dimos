@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lidar loop closure: Scan Context++ (https://arxiv.org/abs/2109.13494) place recognition and ICP,
-gated so a closure does no harm, and a pose graph re-solved with GNC on a background thread. All Rust.
-"""
+"""Lidar loop closure (Rust): Scan Context++ place recognition, gated ICP, and a background GNC pose graph solve."""
 
 from __future__ import annotations
 
@@ -34,8 +32,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-# Mid-360 + FAST-LIO/Point-LIO odometry error estimate, fitted to ground truth on five recordings (drift is almost all
-# from turning): what an unset odometry_error_estimate_* field gets when another one is given.
+# Mid-360 + FAST-LIO/Point-LIO odometry error estimate (fitted to ground truth): the default for unset fields.
 MID360_ODOMETRY_ERROR_ESTIMATE = {
     "odometry_error_estimate_xy_per_sqrt_m": 3.91e-4,
     "odometry_error_estimate_xy_per_sqrt_rad": 6.35e-3,
@@ -49,14 +46,11 @@ MID360_ODOMETRY_ERROR_ESTIMATE = {
 
 
 class PGOConfig(NativeModuleConfig):
-    # "deterministic" (default): every LET job (solve, closure search, verification, pressure) is held to its estimate in
-    # deterministic_config, so a replay gives the same graph on any machine; "fast" (a real-life run): every job lands as
-    # soon as it finishes, and the run prints the deterministic_config it measured, ready to paste here
+    # "deterministic": jobs held to deterministic_config estimates (same graph on any machine); "fast": land on finish
     mode: str = "deterministic"
-    # a job past its estimate logs a warning at most once per this many seconds of data, with each LET kind's overshoots
-    # since the last (a warning only: a slower machine running a faster one's deterministic_config just waits)
+    # overshoot warnings are logged at most once per this many seconds of data
     overshoot_warning_interval_s: float = 10.0
-    # the deterministic mode's estimates, in scans (a job holds ceil(estimate) scans, at least one; exponents unitless)
+    # per-job cost estimates in scans (a job holds ceil(estimate) scans, at least one; *_power are unitless exponents)
     deterministic_config: dict[str, float] = Field(
         default_factory=lambda: {
             "fast_match_scans_fixed_overhead": 1.3885433563125162,
@@ -94,158 +88,104 @@ class PGOConfig(NativeModuleConfig):
 
     # Loop closure knobs
     closure_search_radius: float = 3.0
-    # ICP pairs points only within this distance (m); the default is the old 0.15 m^2 squared cutoff
+    # ICP pairs points only within this distance (m)
     closure_icp_inlier_distance_m: float = 0.3872983346207417
     # reject a closure whose ICP rms inlier distance (m) is larger
     closure_icp_max_fitness_m: float = 0.3872983346207417
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
     closure_icp_point_to_plane: bool = True
-    # the single-scan closure ICP aligns against its target voxelized at this (m, fitness still on the full target; 0 = full)
+    # single-scan ICP target voxel size (m; fitness still on the full target; 0 = full)
     closure_icp_target_resolution_m: float = 0.15
-    # the single-scan closure ICP gives up once its fitness can no longer reach the gate's largest passing fitness
+    # stop single-scan ICP once its fitness can no longer pass the gate
     closure_icp_early_stop: bool = True
-    # alternative places are retried only at or above this pressure (below it, only the best match is tried)
+    # retry alternative places only at or above this pressure
     closure_alternative_places_min_pressure: float = 0.8
-    # a scan-context target matched from this many separate places looks like everything and is skipped before closure ICP (0 = off)
-    scan_context_generic_places: int = 0
-    # scans this close (m) to one already counted, or to the target, are the same place
-    scan_context_generic_place_radius_m: float = 10.0
-    # targets the generic-place cache tracks
-    scan_context_generic_capacity: int = 256
-    # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud (on by default)
+    # drop points a scan re-sends from the previous scan (Go2 L1 republishes its last seconds)
     drop_reseen_points: bool = True
-    # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
+    # min points per keyframe cloud; a due keyframe aggregates scans until reached (0 = off)
     auto_aggregate_cloud_size: int = 2000
-    # Closure target submap half range = ceil(source clouds x (1 + extra_fraction)) + extra_keyframes (5 for the single scan)
+    # target submap half range = ceil(source clouds x (1 + extra_fraction)) + extra_keyframes
     closure_target_extra_fraction: float = 0.3
     closure_target_extra_keyframes: int = 3
     submap_resolution: float = 0.1
-    # higher=more strict, min number of Scan-Context cells
-    # 0 disables
+    # min occupied Scan-Context cells (0 = off)
     closure_min_occupancy: int = 80
-    # Observability gate (Zhang 2016 / X-ICP degeneracy): higher = less false positive matches
-    # 0 disables.
+    # ICP degeneracy (observability) gate; higher = fewer false matches (0 = off)
     closure_min_degeneracy: float = 0.05
 
-    # Where each pose graph snapshot's keyframes go for offline checks (f64 ts, raw xyz+q, corrected xyz+q), empty for never.
+    # keyframe dump file for offline checks (f64 ts, raw xyz+q, corrected xyz+q); "" = none
     dump_path: str = ""
 
     scan_context_num_rings: int = 20
     scan_context_num_sectors: int = 60
-    # Ring range in meters; keep near the lidar's useful range (a fixed 80 m
-    # collapses a short-range Go2 L1 to one ring). 0 = auto-scale from the
-    # first scan's extent, which adapts across sensors (Go2 L1 vs mid360).
+    # ring range (m), near the lidar's useful range; 0 = auto-scale from the first scan's extent
     scan_context_max_range_m: float = 0.0
     scan_context_top_k: int = 10
     scan_context_match_threshold: float = 0.4
     scan_context_lidar_height_m: float = 2.0
-    # recompute the loop-overlap pressure (debug_log unresolved_loop_probability) every this-many-th scan; 0 = never
+    # recompute the loop-overlap pressure every this-many-th scan (0 = never)
     pressure_check_frequency: int = 5
-    # The pressure off the scan thread: a job on one worker (newest request pending), landing at dispatch + estimate
-    # (scans: fixed overhead + per keyframe + per committed closure, rounded up); off = inline on the scan thread
-    # soft_pressure (display only: the same probability without the cliff) is 50% where log10 of the loop hazard
-    # (pressure = 1 - e^-hazard) is soft_pressure_half_log10_hazard, falling log-compressed to 0% soft_pressure_decades below
+    # display-only soft_pressure is 50% at this log10 loop hazard, log-compressed to 0% soft_pressure_decades below
     soft_pressure_half_log10_hazard: float = -0.5
     soft_pressure_decades: float = 100.0
 
-    # A closure's match confidence (scan-context x ICP x degeneracy, each normalized by its own gate) must clear
-    # 1 - exp(-z^2/2k^2), z = how hard it yanks the graph (per sqrt keyframe gap) in robust std devs of the yanks scored so far; this is k
+    # k in the yank gate: confidence must clear 1 - exp(-z^2/2k^2), z = yank in robust std devs of yanks so far
     closure_yank_gate_width: float = 1.0
-    # How many times the stated odometry error estimate (sd) the true drift may be; the yank gate averages over it (1 = trust it)
+    # max ratio of true drift to the stated odometry error estimate, averaged over by the yank gate (1 = trust it)
     closure_yank_drift_range: float = 100.0
-    # Extension stops: skip a candidate a full stack could not carry, stop when a step's evidence stops rising, stop when
-    # a step's fit leaves the single fit's place
+    # skip an extension candidate a full stack of scans could not carry
     closure_extension_skip_unreachable: bool = True
-    # Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give
-    closure_yank_pre_check: bool = False
-    closure_extension_stop_when_flat: bool = True
-    closure_extension_stop_on_swing: bool = True
-    # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail
-    # reject, extend the match in between (barely_fail < 1 < barely_pass)
+    # evidence / required (yank units): <= barely_fail reject, >= barely_pass accept, else extend (fail < 1 < pass)
     barely_fail_uncertainty_range: float = 0.05
     barely_pass_uncertainty_range: float = 3.0
-    # The uncertainty range narrows over the extension's steps, slowed by 1 / (1 - pressure)^this
+    # uncertainty range narrows over extension steps, slowed by 1 / (1 - pressure)^this
     decisive_pressure_rate: float = 1.0
-    # Odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach
+    # odometry distance between an extension's source clouds, as a fraction of mean scan reach
     extension_cloud_spacing: float = 0.25
-    # Compounding agreement sensitivity: the yank gate scores an extension by its median cloud ratio times
-    # exp(sensitivity (1 - min(d, 5)^2)) per step, d = how far that step's alignment is from the one before it at the
-    # source keyframe, in inlier distances (0 = plain median)
+    # extension score = median cloud ratio x exp(this (1 - min(d, 5)^2)) per step, d = step disagreement (0 = median)
     compounding_agreement_sensitivity: float = 1.5
-    # Graph change heat: a finished solve is adopted only while the heat <= threshold; adopting adds the curbed yank of the
-    # largest keyframe move it makes (stated odometry error sigmas along the path) above the floor; the heat decays by
-    # decay per keyframe; a solve finishing while hot waits (a newer one replaces it), always adopted at the run's end
+    # adopt a solve only while heat <= threshold; adopting adds its largest move's yank above floor; decay per keyframe
     graph_change_heat_enabled: bool = True
     graph_change_heat_threshold: float = 30.0
     graph_change_heat_floor: float = 20.0
     graph_change_heat_decay: float = 0.995
-    # Seeded solve: a solve starts from the accepted graph instead of the odometry when that graph already fits every
-    # closure GNC would weigh; with gnc verdicts, GNC starts from the newest adopted solve's verdicts (a rejected closure
-    # starts out, mu from the rest's residuals)
+    # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
     solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
-    # Deterministic solve schedule: a finished solve is held ceil(solve_scans_scale * keyframes^solve_keyframe_power *
-    # (1 + closures)^solve_closure_power * (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe *
-    # keyframes) scans after its dispatch (an upper bound on its cost in scans; rejected = closures the newest adopted
-    # solve rejected; debounce = the graph change heat's cost its thread measures); one still running then is an
-    # overshoot, logged and adopted as it finishes
-    # Deterministic closure-search schedule: a search's result lands only once ceil(its estimate) scans have passed since
-    # its dispatch: the fast match (fast_match_scans_fixed_overhead + per keyframe, the scan-context lookup, + per point,
-    # source and target, + per source point) at dispatch, then the verification's fixed overhead as the extension
-    # starts and one round's scans before each round (verification_scans_*)
-    # The closure search's pipeline: SC candidates and retries wait in a priority buffer (most similar first, least
-    # dropped when full) for fast_match_workers (cloud build, single ICP, gates); a match inside the uncertainty range
-    # waits in a priority buffer (highest single-scan confidence ratio first, lowest dropped) for verification_workers to
-    # extend it, each round held to its own estimate
+    # closure search pipeline: SC buffer (most similar first) -> fast-match workers -> verification buffer -> workers
     fast_match_workers: int = 2
     sc_buffer_size: int = 4
     verification_workers: int = 2
     verification_buffer_slots: int = 2
-    # The body's recent speed (solve estimate, closure diagnostics): median over the newest this many distinct-pose steps
+    # recent speed = median over the newest this many distinct-pose steps
     solve_speed_window_poses: int = 500
-    # Write every ICP-scored candidate's source cloud, target submap and ICP result to <dir>/<source>_<target>.icp
+    # write each ICP-scored candidate to <dir>/<source>_<target>.icp ("" = off)
     closure_icp_dump_dir: str = ""
-    # Re-check a too-weak match on the last 2, 4, 8, ... (up to this many) keyframes, seeded by the first ICP. 0 = off
+    # re-check a weak match on the last 2, 4, 8, ... (up to this many) keyframes (0 = off)
     closure_extended_icp_max_keyframes: int = 16
-    # Above 0: score a closure's fit by its sharpness s (share within submap_resolution, times how much overlap falls when
-    # nudged closure_sharpness_nudge_m / _deg) as s / (s + this), extended stacks by their own sharpness; 0 = fitness
-    closure_sharpness_half: float = 0.0
-    closure_sharpness_nudge_m: float = 1.0
-    closure_sharpness_nudge_deg: float = 5.0
-    # True: a closure's evidence is its likelihood ratio (mean log ratio per point: aligned half-normal of a width measured
-    # from the clouds vs uniform out to the ICP match distance), in place of scan-context x ICP x degeneracy
+    # closure evidence = per-point likelihood ratio, instead of scan-context x ICP x degeneracy
     closure_likelihood_confidence: bool = True
-    # True: a keyframe whose closure search is rejected tries its next scan-context match, up to
-    # 1 + floor(sqrt(min(ceil(1/(1 - pressure)), scan_context_top_k - 1))) tries (3 at pressure 0.8, 4 from 0.9 with top_k 10)
+    # after a rejection, try the next scan-context match (up to 1 + floor(sqrt(min(ceil(1/(1-pressure)), top_k-1))))
     closure_alternative_places: bool = True
-    # True (with closure_likelihood_confidence): source points no target scan saw count for nothing, not as misfits
+    # with closure_likelihood_confidence: ignore source points no target scan saw
     closure_likelihood_visibility: bool = True
-    # True: scale the odometry's reported noise by the factor the kept closures' disagreement with it implies (max likelihood)
+    # learn the odometry noise scale from kept closures (max likelihood)
     learned_odometry_error_estimate_from_closures: bool = True
-    # True: the noise learner reads only the kept closures that agree pairwise (PCM core) on every solve
+    # noise learner reads only pairwise-consistent (PCM core) kept closures
     odometry_error_estimate_evidence_core: bool = True
-    # Closure-verification ICP: iteration cap and correspondence gate (m).
+    # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0
 
-    # Each new closure re-solves the whole pose graph on a background thread from the odometry, with
-    # GNC (truncated least squares) keeping the closures that agree with the odometry and each other.
-    # closure_gnc_var_scale loosens each closure's ICP-fitness variance while GNC decides, and
-    # closure_gnc_inlier_probability sets its chi-squared cutoff (lower rejects more).
+    # GNC: var_scale loosens closure variance while deciding; inlier_probability sets the chi-squared cutoff
     closure_gnc_var_scale: float = 10.0
     closure_gnc_inlier_probability: float = 0.95
-    # Huber threshold on a kept closure's whitened residual in the final solve (0 = plain least squares).
+    # Huber threshold on kept closures' whitened residuals in the final solve (0 = plain least squares)
     closure_robust_huber_k: float = 1.345
 
-    # True: a closure is uninformative only where the graph's own covariance of its ends is surer than ICP in every direction
-    closure_informative_by_graph_covariance: bool = True
-    # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
+    # reject closures the graph is already surer of than ICP
     closure_uninformative_gate: bool = True
-    # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
-    # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. After each solve
-    # that keeps loops, debug_log (kind "odometry_drift") gives the values the run measured, to start the next run from.
-    # Unset: the Mid-360 + FAST-LIO/Point-LIO values fitted to ground truth on five recordings, unless
-    # odometry_error_estimate_from_lidar_range turns on the range-scaled estimate.
+    # odometry drift std dev per sqrt(m travelled) / sqrt(rad turned); None = MID360_ODOMETRY_ERROR_ESTIMATE
     odometry_error_estimate_xy_per_sqrt_m: float | None = None
     odometry_error_estimate_xy_per_sqrt_rad: float | None = None
     odometry_error_estimate_z_per_sqrt_m: float | None = None
@@ -254,30 +194,17 @@ class PGOConfig(NativeModuleConfig):
     odometry_error_estimate_yaw_per_sqrt_rad: float | None = None
     odometry_error_estimate_tilt_per_sqrt_m: float | None = None
     odometry_error_estimate_tilt_per_sqrt_rad: float | None = None
-    # True: the odometry error estimate is linear in the lidar's range between the Go2 L1's and the Mid-360's calibrated
-    # estimates (each scan's farthest point from its frame origin, the median of the last lidar_range.window_scans scans
-    # blended in every ceil(window_scans / 5) scans, cooling with half-life lidar_range.decay_half_life_updates blends).
-    # False (default, today's live behaviour): unset odometry_error_estimate_* get the Mid-360 values. None: on exactly
-    # when no odometry_error_estimate_* is given.
+    # scale the odometry error estimate by lidar range (L1..Mid-360); None = on only if no estimate field is given
     odometry_error_estimate_from_lidar_range: bool | None = False
-    # overrides for the lidar range settings (window_scans, decay_half_life_updates, l1_range_m, mid360_range_m, ...);
-    # empty = the calibrated defaults
+    # LidarRangeConfig overrides (window_scans, decay_half_life_updates, ...); empty = calibrated defaults
     lidar_range: dict[str, Any] = Field(default_factory=dict)
-    # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
-    learned_odometry_error_estimate_prior_ln_sd_xy: float = 1.72
-    learned_odometry_error_estimate_prior_ln_sd_z: float = 2.05
-    learned_odometry_error_estimate_prior_ln_sd_yaw: float = 1.15
-    learned_odometry_error_estimate_prior_ln_sd_tilt: float = 0.96
-    # how many closed loops' worth of evidence the stated odometry error estimate counts as for the learner (its plasticity); 0 = the closures alone, inf = never learned (the config's drift is used)
+    # loops' worth of evidence the stated estimate counts as in the learner (0 = closures alone, inf = never learn)
     learned_odometry_error_estimate_stiffness: float = 10.0
 
-    # usually que is 1 lidar frame, only goes up after a compute spike (backpressure); past
-    # this every queued scan but the newest is dropped, so a stall can't leave the module stale
+    # scan queue depth; past it all but the newest scan are dropped (<= 0 = unbounded)
     max_scan_queue: int = 5
-    # threads closure search and solves may use (the rayon pool): 0 (default) = every core, so GSC never runs itself
-    # handicapped; set a number to leave cores to the rest of the robot where measurements show it pays
+    # rayon threads for closure search and solves (0 = every core)
     worker_threads: int = 0
-
 
     @model_validator(mode="after")
     def _odometry_error_estimate(self) -> PGOConfig:
@@ -291,7 +218,7 @@ class PGOConfig(NativeModuleConfig):
 
 
 class GscPGO(NativeModule):
-    """Pose graph optimization with loop closure — Rust port of gsc_pgo."""
+    """Pose graph optimization with loop closure (Rust)."""
 
     config: PGOConfig
 
@@ -299,7 +226,7 @@ class GscPGO(NativeModule):
     odometry: In[Odometry]
     # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
     coordinate_factor: In[Odometry]
-    # a landmark seen by a sensor: header.frame_id = sensor, child_frame_id = landmark name, pose + 6x6 covariance in the sensor frame (unknown dims: -1)
+    # landmark sighting: header.frame_id = sensor, child_frame_id = landmark name, 6x6 covariance (unknown dims: -1)
     landmark_factor: In[Odometry]
     corrected_odometry: Out[Odometry]
     # the map -> odometry correction, identity until the first one
@@ -308,13 +235,9 @@ class GscPGO(NativeModule):
     pose_graph: Out[PointCloud2]
     # a packed record per keyframe a solve moved: its pose before, then the delta (post = delta * pre)
     loop_closure_event: Out[PointCloud2]
-    # each closure candidate's lifecycle (proposed, gated, accepted, rejected, applied) as packed records
-    # with both keyframes' current positions and a confidence, for drawing closure edges
+    # closure candidate lifecycle events as packed records, for drawing closure edges
     closure_edges: Out[PointCloud2]
-    # debugging numbers as JSON lines, each with "kind" and "ts", for graphing: "pressure" (every pressure_check_frequency-th
-    # scan: unresolved_loop_probability, the chance the newest scan overlaps an earlier stretch no closure has tied it to),
-    # "closure" (every closure search: each gate's inputs and the outcome), "keyframe" (scan queue, running threads, stage
-    # seconds), "solve" (each adopted solve: closures committed / judged / kept, graph error)
+    # JSON lines tagged "kind" (pressure, closure, keyframe, solve, odometry_drift) and "ts"
     debug_log: Out[String]
 
     @rpc
