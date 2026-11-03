@@ -29,8 +29,6 @@ use crate::mat3::{self, Mat3, Vec3};
 /// A background pose-graph solve over the first `keyframes` keyframes (all but 0 free) and `closures_dispatched` closures.
 pub(crate) struct Solving {
     pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
-    /// The adopted solves at dispatch (`GscPgo::adopted_solves`): the accepted graph its thread measured its change against.
-    pub(crate) graph_version: u64,
     pub(crate) keyframes: usize,
     pub(crate) schedule: SolveSchedule,
     /// What the solve was handed, only when `GSC_SOLVE_LOG` is set.
@@ -162,7 +160,7 @@ impl GscPgo {
             * (keyframes as f64).powf(config.deterministic_config.solve_keyframe_power)
             * (1.0 + closures).powf(config.deterministic_config.solve_closure_power)
             * (1.0 + rejected).powf(config.deterministic_config.solve_rejected_power);
-        (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans, config))
+        (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans))
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
     pub fn solve_started(&self) -> Option<(usize, usize)> {
@@ -449,7 +447,6 @@ impl GscPgo {
         let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(n);
         self.solving = Some(Solving {
             handle,
-            graph_version: self.adopted_solves,
             keyframes: n,
             schedule: SolveSchedule {
                 dispatch_scan: self.scans_seen,
@@ -519,7 +516,6 @@ impl GscPgo {
         }
         let finished = FinishedSolve {
             solution,
-            graph_version: solving.graph_version,
             seconds,
             landmark_ids,
             keyframes: solving.keyframes,
@@ -834,9 +830,6 @@ impl GscPgo {
 /// A finished solve's result and what it was dispatched over, waiting to be adopted (`graph_change_heat_enabled`).
 pub(crate) struct FinishedSolve {
     pub(crate) solution: Solution,
-    /// The adopted solves at its dispatch (`GscPgo::adopted_solves`).
-    #[allow(dead_code)]
-    pub(crate) graph_version: u64,
     seconds: f64,
     landmark_ids: Vec<u64>,
     pub(crate) keyframes: usize,
@@ -970,8 +963,6 @@ pub(crate) struct ChangeScan {
     turned: f64,
     previous_local: Option<(Mat3, Vec3)>,
     largest: f64,
-    #[allow(dead_code)]
-    seconds: f64,
 }
 
 impl ChangeScan {
