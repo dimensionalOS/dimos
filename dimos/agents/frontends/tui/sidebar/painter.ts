@@ -1,6 +1,6 @@
-import type { FrameBox } from "../../../shared/render/frames.ts";
-import type { FrameRecord } from "../../../sdk/streams/base.ts";
-import { cloudFrame, gridFrame, imageFrame, topDownCamera } from "../../../shared/render/frames.ts";
+import type { FrameBox } from "#dimos/agents/shared/render/frames.ts";
+import type { FrameRecord } from "#dimos/agents/sdk/streams/base.ts";
+import { cloudFrame, gridFrame, imageFrame, topDownCamera } from "#dimos/agents/shared/render/frames.ts";
 
 type PictureRecord = Extract<FrameRecord, { readonly kind: "image" | "cloud" | "grid" }>;
 

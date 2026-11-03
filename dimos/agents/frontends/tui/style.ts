@@ -1,6 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
-import type { Level } from "../../shared/view-models/levels.ts";
-import { clean } from "../../shared/view-models/text.ts";
+import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /** Moved as is from dimcode terminal-style.ts. */

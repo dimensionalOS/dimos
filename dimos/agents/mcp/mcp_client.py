@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -28,7 +28,7 @@ from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
 # `allowed_objects` warning emitted when langchain.agents pulls in langgraph.checkpoint.
 warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
@@ -37,7 +37,7 @@ import requests
 
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -52,6 +52,8 @@ from dimos.utils.sequential_ids import SequentialIds
 logger = setup_logger()
 
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+# How much of a failed turn's error message goes into the agent's history.
+_FAILED_TURN_ERROR_CHARS = 300
 
 
 def _preload_agent_deps() -> None:
@@ -401,19 +403,58 @@ class McpClient(Module):
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
         self.agent_idle.publish(False)
+        turn_start = len(self._history)
+        self._record(message)
+
+        try:
+            for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
+                for node_output in update.values():
+                    for msg in node_output.get("messages", []):
+                        self._record(msg)
+        except Exception as e:
+            # Letting this escape would end the thread, and no later message, tool
+            # updates included, would be processed. Log it and return; the failed
+            # message is not retried.
+            logger.exception("Agent turn failed", error=f"{type(e).__name__}: {e}")
+            failure = f"{type(e).__name__}: {str(e)[:_FAILED_TURN_ERROR_CHARS]}"
+            # Model APIs reject a history with an unanswered tool call, so answer
+            # each one with an error.
+            for call_id in _unanswered_tool_calls(self._history[turn_start + 1 :]):
+                self._record(
+                    ToolMessage(
+                        content=(
+                            f"No result: the agent turn failed with {failure}. "
+                            "The call may or may not have run."
+                        ),
+                        tool_call_id=call_id,
+                        status="error",
+                    )
+                )
+            self._record(
+                AIMessage(
+                    content=f"This turn failed with {failure}",
+                    additional_kwargs={TURN_FAILED_KEY: True},
+                )
+            )
+
+        if self._message_queue.empty():
+            self.agent_idle.publish(True)
+
+    def _record(self, message: BaseMessage) -> None:
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
-        for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
-            for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
 
-        if self._message_queue.empty():
-            self.agent_idle.publish(True)
+def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:
+    answered = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    for message in messages:
+        if not isinstance(message, AIMessage):
+            continue
+        for call in message.tool_calls:
+            call_id = call["id"]
+            if call_id is not None and call_id not in answered:
+                yield call_id
 
 
 def _append_image_to_history(

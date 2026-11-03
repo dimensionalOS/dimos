@@ -491,8 +491,8 @@ tests = [
 ]
 
 # Drives the cockpit browser e2e (-m web_browser). Kept out of `tests`: only
-# the CI jobs that run it (`web`, macOS `self-hosted-tests`) need the
-# platform-specific Playwright package.
+# the browser jobs of the daily `e2e` workflow need the platform-specific
+# Playwright package.
 browser-tests = [
     "playwright>=1.55",
 ]

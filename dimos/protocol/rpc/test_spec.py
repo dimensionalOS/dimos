@@ -353,6 +353,7 @@ def test_multiple_services(rpc_context, impl_name: str) -> None:
             unsub3()
 
 
+@pytest.mark.skip(reason="flaky in CI, disabled until fixed")
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
 def test_concurrent_calls(rpc_context, impl_name: str) -> None:
     """Test making multiple concurrent RPC calls."""

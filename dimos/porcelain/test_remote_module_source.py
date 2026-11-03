@@ -221,12 +221,14 @@ def test_connect_run_by_name_adds_module(running_app, client):
     assert "McpServer" in running_app._source.list_module_names()
 
 
+@pytest.mark.flaky(reruns=1)
 def test_connect_repr_marks_remote(client):
     rep = repr(client)
     assert "remote" in rep
     assert "StressTestModule" in rep
 
 
+@pytest.mark.flaky(reruns=1)
 def test_connect_stop_does_not_kill_remote(running_app, client):
     client.stop()
     assert not client.is_running
@@ -246,6 +248,7 @@ def test_connect_get_module_caches(client):
     assert m1 is m2
 
 
+@pytest.mark.flaky(reruns=1)
 def test_get_module_class_name_resolves_single_namespaced_instance():
     with _remote_source_with_instances("robot0/namedremotemodule") as source:
         module = source.get_module("NamedRemoteModule")

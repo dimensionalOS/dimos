@@ -7,7 +7,7 @@ into rows with [view models](/docs/development/agent/view-models.md) and preview
 [shared/render/](/docs/development/agent/render.md). [The terminal](/docs/usage/agent.md#the-terminal) in
 docs/usage/agent.md describes what a user sees and lists every key.
 
-Source: [dimos/agents/frontends/tui/](/dimos/agents/frontends/tui/). TypeScript examples use imports relative to this source directory.
+Source: [dimos/agents/frontends/tui/](/dimos/agents/frontends/tui/). TypeScript examples use `#dimos/agents/...` package subpaths.
 Save temporary example files there and run them from `dimos/agents` with `node --import=./test/web-sdk.mjs frontends/tui/demo_example.ts`.
 Remove the temporary file with `rm frontends/tui/demo_example.ts` before running `npm run typecheck` or `npm test`.
 Those checks treat saved examples as package code and may reject their imports.
@@ -207,7 +207,7 @@ rows from `render` and keys from `handleInput`.
 ```ts
 import type { Component } from "@earendil-works/pi-tui";
 import { ProcessTerminal, TuiMainScreen, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { accent, muted } from "./style.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
 
 const HINTS = ["Ctrl+O  switch conversations", "Ctrl+T  show or hide the sidebar", "Ctrl-C  detach"];
 
@@ -256,13 +256,13 @@ and return it from `cardFor` in [cards/choose.ts](/dimos/agents/frontends/tui/ca
 ```ts
 import type { TUI } from "@earendil-works/pi-tui";
 import type { ToolCall } from "@earendil-works/pi-ai";
-import type { ToolCard } from "./cards/base.ts";
-import type { ToolResult } from "../../shared/protocol/conversation/state.ts";
+import type { ToolCard } from "#dimos/agents/frontends/tui/cards/base.ts";
+import type { ToolResult } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import { Loader, truncateToWidth } from "@earendil-works/pi-tui";
-import { PiToolCard } from "./cards/pi-tool.ts";
-import { accent, amber, muted } from "./style.ts";
-import { clean } from "../../shared/view-models/text.ts";
-import { movedToBackground } from "../../shared/view-models/conversation/tools.ts";
+import { PiToolCard } from "#dimos/agents/frontends/tui/cards/pi-tool.ts";
+import { accent, amber, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { movedToBackground } from "#dimos/agents/shared/view-models/conversation/tools.ts";
 
 function streamOf(call: ToolCall): string {
     const { module, stream } = call.arguments;
@@ -334,8 +334,8 @@ chat. It reads `ui.gateway.conversations` each time the view renders, as `conver
 [menu/view.ts](/dimos/agents/frontends/tui/menu/view.ts). Add a matching key to `TAB_KEYS`.
 
 ```ts
-import type { MenuRow, MenuTab } from "./menu/base.ts";
-import { duration } from "../../shared/view-models/time.ts";
+import type { MenuRow, MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
+import { duration } from "#dimos/agents/shared/view-models/time.ts";
 
 const LONG_RUN_MS = 10 * 60 * 1000;
 

@@ -1,8 +1,8 @@
-import type { CallId, MovedCall } from "../../protocol/conversation/calls.ts";
-import type { EpochMs } from "../../protocol/time.ts";
-import type { TimelineRow } from "./timeline.ts";
+import type { CallId, MovedCall } from "#dimos/agents/shared/protocol/conversation/calls.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { TimelineRow } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
 import type { ToolCall } from "@earendil-works/pi-ai";
-import type { ToolResult } from "../../protocol/conversation/state.ts";
+import type { ToolResult } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import type { ToolSlot } from "@earendil-works/pi-durable";
 
 /** Requirement 5 outside the chat (switcher, web page): the running calls and how long each has run. */

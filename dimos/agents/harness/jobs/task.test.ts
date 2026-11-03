@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
-import type { Agent } from "../main.ts";
+import type { Agent } from "#dimos/agents/harness/main.ts";
 import type { ChildProcess } from "node:child_process";
 import type { Socket } from "node:net";
-import type { UserRequestId } from "../../shared/protocol/conversation/input.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { after, before, test } from "node:test";
 import { createServer } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { join } from "node:path";
-import { listJobs } from "./registry.ts";
-import { openAgent } from "../main.ts";
-import { parseDimosInstall } from "../../gateway/config/environment.ts";
-import { scriptedModel } from "../../test/scripted-model.ts";
+import { listJobs } from "#dimos/agents/harness/jobs/registry.ts";
+import { openAgent } from "#dimos/agents/harness/main.ts";
+import { parseDimosInstall } from "#dimos/agents/gateway/config/environment.ts";
+import { scriptedModel } from "#dimos/agents/test/scripted-model.ts";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 

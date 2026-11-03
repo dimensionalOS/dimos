@@ -103,6 +103,7 @@ SDK and reads only view models, so a web frontend would be a sibling of `fronten
 
 ## Conventions the tests enforce
 
+- Local imports use Node package subpaths, such as `#dimos/agents/harness/main.ts`, mapped by `imports` in `package.json`.
 - `main.ts` is the entry of each application. Supporting APIs are imported from the file that defines them. There are no
   `index.ts` files and no re-exports.
 - A folder with a `base.ts` is a family. `base.ts` defines the interface, each sibling implements it, and one consumer
