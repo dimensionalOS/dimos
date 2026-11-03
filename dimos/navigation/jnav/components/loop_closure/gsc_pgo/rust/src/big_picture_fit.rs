@@ -134,6 +134,7 @@ pub fn solve(
 pub(crate) struct FastSolve {
     pub(crate) rotations: Vec<Mat3>,
     pub(crate) positions: Vec<Vec3>,
+    /// Whether every Levenberg-Marquardt pass reached a minimum within its steps.
     pub(crate) converged: bool,
     /// The largest whitened squared residual of a `new` closure at GNC's start (all in, variances x `gnc_variance_scale`),
     /// over GNC's cutoff; under 1, GNC would not even run on this window and would keep every closure.
@@ -144,7 +145,8 @@ pub(crate) struct FastSolve {
 
 /// GNC's start without GNC: least squares with every closure in at GNC's scaled variances, the `new` closures' residuals
 /// read against GNC's cutoff, then (if under it) `solve_core`'s polish (own variances, Huber passes). No covariances. Each
-/// Levenberg-Marquardt pass stops after `steps` steps (unconverged), bounding the cost.
+/// Levenberg-Marquardt pass stops after `steps` steps, bounding the cost (every step lowers the cost, so a pass cut short
+/// is still nearer the minimum than its start).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_fast_path(
     rotations: &[Mat3],
@@ -184,11 +186,11 @@ pub(crate) fn solve_fast_path(
         .filter(|(_, &n)| n)
         .map(|(e, _)| whitened_squared(e, &state))
         .fold(0.0, f64::max);
-    // over the cutoff or stalled, the fast path declines: no polish
-    let polish = if converged && worst <= threshold { 3 } else { 0 };
+    // over the cutoff the fast path declines: no polish
+    let polish = if worst <= threshold { 3 } else { 0 };
     let mut huber = all;
     for _ in 0..polish {
-        converged = levenberg_marquardt_steps(
+        converged &= levenberg_marquardt_steps(
             &mut state, &pattern, odometry, closures, &huber, &[], &[], &[], &[], 1e-5, steps, false,
         );
         for (h, e) in huber.iter_mut().zip(closures) {

@@ -28,10 +28,11 @@ use crate::mat3::{self, Mat3, Vec3};
 use crate::pose_graph_solving::graph_change_cost_on;
 use crate::store::SolvedPoses;
 
-/// What the fast path's worker returns: the first `keyframes` global poses (None if LM stalled), heat cost, seconds, and
-/// the GNC cutoff check (`FastSolve`).
+/// What the fast path's worker returns: the first `keyframes` global poses, heat cost, seconds, and the GNC cutoff check
+/// and convergence (`FastSolve`).
 struct FastPathResult {
-    solved: Option<SolvedPoses>,
+    solved: SolvedPoses,
+    converged: bool,
     cost: f64,
     seconds: f64,
     worst_over_cutoff: f64,
@@ -42,6 +43,8 @@ struct FastPathResult {
 pub struct FastPathJob {
     slot: Arc<JobSlot<FastPathResult>>,
     dispatch_scan: usize,
+    /// `scans_seen` at dispatch (`dispatch_scan` counts advancing scans), for its record.
+    dispatch_seen: usize,
     dispatch_time: f64,
     estimate_raw_scans: f64,
     /// GNC solves adopted at dispatch: its result is stale once another has been.
@@ -62,15 +65,16 @@ pub struct FastPathRecord {
     pub scan: usize,
     pub time: f64,
     pub dispatch_scan: usize,
-    /// "adopted", "stale" (a GNC solve landed first), "unconverged", "over_cutoff" (GNC would weigh a closure) or "heat_held".
+    /// "adopted", "stale" (a GNC solve landed first), "over_cutoff" (GNC would weigh a closure) or "heat_held".
     pub outcome: &'static str,
     pub closures: Vec<usize>,
     pub first_keyframe: usize,
     pub keyframes: usize,
     pub seconds: f64,
     pub heat_cost: f64,
-    /// `FastSolve::worst_over_cutoff` and `cost_rise_over_cutoff`.
+    /// `FastSolve::worst_over_cutoff`, `cost_rise_over_cutoff` and `converged`.
     pub worst_over_cutoff: f64,
+    pub converged: bool,
     pub cost_rise_over_cutoff: f64,
     /// Adopted only: keyframes first..keyframes' times and positions before it, after it, and after the GNC solve judging it.
     pub times: Vec<f64>,
@@ -227,24 +231,22 @@ impl GscPgo {
                 let steps = config.solver_fast_path_max_lm_steps;
                 let fast = solve_fast_path(&rotations, &positions, &free, &odometry, &closures, &new, &solve_config, steps);
                 let (window_rotations, window_positions) = (fast.rotations, fast.positions);
-                let solved = fast.converged.then(|| {
-                    let (mut rotations, mut positions): (Vec<Mat3>, Vec<Vec3>) =
-                        (0..first).map(|k| keys.global(k)).unzip();
-                    rotations.extend_from_slice(&window_rotations[..n - first]);
-                    positions.extend_from_slice(&window_positions[..n - first]);
-                    SolvedPoses {
-                        rotations,
-                        positions,
-                    }
-                });
-                let cost = match &solved {
-                    Some(s) if config.graph_change_heat_enabled => {
-                        graph_change_cost_on(&keys, &config, (&s.rotations, &s.positions), n)
-                    }
-                    _ => 0.0,
+                let (mut rotations, mut positions): (Vec<Mat3>, Vec<Vec3>) =
+                    (0..first).map(|k| keys.global(k)).unzip();
+                rotations.extend_from_slice(&window_rotations[..n - first]);
+                positions.extend_from_slice(&window_positions[..n - first]);
+                let solved = SolvedPoses {
+                    rotations,
+                    positions,
+                };
+                let cost = if config.graph_change_heat_enabled && fast.worst_over_cutoff <= 1.0 {
+                    graph_change_cost_on(&keys, &config, (&solved.rotations, &solved.positions), n)
+                } else {
+                    0.0
                 };
                 *finish.done.lock().expect("fast path slot") = Some(FastPathResult {
                     solved,
+                    converged: fast.converged,
                     cost,
                     seconds: started.elapsed().as_secs_f64(),
                     worst_over_cutoff: fast.worst_over_cutoff,
@@ -255,6 +257,7 @@ impl GscPgo {
         self.fast_path_job = Some(FastPathJob {
             slot,
             dispatch_scan: self.advancing_scans,
+            dispatch_seen: self.scans_seen,
             dispatch_time: self.newest_scan_time(),
             estimate_raw_scans,
             adopted_solves: self.adopted_solves,
@@ -305,7 +308,7 @@ impl GscPgo {
         let mut record = FastPathRecord {
             scan: self.scans_seen,
             time: self.newest_scan_time(),
-            dispatch_scan: job.dispatch_scan,
+            dispatch_scan: job.dispatch_seen,
             outcome: "adopted",
             closures: job.applied.clone(),
             first_keyframe: job.first,
@@ -313,6 +316,7 @@ impl GscPgo {
             seconds: result.seconds,
             heat_cost: result.cost,
             worst_over_cutoff: result.worst_over_cutoff,
+            converged: result.converged,
             cost_rise_over_cutoff: result.cost_rise_over_cutoff,
             times: Vec::new(),
             before: Vec::new(),
@@ -326,20 +330,16 @@ impl GscPgo {
                 record.outcome = "stale";
                 false
             }
-            None => {
-                record.outcome = "unconverged";
-                false
-            }
             // GNC would weigh a closure (it might reject it): leave the loop to GNC
-            Some(_) if result.worst_over_cutoff > 1.0 => {
+            _ if result.worst_over_cutoff > 1.0 => {
                 record.outcome = "over_cutoff";
                 false
             }
-            Some(_) if self.config.graph_change_heat_enabled && heat > self.config.graph_change_heat_threshold => {
+            _ if self.config.graph_change_heat_enabled && heat > self.config.graph_change_heat_threshold => {
                 record.outcome = "heat_held";
                 false
             }
-            Some(solved) => {
+            solved => {
                 if self.config.graph_change_heat_enabled {
                     self.heat = heat + result.cost;
                     self.heat_keyframes = self.key_poses.len();
