@@ -52,6 +52,25 @@ impl GscPgo {
             self.dispatch_pressure();
         }
     }
+    /// Per pressure computation: (keyframes, committed closures, seconds).
+    pub fn pressure_calls(&self) -> &[(usize, usize, f64)] {
+        &self.pressure_calls
+    }
+    pub fn pressure_overshoots(&self) -> usize {
+        self.pressure_overshoots
+    }
+    /// Per adopted solve (keyframes, change-cost seconds on its thread), and how many costs the scan thread recomputed.
+    pub fn change_cost_calls(&self) -> (&[(usize, f64)], usize) {
+        (&self.change_cost_calls, self.graph_change_cost_recomputed)
+    }
+    /// Seconds the scan thread blocked on due jobs and joined solves (lockstep waits, excluded from its work).
+    pub fn thread_waits_s(&self) -> f64 {
+        self.closure_search_wait_s + self.solve_join_wait_s
+    }
+    /// Lockstep replay: wait for unfinished due jobs so results don't depend on machine speed.
+    pub fn set_wait_for_due_jobs(&mut self, wait: bool) {
+        self.wait_for_due_jobs = wait;
+    }
     fn dispatch_pressure(&mut self) {
         let snapshot = self.overlap_snapshot();
         let (keyframes, closures) = snapshot.size();
@@ -79,7 +98,7 @@ impl GscPgo {
             closures,
         });
     }
-    /// Land the job once its hold has passed (one still running then lands late, as an overshoot).
+    /// Land the job once its hold has passed (waiting if `wait_for_due_jobs`, else landing late as an overshoot).
     fn land_pressure(&mut self) {
         let Some(job) = &self.pressure_job else {
             return;
@@ -95,10 +114,19 @@ impl GscPgo {
             return;
         }
         if done.is_none() {
-            job.slot.changed.notify_all();
-            drop(done);
-            self.pressure_late = true;
-            return;
+            if !self.wait_for_due_jobs {
+                job.slot.changed.notify_all();
+                drop(done);
+                self.pressure_late = true;
+                return;
+            }
+            let started = std::time::Instant::now();
+            done = job
+                .slot
+                .changed
+                .wait_while(done, |done| done.is_none())
+                .expect("pressure slot");
+            self.closure_search_wait_s += started.elapsed().as_secs_f64();
         }
         let (overlap, seconds) = done.take().expect("finished");
         drop(done);
@@ -117,6 +145,7 @@ impl GscPgo {
                 job.estimate_scans(),
             );
         }
+        self.pressure_calls.push((job.keyframes, job.closures, seconds));
         self.record_job_ratio("pressure", seconds, job.estimate_raw_scans);
         if let Some(overlap) = overlap {
             self.pressure = Some((self.scans_seen, overlap));

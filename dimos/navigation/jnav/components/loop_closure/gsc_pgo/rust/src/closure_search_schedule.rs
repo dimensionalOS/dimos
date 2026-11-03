@@ -143,9 +143,9 @@ impl SearchJob {
 }
 
 impl GscPgo {
-    /// Per keyframe: land due jobs, buffer this keyframe's proposal, and fill free workers.
-    pub fn step_closure_search(&mut self) {
-        self.land_due_closure_searches(false);
+    /// Per keyframe: land due jobs (`wait`: lockstep), buffer this keyframe's proposal, and fill free workers.
+    pub fn step_closure_search(&mut self, wait: bool) {
+        self.land_due_closure_searches(wait, false);
         self.propose_closure();
         self.buffer_waiting_proposal();
         self.fill_workers();
@@ -154,13 +154,26 @@ impl GscPgo {
     pub fn land_remaining_closure_search(&mut self) {
         loop {
             if !self.closure_searches.is_empty() {
-                self.land_due_closure_searches(true);
+                self.land_due_closure_searches(true, true);
             }
             self.fill_workers();
             if self.closure_searches.is_empty() {
                 return;
             }
         }
+    }
+    /// Fast matches that ran past the data time their estimate spanned.
+    pub fn closure_search_overshoots(&self) -> usize {
+        self.closure_search_overshoots
+    }
+    pub fn verification_overshoots(&self) -> usize {
+        self.verification_overshoots
+    }
+    pub fn closure_search_wait_s(&self) -> f64 {
+        self.closure_search_wait_s
+    }
+    pub fn buffer_drops(&self) -> (usize, usize) {
+        (self.sc_dropped, self.verification_dropped)
     }
     /// Whether a closure search is running, held or buffered.
     pub fn closure_search_running(&self) -> bool {
@@ -204,6 +217,7 @@ impl GscPgo {
             let (proposal, _) = self.sc_buffer.remove(worst);
             let mut diag = proposal.diag;
             diag.outcome = "sc_dropped";
+            self.sc_dropped += 1;
             self.record_search(diag);
         }
         while self.jobs_of(JobKind::Verification) < self.config.verification_workers
@@ -216,6 +230,7 @@ impl GscPgo {
         while self.verification_buffer.len() > self.config.verification_buffer_slots {
             let worst = self.verification_rank(false);
             let (pending, _) = self.verification_buffer.remove(worst);
+            self.verification_dropped += 1;
             self.finish_closure_search(ClosureSearchResult::dropped(*pending));
         }
     }
@@ -288,11 +303,12 @@ impl GscPgo {
     fn hold_passed(&self, job: &SearchJob, rounds: usize) -> bool {
         self.advancing_scans >= job.dispatch_scan + job.estimate_scans(rounds)
     }
-    /// Land finished jobs whose hold passed in due order (`now`: all, blocking on unfinished); returns count.
-    fn land_due_closure_searches(&mut self, now: bool) -> usize {
+    /// Land finished jobs whose hold passed (all if `now`; `wait` blocks on unfinished) in due order; returns count.
+    fn land_due_closure_searches(&mut self, wait: bool, now: bool) -> usize {
         let hold = self.config.deterministic() && !now;
         // (due scan, dispatch number, kind)
         let mut due: Vec<(usize, u64, u8)> = Vec::new();
+        let mut waited_s = 0.0;
         for job in &self.closure_searches {
             loop {
                 let seen = job.progress.snapshot();
@@ -308,13 +324,17 @@ impl GscPgo {
                     ));
                     break;
                 }
-                if !now {
+                if !wait {
                     job.late.set(hold);
                     break;
                 }
+                // replay is ahead: wait for it to finish or start another round (which moves its hold)
+                let started = std::time::Instant::now();
                 job.progress.wait_past(seen);
+                waited_s += started.elapsed().as_secs_f64();
             }
         }
+        self.closure_search_wait_s += waited_s;
         due.sort();
         for &(_, order, kind) in &due {
             let index = self

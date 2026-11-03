@@ -780,6 +780,8 @@ pub struct GscPgo {
     pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
+    /// Per finished solve: dispatched keyframes, newest keyframe time, seconds on its thread.
+    pub(crate) solve_records: Vec<(usize, f64, f64)>,
     /// Graph change heat, the keyframe count it was last raised at, and the solve waiting for it to cool.
     pub(crate) heat: f64,
     pub(crate) heat_keyframes: usize,
@@ -819,8 +821,11 @@ pub struct GscPgo {
     pub(crate) sc_arrivals: u64,
     pub(crate) verification_buffer: Vec<(Box<PendingExtension>, u64)>,
     pub(crate) verification_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) sc_dropped: usize,
+    pub(crate) verification_dropped: usize,
     pub(crate) verification_overshoots: usize,
     pub(crate) closure_search_overshoots: usize,
+    pub(crate) closure_search_wait_s: f64,
     /// Scans offered to `add_key_pose`.
     pub(crate) scans_seen: usize,
     /// The running lidar range estimate (`odometry_error_estimate_from_lidar_range`).
@@ -831,12 +836,19 @@ pub struct GscPgo {
     pub(crate) pressure_version: Option<u64>,
     /// The pressure job running or held (`pressure_schedule`).
     pub(crate) pressure_job: Option<crate::pressure_schedule::PressureJob>,
+    /// Graph change heat's cost per adopted solve, measured on its solve's thread (keyframes, seconds).
+    pub(crate) change_cost_calls: Vec<(usize, f64)>,
+    /// Seconds the scan thread blocked joining finished-or-waited-for solves (a lockstep replay's wait, not work).
+    pub(crate) solve_join_wait_s: f64,
+    pub(crate) graph_change_cost_recomputed: usize,
     /// Solves adopted so far: the accepted graph's version (keyframes added since only ride it).
     pub(crate) adopted_solves: u64,
     pub(crate) pressure_requested: bool,
     pub(crate) pressure_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) pressure_calls: Vec<(usize, usize, f64)>,
     pub(crate) pressure_overshoots: usize,
     pub(crate) pressure_late: bool,
+    pub(crate) wait_for_due_jobs: bool,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
     /// `drop_reseen_points`: the previous scan's points (odometry frame, 0.1 mm grid).
@@ -1559,6 +1571,11 @@ impl GscPgo {
         }
     }
 
+    /// Send every closure search's cloud computations through `cache` (recording, or answering from a recording).
+    pub fn set_icp_cache(&mut self, cache: Arc<crate::icp_cache::IcpCache>) {
+        self.icp_cache = Some(cache);
+    }
+
     /// Add a scan's range to the running range estimate and, when it updates, set the odometry error estimate it implies.
     fn follow_lidar_range(&mut self, cloud: &[[f32; 3]]) {
         let range = crate::lidar_range::scan_range(cloud);
@@ -1571,6 +1588,11 @@ impl GscPgo {
         [c.odometry_error_estimate_z_per_sqrt_m, c.odometry_error_estimate_z_per_sqrt_rad] = z;
         [c.odometry_error_estimate_yaw_per_sqrt_m, c.odometry_error_estimate_yaw_per_sqrt_rad] = yaw;
         [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad] = tilt;
+    }
+
+    /// The lidar range estimate (m) the odometry error estimate follows, once known.
+    pub fn lidar_range_estimate_m(&self) -> Option<f64> {
+        self.lidar_range.estimate_m()
     }
 
     /// The stated odometry error estimate in use (per source xy, z, yaw, tilt: [per sqrt m, per sqrt rad]).
@@ -1665,6 +1687,10 @@ impl GscPgo {
             ("extended_icp", t.extended_icp_s),
             ("solve", t.solve_s),
         ]
+    }
+    /// Per finished solve: the keyframes it was dispatched over, its newest keyframe's time, and its seconds.
+    pub fn solve_records(&self) -> &[(usize, f64, f64)] {
+        &self.solve_records
     }
     pub fn closure_diagnostics(&self) -> &[ClosureCandidateDiag] {
         &self.closure_diagnostics
@@ -1881,6 +1907,10 @@ impl GscPgo {
     pub fn translation_offset(&self) -> Vec3 {
         self.translation_offset
     }
+    /// Whether a closure was committed since the last `update`.
+    pub fn has_closure(&self) -> bool {
+        self.new_closure
+    }
 
     /// Stages 1 and 2 for the newest keyframe: it becomes the waiting proposal if its match beats the waiting one (loser: "outranked").
     pub fn propose_closure(&mut self) {
@@ -2049,6 +2079,10 @@ impl GscPgo {
                 self.config.closure_search_radius
             },
         })
+    }
+    /// Search at the newest keyframe as a lockstep replay does: deterministic waits for a job only once its hold passed; fast waits for none.
+    pub fn search_for_closure_pairs(&mut self) {
+        self.step_closure_search(self.config.deterministic());
     }
     /// Apply a `ClosureSearch`'s result: record its diagnostics and commit the closure it accepted.
     pub fn finish_closure_search(&mut self, result: ClosureSearchResult) {

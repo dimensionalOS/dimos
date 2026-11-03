@@ -165,6 +165,8 @@ impl GscPgo {
     pub(crate) fn step_adoption(&mut self, now: bool) -> bool {
         let mut moved = false;
         if let Some(debounced) = self.land_adoption_job::<Debounced>(now) {
+            self.change_cost_calls
+                .push((debounced.finished.keyframes, debounced.seconds));
             let estimate = self.config.deterministic_config.debounce_scans_per_keyframe
                 * self.key_poses.len() as f64;
             self.record_job_ratio("debounce", debounced.seconds, estimate);
@@ -194,6 +196,7 @@ impl GscPgo {
     fn land_adoption_job<T: AdoptionKind>(&mut self, now: bool) -> Option<T> {
         let deterministic = self.config.deterministic();
         let advancing = self.advancing_scans;
+        let wait = self.wait_for_due_jobs || now;
         let job = T::job(self)?;
         let due = advancing >= job.dispatch_scan + hold_scans(job.estimate_raw_scans);
         if deterministic && !due && !now {
@@ -201,16 +204,19 @@ impl GscPgo {
         }
         let mut done = job.slot.done.lock().expect("adoption slot");
         if done.is_none() {
-            if !now {
+            if !(now || (deterministic && wait)) {
                 return None;
             }
+            let started = std::time::Instant::now();
             done = job
                 .slot
                 .changed
                 .wait_while(done, |done| done.is_none())
                 .expect("adoption slot");
+            let waited = started.elapsed().as_secs_f64();
             let result = done.take();
             drop(done);
+            self.closure_search_wait_s += waited;
             T::clear(self);
             return result;
         }

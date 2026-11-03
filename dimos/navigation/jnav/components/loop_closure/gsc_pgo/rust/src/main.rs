@@ -705,7 +705,7 @@ impl Worker {
                 continue;
             }
 
-            pgo.step_closure_search();
+            pgo.step_closure_search(false);
             let moved = pgo.update();
             publisher.send(&pgo, moved, cur_time);
             if moved {
