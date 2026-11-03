@@ -1,12 +1,12 @@
 import type { ChannelSpec, CostmapValue, Session, Slot, VoxelsValue } from "@dimos/sdk";
-import type { Channel } from "../../shared/protocol/streams.ts";
-import type { FrameRecord, FrameSource } from "./base.ts";
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import type { RelayEndpoint } from "../relay.ts";
+import type { Channel } from "#dimos/agents/shared/protocol/streams.ts";
+import type { FrameRecord, FrameSource } from "#dimos/agents/sdk/streams/base.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { RelayEndpoint } from "#dimos/agents/sdk/relay.ts";
 import { inflateCostmap, inflateVoxels } from "@dimos/sdk";
 import sharp from "sharp";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { channelFor, openRelay } from "../relay.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { channelFor, openRelay } from "#dimos/agents/sdk/relay.ts";
 
 type Watching = { spec: ChannelSpec; epoch: number; stop: () => void; converting: boolean; version: number };
 

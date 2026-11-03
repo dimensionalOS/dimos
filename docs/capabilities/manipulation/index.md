@@ -389,7 +389,7 @@ uv sync --extra manipulation --inexact
 
 The Viser panel talks to the concrete `ManipulationOperator` bound into its
 `VisualizationSession`. GUI callbacks enqueue operations through that operator
-for target evaluation, planning, preview, execution, cancellation, reset, and
+for target evaluation, planning, preview, execution, cancellation, and
 clear-plan actions. The panel owns only target drafts, selection state, and
 callback generations; it does not touch `WorldSpec`, IK, planner objects,
 `ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.

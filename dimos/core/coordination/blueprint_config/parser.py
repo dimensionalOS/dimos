@@ -80,11 +80,11 @@ from dimos.core.coordination.blueprint_config.values import (
 )
 from dimos.core.coordination.blueprints import (
     Blueprint,
-    TransportSpec,
     config_key,
     transport_config_name,
 )
 from dimos.core.global_config import GlobalConfig
+from dimos.core.stream import TransportSpec
 
 
 def split_run_arguments(tokens: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:

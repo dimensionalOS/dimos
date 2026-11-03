@@ -1,5 +1,5 @@
 import type { ConversationId, Harness, SubmissionId } from "@earendil-works/pi-durable";
-import type { InputGate } from "./gate.ts";
+import type { InputGate } from "#dimos/agents/harness/inputs/gate.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 
 type QueueKickerOptions = {

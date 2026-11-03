@@ -1,13 +1,13 @@
-import type { AgentPaths } from "./paths.ts";
+import type { AgentPaths } from "#dimos/agents/gateway/config/paths.ts";
 import type { ModelRef } from "@earendil-works/pi-durable";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { ConfigStore } from "./store.ts";
+import { ConfigStore } from "#dimos/agents/gateway/config/store.ts";
 import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-schema";
 import { Value } from "typebox/value";
 import { access, chmod, copyFile, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
-import { readJsonFile } from "./lib/json-file.ts";
+import { readJsonFile } from "#dimos/agents/gateway/config/lib/json-file.ts";
 
 type MigrationResult =
   | { readonly kind: "copied"; readonly files: readonly string[] }

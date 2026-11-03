@@ -7,7 +7,7 @@ import {
   setCellDimensions,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { TerminalImage } from "./terminal-image.ts";
+import { TerminalImage } from "#dimos/agents/frontends/tui/lib/terminal-image.ts";
 import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";

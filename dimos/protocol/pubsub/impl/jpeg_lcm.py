@@ -14,7 +14,7 @@
 
 """JPEG-encoded LCM PubSub.
 
-Split from lcmpubsub.py so that importing PickleLCM / LCM does not
+Split from lcmpubsub.py so that importing CborLCM / LCM does not
 transitively pull in ``dimos.msgs.sensor_msgs.Image`` (and its heavy
 cv2 / rerun dependencies).
 """

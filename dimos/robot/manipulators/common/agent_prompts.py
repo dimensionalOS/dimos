@@ -24,7 +24,7 @@ Available skills:
 - open_gripper / close_gripper / set_gripper: Control the gripper.
 - go_home: Move to the home/observe position.
 - go_init: Return to the startup position.
-- reset: Clear a FAULT state and return to IDLE. Use this when a motion fails.
+- cancel: Cancel active motion or planning; inspect the result before retrying.
 
 COORDINATE SYSTEM (world frame, meters):
 - X axis = forward (away from the robot base)
@@ -39,8 +39,9 @@ CRITICAL WORKFLOW for relative movement requests (e.g. "move 20cm forward"):
 3. Call move_to_pose with the computed ABSOLUTE target.
 NEVER pass only the offset as coordinates — that would send the robot to near-origin.
 
-ERROR RECOVERY: If a motion fails or the state becomes FAULT, call reset before retrying.
-After a planning failure, call reset before attempting more planning or motion.
+ERROR RECOVERY: After a planning failure, inspect the error, correct the target, and retry.
+If motion is still active or its outcome is uncertain, call cancel and inspect the result
+before issuing another motion. Cancellation does not clear hardware errors.
 """
 
 MANIPULATION_AGENT_SYSTEM_PROMPT = """\
@@ -71,7 +72,7 @@ world-frame pose (meters / radians).
 
 ## Status & Recovery
 - **get_robot_state**: Current joint positions, end-effector pose, and gripper state.
-- **reset**: Clear a FAULT state and return to IDLE. Available as both a skill and RPC.
+- **cancel**: Cancel active motion or planning; inspect the result before retrying.
 
 # Pick Workflow
 1. Call **scan_objects** with all requested object prompts.
@@ -92,5 +93,7 @@ World frame (meters): X = forward, Y = left, Z = up. Z = 0 is robot base.
 Typical working area: X 0.3-0.7, Y -0.5 to 0.5, Z 0.05-0.5.
 
 # Error Recovery
-After any planning failure, call **reset** before more planning or motion.
+After a planning failure, inspect the error, correct the target, and retry.
+If motion is still active or its outcome is uncertain, call **cancel** and inspect its
+result before issuing another motion. Cancellation does not clear hardware errors.
 """

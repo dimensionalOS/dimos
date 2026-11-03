@@ -36,6 +36,7 @@ from dimos.core.coordination.worker_messages import (
     WorkerResponse,
 )
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
@@ -44,6 +45,14 @@ if TYPE_CHECKING:
     from dimos.core.module import ModuleBase
 
 logger = setup_logger()
+
+
+def _send(conn: Connection, message: Any) -> None:
+    conn.send_bytes(encode(message))
+
+
+def _recv(conn: Connection) -> Any:
+    return decode(conn.recv_bytes())
 
 
 class ActorFuture:
@@ -66,8 +75,12 @@ class MethodCallProxy:
     def __init__(self, actor: Actor) -> None:
         self._actor = actor
 
-    def __reduce__(self) -> tuple[type, tuple[Actor]]:
-        return (MethodCallProxy, (self._actor,))
+    def cbor_encode(self) -> Actor:
+        return self._actor
+
+    @classmethod
+    def cbor_decode(cls, actor: Actor) -> MethodCallProxy:
+        return cls(actor)
 
     def __getattr__(self, name: str) -> Any:
         # Don't intercept private/dunder attributes - they must follow normal lookup.
@@ -105,25 +118,34 @@ class Actor:
         self._module_id = module_id
         self._lock = lock
 
-    def __reduce__(self) -> tuple[type, tuple[None, None, int, int, None]]:
-        """Exclude the connection, the lock and the module class when pickling.
+    def cbor_encode(self) -> dict[str, int]:
+        """Only the ids cross a process boundary.
 
-        The class would make every receiving process import the module and
-        its dependencies; nothing reads it off an actor that crossed a
-        process boundary.
+        The connection and the lock cannot, and the class would make every
+        receiving process import the module and its dependencies; nothing reads
+        it off an actor that crossed a process boundary.
         """
-        return (Actor, (None, None, self._worker_id, self._module_id, None))
+        return {"worker_id": self._worker_id, "module_id": self._module_id}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, int]) -> Actor:
+        return cls(None, None, data["worker_id"], data["module_id"], None)
 
     def _send_request_to_worker(self, request: WorkerRequest) -> Any:
         if self._conn is None:
             raise RuntimeError("Actor connection not available - cannot send requests")
+        # Encode and decode outside the lock: an unencodable argument raises to the
+        # caller, and a large result is decoded, without holding up the other modules
+        # on this worker.
+        payload = encode(request)
         if self._lock is not None:
             with self._lock:
-                self._conn.send(request)
-                response: WorkerResponse = self._conn.recv()
+                self._conn.send_bytes(payload)
+                reply = self._conn.recv_bytes()
         else:
-            self._conn.send(request)
-            response = self._conn.recv()
+            self._conn.send_bytes(payload)
+            reply = self._conn.recv_bytes()
+        response: WorkerResponse = decode(reply)
         if response.error:
             if "AttributeError" in response.error:  # TODO: better error handling
                 raise AttributeError(response.error)
@@ -202,7 +224,8 @@ class PythonWorker:
     def module_names(self) -> list[str]:
         names = []
         for actor in self._modules.values():
-            # Parent-side actors always carry their class; only pickled copies drop it.
+            # Parent-side actors always carry their class; only copies that crossed a
+            # process boundary drop it.
             assert actor._cls is not None
             names.append(actor._cls.__name__)
         return names
@@ -239,9 +262,11 @@ class PythonWorker:
 
         request = DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs)
         try:
+            payload = encode(request)
             with self._lock:
-                self._conn.send(request)
-                response: WorkerResponse = self._conn.recv()
+                self._conn.send_bytes(payload)
+                reply = self._conn.recv_bytes()
+            response: WorkerResponse = decode(reply)
 
             if response.error:
                 raise RuntimeError(f"Failed to deploy module: {response.error}")
@@ -266,8 +291,8 @@ class PythonWorker:
             raise RuntimeError("Worker process not started")
 
         with self._lock:
-            self._conn.send(UndeployModuleRequest(module_id=module_id))
-            response: WorkerResponse = self._conn.recv()
+            _send(self._conn, UndeployModuleRequest(module_id=module_id))
+            response: WorkerResponse = _recv(self._conn)
 
         if response.error:
             raise RuntimeError(f"Failed to undeploy module: {response.error}")
@@ -279,8 +304,8 @@ class PythonWorker:
             return
         try:
             with self._lock:
-                self._conn.send(SuppressConsoleRequest())
-                self._conn.recv()
+                _send(self._conn, SuppressConsoleRequest())
+                _recv(self._conn)
         except (BrokenPipeError, EOFError, ConnectionResetError):
             pass
 
@@ -288,9 +313,9 @@ class PythonWorker:
         if self._conn is not None:
             try:
                 with self._lock:
-                    self._conn.send(ShutdownRequest())
+                    _send(self._conn, ShutdownRequest())
                     if self._conn.poll(timeout=5):
-                        self._conn.recv()
+                        _recv(self._conn)
                     else:
                         logger.warning(
                             "Worker did not respond to shutdown within 5s, closing pipe.",
@@ -476,11 +501,13 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
         try:
             if not conn.poll(timeout=0.1):
                 continue
-            request = conn.recv()
+            payload = conn.recv_bytes()
         except EOFError:
             break
 
+        request: Any = None
         try:
+            request = decode(payload)
             response = _handle_request(request, state)
         except Exception as e:
             response = WorkerResponse(
@@ -488,18 +515,20 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
             )
 
         try:
-            conn.send(response)
+            _send(conn, response)
         except (BrokenPipeError, EOFError):
             break
         except Exception as e:
-            # A result that cannot be pickled must not take the worker with it.
+            # A result that cannot be encoded must not take the worker with it.
             logger.error(
                 "Worker response could not be sent",
                 worker_id=state.worker_id,
+                request=type(request).__name__,
+                name=getattr(request, "name", None),
                 error_repr=repr(e),
             )
             try:
-                conn.send(WorkerResponse(error=f"{e.__class__.__name__}: {e}"))
+                _send(conn, WorkerResponse(error=f"{e.__class__.__name__}: {e}"))
             except (BrokenPipeError, EOFError):
                 break
 
