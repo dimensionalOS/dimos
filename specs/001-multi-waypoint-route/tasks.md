@@ -83,13 +83,13 @@ Python under `dimos/`, docs under `docs/`. Every new `.py` file needs the licens
 
 ### Tests for User Story 2
 
-- [ ] T021 [P] [US2] Add failing tests to `dimos/navigation/route_follower/test_module.py`: `remove` with an out-of-range index leaves the route unchanged and sets `message`; the 21st waypoint click is refused with a message (FR-015); `remove`, `clear` and `set_mode` edits while running leave the waypoint list unchanged and `remove`/`clear` set the "stop the route first" message; after `remove` the published state is renumbered 1..N.
-- [ ] T022 [P] [US2] Add failing tests to `dimos/navigation/route_follower/test_control_layout.py` and `test_control_window.py`: clicking a row's remove control emits `remove` with that index; Clear emits `clear`; both are disabled while `running`; Start is disabled after Clear.
+- [x] T021 [P] [US2] Add failing tests to `dimos/navigation/route_follower/test_module.py`: `remove` with an out-of-range index leaves the route unchanged and sets `message`; the 21st waypoint click is refused with a message (FR-015); `remove`, `clear` and `set_mode` edits while running leave the waypoint list unchanged and `remove`/`clear` set the "stop the route first" message; after `remove` the published state is renumbered 1..N.
+- [x] T022 [P] [US2] Add failing tests to `dimos/navigation/route_follower/test_control_layout.py` and `test_control_window.py`: clicking a row's remove control emits `remove` with that index; Clear emits `clear`; both are disabled while `running`; Start is disabled after Clear.
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Implement the refusal rules and message texts in `dimos/navigation/route_follower/route.py` and the `remove`/`clear` handlers in `dimos/navigation/route_follower/module.py` so T021 passes.
-- [ ] T024 [US2] Add per-row remove controls and the Clear button to `dimos/navigation/route_follower/control_window.py` and `control_layout.py` so T022 passes.
+- [x] T023 [US2] Implement the refusal rules and message texts in `dimos/navigation/route_follower/route.py` and the `remove`/`clear` handlers in `dimos/navigation/route_follower/module.py` so T021 passes.
+- [x] T024 [US2] Add per-row remove controls and the Clear button to `dimos/navigation/route_follower/control_window.py` and `control_layout.py` so T022 passes.
 
 **Checkpoint**: Stories 1 and 2 work together (quickstart S3).
 
@@ -103,15 +103,15 @@ Python under `dimos/`, docs under `docs/`. Every new `.py` file needs the licens
 
 ### Tests for User Story 3
 
-- [ ] T025 [P] [US3] Add failing tests to `dimos/navigation/route_follower/test_module.py`: `stop` publishes `Bool(True)` on `route_stop` and ends the route `stopped` with unreached waypoints still `pending`; the planner's resulting `goal_reached(False)` does not turn into `failed`; a `stop_seen(True)` the follower did not publish ends a running route `interrupted` (teleop, FR-012); a `goal_seen` that does not match the last goal the follower published ends it `interrupted` (agent, patrol, exploration); the follower's own goals on `goal_seen` do not interrupt; `stop` works in every status.
-- [ ] T026 [P] [US3] Add failing tests to `dimos/navigation/route_follower/test_module.py` for the watchdog: with a running route and no command for `heartbeat_timeout_s` (use a short configured value and an event or bounded poll, never a fixed sleep) the follower stops advancing, the current leg completes, and status becomes `held`; arrival at an intermediate held waypoint is not `completed`; `keepalive` resets the timer; `start` on a `held` route resumes from the first waypoint not yet reached; silence also sets `add_mode` to false whether or not a route runs.
-- [ ] T027 [P] [US3] Add failing tests to `dimos/navigation/route_follower/test_control_window.py` and `test_control_layout.py`: Stop emits `stop` and is enabled while `running` or `held`; a `keepalive` is emitted about once per second only while the window is open (use an injectable clock, no real sleeps); status text shows `stopped`, `interrupted`, `held` and `completed` distinctly; a close request while `running` is ignored and shows "stop the route first"; after `show_window()` a hidden window is visible again with the current state.
+- [x] T025 [P] [US3] Add failing tests to `dimos/navigation/route_follower/test_module.py`: `stop` publishes `Bool(True)` on `route_stop` and ends the route `stopped` with unreached waypoints still `pending`; the planner's resulting `goal_reached(False)` does not turn into `failed`; a `stop_seen(True)` the follower did not publish ends a running route `interrupted` (teleop, FR-012); a `goal_seen` that does not match the last goal the follower published ends it `interrupted` (agent, patrol, exploration); the follower's own goals on `goal_seen` do not interrupt; `stop` works in every status.
+- [x] T026 [P] [US3] Add failing tests to `dimos/navigation/route_follower/test_module.py` for the watchdog: with a running route and no command for `heartbeat_timeout_s` (use a short configured value and an event or bounded poll, never a fixed sleep) the follower stops advancing, the current leg completes, and status becomes `held`; arrival at an intermediate held waypoint is not `completed`; `keepalive` resets the timer; `start` on a `held` route resumes from the first waypoint not yet reached; silence also sets `add_mode` to false whether or not a route runs.
+- [x] T027 [P] [US3] Add failing tests to `dimos/navigation/route_follower/test_control_window.py` and `test_control_layout.py`: Stop emits `stop` and is enabled while `running` or `held`; a `keepalive` is emitted about once per second only while the window is open (use an injectable clock, no real sleeps); status text shows `stopped`, `interrupted`, `held` and `completed` distinctly; a close request while `running` is ignored and shows "stop the route first"; after `show_window()` a hidden window is visible again with the current state.
 
 ### Implementation for User Story 3
 
-- [ ] T028 [US3] Implement stop handling in `dimos/navigation/route_follower/module.py`: a "stop pending" guard set before publishing `route_stop` so the planner's matching `goal_reached(False)` is ignored; `interrupted` detection from `stop_seen` and `goal_seen` (compare against the follower's last published goal by position within 5 cm and a timestamp window, not exact equality, because message encoding rounds the time). If the viewer sends idle zero-twist messages that make `MovementManager` publish `stop_movement` (it cancels the goal on any `tele_cmd_vel` message), ignore a `stop_seen` that arrives within 100 ms of a zero `tele_cmd_vel` with no nonzero command. Add the `stopped` and `interrupted` transitions to `dimos/navigation/route_follower/route.py`. Makes T025 pass.
-- [ ] T029 [US3] Implement the heartbeat watchdog in `dimos/navigation/route_follower/module.py` (track last command time with `time.monotonic()`, a tracked thread joined in `stop()`, a `threading.Event` stop flag) and the `held` transition, resume, and add-mode reset in `dimos/navigation/route_follower/route.py`. Makes T026 pass.
-- [ ] T030 [US3] Add the Stop button, the 1 Hz keepalive and the distinct status text to `dimos/navigation/route_follower/control_window.py` and `control_layout.py`. Makes T027 pass.
+- [x] T028 [US3] Implement stop handling in `dimos/navigation/route_follower/module.py`: a "stop pending" guard set before publishing `route_stop` so the planner's matching `goal_reached(False)` is ignored; `interrupted` detection from `stop_seen` and `goal_seen` (compare against the follower's last published goal by position within 5 cm and a timestamp window, not exact equality, because message encoding rounds the time). If the viewer sends idle zero-twist messages that make `MovementManager` publish `stop_movement` (it cancels the goal on any `tele_cmd_vel` message), ignore a `stop_seen` that arrives within 100 ms of a zero `tele_cmd_vel` with no nonzero command. Add the `stopped` and `interrupted` transitions to `dimos/navigation/route_follower/route.py`. Makes T025 pass.
+- [x] T029 [US3] Implement the heartbeat watchdog in `dimos/navigation/route_follower/module.py` (track last command time with `time.monotonic()`, a tracked thread joined in `stop()`, a `threading.Event` stop flag) and the `held` transition, resume, and add-mode reset in `dimos/navigation/route_follower/route.py`. Makes T026 pass.
+- [x] T030 [US3] Add the Stop button, the 1 Hz keepalive and the distinct status text to `dimos/navigation/route_follower/control_window.py` and `control_layout.py`. Makes T027 pass.
 
 **Checkpoint**: Quickstart S4, S6, S7, S8, S9, S11, S12 pass in simulation.
 
@@ -125,13 +125,13 @@ Python under `dimos/`, docs under `docs/`. Every new `.py` file needs the licens
 
 ### Tests for User Story 4
 
-- [ ] T031 [P] [US4] Add failing tests to `dimos/navigation/route_follower/test_module.py`: `goal_reached(False)` with no follower stop pending, no outside stop and no outside goal marks the current waypoint `failed`, sets status `failed`, sets `message` naming the waypoint number, and publishes no further `route_goal`; a failure on waypoint 1 and on a middle waypoint behave the same; the failed state is published within one state publication.
-- [ ] T032 [P] [US4] Add a failing test to `dimos/navigation/route_follower/test_control_window.py` that a `failed` state shows the failed waypoint and the message, and that Start is available again after the next edit.
+- [x] T031 [P] [US4] Add failing tests to `dimos/navigation/route_follower/test_module.py`: `goal_reached(False)` with no follower stop pending, no outside stop and no outside goal marks the current waypoint `failed`, sets status `failed`, sets `message` naming the waypoint number, and publishes no further `route_goal`; a failure on waypoint 1 and on a middle waypoint behave the same; the failed state is published within one state publication.
+- [x] T032 [P] [US4] Add a failing test to `dimos/navigation/route_follower/test_control_window.py` that a `failed` state shows the failed waypoint and the message, and that Start is available again after the next edit.
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] Implement the failure transition in `dimos/navigation/route_follower/module.py` and `dimos/navigation/route_follower/route.py` per research.md R6. Makes T031 pass.
-- [ ] T034 [US4] Show the failed waypoint and message in `dimos/navigation/route_follower/control_window.py` and `control_layout.py`. Makes T032 pass.
+- [x] T033 [US4] Implement the failure transition in `dimos/navigation/route_follower/module.py` and `dimos/navigation/route_follower/route.py` per research.md R6. Makes T031 pass.
+- [x] T034 [US4] Show the failed waypoint and message in `dimos/navigation/route_follower/control_window.py` and `control_layout.py`. Makes T032 pass.
 
 **Checkpoint**: All four stories work; quickstart S1 to S12 pass in simulation.
 
@@ -139,12 +139,12 @@ Python under `dimos/`, docs under `docs/`. Every new `.py` file needs the licens
 
 ## Phase 7: Polish and cross-cutting
 
-- [ ] T035 [P] Document the route feature in a new page under `docs/capabilities/navigation/` (and a link from `docs/usage/visualization.md`): how to run `unitree-go2-route`, what each Route window control does, how clicks behave with add-waypoints on and off. Runnable example blocks, no em dashes, links that pass `doclinks`. Name the extra that provides pygame, how to reopen the Route window with `show_window()` from `dimos shell`, and that the window forces the X11 video driver (needs XWayland on a Wayland-only desktop).
-- [ ] T036 Regenerate the registry with `uv run pytest dimos/robot/test_all_blueprints_generation.py` so `dimos/robot/all_blueprints.py` includes `route_follower`, `route_control` and `unitree-go2-route` (never edit it by hand).
-- [ ] T037 [P] Run `uv run mypy dimos/`, `ruff format` and `ruff check`, and fix findings in the files this feature touched.
+- [x] T035 [P] Document the route feature in a new page under `docs/capabilities/navigation/` (and a link from `docs/usage/visualization.md`): how to run `unitree-go2-route`, what each Route window control does, how clicks behave with add-waypoints on and off. Runnable example blocks, no em dashes, links that pass `doclinks`. Name the extra that provides pygame, how to reopen the Route window with `show_window()` from `dimos shell`, and that the window forces the X11 video driver (needs XWayland on a Wayland-only desktop).
+- [x] T036 Regenerate the registry with `uv run pytest dimos/robot/test_all_blueprints_generation.py` so `dimos/robot/all_blueprints.py` includes `route_follower`, `route_control` and `unitree-go2-route` (never edit it by hand).
+- [x] T037 [P] Run `uv run mypy dimos/`, `ruff format` and `ruff check`, and fix findings in the files this feature touched.
 - [ ] T038 Run the automated checks and simulation steps S1 to S12 and the replay steps from `specs/001-multi-waypoint-route/quickstart.md`; fix any failures. Record the measured minimum speed between waypoints (SC-002) and the measured Stop-to-stationary time (SC-004) in the PR description.
 - [ ] T039 Run hardware stages A to F from `specs/001-multi-waypoint-route/quickstart.md` on the Go2 PRO with a person at the manual emergency stop, and record stage, date and outcome in the PR description (constitution III). Tune `pass_radius_m` and `heartbeat_timeout_s` here if needed, and check on the robot that the held rule (3 s of window silence, finish the leg, stop at that waypoint) feels right; the rule itself is confirmed.
-- [ ] T040 Confirm the Constitution Check in `specs/001-multi-waypoint-route/plan.md` still passes, then open the PR to `main` after one batched push.
+- [x] T040 Confirm the Constitution Check in `specs/001-multi-waypoint-route/plan.md` still passes, then open the PR to `main` after one batched push.
 
 ---
 
