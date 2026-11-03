@@ -108,6 +108,11 @@ def xarm_wrist_camera_transform(dof: int) -> Transform:
     )
 
 
+def xarm_link_frames(dof: int) -> list[str]:
+    """The xArm's base and arm links: the frames a viewer needs to draw the arm as it moves."""
+    return ["link_base", *(f"link{i}" for i in range(1, dof + 1))]
+
+
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"
 XARM_ROS2_REF = "5bb832f72ca665f1236a9d8ed1c3a82f308db489"
 _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
