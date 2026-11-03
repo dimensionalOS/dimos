@@ -135,8 +135,6 @@ class PGOConfig(NativeModuleConfig):
     closure_yank_drift_range: float = 100.0
     # skip an extension candidate a full stack of scans could not carry
     closure_extension_skip_unreachable: bool = True
-    # reject before ICP a candidate no stack of scans could give enough evidence for
-    closure_yank_pre_check: bool = False
     # evidence / required (yank units): <= barely_fail reject, >= barely_pass accept, else extend (fail < 1 < pass)
     barely_fail_uncertainty_range: float = 0.05
     barely_pass_uncertainty_range: float = 3.0
