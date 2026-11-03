@@ -739,7 +739,7 @@ impl Default for Config {
             graph_change_heat_decay: 0.995,
             solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
-            solver_fast_path_enabled: true,
+            solver_fast_path_enabled: false,
             solver_fast_path_max_keyframes: 1000,
             solver_fast_path_max_lm_steps: 10,
             fast_match_workers: 2,
