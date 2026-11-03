@@ -78,7 +78,6 @@ That's it. dimOS connects via WebRTC (no jailbreak required), starts the full na
 | **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
 | **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
 | **ReplanningAStarPlanner** | Continuous A* path planning with dynamic replanning |
-| **WavefrontFrontierExplorer** | Autonomous exploration of unmapped areas |
 | **RerunBridge** | 3D visualization in browser |
 | **WebsocketVis** | Command center at localhost:7779 |
 
