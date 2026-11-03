@@ -339,6 +339,7 @@ def generate_dataset(
             detector_model: object | None = None
             catalog: OpenVocabDetectionCatalog | LocalizeSightingCatalog | None = None
             detector: ObjectDetector
+            author: QuestionAuthor
             try:
                 if localize_result is not None:
                     # Reuse Dan 2D sightings — no second OWL for image families.
@@ -354,7 +355,7 @@ def generate_dataset(
                 elif config.question_author == "openai":
                     author_model = OpenAIVlModel()
                     detector_model = MoondreamVlModel()
-                    author: QuestionAuthor = OpenAIQuestionAuthor(author_model)
+                    author = OpenAIQuestionAuthor(author_model)
                     detector = detector_model
                     model_names = {
                         "author": author_model.config.model_name,
