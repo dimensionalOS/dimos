@@ -35,10 +35,22 @@ from dimos.evals.vqa.primitives.cross_view_identity import (
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 
-def _image(width: int = 200, height: int = 200, ts: float = 1.0) -> Image:
+def _image(
+    width: int = 200,
+    height: int = 200,
+    ts: float = 1.0,
+    *,
+    fill: tuple[int, int, int] = (40, 40, 40),
+) -> Image:
     rgb = np.zeros((height, width, 3), dtype=np.uint8)
-    rgb[:, :] = (40, 40, 40)
+    rgb[:, :] = fill
     return Image.from_numpy(rgb, format=ImageFormat.RGB, frame_id="camera_optical", ts=ts)
+
+
+def _fill_for_instance(instance_id: str) -> tuple[int, int, int]:
+    """Distinct full-frame RGB so diff pairs are not rejected as identical frames."""
+    digest = sum(ord(ch) for ch in instance_id) % 180
+    return (40 + digest, 80 + (digest // 2), 120)
 
 
 def _view(
@@ -55,7 +67,7 @@ def _view(
     return SightingView(
         query=query,
         instance_id=instance_id,
-        image=_image(ts=ts),
+        image=_image(ts=ts, fill=_fill_for_instance(instance_id)),
         bbox=bbox,
         confidence=confidence,
         timestamp=ts,

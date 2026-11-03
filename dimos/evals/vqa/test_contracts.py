@@ -1821,7 +1821,10 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     assert run["generation"]["start"] == 1
     assert run["generation"]["stop"] == 5
     assert run["generation"]["stride"] == 2
-    assert run["configuration"] == {"synchronization_tolerance_s": 0.025}
+    assert run["configuration"]["synchronization_tolerance_s"] == 0.025
+    assert run["configuration"]["diversity_max_per_category"] == 2
+    assert run["configuration"]["diversity_max_per_family_category"] == 1
+    assert "diversity" not in run  # image-only path does not thin
     assert run["models"] == {
         "author": "gpt-4o-mini",
         "detector": "vikhyatk/moondream2",

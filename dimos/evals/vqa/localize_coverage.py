@@ -86,6 +86,10 @@ def coverage_category(
         return f"{left}|{right}"
     if not object_names:
         return "unknown"
+    # Image families use bare display names ("left person"); only localize
+    # referents go through parse_referent (nearest / next to / …).
+    if family not in _LOCALIZE_FAMILIES:
+        return object_names[0].casefold()
     return parse_referent(object_names[0]).category.casefold()
 
 

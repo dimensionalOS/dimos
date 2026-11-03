@@ -43,6 +43,7 @@ from dimos.evals.vqa.contracts import (
     InsufficientEvidenceError,
     InvalidQuestionProposalError,
     NonEmptyString,
+    ObjectDetector,
     ObjectMaskEstimator,
     ObjectRangeEstimator,
     QuestionProposal,
@@ -93,7 +94,6 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.evals.vqa.localize_evidence import LocalizeEvidenceDocument
     from dimos.evals.vqa.localize_recording import LocalizeWindowResult
-    from dimos.models.vl.base import VlModel
 
 logger = setup_logger()
 
@@ -368,6 +368,7 @@ def generate_dataset(
             author_model: object | None = None
             detector_model: object | None = None
             catalog: OpenVocabDetectionCatalog | LocalizeSightingCatalog | None = None
+            detector: ObjectDetector
             try:
                 if config.question_author == "openai":
                     author_model = OpenAIVlModel()
@@ -484,7 +485,7 @@ def generate_frames_dataset(
     request: GenerationRequest,
     frames: Iterable[GenerationFrame],
     author: QuestionAuthor,
-    detector: VlModel,
+    detector: ObjectDetector,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
     *,
@@ -558,7 +559,9 @@ def generate_frames_dataset(
                     used_family_names.add("cross_view_same_object")
 
             diversity_stats: dict[str, object] | None = None
-            if all_cases:
+            # Diversity thinning is for large with-localize publishes; keep every
+            # case on image-only / unit-test paths that do not opt into it.
+            if request.with_localize and all_cases:
                 all_cases, all_labels, diversity_stats = _apply_diversity_budget(
                     generated_frames,
                     all_cases,
@@ -756,7 +759,7 @@ def _materialize_cross_view_clips(
 def _generate_frame(
     source: GenerationFrame,
     author: QuestionAuthor,
-    detector: VlModel,
+    detector: ObjectDetector,
     range_estimator: ObjectRangeEstimator | None,
     mask_estimator: ObjectMaskEstimator | None,
 ) -> tuple[_GeneratedFrame, Image]:

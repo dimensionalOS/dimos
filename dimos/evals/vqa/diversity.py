@@ -98,8 +98,14 @@ def difficulty_for(
         return 0.9 if ans == "yes" else 0.35
     if family == "cross_view_same_object":
         return 0.7 if ans == "yes" else 0.9
-    # Prefer nearest / next-to referents slightly over bare names.
-    if object_names:
+    # Prefer nearest / next-to localize referents slightly over bare names.
+    # Image-family labels like "left person" are not localize referents.
+    if family in {
+        "ego_fore_aft",
+        "ego_turn",
+        "ego_any_fore_aft",
+        "height_order",
+    } and object_names:
         selector = parse_referent(object_names[0]).selector
         if selector == "next_to":
             return 0.85

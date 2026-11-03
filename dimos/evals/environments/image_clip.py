@@ -24,7 +24,7 @@ from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.types import RunningEnvironment
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
 
 _MULTI_STREAM_NAMES = ("first_clip", "second_clip", "third_clip", "fourth_clip")
 
@@ -53,7 +53,7 @@ class ImageClip(Environment):
         artifact_names = ("clip",) if len(paths) == 1 else _MULTI_STREAM_NAMES[: len(paths)]
         super().__init__(paths=paths, agent_artifacts=artifact_names, **kwargs)
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalSubject) -> None:
         from dimos.evals.vqa.clip import CLIP_ASSET_MAX_FRAMES, load_clip_manifest
 
         if agent.config.modules:

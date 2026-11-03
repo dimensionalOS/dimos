@@ -25,6 +25,7 @@ from dimos.evals.vqa.contracts import (
     FamilyName,
     FamilySpec,
     InsufficientEvidenceError,
+    ObjectDetector,
     ObjectMaskEstimator,
     ObjectRangeEstimator,
     QuestionProposal,
@@ -44,7 +45,6 @@ from dimos.evals.vqa.primitives.localize_scene import (
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
-    from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -174,7 +174,7 @@ def _family_spec(name: FamilyName) -> FamilySpec:
 def answer_question(
     proposal: QuestionProposal,
     image: Image,
-    detector: VlModel,
+    detector: ObjectDetector,
     pointcloud_frame: PointCloudFrame | None = None,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
@@ -234,7 +234,7 @@ def answer_question(
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
-def _answer_presence(proposal: QuestionProposal, image: Image, detector: VlModel) -> FamilyAnswer:
+def _answer_presence(proposal: QuestionProposal, image: Image, detector: ObjectDetector) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)
     if not detections.detections:
@@ -254,7 +254,7 @@ def _answer_presence(proposal: QuestionProposal, image: Image, detector: VlModel
 
 
 def _answer_horizontal_direction(
-    proposal: QuestionProposal, image: Image, detector: VlModel
+    proposal: QuestionProposal, image: Image, detector: ObjectDetector
 ) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)
@@ -289,7 +289,7 @@ def _answer_horizontal_direction(
 
 
 def _answer_object_count(
-    proposal: QuestionProposal, image: Image, detector: VlModel
+    proposal: QuestionProposal, image: Image, detector: ObjectDetector
 ) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)

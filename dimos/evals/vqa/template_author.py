@@ -22,7 +22,7 @@ from typing import Any, Protocol
 
 import torch
 
-from dimos.evals.vqa.contracts import FamilySpec, QuestionProposal
+from dimos.evals.vqa.contracts import FamilyName, FamilySpec, QuestionProposal
 from dimos.evals.vqa.primitives.cross_view_identity import SightingView
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
@@ -66,7 +66,7 @@ def proposals_from_detected_names(
 
     out: list[QuestionProposal] = []
 
-    def _add(family: str, object_names: tuple[str, ...]) -> None:
+    def _add(family: FamilyName, object_names: tuple[str, ...]) -> None:
         spec = available.get(family)
         if spec is None:
             return

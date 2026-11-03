@@ -274,10 +274,9 @@ def select_quality_indices(
     ts_to_index = {obs.ts: start + offset for offset, obs in enumerate(ranged)}
 
     brightness_floor = float("-inf") if min_brightness is None else min_brightness
-    bright = (obs for obs in ranged if obs.data.brightness > brightness_floor)
-    selected_obs = cast(
-        "list[Observation[Image]]",
-        list(QualityWindow(lambda img: img.sharpness, window=quality_window)(bright)),
+    bright = [obs for obs in ranged if obs.data.brightness > brightness_floor]
+    selected_obs = list(
+        QualityWindow[Image](lambda img: img.sharpness, window=quality_window)(iter(bright))
     )
     indices: list[int] = []
     for obs in selected_obs:
