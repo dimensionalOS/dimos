@@ -135,6 +135,7 @@ config! {
     soft_pressure_decades: f64,
     graph_simplify: bool,
     graph_simplify_frontier_keyframes: usize,
+    graph_simplify_pass_gap_keyframes: usize,
     graph_simplify_place_radius_m: f64,
     graph_simplify_localized_keyframes: usize,
     graph_simplify_closures_per_pair: usize,

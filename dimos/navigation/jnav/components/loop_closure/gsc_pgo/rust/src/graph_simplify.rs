@@ -18,7 +18,8 @@
 //! Each keyframe gets a fixed placement once it leaves the frontier (the newest `graph_simplify_frontier_keyframes`) and an
 //! adopted solve has placed it:
 //! - kept: its own node in every later solve (it keeps its cloud and descriptor, so loops can still close onto it);
-//! - removed: it lies within `graph_simplify_place_radius_m` of a keyframe kept on an older pass, and a closure the newest
+//! - removed: it lies within `graph_simplify_place_radius_m` of a keyframe kept on an older pass (at least
+//!   `graph_simplify_pass_gap_keyframes` before it), and a closure the newest
 //!   solve kept is within `graph_simplify_localized_keyframes` of it (the map has localized this stretch). It rides that
 //!   kept keyframe rigidly at the offset the adopted graph gave it, its cloud and descriptor are freed, and it is no closure
 //!   target any more.
@@ -488,7 +489,7 @@ impl GscPgo {
     /// Place keyframe `k` (see the module) from the adopted graph.
     fn decide(&mut self, k: usize) {
         let radius = self.config.graph_simplify_place_radius_m.max(1e-3);
-        let frontier = self.config.graph_simplify_frontier_keyframes.max(1);
+        let pass_gap = self.config.graph_simplify_pass_gap_keyframes;
         let localized_within = self.config.graph_simplify_localized_keyframes;
         let here = self.key_poses.global(k);
         let localized = {
@@ -505,7 +506,7 @@ impl GscPgo {
                     for dz in -1..=1 {
                         let key = [centre[0] + dx, centre[1] + dy, centre[2] + dz];
                         for &kept in self.simplify.cells.get(&key).into_iter().flatten() {
-                            if kept + frontier >= k {
+                            if kept + pass_gap >= k {
                                 continue;
                             }
                             let d = mat3::norm(&mat3::sub(&self.key_poses.position(kept), &here.1));

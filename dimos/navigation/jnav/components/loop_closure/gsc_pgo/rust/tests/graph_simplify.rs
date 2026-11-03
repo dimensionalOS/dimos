@@ -25,6 +25,7 @@ fn run(simplify: bool) -> (Vec<[f64; 3]>, usize, usize, Vec<[f64; 3]>) {
         odometry_error_estimate_from_lidar_range: false,
         graph_simplify: simplify,
         graph_simplify_frontier_keyframes: 15,
+        graph_simplify_pass_gap_keyframes: 15,
         graph_simplify_localized_keyframes: 40,
         ..Config::default()
     };
