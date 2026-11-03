@@ -35,6 +35,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.calibration.store import load_hand_eye
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -114,12 +115,16 @@ XARM_GRASP_FRAME_TO_TCP = (
 def _wrist_camera(dof: int) -> Transform:
     """Where the wrist RealSense sits on the arm's last link, from hand-eye calibration.
 
-    Measured on the xArm7's link7; the xArm6 gets the same numbers on link6, not
-    measured there.
+    A calibration run on this machine (``dimos run xarm{dof}-handeye-calibrate``, stored
+    under STATE_DIR/calibration) wins. Otherwise the numbers measured on the xArm7's
+    link7, which the xArm6 gets on link6, not measured there.
 
     Args:
         dof: The arm's joint count: 7 for the xArm7, 6 for the xArm6.
     """
+    calibrated = load_hand_eye(f"xarm{dof}_wrist_camera")
+    if calibrated is not None:
+        return calibrated
     # RealSenseCamera publishes only its own subtree, so without this edge
     # camera_link has no parent, nothing resolves into world, and every cloud the
     # camera produces is silently unusable. The last link is a frame the model
