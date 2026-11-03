@@ -30,6 +30,8 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
@@ -82,6 +84,28 @@ XARM_HEURISTIC_AIM = {
     "fingertip_reach": 0.0031,
     "palm_behind_tcp": 0.0499,
 }
+
+
+def xarm_wrist_camera_transform(dof: int) -> Transform:
+    """Where the wrist RealSense sits on the arm's last link, from hand-eye calibration.
+
+    Measured on the xArm7's link7; the xArm6 gets the same numbers on link6, not
+    measured there.
+
+    Args:
+        dof: The arm's joint count: 7 for the xArm7, 6 for the xArm6.
+    """
+    # RealSenseCamera publishes only its own subtree, so without this edge
+    # camera_link has no parent, nothing resolves into world, and every cloud the
+    # camera produces is silently unusable. The last link is a frame the model
+    # already publishes, so ManipulationModule emits the whole chain from one
+    # loop at one rate.
+    return Transform(
+        translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
+        rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+        frame_id=f"link{dof}",
+        child_frame_id="camera_link",
+    )
 
 
 XARM_ROS2_REPO = "https://github.com/xArm-Developer/xarm_ros2"

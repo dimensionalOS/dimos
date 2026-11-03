@@ -34,8 +34,11 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import FeatureSpec
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.xarm.config import xarm_wrist_camera_transform
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
@@ -53,21 +56,63 @@ class _CollectionRealSenseCamera(RealSenseCamera):
     config: _CollectionRealSenseConfig
 
 
-def _camera_if_real() -> tuple[Blueprint, ...]:
+def _camera_if_real(*, pointcloud: bool) -> tuple[Blueprint, ...]:
     """Real RealSense only off-sim. In `--simulation` the teleop coordinator's
     MujocoSimModule already publishes color_image on /camera/color_image, so a
-    real camera would be redundant (and fail with no device connected)."""
+    real camera would be redundant (and fail with no device connected).
+
+    Args:
+        pointcloud: Also publish the depth point cloud (for the 3D view; not recorded).
+    """
     if global_config.simulation:
         return ()
     return (
         _CollectionRealSenseCamera.blueprint(
-            instance_name="RealSenseCamera", enable_pointcloud=False
+            instance_name="RealSenseCamera", enable_pointcloud=pointcloud
         ),
     )
 
 
-def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple[Blueprint, ...]:
-    producers = autoconnect(teleop, *_camera_if_real())
+def _planner_with_camera_mount(teleop: Blueprint, mount: Transform) -> Blueprint:
+    """The teleop stack's planner again, also publishing where the camera sits on the arm.
+
+    Composed after the teleop stack, it replaces that stack's planner, so the
+    camera's point cloud has a place in the world and shows in the 3D view.
+
+    Args:
+        teleop: The teleop stack whose ManipulationModule this copies.
+        mount: The camera's pose on an arm link: frame_id is the link,
+            child_frame_id the camera's frame.
+    """
+    planner = next(atom for atom in teleop.active_blueprints if atom.module is ManipulationModule)
+    model = planner.kwargs["model"]
+    return ManipulationModule.blueprint(
+        **{
+            **planner.kwargs,
+            "model": model.model_copy(
+                update={"tf_extra_links": [*model.tf_extra_links, mount.frame_id]}
+            ),
+            "static_transforms": [mount],
+        }
+    )
+
+
+def _collection_components(
+    robot: str, teleop: Blueprint, *, task: str, camera_mount: Transform | None = None
+) -> tuple[Blueprint, ...]:
+    """The recorder, the episode monitor and the teleop stack with its camera.
+
+    Args:
+        camera_mount: Where the real camera sits on the arm. With it the camera
+            also publishes its point cloud, placed in the world for the 3D view.
+    """
+    real_camera = _camera_if_real(pointcloud=camera_mount is not None)
+    mounted = (
+        (_planner_with_camera_mount(teleop, camera_mount),)
+        if real_camera and camera_mount is not None
+        else ()
+    )
+    producers = autoconnect(teleop, *real_camera, *mounted)
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )
@@ -112,7 +157,12 @@ def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple
 
 
 learning_collect_webxr_xarm7 = autoconnect(
-    *_collection_components("xarm7", teleop_webxr_xarm7, task="Teleoperate the xArm")
+    *_collection_components(
+        "xarm7",
+        teleop_webxr_xarm7,
+        task="Teleoperate the xArm",
+        camera_mount=xarm_wrist_camera_transform(7),
+    )
 )
 learning_collect_webxr_piper = autoconnect(
     *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")
