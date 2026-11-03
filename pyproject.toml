@@ -246,7 +246,7 @@ web = [
     "jinja2>=3.1.6",
     "av>=16.1",  # browser audio decode (stream/audio/decode.py)
     "soundfile",
-    "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
+    "aioquic==1.3.0",  # Ordered stream credit/pacing use the tested QUIC internals
 ]
 
 perception = [
@@ -712,6 +712,7 @@ ignore = [
 # Wire-protocol/manifest mirrors: model field names are the wire names
 # (camelCase, pinned to the TS side by the golden fixtures).
 "dimos/web/relay_bridge/protocol.py" = ["N815"]
+"dimos/web/relay_bridge/topic_protocol.py" = ["N815"]
 "dimos/web/relay_bridge/manifest.py" = ["N815"]
 "experimental/gateway/routes/*.py" = ["N815"]
 # Polyfill module: re-exports ROS message types (with a dimos_lcm fallback).

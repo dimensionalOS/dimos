@@ -30,6 +30,7 @@ import urllib.request
 
 import pytest
 
+from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge.e2e_support import attach_viewer, collect_until, wait_subs
 from dimos.web.relay_bridge.protocol import (
     DataFrame,
@@ -437,7 +438,7 @@ async def test_empty_manifest_cannot_grant_topic_access(
     async with await RelayClient.connect(relay.wt_url, "robot") as client:
         await client.hello(robot=ROBOT, manifest=manifest)
         await attach_viewer(viewer, ROBOT.id, [])
-        async with asyncio.timeout(5):
+        async with timeout(5):
             while viewer._session.relay_error is None:
                 viewer.send_control(Sub(ch="dimos/**"))
                 await viewer.ping()
