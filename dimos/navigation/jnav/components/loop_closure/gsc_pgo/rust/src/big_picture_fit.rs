@@ -248,47 +248,68 @@ pub(crate) fn solve_core(
     config: &SolveConfig,
 ) -> Solution {
     // a re-sighting across a drifted loop needs big heading changes, which a solve from the odometry cannot reach through
-    // its stiff xy edges (each turned segment would stretch them); with xy loosened the sightings pull the loop shut almost
-    // linearly in position, and the real solve (and its GNC verdicts) starts from that shape (`landmark_warm_start_*`)
-    if !sightings.is_empty() && config.landmark_warm_start_xy_variance_scale > 1.0 {
-        let loosened: Vec<Edge> = odometry
-            .iter()
-            .map(|e| {
-                let mut variances = e.variances;
-                for axis in [3, 4] {
-                    variances[axis] *= config.landmark_warm_start_xy_variance_scale;
-                }
-                Edge { variances, ..*e }
-            })
-            .collect();
-        let config = SolveConfig {
-            landmark_warm_start_xy_variance_scale: 0.0,
-            ..config.clone()
-        };
-        let warm = solve_core(
-            rotations,
-            positions,
-            free,
-            &loosened,
-            closures,
-            unary,
-            sightings,
-            &SolveConfig {
-                learned_evidence: false,
-                ..config.clone()
-            },
-        );
-        return solve_core(
-            &warm.rotations,
-            &warm.positions,
-            free,
-            odometry,
-            closures,
-            unary,
-            sightings,
-            &config,
+    // its stiff xy edges (each turned segment would stretch them); with xy loosened and every sighting in (a tag's id makes
+    // a wrong match rare) they pull the loop shut almost linearly in position, and the real solve, GNC verdicts on the
+    // sightings included, starts from that shape (`landmark_warm_start_xy_variance_scale`)
+    if sightings.is_empty() || config.landmark_warm_start_xy_variance_scale <= 1.0 {
+        return solve_from(
+            rotations, positions, free, odometry, closures, unary, sightings, config, true,
         );
     }
+    let loosened: Vec<Edge> = odometry
+        .iter()
+        .map(|e| {
+            let mut variances = e.variances;
+            for axis in [3, 4] {
+                variances[axis] *= config.landmark_warm_start_xy_variance_scale;
+            }
+            Edge { variances, ..*e }
+        })
+        .collect();
+    let config = SolveConfig {
+        landmark_warm_start_xy_variance_scale: 0.0,
+        ..config.clone()
+    };
+    let warm = solve_from(
+        rotations,
+        positions,
+        free,
+        &loosened,
+        closures,
+        unary,
+        sightings,
+        &SolveConfig {
+            learned_evidence: false,
+            ..config.clone()
+        },
+        false,
+    );
+    solve_from(
+        &warm.rotations,
+        &warm.positions,
+        free,
+        odometry,
+        closures,
+        unary,
+        sightings,
+        &config,
+        true,
+    )
+}
+
+/// `solve_core` from the given start; `judge_sightings` false keeps every sighting in (no GNC on them).
+#[allow(clippy::too_many_arguments)]
+fn solve_from(
+    rotations: &[Mat3],
+    positions: &[Vec3],
+    free: &[bool],
+    odometry: &[Edge],
+    closures: &[Edge],
+    unary: &[Unary],
+    sightings: &[LandmarkSighting],
+    config: &SolveConfig,
+    judge_sightings: bool,
+) -> Solution {
     // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
     let seeded_out: Vec<bool> = (0..closures.len())
         .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
@@ -396,7 +417,11 @@ pub(crate) fn solve_core(
             .map(|(s, t)| s.whitened(state) / t)
             .collect()
     };
-    let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
+    let sighting_worst = if judge_sightings {
+        sighting_residuals(&state).into_iter().fold(0.0, f64::max)
+    } else {
+        0.0
+    };
     let mut sighting_weights = vec![1.0; sightings.len()];
     let tracing = solve_log_path().is_some();
     let initial_cost = if tracing {
@@ -465,8 +490,10 @@ pub(crate) fn solve_core(
             for (w, &r) in unary_weights.iter_mut().zip(&u2) {
                 *w = tls(r, unary_threshold, mu);
             }
-            for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
-                *w = tls(r, 1.0, mu);
+            if judge_sightings {
+                for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
+                    *w = tls(r, 1.0, mu);
+                }
             }
             converged = levenberg_marquardt(
                 &mut state,
