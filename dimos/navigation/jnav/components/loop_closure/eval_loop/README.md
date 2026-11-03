@@ -1,5 +1,20 @@
 # eval_loop: gsc_pgo vs Ivan's go2 PGO
 
+## Reproduce the deterministic GSC battery (one command)
+
+From the root of a dimos checkout, after a one-time `dimos login` (console.dimensional.org):
+
+```bash
+uv sync && uv run python dimos/navigation/jnav/components/loop_closure/eval_loop/deterministic_battery.py
+```
+
+It builds `pgo-eval` if missing, pulls each recording's db from the dimos cloud by the `cloud` upload id in
+`benchmark.json` (into `~/.cache/dimos/eval_loop/`, `EVAL_LOOP_DATA`), and replays the 9-map battery in
+deterministic mode at the module defaults (the R1 Jetson's deterministic_config), so every machine gets the same
+graphs; a slower machine only takes longer. Results: `./eval_loop_results/deterministic/<recording>/` and
+`summary.json` (closures, overshoots per job, speed). `--tier main|do_no_harm|extra` or recording names pick
+another set. The pulls need disk for each db twice while decompressing (huge_loop_go2 is 58 GB).
+
 ## Claims
 
 Who built what, and when: gsc is the author's, first working on 2026-03-14 and ported to Rust in July. Ivan's

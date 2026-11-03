@@ -15,7 +15,10 @@
 """Replay benchmark.json recordings through pgo-eval in deterministic mode at the module defaults (the R1 Jetson's
 deterministic_config), so any machine reproduces the same graph: a slower machine only waits longer.
 
-usage: deterministic_battery.py [--tier main|do_no_harm|extra] [name ...]   (no names and no tier: the 9-map battery)
+Each recording's db is used from its `db` path when that exists, else pulled from the dimos cloud by its `cloud`
+upload id into $EVAL_LOOP_DATA (`dimos login` once first). pgo-eval is built when $PGO_EVAL is missing.
+
+usage: deterministic_battery.py [--cloud-only] [--tier main|do_no_harm|extra] [name ...]   (no names and no tier: the 9-map battery)
     -> $EVAL_LOOP_OUT/deterministic/<name>/{a.json, a.kf*, a.log, run.log, summary.json} and summary.json for all
 """
 
@@ -24,12 +27,15 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
 from paths import OUT, PGO_EVAL
+from recordings import CACHE
 
 BENCHMARK = Path(__file__).with_name("benchmark.json")
+CRATE = Path(__file__).resolve().parents[1] / "gsc_pgo/rust"
 BATTERY = [
     "small_l1",
     "small_fastlio",
@@ -57,22 +63,62 @@ def summarize(log: str) -> dict:
     return summary
 
 
+def build_pgo_eval() -> None:
+    """Build pgo-eval where $PGO_EVAL points (the crate's target/ by default), with cargo or the crate's nix flake."""
+    if PGO_EVAL.is_file():
+        return
+    cargo = ["cargo", "build", "--release", "--features", "native", "--bin", "pgo-eval"]
+    if not shutil.which("cargo"):
+        cargo = ["nix", "develop", "path:.", "--command", *cargo]
+    print(f"building pgo-eval: {' '.join(cargo)}", file=sys.stderr)
+    subprocess.run(cargo, cwd=CRATE, check=True)
+    built = CRATE / "target/release/pgo-eval"
+    if built != PGO_EVAL:
+        PGO_EVAL.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, PGO_EVAL)
+
+
+def dataset(recording: dict, cloud_only: bool) -> Path | None:
+    """The recording's db: its local `db` path, else its `cloud` upload pulled into the cache once."""
+    local = Path(os.path.expanduser(recording.get("db", "")))
+    if local.is_file() and not cloud_only:
+        return local
+    if not recording.get("cloud"):
+        return None
+    out = CACHE / f"{recording['cloud']}.db"
+    if not out.is_file():
+        from dimos.cloud.data import CloudData
+
+        print(f"{recording['name']}: downloading {recording['cloud']} -> {out}", file=sys.stderr, flush=True)
+        CloudData().pull(recording["cloud"], out)
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("names", nargs="*")
     parser.add_argument("--tier")
+    parser.add_argument("--cloud-only", action="store_true", help="ignore local db paths, use the cloud uploads")
     args = parser.parse_args()
-    recordings = {r["name"]: r for r in json.loads(BENCHMARK.read_text())["recordings"]}
+    recordings = {}
+    for recording in json.loads(BENCHMARK.read_text())["recordings"]:
+        # a recording in several dbs (hk_village) runs each part as <name>/<part>
+        for part in recording.get("parts", [{}]):
+            entry = recording | part
+            entry["name"] = f"{recording['name']}/{part['name']}" if part else recording["name"]
+            recordings[entry["name"]] = entry
     if args.tier:
         names = [name for name, r in recordings.items() if r["tier"] == args.tier]
     else:
-        names = args.names or BATTERY
+        names = [name for name in recordings for wanted in args.names or BATTERY if name.split("/")[0] == wanted]
+    build_pgo_eval()
+    (OUT / "deterministic").mkdir(parents=True, exist_ok=True)
     summaries = {}
     for name in names:
         recording = recordings[name]
-        db = Path(os.path.expanduser(recording["db"]))
-        if recording.get("status") == "todo" or not db.is_file():
-            print(f"{name}: skipped (status {recording.get('status')}, db {db})", file=sys.stderr)
+        db = None if recording.get("status") == "todo" else dataset(recording, args.cloud_only)
+        if db is None:
+            print(f"{name}: skipped (status {recording.get('status')}, no db or cloud upload)", file=sys.stderr)
             continue
         out = OUT / "deterministic" / name
         out.mkdir(parents=True, exist_ok=True)
