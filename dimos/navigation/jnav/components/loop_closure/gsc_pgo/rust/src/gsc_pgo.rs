@@ -654,6 +654,13 @@ pub struct Config {
     pub graph_change_heat_threshold: f64,
     pub graph_change_heat_floor: f64,
     pub graph_change_heat_decay: f64,
+    /// Seeded solve: a solve starts from the accepted graph (the newest adopted solve's poses, the keyframes since riding
+    /// its correction) instead of from the odometry when that graph already fits every closure GNC would weigh (so GNC
+    /// has nothing to decide); otherwise, and with position priors or sightings, from the odometry as before.
+    pub solve_seed_from_accepted: bool,
+    /// GNC starts from the newest adopted solve's verdicts: a closure it rejected starts out, and GNC's starting mu comes
+    /// from the rest's residuals, so one still beyond twice the worst of them stays out.
+    pub solve_seed_gnc_verdicts: bool,
     /// Deterministic solve schedule: a finished solve is held `ceil(estimate)` scans (at least one) after its dispatch,
     /// its estimate an upper bound on its cost in scans known before it starts, so the graph is the same however fast the
     /// machine is; one still running then is an overshoot (logged loudly, counted) and is adopted as soon as it
@@ -922,6 +929,8 @@ impl Default for Config {
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
             graph_change_heat_decay: 0.995,
+            solve_seed_from_accepted: false,
+            solve_seed_gnc_verdicts: false,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,

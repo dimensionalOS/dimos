@@ -58,6 +58,13 @@ pub struct SolveConfig {
     /// Compute that evidence at all (a polishing solve and Hutchinson traces each solve); it only feeds the learned
     /// odometry error estimate, which is only logged.
     pub learned_evidence: bool,
+    /// Per closure, the newest adopted solve's verdict (1 kept, 0 rejected, NaN not yet judged) to start GNC from, or
+    /// empty to start every closure in (`solve_seed_gnc_verdicts`).
+    pub seed_closure_weights: Vec<f64>,
+    /// Per keyframe, a second starting estimate (the accepted graph, `solve_seed_from_accepted`), taken instead of the
+    /// given one when it already fits every closure that does not start out (so GNC has nothing to decide), the
+    /// solve has no position priors or sightings, and it covers every keyframe; empty for none.
+    pub seed_start: Vec<(Mat3, Vec3)>,
 }
 
 pub struct Solution {
@@ -87,6 +94,8 @@ pub struct Solution {
     pub odometry_error_estimate_evidence: Option<[(f64, f64); 6]>,
     /// How GNC reached this solution, only when `GSC_SOLVE_LOG` is set (`solve_log_path`).
     pub trace: Option<SolveTrace>,
+    /// Whether it started from `SolveConfig::seed_start`.
+    pub seeded: bool,
 }
 
 /// GNC's path to a solution, for the solve log.
@@ -170,6 +179,43 @@ pub(crate) fn solve_core(
     sightings: &[LandmarkSighting],
     config: &SolveConfig,
 ) -> Solution {
+    // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
+    let seeded_out: Vec<bool> = (0..closures.len())
+        .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
+        .collect();
+    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
+    let scaled: Vec<Edge> = closures
+        .iter()
+        .map(|e| Edge {
+            variances: e.variances.map(|v| v * config.gnc_variance_scale),
+            ..*e
+        })
+        .collect();
+    // the seed only where it already fits what GNC would weigh: elsewhere GNC's whole schedule runs either way, and
+    // from the odometry as it always has
+    let seeded = config.seed_start.len() == rotations.len() && unary.is_empty() && sightings.is_empty() && {
+        let (rotation, position) = config.seed_start.iter().copied().unzip();
+        let probe = State {
+            rotation,
+            position,
+            landmark: Vec::new(),
+            landmark_rotation: Vec::new(),
+        };
+        scaled
+            .iter()
+            .zip(&seeded_out)
+            .all(|(e, &out)| out || whitened_squared(e, &probe) <= threshold)
+    };
+    let seed: (Vec<Mat3>, Vec<Vec3>) = if seeded {
+        config.seed_start.iter().copied().unzip()
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let (rotations, positions) = if seeded {
+        (&seed.0[..], &seed.1[..])
+    } else {
+        (rotations, positions)
+    };
     // each landmark starts where its first sighting puts it from the starting estimate
     let landmark_count = sightings.iter().map(|s| s.landmark + 1).max().unwrap_or(0);
     let mut landmark: Vec<Option<(Mat3, Vec3)>> = vec![None; landmark_count];
@@ -206,13 +252,6 @@ pub(crate) fn solve_core(
         landmark_rotation,
     };
     let sightings = &sightings[..];
-    let scaled: Vec<Edge> = closures
-        .iter()
-        .map(|e| Edge {
-            variances: e.variances.map(|v| v * config.gnc_variance_scale),
-            ..*e
-        })
-        .collect();
     let pattern = Pattern::new(
         free,
         odometry.iter().chain(closures),
@@ -222,13 +261,16 @@ pub(crate) fn solve_core(
     );
     // GNC with truncated least squares (Yang et al. 2020): start convex (every closure in), then tighten
     // until each closure is clearly in or out. Odometry is always in.
-    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
     let residual =
         |state: &State| -> Vec<f64> { scaled.iter().map(|e| whitened_squared(e, state)).collect() };
     // GNC's starting mu comes from the residuals at the starting estimate, before any solve (as GTSAM's
-    // GncOptimizer does): the worse the start, the more gently it tightens
-    let worst = residual(&state).into_iter().fold(0.0, f64::max);
-    let mut weights = vec![1.0; closures.len()];
+    // GncOptimizer does): the worse the start, the more gently it tightens; a closure that starts out sets none
+    let worst = residual(&state)
+        .into_iter()
+        .zip(&seeded_out)
+        .filter(|&(_, &out)| !out)
+        .fold(0.0, |worst: f64, (r, _)| worst.max(r));
+    let mut weights: Vec<f64> = seeded_out.iter().map(|&out| if out { 0.0 } else { 1.0 }).collect();
     // position priors: GNC-weighted the same way, against the 3-DoF cutoff
     let unary_threshold = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
     let unary_residuals =
@@ -359,6 +401,29 @@ pub(crate) fn solve_core(
             }
             previous_cost = weighted_cost;
             mu *= 1.4;
+        }
+    } else if seeded_out.iter().any(|&out| out) {
+        // no GNC: a closure that started out comes back in once the solve puts it under the cutoff
+        let mut readmitted = false;
+        for ((w, &r), &out) in weights.iter_mut().zip(&r2).zip(&seeded_out) {
+            if out && r <= threshold {
+                *w = 1.0;
+                readmitted = true;
+            }
+        }
+        if readmitted {
+            converged = levenberg_marquardt(
+                &mut state,
+                &pattern,
+                odometry,
+                &scaled,
+                &weights,
+                unary,
+                &unary_weights,
+                sightings,
+                &sighting_weights,
+                1e-5,
+            );
         }
     }
     let kept: Vec<f64> = weights
@@ -503,6 +568,7 @@ pub(crate) fn solve_core(
     });
     Solution {
         trace,
+        seeded,
         odometry_error_estimate_evidence,
         rotations: state.rotation,
         positions: state.position,
