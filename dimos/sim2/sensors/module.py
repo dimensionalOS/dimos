@@ -28,16 +28,11 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.sim2.module import SimulationSpec
-from dimos.sim2.observations import SceneSample
-from dimos.sim2.types import (
-    Camera,
-    Layout,
-    Lidar,
-    SensorFactory,
-    SensorReader,
-    World,
-)
+from dimos.sim2.description import Camera, Lidar, World
+from dimos.sim2.messages.observations import SceneSample
+from dimos.sim2.physics.module import SimulationSpec
+from dimos.sim2.sensors.interface import SensorFactory, SensorReader
+from dimos.sim2.state import Layout
 
 
 class SensorConfig(ModuleConfig):

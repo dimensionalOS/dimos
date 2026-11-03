@@ -26,9 +26,9 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import unitree_g1_sim2
 from dimos.robot.unitree.g1.demo_sim2_control import G1PolicyDemo
-from dimos.sim2.module import SimModule
-from dimos.sim2.sensor_module import SimSensorModule
-from dimos.sim2.sensors import MujocoSensors
+from dimos.sim2.physics.module import SimModule
+from dimos.sim2.sensors.module import SimSensorModule
+from dimos.sim2.sensors.mujoco import MujocoSensors
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = pytest.mark.native_e2e

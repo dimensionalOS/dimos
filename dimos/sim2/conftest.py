@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.types import Camera, Drive, Imu, Instance, Lidar, World
+from dimos.sim2.description import Camera, Drive, Imu, Instance, Lidar, World
 
 
 def _box_link(

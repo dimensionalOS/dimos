@@ -19,7 +19,7 @@ import pytest
 
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.types import Instance, World
+from dimos.sim2.description import Instance, World
 
 
 def test_cli_configuration_roundtrip_keeps_sensor_profiles_and_model_variants(world):

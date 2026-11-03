@@ -39,7 +39,7 @@ from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.sim2.module import SimulationSpec
+from dimos.sim2.physics.module import SimulationSpec
 from dimos.utils.data import LfsPath
 
 JOINTS = tuple(n + "_joint" for n in make_humanoid_joints("g1"))

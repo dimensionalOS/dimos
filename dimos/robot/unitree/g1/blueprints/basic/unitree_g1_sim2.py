@@ -29,11 +29,11 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.demo_sim2_control import JOINTS, POLICY, G1PolicyDemo
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.module import SimModule
-from dimos.sim2.mujoco import MujocoBackend
-from dimos.sim2.sensor_module import SimSensorModule
-from dimos.sim2.sensors import MujocoSensors
-from dimos.sim2.types import Camera, Drive, Imu, Instance, Lidar, World
+from dimos.sim2.description import Camera, Drive, Imu, Instance, Lidar, World
+from dimos.sim2.physics.module import SimModule
+from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.sensors.module import SimSensorModule
+from dimos.sim2.sensors.mujoco import MujocoSensors
 from dimos.utils.data import LfsPath
 
 G1_MODEL = (

@@ -19,11 +19,11 @@ from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.mujoco import MujocoBackend
-from dimos.sim2.observations import observations, read_poses
-from dimos.sim2.runtime import Runtime
-from dimos.sim2.sensors import MujocoSensors
-from dimos.sim2.types import JointEfforts, JointTargets, Wrench
+from dimos.sim2.messages.observations import observations, read_poses
+from dimos.sim2.physics.interface import JointEfforts, JointTargets, Wrench
+from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.physics.runtime import Runtime
+from dimos.sim2.sensors.mujoco import MujocoSensors
 
 
 @pytest.fixture
