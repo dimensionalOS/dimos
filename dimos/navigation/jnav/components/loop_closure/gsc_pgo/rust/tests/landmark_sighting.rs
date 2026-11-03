@@ -126,6 +126,8 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         huber_k: 0.0,
         evidence_core: false,
         learned_evidence: true,
+        seed_closure_weights: Vec::new(),
+        seed_start: Vec::new(),
     };
     let solution = solve_with_priors(
         &rotations,
@@ -231,6 +233,8 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         huber_k: 0.0,
         evidence_core: false,
         learned_evidence: true,
+        seed_closure_weights: Vec::new(),
+        seed_start: Vec::new(),
     };
     let solution = solve_with_priors(
         &rotations,

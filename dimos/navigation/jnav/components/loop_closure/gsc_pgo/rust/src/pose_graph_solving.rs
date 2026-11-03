@@ -415,6 +415,18 @@ impl GscPgo {
             // the learned estimate's evidence only in `finish`'s last solve
             learned_evidence: config.learned_odometry_error_estimate_from_closures
                 && self.learned_evidence_requested,
+            // or from the accepted graph (the keyframes since the newest adopted solve riding its correction), where it
+            // already fits
+            seed_start: if config.solve_seed_from_accepted {
+                (0..n).map(|k| self.key_poses.global(k)).collect()
+            } else {
+                Vec::new()
+            },
+            seed_closure_weights: if config.solve_seed_gnc_verdicts {
+                self.committed_closures.iter().map(|c| c.gnc_weight).collect()
+            } else {
+                Vec::new()
+            },
         };
         let solved = self.solved.clone();
         let closures_before = self.closures_dispatched;

@@ -18,7 +18,9 @@ gated so a closure does no harm, and a pose graph re-solved with GNC on a backgr
 
 from __future__ import annotations
 
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, model_validator
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -30,6 +32,20 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+# Mid-360 + FAST-LIO/Point-LIO odometry error estimate, fitted to ground truth on five recordings (drift is almost all
+# from turning): what an unset odometry_error_estimate_* field gets when another one is given.
+MID360_ODOMETRY_ERROR_ESTIMATE = {
+    "odometry_error_estimate_xy_per_sqrt_m": 3.91e-4,
+    "odometry_error_estimate_xy_per_sqrt_rad": 6.35e-3,
+    "odometry_error_estimate_z_per_sqrt_m": 6.42e-4,
+    "odometry_error_estimate_z_per_sqrt_rad": 3.86e-3,
+    "odometry_error_estimate_yaw_per_sqrt_m": 1e-6,
+    "odometry_error_estimate_yaw_per_sqrt_rad": 8.66e-3,
+    "odometry_error_estimate_tilt_per_sqrt_m": 6.91e-4,
+    "odometry_error_estimate_tilt_per_sqrt_rad": 3.3e-3,
+}
 
 
 class PGOConfig(NativeModuleConfig):
@@ -90,6 +106,12 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_early_stop: bool = True
     # alternative places are retried only at or above this pressure (below it, only the best match is tried)
     closure_alternative_places_min_pressure: float = 0.8
+    # a scan-context target matched from this many separate places looks like everything and is skipped before closure ICP (0 = off)
+    scan_context_generic_places: int = 0
+    # scans this close (m) to one already counted, or to the target, are the same place
+    scan_context_generic_place_radius_m: float = 10.0
+    # targets the generic-place cache tracks
+    scan_context_generic_capacity: int = 256
     # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud (on by default)
     drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)
@@ -157,6 +179,11 @@ class PGOConfig(NativeModuleConfig):
     graph_change_heat_threshold: float = 30.0
     graph_change_heat_floor: float = 20.0
     graph_change_heat_decay: float = 0.995
+    # Seeded solve: a solve starts from the accepted graph instead of the odometry when that graph already fits every
+    # closure GNC would weigh; with gnc verdicts, GNC starts from the newest adopted solve's verdicts (a rejected closure
+    # starts out, mu from the rest's residuals)
+    solve_seed_from_accepted: bool = False
+    solve_seed_gnc_verdicts: bool = False
     # Deterministic solve schedule: a finished solve is held ceil(solve_scans_scale * keyframes^solve_keyframe_power *
     # (1 + closures)^solve_closure_power * (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe *
     # keyframes) scans after its dispatch (an upper bound on its cost in scans; rejected = closures the newest adopted
@@ -215,17 +242,26 @@ class PGOConfig(NativeModuleConfig):
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
     closure_uninformative_gate: bool = True
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
-    # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. Defaults: Mid-360 +
-    # FAST-LIO/Point-LIO fitted to ground truth on five recordings (drift is almost all from turning). After each solve
+    # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. After each solve
     # that keeps loops, debug_log (kind "odometry_drift") gives the values the run measured, to start the next run from.
-    odometry_error_estimate_xy_per_sqrt_m: float = 3.91e-4
-    odometry_error_estimate_xy_per_sqrt_rad: float = 6.35e-3
-    odometry_error_estimate_z_per_sqrt_m: float = 6.42e-4
-    odometry_error_estimate_z_per_sqrt_rad: float = 3.86e-3
-    odometry_error_estimate_yaw_per_sqrt_m: float = 1e-6
-    odometry_error_estimate_yaw_per_sqrt_rad: float = 8.66e-3
-    odometry_error_estimate_tilt_per_sqrt_m: float = 6.91e-4
-    odometry_error_estimate_tilt_per_sqrt_rad: float = 3.3e-3
+    # None (the default) for all of them: the estimate follows the lidar's range (odometry_error_estimate_from_lidar_range);
+    # any one given: the rest are the Mid-360 + FAST-LIO/Point-LIO values fitted to ground truth on five recordings.
+    odometry_error_estimate_xy_per_sqrt_m: float | None = None
+    odometry_error_estimate_xy_per_sqrt_rad: float | None = None
+    odometry_error_estimate_z_per_sqrt_m: float | None = None
+    odometry_error_estimate_z_per_sqrt_rad: float | None = None
+    odometry_error_estimate_yaw_per_sqrt_m: float | None = None
+    odometry_error_estimate_yaw_per_sqrt_rad: float | None = None
+    odometry_error_estimate_tilt_per_sqrt_m: float | None = None
+    odometry_error_estimate_tilt_per_sqrt_rad: float | None = None
+    # True: the odometry error estimate is linear in the lidar's range between the Go2 L1's and the Mid-360's calibrated
+    # estimates (each scan's farthest point from its frame origin, the median of the last lidar_range.window_scans scans
+    # blended in every ceil(window_scans / 5) scans, cooling with half-life lidar_range.decay_half_life_updates blends).
+    # None: on exactly when no odometry_error_estimate_* is given.
+    odometry_error_estimate_from_lidar_range: bool | None = None
+    # overrides for the lidar range settings (window_scans, decay_half_life_updates, l1_range_m, mid360_range_m, ...);
+    # empty = the calibrated defaults
+    lidar_range: dict[str, Any] = Field(default_factory=dict)
     # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
     learned_odometry_error_estimate_prior_ln_sd_xy: float = 1.72
     learned_odometry_error_estimate_prior_ln_sd_z: float = 2.05
@@ -240,6 +276,17 @@ class PGOConfig(NativeModuleConfig):
     # threads closure search and solves may use (the rayon pool): 0 (default) = every core, so GSC never runs itself
     # handicapped; set a number to leave cores to the rest of the robot where measurements show it pays
     worker_threads: int = 0
+
+
+    @model_validator(mode="after")
+    def _odometry_error_estimate(self) -> PGOConfig:
+        given = {name: getattr(self, name) for name in MID360_ODOMETRY_ERROR_ESTIMATE}
+        if self.odometry_error_estimate_from_lidar_range is None:
+            self.odometry_error_estimate_from_lidar_range = all(v is None for v in given.values())
+        for name, value in given.items():
+            if value is None:
+                setattr(self, name, MID360_ODOMETRY_ERROR_ESTIMATE[name])
+        return self
 
 
 class GscPGO(NativeModule):

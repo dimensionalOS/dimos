@@ -525,6 +525,7 @@ fn load_config(
             }
         }
     }
+    let given = ODOMETRY_ERROR_ESTIMATE_KEYS.iter().flatten().any(|key| fields.contains_key(*key));
     match stated_odometry_error_estimate(odom_child_frame) {
         Some(drift) => {
             for (keys, values) in ODOMETRY_ERROR_ESTIMATE_KEYS.iter().zip(drift) {
@@ -533,10 +534,17 @@ fn load_config(
                 }
             }
         }
-        None => eprintln!(
-            "pgo-eval: WARNING: no stated odometry error estimate known for odometry child frame {odom_child_frame:?}; \
-             using the Config defaults (Mid-360) unless --config gives them"
-        ),
+        // as the module: no odometry error estimate stated anywhere, so it follows the lidar's range
+        None if !given => {
+            eprintln!(
+                "pgo-eval: no stated odometry error estimate known for odometry child frame {odom_child_frame:?}; \
+                 it follows the lidar's range (odometry_error_estimate_from_lidar_range)"
+            );
+            fields
+                .entry("odometry_error_estimate_from_lidar_range".to_string())
+                .or_insert(true.into());
+        }
+        None => {}
     }
     let mut config: EvalConfig =
         serde_json::from_value(overlay).map_err(|e| format!("config: {e}"))?;
@@ -722,6 +730,12 @@ fn run() -> Result<(), String> {
                     to_body.translation,
                     [qx, qy, qz, qw]
                 );
+                if matches!(scan.frame_id.as_str(), "odom" | "map" | "world") {
+                    eprintln!(
+                        "pgo-eval: WARNING: lidar scans are in {:?}; they should be in the sensor frame, not a fixed frame like odom, map or world",
+                        scan.frame_id
+                    );
+                }
                 lidar_to_body = Some(to_body);
                 lidar_frame = Some(scan.frame_id.clone());
             }
@@ -1117,6 +1131,12 @@ fn run() -> Result<(), String> {
         pgo.buffer_drops().1,
         pgo.closure_search_wait_s(),
     );
+    if let Some(range_m) = pgo.lidar_range_estimate_m() {
+        eprintln!(
+            "pgo-eval: lidar range estimate {range_m:.2} m -> odometry error estimate {:?} (odometry_error_estimate_from_lidar_range)",
+            pgo.config_odometry_error_estimate()
+        );
+    }
     eprintln!(
         "pgo-eval: {} scans, {} keyframes, {} closures, {:.1}s data in {:.2}s replay wall time ({:.1}x realtime; then {:.1}s in finish) -> {:?}",
         scans_processed,
