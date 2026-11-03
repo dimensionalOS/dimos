@@ -17,7 +17,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import zenoh
 
@@ -26,7 +26,7 @@ from dimos.web.relay_bridge.protocol import Msg
 from dimos.web.relay_bridge.relay_process import RelayReadyInfo
 from dimos.web.relay_bridge.topic_catalog import TopicCatalog
 from dimos.web.relay_bridge.topic_metadata import MetadataReceiver
-from dimos.web.relay_bridge.topic_profiles import MEDIA_PROFILES
+from dimos.web.relay_bridge.topic_profiles import MEDIA_PROFILES, PROFILE_OPTIONS
 from dimos.web.relay_bridge.topic_protocol import TopicCapabilities
 from dimos.web.relay_bridge.topic_put import TopicPuts
 from dimos.web.relay_bridge.topic_service import TopicProvider, TopicServiceConfig
@@ -41,6 +41,11 @@ async def next_message(client: RelayClient, kind: type[MessageT]) -> MessageT:
             msg = await client._session.control_msgs.get()
             if isinstance(msg, kind):
                 return msg
+
+
+def route_variants(provider: TopicProvider) -> dict[str, dict[str, dict[str, Any]]]:
+    """The open variants per provider route with their settings in force."""
+    return {route: service.variants for route, service in provider._routes.items()}
 
 
 @asynccontextmanager
@@ -62,6 +67,7 @@ async def provider_connection(
                 write=config.write,
                 profiles=["raw", *MEDIA_PROFILES],
                 guardedPublishers=config.write,
+                profileOptions=PROFILE_OPTIONS,
             ),
         )
         catalog = TopicCatalog()

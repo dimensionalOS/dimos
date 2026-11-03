@@ -53,8 +53,8 @@ CLOUD_FIELDS = ["intensity", "color"]
 MAX_RATE = 1000
 
 
-def _options(profile: MediaProfile | None) -> dict[str, dict[str, Any]]:
-    options: dict[str, dict[str, Any]] = {
+def _options(profile: MediaProfile | None) -> dict[str, Any]:
+    options: dict[str, Any] = {
         "maxHz": {
             "kind": "number",
             "max": MAX_RATE,
@@ -76,7 +76,7 @@ def _options(profile: MediaProfile | None) -> dict[str, dict[str, Any]]:
 
 
 # Advertised in TopicCapabilities.profileOptions; the relay validates against it.
-PROFILE_OPTIONS: dict[str, dict[str, dict[str, Any]]] = {
+PROFILE_OPTIONS: dict[str, dict[str, Any]] = {
     "raw": _options(None),
     **{name: _options(profile) for name, profile in MEDIA_PROFILES.items()},
 }

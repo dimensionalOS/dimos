@@ -34,10 +34,12 @@ from dimos.web.relay_bridge import topic_service, topic_transform
 from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.topic_metadata import METADATA_PREFIX, DescriptorSnapshot
+from dimos.web.relay_bridge.topic_profiles import PROFILE_OPTIONS
 from dimos.web.relay_bridge.topic_protocol import (
     TOPIC_GUARD_STREAM_MAGIC,
     TOPIC_PUBLISH_STREAM_MAGIC,
     TopicActivate,
+    TopicApplied,
     TopicClose,
     TopicDescriptor,
     TopicError,
@@ -50,15 +52,23 @@ from dimos.web.relay_bridge.topic_protocol import (
     TopicList,
     TopicOpen,
     TopicOpened,
+    TopicOptions,
     TopicPage,
     TopicPubResult,
     TopicReady,
+    TopicSettings,
+    TopicSettingsRequest,
     TopicSources,
     TopicSub,
     TopicUnsub,
+    TopicUpdate,
 )
 from dimos.web.relay_bridge.topic_service import TopicServiceConfig
-from dimos.web.relay_bridge.topic_test_support import next_message, provider_connection
+from dimos.web.relay_bridge.topic_test_support import (
+    next_message,
+    provider_connection,
+    route_variants,
+)
 from dimos.web.relay_bridge.topic_transport import OrderedTopicWriter, TopicByteBudget
 from dimos.web.relay_bridge.wt_client import RelayClient
 
@@ -234,9 +244,9 @@ async def test_corrupt_camera_sample_is_dropped_and_later_media_and_events_arriv
     loop = asyncio.get_running_loop()
     original = topic_transform._encode
 
-    def encode(profile, data):
+    def encode(profile, data, settings):
         try:
-            return original(profile, data)
+            return original(profile, data, settings)
         finally:
             if data == b"not an image at all":
                 loop.call_soon_threadsafe(invalid_decoded.set)
@@ -695,7 +705,7 @@ async def test_media_workers_select_latest_after_capacity_and_leave_events_respo
     started = 0
     lock = threading.Lock()
 
-    def slow(profile, data):
+    def slow(profile, data, settings):
         nonlocal started
         with lock:
             started += 1
@@ -703,7 +713,7 @@ async def test_media_workers_select_latest_after_capacity_and_leave_events_respo
                 loop.call_soon_threadsafe(both_started.set)
         if not release.wait(timeout=5):
             raise TimeoutError("test media worker was not released")
-        return original(profile, data)
+        return original(profile, data, settings)
 
     encode = mocker.patch.object(topic_transform, "_encode", side_effect=slow)
     try:
@@ -978,7 +988,7 @@ async def test_guard_watchdog_and_receipts_run_while_all_media_workers_are_busy(
     count = 0
     lock = threading.Lock()
 
-    def encode(profile, data):
+    def encode(profile, data, settings):
         nonlocal count
         with lock:
             count += 1
@@ -986,7 +996,7 @@ async def test_guard_watchdog_and_receipts_run_while_all_media_workers_are_busy(
                 loop.call_soon_threadsafe(both_started.set)
         if not release.wait(timeout=5):
             raise TimeoutError("media test did not finish")
-        return original(profile, data)
+        return original(profile, data, settings)
 
     def sample(value: zenoh.Sample) -> None:
         loop.call_soon_threadsafe(received.put_nowait, value.payload.to_bytes())
@@ -1105,3 +1115,209 @@ async def test_invalid_concrete_key_rejects_without_disabling_later_publications
             ("bad", "rejected"),
             ("ok", "accepted"),
         ]
+
+
+# Settings updates (PLAN_2a): variants per route, acknowledged moves.
+
+
+async def expect(client: RelayClient, kind: type, *, forbid: type = TopicError) -> Any:
+    """The next control message of `kind`; a `forbid` message before it fails."""
+    async with timeout(5):
+        while True:
+            message = await client._session.control_msgs.get()
+            if isinstance(message, kind):
+                return message
+            assert not isinstance(message, forbid), message
+
+
+def boxed_vector() -> dict[str, Any]:
+    vectors = json.loads(
+        (Path(__file__).parents[3] / "web/shared/fixtures/topic_media.json").read_text()
+    )
+    return next(v for v in vectors if v["name"] == "color_rgb_boxed")
+
+
+async def subscribe_camera(
+    viewer: RelayClient,
+    key: str,
+    *,
+    sub_id: str = "camera",
+    profile: str = "image.jpeg.balanced.v1",
+    settings: TopicSettingsRequest | None = None,
+    max_hz: float = 30,
+) -> TopicReady:
+    viewer.send_control(
+        TopicSub(
+            id=sub_id,
+            source="workspace",
+            keyExpr=key,
+            delivery="latest",
+            profile=profile,
+            maxHz=max_hz,
+            **({} if settings is None else {"settings": settings}),
+        )
+    )
+    ready = await expect(viewer, TopicReady)
+    viewer.send_control(TopicActivate(route=ready.route, gen=ready.gen))
+    return ready
+
+
+async def test_profile_options_are_advertised_and_different_quality_shares_the_subscription_not_the_encode(
+    relay: RelayReadyInfo, mocker
+) -> None:
+    vector = boxed_vector()
+    encode = mocker.spy(topic_transform, "_encode")
+    with local_session() as session:
+        async with (
+            provider_connection(relay, session) as provider,
+            await RelayClient.connect(relay.wt_url, "viewer") as crisp,
+            await RelayClient.connect(relay.wt_url, "viewer") as soft,
+        ):
+            for viewer, settings in ((crisp, None), (soft, TopicSettingsRequest(quality=40))):
+                await viewer.hello(topics=True)
+                info = (await next_message(viewer, TopicSources)).sources[0]
+                assert info.profileOptions is not None
+                advertised = {
+                    profile: {
+                        name: option.model_dump(exclude_none=True)
+                        for name, option in ranges.items()
+                    }
+                    for profile, ranges in info.profileOptions.items()
+                }
+                assert advertised == PROFILE_OPTIONS
+                ready = await subscribe_camera(viewer, "sensor/quality", settings=settings)
+                assert ready.settings == TopicSettings(
+                    maxHz=30, maxResolution=[1280, 720], quality=75 if settings is None else 40
+                )
+            session.put("sensor/quality", bytes.fromhex(vector["lcm"]))
+            frames = await asyncio.wait_for(
+                asyncio.gather(anext(crisp.frames()), anext(soft.frames())), 5
+            )
+            assert [frame.header.meta["quality"] for frame in frames] == [75, 40]
+            assert frames[0].payload != frames[1].payload
+            assert "variant" not in frames[0].header.meta
+            assert encode.call_count == 2
+            assert len(provider._routes) == 1
+            (variants,) = route_variants(provider).values()
+            assert sorted(v["quality"] for v in variants.values()) == [40, 75]
+    await asyncio.get_running_loop().shutdown_default_executor()
+
+
+async def test_resolution_update_switches_without_a_gap_then_resets_and_retires_the_old_variant(
+    relay: RelayReadyInfo,
+) -> None:
+    vector = boxed_vector()
+    with local_session() as session:
+        async with (
+            provider_connection(relay, session) as provider,
+            await RelayClient.connect(relay.wt_url, "viewer") as viewer,
+        ):
+            await viewer.hello(topics=True)
+            await subscribe_camera(viewer, "sensor/box")
+            frames = viewer.frames()
+            session.put("sensor/box", bytes.fromhex(vector["lcm"]))
+            first = await asyncio.wait_for(anext(frames), 5)
+            assert (first.header.meta["w"], first.header.meta["h"]) == (32, 16)
+            viewer.send_control(
+                TopicUpdate(id="camera", revision=1, options=TopicOptions(maxResolution=[16, 16]))
+            )
+            # No interruption and no reopen: the acknowledgement names the
+            # settings in force, and frames keep flowing on the same route.
+            applied = await expect(viewer, TopicApplied)
+            assert applied.revision == 1
+            assert applied.settings == TopicSettings(maxHz=30, maxResolution=[16, 16], quality=75)
+            session.put("sensor/box", bytes.fromhex(vector["lcm"]))
+            boxed = await asyncio.wait_for(anext(frames), 5)
+            assert boxed.header.ch == first.header.ch
+            assert (boxed.header.meta["w"], boxed.header.meta["h"]) == (16, 8)
+            (route,) = provider._routes
+            async with timeout(5):
+                while len(route_variants(provider)[route]) != 1:
+                    await asyncio.sleep(0.05)
+            (remaining,) = route_variants(provider)[route].values()
+            assert remaining["maxResolution"] == [16, 16]
+            viewer.send_control(
+                TopicUpdate(id="camera", revision=2, options=TopicOptions(maxResolution=None))
+            )
+            applied = await expect(viewer, TopicApplied)
+            assert applied.settings == TopicSettings(
+                maxHz=30, maxResolution=[1280, 720], quality=75
+            )
+            session.put("sensor/box", bytes.fromhex(vector["lcm"]))
+            restored = await asyncio.wait_for(anext(frames), 5)
+            assert (restored.header.meta["w"], restored.header.meta["h"]) == (32, 16)
+            assert not viewer.is_closed
+    await asyncio.get_running_loop().shutdown_default_executor()
+
+
+async def test_a_fifth_settings_set_rejects_with_variant_limit_and_rejections_keep_the_settings(
+    relay: RelayReadyInfo, source: zenoh.Session
+) -> None:
+    vector = boxed_vector()
+    async with await RelayClient.connect(relay.wt_url, "viewer") as viewer:
+        await viewer.hello(topics=True)
+        for quality in (10, 20, 30, 40):
+            await subscribe_camera(
+                viewer,
+                "sensor/limit",
+                sub_id=f"q{quality}",
+                settings=TopicSettingsRequest(quality=quality),
+            )
+        viewer.send_control(
+            TopicSub(
+                id="q50",
+                source="workspace",
+                keyExpr="sensor/limit",
+                delivery="latest",
+                profile="image.jpeg.balanced.v1",
+                maxHz=30,
+                settings=TopicSettingsRequest(quality=50),
+            )
+        )
+        error = await next_message(viewer, TopicError)
+        assert (error.id, error.code, error.outcome) == ("q50", "variant_limit", "rejected")
+        for revision, options, code in (
+            (1, TopicOptions(quality=50), "variant_limit"),
+            (2, TopicOptions(quality=0), "option_out_of_range"),
+            (3, TopicOptions(keepEvery=2), "unsupported_option"),
+        ):
+            viewer.send_control(TopicUpdate(id="q10", revision=revision, options=options))
+            error = await next_message(viewer, TopicError)
+            assert (error.id, error.revision, error.code) == ("q10", revision, code)
+            assert error.outcome == "rejected"
+        source.put("sensor/limit", bytes.fromhex(vector["lcm"]))
+        frames = viewer.frames()
+        received = [await asyncio.wait_for(anext(frames), 5) for _ in range(4)]
+        assert sorted(frame.header.meta["quality"] for frame in received) == [10, 20, 30, 40]
+        assert not viewer.is_closed
+
+
+async def test_a_raw_rate_update_is_acknowledged_by_the_relay_and_reliable_events_all_arrive(
+    relay: RelayReadyInfo, source: zenoh.Session
+) -> None:
+    async with await RelayClient.connect(relay.wt_url, "viewer") as viewer:
+        await viewer.hello(topics=True)
+        viewer.send_control(
+            TopicSub(
+                id="events",
+                source="workspace",
+                keyExpr="events/rate",
+                delivery="reliable",
+                profile="raw",
+                maxHz=1000,
+            )
+        )
+        ready = await expect(viewer, TopicReady)
+        assert ready.settings == TopicSettings(maxHz=1000)
+        viewer.send_control(TopicActivate(route=ready.route, gen=ready.gen))
+        viewer.send_control(TopicUpdate(id="events", revision=1, options=TopicOptions(maxHz=1)))
+        applied = await expect(viewer, TopicApplied)
+        assert (applied.revision, applied.settings) == (1, TopicSettings(maxHz=1))
+        for n in range(5):
+            source.put("events/rate", bytes([n]))
+        frames = viewer.frames()
+        received = [await asyncio.wait_for(anext(frames), 5) for _ in range(5)]
+        assert [frame.payload for frame in received] == [bytes([n]) for n in range(5)]
+        viewer.send_control(TopicUpdate(id="events", revision=2, options=TopicOptions(quality=1)))
+        error = await next_message(viewer, TopicError)
+        assert (error.revision, error.code) == (2, "unsupported_option")
