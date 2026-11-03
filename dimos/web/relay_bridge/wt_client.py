@@ -334,17 +334,18 @@ class RelayClient:
         topic_capabilities: TopicCapabilities | None = None,
         topics: bool = False,
     ) -> None:
-        """Register with the relay; returns once its welcome datagram arrives.
+        """Register with the relay; returns once its welcome arrives.
 
         A robot hello carries identity and channel manifest as one @control
-        data frame on a fresh one-shot bidi stream (v5); a viewer hello rides
-        datagrams (the test viewer's control plane). The welcome datagram is
-        lossy either way, so the hello repeats every 200 ms; a robot resend
-        first retires the previous hello stream if it is still in flight.
+        data frame on a fresh one-shot bidi stream (v5); its welcome datagram
+        is lossy, so the hello repeats every 200 ms, each resend first
+        retiring the previous hello stream if it is still in flight. A viewer
+        hello opens the persistent control stream (the browser SDK's lane)
+        and rides it once; the relay answers on that stream.
         `token` is the robot key or viewer token for a relay started with
         --auth-file (the relay answers auth_failed without a valid one).
-        Raises ProtocolError if the encoded hello exceeds its transport
-        budget, RelayRejectedError if the relay answers with an error
+        Raises ProtocolError if the encoded hello exceeds the control payload
+        cap, RelayRejectedError if the relay answers with an error
         (version mismatch, missing robot id, auth_failed, ...), TimeoutError
         if nothing answers within `timeout`.
         """
@@ -363,23 +364,15 @@ class RelayClient:
         )
         if topic_source is not None:
             self._session.enable_topic_provider()
-        control_payload: bytes | None = None
-        if self.role == "robot":
-            control_payload = encode_datagram(msg)
-            if len(control_payload) > MAX_CONTROL_PAYLOAD_BYTES:
-                raise ProtocolError(
-                    f"hello control payload is {len(control_payload)} B "
-                    f"(limit {MAX_CONTROL_PAYLOAD_BYTES}); trim the manifest"
-                )
-        else:
-            size = len(encode_datagram(msg))
-            if size > _DATAGRAM_MAX_BYTES:
-                raise ProtocolError(
-                    f"hello datagram is {size} B (limit {_DATAGRAM_MAX_BYTES}); an "
-                    "oversized datagram wedges aioquic's whole datagram queue"
-                )
+        control_payload = encode_datagram(msg)
+        if len(control_payload) > MAX_CONTROL_PAYLOAD_BYTES:
+            raise ProtocolError(
+                f"hello control payload is {len(control_payload)} B "
+                f"(limit {MAX_CONTROL_PAYLOAD_BYTES}); trim the manifest"
+            )
         deadline = time.monotonic() + timeout
         hello_stream: int | None = None
+        sent = False
 
         def retire_hello_stream() -> None:
             # In-flight check and reset in the same event-loop turn (the
@@ -391,11 +384,13 @@ class RelayClient:
 
         try:
             while True:
-                if control_payload is None:
-                    self._session.send_msg(msg)
-                else:
+                if self.role == "robot":
                     retire_hello_stream()
                     hello_stream = self.send_frame(CONTROL_CHANNEL, control_payload)
+                elif not sent:
+                    self._session.open_control_stream()
+                    self._session.send_control(msg)
+                    sent = True
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self._session.welcomed.wait(), 0.2)
                 if self._session.relay_error is not None:
@@ -417,13 +412,22 @@ class RelayClient:
             retire_hello_stream()
 
     def send_control(self, msg: Msg) -> None:
-        """Send one control message to the relay (datagram: lossy, ordered-less).
+        """Send one control message to the relay.
 
-        Refuses a datagram over the packet-size cliff: aioquic would retry it
-        forever and wedge every datagram queued behind it (the hello guard's
-        rule, applied to the test viewer's whole control plane).
+        A viewer sends on the control stream its hello opened: reliable,
+        ordered, bounded by the control payload cap. Before that, and on the
+        robot leg, the message is a datagram (lossy, order-less), refused
+        over the packet-size cliff: aioquic would retry it forever and wedge
+        every datagram queued behind it.
         """
         size = len(encode_datagram(msg))
+        if self._session.has_control_stream:
+            if size > MAX_CONTROL_PAYLOAD_BYTES:
+                raise ProtocolError(
+                    f"control message is {size} B (limit {MAX_CONTROL_PAYLOAD_BYTES})"
+                )
+            self._session.send_control(msg)
+            return
         if size > _DATAGRAM_MAX_BYTES:
             raise ProtocolError(
                 f"control datagram is {size} B (limit {_DATAGRAM_MAX_BYTES}); an "
