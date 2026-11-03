@@ -26,11 +26,11 @@ use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Par, Side};
 
 use crate::store::KeyFrames;
-use crate::gsc_pgo::{CommittedClosure, Config, KeyPoseWithCloud};
+use crate::gsc_pgo::{CommittedClosure, Config};
 use crate::landmarks::{self, Sighting};
 use crate::mat3::{self, Mat3, Vec3};
 
-pub use crate::landmarks::{bearing_and_range, LandmarkSighting};
+pub use crate::landmarks::LandmarkSighting;
 pub use crate::world_positions::{solve_with_priors, PositionPrior};
 
 /// A relative-pose measurement from keyframe `from` to keyframe `to`, in `from`'s body frame
@@ -1610,17 +1610,8 @@ pub(crate) fn log(r: &Mat3) -> Vec3 {
     v.map(|x| x * scale)
 }
 
-/// The reported odometry variance of one keyframe step from `from` to `to` (xy, z, yaw, roll/pitch): each source's
-/// drift per square root of metre travelled, squared, times the distance, plus its drift per square root of radian
-/// turned, squared, times the angle.
-pub fn step_variances(config: &Config, from: &KeyPoseWithCloud, to: &KeyPoseWithCloud) -> [f64; 4] {
-    let distance = mat3::norm(&mat3::sub(&to.translation_local, &from.translation_local));
-    let turn = mat3::angular_distance(&from.rotation_local, &to.rotation_local);
-    motion_variances(config, distance, turn)
-}
-
-/// `step_variances` from the keyframes' fixed data (`store::KeyFixed`).
-pub(crate) fn local_step_variances(
+/// The reported odometry variance of one keyframe step (xy, z, yaw, roll/pitch) from the keyframes' fixed data.
+pub(crate) fn step_variances(
     config: &Config,
     from: &crate::store::KeyFixed,
     to: &crate::store::KeyFixed,
@@ -1665,7 +1656,7 @@ pub(crate) fn mean_step_variances(key_poses: &KeyFrames, config: &Config) -> [f6
     }
     let mut sum = [0.0; 4];
     for k in 1..key_poses.len() {
-        let step = local_step_variances(config, key_poses.fixed(k - 1), key_poses.fixed(k));
+        let step = step_variances(config, key_poses.fixed(k - 1), key_poses.fixed(k));
         for c in 0..4 {
             sum[c] += step[c];
         }
@@ -1684,7 +1675,7 @@ pub(crate) fn odometry_edges(
         .map(|k| (k - 1, [key_poses.fixed(k - 1), key_poses.fixed(k)]))
         .map(|(i, pair)| {
             let back = mat3::transpose(&pair[0].rotation_local);
-            let step = local_step_variances(config, pair[0], pair[1]);
+            let step = step_variances(config, pair[0], pair[1]);
             let [xy, z, yaw, tilt]: [f64; 4] = std::array::from_fn(|c| step[c] * noise[c]);
             Edge {
                 from: i,

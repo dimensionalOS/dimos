@@ -237,42 +237,6 @@ impl KdTree {
         self.buckets.nearest(query)
     }
 
-    /// `nearest` through the point-per-node tree (kept to check the bucket tree against).
-    pub fn nearest_reference(&self, query: &[f32; 3]) -> Option<(usize, f32)> {
-        if self.root < 0 {
-            return None;
-        }
-        let mut best = (usize::MAX, f32::MAX);
-        self.nearest_recursive(self.root, query, &mut best);
-        if best.0 == usize::MAX {
-            None
-        } else {
-            Some(best)
-        }
-    }
-
-    fn nearest_recursive(&self, node_index: i32, query: &[f32; 3], best: &mut (usize, f32)) {
-        let node = &self.nodes[node_index as usize];
-        let p = &self.points[node.point as usize];
-        let d = sq_dist(p, query);
-        if d < best.1 {
-            *best = (node.point as usize, d);
-        }
-        let axis = node.axis as usize;
-        let delta = query[axis] - p[axis];
-        let (near, far) = if delta < 0.0 {
-            (node.left, node.right)
-        } else {
-            (node.right, node.left)
-        };
-        if near >= 0 {
-            self.nearest_recursive(near, query, best);
-        }
-        if far >= 0 && delta * delta < best.1 {
-            self.nearest_recursive(far, query, best);
-        }
-    }
-
     /// k nearest neighbours, ascending by squared distance (includes the
     /// query point itself when it is in the cloud). Distance ties on the k-th
     /// slot keep the earlier find (strict `dist < worstDist()` insertion).
@@ -410,10 +374,9 @@ fn sq_dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 mod bucket_tree_tests {
     use super::KdTree;
 
-    /// The bucket tree finds the same nearest distance as the point-per-node tree and as brute force, on a cloud with
-    /// many equal coordinates (a voxel grid's) and on queries far outside it.
+    /// The bucket tree finds the brute-force nearest distance, on a voxel grid's equal coordinates and far queries.
     #[test]
-    fn nearest_matches_the_reference_tree() {
+    fn nearest_matches_brute_force() {
         let mut seed = 12345u64;
         let mut next = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -426,9 +389,7 @@ mod bucket_tree_tests {
         for _ in 0..2000 {
             let q = [next() * 30.0 - 13.0, next() * 30.0 - 13.0, next() * 6.0 - 1.0];
             let (i, d) = tree.nearest(&q).unwrap();
-            let (_, d_ref) = tree.nearest_reference(&q).unwrap();
             let brute = cloud.iter().map(|p| super::sq_dist(p, &q)).fold(f32::MAX, f32::min);
-            assert_eq!(d, d_ref);
             assert_eq!(d, brute);
             assert_eq!(super::sq_dist(&cloud[i], &q), d);
         }

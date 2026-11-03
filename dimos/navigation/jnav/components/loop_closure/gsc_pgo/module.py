@@ -153,13 +153,10 @@ class PGOConfig(NativeModuleConfig):
     closure_yank_gate_width: float = 1.0
     # How many times the stated odometry error estimate (sd) the true drift may be; the yank gate averages over it (1 = trust it)
     closure_yank_drift_range: float = 100.0
-    # Extension stops: skip a candidate a full stack could not carry, stop when a step's evidence stops rising, stop when
-    # a step's fit leaves the single fit's place
+    # skip an extension candidate a full stack of scans could not carry
     closure_extension_skip_unreachable: bool = True
     # Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give
     closure_yank_pre_check: bool = False
-    closure_extension_stop_when_flat: bool = True
-    closure_extension_stop_on_swing: bool = True
     # Uncertainty range as evidence / required evidence (yank units): at or above barely_pass accept, at or below barely_fail
     # reject, extend the match in between (barely_fail < 1 < barely_pass)
     barely_fail_uncertainty_range: float = 0.05
@@ -237,8 +234,6 @@ class PGOConfig(NativeModuleConfig):
     # Huber threshold on a kept closure's whitened residual in the final solve (0 = plain least squares).
     closure_robust_huber_k: float = 1.345
 
-    # True: a closure is uninformative only where the graph's own covariance of its ends is surer than ICP in every direction
-    closure_informative_by_graph_covariance: bool = True
     # False: never reject a closure as uninformative (the graph already surer of its ends than ICP)
     closure_uninformative_gate: bool = True
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
@@ -263,11 +258,6 @@ class PGOConfig(NativeModuleConfig):
     # overrides for the lidar range settings (window_scans, decay_half_life_updates, l1_range_m, mid360_range_m, ...);
     # empty = the calibrated defaults
     lidar_range: dict[str, Any] = Field(default_factory=dict)
-    # spread (sd of ln) of each source's true size across recordings: the online estimate's prior; 0 = one closure's worth
-    learned_odometry_error_estimate_prior_ln_sd_xy: float = 1.72
-    learned_odometry_error_estimate_prior_ln_sd_z: float = 2.05
-    learned_odometry_error_estimate_prior_ln_sd_yaw: float = 1.15
-    learned_odometry_error_estimate_prior_ln_sd_tilt: float = 0.96
     # how many closed loops' worth of evidence the stated odometry error estimate counts as for the learner (its plasticity); 0 = the closures alone, inf = never learned (the config's drift is used)
     learned_odometry_error_estimate_stiffness: float = 10.0
 

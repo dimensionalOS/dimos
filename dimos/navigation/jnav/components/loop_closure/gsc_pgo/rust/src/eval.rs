@@ -57,7 +57,6 @@ struct EvalConfig {
     /// `--live`: once more than this many scans wait, all but the newest are dropped (the module's max_scan_queue; <= 0 = unbounded).
     max_scan_queue: i32,
     /// Multiplies every stated odometry_error_estimate_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
-    #[serde(alias = "odom_drift_scale")]
     odometry_error_estimate_scale: f64,
     /// The frame the odometry's poses are really of, where its child_frame_id misnames it (office555's Point-LIO names
     /// base_link but reports the lidar's pose: "livox_frame"); empty = the child frame.

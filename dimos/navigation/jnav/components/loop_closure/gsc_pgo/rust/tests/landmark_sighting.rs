@@ -15,9 +15,7 @@
 //! Landmark sightings (`solve_with_priors`): a drifting square path with no loop closures and no world positions,
 //! seeing a few landmarks by bearing with only a rough range (its uncertainty half the range), or one tag's full pose.
 
-use dimos_gsc_pgo::big_picture_fit::{
-    bearing_and_range, solve_with_priors, Edge, LandmarkSighting, SolveConfig,
-};
+use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, Edge, LandmarkSighting, SolveConfig};
 use dimos_gsc_pgo::landmarks::known_inverse;
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
@@ -78,6 +76,26 @@ fn odometry(truth: &[(f64, Vec3)]) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>) {
         positions.push(mat3::add(&p, &mat3::mat_vec(&r, &e.translation)));
     }
     (edges, rotations, positions)
+}
+
+/// A bearing (unit `direction`) with a range along it, as a point and its covariance: `range_variance` (m²) along the
+/// ray, `bearing_variance` (rad²) about each axis across it (so `range² · bearing_variance` across). A range barely
+/// known is a large `range_variance`, which leaves the sighting a bearing.
+fn bearing_and_range(
+    direction: &Vec3,
+    range: f64,
+    bearing_variance: f64,
+    range_variance: f64,
+) -> (Vec3, Mat3) {
+    let b = mat3::scale(direction, 1.0 / mat3::norm(direction));
+    let across = range * range * bearing_variance;
+    let covariance = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            let along = b[i] * b[j];
+            range_variance * along + across * ((i == j) as u8 as f64 - along)
+        })
+    });
+    (mat3::scale(&b, range), covariance)
 }
 
 #[test]
@@ -173,16 +191,6 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         post_error < 1.0,
         "the posts triangulated (off {post_error} m)"
     );
-}
-
-#[test]
-fn bearing_and_range_is_tight_across_the_ray_and_loose_along_it() {
-    let (point, covariance) = bearing_and_range(&[0.0, 2.0, 0.0], 100.0, 1e-4, 2500.0);
-    assert!(mat3::norm(&mat3::sub(&point, &[0.0, 100.0, 0.0])) < 1e-9);
-    // along the ray: the range's variance; across it: (range x bearing sigma)^2 = 1 m^2
-    assert!((covariance[1][1] - 2500.0).abs() < 1e-9);
-    assert!((covariance[0][0] - 1.0).abs() < 1e-9 && (covariance[2][2] - 1.0).abs() < 1e-9);
-    assert!(covariance[0][1].abs() < 1e-9);
 }
 
 #[test]
@@ -299,12 +307,8 @@ fn unknown_dimensions_carry_no_information() {
 fn factors_before_the_first_keyframe_wait_for_it() {
     // a fix or sighting can reach the module before its first scan; there is nothing to solve yet
     let mut pgo = dimos_gsc_pgo::gsc_pgo::GscPgo::new(dimos_gsc_pgo::gsc_pgo::Config::default());
-    pgo.add_landmark_point(
-        0.0,
-        7,
-        [1.0, 0.0, 0.0],
-        [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]],
-    );
+    let point = LandmarkSighting::point(0, 0, [1.0, 0.0, 0.0], [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]]);
+    pgo.add_landmark_factor(0.0, 7, point.rotation, point.position, point.information);
     pgo.add_coordinate_factor(
         0.0,
         0,

@@ -97,9 +97,6 @@ impl<T> Appended<T> {
     pub fn last(&self) -> Option<&T> {
         self.len.checked_sub(1).map(|k| self.arena.get(k))
     }
-    pub fn iter(&self) -> impl Iterator<Item = &T> + '_ {
-        (0..self.len).map(|k| self.arena.get(k))
-    }
     /// Append (only through the one handle that owns the sequence; snapshots never see past their length).
     pub(crate) fn push(&mut self, value: T) {
         self.arena.set(self.len, value);
@@ -150,23 +147,6 @@ impl Default for KeyFrames {
 }
 
 impl KeyFrames {
-    /// Keyframes with these poses (their globals as given, as if one solve had placed them all).
-    pub fn from_poses(poses: Vec<KeyPoseWithCloud>) -> KeyFrames {
-        let mut frames = KeyFrames::default();
-        let mut solved = SolvedPoses::default();
-        for pose in poses {
-            solved.rotations.push(pose.rotation_global);
-            solved.positions.push(pose.translation_global);
-            frames.fixed.push(KeyFixed {
-                rotation_local: pose.rotation_local,
-                translation_local: pose.translation_local,
-                time: pose.time,
-                body_cloud: pose.body_cloud,
-            });
-        }
-        frames.solved = Arc::new(solved);
-        frames
-    }
     pub fn len(&self) -> usize {
         self.fixed.len()
     }
@@ -217,10 +197,6 @@ impl KeyFrames {
     }
     pub fn range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = KeyPoseWithCloud> + '_ {
         range.map(|k| self.get(k))
-    }
-    /// The correction the keyframes past the newest solve's ride on.
-    pub fn ride(&self) -> (Mat3, Vec3) {
-        (self.ride_rotation, self.ride_translation)
     }
     pub(crate) fn push(&mut self, fixed: KeyFixed) {
         self.fixed.push(fixed);

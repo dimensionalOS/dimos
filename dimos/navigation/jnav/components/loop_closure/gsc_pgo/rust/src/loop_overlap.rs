@@ -233,20 +233,6 @@ impl OverlapSnapshot {
 }
 
 impl GscPgo {
-    /// What the loop-overlap pressure reads, borrowed.
-    pub(crate) fn overlap_inputs(&self) -> OverlapInputs<'_> {
-        OverlapInputs {
-            key_poses: &self.key_poses,
-            config: &self.config,
-            keyframe_reach: self.keyframe_reach,
-            error_estimate: self.odometry_error_estimate(),
-            solved_relative_covariance: self
-                .solved_relative_covariance
-                .as_ref()
-                .map(|(tip, covariance)| (*tip, covariance.as_slice())),
-            committed_closures: &self.committed_closures,
-        }
-    }
     /// What the loop-overlap pressure reads, as an O(1) snapshot (`pressure_let_enabled`): shared handles, no copies of
     /// the keyframes, closures or covariances.
     pub(crate) fn overlap_snapshot(&self) -> OverlapSnapshot {
@@ -258,10 +244,6 @@ impl GscPgo {
             solved_relative_covariance: self.solved_relative_covariance.clone(),
             committed_closures: self.committed_closures.clone(),
         }
-    }
-    /// See `OverlapInputs::loop_overlap`.
-    pub fn loop_overlap(&self) -> Option<LoopOverlap> {
-        self.overlap_inputs().loop_overlap()
     }
 }
 

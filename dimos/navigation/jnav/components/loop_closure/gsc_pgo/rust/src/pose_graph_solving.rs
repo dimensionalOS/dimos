@@ -228,18 +228,6 @@ impl GscPgo {
         self.landmark_sightings
             .push((time, landmark, rotation, position, information));
     }
-    /// `add_landmark_factor` for a point: `position` with its 3x3 `covariance` (m²; `bearing_and_range` makes one from a
-    /// bearing and a rough range), the rotation unknown.
-    pub fn add_landmark_point(
-        &mut self,
-        time: f64,
-        landmark: u64,
-        position: Vec3,
-        covariance: Mat3,
-    ) {
-        let point = LandmarkSighting::point(0, 0, position, covariance);
-        self.add_landmark_factor(time, landmark, point.rotation, position, point.information);
-    }
     /// The newest solve's landmarks: id, map rotation (identity for a point) and map position.
     pub fn landmarks(&self) -> &[(u64, Mat3, Vec3)] {
         &self.landmarks
