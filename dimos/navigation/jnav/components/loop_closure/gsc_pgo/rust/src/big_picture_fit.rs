@@ -59,7 +59,8 @@ pub struct SolveConfig {
     pub seed_closure_weights: Vec<f64>,
     /// Per keyframe, the accepted graph as an alternate start used where it fits (`solve_seed_from_accepted`); empty = none.
     pub seed_start: Vec<(Mat3, Vec3)>,
-    /// `planar_pose_graph`: every keyframe's roll, pitch and z are held, and edges and priors weigh only x, y and yaw.
+    /// `planar_pose_graph`: every keyframe's roll, pitch and z are held, and edges and priors weigh only x, y and yaw; GNC's
+    /// cutoffs stay the 3D ones (a 3-DoF cutoff on the stated odometry error estimate drops the true loop on huge_fastlio).
     pub planar: bool,
 }
 
@@ -78,15 +79,6 @@ fn in_plane(edges: &[Edge]) -> Vec<Edge> {
             e
         })
         .collect()
-}
-
-/// The chi-square cutoff GNC holds a closure's whitened residual to: 3 DoF (x, y, yaw) when planar, else 6.
-fn closure_cutoff(config: &SolveConfig) -> f64 {
-    if config.planar {
-        crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability)
-    } else {
-        chi2_inverse_6dof(config.gnc_inlier_probability)
-    }
 }
 
 pub struct Solution {
@@ -200,7 +192,7 @@ pub(crate) fn solve_fast_path(
         landmark_rotation: Vec::new(),
     };
     let pattern = Pattern::new(free, odometry.iter().chain(closures), &[], &[], &[], config.planar);
-    let threshold = closure_cutoff(config);
+    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
     let scaled: Vec<Edge> = closures
         .iter()
         .map(|e| Edge {
@@ -291,7 +283,7 @@ pub(crate) fn solve_core(
     let seeded_out: Vec<bool> = (0..closures.len())
         .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
         .collect();
-    let threshold = closure_cutoff(config);
+    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
     let scaled: Vec<Edge> = closures
         .iter()
         .map(|e| Edge {
@@ -377,12 +369,8 @@ pub(crate) fn solve_core(
         .filter(|&(_, &out)| !out)
         .fold(0.0, |worst: f64, (r, _)| worst.max(r));
     let mut weights: Vec<f64> = seeded_out.iter().map(|&out| if out { 0.0 } else { 1.0 }).collect();
-    // position priors: GNC-weighted the same way, against the 3-DoF cutoff (2-DoF when planar: z is not weighed)
-    let unary_threshold = if config.planar {
-        landmarks::chi2_inverse(config.gnc_inlier_probability, 2)
-    } else {
-        crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability)
-    };
+    // position priors: GNC-weighted the same way, against the 3-DoF cutoff
+    let unary_threshold = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
     let unary_residuals =
         |state: &State| -> Vec<f64> { unary.iter().map(|u| unary_whitened(u, state)).collect() };
     let unary_worst = unary_residuals(&state).into_iter().fold(0.0, f64::max);
