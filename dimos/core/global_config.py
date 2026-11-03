@@ -98,6 +98,8 @@ class GlobalConfig(BaseSettings):
     dtop: bool = False
     listen_host: str = "127.0.0.1"
     local_relay: bool = False
+    topic_metadata: bool = False
+    """Publish bounded Zenoh stream descriptors for a trusted topic service."""
     relay_url: str | None = None
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
     bridge discovers its WebTransport endpoint through /api/info."""
