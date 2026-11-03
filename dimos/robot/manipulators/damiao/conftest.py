@@ -45,7 +45,6 @@ from dimos.utils.testing.waiting import wait_until
 def connection_class():
     class Config(DamiaoConnectionConfig):
         source: str = "arm"
-        native: bool = True
 
         @model_validator(mode="after")
         def _model(self) -> Self:
@@ -73,7 +72,7 @@ def connection_class():
         gravity_comp = False
 
         def _can_devices(self):
-            return {"left": "can1", "right": "can0"} if self.config.native else None
+            return {"left": "can1", "right": "can0"}
 
         def _build_robot(self):
             return (

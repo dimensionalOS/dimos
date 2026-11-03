@@ -41,10 +41,10 @@ def test_dual_openyam_reuses_the_single_arm_home_posture() -> None:
 
 
 def test_dual_openyam_connection_declares_both_arms_and_grippers() -> None:
-    connection = DualOpenYamConnection()
+    connection = DualOpenYamConnection(left_can_port="left", right_can_port="right")
     try:
         assert connection.config.source == "dual_openyam"
-        assert connection._can_devices() is None
+        assert connection._can_devices() == {"left": "left", "right": "right"}
         assert connection.joint_names == [
             *DUAL_OPENYAM_ARM_JOINTS,
             "left_gripper",
@@ -71,7 +71,7 @@ def test_dual_openyam_connection_uses_both_explicit_can_ports() -> None:
     ],
 )
 def test_dual_openyam_connection_rejects_partial_can_configuration(ports) -> None:
-    with pytest.raises(ValueError, match="requires both"):
+    with pytest.raises(ValueError, match="Field required"):
         DualOpenYamConnection(**ports)
 
 

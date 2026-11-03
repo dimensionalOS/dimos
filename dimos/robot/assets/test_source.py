@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 import os
 from pathlib import Path
 import pickle
@@ -20,6 +21,14 @@ import pytest
 
 from dimos.robot.assets.git_cache import GitAssetCache
 from dimos.robot.assets.source import RobotDescriptionPath, RobotDescriptionSource
+
+
+def test_deepcopy_preserves_lazy_model_paths(robot_source):
+    source, cache = robot_source
+    copied = deepcopy(source / "robots/testbot/model.urdf")
+    assert isinstance(copied, RobotDescriptionPath)
+    assert copied.name == "model.urdf"
+    assert cache.resolve_calls == []
 
 
 class RecordingGitAssetCache(GitAssetCache):

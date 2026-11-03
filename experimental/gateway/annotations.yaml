@@ -692,6 +692,22 @@ robots:
         makermods-metal-connection-control:
           title: Metal connection control
           description: Direct CAN connection and joint trajectory control for a Metal arm; requires CAN selectors; use simulation for a mock connection.
+        coordinator-makermods-metal:
+          title: Metal coordinator
+          description: Metal trajectory and gripper control through its connection module.
+        makermods-metal-planner-coordinator:
+          title: Metal motion planning
+          description: Plan and execute Metal arm motion with a Viser view.
+    dual-makermods-metal:
+      name: Dual MakerMods Metal
+      description: Two Metal arms in one configurable planning and collision world.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/dual_makermods_metal]
+      blueprints:
+        dual-makermods-metal-planner-coordinator:
+          title: Dual Metal motion planning
+          description: Independent arm and gripper control with configurable mounting geometry.
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.

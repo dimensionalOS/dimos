@@ -21,6 +21,7 @@ import pytest
 from dimos.robot.manipulators.damiao import damiao_connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
+from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
@@ -80,6 +81,18 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
             "increasing_position",
             0.1,
         ),
+        (
+            DualMetalConnection,
+            {"left_can_port": "can0", "right_can_port": "can1"},
+            ["left", "right"],
+            ["left_arm", "right_arm"],
+            ["left_joint", "right_joint"],
+            ["low", "shoulder", "low", "low", "high", "high"],
+            [100, 100, 100, 50, 20, 20],
+            [5, 5, 5, 5, 0.6, 0.6],
+            "increasing_position",
+            0.1,
+        ),
     ],
 )
 def test_native_wiring_and_commands(
@@ -98,7 +111,7 @@ def test_native_wiring_and_commands(
     tmp_path,
 ):
     profile = codec = None
-    if connection_type is MetalConnection:
+    if connection_type in (MetalConnection, DualMetalConnection):
         profile = mocker.patch.object(
             damiao, "MotorProfile", side_effect=["low", "shoulder", "high"]
         )
@@ -138,7 +151,7 @@ def test_native_wiring_and_commands(
             assert config["opening_direction"] == direction
             assert config["default_current"] == current
             assert config["motor"][2:] == (
-                (7, 23) if connection_type is MetalConnection else (8, 24)
+                (7, 23) if connection_type in (MetalConnection, DualMetalConnection) else (8, 24)
             )
         if profile is not None:
             assert profile.call_args_list == [
@@ -146,14 +159,16 @@ def test_native_wiring_and_commands(
                 mocker.call(0x8001, p_max=6.28, v_max=10, t_max=120),
                 mocker.call(0x8002, p_max=6.28, v_max=30, t_max=20),
             ]
-            codec.assert_called_once_with(profiles=["low", "shoulder", "high"])
+            assert codec.call_args_list == [
+                mocker.call(profiles=["low", "shoulder", "high"])
+            ] * len(buses)
     finally:
         module.stop()
 
 
 def test_missing_metal_profiles_fail_before_opening_a_bus(boundary, monkeypatch):
     monkeypatch.delattr(damiao, "MotorProfile", raising=False)
-    module = MetalConnection()
+    module = MetalConnection(can_port="can0")
     try:
         with pytest.raises(
             RuntimeError, match="MetalConnection requires can-motor-control>=0.0.11"

@@ -33,11 +33,11 @@ from dimos.utils.data import LfsPath
 
 class OpenYamConnectionConfig(DamiaoConnectionConfig):
     source: str = "yam"
-    can_port: str | None = None
+    can_port: str
 
     @model_validator(mode="after")
     def _set_model(self) -> Self:
-        if self.can_port is not None and not self.can_port.strip():
+        if not self.can_port.strip():
             raise ValueError("CAN selector must not be empty")
         if self.model is None:
             self.model = OpenYamConnection.control_model()
@@ -58,8 +58,8 @@ class OpenYamConnection(DamiaoConnection):
     )
     planning = make_openyam_model_config()
 
-    def _can_devices(self) -> dict[str, str] | None:
-        return None if self.config.can_port is None else {"openyam": self.config.can_port}
+    def _can_devices(self) -> dict[str, str]:
+        return {"openyam": self.config.can_port}
 
     def _build_robot(self) -> can_motor_control.Robot:
         arm_motors = [

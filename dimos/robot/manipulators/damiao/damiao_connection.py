@@ -139,7 +139,7 @@ class DamiaoConnection(ConnectionModule):
         return model
 
     @abstractmethod
-    def _can_devices(self) -> dict[str, str] | None:
+    def _can_devices(self) -> dict[str, str]:
         """Return the explicitly configured logical-bus selectors."""
 
     @abstractmethod
@@ -162,8 +162,6 @@ class DamiaoConnection(ConnectionModule):
             raise ValueError("connection model joints must match the vendor topology")
         self._state_frame = self.frame(self.config.model.load().root_link)
         devices = self._can_devices()
-        if devices is None:
-            raise ValueError("CAN selectors are required; use a mock connection for simulation")
         if set(devices) != set(self.bus_names) or any(
             not device.strip() for device in devices.values()
         ):

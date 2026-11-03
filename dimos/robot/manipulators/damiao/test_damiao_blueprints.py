@@ -26,14 +26,21 @@ from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
 from dimos.robot.manipulators.damiao.damiao_blueprint import damiao_connection_control
 from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
+from dimos.robot.manipulators.dual_makermods_metal.blueprints.basic import (
+    dual_makermods_metal_planner_coordinator,
+)
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     coordinator_dual_openyam,
     dual_openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.manipulators.makermods_metal.blueprints.basic import coordinator_makermods_metal
 from dimos.robot.manipulators.makermods_metal.blueprints.connection import (
     makermods_metal_connection_control,
+)
+from dimos.robot.manipulators.makermods_metal.blueprints.planning import (
+    makermods_metal_planner_coordinator,
 )
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 from dimos.robot.manipulators.openarm.blueprints.basic import (
@@ -54,6 +61,9 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 )
 
 CASES = [
+    ("coordinator-makermods-metal", coordinator_makermods_metal),
+    ("makermods-metal-planner-coordinator", makermods_metal_planner_coordinator),
+    ("dual-makermods-metal-planner-coordinator", dual_makermods_metal_planner_coordinator),
     ("coordinator-openyam", coordinator_openyam),
     ("openyam-planner-coordinator", openyam_planner_coordinator),
     ("keyboard-teleop-openyam", keyboard_teleop_openyam),
