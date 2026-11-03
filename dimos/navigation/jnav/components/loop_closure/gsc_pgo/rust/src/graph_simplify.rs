@@ -28,8 +28,8 @@
 //! only the first edge between a pair of nodes is kept. An edge that reaches a node through a frozen offset also carries
 //! `graph_simplify_offset_sd_*` per such end: the offset is the adopted graph's guess, and taken as exact (odometry-tight)
 //! it outvotes true closures (the GNC then rejects them and the map drifts lap by lap). A closure's ends ride their nodes the same way (one riding a
-//! single node drops out); at most `graph_simplify_closures_per_pair` closures per node pair go to the solve, the rest keep
-//! their last verdict. The solve's nodes expand back to every keyframe's pose.
+//! single node drops out); a folded closure goes to the solve only while its node pair has fewer than
+//! `graph_simplify_closures_per_pair`, the rest keep their last verdict (closures between kept keyframes always go in). The solve's nodes expand back to every keyframe's pose.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -230,8 +230,8 @@ impl GraphSimplify {
         }
         edges
     }
-    /// Closures as node edges (closure index, edge); one riding a single node drops out, and past `per_pair` (0 = no cap)
-    /// closures for a node pair the rest wait out of the solve.
+    /// Closures as node edges (closure index, edge); one riding a single node drops out, and once a node pair has
+    /// `graph_simplify_closures_per_pair` (0 = no cap) closures, further ones folded onto it wait out of the solve.
     pub fn closures(&self, closures: &Closures, count: usize, config: &Config) -> Vec<(usize, Edge)> {
         let per_pair = config.graph_simplify_closures_per_pair;
         let mut per: HashMap<(usize, usize), usize> = HashMap::new();
@@ -243,8 +243,10 @@ impl GraphSimplify {
                 if target == source {
                     return None;
                 }
+                // only a closure folded onto a node (an end removed) can be left out; one between its own keyframes always goes in
+                let ends = (target_offset != identity()) as u32 + (source_offset != identity()) as u32;
                 let taken = per.entry((target.min(source), target.max(source))).or_default();
-                if per_pair > 0 && *taken >= per_pair {
+                if ends > 0 && per_pair > 0 && *taken >= per_pair {
                     return None;
                 }
                 *taken += 1;
@@ -253,7 +255,6 @@ impl GraphSimplify {
                     &invert(&source_offset),
                 );
                 let mut variances = [fixed.score.max(1e-6); 6];
-                let ends = (target_offset != identity()) as u32 + (source_offset != identity()) as u32;
                 add_offset_variances(&mut variances, config, ends);
                 Some((
                     i,
@@ -552,7 +553,8 @@ mod tests {
         assert_eq!(simplify.closures(&closures, 2, &config).len(), 1);
     }
 
-    /// Past the per-pair cap, closures between the same nodes wait out of the solve and keep their verdicts.
+    /// Past the per-pair cap, closures folded onto the same nodes wait out of the solve and keep their verdicts; closures
+    /// between kept keyframes always go in.
     #[test]
     fn closures_past_the_per_pair_cap_keep_their_verdict() {
         let mut simplify = GraphSimplify::default();
@@ -560,10 +562,12 @@ mod tests {
             simplify.kept.push(k);
             simplify.placements.push(Placement::Node(k));
         }
+        // keyframe 2 rides node 1
+        simplify.placements.push(Placement::Anchored { node: 1, offset: (mat3::rot_z(0.1), [0.2, 0.0, 0.0]) });
         let mut closures = Closures::default();
-        for _ in 0..4 {
+        for i in 0..4 {
             closures.push(crate::store::ClosureFixed {
-                source_id: 1,
+                source_id: if i == 0 { 1 } else { 2 },
                 target_id: 0,
                 rotation_offset: mat3::identity(),
                 translation_offset: [1.0, 0.0, 0.0],
@@ -576,10 +580,15 @@ mod tests {
         let config = Config { graph_simplify_closures_per_pair: 2, ..Config::default() };
         let edges = simplify.closures(&closures, 4, &config);
         assert_eq!(edges.iter().map(|e| e.0).collect::<Vec<_>>(), vec![0, 1]);
+        let mut unfolded = Closures::default();
+        for _ in 0..4 {
+            unfolded.push(crate::store::ClosureFixed { source_id: 1, ..*closures.fixed(0) });
+        }
+        assert_eq!(simplify.closures(&unfolded, 4, &config).len(), 4);
         let expansion = Expansion {
             placements: simplify.placements.clone(),
             kept: 2,
-            keyframes: 2,
+            keyframes: 3,
             closure_index: vec![0, 1],
             closures: closures.clone(),
             closure_count: 4,
@@ -600,6 +609,9 @@ mod tests {
             trace: None,
             seeded: false,
         };
-        assert_eq!(expansion.expand(solution).closure_weights, vec![0.0, 1.0, 0.0, 1.0]);
+        let expanded = expansion.expand(solution);
+        assert_eq!(expanded.closure_weights, vec![0.0, 1.0, 0.0, 1.0]);
+        // the removed keyframe rides node 1
+        assert!(close(&(expanded.rotations[2], expanded.positions[2]), &(mat3::rot_z(0.1), [1.2, 0.0, 0.0])));
     }
 }
