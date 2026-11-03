@@ -37,7 +37,6 @@ from dimos.evals.vqa.generate import (
     GenerationFrame,
     GenerationRequest,
     GenerationResult,
-    PrivateLabel,
     PublicCase,
     generate_dataset,
     generate_frames_dataset,
