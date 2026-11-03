@@ -136,7 +136,7 @@ never budgeted.
 After ego clips, the same localize pass materializes **cross-view identity** pairs
 (`cross_view_same_object`): propose same/different instance pairs from multi-view
 sightings (≥ 3 distinct poses), then cut two short dense clips from the cached
-`color_frames` at each sighting timestamp — **no second localize pass**.
+`color_frames` at each sighting timestamp - **no second localize pass**.
 
 Without `--with-localize`, those families are not offered.
 
