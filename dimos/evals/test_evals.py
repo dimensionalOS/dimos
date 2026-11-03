@@ -305,7 +305,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
         scene="empty",
         launch_timeout_s=4.0,
         setup=setup,
-        disable=("wavefront-frontier-explorer", "patrolling-module"),
+        disable=("patrolling-module",),
     )
     mocker.patch.object(env, "_wait_recording", return_value=Path(dataset))
 
@@ -318,8 +318,6 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "unitree-skill-container",
             "mcp-client",
             "speak-skill",
-            "--disable",
-            "wavefront-frontier-explorer",
             "--disable",
             "patrolling-module",
         ]
