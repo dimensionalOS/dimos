@@ -531,7 +531,7 @@ impl Default for DeterministicConfig {
             solve_closure_power: -0.215,
             solve_rejected_power: 0.558,
             debounce_scans_per_keyframe: 6.093487031356368e-06,
-            merge_scans_per_keyframe: 2.56e-06,
+            merge_scans_per_keyframe: 3.0032671115943386e-07,
             pressure_scans_fixed_overhead: 0.0007777038336858567,
             pressure_scans_per_keyframe: 8.708997476399469e-06,
             pressure_scans_per_closure: 1.2578234731596874e-05,
@@ -653,9 +653,8 @@ pub struct Config {
     /// its estimate an upper bound on its cost in scans known before it starts, so the graph is the same however fast the
     /// machine is; one still running then is an overshoot (logged loudly, counted) and is adopted as soon as it
     /// finishes. The estimate is `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power *
-    /// (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe * keyframes`: the closures in the solve, the
-    /// ones the newest adopted solve rejected (GNC takes longer with outliers in), and the graph change heat's cost the
-    /// solve's thread measures after it (`debounce`). The graph change heat acts on adoption after the hold.
+    /// (1 + rejected)^solve_rejected_power`: the closures in the solve and the ones the newest adopted solve rejected
+    /// (GNC takes longer with outliers in). The debounce and merge after it are their own jobs (`adoption_schedule`).
     /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
     /// once `ceil(estimate)` scans (at least one) have passed since its dispatch, an upper bound on its cost in scans fixed
     /// before each piece of work starts, so which searches run and when their closures land is the same however fast the
