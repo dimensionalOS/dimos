@@ -25,12 +25,17 @@ Named locations live here too, kept in the ``map`` frame so every new fix moves 
 with the old map. Each is also a tf frame under ``map``. Wire contract:
 
 - ``named_locations`` (in and out): the whole list, as an ``InteractiveMarkerUpdate`` whose
-  ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}. Anyone may
-  publish it; adding, moving, renaming and deleting are all a new whole list. The module
-  adopts a list that differs from its own (its own echo does not) and publishes its list only
-  on a ``named_locations_request``, which a viewer sends when it connects.
-- ``go_to_named_location`` (in): a name. Its pose goes out on ``goal`` in ``world_frame``,
-  through the live ``world -> map`` fix.
+  ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}, and whose
+  ``server_id``/``seq_num`` name the module run and the revision of the list. Anyone may
+  publish it; adding, moving, renaming and deleting are all a new whole list, carrying the
+  ``server_id``/``seq_num`` of the list it was edited from. The module adopts it only when that
+  is its current revision, then publishes the result as the next revision; a list edited from
+  an older revision, or from another run, is dropped and the current list republished, so a
+  stale cache can never bring back a renamed or deleted location. A viewer replaces its cache
+  with every list the module publishes, and sends ``named_locations_request`` when it connects.
+- Going to a location is the viewer's job: it sends the location's pose on the planner's
+  ``goal`` as a ``PointStamped`` in ``map_frame``, which the planner re-expresses through tf on
+  every replan, so the goal follows a later fix.
 
 The locations are seeded from the last ``locations_stream`` snapshot of ``locations_from``
 (by default the ``map_file`` recording itself), and every list adopted is appended to
@@ -52,6 +57,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+import uuid
 
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
@@ -77,7 +83,6 @@ from dimos.mapping.relocalization.named_locations import (
     same_locations,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -185,8 +190,6 @@ class RelocalizationModule(Module):
     loaded_map: Out[PointCloud2]
     named_locations: IO[InteractiveMarkerUpdate]
     named_locations_request: In[String]
-    go_to_named_location: In[String]
-    goal: Out[PointStamped]
     marker_detections: In[Detection3DArray]
     old_april_tags: Out[Detection3DArray]
     new_april_tags: Out[Detection3DArray]
@@ -201,7 +204,9 @@ class RelocalizationModule(Module):
         self._lock = threading.Lock()
         # name -> pose in map_frame, in the order they were added
         self._locations: dict[str, PoseStamped] = {}
-        self._seq = 0
+        # The list's revision, under an id of its own per run so another run's revisions never match
+        self._server_id = uuid.uuid4().hex
+        self._revision = 0
         self._locations_store: SqliteStore | None = None
         # marker id -> clustered pose; old in map_frame, new in world_frame
         self.old_tags: dict[int, TagDetection] = {}
@@ -373,30 +378,25 @@ class RelocalizationModule(Module):
         with self._lock:
             if same_locations(locations, self._locations):
                 return
-            self._locations = locations
+            edited_from = (published.server_id, published.seq_num)
+            current = (self._server_id, self._revision)
+            if edited_from == current:
+                self._locations = locations
+                self._revision += 1
+        if edited_from != current:
+            logger.warning(
+                f"named locations dropped: edited from revision {edited_from}, current is {current}"
+            )
+            self.named_locations.publish(self.locations_snapshot())
+            return
         logger.info(f"named locations: {list(locations)}")
-        self._save_locations(self.locations_snapshot())
+        snapshot = self.locations_snapshot()
+        self._save_locations(snapshot)
+        self.named_locations.publish(snapshot)
         self.publish_tf()
 
     async def handle_named_locations_request(self, _: String) -> None:
         self.named_locations.publish(self.locations_snapshot())
-
-    async def handle_go_to_named_location(self, name: String) -> None:
-        with self._lock:
-            pose = self._locations.get(name.data)
-        if pose is None:
-            logger.warning(
-                f"go to {name.data!r}: no such named location, have {list(self._locations)}"
-            )
-            return
-        goal = self.reexpress(pose, self.config.world_frame)
-        if goal is None:
-            logger.warning(
-                f"go to {name.data!r}: no {self.config.world_frame!r} -> {self.config.map_frame!r} yet"
-            )
-            return
-        logger.info(f"go to {name.data!r}: goal {goal}")
-        self.goal.publish(PointStamped(goal.x, goal.y, goal.z, frame_id=goal.frame_id))
 
     def frame_to(self, frame: str, child: str) -> Transform | None:
         """``frame -> child``: from this module's own fix for world/map, else from tf."""
@@ -419,11 +419,10 @@ class RelocalizationModule(Module):
 
     def locations_snapshot(self) -> InteractiveMarkerUpdate:
         with self._lock:
-            self._seq += 1
             return InteractiveMarkerUpdate(
                 [named_pose(name, pose) for name, pose in self._locations.items()],
-                server_id=type(self).__name__,
-                seq_num=self._seq,
+                server_id=self._server_id,
+                seq_num=self._revision,
             )
 
     def _save_locations(self, snapshot: InteractiveMarkerUpdate) -> None:
