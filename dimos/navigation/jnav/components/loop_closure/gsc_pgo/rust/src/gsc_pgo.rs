@@ -602,6 +602,20 @@ pub struct Config {
     /// `soft_pressure` (display only): 50% where log10 of the loop hazard is this, 0% this many decades below (log-compressed).
     pub soft_pressure_half_log10_hazard: f64,
     pub soft_pressure_decades: f64,
+    /// Reduced pose graph for long runs (`graph_simplify`): keyframes revisiting a mapped, localized place ride a kept one.
+    pub graph_simplify: bool,
+    /// The newest this many keyframes are never simplified (each is decided once it is this far behind the newest).
+    pub graph_simplify_frontier_keyframes: usize,
+    /// A keyframe may ride a keyframe kept on an older pass within this distance (m).
+    pub graph_simplify_place_radius_m: f64,
+    /// ...only when a closure the newest solve kept has an end within this many keyframes of it.
+    pub graph_simplify_localized_keyframes: usize,
+    /// Closures per node pair that go to the solve (the rest keep their last verdict); 0 = all.
+    pub graph_simplify_closures_per_pair: usize,
+    /// How far a removed keyframe's frozen offset from its node may be off (m, rad, one sd): an edge reaching a node through
+    /// one carries this much more variance per such end, so the adopted graph it was read from is not taken as exact.
+    pub graph_simplify_offset_sd_m: f64,
+    pub graph_simplify_offset_sd_rad: f64,
 }
 
 impl Config {
@@ -741,6 +755,13 @@ impl Default for Config {
             pressure_check_frequency: 5,
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
+            graph_simplify: false,
+            graph_simplify_frontier_keyframes: 200,
+            graph_simplify_place_radius_m: 1.0,
+            graph_simplify_localized_keyframes: 50,
+            graph_simplify_closures_per_pair: 3,
+            graph_simplify_offset_sd_m: 0.05,
+            graph_simplify_offset_sd_rad: 0.005,
         }
     }
 }
@@ -854,8 +875,8 @@ pub struct GscPgo {
     pub(crate) gathered: PointCloud,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Arc<Vec<Mat3>>)>,
-    /// Shared, so a closure search can count look-alike places without copying them.
-    pub(crate) scan_context_descriptors: crate::store::Appended<Arc<similarity_discovery::Descriptor>>,
+    /// The reduced pose graph (`graph_simplify`).
+    pub(crate) simplify: crate::graph_simplify::GraphSimplify,
     pub(crate) scan_context_ring_keys: Vec<similarity_discovery::RingKey>,
     pub(crate) rotation_offset: Mat3,
     pub(crate) translation_offset: Vec3,
@@ -916,7 +937,6 @@ pub struct ClosureSearch {
     pub(crate) target_idx: usize,
     pub(crate) init_rotation: Mat3,
     pub(crate) init_translation: Vec3,
-    pub(crate) scan_context_descriptors: crate::store::Appended<Arc<similarity_discovery::Descriptor>>,
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) ranked: Vec<(f32, usize)>,
     /// Every closure the solve has judged: its yank_stdevs when committed, and whether the solve kept it.
@@ -1231,8 +1251,8 @@ impl ClosureSearch {
             });
             let places = look_alikes.count_past(
                 (evidence - base).exp(),
-                &self.scan_context_descriptors[cur_idx],
-                &self.scan_context_descriptors,
+                &self.key_poses.descriptor(cur_idx),
+                |k| self.key_poses.descriptor(k),
                 self.scan_context_config.match_threshold,
                 |a, b| {
                     crate::loop_overlap::could_be_same_place(
@@ -1933,10 +1953,10 @@ impl GscPgo {
         let mut diag = ClosureCandidateDiag::new(cur_idx, current.time, current.translation_global);
 
         // stage 1, universal uniqueness: a scan whose structure barely fills the descriptor can't place itself
-        let descriptor = &self.scan_context_descriptors[cur_idx];
+        let descriptor = self.key_poses.descriptor(cur_idx);
         if !descriptor.is_empty() {
             diag.descriptor_occupancy =
-                similarity_discovery::descriptor_occupancy(descriptor) as i32;
+                similarity_discovery::descriptor_occupancy(&descriptor) as i32;
             if diag.descriptor_occupancy < self.config.closure_min_occupancy {
                 diag.outcome = "low_occupancy";
                 self.record_search(diag);
@@ -2055,7 +2075,6 @@ impl GscPgo {
             target_idx,
             init_rotation,
             init_translation,
-            scan_context_descriptors: self.scan_context_descriptors.clone(),
             scan_context_config: self.scan_context_config,
             ranked,
             judged_yanks: Vec::new(),
@@ -2174,14 +2193,6 @@ impl GscPgo {
                 self.keyframe_reach.1 += 1;
             }
         }
-        // placed by the current correction (`KeyFrames::global` rides it on the odometry pose when read)
-        self.key_poses.push(crate::store::KeyFixed {
-            time: pose.second,
-            rotation_local: pose.rotation,
-            translation_local: pose.translation,
-            body_cloud: stored,
-        });
-
         // scan context descriptor and ring key (empty without a cloud); a non-positive max range is set once from the first cloud
         if let Some(cloud) = &cloud {
             if self.scan_context_config.max_range_m <= 0.0 {
@@ -2203,7 +2214,15 @@ impl GscPgo {
         // an empty descriptor's ring key is empty too
         self.scan_context_ring_keys
             .push(similarity_discovery::make_ring_key(&descriptor));
-        self.scan_context_descriptors.push(Arc::new(descriptor));
+        // placed by the current correction (`KeyFrames::global` rides it on the odometry pose when read)
+        self.key_poses.push(crate::store::KeyFixed::new(
+            pose.rotation,
+            pose.translation,
+            pose.second,
+            stored,
+            Arc::new(descriptor),
+        ));
+        self.simplify_step();
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.

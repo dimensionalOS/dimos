@@ -150,6 +150,8 @@ struct EvalOutput {
     /// Measured odometry error estimate for next run ([per sqrt m, per sqrt rad] x xy, z, yaw, tilt); was each measured.
     odometry_drift: [[f64; 2]; 4],
     odometry_drift_measured: [bool; 4],
+    /// The reduced pose graph at the end (`graph_simplify`; all keyframes nodes when off).
+    simplify: dimos_gsc_pgo::graph_simplify::SimplifyStats,
 }
 
 struct Args {
@@ -907,6 +909,7 @@ fn run() -> Result<(), String> {
         closure_diagnostics,
         graph_error,
         committed_closure_edges,
+        simplify: pgo.simplify_stats(),
     };
 
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;

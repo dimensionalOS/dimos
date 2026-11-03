@@ -133,6 +133,13 @@ config! {
     pressure_check_frequency: usize,
     soft_pressure_half_log10_hazard: f64,
     soft_pressure_decades: f64,
+    graph_simplify: bool,
+    graph_simplify_frontier_keyframes: usize,
+    graph_simplify_place_radius_m: f64,
+    graph_simplify_localized_keyframes: usize,
+    graph_simplify_closures_per_pair: usize,
+    graph_simplify_offset_sd_m: f64,
+    graph_simplify_offset_sd_rad: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------

@@ -128,6 +128,17 @@ class PGOConfig(NativeModuleConfig):
     # display-only soft_pressure is 50% at this log10 loop hazard, log-compressed to 0% soft_pressure_decades below
     soft_pressure_half_log10_hazard: float = -0.5
     soft_pressure_decades: float = 100.0
+    # reduced pose graph for very long runs: once a keyframe is graph_simplify_frontier_keyframes behind the newest, it rides
+    # a keyframe kept on an older pass within graph_simplify_place_radius_m (cloud and descriptor freed) when a kept closure
+    # is within graph_simplify_localized_keyframes of it; at most graph_simplify_closures_per_pair closures per node pair
+    graph_simplify: bool = False
+    graph_simplify_frontier_keyframes: int = 200
+    graph_simplify_place_radius_m: float = 1.0
+    graph_simplify_localized_keyframes: int = 50
+    graph_simplify_closures_per_pair: int = 3
+    # one sd of how far a removed keyframe's frozen offset may be off: edges through one carry this much more variance
+    graph_simplify_offset_sd_m: float = 0.05
+    graph_simplify_offset_sd_rad: float = 0.005
 
     # k in the yank gate: confidence must clear 1 - exp(-z^2/2k^2), z = yank in robust std devs of yanks so far
     closure_yank_gate_width: float = 1.0
