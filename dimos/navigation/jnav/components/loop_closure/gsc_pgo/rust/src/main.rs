@@ -105,6 +105,8 @@ config! {
     graph_change_heat_threshold: f64,
     graph_change_heat_floor: f64,
     graph_change_heat_decay: f64,
+    solve_seed_from_accepted: bool,
+    solve_seed_gnc_verdicts: bool,
     fast_match_workers: usize,
     sc_buffer_size: usize,
     verification_workers: usize,
@@ -127,6 +129,8 @@ config! {
     odometry_error_estimate_yaw_per_sqrt_rad: f64,
     odometry_error_estimate_tilt_per_sqrt_m: f64,
     odometry_error_estimate_tilt_per_sqrt_rad: f64,
+    odometry_error_estimate_from_lidar_range: bool,
+    lidar_range: dimos_gsc_pgo::lidar_range::LidarRangeConfig,
     learned_odometry_error_estimate_prior_ln_sd_xy: f64,
     learned_odometry_error_estimate_prior_ln_sd_z: f64,
     learned_odometry_error_estimate_prior_ln_sd_yaw: f64,
@@ -143,6 +147,9 @@ config! {
     closure_sharpness_nudge_deg: f64,
     closure_likelihood_confidence: bool,
     closure_alternative_places: bool,
+    scan_context_generic_places: usize,
+    scan_context_generic_place_radius_m: f64,
+    scan_context_generic_capacity: usize,
     closure_likelihood_visibility: bool,
     learned_odometry_error_estimate_from_closures: bool,
     odometry_error_estimate_evidence_core: bool,
@@ -194,9 +201,16 @@ struct SharedState {
     cloud_buffer: VecDeque<CloudWithPose>,
     /// A background pose-graph solve finished and waits to be adopted.
     solve_finished: bool,
+    /// Whether the scans' frame was already found to be a fixed frame (warned once).
+    fixed_frame_warned: bool,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
+
+/// A world-fixed frame name, which a lidar scan's frame should not be.
+fn is_fixed_frame(frame_id: &str) -> bool {
+    matches!(frame_id, "odom" | "map" | "world")
+}
 
 // ---- module ----------------------------------------------------------------------
 
@@ -468,6 +482,11 @@ impl GscPgoModule {
         }
         state.last_message_time = latest.ts;
 
+        // the lidar range (odometry_error_estimate_from_lidar_range) is measured from the scan's frame origin
+        if !state.fixed_frame_warned && is_fixed_frame(&msg.header.frame_id) {
+            state.fixed_frame_warned = true;
+            warn!(frame = %msg.header.frame_id, "lidar scans should be in the sensor (or body) frame, not a fixed frame like odom, map or world");
+        }
         let cloud = match extract_xyz(&msg) {
             Ok(points) => points,
             Err(e) => {

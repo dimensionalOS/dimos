@@ -135,6 +135,9 @@ pub struct ClosureCandidateDiag {
     pub keep_rate: f64,
     pub extension_budget: usize,
     pub look_alike_places: usize,
+    /// Separate places that had matched the chosen scan-context target, and the generic targets skipped for it.
+    pub generic_places: usize,
+    pub generic_skipped: usize,
     /// Global distance between source and candidate keyframe.
     pub candidate_distance: f64,
     /// Minimum degeneracy (observability) of the source submap, -1 if not
@@ -276,6 +279,8 @@ impl ClosureCandidateDiag {
             keep_rate: f64::NAN,
             extension_budget: 0,
             look_alike_places: 0,
+            generic_places: 0,
+            generic_skipped: 0,
             candidate_distance: f64::NAN,
             degeneracy_min: -1.0,
             icp_converged: false,
@@ -649,6 +654,13 @@ pub struct Config {
     pub graph_change_heat_threshold: f64,
     pub graph_change_heat_floor: f64,
     pub graph_change_heat_decay: f64,
+    /// Seeded solve: a solve starts from the accepted graph (the newest adopted solve's poses, the keyframes since riding
+    /// its correction) instead of from the odometry when that graph already fits every closure GNC would weigh (so GNC
+    /// has nothing to decide); otherwise, and with position priors or sightings, from the odometry as before.
+    pub solve_seed_from_accepted: bool,
+    /// GNC starts from the newest adopted solve's verdicts: a closure it rejected starts out, and GNC's starting mu comes
+    /// from the rest's residuals, so one still beyond twice the worst of them stays out.
+    pub solve_seed_gnc_verdicts: bool,
     /// Deterministic solve schedule: a finished solve is held `ceil(estimate)` scans (at least one) after its dispatch,
     /// its estimate an upper bound on its cost in scans known before it starts, so the graph is the same however fast the
     /// machine is; one still running then is an overshoot (logged loudly, counted) and is adopted as soon as it
@@ -740,6 +752,11 @@ pub struct Config {
     pub odometry_error_estimate_tilt_per_sqrt_m: f64,
     #[cfg_attr(feature = "native", serde(alias = "odom_tilt_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_tilt_per_sqrt_rad: f64,
+    /// True (the module sets it when the config states no odometry error estimate): the odometry error estimate follows
+    /// the lidar's range (`lidar_range`, linear between the Go2 L1's and the Mid-360's calibrated estimates), replacing the
+    /// `odometry_error_estimate_*` above each time the range estimate updates.
+    pub odometry_error_estimate_from_lidar_range: bool,
+    pub lidar_range: crate::lidar_range::LidarRangeConfig,
     /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
     /// the next (xy, z, yaw, roll/pitch): the prior that `learned_odometry_error_estimate_from_closures` holds its estimate to. 0 = one
     /// closure's worth of information (a unit-information prior). Defaults: the spread of those five recordings around
@@ -788,6 +805,13 @@ pub struct Config {
     /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
     /// loops; huge: 12,012 of 16,867 for 69 right and 150 wrong).
     pub closure_alternative_places_min_pressure: f64,
+    /// When above 0, a scan-context target matched from this many separate places (`similarity_discovery::GenericPlaces`)
+    /// "looks like everything" and is skipped before closure ICP, the next match tried instead; 0 turns it off.
+    pub scan_context_generic_places: usize,
+    /// Scans this close (m, current graph) to one already counted, or to the target, are the same place.
+    pub scan_context_generic_place_radius_m: f64,
+    /// Targets the generic-place cache tracks.
+    pub scan_context_generic_capacity: usize,
     /// With `closure_likelihood_confidence`: score only the source points the target can speak to, those within ICP's
     /// inlier distance of it or in space a target scan looked through (`connection_fit::likelihood_ratio_visible`);
     /// a point no target scan saw counts for nothing instead of as a misfit.
@@ -824,6 +848,9 @@ impl Config {
     // the negated comparisons reject NaN too
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn validate(&self) -> Result<(), String> {
+        if self.odometry_error_estimate_from_lidar_range {
+            self.lidar_range.validate()?;
+        }
         if !(self.barely_fail_uncertainty_range < 1.0) {
             return Err(format!(
                 "barely_fail_uncertainty_range must be < 1 (got {})",
@@ -910,6 +937,8 @@ impl Default for Config {
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
             graph_change_heat_decay: 0.995,
+            solve_seed_from_accepted: false,
+            solve_seed_gnc_verdicts: false,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
@@ -932,6 +961,8 @@ impl Default for Config {
             odometry_error_estimate_yaw_per_sqrt_rad: 8.66e-3,
             odometry_error_estimate_tilt_per_sqrt_m: 6.91e-4,
             odometry_error_estimate_tilt_per_sqrt_rad: 3.3e-3,
+            odometry_error_estimate_from_lidar_range: false,
+            lidar_range: crate::lidar_range::LidarRangeConfig::default(),
             learned_odometry_error_estimate_prior_ln_sd_xy: 1.72,
             learned_odometry_error_estimate_prior_ln_sd_z: 2.05,
             learned_odometry_error_estimate_prior_ln_sd_yaw: 1.15,
@@ -949,6 +980,9 @@ impl Default for Config {
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
             closure_alternative_places_min_pressure: 0.8,
+            scan_context_generic_places: 0,
+            scan_context_generic_place_radius_m: 10.0,
+            scan_context_generic_capacity: 256,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,
@@ -1059,6 +1093,8 @@ pub struct GscPgo {
     pub(crate) closure_search_wait_s: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
+    /// The running lidar range estimate (`odometry_error_estimate_from_lidar_range`).
+    pub(crate) lidar_range: crate::lidar_range::LidarRange,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
     /// Bumped whenever a keyframe is added or a solve is adopted: what loop_overlap reads changes only then, so pressure
     /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
@@ -1105,6 +1141,8 @@ pub struct GscPgo {
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// The ICP cache every closure search's cloud computations go through (`set_icp_cache`), if any.
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
+    /// Scan-context targets matched from many separate places (`scan_context_generic_places`).
+    pub(crate) generic_places: similarity_discovery::GenericPlaces,
     /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
@@ -1884,6 +1922,7 @@ impl GscPgo {
             lidar_height_m: config.scan_context_lidar_height_m,
         };
         GscPgo {
+            generic_places: similarity_discovery::GenericPlaces::new(config.scan_context_generic_capacity),
             config,
             scan_context_config,
             rotation_offset: mat3::identity(),
@@ -1895,6 +1934,37 @@ impl GscPgo {
     /// a recording.
     pub fn set_icp_cache(&mut self, cache: Arc<crate::icp_cache::IcpCache>) {
         self.icp_cache = Some(cache);
+    }
+
+    /// Add a scan's range to the running range estimate and, when it updates, set the odometry error estimate it implies.
+    fn follow_lidar_range(&mut self, cloud: &[[f32; 3]]) {
+        let range = crate::lidar_range::scan_range(cloud);
+        let Some(range_m) = self.lidar_range.add(range, &self.config.lidar_range) else {
+            return;
+        };
+        let [xy, z, yaw, tilt] = self.config.lidar_range.odometry_error_estimate_at(range_m);
+        let c = &mut self.config;
+        [c.odometry_error_estimate_xy_per_sqrt_m, c.odometry_error_estimate_xy_per_sqrt_rad] = xy;
+        [c.odometry_error_estimate_z_per_sqrt_m, c.odometry_error_estimate_z_per_sqrt_rad] = z;
+        [c.odometry_error_estimate_yaw_per_sqrt_m, c.odometry_error_estimate_yaw_per_sqrt_rad] = yaw;
+        [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad] = tilt;
+    }
+
+    /// The lidar range estimate (m) the odometry error estimate follows, once one is known
+    /// (`odometry_error_estimate_from_lidar_range`).
+    pub fn lidar_range_estimate_m(&self) -> Option<f64> {
+        self.lidar_range.estimate_m()
+    }
+
+    /// The stated odometry error estimate in use (per source xy, z, yaw, tilt: [per sqrt m, per sqrt rad]).
+    pub fn config_odometry_error_estimate(&self) -> crate::lidar_range::OdometryErrorEstimate {
+        let c = &self.config;
+        [
+            [c.odometry_error_estimate_xy_per_sqrt_m, c.odometry_error_estimate_xy_per_sqrt_rad],
+            [c.odometry_error_estimate_z_per_sqrt_m, c.odometry_error_estimate_z_per_sqrt_rad],
+            [c.odometry_error_estimate_yaw_per_sqrt_m, c.odometry_error_estimate_yaw_per_sqrt_rad],
+            [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad],
+        ]
     }
 
     /// The odometry error estimate in use as ratios to the reported variances (xy, z, yaw, roll/pitch;
@@ -2109,6 +2179,11 @@ impl GscPgo {
     /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
         let started = std::time::Instant::now();
+        if self.config.odometry_error_estimate_from_lidar_range {
+            if let Some(cloud) = &cloud_with_pose.cloud {
+                self.follow_lidar_range(cloud);
+            }
+        }
         let pose = &cloud_with_pose.pose;
         // an odometry that repeats each pose with a fresh stamp (huge's fastlio_odometry, ~2.7x) counts each pose once
         if self
@@ -2289,8 +2364,44 @@ impl GscPgo {
 
         // stage 2, similarity discovery: scan context, else the nearest past keyframe by position
         let t0 = std::time::Instant::now();
-        let (scan_context_target, sector_shift, sc_best, sc_second, ranked, alternatives) =
+        let (mut scan_context_target, mut sector_shift, mut sc_best, sc_second, ranked, mut alternatives) =
             self.search_by_scan_context();
+        if self.config.scan_context_generic_places > 0 {
+            let (best_shift, best_dist) = (sector_shift, sc_best);
+            let matched = scan_context_target
+                .map(|target| (best_dist, target, best_shift))
+                .into_iter()
+                .chain(alternatives.iter().copied());
+            let (radius, cap) = (
+                self.config.scan_context_generic_place_radius_m,
+                self.config.scan_context_generic_places,
+            );
+            let matched: Vec<_> = matched.collect();
+            let key_poses = &self.key_poses;
+            for &(_, target, _) in &matched {
+                self.generic_places
+                    .record(target, cur_idx, radius, cap, |k| key_poses.position(k));
+            }
+            // a target matched from `cap` separate places looks like everything: try the next match instead
+            let mut kept: Vec<_> = matched
+                .iter()
+                .copied()
+                .filter(|&(_, target, _)| self.generic_places.places(target) < cap)
+                .collect();
+            diag.generic_skipped = matched.len() - kept.len();
+            let first = (!kept.is_empty()).then(|| kept.remove(0));
+            let rest = kept;
+            match first {
+                Some((distance, target, shift)) => {
+                    scan_context_target = Some(target);
+                    sector_shift = shift;
+                    sc_best = distance;
+                }
+                None => scan_context_target = None,
+            }
+            alternatives = rest;
+            diag.generic_places = scan_context_target.map_or(0, |t| self.generic_places.places(t));
+        }
         let lookup_s = t0.elapsed().as_secs_f64();
         self.timing.scan_context_s += lookup_s;
         diag.cost_lookup_s = lookup_s;

@@ -95,6 +95,8 @@ fn residuals_measure_translation_and_heading_noise_apart() {
         huber_k: 0.0,
         evidence_core: false,
         learned_evidence: true,
+        seed_closure_weights: Vec::new(),
+        seed_start: Vec::new(),
     };
     // Helmert's iteration: rescale each source by its ratio and solve again until the ratios settle at 1
     let mut odometry = odometry;
