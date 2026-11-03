@@ -119,9 +119,6 @@ pub struct ClosureCandidateDiag {
     pub keep_rate: f64,
     pub extension_budget: usize,
     pub look_alike_places: usize,
-    /// Separate places that had matched the chosen scan-context target, and the generic targets skipped for it.
-    pub generic_places: usize,
-    pub generic_skipped: usize,
     /// Global distance between source and candidate keyframe.
     pub candidate_distance: f64,
     /// Minimum degeneracy (observability) of the source submap; -1 if not computed.
@@ -231,8 +228,6 @@ impl ClosureCandidateDiag {
             keep_rate: f64::NAN,
             extension_budget: 0,
             look_alike_places: 0,
-            generic_places: 0,
-            generic_skipped: 0,
             candidate_distance: f64::NAN,
             degeneracy_min: -1.0,
             icp_converged: false,
@@ -601,12 +596,6 @@ pub struct Config {
     pub closure_alternative_places: bool,
     /// Alternative places are tried only at or above this pressure.
     pub closure_alternative_places_min_pressure: f64,
-    /// Above 0: skip a scan-context target matched from this many separate places (`similarity_discovery::GenericPlaces`); 0 = off.
-    pub scan_context_generic_places: usize,
-    /// Scans this close (m, current graph) to one already counted, or to the target, are the same place.
-    pub scan_context_generic_place_radius_m: f64,
-    /// Targets the generic-place cache tracks.
-    pub scan_context_generic_capacity: usize,
     /// With `closure_likelihood_confidence`: score only source points a target scan could see (`connection_fit::likelihood_ratio`).
     pub closure_likelihood_visibility: bool,
     /// Estimate the odometry noise variances from kept closures (`learned_odometry_error_estimate`); logged only, nothing uses them.
@@ -752,9 +741,6 @@ impl Default for Config {
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
             closure_alternative_places_min_pressure: 0.8,
-            scan_context_generic_places: 0,
-            scan_context_generic_place_radius_m: 10.0,
-            scan_context_generic_capacity: 256,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,
@@ -889,8 +875,6 @@ pub struct GscPgo {
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// The ICP cache every closure search's cloud computations go through (`set_icp_cache`), if any.
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
-    /// Scan-context targets matched from many separate places (`scan_context_generic_places`).
-    pub(crate) generic_places: similarity_discovery::GenericPlaces,
     /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
@@ -1612,7 +1596,6 @@ impl GscPgo {
             lidar_height_m: config.scan_context_lidar_height_m,
         };
         GscPgo {
-            generic_places: similarity_discovery::GenericPlaces::new(config.scan_context_generic_capacity),
             config,
             scan_context_config,
             rotation_offset: mat3::identity(),
@@ -2015,44 +1998,8 @@ impl GscPgo {
 
         // stage 2, similarity discovery: scan context, else the nearest past keyframe by position
         let t0 = std::time::Instant::now();
-        let (mut scan_context_target, mut sector_shift, mut sc_best, sc_second, ranked, mut alternatives) =
+        let (scan_context_target, sector_shift, sc_best, sc_second, ranked, alternatives) =
             self.search_by_scan_context();
-        if self.config.scan_context_generic_places > 0 {
-            let (best_shift, best_dist) = (sector_shift, sc_best);
-            let matched = scan_context_target
-                .map(|target| (best_dist, target, best_shift))
-                .into_iter()
-                .chain(alternatives.iter().copied());
-            let (radius, cap) = (
-                self.config.scan_context_generic_place_radius_m,
-                self.config.scan_context_generic_places,
-            );
-            let matched: Vec<_> = matched.collect();
-            let key_poses = &self.key_poses;
-            for &(_, target, _) in &matched {
-                self.generic_places
-                    .record(target, cur_idx, radius, cap, |k| key_poses.position(k));
-            }
-            // a target matched from `cap` separate places looks like everything: try the next match instead
-            let mut kept: Vec<_> = matched
-                .iter()
-                .copied()
-                .filter(|&(_, target, _)| self.generic_places.places(target) < cap)
-                .collect();
-            diag.generic_skipped = matched.len() - kept.len();
-            let first = (!kept.is_empty()).then(|| kept.remove(0));
-            let rest = kept;
-            match first {
-                Some((distance, target, shift)) => {
-                    scan_context_target = Some(target);
-                    sector_shift = shift;
-                    sc_best = distance;
-                }
-                None => scan_context_target = None,
-            }
-            alternatives = rest;
-            diag.generic_places = scan_context_target.map_or(0, |t| self.generic_places.places(t));
-        }
         let lookup_s = t0.elapsed().as_secs_f64();
         self.timing.scan_context_s += lookup_s;
         diag.cost_lookup_s = lookup_s;
