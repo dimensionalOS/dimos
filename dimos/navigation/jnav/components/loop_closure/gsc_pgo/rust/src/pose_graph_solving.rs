@@ -115,28 +115,6 @@ impl GscPgo {
         });
         self.adopt(ready)
     }
-    /// `update`, but waiting for the running solve once its hold passes, so a replay gives the same graph on any machine.
-    pub fn wait_for_due_solve(&mut self) -> bool {
-        self.track_solve();
-        let due = self.config.deterministic()
-            && self
-                .solving
-                .as_ref()
-                .is_some_and(|solving| self.scans_seen >= solving.schedule.due_scan());
-        if due {
-            self.adopt(true)
-        } else {
-            self.update()
-        }
-    }
-    /// `update`, but waiting for the running solve to finish first, whatever its hold.
-    pub fn wait_for_solve(&mut self) -> bool {
-        self.adopt(true)
-    }
-    /// Solves that took longer than the data time their estimate spanned (`SolveSchedule::overshoot`).
-    pub fn solve_overshoots(&self) -> usize {
-        self.solve_overshoots
-    }
     /// Note the scan the running solve was first seen finished at.
     fn track_solve(&mut self) {
         let scans = self.scans_seen;
@@ -457,10 +435,8 @@ impl GscPgo {
         let Some(solving) = self.solving.take() else {
             return false;
         };
-        let joined = std::time::Instant::now();
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
-        self.solve_join_wait_s += joined.elapsed().as_secs_f64();
         // a waited-for solve finished at the waiting scan; one slower than its estimate's data span overshot
         let schedule = SolveSchedule {
             finished_scan: Some(solving.schedule.finished_scan.unwrap_or(self.scans_seen)),
@@ -483,12 +459,6 @@ impl GscPgo {
         }
         self.timing.solve_s += seconds;
         self.record_job_ratio("solve", seconds, solving.schedule.estimate_raw_scans);
-        let dispatched_over = solving.keyframes;
-        self.solve_records.push((
-            dispatched_over,
-            self.key_poses.fixed(dispatched_over - 1).time,
-            seconds,
-        ));
         // an unconverged solve keeps the previous map (cost is no test: a real loop can raise it a hundredfold)
         let previous = self.graph_error;
         if !solution.converged {
