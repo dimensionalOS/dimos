@@ -52,19 +52,19 @@ test("latest returns a live frame after an earlier read cached one", async (t) =
   const { session, push } = fakeSession(t, odom);
   setTimeout(() => push(1), 50);
   const first = await readChannel(session, odom, "latest", AbortSignal.timeout(1_000));
-  assert.deepEqual([first.slot.seq, first.fresh], [1, true]);
+  assert.deepEqual([first.slot.seq, first.stale], [1, false]);
   setTimeout(() => push(2), 50);
   const second = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
-  assert.deepEqual([second.slot.seq, second.fresh], [2, true]);
+  assert.deepEqual([second.slot.seq, second.stale], [2, false]);
 });
 
 test("latest falls back to the cached frame on a quiet stream", async (t) => {
   const { session, push } = fakeSession(t, odom);
   push(1);
   const quiet = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
-  assert.deepEqual([quiet.slot.seq, quiet.fresh], [1, false]);
+  assert.deepEqual([quiet.slot.seq, quiet.stale], [1, true]);
   const short = await readChannel(session, odom, "latest", AbortSignal.timeout(100));
-  assert.deepEqual([short.slot.seq, short.fresh], [1, false], "a caller timeout under 2 s still gets a frame");
+  assert.deepEqual([short.slot.seq, short.stale], [1, true], "a caller timeout under 2 s still gets a frame");
 });
 
 test("latest still fails when the caller cancels", async (t) => {

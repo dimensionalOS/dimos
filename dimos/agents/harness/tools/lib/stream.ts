@@ -59,7 +59,8 @@ const LATEST_REFRESH_MS = 2_000;
 
 export interface ChannelRead {
   readonly slot: Slot;
-  readonly fresh: boolean;
+  /** True when latest fell back to the frame an earlier read cached. */
+  readonly stale: boolean;
 }
 
 export async function readChannel(
@@ -78,7 +79,7 @@ export async function readChannel(
         AbortSignal.any([signal, AbortSignal.timeout(LATEST_REFRESH_MS)]),
       );
     } catch (error) {
-      if (error instanceof DOMException && error.name === "TimeoutError") return { slot: previous, fresh: false };
+      if (error instanceof DOMException && error.name === "TimeoutError") return { slot: previous, stale: true };
       throw error;
     }
   }
@@ -102,7 +103,7 @@ export async function readChannel(
       },
       signal,
     );
-    return { slot, fresh: true };
+    return { slot, stale: false };
   } finally {
     stop();
   }
@@ -147,7 +148,7 @@ export function streamTool(options: {
     "stream_get",
     {
       name: "stream_get",
-      description: `Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame, waiting up to ${LATEST_REFRESH_MS / 1000} s for a live one and otherwise returning the last frame with fresh=false (only latest can return fresh=false); next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.`,
+      description: `Discover streams with op=list, then use op=read with an exact returned channel ID. Latest returns the current frame; when none arrives within ${LATEST_REFRESH_MS / 1000} s it returns the last one with stale=true. Next waits for a new frame. Subscriptions close after the read. Export uses the relay's preview resolution.`,
       parameters: Parameters,
       execute: async (args, _api, context) => {
         try {
@@ -182,7 +183,7 @@ export function streamTool(options: {
             (changed) => session.status.subscribe(changed),
             signal,
           );
-          const { slot, fresh } = await readChannel(session, spec, input.mode ?? "latest", signal);
+          const { slot, stale } = await readChannel(session, spec, input.mode ?? "latest", signal);
           const path = input.export
             ? await savePreview(await toFrame(channel, spec, slot, epochMs(Date.now())), options.exportsDir)
             : null;
@@ -196,7 +197,7 @@ export function streamTool(options: {
                   channel,
                   seq: slot.seq,
                   ts: slot.ts,
-                  fresh,
+                  stale,
                   preview: slot.preview ?? null,
                   export: path,
                 }),
