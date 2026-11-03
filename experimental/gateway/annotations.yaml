@@ -713,6 +713,27 @@ robots:
         teleop-webxr-openarm:
           title: OpenArm VR teleop
           description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+    seeed_b601_dm:
+      name: Seeed reBot B601-DM
+      description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
+      type: arm
+      manufacturer: Seeed Studio
+      dirs: [dimos/robot/manipulators/seeed_b601_dm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - module: controlcoordinator
+          field: can_port
+          label: CAN port
+          placeholder: /dev/ttyACM0
+          when: {simulation: ''}
+      blueprints:
+        seeed-b601-dm-planner-coordinator:
+          title: B601-DM motion planning
+          description: Motion planning and execution for a Seeed reBot B601-DM arm.
+        coordinator-seeed-b601-dm:
+          title: B601-DM coordinator
+          description: A B601-DM behind a ControlCoordinator (a building block).
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.

@@ -186,6 +186,7 @@ class RobotModel:
     _fixed_joints: tuple[str, ...] = ()
     _renamed_joints: tuple[tuple[str, str], ...] = ()
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
+    _joint_velocity_limits: tuple[tuple[str, float], ...] = ()
     _subtree_root_link: str | None = None
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
@@ -353,6 +354,12 @@ class RobotModel:
             ),
         )
 
+    def with_joint_velocity_limits(self, limits: Mapping[str, float]) -> RobotModel:
+        """Replace named joint velocity limits in every planning backend."""
+        if not limits or any(not math.isfinite(value) or value <= 0 for value in limits.values()):
+            raise ValueError("Joint velocity limits must be positive and finite")
+        return replace(self, _joint_velocity_limits=(*self._joint_velocity_limits, *limits.items()))
+
     def with_default_joint_acceleration_limit(self, value: float) -> RobotModel:
         """Fill missing movable-joint acceleration limits during materialization."""
         if not math.isfinite(value) or value <= 0.0:
@@ -412,6 +419,8 @@ class RobotModel:
             xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
             xml = _set_joint_position_limits(xml, self._joint_position_limits)
+        if self._joint_velocity_limits:
+            xml = _set_joint_velocity_limits(xml, self._joint_velocity_limits)
         if self._renamed_joints:
             xml = _rename_joints(xml, dict(self._renamed_joints))
         if self._default_joint_acceleration_limit is not None:
@@ -731,6 +740,24 @@ def _set_joint_position_limits(
             raise ValueError(f"Joint has no position limits: {replacement.name}")
         limit.set("lower", str(replacement.lower))
         limit.set("upper", str(replacement.upper))
+    return ET.tostring(root, encoding="unicode")
+
+
+def _set_joint_velocity_limits(xml: str, replacements: tuple[tuple[str, float], ...]) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    seen: set[str] = set()
+    for name, value in replacements:
+        if name in seen:
+            raise ValueError(f"Joint velocity limits already replaced: {name}")
+        seen.add(name)
+        joint = joints.get(name)
+        if joint is None:
+            raise ValueError(f"Joint not found: {name}")
+        limit = joint.find("limit")
+        if limit is None or joint.get("type") == "fixed":
+            raise ValueError(f"Joint has no velocity limits: {name}")
+        limit.set("velocity", str(value))
     return ET.tostring(root, encoding="unicode")
 
 
