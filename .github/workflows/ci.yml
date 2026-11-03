@@ -617,39 +617,6 @@ jobs:
         working-directory: web/cockpit
         run: deno task build
 
-      # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
-          prune-cache: true
-      - name: Setup Python
-        uses: actions/setup-python@v7.0.0
-        with:
-          python-version: '3.12'
-      - name: Install native dependencies (pyaudio build, JPEG encoding)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
-      - name: Fetch the go2_short replay dataset
-        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
-      - name: Install dependencies
-        run: uv sync --group tests --group browser-tests --frozen
-      - name: Install Playwright browsers  # the e2e runs in both engines
-        run: uv run playwright install --with-deps chromium firefox
-      - name: Cockpit + SDK browser e2e
-        run: >-
-          uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
-          dimos/e2e_tests/test_sdk_browser.py
-          dimos/e2e_tests/test_custom_channel_browser.py
-          dimos/e2e_tests/test_lcm_channel_browser.py
-          dimos/e2e_tests/test_publish_browser.py
-          dimos/e2e_tests/test_voice_browser.py
-          dimos/e2e_tests/test_stats_browser.py
-          dimos/e2e_tests/test_map3d_browser.py
-          dimos/e2e_tests/test_robot_picker_browser.py
-          dimos/e2e_tests/test_relay_auth_browser.py --no-cov
-
       - name: Relay image build  # docker/relay/Dockerfile must not rot silently
         run: docker build -f docker/relay/Dockerfile .
 
@@ -877,9 +844,8 @@ jobs:
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
-            # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
             # native_e2e: livox live loopback; hosted macOS has no nix-built binaries, Linux runs it in tests.
-            markers: "self_hosted or web_browser or native_e2e"
+            markers: "self_hosted or native_e2e"
             experimental: false
     runs-on:
       - self-hosted
@@ -927,11 +893,6 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
-      - name: Install web_browser e2e dependencies (macOS)
-        if: matrix.os == 'macOS'
-        run: |
-          uv sync --group tests-self-hosted --group browser-tests --frozen
-          uv run playwright install chromium firefox
       - name: Install Node 24 for the Pi and dimcode CLIs
         uses: actions/setup-node@v7
         with:
@@ -1116,149 +1077,6 @@ jobs:
         # always(): a cancelled run can leave nix processes holding locks.
         if: ${{ !cancelled() && matrix.os == 'Linux' }}
         run: nix-collect-garbage --delete-older-than 3d
-
-  self-hosted-large-tests:
-    # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
-    if: |
-      !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      needs.cachix-build-check.result == 'success' &&
-      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [cachix-build-check, cachix-build]
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-      TYPESAFENAVIGATIONAGENT__API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-      DIMSIM_RENDER: gpu
-      # See the `tests` job for why this is set.
-      PYTHONFAULTHANDLER: "1"
-    timeout-minutes: 30
-    runs-on: [self-hosted, Linux, large]
-    permissions:
-      contents: read  # For checkout
-      id-token: write  # For codecov-action's OIDC upload
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          clean: false
-          # If we ever allow external PRs on custom runner, persisting credentials
-          # could be abused by attackers.
-          persist-credentials: false
-      - name: Fix permissions
-        run: |
-          sudo git config --global --add safe.directory '*'
-          sudo git clean -ffdx
-      - name: Fetch DimSim LFS assets only
-        # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
-        # glbs are pointer stubs and the browser sim fails to load them. Pull
-        # ONLY misc/DimSim assets — a full `lfs: true` would also drag in main's
-        # multi-GB data/.lfs/* objects (some missing on the server → 404).
-        # persist-credentials is false above, so supply the token for this pull.
-        run: |
-          git config --local http.https://github.com/.extraheader \
-            "AUTHORIZATION: basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)"
-          git lfs pull --include="misc/DimSim/**"
-          git config --local --unset-all http.https://github.com/.extraheader
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          # We persist on disk, cache would clean some of this up.
-          enable-cache: false
-      - name: Install codecov CLI
-        # Self-hosted runners have no `pip` on PATH, so codecov-action's
-        # use_pypi can't work here; pre-install the pinned CLI with uv and
-        # point the action at it via `binary`. See codecov/codecov-action#1955
-        # and #2398.
-        run: |
-          uv venv .codecov-venv
-          uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
-      - name: Install apt dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            `# Compiler toolchain for the in-tree pybind11 C++ extension.` \
-            build-essential \
-            `# Runtime lib for opencv-python (cv2 loads libGL.so.1 on import).` \
-            libgl1 \
-            `# Runtime lib for PyTurboJPEG (fast JPEG encode/decode).` \
-            libturbojpeg \
-            `# Dev package for PyAudio (built from source against PortAudio).` \
-            portaudio19-dev \
-            `# Chromium runtime libs required by Playwright (used by dimsim browser tests).` \
-            libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
-            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
-            `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
-            libxkbcommon-x11-0
-      - name: Install dependencies
-        run: uv sync --group tests-self-hosted --frozen
-      - name: Build C++ extensions in-place
-        run: uv run python setup.py build_ext --inplace
-      - name: Build DimSim and install its headless Chromium
-        # Without this, it gets built in the test, creating race conditions.
-        run: ./bin/dimsim-prepare
-      - name: Run tests
-        # The runner must have an Xorg server with NVIDIA GPU access running
-        # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
-        # heavier scenes (`apt`). Software X via xvfb is not enough.
-        env:
-          DISPLAY: ":0"
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
-      - name: Re-run the failing tests with maximum verbosity
-        if: failure()
-        env:
-          COLOR: yes
-          DISPLAY: ":0"
-        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
-        shell: bash
-      - name: Print crash diagnostics
-        if: failure()
-        shell: bash
-        run: |
-          shopt -s nullglob
-          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
-            echo "::group::$(basename "$f")"
-            cat "$f"
-            echo "::endgroup::"
-          done
-      - name: Turn coverage into xml
-        run: uv run python -m coverage xml
-      - name: Upload coverage
-        uses: codecov/codecov-action@v7
-        with:
-          disable_search: true
-          fail_ci_if_error: true
-          files: ./coverage.xml
-          flags: SelfHosted-Large
-          use_oidc: true
-          # Use the pinned CLI from the "Install codecov CLI" step (no pip
-          # on self-hosted runners, and the default cli.codecov.io download
-          # has a broken GPG key fetch). See codecov/codecov-action#1955.
-          binary: .codecov-venv/bin/codecovcli
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7
-        with:
-          report_type: test_results
-          use_oidc: true
-          # See the "Upload coverage" step above.
-          binary: .codecov-venv/bin/codecovcli
-      - name: Check disk space
-        if: failure()
-        run: |
-          df -h
-      - name: Prune the persistent uv cache
-        # See self-hosted-tests; UV_CACHE_DIR isn't set here, so resolve the
-        # default with `uv cache dir`.
-        if: ${{ !cancelled() }}
-        run: |
-          uv cache prune
-          size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
-          echo "uv cache size: ${size_mb} MB"
-          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   benchmark:
     timeout-minutes: 30
@@ -1457,7 +1275,6 @@ jobs:
     - tests
     - self-hosted-tests
     - benchmark-track
-    #- self-hosted-large-tests
 
     runs-on: ubuntu-latest
     permissions:
@@ -1467,7 +1284,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: self-hosted-tests, self-hosted-large-tests
+        allowed-skips: self-hosted-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7

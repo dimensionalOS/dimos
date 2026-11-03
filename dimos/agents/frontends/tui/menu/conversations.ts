@@ -1,5 +1,5 @@
-import type { MenuTab } from "./base.ts";
-import { switcherLine, switcherRows } from "../../../shared/view-models/gateway/switcher.ts";
+import type { MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
+import { switcherLine, switcherRows } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
 
 /** Tab 2: every conversation as the switcher orders it; Enter shows it in the chat. */
 export const conversationsTab: MenuTab = {

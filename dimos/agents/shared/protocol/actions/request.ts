@@ -1,4 +1,4 @@
-import type { UserRequestId } from "../conversation/input.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 
 /**
  * Chosen by the client for one action whose catalog entry retries `by_request_id`, and reused when it retries after the

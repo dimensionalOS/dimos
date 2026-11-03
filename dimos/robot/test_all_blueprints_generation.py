@@ -50,6 +50,7 @@ _EXCLUDED_MODULE_NAMES = {
     "StreamModule",
     "ConnectionModule",
     "DamiaoConnection",
+    "CollectionModule",
 }
 
 

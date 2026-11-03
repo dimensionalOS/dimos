@@ -1,6 +1,6 @@
-import type { EpochMs } from "../../protocol/time.ts";
-import type { JobRow } from "../../protocol/jobs/state.ts";
-import type { Level } from "../levels.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
 
 /** One mark on a job's lane: a run that happened, with its outcome's level, or a due time to come. */
 export type JobMark =

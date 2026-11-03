@@ -1,6 +1,6 @@
-import { owner } from "../../../sdk/failures.ts";
-import type { ModuleRow } from "../../../shared/protocol/runtime/module.ts";
-import type { MenuTab } from "./base.ts";
+import { owner } from "#dimos/agents/sdk/failures.ts";
+import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
 
 /** "follower  #2  r12 running  ✖ ImportError: …" */
 function moduleText(module: ModuleRow): string {

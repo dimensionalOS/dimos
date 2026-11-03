@@ -1,14 +1,14 @@
 import type { Ref } from "@earendil-works/chord";
-import { connect } from "../../sdk/main.ts";
-import { unixSocket } from "../../sdk/node.ts";
-import { refusalOfFailure } from "../../sdk/failures.ts";
-import { GatewayContract } from "../../shared/protocol/gateway/contract.ts";
-import { LifecycleContract } from "../../shared/protocol/lifecycle/contract.ts";
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import { refusalText } from "../../shared/view-models/outcome.ts";
-import { statusText } from "../../shared/view-models/status.ts";
-import { gatewayState } from "../process.ts";
-import type { Command } from "./base.ts";
+import { connect } from "#dimos/agents/sdk/main.ts";
+import { unixSocket } from "#dimos/agents/sdk/node.ts";
+import { refusalOfFailure } from "#dimos/agents/sdk/failures.ts";
+import { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
+import { statusText } from "#dimos/agents/shared/view-models/status.ts";
+import { gatewayState } from "#dimos/agents/cli/process.ts";
+import type { Command } from "#dimos/agents/cli/commands/base.ts";
 
 /** What `dimos agent status --json` prints: the gateway process and every gateway member's value. */
 export function statusJson(refs: { gateway: Ref<typeof GatewayContract>; lifecycle: Ref<typeof LifecycleContract> }) {

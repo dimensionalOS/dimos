@@ -1,5 +1,5 @@
 import { registerHooks } from "node:module";
-import { webAliases } from "../web-aliases.mjs";
+import { webAliases } from "#dimos/agents/web-aliases.mjs";
 import { readFileSync } from "node:fs";
 import { transformSync } from "esbuild";
 

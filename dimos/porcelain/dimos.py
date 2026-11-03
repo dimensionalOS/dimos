@@ -73,7 +73,7 @@ class Dimos:
         Args:
             target: One of:
                 - A string name from the blueprint/module registry
-                  (e.g. `"unitree-go2-basic"` or `"camera-module"`).
+                  (e.g. `"unitree-go2-basic"` or `"webcam-module"`).
                 - A `Blueprint` object.
                 - A `Module` class (calls `.blueprint()` automatically).
 
@@ -82,7 +82,7 @@ class Dimos:
 
         On a connected Dimos, `target` is sent to the daemon: strings and
         registered module classes take a name-based fast path, while Module
-        classes and Blueprint objects are pickled and unpickled on the daemon.
+        classes and Blueprint objects are encoded and rebuilt on the daemon.
         """
         with self._lock:
             if self._stopped:

@@ -18,11 +18,12 @@ from __future__ import annotations
 
 from functools import cached_property
 import sys
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import torch
 
 from dimos.core.resource import Resource
+from dimos.protocol.encode.cbor import register_codec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', 'mps', etc.
@@ -36,6 +37,14 @@ def default_torch_device() -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def _torch_dtype(name: str) -> torch.dtype:
+    return cast("torch.dtype", getattr(torch, name))
+
+
+# Model configs carry a torch.dtype default and ride into workers over the CBOR codec.
+register_codec(torch.dtype, lambda dtype: str(dtype).removeprefix("torch."), _torch_dtype)
 
 
 class LocalModelConfig(BaseConfig):

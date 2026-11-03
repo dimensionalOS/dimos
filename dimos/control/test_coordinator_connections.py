@@ -661,10 +661,21 @@ TARGET = [0.2, -0.1, 0.3, 0.0, 0.1, -0.2, 0.25]
 
 
 @pytest.fixture
-def system() -> Iterator[ModuleCoordinator]:
-    """FakeArm and FakeBase behind a coordinator with a trajectory task, built with no viewer."""
+def system(request: pytest.FixtureRequest) -> Iterator[ModuleCoordinator]:
+    """FakeArm and FakeBase behind a coordinator with a trajectory task, built with no viewer.
+
+    A coordinator that goes ``reading_timeout_s`` without a reading stops
+    commanding the robot, so a test machine that freezes that long can leave
+    the arm short of TARGET. The default here outlasts such a freeze; a test
+    that needs a silence noticed passes a shorter one, in seconds, with
+    ``indirect=True``.
+    """
     blueprint = autoconnect(
-        Robots.blueprint(model=MOCK_MODEL, tasks=[joint_trajectory_task(MOCK_JOINTS)]),
+        Robots.blueprint(
+            model=MOCK_MODEL,
+            tasks=[joint_trajectory_task(MOCK_JOINTS)],
+            reading_timeout_s=getattr(request, "param", 10.0),
+        ),
         FakeArm.blueprint(),
         FakeBase.blueprint(),
     ).remappings(
@@ -719,6 +730,9 @@ def test_a_trajectory_reaches_the_fake_arm_and_the_base_is_told_to_stand_still(
     assert base.last_error is None
 
 
+# Only a silence longer than the reading timeout makes the coordinator forget
+# where it held the arm, so the restart has to outlast it.
+@pytest.mark.parametrize("system", [0.2], indirect=True)
 def test_a_restarted_connection_module_is_held_where_it_now_is(system: ModuleCoordinator) -> None:
     drive_to_target(system)
 

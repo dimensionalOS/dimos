@@ -85,7 +85,7 @@ config = DataPrepConfig(
         },
         action={
             "action": FeatureSpec(
-                stream="applied_joint_position_command",
+                stream="coordinator_joint_command",
                 field="position",
                 dtype="float32",
                 shape=(2,),

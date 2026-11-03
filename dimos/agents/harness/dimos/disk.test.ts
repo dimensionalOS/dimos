@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { readModuleRecords } from "./disk.ts";
+import { readModuleRecords } from "#dimos/agents/harness/dimos/disk.ts";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
 

@@ -1,7 +1,7 @@
 import type { Context } from "@earendil-works/chord/context";
-import type { DimosConnection } from "../dimos/connection.ts";
-import type { InputGate } from "../inputs/gate.ts";
-import type { JobDefinition, JobOutcome, JobRun } from "../../shared/protocol/jobs/state.ts";
+import type { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import type { InputGate } from "#dimos/agents/harness/inputs/gate.ts";
+import type { JobDefinition, JobOutcome, JobRun } from "#dimos/agents/shared/protocol/jobs/state.ts";
 
 export type JobFiringDeps = {
   readonly inputs: InputGate;
