@@ -244,8 +244,8 @@ class PGOConfig(NativeModuleConfig):
     # Odometry drift as a random walk in the motion (independent of keyframe spacing): per source, the standard deviation
     # it adds per sqrt(metre travelled) and per sqrt(radian turned); translation in m, rotation in rad. After each solve
     # that keeps loops, debug_log (kind "odometry_drift") gives the values the run measured, to start the next run from.
-    # None (the default) for all of them: the estimate follows the lidar's range (odometry_error_estimate_from_lidar_range);
-    # any one given: the rest are the Mid-360 + FAST-LIO/Point-LIO values fitted to ground truth on five recordings.
+    # Unset: the Mid-360 + FAST-LIO/Point-LIO values fitted to ground truth on five recordings, unless
+    # odometry_error_estimate_from_lidar_range turns on the range-scaled estimate.
     odometry_error_estimate_xy_per_sqrt_m: float | None = None
     odometry_error_estimate_xy_per_sqrt_rad: float | None = None
     odometry_error_estimate_z_per_sqrt_m: float | None = None
@@ -257,8 +257,9 @@ class PGOConfig(NativeModuleConfig):
     # True: the odometry error estimate is linear in the lidar's range between the Go2 L1's and the Mid-360's calibrated
     # estimates (each scan's farthest point from its frame origin, the median of the last lidar_range.window_scans scans
     # blended in every ceil(window_scans / 5) scans, cooling with half-life lidar_range.decay_half_life_updates blends).
-    # None: on exactly when no odometry_error_estimate_* is given.
-    odometry_error_estimate_from_lidar_range: bool | None = None
+    # False (default, today's live behaviour): unset odometry_error_estimate_* get the Mid-360 values. None: on exactly
+    # when no odometry_error_estimate_* is given.
+    odometry_error_estimate_from_lidar_range: bool | None = False
     # overrides for the lidar range settings (window_scans, decay_half_life_updates, l1_range_m, mid360_range_m, ...);
     # empty = the calibrated defaults
     lidar_range: dict[str, Any] = Field(default_factory=dict)
