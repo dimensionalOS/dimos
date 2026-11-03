@@ -28,7 +28,6 @@ import time
 from typing import TYPE_CHECKING, Any
 import webbrowser
 
-from dimos_lcm.std_msgs import Bool
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -112,8 +111,6 @@ class WebsocketVisModule(Module):
     # LCM outputs
     goal_request: Out[PoseStamped]
     gps_goal: Out[LatLon]
-    explore_cmd: Out[Bool]
-    stop_explore_cmd: Out[Bool]
     tele_cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
@@ -340,16 +337,6 @@ class WebsocketVisModule(Module):
             logger.debug(
                 f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}"
             )
-
-        @self.sio.event  # type: ignore[untyped-decorator]
-        async def start_explore(sid: str) -> None:
-            logger.info("Starting exploration")
-            self.explore_cmd.publish(Bool(data=True))
-
-        @self.sio.event  # type: ignore[untyped-decorator]
-        async def stop_explore(sid) -> None:  # type: ignore[no-untyped-def]
-            logger.info("Stopping exploration")
-            self.stop_explore_cmd.publish(Bool(data=True))
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def clear_gps_goals(sid: str) -> None:
