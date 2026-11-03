@@ -102,6 +102,10 @@ class WebXRTeleopModule(Module):
     server, computes output poses, and publishes them.  Subclass to customize
     pose computation, output format, and engage behavior.
 
+    Inputs:
+        - webxr_pose, webxr_joy: the same controller poses and buttons the browser
+          sends over the WebSocket, for a page that publishes them on topics instead
+
     Outputs:
         - left_controller_output: PoseStamped (output pose for left hand)
         - right_controller_output: PoseStamped (output pose for right hand)
@@ -118,6 +122,8 @@ class WebXRTeleopModule(Module):
     button_pressed: Out[Buttons]
     button_released: Out[Buttons]
     status: In[String]
+    webxr_pose: In[PoseStamped]
+    webxr_joy: In[Joy]
     body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -165,6 +171,8 @@ class WebXRTeleopModule(Module):
         self._body_tracking_acquired = False
         self._debounced_buttons = 0
         self._button_candidates: dict[int, tuple[bool, float]] = {}
+        self._input_source: str | None = None
+        self._warned_two_sources = False
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -202,6 +210,7 @@ class WebXRTeleopModule(Module):
                     data = message.get("bytes")
                     text = message.get("text")
                     if data is not None:
+                        self._note_input_source("websocket")
                         self._dispatch_binary_message(data)
                     elif text is not None:
                         self._dispatch_text_message(text)
@@ -252,6 +261,29 @@ class WebXRTeleopModule(Module):
         self.body_tracking.publish(snapshot)
         self._log_body_tracking(snapshot)
         return True
+
+    def _on_stream_message(self, msg: PoseStamped | Joy) -> None:
+        """Take one controller pose or button message from webxr_pose / webxr_joy.
+
+        It goes through the same handlers as the same message sent over the WebSocket.
+        """
+        self._note_input_source("stream")
+        try:
+            if isinstance(msg, Joy):
+                self._on_joy(msg)
+            else:
+                self._on_pose(msg)
+        except ValueError as exc:
+            logger.warning("Dropping WebXR stream message", error=str(exc))
+
+    def _note_input_source(self, source: str) -> None:
+        """Warn once when controller input comes from both the WebSocket and the streams."""
+        if self._input_source not in (None, source) and not self._warned_two_sources:
+            self._warned_two_sources = True
+            logger.warning(
+                "WebXR input arrives over both /ws and webxr_pose/webxr_joy; the newest message wins"
+            )
+        self._input_source = source
 
     def _log_body_tracking(self, snapshot: BodyTrackingSnapshot) -> None:
         joints = snapshot.joints
@@ -340,6 +372,12 @@ class WebXRTeleopModule(Module):
         super().build()
         if self.status.connection is not None or self.status._transport is not None:
             self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
+        # Plain subscribe, not handle_*: those keep only the newest message, which
+        # would drop one hand when both hands' messages arrive back to back.
+        streams: tuple[In[Any], ...] = (self.webxr_pose, self.webxr_joy)
+        for stream in streams:
+            if stream.connection is not None or stream._transport is not None:
+                self.register_disposable(Disposable(stream.subscribe(self._on_stream_message)))
 
     @rpc
     def start(self) -> None:
@@ -446,8 +484,11 @@ class WebXRTeleopModule(Module):
         raise ValueError(f"Unexpected frame_id: {frame_id!r}, expected 'left' or 'right'")
 
     def _on_pose_bytes(self, data: bytes) -> None:
-        """Decode LCM bytes into PoseStamped, transform to robot frame."""
-        msg = PoseStamped.lcm_decode(data)
+        """Decode LCM bytes into PoseStamped and take it as a controller pose."""
+        self._on_pose(PoseStamped.lcm_decode(data))
+
+    def _on_pose(self, msg: PoseStamped) -> None:
+        """Store a controller pose from the browser, turned into the robot frame."""
         hand = self._resolve_hand(msg.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
@@ -455,8 +496,11 @@ class WebXRTeleopModule(Module):
             self._last_pose_update[hand] = time.monotonic()
 
     def _on_joy_bytes(self, data: bytes) -> bool:
-        """Decode LCM bytes into Joy, parse into WebXRControllerState."""
-        msg = Joy.lcm_decode(data)
+        """Decode LCM bytes into Joy and take it as controller buttons."""
+        return self._on_joy(Joy.lcm_decode(data))
+
+    def _on_joy(self, msg: Joy) -> bool:
+        """Store a controller's buttons and axes; False if the layout is malformed."""
         hand = self._resolve_hand(msg.frame_id)
         try:
             controller = WebXRControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))

@@ -276,6 +276,7 @@ all_modules = {
     "head-camera-info": "dimos.robot.galaxea.r1pro.head_cameras.HeadCameraInfo",
     "head-left-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadLeftCamera",
     "head-right-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadRightCamera",
+    "headset-feed-module": "dimos.teleop.webxr.headset_feed.HeadsetFeedModule",
     "heuristic-grasp-module": "dimos.manipulation.grasping.heuristic_grasp.HeuristicGraspModule",
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",
     "hybrid-teleop-coordinator": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim.HybridTeleopCoordinator",

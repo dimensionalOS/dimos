@@ -19,6 +19,7 @@ from __future__ import annotations
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -38,6 +39,7 @@ from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
     XARM_ARMS,
+    XARM_WRIST_CAMERA_TRANSFORM,
     XArmType,
     lite6_hardware,
     make_lite6_model_config,
@@ -47,6 +49,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm_model_config,
     xarm6_hardware,
     xarm7_hardware,
+    xarm_link_frames,
     xarm_model,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
@@ -210,6 +213,7 @@ _xarm6_teleop_model = make_xarm6_model_config(
 )
 _xarm7_teleop_model = make_xarm7_model_config(
     add_gripper=True,
+    tf_extra_links=xarm_link_frames(7),
 )
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
@@ -234,12 +238,14 @@ coordinator_teleop_xarm7 = autoconnect(
                 name="teleop_xarm",
                 priority=20,
             ),
+            # A browser jog streams twists while a button is held; one that stops
+            # arriving for 0.3 s is dropped, so a lost page cannot keep the arm moving.
             eef_twist_task(
                 _xarm7_teleop_hw,
                 robot_model=_xarm7_control_model,
                 target_frame="link7",
                 priority=10,
-                timeout=0.0,
+                timeout=0.3,
             ),
             TaskConfig(
                 name="arm_gripper",
@@ -248,14 +254,19 @@ coordinator_teleop_xarm7 = autoconnect(
                 priority=20,
                 stream_bind={"gripper_command": "right_gripper_command"},
             ),
-            trajectory_task(_xarm7_teleop_hw),
+            # Above eef_twist, which always holds the arm, so a planned motion runs;
+            # below VR, which takes over and aborts it.
+            trajectory_task(_xarm7_teleop_hw, priority=15),
         ],
     ),
     ManipulationModule.blueprint(
         gripper_tasks={"manipulator": "arm_gripper"},
         model=_xarm7_teleop_model,
         visualization={"backend": "viser"},
+        static_transforms=[] if global_config.simulation else [XARM_WRIST_CAMERA_TRANSFORM],
     ),
+    # Serves the URDF and its meshes to viewers; the planner already puts the links on tf.
+    UrdfManager.blueprint(model=_xarm7_teleop_model.model, publish_joint_tf=False),
     *mujoco_if_sim(XARM7_SIM_PATH, len(_xarm7_teleop_hw.joints)),
 )
 
