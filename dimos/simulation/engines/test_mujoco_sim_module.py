@@ -421,13 +421,13 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         module.stop()
 
 
-def _write_one_link_arm_xml(path: Path, forcerange: float = 100.0) -> None:
+def _write_one_link_arm_xml(path: Path, forcerange: float = 100.0, joint_cap: str = "") -> None:
     path.write_text(
         f"""
 <mujoco>
   <worldbody>
     <body name="link" pos="0 0 1">
-      <joint name="joint1" type="hinge" axis="0 1 0"/>
+      <joint name="joint1" type="hinge" axis="0 1 0" {joint_cap}/>
       <geom type="capsule" fromto="0 0 0 0.5 0 0" size="0.03" mass="2"/>
     </body>
   </worldbody>
@@ -454,17 +454,26 @@ def test_gravity_compensation_holds_the_commanded_pose(tmp_path: Path, compensat
         assert sag > 0.02
 
 
-def test_gravity_compensation_stays_within_the_actuator_force_limit(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "forcerange,joint_cap",
+    [(2.0, ""), (100.0, 'actuatorfrcrange="-2 2"')],
+    ids=["actuator_cap", "tighter_joint_cap"],
+)
+def test_gravity_compensation_stays_within_the_force_limit(
+    tmp_path: Path, forcerange: float, joint_cap: str
+) -> None:
     # The link needs about 4.9 Nm to hold level; 2 Nm cannot, even with compensation.
     robot_xml = tmp_path / "weak_arm.xml"
-    _write_one_link_arm_xml(robot_xml, forcerange=2.0)
+    _write_one_link_arm_xml(robot_xml, forcerange=forcerange, joint_cap=joint_cap)
     engine = MujocoEngine(config_path=robot_xml, headless=True, gravity_compensation=True)
     assert engine.model.jnt_actfrclimited[0]
     assert list(engine.model.jnt_actfrcrange[0]) == [-2.0, 2.0]
+    sag = 0.0
     for _ in range(2000):
         mujoco.mj_step(engine.model, engine.data)
+        sag = max(sag, abs(float(engine.data.qpos[0])))
 
-    assert abs(float(engine.data.qpos[0])) > 0.5
+    assert sag > 0.5
 
 
 @pytest.mark.self_hosted

@@ -310,8 +310,13 @@ class MujocoEngine(SimulationEngine):
             joint.actgravcomp = True
             if self._model.actuator_forcelimited[m.actuator_id]:
                 gear = abs(float(self._model.actuator_gear[m.actuator_id][0]))
+                low, high = self._model.actuator_forcerange[m.actuator_id] * gear
+                # Keep a tighter cap the joint already has.
+                if self._model.jnt_actfrclimited[m.joint_id]:
+                    joint_low, joint_high = self._model.jnt_actfrcrange[m.joint_id]
+                    low, high = max(low, joint_low), min(high, joint_high)
                 joint.actfrclimited = mujoco.mjtLimited.mjLIMITED_TRUE
-                joint.actfrcrange = self._model.actuator_forcerange[m.actuator_id] * gear
+                joint.actfrcrange = [low, high]
         logger.info("MujocoEngine: gravity compensation", bodies=len(bodies), joints=len(joints))
         return spec.compile()
 
