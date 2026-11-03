@@ -87,7 +87,7 @@ impl GscPgo {
             .send(Box::new(move || {
                 let started = std::time::Instant::now();
                 let cost = if config.graph_change_heat_enabled {
-                    graph_change_cost_on(&keys, &config, &finished.solution, finished.keyframes)
+                    graph_change_cost_on(&keys, &config, finished.poses(), finished.keyframes)
                 } else {
                     0.0
                 };

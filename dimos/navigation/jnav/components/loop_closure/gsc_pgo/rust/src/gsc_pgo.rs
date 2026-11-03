@@ -447,6 +447,10 @@ pub struct DeterministicConfig {
     pub pressure_scans_fixed_overhead: f64,
     pub pressure_scans_per_keyframe: f64,
     pub pressure_scans_per_closure: f64,
+    /// The solver fast path (`fast_path`): fixed, per keyframe it frees, and per keyframe of the graph (its copy and heat cost).
+    pub fast_path_scans_fixed_overhead: f64,
+    pub fast_path_scans_per_window_keyframe: f64,
+    pub fast_path_scans_per_keyframe: f64,
 }
 
 impl Default for DeterministicConfig {
@@ -469,6 +473,10 @@ impl Default for DeterministicConfig {
             pressure_scans_fixed_overhead: 0.0007777038336858567,
             pressure_scans_per_keyframe: 8.708997476399469e-06,
             pressure_scans_per_closure: 1.2578234731596874e-05,
+            // fast path: a loaded Mac's fast-mode p99 (gir1_pointlio, 1000-keyframe window) x4, the Jetson's slowdown on solve-like jobs
+            fast_path_scans_fixed_overhead: 0.42,
+            fast_path_scans_per_window_keyframe: 1.7e-3,
+            fast_path_scans_per_keyframe: 8.4e-5,
         }
     }
 }
@@ -541,6 +549,12 @@ pub struct Config {
     pub graph_change_heat_decay: f64,
     /// Seed a solve from the accepted graph when it already fits every closure GNC would weigh; otherwise from the odometry.
     pub solve_seed_from_accepted: bool,
+    /// Solver fast path (`fast_path`): a new closure whose older end is within `solver_fast_path_max_keyframes` of the newest
+    /// keyframe is applied at once by a local least squares (no GNC) over those keyframes; the GNC solve covering it supersedes.
+    pub solver_fast_path_enabled: bool,
+    pub solver_fast_path_max_keyframes: usize,
+    /// Each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate.
+    pub solver_fast_path_max_lm_steps: usize,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
     /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
@@ -662,6 +676,9 @@ impl Config {
             ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
             ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
             ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
+            ("fast_path_scans_fixed_overhead", self.deterministic_config.fast_path_scans_fixed_overhead),
+            ("fast_path_scans_per_window_keyframe", self.deterministic_config.fast_path_scans_per_window_keyframe),
+            ("fast_path_scans_per_keyframe", self.deterministic_config.fast_path_scans_per_keyframe),
         ];
         for (name, count) in [
             ("fast_match_workers", self.fast_match_workers),
@@ -722,6 +739,9 @@ impl Default for Config {
             graph_change_heat_decay: 0.995,
             solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
+            solver_fast_path_enabled: true,
+            solver_fast_path_max_keyframes: 1000,
+            solver_fast_path_max_lm_steps: 10,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
@@ -900,6 +920,14 @@ pub struct GscPgo {
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Solver fast path (`fast_path`): the job out, its worker, the committed closures the graph reflects, and its records.
+    pub(crate) fast_path_job: Option<crate::fast_path::FastPathJob>,
+    pub(crate) fast_path_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) fast_path_reflected: usize,
+    pub(crate) fast_path_overshoots: usize,
+    pub(crate) fast_path_records: Vec<crate::fast_path::FastPathRecord>,
+    /// Per committed closure, when it was committed, first reflected by the fast path, and judged by an adopted GNC solve.
+    pub(crate) closure_latency: Vec<crate::fast_path::ClosureLatency>,
 }
 
 /// Cumulative per-stage wall time (`GscPgo::stage_seconds`), purely observational (never read back into the pipeline).
@@ -1855,9 +1883,13 @@ impl GscPgo {
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
         let check_due = frequency > 0 && self.scans_seen.is_multiple_of(frequency);
-        // pressure is its own job (`pressure_schedule`); debounce and merge also land every scan, not only at keyframes
+        // pressure is its own job (`pressure_schedule`); debounce, merge and fast path also land every scan, not only at keyframes
         self.step_pressure(check_due);
         if !self.adoption_inline && self.step_adoption(false) {
+            self.adopted_since_update = true;
+        }
+        // the solver fast path too, so its correction lands on the scan its hold ends at
+        if self.step_fast_path() {
             self.adopted_since_update = true;
         }
         self.timing.pressure_s += checked.elapsed().as_secs_f64();
@@ -2255,6 +2287,10 @@ impl GscPgo {
             yank_stdevs,
         });
         self.new_closure = true;
+        self.closure_latency.push(crate::fast_path::ClosureLatency::committed(
+            self.scans_seen,
+            self.newest_scan_time(),
+        ));
     }
 }
 
