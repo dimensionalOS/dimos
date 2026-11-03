@@ -66,7 +66,7 @@ fn read_stream<T>(
     mut decode: impl FnMut(f64, &[u8]) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let mut out = Vec::new();
-    for_each_row(connection, stream, 1, f64::INFINITY, |ts, data| {
+    for_each_row(connection, stream, f64::INFINITY, |ts, data| {
         if let Some(value) = decode(ts, data) {
             out.push(value);
         }
@@ -75,16 +75,13 @@ fn read_stream<T>(
     Ok(out)
 }
 
-/// Call `visit` with every `stride`th row's (ts, blob) in time order, one row in memory at a time: strided-out blobs are
-/// never decoded or retained, so a huge recording can be subsampled without materializing every scan in memory.
+/// Call `visit` with every row's (ts, blob) in time order, one row in memory at a time.
 fn for_each_row(
     connection: &Connection,
     stream: &str,
-    stride: usize,
     until_s: f64,
     mut visit: impl FnMut(f64, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
-    let stride = stride.max(1);
     let table = quote_ident(stream)?;
     let blob_table = quote_ident(&format!("{stream}_blob"))?;
     // order the (small) metadata alone, then fetch each kept blob by id: sorting the joined blobs would spill the whole
@@ -95,24 +92,19 @@ fn for_each_row(
     let mut blob_statement = connection
         .prepare(&format!("SELECT data FROM {blob_table} WHERE id = ?1"))
         .map_err(|e| e.to_string())?;
-    let mut index = 0usize;
     let mut first_ts = None;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        if index.is_multiple_of(stride) {
-            let id: i64 = row.get(0).map_err(|e| e.to_string())?;
-            let ts: f64 = row.get(1).map_err(|e| e.to_string())?;
-            // rows come in time order: past `until_s` of the stream there is nothing more to visit
-            if ts - *first_ts.get_or_insert(ts) > until_s {
-                break;
-            }
-            let mut blob_rows = blob_statement.query([id]).map_err(|e| e.to_string())?;
-            if let Some(blob_row) = blob_rows.next().map_err(|e| e.to_string())? {
-                let data = blob_row.get_ref(0).map_err(|e| e.to_string())?;
-                let data = data.as_blob().map_err(|e| e.to_string())?;
-                visit(ts, data)?;
-            }
+        let id: i64 = row.get(0).map_err(|e| e.to_string())?;
+        let ts: f64 = row.get(1).map_err(|e| e.to_string())?;
+        // rows come in time order: past `until_s` of the stream there is nothing more to visit
+        if ts - *first_ts.get_or_insert(ts) > until_s {
+            break;
         }
-        index += 1;
+        let mut blob_rows = blob_statement.query([id]).map_err(|e| e.to_string())?;
+        if let Some(blob_row) = blob_rows.next().map_err(|e| e.to_string())? {
+            let data = blob_row.get_ref(0).map_err(|e| e.to_string())?;
+            visit(ts, data.as_blob().map_err(|e| e.to_string())?)?;
+        }
     }
     Ok(())
 }
@@ -193,11 +185,10 @@ pub fn read_odometry(connection: &Connection, stream: &str) -> Result<Vec<OdomRo
 pub fn for_each_scan(
     connection: &Connection,
     stream: &str,
-    stride: usize,
     until_s: f64,
     mut visit: impl FnMut(ScanRow) -> Result<(), String>,
 ) -> Result<(), String> {
-    for_each_row(connection, stream, stride, until_s, |ts, data| {
+    for_each_row(connection, stream, until_s, |ts, data| {
         let Ok(message) = PointCloud2::decode(data) else {
             return Ok(());
         };
@@ -283,7 +274,7 @@ impl TfTree {
         if !has_tf {
             return Ok(TfTree { edges });
         }
-        for_each_row(connection, "tf", 1, f64::INFINITY, |_, data| {
+        for_each_row(connection, "tf", f64::INFINITY, |_, data| {
             let Ok(message) = TFMessage::decode(data) else {
                 return Ok(());
             };
