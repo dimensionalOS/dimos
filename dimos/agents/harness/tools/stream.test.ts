@@ -10,15 +10,15 @@ import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { stream as anthropicStream } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { ChildAgent } from "../../test/child-driver.ts";
-import { dimosFixture } from "../../test/environment.ts";
-import { DimosConnection } from "../dimos/connection.ts";
-import { RuntimeClient } from "../dimos/client.ts";
-import { until } from "../../sdk/until.ts";
-import { Status } from "../../shared/protocol/status.ts";
-import { FileRenderer } from "../../shared/render/render.ts";
+import { ChildAgent } from "#dimos/agents/test/child-driver.ts";
+import { dimosFixture } from "#dimos/agents/test/environment.ts";
+import { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
+import { until } from "#dimos/agents/sdk/until.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import type { ChannelSpec, Session, Slot } from "@dimos/sdk";
-import { readChannel, streamTool } from "./lib/stream.ts";
+import { readChannel, streamTool } from "#dimos/agents/harness/tools/lib/stream.ts";
 
 const dimos = dimosFixture();
 

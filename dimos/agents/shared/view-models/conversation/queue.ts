@@ -1,7 +1,7 @@
-import type { DimosInput } from "../../protocol/conversation/input.ts";
+import type { DimosInput } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import type { InboxState, SubmissionId } from "@earendil-works/pi-durable";
-import type { QueuedText } from "../../protocol/conversation/queue.ts";
-import { inputOf } from "../../protocol/conversation/queue.ts";
+import type { QueuedText } from "#dimos/agents/shared/protocol/conversation/queue.ts";
+import { inputOf } from "#dimos/agents/shared/protocol/conversation/queue.ts";
 
 /** One queued item as the chat shows it: in queue order, with its mode, and whose it is. Never "event" or "task". */
 export type QueuedRow = {

@@ -1,19 +1,19 @@
-import type { Handlers } from "./lib/bind.ts";
-import type { ServeObject } from "./base.ts";
-import type { Standing } from "../../../shared/protocol/actions/standing.ts";
-import type { TranscriptItem } from "../../../shared/protocol/conversation/state.ts";
+import type { Handlers } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import type { TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
-import { CONVERSATION_ACTIONS } from "../../../shared/protocol/actions/conversation.ts";
-import { ConversationContract, ConversationState } from "../../../shared/protocol/conversation/contract.ts";
-import { ConversationRoom } from "./room.ts";
-import { GatewayStore } from "./store.ts";
-import { bind } from "./lib/bind.ts";
-import { conversationStanding } from "../../../shared/protocol/actions/standing.ts";
-import { done, refused } from "../../../shared/protocol/outcome.ts";
-import { forward } from "./lib/forward.ts";
-import { fromBranch, fromSubmit } from "./lib/outcomes.ts";
-import { imageAt } from "./lib/items.ts";
-import { grantOf } from "../../auth/principal.ts";
+import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
+import { ConversationContract, ConversationState } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import { ConversationRoom } from "#dimos/agents/gateway/server/objects/room.ts";
+import { GatewayStore } from "#dimos/agents/gateway/server/objects/store.ts";
+import { bind } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import { conversationStanding } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
+import { forward } from "#dimos/agents/gateway/server/objects/lib/forward.ts";
+import { fromBranch, fromSubmit } from "#dimos/agents/gateway/server/objects/lib/outcomes.ts";
+import { imageAt } from "#dimos/agents/gateway/server/objects/lib/items.ts";
+import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
 
 const SHARED = Object.keys(ConversationState) as (keyof typeof ConversationState)[];
 

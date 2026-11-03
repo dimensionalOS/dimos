@@ -1,12 +1,12 @@
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import type { JobDefinition, JobName, JobOutcome, JobRun } from "../../shared/protocol/jobs/state.ts";
-import type { JobFiringDeps } from "./fire.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { JobDefinition, JobName, JobOutcome, JobRun } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { JobFiringDeps } from "#dimos/agents/harness/jobs/fire.ts";
 import type { NextTaskState, Task, TaskId, Tx } from "@earendil-works/pi-durable";
-import { CronExpr } from "./cron.ts";
+import { CronExpr } from "#dimos/agents/harness/jobs/cron.ts";
 import { defineTask } from "@earendil-works/pi-durable";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { fireJob } from "./fire.ts";
-import { jobIn, recordRun } from "./registry.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { fireJob } from "#dimos/agents/harness/jobs/fire.ts";
+import { jobIn, recordRun } from "#dimos/agents/harness/jobs/registry.ts";
 
 type JobTaskInput = {
   readonly name: JobName;

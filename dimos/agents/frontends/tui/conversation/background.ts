@@ -1,9 +1,9 @@
-import type { CallId } from "../../../shared/protocol/conversation/calls.ts";
+import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { Component } from "@earendil-works/pi-tui";
-import type { MovedRow } from "../../../shared/view-models/conversation/tools.ts";
-import { accent, muted } from "../style.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { duration } from "../../../shared/view-models/time.ts";
+import type { MovedRow } from "#dimos/agents/shared/view-models/conversation/tools.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { duration } from "#dimos/agents/shared/view-models/time.ts";
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /** Rows shown at once; the selection scrolls the rest into view. */

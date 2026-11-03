@@ -1,13 +1,13 @@
-import type { AgentTool } from "./base.ts";
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import type { JobDefinition, JobName } from "../../shared/protocol/jobs/state.ts";
-import type { JobOps } from "../jobs/ops.ts";
+import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { JobDefinition, JobName } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { JobOps } from "#dimos/agents/harness/jobs/ops.ts";
 import type { JsonObject, ToolExecutionResult } from "@earendil-works/pi-durable";
 import type { Static } from "typebox";
 import { Type } from "typebox";
-import { agentTool } from "./lib/tool.ts";
+import { agentTool } from "#dimos/agents/harness/tools/lib/tool.ts";
 import { defineTool } from "@earendil-works/pi-durable";
-import { jobIn, listJobs, parseJobName } from "../jobs/registry.ts";
+import { jobIn, listJobs, parseJobName } from "#dimos/agents/harness/jobs/registry.ts";
 
 const JobParameters = Type.Object({
   op: Type.Union([

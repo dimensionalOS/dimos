@@ -1,8 +1,8 @@
-import type { EpochMs } from "./time.ts";
-import type { ModuleInstance } from "./runtime/module.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { ModuleInstance } from "#dimos/agents/shared/protocol/runtime/module.ts";
 import type { Static } from "typebox";
 import { Type } from "typebox";
-import { nullable } from "./schema.ts";
+import { nullable } from "#dimos/agents/shared/protocol/schema.ts";
 
 /** A DimOS message type by its class name, as inventory reports it and the model reads it, e.g. `Image`. */
 export type MsgType = string & { readonly __brand: "MsgType" };
