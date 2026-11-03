@@ -48,3 +48,7 @@ required-features = ["native"]
 [[example]]
 name = "seeded_resolve"
 required-features = ["native"]
+
+[[example]]
+name = "landmark_resolve"
+required-features = ["native"]

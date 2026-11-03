@@ -146,6 +146,9 @@ config! {
     graph_simplify_offset_sd_rad: f64,
     graph_simplify_chain_odometry: bool,
     graph_simplify_chain_fold_max_m: f64,
+    // "scan_context" (default) or "inputs_only": no place recognition, landmarks/world positions only, landmark-seeded ICP closures
+    closure_sources: dimos_gsc_pgo::gsc_pgo::ClosureSources,
+    landmark_closure_icp: bool,
 }
 
 // ---- shared state ---------------------------------------------------------------

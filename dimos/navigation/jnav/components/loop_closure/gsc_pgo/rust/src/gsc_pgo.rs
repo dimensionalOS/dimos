@@ -417,6 +417,21 @@ pub enum Mode {
     Deterministic,
 }
 
+/// `Config::closure_sources`: where loop closures come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "native",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "snake_case")
+)]
+pub enum ClosureSources {
+    /// Scan-context place recognition (else the nearest past keyframe by position), each match verified by ICP.
+    ScanContext,
+    /// No place recognition: the external inputs (landmark sightings, world positions) close loops; a landmark seen again on a
+    /// later visit seeds an ICP closure between the two sighting keyframes (`landmark_closure_icp`) so the clouds line up.
+    InputsOnly,
+}
+
 /// Deterministic-mode job estimates in scans (a job holds `ceil(estimate)`, at least one); defaults are the R1 Jetson fit.
 #[derive(Debug, Clone)]
 #[cfg_attr(
@@ -636,6 +651,10 @@ pub struct Config {
     pub graph_simplify_chain_odometry: bool,
     /// ...folding at most this many metres between kept keyframes; past it the walk rides the current place's node.
     pub graph_simplify_chain_fold_max_m: f64,
+    /// `scan_context` (default): scan-context proposals; `inputs_only`: none, only landmark sightings and world positions (`ClosureSources`).
+    pub closure_sources: ClosureSources,
+    /// With `inputs_only`: a landmark re-seen on a later visit proposes an ICP closure between its two sighting keyframes.
+    pub landmark_closure_icp: bool,
 }
 
 impl Config {
@@ -791,6 +810,8 @@ impl Default for Config {
             graph_simplify_offset_sd_rad: 0.005,
             graph_simplify_chain_odometry: true,
             graph_simplify_chain_fold_max_m: 30.0,
+            closure_sources: ClosureSources::ScanContext,
+            landmark_closure_icp: true,
         }
     }
 }
@@ -825,6 +846,9 @@ pub struct GscPgo {
     pub(crate) landmark_sightings: Vec<LandmarkSightingRecord>,
     pub(crate) landmark_sightings_dispatched: usize,
     pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
+    /// `inputs_only`: how many sightings were placed on their nearest keyframes, and each landmark's visits (`LandmarkVisits`).
+    pub(crate) sightings_placed: usize,
+    pub(crate) landmark_visits: std::collections::BTreeMap<u64, LandmarkVisits>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
     /// Per finished solve: dispatched keyframes, newest keyframe time, seconds on its thread.
@@ -960,6 +984,33 @@ pub struct ClosureProposal {
     /// The keyframe's other scan-context matches still untried (distance, index, shift), and the tries so far.
     pub(crate) alternatives: Vec<(f32, usize, i32)>,
     pub(crate) tries: usize,
+    /// A landmark seen from both keyframes (`inputs_only`), which seeds the ICP instead of a place match.
+    pub(crate) landmark_pair: Option<LandmarkPair>,
+}
+
+/// A landmark sighting on its nearest keyframe (`inputs_only`): keyframe, body-frame position and its covariance (m²).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlacedSighting {
+    pub(crate) keyframe: usize,
+    pub(crate) position: Vec3,
+    pub(crate) covariance: Mat3,
+}
+
+/// One landmark's sightings so far: its first visit's best (nearest) sighting, that visit's newest keyframe and whether it ended,
+/// and the newest keyframe a closure was proposed from.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LandmarkVisits {
+    pub(crate) first_visit_best: PlacedSighting,
+    pub(crate) first_visit_newest: usize,
+    pub(crate) first_visit_over: bool,
+    pub(crate) newest_proposed: Option<usize>,
+}
+
+/// The two sightings of one landmark a closure candidate joins: the source keyframe's and the (earlier) target keyframe's.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LandmarkPair {
+    pub(crate) source: PlacedSighting,
+    pub(crate) target: PlacedSighting,
 }
 
 /// The ICP half of a closure search, on its own keyframe copy so it runs off the scan thread (`begin_closure_search` -> `finish_closure_search`).
@@ -997,6 +1048,9 @@ pub struct ClosureSearch {
     pub(crate) mean_reach: f64,
     /// Where the search reports each extension round's start and end.
     pub(crate) progress: Option<Arc<crate::closure_search_schedule::SearchProgress>>,
+    /// A landmark-seeded search (`inputs_only`): the covariance (m², map frame) of the seed the two sightings imply, which the yank
+    /// is then measured from instead of the current graph.
+    pub(crate) landmark_seed_covariance: Option<Mat3>,
 }
 
 /// What a `ClosureSearch` found: diagnostics, the accepted closure (relative rotation, translation, fitness), stage timings.
@@ -1324,7 +1378,11 @@ impl ClosureSearch {
             } else {
                 ""
             },
-        )
+        ) + if self.landmark_seed_covariance.is_some() {
+            ":lm"
+        } else {
+            ""
+        }
     }
 
     fn search_stage(self) -> SearchStage {
@@ -1509,9 +1567,16 @@ impl ClosureSearch {
         let (rotation_offset, translation_offset) =
             measured(&icp.rotation, &icp.translation);
 
-        // graph yank: how far this constraint pulls the source from the current graph's relative pose (large = likely false closure)
+        // graph yank: how far this constraint pulls the source from the current graph's relative pose (large = likely false closure);
+        // a landmark-seeded search measures it from the pose the landmark implies, at that seed's covariance
         let (current_relative_rotation, current_relative_translation) =
-            measured(&mat3::identity(), &[0.0; 3]);
+            match self.landmark_seed_covariance {
+                Some(covariance) => {
+                    diag.innovation_covariance = covariance;
+                    measured(&init_rotation, &init_translation)
+                }
+                None => measured(&mat3::identity(), &[0.0; 3]),
+            };
         diag.yank_translation = mat3::norm(&mat3::sub(
             &translation_offset,
             &current_relative_translation,
@@ -1976,6 +2041,10 @@ impl GscPgo {
         self.timing.propose_s += started.elapsed().as_secs_f64();
     }
     fn propose(&mut self) {
+        if self.config.closure_sources == ClosureSources::InputsOnly {
+            self.propose_from_landmarks();
+            return;
+        }
         // nothing to close onto until a keyframe exists whose submap leaves out this one's scan
         if self.key_poses.is_empty() || self.newest_closure_target() == 0 {
             return;
@@ -2039,8 +2108,103 @@ impl GscPgo {
             ranked,
             alternatives,
             tries: 0,
+            landmark_pair: None,
         };
         self.offer_proposal(proposal);
+    }
+    /// `inputs_only`: place the sightings up to the newest keyframe; a landmark seen on a later visit than its first proposes a
+    /// closure from that sighting's keyframe onto the first visit's nearest sighting, at most one per target submap span per landmark.
+    fn propose_from_landmarks(&mut self) {
+        let Some(newest_time) = self.key_poses.last().map(|k| k.time) else {
+            return;
+        };
+        let half_range = self.config.target_half_range(1);
+        let mut candidate: Option<LandmarkPair> = None;
+        // a sighting after the newest keyframe waits: a later keyframe may be nearer
+        while let Some(&(time, landmark, _, position, information)) =
+            self.landmark_sightings.get(self.sightings_placed)
+        {
+            if time > newest_time {
+                break;
+            }
+            self.sightings_placed += 1;
+            let Some((keyframe, moved)) = self.nearest_keyframe(time) else {
+                continue;
+            };
+            let full = crate::landmarks::known_inverse(&information);
+            // the position block only (a rotation-only sighting places nothing)
+            let mut covariance: Mat3 =
+                std::array::from_fn(|i| std::array::from_fn(|j| full[3 + i][3 + j]));
+            if (0..3).any(|i| covariance[i][i] <= 0.0) {
+                continue;
+            }
+            for (axis, row) in covariance.iter_mut().enumerate() {
+                row[axis] += moved;
+            }
+            let sighting = PlacedSighting {
+                keyframe,
+                position,
+                covariance,
+            };
+            let visits = self
+                .landmark_visits
+                .entry(landmark)
+                .or_insert(LandmarkVisits {
+                    first_visit_best: sighting,
+                    first_visit_newest: keyframe,
+                    first_visit_over: false,
+                    newest_proposed: None,
+                });
+            // the first visit lasts while sightings keep coming within the target submap's half range of each other
+            if !visits.first_visit_over {
+                if keyframe <= visits.first_visit_newest + half_range {
+                    visits.first_visit_newest = visits.first_visit_newest.max(keyframe);
+                    if mat3::norm(&position) < mat3::norm(&visits.first_visit_best.position) {
+                        visits.first_visit_best = sighting;
+                    }
+                    continue;
+                }
+                visits.first_visit_over = true;
+            }
+            // the two keyframes' submaps must not share a scan, and one proposal per half range of source keyframes
+            let target = visits.first_visit_best;
+            if !self.config.landmark_closure_icp
+                || keyframe <= target.keyframe + 2 * half_range + 1
+                || visits
+                    .newest_proposed
+                    .is_some_and(|proposed| keyframe < proposed + half_range)
+            {
+                continue;
+            }
+            visits.newest_proposed = Some(keyframe);
+            candidate = Some(LandmarkPair {
+                source: sighting,
+                target,
+            });
+        }
+        let Some(pair) = candidate else {
+            return;
+        };
+        let (source_id, target_idx) = (pair.source.keyframe, pair.target.keyframe);
+        let source = self.key_poses.get(source_id);
+        let mut diag = ClosureCandidateDiag::new(source_id, source.time, source.translation_global);
+        diag.speed_mps = self.recent_speed();
+        diag.scan_index_proposed = self.scans_seen;
+        diag.target_id = target_idx as i64;
+        diag.target_time = self.key_poses.fixed(target_idx).time;
+        diag.target_xyz = self.key_poses.position(target_idx);
+        diag.candidate_distance = mat3::norm(&mat3::sub(&diag.source_xyz, &diag.target_xyz));
+        // the landmark already names the place, so it ranks above any place match
+        self.offer_proposal(ClosureProposal {
+            diag,
+            target_idx,
+            sector_shift: 0,
+            similarity: 0.0,
+            ranked: Vec::new(),
+            alternatives: Vec::new(),
+            tries: 0,
+            landmark_pair: Some(pair),
+        });
     }
     /// Make `proposal` the waiting one if its match beats the one already waiting; the loser is recorded as "outranked".
     fn offer_proposal(&mut self, proposal: ClosureProposal) {
@@ -2081,6 +2245,7 @@ impl GscPgo {
             ranked,
             alternatives,
             tries,
+            landmark_pair,
             ..
         } = self.waiting_proposal.take()?;
         let mut diag = diag;
@@ -2097,11 +2262,36 @@ impl GscPgo {
         } else {
             0.0
         };
-        let init_rotation = mat3::rot_z(yaw);
-        let init_translation = mat3::sub(
+        let mut init_rotation = mat3::rot_z(yaw);
+        let mut init_translation = mat3::sub(
             &target_position,
             &mat3::mat_vec(&init_rotation, &source_position),
         );
+        // a landmark seen from both: shift the source so its sighting lands where the target's puts the landmark (rotation kept)
+        let mut landmark_seed_covariance = None;
+        if let Some(pair) = landmark_pair {
+            let (source, target) = (
+                self.key_poses.get(diag.source_id),
+                self.key_poses.get(target_idx),
+            );
+            let placed = |key_pose: &KeyPoseWithCloud, sighting: &PlacedSighting| {
+                (
+                    mat3::add(
+                        &mat3::mat_vec(&key_pose.rotation_global, &sighting.position),
+                        &key_pose.translation_global,
+                    ),
+                    mat3::mat_mul(
+                        &mat3::mat_mul(&key_pose.rotation_global, &sighting.covariance),
+                        &mat3::transpose(&key_pose.rotation_global),
+                    ),
+                )
+            };
+            let ((from_target, target_covariance), (from_source, source_covariance)) =
+                (placed(&target, &pair.target), placed(&source, &pair.source));
+            init_rotation = mat3::identity();
+            init_translation = mat3::sub(&from_target, &from_source);
+            landmark_seed_covariance = Some(mat3::add_mat(&target_covariance, &source_covariance));
+        }
         Some(ClosureSearch {
             key_poses: self.key_poses.clone(),
             config: self.config.clone(),
@@ -2131,6 +2321,7 @@ impl GscPgo {
             } else {
                 self.config.closure_search_radius
             },
+            landmark_seed_covariance,
         })
     }
     /// Search at the newest keyframe as a lockstep replay does: deterministic waits for a job only once its hold passed; fast waits for none.
@@ -2210,6 +2401,7 @@ impl GscPgo {
             ranked,
             alternatives,
             tries,
+            landmark_pair: None,
         });
     }
     /// Add a keyframe at `pose`, placed by the current correction.
