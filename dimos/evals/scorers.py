@@ -120,11 +120,21 @@ def choice(options: Sequence[str], *, case_sensitive: bool = False) -> Callable[
     """Parser for a multiple-choice reply: the last option the model names, so
     that reasoning before the answer does not decide it. Longest option first,
     so "northeast" wins over "north". ``case_sensitive`` for lettered options
-    ("A", "B"), where the article "a" must not count."""
+    ("A", "B"), where the article "a" must not count.
+
+    Boundaries are alphanumeric lookarounds rather than ``\\b``, so options that
+    end in punctuation (e.g. ``under 25%``) still match when quoted or alone.
+    """
     import re
 
     words = "|".join(re.escape(o) for o in sorted(options, key=len, reverse=True))
-    pattern = re.compile(rf"\b({words})\b", 0 if case_sensitive else re.I)
+    # (?<![A-Za-z0-9_]) / (?![A-Za-z0-9_]) ≈ word edges, but also allow a match
+    # to end on '%', which \\b does not ('%' is non-word, so \\b after it needs
+    # a following word char).
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])({words})(?![A-Za-z0-9_])",
+        0 if case_sensitive else re.IGNORECASE,
+    )
 
     def parse(text: str) -> str:
         # "north-west" must read as northwest, not as west.
