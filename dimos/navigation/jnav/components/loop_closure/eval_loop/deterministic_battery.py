@@ -72,7 +72,15 @@ def build_pgo_eval() -> None:
         cargo = ["nix", "develop", "path:.", "--command", *cargo]
     print(f"building pgo-eval: {' '.join(cargo)}", file=sys.stderr)
     subprocess.run(cargo, cwd=CRATE, check=True)
-    built = CRATE / "target/release/pgo-eval"
+    # the crate sits in the repo's cargo workspace, whose target dir is not the crate's own
+    metadata = subprocess.run(
+        [*cargo[: cargo.index("cargo")], "cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=CRATE,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    built = Path(json.loads(metadata.stdout)["target_directory"]) / "release/pgo-eval"
     if built != PGO_EVAL:
         PGO_EVAL.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(built, PGO_EVAL)
