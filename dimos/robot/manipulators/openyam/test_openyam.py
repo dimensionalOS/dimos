@@ -22,7 +22,6 @@ from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
