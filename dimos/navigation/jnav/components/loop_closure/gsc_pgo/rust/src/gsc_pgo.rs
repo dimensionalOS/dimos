@@ -760,15 +760,12 @@ pub struct GscPgo {
     pub(crate) learned_odometry_error_estimate_ln: [f64; 4],
     /// Each `learned_odometry_error_estimate_ln`'s posterior standard deviation once the residuals have measured it (the prior's before).
     pub(crate) learned_odometry_error_estimate_ln_sd: [Option<f64>; 4],
-    /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
-    pub(crate) learned_odometry_error_estimate_ln_dispatched: [f64; 4],
-    pub(crate) odometry_error_estimate_rescale: bool,
+    /// A solve is due only to measure the learned estimate's evidence (at `finish`).
+    pub(crate) evidence_solve_due: bool,
     /// Next solve also measures the learned estimate's evidence: on a longer kept loop than ever (`learned_evidence_gap`), and at `finish`.
     pub(crate) learned_evidence_requested: bool,
     pub(crate) learned_evidence_gap: usize,
     pub(crate) learned_evidence_measured: bool,
-    /// Newest solve was a re-solve at a moved noise; one per new piece of evidence, else it could re-solve forever.
-    pub(crate) odometry_error_estimate_rescaled: bool,
     /// A closure was committed since the last `update`.
     pub(crate) new_closure: bool,
     /// Committed closures a solve has been started for.
@@ -1652,16 +1649,12 @@ impl GscPgo {
         }
         // from the solved graph's residuals per source against the checks the graph gave it (`odometry_error_estimate_evidence`)
         let mut ln_odometry = self.learned_odometry_error_estimate_ln;
-        let mut redundancy = [0.0; 4];
         if let Some(evidence) = evidence {
             for c in 0..4 {
                 let (sum, r) = evidence[c];
-                redundancy[c] = r;
                 if r > 0.5 && sum.is_finite() {
-                    let (dispatched, prior_sd) = (
-                        self.learned_odometry_error_estimate_ln_dispatched[c],
-                        self.learned_odometry_error_estimate_prior()[c],
-                    );
+                    // the solve whitens at the stated estimate, so the residuals' ln scale is 0
+                    let (dispatched, prior_sd) = (0.0, self.learned_odometry_error_estimate_prior()[c]);
                     ln_odometry[c] = crate::odometry_error_estimate::residual_ln_ratio(
                         sum, r, dispatched, c, prior_sd,
                     );
@@ -1675,18 +1668,6 @@ impl GscPgo {
                         ));
                 }
             }
-        }
-        // what the next solve would use (the estimate, or its lower bound) against what the last one did
-        let previous = std::mem::replace(&mut self.learned_odometry_error_estimate_ln, ln_odometry);
-        let next_solve = self.odometry_error_estimate().map(f64::ln);
-        self.learned_odometry_error_estimate_ln = previous;
-        let moved = (0..4).any(|c| {
-            redundancy[c] > 0.5
-                && (next_solve[c] - self.learned_odometry_error_estimate_ln_dispatched[c]).abs()
-                    > (2.0 / redundancy[c]).sqrt()
-        });
-        if moved && !self.odometry_error_estimate_rescaled {
-            self.odometry_error_estimate_rescale = true;
         }
         self.learned_odometry_error_estimate_ln = ln_odometry;
     }
