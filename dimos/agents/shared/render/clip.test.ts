@@ -86,6 +86,7 @@ test("image clips keep colors, timestamps and hashes; the model gets one contact
     `  t = 1.110 s: ${view.clip.frames[1].png.path}`,
     `  t = 1.260 s: ${view.clip.frames[2].png.path}`,
     `  GIF: ${view.clip.gif.path}`,
+    `Preview: ${view.sheet.path}`,
   ]);
   for (const [i, frame] of frames.entries()) assert.deepEqual(await readFile(join(dir, frame.path)), originals[i]);
 });
