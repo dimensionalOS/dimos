@@ -133,6 +133,9 @@ config! {
     pressure_check_frequency: usize,
     soft_pressure_half_log10_hazard: f64,
     soft_pressure_decades: f64,
+    // "scan_context" (default) or "inputs_only": no place recognition, landmarks/world positions only, landmark-seeded ICP closures
+    closure_sources: dimos_gsc_pgo::gsc_pgo::ClosureSources,
+    landmark_closure_icp: bool,
 }
 
 // ---- shared state ---------------------------------------------------------------

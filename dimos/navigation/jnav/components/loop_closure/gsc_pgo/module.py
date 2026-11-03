@@ -173,6 +173,11 @@ class PGOConfig(NativeModuleConfig):
     learned_odometry_error_estimate_from_closures: bool = True
     # noise learner reads only pairwise-consistent (PCM core) kept closures
     odometry_error_estimate_evidence_core: bool = True
+    # "scan_context": scan-context place recognition proposes closures; "inputs_only": none, the graph is odometry plus the
+    # external inputs (landmark_sighting, world_position), and a landmark re-seen on a later visit seeds an ICP closure
+    closure_sources: str = "scan_context"
+    # with inputs_only: run that landmark-seeded ICP closure (false = landmarks and world positions alone)
+    landmark_closure_icp: bool = True
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0

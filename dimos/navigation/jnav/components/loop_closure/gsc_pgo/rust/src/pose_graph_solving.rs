@@ -243,7 +243,7 @@ impl GscPgo {
             .collect()
     }
     /// The keyframe nearest `time` and the body's squared motion (m²) over that gap; None outside the keyframes' time span.
-    fn nearest_keyframe(&self, time: f64) -> Option<(usize, f64)> {
+    pub(crate) fn nearest_keyframe(&self, time: f64) -> Option<(usize, f64)> {
         let n = self.key_poses.len();
         let time_of = |k: usize| self.key_poses.fixed(k).time;
         if n < 2 || time < time_of(0) || time > time_of(n - 1) {
