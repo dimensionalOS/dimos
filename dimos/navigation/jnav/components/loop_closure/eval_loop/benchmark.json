@@ -350,10 +350,21 @@
     }
   ],
   "todo": [
-    "auto-configure the fitness metric (no inlier distance / scan range config)",
-    "best odometry error correction we can get (over/under-start sweep: learner must beat both starts)",
-    "standardize + upload the datasets (canonical dbs, dimos cloud upload; check with Jeff before uploading)",
-    "recalibrate everything after those changes: huge_l1 and small_l1 must loop-close"
+    "scan context: a small cache of places that look like everything (reverse TF-IDF), so they stop proposing closures",
+    "seed each solve with the previous pose graph for a faster GNC solve",
+    "max buffer for the pose graph: only the most recent 5000 keyframes and/or nearby keyframes in a solve",
+    "full MLS planner testing on every recording",
+    "finish the replay artifact with the optimized system",
+    "print the recommended odometry error estimate for the next run",
+    "solver fast path for small yank items",
+    "an odometry error estimate that scales with lidar range",
+    "in progress: calibrate everything after those changes: huge_l1 and small_l1 must loop-close",
+    "in progress: one odometry error estimate for all Mid-360 runs and one for all L1 runs",
+    "in progress: fix the deterministic replay and the faster-than-real numbers",
+    "in progress: graph change heat against thrashing map changes; fix the L1 map on gsc_stable_0.0.1",
+    "cancelled: auto-configure the fitness metric",
+    "cancelled: auto-configure the odometry error estimate",
+    "done?: standardize + upload the datasets"
   ],
   "requirements": [
     "each recording has a corrected odometry to score against, validated (AprilTag spread through the correct camera mount, and lidar map consistency)",
