@@ -1,6 +1,6 @@
-import type { EpochMs } from "../../../../shared/protocol/time.ts";
-import type { JobMark } from "../../../../shared/view-models/jobs/timeline.ts";
-import { clock } from "../../../../shared/view-models/time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { JobMark } from "#dimos/agents/shared/view-models/jobs/timeline.ts";
+import { clock } from "#dimos/agents/shared/view-models/time.ts";
 
 const RUN_MARKS = { submitted: "✓", ok: "✓", error: "✖", interrupted: "⚠" } as const;
 

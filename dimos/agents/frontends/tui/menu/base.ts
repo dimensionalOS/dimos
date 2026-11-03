@@ -1,9 +1,9 @@
 import type { Ref } from "@earendil-works/chord";
-import { InventoryContract } from "../../../shared/protocol/inventory/contract.ts";
+import { InventoryContract } from "#dimos/agents/shared/protocol/inventory/contract.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { EpochMs } from "../../../shared/protocol/time.ts";
-import type { Level } from "../../../shared/view-models/levels.ts";
-import type { Ui } from "../session.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
+import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
 
 /** What Enter opens on a row: a pane drawn from served state when it renders, closed by Esc. */
 export type MenuDetail = {

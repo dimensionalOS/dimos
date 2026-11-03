@@ -1,12 +1,12 @@
 import type { Host, WebSocketLike } from "@earendil-works/chord";
-import type { EpochMs } from "../shared/protocol/time.ts";
-import type { Refusal } from "../shared/protocol/outcome.ts";
-import type { Live } from "../shared/protocol/status.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
 import { createHost, webSocketLink } from "@earendil-works/chord";
-import { epochMs } from "../shared/protocol/time.ts";
-import { RefusalError } from "./failures.ts";
-import { Status } from "../shared/protocol/status.ts";
-import { until } from "./until.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { RefusalError } from "#dimos/agents/sdk/failures.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { until } from "#dimos/agents/sdk/until.ts";
 
 type GatewayPrincipal = { readonly kind: "gateway" };
 
