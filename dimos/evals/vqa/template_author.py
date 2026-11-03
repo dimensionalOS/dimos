@@ -296,7 +296,8 @@ class LocalizeSightingCatalog:
                 for view in views:
                     if abs(float(view.timestamp) - ts) > self._tol:
                         continue
-                    if camera and view.camera_frame and view.camera_frame != camera:
+                    # Selected image with a frame_id must not accept other/unknown cameras.
+                    if camera and (not view.camera_frame or view.camera_frame != camera):
                         continue
                     prev = best_by_instance.get(instance_id)
                     if prev is None:

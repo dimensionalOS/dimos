@@ -1631,6 +1631,17 @@ def test_generation_accepts_precreated_empty_output_directory(tmp_path: Path) ->
     assert (output / "cases.jsonl").is_file()
 
 
+def test_generation_rejects_second_claim_on_empty_output_directory(tmp_path: Path) -> None:
+    """Two concurrent empty-dir claims must not both proceed."""
+    from dimos.evals.vqa.generate import _prepare_output
+
+    output = tmp_path / "vqa"
+    output.mkdir()
+    _prepare_output(output)
+    with pytest.raises(FileExistsError, match="already claimed"):
+        _prepare_output(output)
+
+
 def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path) -> None:
     output = tmp_path / "vqa"
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))

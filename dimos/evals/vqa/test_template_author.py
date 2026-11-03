@@ -114,3 +114,13 @@ def test_localize_sighting_catalog_scopes_to_camera_and_dedupes_instance() -> No
     dets = catalog.query_detections(empty_front, "chair")
     assert len(dets.detections) == 1  # one instance, not three
     assert catalog.names_for(empty_front) == ("chair",)
+
+    # Sightings with blank camera_frame must not leak onto a named camera either.
+    blank = LocalizeSightingCatalog(
+        {
+            "chair": {
+                "b": (view(camera="", ts=5.0, instance_id="b", image=rear),),
+            }
+        }
+    )
+    assert blank.query_detections(empty_front, "chair").detections == []

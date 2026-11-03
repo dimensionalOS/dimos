@@ -20,6 +20,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -622,6 +623,9 @@ def generate_frames_dataset(
                     }
             _write_json(staging / "audit" / "run.json", run_payload)
             if output.exists():
+                claim = output / _OUTPUT_CLAIM
+                if claim.exists():
+                    claim.unlink()
                 output.rmdir()
             staging.replace(output)
             claimed_output = False
@@ -1213,19 +1217,33 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
     return tuple(identifiers)
 
 
-def _prepare_output(output: Path) -> None:
-    """Claim ``output`` so concurrent runs cannot share a non-empty path.
+_OUTPUT_CLAIM = ".dimos_vqa_claim"
 
-    The CLI contract allows an absent **or empty** destination; an existing empty
-    directory is accepted. Non-empty directories and non-directory paths are rejected.
+
+def _prepare_output(output: Path) -> None:
+    """Claim ``output`` exclusively (absent or empty destinations only).
+
+    The CLI allows an absent or empty destination. An exclusive claim file stops
+    two concurrent runs from both accepting the same empty directory and later
+    colliding when one publishes.
     """
+    claim = output / _OUTPUT_CLAIM
     if output.exists():
         if not output.is_dir():
             raise FileExistsError(f"VQA output path already exists: {output}")
-        if any(output.iterdir()):
+        entries = list(output.iterdir())
+        if claim.exists():
+            raise FileExistsError(f"VQA output directory already claimed: {output}")
+        if entries:
             raise FileExistsError(f"VQA output directory is not empty: {output}")
-        return
-    output.mkdir(parents=True, exist_ok=False)
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+    try:
+        fd = os.open(str(claim), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise FileExistsError(f"VQA output directory already claimed: {output}") from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"{os.getpid()}\n")
 
 
 def _remove_incomplete_output(output: Path) -> None:
