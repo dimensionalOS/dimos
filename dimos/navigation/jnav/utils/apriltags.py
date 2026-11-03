@@ -103,25 +103,27 @@ def cluster_by_time(detections: list[Detection], gap_sec: float) -> list[list[De
 
 
 def _pose_distance(a: list[float], b: list[float], rotation_weight_m_per_rad: float) -> float:
-    translation = float(np.linalg.norm(np.array(a[:3]) - np.array(b[:3])))
-    rotation = 2.0 * math.acos(min(1.0, abs(float(np.dot(a[3:7], b[3:7])))))
-    return translation + rotation_weight_m_per_rad * rotation
+    return float(_pose_distances(np.array([a]), np.array([b]), rotation_weight_m_per_rad)[0, 0])
 
 
-def cluster_medoid(cluster: list[Detection], rotation_weight_m_per_rad: float) -> Detection:
-    """The detection whose pose is most central (min total spatial+rotational
+def _pose_distances(
+    poses: np.ndarray, others: np.ndarray, rotation_weight_m_per_rad: float
+) -> np.ndarray:
+    """Translation + weighted rotation angle between every row of `poses` and of `others` (xyz + xyzw quat)."""
+    translation = np.linalg.norm(poses[:, None, :3] - others[None, :, :3], axis=2)
+    cos_half = np.minimum(1.0, np.abs(poses[:, 3:7] @ others[:, 3:7].T))
+    distances: np.ndarray = translation + rotation_weight_m_per_rad * 2.0 * np.arccos(cos_half)
+    return distances
+
+
+def cluster_medoid(
+    cluster: list[Detection], rotation_weight_m_per_rad: float, pose_key: str = "t_cam_marker"
+) -> Detection:
+    """The detection whose pose (`pose_key`) is most central (min total spatial+rotational
     distance to the rest) — a robust representative of the cluster."""
-    poses = [detection["t_cam_marker"] for detection in cluster]
-    best_index, best_cost = 0, float("inf")
-    for i in range(len(poses)):
-        cost = sum(
-            _pose_distance(poses[i], poses[j], rotation_weight_m_per_rad)
-            for j in range(len(poses))
-            if j != i
-        )
-        if cost < best_cost:
-            best_cost, best_index = cost, i
-    return cluster[best_index]
+    poses = np.array([detection[pose_key] for detection in cluster], dtype=np.float64)
+    costs = _pose_distances(poses, poses, rotation_weight_m_per_rad).sum(axis=1)
+    return cluster[int(np.argmin(costs))]
 
 
 def tag_pixel_size(corners_pixels: np.ndarray) -> float:
@@ -238,6 +240,150 @@ def robust_cluster_pose(
         **medoid,
         "t_cam_marker": [*estimate_translation.tolist(), *estimate_quaternion.tolist()],
     }
+
+
+# A detection's tag pose in a frame that only drifts slowly (odometry), where same-tag detections are compared.
+STABLE_POSE_KEY = "t_odom_marker"
+
+
+@dataclass(frozen=True)
+class SightingClustering:
+    """How `SightingClusterer` turns a tag's detections into sightings. The glimpse gates are loose on purpose: the
+    medoid and its Huber outlier test reject the noisy glimpses, and a glance never reaches `min_inliers`."""
+
+    # per-glimpse gates (`glimpse_passes`)
+    max_distance_m: float = 2.0
+    max_view_angle_deg: float = 60.0
+    min_sharpness: float = 30.0
+    max_reproj_px: float = 3.0
+    min_tag_px: float = 16.0
+    max_linear_speed_mps: float = 1.0
+    max_angular_speed_dps: float = 90.0
+    # the same tag seen again within this long joins the open sighting, whose medoid is recomputed
+    cooldown_s: float = DEFAULT_CLUSTER_GAP_SEC
+    # a sighting is first published once this many detections agree with its medoid
+    min_inliers: int = DEFAULT_MIN_OBSERVATIONS
+    # residual from the medoid past which a detection is down-weighted, and the Huber weight below which it is an outlier
+    huber_delta_m: float = DEFAULT_HUBER_DELTA_M
+    min_huber_weight: float = 0.25
+    rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD
+    # a published sighting is republished under its id (superseding it) once its medoid moves further than this
+    republish_shift_m: float = 0.02
+
+    def gate_thresholds(self) -> dict[str, float]:
+        """The `glimpse_passes` keyword thresholds."""
+        return {
+            "max_distance_m": self.max_distance_m,
+            "max_view_angle_deg": self.max_view_angle_deg,
+            "min_sharpness": self.min_sharpness,
+            "max_reproj_px": self.max_reproj_px,
+            "min_tag_px": self.min_tag_px,
+            "max_linear_speed_mps": self.max_linear_speed_mps,
+            "max_angular_speed_dps": self.max_angular_speed_dps,
+        }
+
+
+@dataclass(frozen=True)
+class SightingUpdate:
+    """A sighting to (re)publish at `publish_ts`: its medoid detection; a later update with the same id supersedes it."""
+
+    sighting_id: int
+    publish_ts: float
+    medoid: Detection
+    inliers: int
+    detections: int
+    supersedes: bool
+
+
+def cluster_inliers(
+    cluster: list[Detection],
+    rotation_weight_m_per_rad: float,
+    huber_delta_m: float,
+    min_huber_weight: float,
+    pose_key: str = STABLE_POSE_KEY,
+) -> tuple[Detection, list[Detection]]:
+    """The medoid and the detections whose Huber weight about it is at least `min_huber_weight` (the rest are
+    outliers); the medoid is re-picked among the inliers until they stop changing."""
+    poses = np.array([detection[pose_key] for detection in cluster], dtype=np.float64)
+    members = np.arange(len(cluster))
+    for _ in range(len(cluster)):
+        medoid = members[
+            int(
+                np.argmin(
+                    _pose_distances(poses[members], poses[members], rotation_weight_m_per_rad).sum(
+                        1
+                    )
+                )
+            )
+        ]
+        residuals = _pose_distances(poses, poses[[medoid]], rotation_weight_m_per_rad)[:, 0]
+        inliers = np.flatnonzero(_huber_weights(residuals, huber_delta_m) >= min_huber_weight)
+        if np.array_equal(inliers, members):
+            break
+        members = inliers
+    return cluster[medoid], [cluster[i] for i in members]
+
+
+@dataclass
+class _OpenSighting:
+    detections: list[Detection] = field(default_factory=list)
+    sighting_id: int | None = None
+    published_pose: list[float] | None = None
+
+
+class SightingClusterer:
+    """Streams tag detections (time order, each with `STABLE_POSE_KEY`) into sightings: a tag's detections within
+    `cooldown_s` of each other are one sighting, published once `min_inliers` agree with their medoid and republished
+    under the same id whenever that medoid moves. The live publisher and the offline sightings CSV both run this."""
+
+    def __init__(self, clustering: SightingClustering | None = None) -> None:
+        self.clustering = clustering or SightingClustering()
+        self.rejected: dict[str, int] = defaultdict(int)
+        self._open: dict[int, _OpenSighting] = {}
+        self._next_sighting_id = 0
+
+    def add(self, detection: Detection) -> SightingUpdate | None:
+        """Take one detection; the sighting update it causes, if any."""
+        clustering = self.clustering
+        reason = glimpse_passes(detection, **clustering.gate_thresholds())
+        if reason is not None:
+            self.rejected[reason] += 1
+            return None
+        marker = detection["marker_id"]
+        sighting = self._open.get(marker)
+        if (
+            sighting is None
+            or detection["ts"] - sighting.detections[-1]["ts"] > clustering.cooldown_s
+        ):
+            sighting = self._open[marker] = _OpenSighting()
+        sighting.detections.append(detection)
+        medoid, inliers = cluster_inliers(
+            sighting.detections,
+            clustering.rotation_weight_m_per_rad,
+            clustering.huber_delta_m,
+            clustering.min_huber_weight,
+        )
+        if len(inliers) < clustering.min_inliers:
+            return None
+        pose = medoid[STABLE_POSE_KEY]
+        if sighting.published_pose is not None and (
+            _pose_distance(pose, sighting.published_pose, clustering.rotation_weight_m_per_rad)
+            <= clustering.republish_shift_m
+        ):
+            return None
+        supersedes = sighting.sighting_id is not None
+        if sighting.sighting_id is None:
+            sighting.sighting_id = self._next_sighting_id
+            self._next_sighting_id += 1
+        sighting.published_pose = list(pose)
+        return SightingUpdate(
+            sighting_id=sighting.sighting_id,
+            publish_ts=float(detection["ts"]),
+            medoid=medoid,
+            inliers=len(inliers),
+            detections=len(sighting.detections),
+            supersedes=supersedes,
+        )
 
 
 def detect_apriltags(
@@ -700,19 +846,21 @@ def glimpse_passes(
     max_linear_speed_mps: float = DEFAULT_MAX_LINEAR_SPEED_MPS,
     max_angular_speed_dps: float = DEFAULT_MAX_ANGULAR_SPEED_DPS,
 ) -> str | None:
-    """None when a glimpse passes every per-glimpse quality gate, else the rejection reason."""
-    if detection["sharpness"] < min_sharpness:
+    """None when a glimpse passes every per-glimpse quality gate, else the rejection reason
+    (a gate whose field the detection lacks passes)."""
+    if detection.get("sharpness") is not None and detection["sharpness"] < min_sharpness:
         return "blur"
-    if detection["reproj_px"] > max_reproj_px:
+    if detection.get("reproj_px") is not None and detection["reproj_px"] > max_reproj_px:
         return "reproj"
-    if detection["tag_px"] < min_tag_px:
+    if detection.get("tag_px") is not None and detection["tag_px"] < min_tag_px:
         return "small"
-    distance, view_angle = view_quality(detection["t_cam_marker"])
-    if distance > max_distance_m:
-        return "far"
-    if view_angle > max_view_angle_deg:
-        return "oblique"
-    speed = detection["speed"]
+    if detection.get("t_cam_marker") is not None:
+        distance, view_angle = view_quality(detection["t_cam_marker"])
+        if distance > max_distance_m:
+            return "far"
+        if view_angle > max_view_angle_deg:
+            return "oblique"
+    speed = detection.get("speed")
     if speed is not None and (speed[0] > max_linear_speed_mps or speed[1] > max_angular_speed_dps):
         return "motion"
     return None

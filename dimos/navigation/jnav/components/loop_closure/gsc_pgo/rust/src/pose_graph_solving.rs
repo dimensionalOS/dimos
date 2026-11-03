@@ -189,6 +189,7 @@ impl GscPgo {
             && (self.committed_closures.len() > self.closures_dispatched
                 || self.world_positions.len() > self.world_positions_dispatched
                 || self.landmark_sightings.len() > self.landmark_sightings_dispatched
+                || self.landmark_sighting_replaced
                 || self.evidence_solve_due)
     }
     /// A sensor's position in world frame `frame` at `time` (mount `lever`, covariance m²): a prior on the nearest keyframe.
@@ -214,6 +215,31 @@ impl GscPgo {
     ) {
         self.landmark_sightings
             .push((time, landmark, rotation, position, information));
+    }
+    /// Sighting `sighting` (any caller id) of landmark `landmark`, as `add_landmark_factor`; a later call with the same
+    /// `sighting` replaces its factor in the pose graph rather than adding another.
+    pub fn replace_landmark_factor(
+        &mut self,
+        sighting: u64,
+        time: f64,
+        landmark: u64,
+        rotation: Mat3,
+        position: Vec3,
+        information: [[f64; 6]; 6],
+    ) {
+        let record = (time, landmark, rotation, position, information);
+        match self.landmark_sighting_index.get(&sighting) {
+            // in place, so the sightings already placed (`sightings_placed`) keep their indices
+            Some(&index) => {
+                self.landmark_sightings[index] = record;
+                self.landmark_sighting_replaced = true;
+            }
+            None => {
+                self.landmark_sighting_index
+                    .insert(sighting, self.landmark_sightings.len());
+                self.landmark_sightings.push(record);
+            }
+        }
     }
     /// The newest solve's landmarks: id, map rotation (identity for a point) and map position.
     pub fn landmarks(&self) -> &[(u64, Mat3, Vec3)] {
@@ -518,6 +544,7 @@ impl GscPgo {
         self.closures_dispatched = self.committed_closures.len();
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
+        self.landmark_sighting_replaced = false;
         self.evidence_solve_due = false;
         let dispatched = solve_log_path().map(|_| SolveDispatch {
             keyframe_time: self.key_poses.fixed(n - 1).time,
@@ -1111,4 +1138,51 @@ pub(crate) fn graph_change_cost_on(
         );
     }
     (curbed_yank(scan.largest, config.closure_yank_drift_range) - config.graph_change_heat_floor).max(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::gsc_pgo::{CloudWithPose, Config, GscPgo, Mode, PoseWithTime};
+    use crate::landmarks::LandmarkSighting;
+    use crate::mat3;
+
+    /// Republishing sighting 3 replaces its factor: one sighting of the landmark in the solve, at the newer position.
+    #[test]
+    fn a_republished_sighting_replaces_its_factor() {
+        let mut pgo = GscPgo::new(Config {
+            mode: Mode::Deterministic,
+            odometry_error_estimate_from_lidar_range: false,
+            // keyframes without clouds
+            auto_aggregate_cloud_size: 0,
+            drop_reseen_points: false,
+            ..Config::default()
+        });
+        pgo.set_wait_for_due_jobs(true);
+        for k in 0..20 {
+            let mut pose = PoseWithTime::new(mat3::identity(), [k as f64, 0.0, 0.0]);
+            pose.set_time(k, 0);
+            pgo.add_key_pose(&CloudWithPose { cloud: None::<Arc<Vec<[f32; 3]>>>, pose });
+            pgo.update();
+        }
+        let covariance = [[0.0025, 0.0, 0.0], [0.0, 0.0025, 0.0], [0.0, 0.0, 0.0025]];
+        let (older, newer) = (
+            LandmarkSighting::point(0, 0, [1.0, 0.0, 0.0], covariance),
+            LandmarkSighting::point(0, 0, [1.0, 2.0, 0.0], covariance),
+        );
+        pgo.replace_landmark_factor(3, 10.0, 7, older.rotation, older.position, older.information);
+        pgo.finish();
+        assert!(!pgo.unsolved());
+        pgo.replace_landmark_factor(3, 10.0, 7, newer.rotation, newer.position, newer.information);
+        assert!(pgo.unsolved(), "a replacement needs a solve");
+        pgo.finish();
+        let (sightings, ids) = pgo.sightings();
+        assert_eq!((sightings.len(), ids), (1, vec![7]));
+        assert_eq!(sightings[0].position, newer.position);
+        let &(landmark, _, at) = pgo.landmarks().first().expect("landmark solved");
+        assert_eq!(landmark, 7);
+        let world = mat3::add(&pgo.key_poses().position(sightings[0].keyframe), &newer.position);
+        assert!(mat3::norm(&mat3::sub(&at, &world)) < 1e-6, "landmark at {at:?}, newer sighting puts it at {world:?}");
+    }
 }

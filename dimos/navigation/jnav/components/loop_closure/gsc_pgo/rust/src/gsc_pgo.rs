@@ -854,6 +854,10 @@ pub struct GscPgo {
     /// Landmark sightings (`add_landmark_factor`), how many were dispatched, and the newest solve's landmarks (id, map rotation, position).
     pub(crate) landmark_sightings: Vec<LandmarkSightingRecord>,
     pub(crate) landmark_sightings_dispatched: usize,
+    /// Each superseding sighting id's index in `landmark_sightings` (`replace_landmark_factor`), and whether one was
+    /// replaced since the newest solve started.
+    pub(crate) landmark_sighting_index: std::collections::HashMap<u64, usize>,
+    pub(crate) landmark_sighting_replaced: bool,
     pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
     /// `inputs_only`: how many sightings were placed on their nearest keyframes, and each landmark's visits (`LandmarkVisits`).
     pub(crate) sightings_placed: usize,
