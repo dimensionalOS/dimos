@@ -105,8 +105,6 @@ pub struct ClosureCandidateDiag {
     pub lowe_ratio: f32,
     /// Pressure at search start (0 before any); keep_rate = similar-yank judged closures' (kept+1)/(judged+2); look_alike_places 0 = not counted.
     pub pressure: f64,
-    /// Pressure 2 when the search started (`LoopOverlap::unclosed_overlap_probability`).
-    pub pressure2: f64,
     /// Odometry error estimate at search start, as ratios to the reported variances (xy, z, yaw, roll/pitch).
     pub learned_odometry_error_estimate: [f64; 4],
     /// The same as the uninformative gate measures the graph with (`GscPgo::odometry_error_estimate`, the stated odometry error estimate).
@@ -219,7 +217,6 @@ impl ClosureCandidateDiag {
             scan_context_second: f32::NAN,
             lowe_ratio: f32::NAN,
             pressure: 0.0,
-            pressure2: 0.0,
             learned_odometry_error_estimate: [1.0; 4],
             odometry_error_estimate_gate: [1.0; 4],
             innovation: [f64::NAN; 3],
@@ -1122,7 +1119,6 @@ impl ClosureSearch {
                 .solved_relative_covariance
                 .as_ref()
                 .map(|(tip, covariance)| (*tip, covariance.as_slice())),
-            committed_closures: &self.closures,
         };
         // extension doubles, so the budget is the doubling step covering max keyframes x the chance a real loop is here
         let model = inputs.overlap_model(source_id);
@@ -2000,9 +1996,6 @@ impl GscPgo {
         diag.pressure = self
             .pressure
             .map_or(0.0, |(_, overlap)| overlap.unresolved_loop_probability);
-        diag.pressure2 = self
-            .pressure
-            .map_or(0.0, |(_, overlap)| overlap.unclosed_overlap_probability);
         diag.learned_odometry_error_estimate = self.learned_odometry_error_estimate();
         diag.odometry_error_estimate_gate = self.odometry_error_estimate();
         let source_position = self.key_poses.position(diag.source_id);
