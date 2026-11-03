@@ -182,7 +182,7 @@ class PGOConfig(NativeModuleConfig):
     # Seeded solve: a solve starts from the accepted graph instead of the odometry when that graph already fits every
     # closure GNC would weigh; with gnc verdicts, GNC starts from the newest adopted solve's verdicts (a rejected closure
     # starts out, mu from the rest's residuals)
-    solve_seed_from_accepted: bool = False
+    solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
     # Deterministic solve schedule: a finished solve is held ceil(solve_scans_scale * keyframes^solve_keyframe_power *
     # (1 + closures)^solve_closure_power * (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe *

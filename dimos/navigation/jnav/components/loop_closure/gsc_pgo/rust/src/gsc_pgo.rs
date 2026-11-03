@@ -937,7 +937,7 @@ impl Default for Config {
             graph_change_heat_threshold: 30.0,
             graph_change_heat_floor: 20.0,
             graph_change_heat_decay: 0.995,
-            solve_seed_from_accepted: false,
+            solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
             fast_match_workers: 2,
             sc_buffer_size: 4,
