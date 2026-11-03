@@ -211,9 +211,13 @@ _xarm6_teleop_hw = xarm6_hardware(
 _xarm6_teleop_model = make_xarm6_model_config(
     add_gripper=True,
 )
+# The xArm7's ready pose for teleop (the planner's "home"), joint angles in radians:
+# the gripper tip 0.40 m in front of the base, 0.23 m above it, pointing down.
+XARM7_TELEOP_READY_JOINTS = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 _xarm7_teleop_model = make_xarm7_model_config(
     add_gripper=True,
     tf_extra_links=xarm_link_frames(7),
+    home_joints=XARM7_TELEOP_READY_JOINTS,
 )
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via

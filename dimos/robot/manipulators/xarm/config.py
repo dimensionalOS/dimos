@@ -87,10 +87,11 @@ XARM_HEURISTIC_AIM = {
 
 
 def xarm_wrist_camera_transform(dof: int) -> Transform:
-    """Where the wrist RealSense sits on the arm's last link, from hand-eye calibration.
+    """Where the wrist RealSense sits on the arm's last link.
 
-    Measured on the xArm7's link7; the xArm6 gets the same numbers on link6, not
-    measured there.
+    Measured on the xArm7's link7, with the pitch set so the table the camera sees
+    comes out level at the height of the arm's base. The xArm6 gets the same
+    numbers on link6, not measured there.
 
     Args:
         dof: The arm's joint count: 7 for the xArm7, 6 for the xArm6.
@@ -101,8 +102,8 @@ def xarm_wrist_camera_transform(dof: int) -> Transform:
     # already publishes, so ManipulationModule emits the whole chain from one
     # loop at one rate.
     return Transform(
-        translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-        rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+        translation=Vector3(x=0.06685201, y=-0.03095927, z=0.00688431),
+        rotation=Quaternion(0.59138443, 0.00099956, 0.80629644, -0.01222741),  # xyzw
         frame_id=f"link{dof}",
         child_frame_id="camera_link",
     )
