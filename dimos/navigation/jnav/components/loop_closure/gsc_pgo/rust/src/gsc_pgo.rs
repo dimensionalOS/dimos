@@ -740,6 +740,11 @@ pub struct Config {
     pub odometry_error_estimate_tilt_per_sqrt_m: f64,
     #[cfg_attr(feature = "native", serde(alias = "odom_tilt_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_tilt_per_sqrt_rad: f64,
+    /// True (the module sets it when the config states no odometry error estimate): the odometry error estimate follows
+    /// the lidar's range (`lidar_range`, linear between the Go2 L1's and the Mid-360's calibrated estimates), replacing the
+    /// `odometry_error_estimate_*` above each time the range estimate updates.
+    pub odometry_error_estimate_from_lidar_range: bool,
+    pub lidar_range: crate::lidar_range::LidarRangeConfig,
     /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
     /// the next (xy, z, yaw, roll/pitch): the prior that `learned_odometry_error_estimate_from_closures` holds its estimate to. 0 = one
     /// closure's worth of information (a unit-information prior). Defaults: the spread of those five recordings around
@@ -824,6 +829,9 @@ impl Config {
     // the negated comparisons reject NaN too
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn validate(&self) -> Result<(), String> {
+        if self.odometry_error_estimate_from_lidar_range {
+            self.lidar_range.validate()?;
+        }
         if !(self.barely_fail_uncertainty_range < 1.0) {
             return Err(format!(
                 "barely_fail_uncertainty_range must be < 1 (got {})",
@@ -932,6 +940,8 @@ impl Default for Config {
             odometry_error_estimate_yaw_per_sqrt_rad: 8.66e-3,
             odometry_error_estimate_tilt_per_sqrt_m: 6.91e-4,
             odometry_error_estimate_tilt_per_sqrt_rad: 3.3e-3,
+            odometry_error_estimate_from_lidar_range: false,
+            lidar_range: crate::lidar_range::LidarRangeConfig::default(),
             learned_odometry_error_estimate_prior_ln_sd_xy: 1.72,
             learned_odometry_error_estimate_prior_ln_sd_z: 2.05,
             learned_odometry_error_estimate_prior_ln_sd_yaw: 1.15,
@@ -1059,6 +1069,8 @@ pub struct GscPgo {
     pub(crate) closure_search_wait_s: f64,
     /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
     pub(crate) scans_seen: usize,
+    /// The running lidar range estimate (`odometry_error_estimate_from_lidar_range`).
+    pub(crate) lidar_range: crate::lidar_range::LidarRange,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
     /// Bumped whenever a keyframe is added or a solve is adopted: what loop_overlap reads changes only then, so pressure
     /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
@@ -1897,6 +1909,37 @@ impl GscPgo {
         self.icp_cache = Some(cache);
     }
 
+    /// Add a scan's range to the running range estimate and, when it updates, set the odometry error estimate it implies.
+    fn follow_lidar_range(&mut self, cloud: &[[f32; 3]]) {
+        let range = crate::lidar_range::scan_range(cloud);
+        let Some(range_m) = self.lidar_range.add(range, &self.config.lidar_range) else {
+            return;
+        };
+        let [xy, z, yaw, tilt] = self.config.lidar_range.odometry_error_estimate_at(range_m);
+        let c = &mut self.config;
+        [c.odometry_error_estimate_xy_per_sqrt_m, c.odometry_error_estimate_xy_per_sqrt_rad] = xy;
+        [c.odometry_error_estimate_z_per_sqrt_m, c.odometry_error_estimate_z_per_sqrt_rad] = z;
+        [c.odometry_error_estimate_yaw_per_sqrt_m, c.odometry_error_estimate_yaw_per_sqrt_rad] = yaw;
+        [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad] = tilt;
+    }
+
+    /// The lidar range estimate (m) the odometry error estimate follows, once one is known
+    /// (`odometry_error_estimate_from_lidar_range`).
+    pub fn lidar_range_estimate_m(&self) -> Option<f64> {
+        self.lidar_range.estimate_m()
+    }
+
+    /// The stated odometry error estimate in use (per source xy, z, yaw, tilt: [per sqrt m, per sqrt rad]).
+    pub fn config_odometry_error_estimate(&self) -> crate::lidar_range::OdometryErrorEstimate {
+        let c = &self.config;
+        [
+            [c.odometry_error_estimate_xy_per_sqrt_m, c.odometry_error_estimate_xy_per_sqrt_rad],
+            [c.odometry_error_estimate_z_per_sqrt_m, c.odometry_error_estimate_z_per_sqrt_rad],
+            [c.odometry_error_estimate_yaw_per_sqrt_m, c.odometry_error_estimate_yaw_per_sqrt_rad],
+            [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad],
+        ]
+    }
+
     /// The odometry error estimate in use as ratios to the reported variances (xy, z, yaw, roll/pitch;
     /// `learned_odometry_error_estimate_from_closures`); all 1 when off or before a kept closure.
     /// The factor on each odometry variance everything uses: always the stated odometry error estimate (the learned estimate,
@@ -2109,6 +2152,11 @@ impl GscPgo {
     /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
         let started = std::time::Instant::now();
+        if self.config.odometry_error_estimate_from_lidar_range {
+            if let Some(cloud) = &cloud_with_pose.cloud {
+                self.follow_lidar_range(cloud);
+            }
+        }
         let pose = &cloud_with_pose.pose;
         // an odometry that repeats each pose with a fresh stamp (huge's fastlio_odometry, ~2.7x) counts each pose once
         if self
