@@ -386,6 +386,7 @@ def test_measured_frame_poses_are_empty_without_full_feedback(mocker: MockerFixt
     assert task.measured_frame_poses(_state(positions={"arm/a": 0.2})) == {}
 
 
+@pytest.mark.self_hosted
 def test_a_joint_just_past_its_limit_is_steered_back_through_step() -> None:
     model = make_xarm7_sim_robot_config()
     names = list(model.joint_names)
