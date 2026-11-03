@@ -29,6 +29,7 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
+    keyboard_teleop_openyam_mock,
     keyboard_teleop_openyam_planner,
     teleop_webxr_openyam,
 )
@@ -254,3 +255,16 @@ def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
+
+
+def test_keyboard_mock_hardware_without_simulation(monkeypatch) -> None:
+    monkeypatch.setattr(global_config, "simulation", "")
+
+    hardware = openyam_hardware(mock=True)
+    configured = _coordinator_kwargs(keyboard_teleop_openyam_mock)["hardware"]
+
+    assert hardware.adapter_type == "mock_whole_body"
+    assert hardware.adapter_kwargs == {}
+    assert hardware.limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
+    assert [component.adapter_type for component in configured] == ["mock_whole_body"]
+    assert configured[0].adapter_kwargs == {}

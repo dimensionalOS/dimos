@@ -48,12 +48,15 @@ OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "openyam_single.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"openyam_single": OPENYAM_PACKAGE}
 
 
-def openyam_hardware(*, bus_devices: dict[str, str] | None = None) -> HardwareComponent:
+def openyam_hardware(
+    *, mock: bool = False, bus_devices: dict[str, str] | None = None
+) -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
-    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
+    use_mock = mock or bool(global_config.simulation)
+    adapter_type = "mock_whole_body" if use_mock else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
     limits: JointLimits | None = None
-    if global_config.simulation:
+    if use_mock:
         limits = JointLimits(
             position_lower=[*([None] * OPENYAM_DOF), 0.0],
             position_upper=[*([None] * OPENYAM_DOF), 1.0],
