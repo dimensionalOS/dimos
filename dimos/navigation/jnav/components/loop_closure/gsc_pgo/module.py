@@ -90,6 +90,12 @@ class PGOConfig(NativeModuleConfig):
     closure_icp_early_stop: bool = True
     # alternative places are retried only at or above this pressure (below it, only the best match is tried)
     closure_alternative_places_min_pressure: float = 0.8
+    # a scan-context target matched from this many separate places looks like everything and is skipped before closure ICP (0 = off)
+    scan_context_generic_places: int = 0
+    # scans this close (m) to one already counted, or to the target, are the same place
+    scan_context_generic_place_radius_m: float = 10.0
+    # targets the generic-place cache tracks
+    scan_context_generic_capacity: int = 256
     # Drop the points a scan re-sends from the scan before (Go2 L1 republishes its last seconds) from every keyframe cloud (on by default)
     drop_reseen_points: bool = True
     # A keyframe's cloud needs at least this many points: scans are gathered and a due keyframe waits until they reach it (0 = off)

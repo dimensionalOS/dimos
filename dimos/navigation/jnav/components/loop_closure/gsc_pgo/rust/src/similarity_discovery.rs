@@ -367,6 +367,63 @@ impl LookAlikes {
     }
 }
 
+/// Keyframes that "look like everything": for each scan-context target, the separate places whose scans matched it
+/// under the threshold (a scan within `place_radius_m` of one already counted, or of the target itself, is the same
+/// place, so revisits of one spot count once). Bounded at `capacity` targets; a new one evicts the target with the
+/// fewest places, oldest touched first, so the cache keeps the most generic ones.
+#[derive(Default)]
+pub struct GenericPlaces {
+    targets: std::collections::BTreeMap<usize, (Vec<usize>, usize)>,
+    capacity: usize,
+    touches: usize,
+}
+
+impl GenericPlaces {
+    pub fn new(capacity: usize) -> GenericPlaces {
+        GenericPlaces {
+            targets: std::collections::BTreeMap::new(),
+            capacity,
+            touches: 0,
+        }
+    }
+    /// Separate places that matched `target` so far.
+    pub fn places(&self, target: usize) -> usize {
+        self.targets.get(&target).map_or(0, |(places, _)| places.len())
+    }
+    /// Count `query`'s match of `target` (positions by keyframe), places capped at `cap`.
+    pub fn record(
+        &mut self,
+        target: usize,
+        query: usize,
+        place_radius_m: f64,
+        cap: usize,
+        position: impl Fn(usize) -> mat3::Vec3,
+    ) {
+        let here = position(query);
+        let near = |other: usize| mat3::norm(&mat3::sub(&position(other), &here)) <= place_radius_m;
+        if near(target) {
+            return;
+        }
+        self.touches += 1;
+        if !self.targets.contains_key(&target) && self.targets.len() >= self.capacity {
+            let evict = self
+                .targets
+                .iter()
+                .min_by_key(|(&key, (places, touched))| (places.len(), *touched, key))
+                .map(|(&key, _)| key);
+            if let Some(evict) = evict {
+                self.targets.remove(&evict);
+            }
+        }
+        let touches = self.touches;
+        let (places, touched) = self.targets.entry(target).or_insert_with(|| (Vec::new(), 0));
+        *touched = touches;
+        if places.len() < cap && !places.iter().any(|&place| near(place)) {
+            places.push(query);
+        }
+    }
+}
+
 impl crate::gsc_pgo::GscPgo {
     /// The newest keyframe a closure may close onto: one whose submap leaves out the source's own scan (a match
     /// against itself only checks odometry against itself). Extended ICP keeps its stack clear of the target on its own.
