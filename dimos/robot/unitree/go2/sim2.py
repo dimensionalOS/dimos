@@ -15,7 +15,7 @@
 """A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_observations and sending joint commands.
 
 Go2Sim.mjcf is the Go2's MJCF with the rig's sensor frames as sites: a sensor names one (Go2Sim.lidar_mount_frame, ...)
-as its frame_id, and UrdfManager.blueprint(model=mjcf_to_urdf(Go2Sim.mjcf)) poses the same frames on tf.
+as its frame_id, and Go2Sim hands a UrdfManager the URDF of it, which poses the same frames on tf.
 """
 
 import asyncio
@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -45,12 +46,14 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_XYZ,
     OPTICAL_RPY,
 )
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
+from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.sim2.view import rotation_matrix
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import ACT, WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
 from dimos.utils.data import get_data
@@ -118,13 +121,18 @@ class Go2Sim(Module):
             )
         }
 
+    @shared_config(UrdfManager)
+    def urdf(self) -> dict[str, RobotModel]:
+        # The MJCF's base body is the URDF's base_link, the frame odometry moves.
+        return {"model": mjcf_to_urdf(self.mjcf, self.config.robot_id, "base_link")}
+
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         loop = asyncio.get_running_loop()
 
         # The world holds every CONTROL_DT of sim time until the policy has acted, as in training.
         def on_frame(world: WorldMirror) -> None:
-            if world.has_event(self.config.robot_id, "events/act"):
+            if world.got(self.config.robot_id, ACT):
                 loop.call_soon_threadsafe(self._act)
 
         self._world.on_frame(on_frame)

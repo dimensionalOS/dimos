@@ -15,7 +15,7 @@
 """The DimSim backend: DimSim's Rapier physics (misc/DimSim/cli/sim2/world.ts), stepped by sim2.
 
 The scene is the same MJCF file the MuJoCo backend takes, read into dimos.scene_data.v1 bodies. A robot is
-DimSim's kind of robot: a kinematic base the size of its model, moved by SetVelocity, sliding along static
+DimSim's kind of robot: a kinematic base the size of its model, moved by its "base_velocity" key, sliding along static
 geometry and pushing dynamic bodies. Each frame is a WorldObservations of what Rapier moved (its sleeping bodies did not);
 sensors draw the world from it, and actions it cannot do (joints) it refuses.
 """
@@ -32,37 +32,13 @@ from typing import TYPE_CHECKING, Any
 from dimos_lcm.world_msgs import WorldObservations
 import mujoco
 import numpy as np
-from scipy.spatial.transform import Rotation
 
-from dimos.sim2.actions import (
-    Action,
-    Attach,
-    Detach,
-    Interact,
-    Pause,
-    Remove,
-    Reset,
-    Resume,
-    SetPose,
-    SetVelocity,
-    Spawn,
-    Step,
-)
+from dimos.sim2.actions import BASE_VELOCITY, Action, CborKeyValueCommand
 from dimos.sim2.backend import Publisher
 from dimos.sim2.mujoco_backend import scene_bodies
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.world import _assets, keyframe
-from dimos.sim2.world_observations import (
-    EPOCH,
-    OBJECT,
-    PAUSED,
-    ROBOT,
-    WorldWriter,
-    cbor_update,
-    pose_update,
-    tag_update,
-    velocity_update,
-)
+from dimos.sim2.world_observations import REFUSED, WorldWriter
 from dimos.utils.deno import ensure_deno
 
 if TYPE_CHECKING:
@@ -96,19 +72,15 @@ class DimsimBackend:
             if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE
         }
         self._bodies, self._meshes = scene_bodies(model, data, set(), movers)
-        self._spawned: dict[str, dict[str, Any]] = {}
-        self._version = 0
         self._latest: dict[str, Any] = {}
         self._pending: list[Action] = []
         self._lock = Lock()
-        self._paused = False
-        self._steps_requested = 0
         self.world = WorldWriter()
-        self._sent_paused = False
         # Entities the frames have added, and the moves Rapier reported since the last frame.
         self._added: set[str] = set()
         self._moved: dict[str, Any] = {}
-        self._removed: list[str] = []
+        # Keys set since the last frame, observed back on it once their entities are added.
+        self._keys: list[tuple[str, str, Any]] = []
         self._refusals: list[tuple[str, str]] = []
         self._world = subprocess.Popen(
             [
@@ -134,22 +106,18 @@ class DimsimBackend:
         return {"world.xml": self._scene.read_bytes()}
 
     def scene_data(self) -> str:
-        with self._lock:
-            spawned = list(self._spawned.values())
-            version = self._version
         # Movers where they are now, for a viewer that starts drawing after they moved.
         now = self._latest.get("entities", {})
         bodies = [
             {**body, "pos": now[body["name"]]["pos"], "quat": now[body["name"]]["quat"]}
             if body["name"] in now
             else body
-            for body in self._bodies + spawned
+            for body in self._bodies
         ]
         return json.dumps(
             {
                 "format": "dimos.scene_data.v1",
-                # A new id per change, so a viewer that drew the old world draws this one.
-                "id": f"{self._scene.stem}-dimsim-{id(self)}-{version}",
+                "id": f"{self._scene.stem}-dimsim-{id(self)}",
                 "frame": "world",
                 "bodies": bodies,
                 "meshes": self._meshes,
@@ -160,14 +128,6 @@ class DimsimBackend:
 
     def apply(self, actions: Sequence[Action]) -> None:
         with self._lock:
-            for action in actions:
-                match action:
-                    case Spawn():
-                        self._spawned[action.entity] = _spawned_body(action)
-                        self._version += 1
-                    case Remove(entity) if entity in self._spawned:
-                        del self._spawned[entity]
-                        self._version += 1
             self._pending.extend(actions)
 
     async def run(self, world_observations: Publisher) -> None:
@@ -175,16 +135,10 @@ class DimsimBackend:
         sim_time = 0.0
         while True:
             await asyncio.to_thread(self._apply_pending)
-            if self._paused:
-                steps, self._steps_requested = self._steps_requested, 0
-                started = time.monotonic() - sim_time / self._config.speed
-            else:
-                steps = int(
-                    ((time.monotonic() - started) * self._config.speed - sim_time) / TIMESTEP
-                )
-                if steps > _MAX_BURST_STEPS:
-                    started += (steps - _MAX_BURST_STEPS) * TIMESTEP / self._config.speed
-                    steps = _MAX_BURST_STEPS
+            steps = int(((time.monotonic() - started) * self._config.speed - sim_time) / TIMESTEP)
+            if steps > _MAX_BURST_STEPS:
+                started += (steps - _MAX_BURST_STEPS) * TIMESTEP / self._config.speed
+                steps = _MAX_BURST_STEPS
             if steps:
                 state = await asyncio.to_thread(self._call, {"op": "step", "steps": steps})
                 sim_time = state["time"]
@@ -221,13 +175,11 @@ class DimsimBackend:
         return reply
 
     def _reset(self) -> None:
-        with self._lock:
-            spawned = list(self._spawned.values())
         state = self._call(
             {
                 "op": "init",
                 "timestep": TIMESTEP,
-                "bodies": self._bodies + spawned,
+                "bodies": self._bodies,
                 "meshes": self._meshes,
                 "robots": [_robot(robot) for robot in self._robots],
             }
@@ -248,51 +200,20 @@ class DimsimBackend:
 
     def _apply(self, action: Action) -> None:
         match action:
-            case SetVelocity(entity, twist):
+            case CborKeyValueCommand(entity, key, value) if key == BASE_VELOCITY:
+                vx, vy, wz = value
                 self._call(
                     {
                         "op": "velocity",
                         "entity": entity,
-                        "linear": _xyz(twist.linear),
-                        "angular": _xyz(twist.angular),
+                        "linear": [vx, vy, 0.0],
+                        "angular": [0.0, 0.0, wz],
                     }
                 )
-            case SetPose(entity, pose, _):
-                p, q = pose.position, pose.orientation
-                self._call(
-                    {
-                        "op": "pose",
-                        "entity": entity,
-                        "pos": [p.x, p.y, p.z],
-                        "quat": [q.x, q.y, q.z, q.w],
-                    }
-                )
-            case Spawn():
-                self._call({"op": "spawn", "body": _spawned_body(action), "mass": action.mass})
-            case Remove(entity):
-                self._call({"op": "remove", "entity": entity})
-                with self._lock:
-                    self._moved.pop(entity, None)
-                    self._removed.append(entity)
-            case Attach(entity, to, None):
-                self._call({"op": "attach", "entity": entity, "to": to})
-            case Detach(entity):
-                self._call({"op": "detach", "entity": entity})
-            case Interact(entity, action):
-                raise ValueError(
-                    f"the dimsim world gives {entity} no states, so it has no {action!r}"
-                )
-            case Pause():
-                self._paused = True
-            case Resume():
-                self._paused = False
-            case Step(steps):
-                self._steps_requested += steps
-            case Reset():
-                self._reset()
+                self._keys.append((entity, key, value))
             case _:
                 raise ValueError(
-                    f"the dimsim world cannot do {type(action).__name__}: it has no joints, wrenches or carrying by a body"
+                    f"the dimsim world cannot do {type(action).__name__}: it has no joints, and no key but {BASE_VELOCITY!r}"
                 )
 
     def _publish(self, state: dict[str, Any]) -> None:
@@ -301,47 +222,23 @@ class DimsimBackend:
             self._moved.update(state["entities"])
 
     def frame(self) -> WorldObservations:
-        """What Rapier moved since the last frame, entities added and removed, and refusals."""
+        """What Rapier moved since the last frame, entities it added, and refusals."""
         world = self.world
         if not self._added:
-            world.add(
-                "world",
-                cbor_update(
-                    EPOCH, time.time() - self._latest.get("time", 0.0) / self._config.speed
-                ),
-                cbor_update("backend", "dimsim"),
-            )
+            world.add("world", backend="dimsim")
             self._added.add("world")
-        robot_ids = {robot.robot_id for robot in self._robots}
         with self._lock:
             moved, self._moved = self._moved, {}
-            removed, self._removed = self._removed, []
-        for name in removed:
-            if name in self._added:
-                world.remove(name)
-                self._added.discard(name)
         for name, entity in moved.items():
-            linear, angular = np.array(entity["linear"]), np.array(entity["angular"])
-            if name in robot_ids:
-                # A robot's velocity is the one commanded, in its own frame; the world's are world-aligned.
-                to_world = Rotation.from_quat(entity["quat"]).as_matrix()
-                linear, angular = to_world @ linear, to_world @ angular
-            motion = (
-                pose_update([*entity["pos"], *entity["quat"]]),
-                velocity_update([*linear, *angular]),
-            )
-            if name in self._added:
-                world.update(name, *motion)
-            else:
-                world.add(name, tag_update(ROBOT if name in robot_ids else OBJECT), *motion)
+            if name not in self._added:
+                world.add(name)
                 self._added.add(name)
-        if self._paused != self._sent_paused:
-            world.update("world", tag_update(PAUSED, self._paused))
-            self._sent_paused = self._paused
+            world.position(name, [*entity["pos"], *entity["quat"]])
+        for entity, key, value in self._keys:
+            world.set(entity, key, value)
+        self._keys.clear()
         for target, reason in self._refusals:
-            world.event(
-                target if target in world.ids else "world", "events/refused", {"reason": reason}
-            )
+            world.set(target if target in world.ids else "world", REFUSED, {"reason": reason})
         self._refusals.clear()
         return world.end_frame(float(self._latest.get("time", 0.0)))
 
@@ -375,30 +272,3 @@ def _robot(robot: SimulatedRobot) -> dict[str, Any]:
         "center": ((high + low) / 2 - root).tolist(),
         "mass": float(model.body_subtreemass[0]),
     }
-
-
-def _spawned_body(spawn: Spawn) -> dict[str, Any]:
-    p, q = spawn.pose.position, spawn.pose.orientation
-    return {
-        "name": spawn.entity,
-        "label": spawn.entity,
-        "pos": [p.x, p.y, p.z],
-        "quat": [q.x, q.y, q.z, q.w],
-        "mocap": spawn.mass > 0,
-        "mass": spawn.mass,
-        "geoms": [
-            {
-                "name": spawn.entity,
-                "type": spawn.shape,
-                "size": list(spawn.size),
-                "pos": [0.0, 0.0, 0.0],
-                "quat": [0.0, 0.0, 0.0, 1.0],
-                "rgba": list(spawn.rgba),
-            }
-        ],
-        "lights": [],
-    }
-
-
-def _xyz(vector: Any) -> list[float]:
-    return [vector.x, vector.y, vector.z]

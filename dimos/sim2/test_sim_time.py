@@ -43,7 +43,7 @@ from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import ACT, WorldMirror
 
 L1_PERIOD = 0.13
 RATES = {
@@ -114,7 +114,7 @@ class _Dog(Module):
             self.actions.publish(world_action(world, JointCommand("dog", ("neck",), effort=(0.0,))))
 
         def on_frame(seen: WorldMirror) -> None:
-            if seen.has_event("dog", "events/act"):
+            if seen.got("dog", ACT):
                 loop.call_soon_threadsafe(loop.call_later, self.config.think, act)
 
         world.on_frame(on_frame)
@@ -191,7 +191,7 @@ WARM_UP = 1.0
 
 
 def _per_sim_second(stamps: list[float], start: float) -> float:
-    # Stamps are the world's epoch plus its sim time, so their spacing is sim time.
+    # Stamps are the wall time the sim started at plus its sim time, so their spacing is sim time.
     steady = [stamp for stamp in stamps if stamp >= start + WARM_UP]
     assert len(steady) > 5, f"only {len(steady)} after warming up"
     return (len(steady) - 1) / (steady[-1] - steady[0])

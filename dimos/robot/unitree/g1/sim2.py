@@ -14,7 +14,8 @@
 
 """G1Sim: the sim twin of G1WholeBodyConnection, with its motor_command in and motor_states and pelvis imu out.
 
-G1Sim.mjcf is menagerie's G1 with its sensor frames as sites: LivoxSim names G1Sim.lidar_mount_frame.
+G1Sim.mjcf is menagerie's G1 with its sensor frames as sites: LivoxSim names G1Sim.lidar_mount_frame, and G1Sim
+hands a UrdfManager the URDF of it.
 """
 
 import asyncio
@@ -33,12 +34,15 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
 from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
+from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.sim2.view import WorldView, open_view
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.mujoco.menagerie import menagerie_path
@@ -125,6 +129,11 @@ class G1Sim(Module):
                 servos=SERVOS,
             )
         }
+
+    @shared_config(UrdfManager)
+    def urdf(self) -> dict[str, RobotModel]:
+        # The MJCF's pelvis is the URDF's root, as on the real G1.
+        return {"model": mjcf_to_urdf(self.mjcf, self.config.robot_id, "pelvis")}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()

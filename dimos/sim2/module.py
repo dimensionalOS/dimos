@@ -29,7 +29,7 @@ import tempfile
 from threading import Event, Thread
 from typing import Any, Protocol
 
-from dimos_lcm.world_msgs import Observation, WorldAction, WorldObservations
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
 from pydantic import Field
 
 from dimos.core.core import rpc
@@ -42,10 +42,10 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.actions import Remove, Spawn, read_actions
+from dimos.sim2.actions import read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
-from dimos.sim2.world_observations import OBJECT, WorldMirror
+from dimos.sim2.world_observations import WorldMirror
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -155,16 +155,12 @@ class Simulation(SharedConfigModule):
         self.world_observations.publish(frame)
         self._mirror.apply(frame)
         # Only the objects this frame moved: the backend sends a resting one's pose only when it moves.
-        moved = {
-            c.entity_id
-            for c in frame.observations
-            if c.type in (Observation.ADD_ENTITY, Observation.ENTITY_UPDATE)
-            and Observation.WORLD_POSE_SET in c.update_types
-        }
+        moved = {position.entity_id for position in frame.positions}
+        robots = {d.robot_id for d in self.simulated.values() if isinstance(d, SimulatedRobot)}
         objects = [
             entity
             for entity_id, entity in self._mirror.entities.items()
-            if entity_id in moved and OBJECT in entity.tags and entity.pose is not None
+            if entity_id in moved and entity.path not in robots and entity.pose is not None
         ]
         if objects:
             stamp = self._mirror.stamp()
@@ -194,9 +190,6 @@ class Simulation(SharedConfigModule):
             logger.warning(f"sim2: an action this world cannot read: {error}")
             return
         backend.apply(actions)
-        # A viewer draws the world once, so a changed one is sent again, unasked.
-        if any(isinstance(action, Spawn | Remove) for action in actions):
-            self.scene_data.publish(String(backend.scene_data()))
 
     async def handle_render_file_request(self, request: String) -> None:
         if self._backend is None:

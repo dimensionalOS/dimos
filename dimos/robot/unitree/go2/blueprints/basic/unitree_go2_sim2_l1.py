@@ -22,17 +22,13 @@ from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.module import Simulation
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.visualization.vis_module import vis_module
 
 unitree_go2_sim2_l1 = autoconnect(
     Simulation.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     Go2Sim.blueprint(),
-    # The MJCF's base body is the URDF's base_link, the frame odometry moves.
-    UrdfManager.blueprint(model=mjcf_to_urdf(Go2Sim.mjcf, "go2", "base_link")).remappings(
-        [(UrdfManager, "coordinator_joint_state", "joint_state")]
-    ),
+    UrdfManager.blueprint().remappings([(UrdfManager, "coordinator_joint_state", "joint_state")]),
     SimL1.blueprint(frame_id=Go2Sim.l1_mount_frame),
     SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame),
 ).global_config(n_workers=6, robot_model="unitree_go2")

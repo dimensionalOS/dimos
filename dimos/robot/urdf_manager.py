@@ -26,7 +26,8 @@ import numpy as np
 from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
+from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -44,7 +45,8 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 
 class UrdfManagerConfig(ModuleConfig):
-    model: RobotModel
+    # Or None, for the one module that sends it: @shared_config(UrdfManager) returning {"model": RobotModel}.
+    model: RobotModel | None = None
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -54,7 +56,7 @@ class UrdfManagerConfig(ModuleConfig):
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
 
 
-class UrdfManager(Module):
+class UrdfManager(SharedConfigModule):
     """Poses the URDF from the joint state onto tf, and serves the URDF and the files it names to renderers."""
 
     config: UrdfManagerConfig
@@ -70,12 +72,32 @@ class UrdfManager(Module):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._description = self.config.model.load()
-        self._file_paths = _files_named_by(self._description.xml)
-        self._joints = {joint.name: joint for joint in self._description.joints}
         self._next_joint_tf_t = 0.0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
+        if self.config.model is not None:
+            self._load(self.config.model)
+
+    def config_receive(self, config_senders: ConfigSenders) -> None:
+        models = [(name, config.get("model")) for name, config in config_senders]
+        if self.config.model is not None:
+            models.insert(0, ("model=", self.config.model))
+        if len(models) != 1:
+            raise ValueError(
+                f"UrdfManager takes one model, from model= or one @shared_config(UrdfManager); got {[n for n, _ in models]}"
+            )
+        name, model = models[0]
+        if not isinstance(model, RobotModel):
+            raise TypeError(
+                f"{name}'s @shared_config(UrdfManager) must return {{'model': RobotModel}}"
+            )
+        if model is not self.config.model:
+            self._load(model)
+
+    def _load(self, model: RobotModel) -> None:
+        self._description = model.load()
+        self._file_paths = _files_named_by(self._description.xml)
+        self._joints = {joint.name: joint for joint in self._description.joints}
 
     @rpc
     def start(self) -> None:

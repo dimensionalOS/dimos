@@ -22,16 +22,13 @@ from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.visualization.vis_module import vis_module
 
 unitree_go2_sim2_mid360 = autoconnect(
     Simulation.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     Go2Sim.blueprint(),
-    UrdfManager.blueprint(model=mjcf_to_urdf(Go2Sim.mjcf, "go2", "base_link")).remappings(
-        [(UrdfManager, "coordinator_joint_state", "joint_state")]
-    ),
+    UrdfManager.blueprint().remappings([(UrdfManager, "coordinator_joint_state", "joint_state")]),
     LivoxSim.blueprint(frame_id=Go2Sim.lidar_mount_frame, go2_occlusion=True),
     SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame),
 ).global_config(n_workers=4, robot_model="unitree_go2")
