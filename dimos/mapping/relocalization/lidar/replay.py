@@ -31,7 +31,7 @@ from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
 from dimos.mapping.relocalization.lidar.module import LocalMapConfig
 from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESETS, LidarRelocalizer
-from dimos.mapping.relocalization.module import fix_error, yaw_deg
+from dimos.mapping.relocalization.module import fix_error, load_premap, yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
@@ -197,7 +197,11 @@ def _print_attempt(attempt: ReplayAttempt, recorded: Transform | None) -> None:
 
 def main(
     recording: str = typer.Argument(..., help="Recording .db: bare name (cwd or data/) or path"),
-    premap: str = typer.Option(..., "--premap", help="Premap .pc2.lcm: bare name or path"),
+    premap: str = typer.Option(
+        ...,
+        "--premap",
+        help="Premap: a .pc2.lcm bare name or path, or a .db/.mcap whose last map_cloud is the map",
+    ),
     lidar: str = typer.Option("lidar", "--lidar", help="Lidar stream in the recording"),
     world_frame: str = typer.Option("odom", "--world-frame", help="Frame the live map is built in"),
     preset: str = typer.Option(DEFAULT_PRESET, "--preset", help=f"One of {sorted(PRESETS)}"),
@@ -226,7 +230,7 @@ def main(
 ) -> None:
     """Replay a recording through the relocalizer and compare its fix with the robot's."""
     db_path = resolve_named_path(recording, ".db")
-    premap_cloud = PointCloud2.lcm_decode(resolve_named_path(premap, ".pc2.lcm").read_bytes())
+    premap_cloud = load_premap(premap, "map_cloud")
     _init_recording(db_path.stem, out)
     print(f"relocalizing {db_path.name} against {premap} ({len(premap_cloud)} points, {preset})")
     store = SqliteStore(path=str(db_path))

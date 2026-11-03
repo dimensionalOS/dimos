@@ -310,7 +310,6 @@ all_modules = {
     "module-b": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleB",
     "movement-manager": "dimos.navigation.movement_manager.movement_manager.MovementManager",
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
-    "named-locations": "dimos.navigation.named_locations.module.NamedLocations",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
     "object-db-module": "dimos.perception.experimental.moduleDB.ObjectDBModule",
     "object-scene-registration-module": "dimos.perception.experimental.object_scene_registration.ObjectSceneRegistrationModule",

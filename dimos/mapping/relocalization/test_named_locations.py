@@ -19,17 +19,19 @@ from typing import Any, cast
 
 import pytest
 
+from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.named_locations import load_locations, location_frame
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
     InteractiveMarkerUpdate,
     named_pose,
 )
-from dimos.navigation.named_locations.module import NamedLocations, load_locations
 from dimos.protocol.tf.tf import TF
 
 # world -> map of a relocalized run: the old map sits 10 m along x and turned a quarter turn
@@ -43,19 +45,20 @@ FIX = Transform(
 
 @pytest.fixture
 def make(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """A NamedLocations on an in-process tf, recording what it publishes."""
-    built: list[NamedLocations] = []
+    """A RelocalizationModule on an in-process tf, recording what it publishes."""
+    built: list[RelocalizationModule] = []
 
     def build(
         **config: Any,
-    ) -> tuple[NamedLocations, list[InteractiveMarkerUpdate], list[PointStamped]]:
-        config.setdefault("save_to", str(tmp_path / "named_locations.db"))
-        module = NamedLocations(**config)
+    ) -> tuple[RelocalizationModule, list[InteractiveMarkerUpdate], list[PointStamped]]:
+        config.setdefault("save_locations_to", str(tmp_path / "named_locations.db"))
+        module = RelocalizationModule(**config)
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         snapshots: list[InteractiveMarkerUpdate] = []
         goals: list[PointStamped] = []
         monkeypatch.setattr(module.named_locations, "publish", snapshots.append)
         monkeypatch.setattr(module.goal, "publish", goals.append)
+        monkeypatch.setattr(module.tf, "publish", module.__dict__.setdefault("sent_tf", []).append)
         built.append(module)
         return module, snapshots, goals
 
@@ -65,9 +68,11 @@ def make(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         module.dispose()
 
 
-def begin(module: NamedLocations) -> None:
-    """What start() does once its ports are bound."""
-    module.open()
+def begin(module: RelocalizationModule) -> None:
+    """What start() does for named locations once its ports are bound."""
+    module.open_locations()
+    if module.config.new_map:
+        module.submit(module._identity(), "new map")
 
 
 def at(x: float, y: float, frame_id: str, yaw: float = 0.0) -> PoseStamped:
@@ -84,7 +89,7 @@ def listing(poses: dict[str, PoseStamped]) -> InteractiveMarkerUpdate:
     return InteractiveMarkerUpdate([named_pose(name, pose) for name, pose in poses.items()])
 
 
-def publish(module: NamedLocations, poses: dict[str, PoseStamped]) -> None:
+def publish(module: RelocalizationModule, poses: dict[str, PoseStamped]) -> None:
     asyncio.run(module.handle_named_locations(listing(poses)))
 
 
@@ -112,10 +117,10 @@ def test_a_published_list_replaces_the_locations_without_a_reply(make, tmp_path)
     publish(module, {"dock": at(1, 2, "map"), "desk": at(3, 4, "map")})
     # rename dock, move desk
     publish(module, {"charger": at(1, 2, "map"), "desk": at(5, 6, "map")})
-    assert positions(module.snapshot()) == {"charger": (1, 2), "desk": (5, 6)}
+    assert positions(module.locations_snapshot()) == {"charger": (1, 2), "desk": (5, 6)}
     # delete desk
     publish(module, {"charger": at(1, 2, "map")})
-    assert names(module.snapshot()) == ["charger"]
+    assert names(module.locations_snapshot()) == ["charger"]
 
     # the module never answers a list: the publisher already has what it sent
     assert published == []
@@ -149,23 +154,23 @@ def test_a_request_resends_every_location(make):
 
 
 def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
-    module, _, _ = make(load_from="none_yet.db")
-    module.tfbuffer.receive_transform(FIX)
+    module, _, _ = make(locations_from="none_yet.db")
+    module.submit(FIX)
 
     # 1 m in front of the old map's origin: map x points along world y
     publish(module, {"door": at(10, 1, "world")})
-    assert positions(module.snapshot()) == {"door": (1, 0)}
+    assert positions(module.locations_snapshot()) == {"door": (1, 0)}
 
 
 def test_a_list_without_a_map_transform_is_ignored(make):
-    module, _, _ = make(load_from="none_yet.db")
+    module, _, _ = make(locations_from="none_yet.db")
     publish(module, {"door": at(10, 1, "world")})
-    assert names(module.snapshot()) == []
+    assert names(module.locations_snapshot()) == []
 
 
 def test_go_to_sends_the_goal_in_the_world_frame_through_the_fix(make):
-    module, _, goals = make(load_from="none_yet.db")
-    module.tfbuffer.receive_transform(FIX)
+    module, _, goals = make(locations_from="none_yet.db")
+    module.submit(FIX)
     publish(module, {"door": at(1, 0, "map")})
 
     asyncio.run(module.handle_go_to_named_location(String("door")))
@@ -177,7 +182,7 @@ def test_go_to_sends_the_goal_in_the_world_frame_through_the_fix(make):
 
 
 def test_go_to_waits_for_relocalization(make):
-    module, _, goals = make(load_from="none_yet.db")
+    module, _, goals = make(locations_from="none_yet.db")
     module._locations = {"door": at(1, 0, "map")}
     asyncio.run(module.handle_go_to_named_location(String("door")))
     assert goals == []
@@ -185,7 +190,7 @@ def test_go_to_waits_for_relocalization(make):
 
 def test_a_new_map_is_the_world_frame(make):
     """Nothing to load: this run's world frame is the map, so locations and goals coincide."""
-    module, _, goals = make()
+    module, _, goals = make(new_map=True)
     begin(module)
     publish(module, {"door": at(4, 5, "world")})
     asyncio.run(module.handle_go_to_named_location(String("door")))
@@ -194,7 +199,7 @@ def test_a_new_map_is_the_world_frame(make):
 
 def test_locations_are_loaded_from_the_saved_file_at_startup(make, tmp_path):
     run1 = str(tmp_path / "run1.db")
-    first, _, _ = make(save_to=run1)
+    first, _, _ = make(save_locations_to=run1)
     begin(first)
     publish(first, {"dock": at(1, 2, "map", yaw=0.5), "desk": at(3, 4, "map")})
     publish(first, {"dock": at(1, 2, "map", yaw=0.5)})
@@ -202,7 +207,7 @@ def test_locations_are_loaded_from_the_saved_file_at_startup(make, tmp_path):
 
     assert list(load_locations(run1, "named_locations")) == ["dock"]
 
-    second, published, _ = make(load_from=run1, save_to=str(tmp_path / "run2.db"))
+    second, published, _ = make(locations_from=run1, save_locations_to=str(tmp_path / "run2.db"))
     begin(second)
     assert published == []
     asyncio.run(second.handle_named_locations_request(String("")))
@@ -217,3 +222,60 @@ def test_locations_are_loaded_from_the_saved_file_at_startup(make, tmp_path):
 
 def test_a_missing_file_loads_nothing(tmp_path):
     assert load_locations(str(tmp_path / "absent.db"), "named_locations") == {}
+
+
+def test_a_list_in_another_frame_goes_through_tf(make):
+    """Only world/map come from the module's own fix; any other frame is looked up in tf."""
+    module, _, _ = make(locations_from="none_yet.db")
+    module.tfbuffer.receive_transform(
+        Transform(translation=Vector3(0.0, 2.0, 0.0), frame_id="map", child_frame_id="desk_frame")
+    )
+    publish(module, {"lamp": at(1, 0, "desk_frame")})
+    assert positions(module.locations_snapshot()) == {"lamp": (1, 2)}
+
+
+def test_locations_hang_off_the_map_frame_and_follow_every_fix(make):
+    """Each location is a tf frame under map, so a new world -> map moves it with the old map."""
+    module, _, _ = make(locations_from="none_yet.db", relocalize_once=False)
+    module.submit(FIX)
+    publish(module, {"door": at(1, 0, "map")})
+    sent: list[TFMessage] = module.__dict__["sent_tf"]
+    door = [t for t in sent[-1].transforms if t.child_frame_id == location_frame("door")]
+    assert len(door) == 1 and door[0].frame_id == "map"
+
+    def door_in_world() -> tuple[float, float]:
+        goal = module.reexpress(module._locations["door"], "world")
+        return (round(goal.x, 6), round(goal.y, 6))
+
+    assert door_in_world() == (10, 1)
+    module.submit(
+        Transform(translation=Vector3(-3.0, 0.0, 0.0), frame_id="world", child_frame_id="map")
+    )
+    assert door_in_world() == (-2, 0)
+
+
+def test_a_premap_recording_also_seeds_its_named_locations(make, tmp_path):
+    """map_file a recording: the premap is its map_cloud, the locations its last snapshot."""
+    import numpy as np
+
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    recording = str(tmp_path / "walk.db")
+    with SqliteStore(path=recording) as store:
+        store.stream("map_cloud", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=1.0), ts=1.0
+        )
+        store.stream("map_cloud", PointCloud2).append(
+            PointCloud2.from_numpy(np.ones((7, 3), dtype=np.float32), timestamp=2.0), ts=2.0
+        )
+        store.stream("named_locations", InteractiveMarkerUpdate).append(
+            listing({"dock": at(1, 2, "map")}), ts=2.0
+        )
+    module, _, _ = make(map_file=recording)
+    module.register_disposable = lambda d: d
+    module.open_locations()
+    module._load_premap(recording)
+    assert module.premap is not None and len(module.premap) == 7
+    assert module.premap.frame_id == "map"
+    assert list(module._locations) == ["dock"]

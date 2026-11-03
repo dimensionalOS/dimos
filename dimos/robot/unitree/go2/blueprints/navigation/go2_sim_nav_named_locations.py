@@ -13,27 +13,28 @@
 # limitations under the License.
 
 
-"""go2-sim-nav with named map locations that outlive the run, placed by the premap relocalizer.
+"""go2-sim-nav with named map locations that outlive the run, kept by the premap relocalizer.
 
 A new map, where the locations get named::
 
-    dimos run go2-sim-nav-named-locations
+    dtk run go2-sim-nav-named-locations --record walk.db
 
-Back on that map, relocalized against its premap, with the locations named last run::
+Back on that map, relocalized against the recording's map_cloud, with the locations named in it::
 
-    dimos run go2-sim-nav-named-locations \\
-        --localmaprelocalization.map-file <premap>.pc2.lcm \\
-        --namedlocations.load-from named_locations.db
+    dtk run go2-sim-nav-named-locations --localmaprelocalization.map-file walk.db
 """
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.navigation.named_locations.module import NamedLocations
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
 from dimos.robot.unitree.go2.nav_3d_config import relocalization
 
 go2_sim_nav_named_locations = autoconnect(
     go2_sim_nav,
     # loaded_map is a never-drop channel under zenoh, so no republish
-    relocalization(republish_loaded_map=0.0),
-    NamedLocations.blueprint(world_frame="odom"),
+    relocalization(
+        republish_loaded_map=0.0,
+        new_map=True,
+        save_locations_to="named_locations.db",
+        tf_interval=1.0,
+    ),
 ).global_config(n_workers=11)
