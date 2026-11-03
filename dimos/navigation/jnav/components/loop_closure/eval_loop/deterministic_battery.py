@@ -18,8 +18,9 @@ deterministic_config), so any machine reproduces the same graph: a slower machin
 Each recording's db is used from its `db` path when that exists, else pulled from the dimos cloud by its `cloud`
 upload id into $EVAL_LOOP_DATA (`dimos login` once first). pgo-eval is built when $PGO_EVAL is missing.
 
-usage: deterministic_battery.py [--cloud-only] [--tier main|do_no_harm|extra] [name ...]   (no names and no tier: the 9-map battery)
-    -> $EVAL_LOOP_OUT/deterministic/<name>/{a.json, a.kf*, a.log, run.log, summary.json} and summary.json for all
+usage: deterministic_battery.py [--cloud-only] [--tier main|do_no_harm|extra] [--config JSON] [--label L] [--include-todo] [name ...]
+    (no names and no tier: the 9-map battery; --config overlays module settings, e.g. '{"solve_seed_from_accepted": false}')
+    -> $EVAL_LOOP_OUT/deterministic[_<label>]/<name>/{a.json, a.kf*, a.log, run.log, summary.json} and summary.json for all
 """
 
 import argparse
@@ -52,13 +53,20 @@ BATTERY = [
 def summarize(log: str) -> dict:
     """The run's speed, closures and overshoots from pgo-eval's stderr."""
     summary: dict = {}
-    if match := re.search(r"(\d+) scans, (\d+) keyframes, (\d+) closures, ([\d.]+)s data in ([\d.]+)s", log):
+    if match := re.search(
+        r"(\d+) scans, (\d+) keyframes, (\d+) closures, ([\d.]+)s data in ([\d.]+)s", log
+    ):
         scans, keyframes, closures, data_s, wall_s = match.groups()
         summary |= {"scans": int(scans), "keyframes": int(keyframes), "closures": int(closures)}
-        summary |= {"data_s": float(data_s), "wall_s": float(wall_s), "x_real": float(data_s) / float(wall_s)}
+        summary |= {
+            "data_s": float(data_s),
+            "wall_s": float(wall_s),
+            "x_real": float(data_s) / float(wall_s),
+        }
     if match := re.search(r"overshoots per LET \(jobs\): (.*)", log):
         summary["overshoots"] = {
-            job: [int(over), int(total)] for job, over, total in re.findall(r"(\w+) (\d+) / (\d+)", match.group(1))
+            job: [int(over), int(total)]
+            for job, over, total in re.findall(r"(\w+) (\d+) / (\d+)", match.group(1))
         }
     return summary
 
@@ -97,16 +105,33 @@ def dataset(recording: dict, cloud_only: bool) -> Path | None:
     if not out.is_file():
         from dimos.cloud.data import CloudData
 
-        print(f"{recording['name']}: downloading {recording['cloud']} -> {out}", file=sys.stderr, flush=True)
+        print(
+            f"{recording['name']}: downloading {recording['cloud']} -> {out}",
+            file=sys.stderr,
+            flush=True,
+        )
         CloudData().pull(recording["cloud"], out)
     return out
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("names", nargs="*")
     parser.add_argument("--tier")
-    parser.add_argument("--cloud-only", action="store_true", help="ignore local db paths, use the cloud uploads")
+    parser.add_argument(
+        "--cloud-only", action="store_true", help="ignore local db paths, use the cloud uploads"
+    )
+    parser.add_argument(
+        "--config", default="{}", help="JSON object of settings laid over the module defaults"
+    )
+    parser.add_argument(
+        "--include-todo", action="store_true", help="also run recordings whose status is todo"
+    )
+    parser.add_argument(
+        "--label", help="output under deterministic_<label>/ so configs do not overwrite each other"
+    )
     args = parser.parse_args()
     recordings = {}
     for recording in json.loads(BENCHMARK.read_text())["recordings"]:
@@ -118,30 +143,57 @@ def main() -> None:
     if args.tier:
         names = [name for name, r in recordings.items() if r["tier"] == args.tier]
     else:
-        names = [name for name in recordings for wanted in args.names or BATTERY if name.split("/")[0] == wanted]
+        names = [
+            name
+            for name in recordings
+            for wanted in args.names or BATTERY
+            if name.split("/")[0] == wanted
+        ]
+    config = {"mode": "deterministic"} | json.loads(args.config)
+    root = OUT / (f"deterministic_{args.label}" if args.label else "deterministic")
     build_pgo_eval()
-    (OUT / "deterministic").mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
     summaries = {}
     for name in names:
         recording = recordings[name]
-        db = None if recording.get("status") == "todo" else dataset(recording, args.cloud_only)
+        db = (
+            None
+            if recording.get("status") == "todo" and not args.include_todo
+            else dataset(recording, args.cloud_only)
+        )
         if db is None:
-            print(f"{name}: skipped (status {recording.get('status')}, no db or cloud upload)", file=sys.stderr)
+            print(
+                f"{name}: skipped (status {recording.get('status')}, no db or cloud upload)",
+                file=sys.stderr,
+            )
             continue
-        out = OUT / "deterministic" / name
+        out = root / name
         out.mkdir(parents=True, exist_ok=True)
-        # mounts come from the db's tf; deterministic mode at the module defaults
+        # mounts come from the db's tf; deterministic mode at the module defaults plus the --config overlay
+        (out / "config.json").write_text(json.dumps(config) + "\n")
         command = [str(PGO_EVAL), "--db", str(db), "--odom-stream", recording["odometry"]]
-        command += ["--lidar-stream", recording["lidar"], "--mode", "deterministic"]
+        command += ["--lidar-stream", recording["lidar"], "--config", "config.json"]
         command += ["--output", "a.json", "--event-dump", "a.kf"]
         print(f"{name}: {' '.join(command)}", file=sys.stderr)
+        # the machine's load, so a run's speed can be read against how busy the machine was
+        load_before = os.getloadavg()[0]
         with open(out / "a.log", "w") as stdout:
-            result = subprocess.run(command, cwd=out, stdout=stdout, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(
+                command, cwd=out, stdout=stdout, stderr=subprocess.PIPE, text=True
+            )
         (out / "run.log").write_text(result.stderr)
-        summaries[name] = summarize(result.stderr) | {"returncode": result.returncode, "command": command}
+        summaries[name] = summarize(result.stderr) | {
+            "returncode": result.returncode,
+            "command": command,
+            "config": config,
+        }
+        summaries[name] |= {"load_before": load_before, "load_after": os.getloadavg()[0]}
         (out / "summary.json").write_text(json.dumps(summaries[name], indent=2) + "\n")
-        print(f"{name}: {json.dumps({k: v for k, v in summaries[name].items() if k != 'command'})}", file=sys.stderr)
-    (OUT / "deterministic" / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
+        print(
+            f"{name}: {json.dumps({k: v for k, v in summaries[name].items() if k != 'command'})}",
+            file=sys.stderr,
+        )
+    (root / "summary.json").write_text(json.dumps(summaries, indent=2) + "\n")
 
 
 if __name__ == "__main__":

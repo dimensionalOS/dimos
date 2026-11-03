@@ -182,6 +182,7 @@
       "lidar": "pointlio_lidar",
       "mount": "level_mid360",
       "db": "~/.cache/dimos/eval_loop/office_555_loop1.db",
+      "note": "the 555 loop (not Office 555, which is office555_extra): end-to-start overlap is minimal",
       "gt": {
         "tf": [
           "world",
@@ -324,7 +325,16 @@
     {
       "name": "office555_extra",
       "tier": "extra",
-      "note": "same as main office555"
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "mount": "mid360",
+      "db": "~/.cache/dimos/eval_loop/office_555_1.db",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      },
+      "status": "no_gt",
+      "note": "Office 555 (sf_555_office_1.mcap, 116 GB with raw depth), a different recording from the main office555 (the 555 loop); db holds only pointlio_*, tf, livox_imu (dtk tools/mcap_to_db.js --map)"
     },
     {
       "name": "china_cpu_bound_pointlio",
