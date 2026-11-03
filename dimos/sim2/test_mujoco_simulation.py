@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 import mujoco
@@ -27,14 +28,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.sim2.actions import JointCommand, SetPose
+from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
 from dimos.sim2.module import Simulation, SimulationConfig
 from dimos.sim2.mujoco_backend import MujocoBackend
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor, resolve
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.world import compile_world
-from dimos.sim2.world_observations import OBJECT, WorldMirror
+from dimos.sim2.world_observations import ACT, WorldMirror
 
 
 @pytest.fixture
@@ -141,12 +141,10 @@ class _Collect:
     def __init__(self) -> None:
         self.world = WorldMirror()
         self.frames: list[Any] = []
-        self.events: list[tuple[int, int, Any]] = []
 
     def offer(self, frame: Any) -> None:
         self.world.apply(frame)
         self.frames.append(frame)
-        self.events += self.world.events
 
 
 def test_backend_steps_physics_and_takes_commands(scene, robot_model, tmp_path):
@@ -174,26 +172,41 @@ def test_backend_steps_physics_and_takes_commands(scene, robot_model, tmp_path):
     names, joints = world.joints("dog")
     assert names == ["neck"]
     assert joints[0, 1] > 1.0
+    # A body's velocity is differenced from its poses.
+    assert world.entity("dog").velocity is not None
 
 
 def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_model, tmp_path):
     backend = MujocoBackend(
         SimulationConfig(scene=scene), {"dog": SimulatedRobot("dog", robot_model, "base")}, tmp_path
     )
-    backend.apply(
-        [
-            SetPose("crate", Pose(1, 2, 3)),
-            JointCommand("dog", ("neck",), effort=(0.5,)),
-        ]
-    )
+    backend.apply([JointCommand("dog", ("neck",), effort=(0.5,))])
     backend._apply_pending()
     seen = _Collect()
     seen.offer(backend.frame())
-    assert [e.path for e in seen.world.tagged("robot")] == ["dog"]
-    assert [e.path for e in seen.world.tagged(OBJECT)] == ["crate"]
+    assert seen.world.entity("dog").cbor["model"] == str(robot_model)
     assert seen.world.joints("dog")[0] == ["neck"]
-    assert seen.world.entity("crate").pose[0] == pytest.approx(1)
+    assert seen.world.entity("crate").pose[:3] == pytest.approx([0, 2, 0.5])
+    # Its ts is the wall time the sim started at, plus sim time.
+    assert seen.world.time == pytest.approx(time.time(), abs=5.0)
     assert backend.data.ctrl[backend.model.actuator("dog/neck").id] == 0.5
+
+
+def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, robot_model, tmp_path):
+    backend = MujocoBackend(
+        SimulationConfig(scene=scene), {"dog": SimulatedRobot("dog", robot_model, "base")}, tmp_path
+    )
+    seen = _Collect()
+    seen.offer(backend.frame())
+    actions = [
+        JointCommand("dog", ("neck",), position=(0.2,), kp=(10.0,), kd=(1.0,)),
+        CborKeyValueCommand("dog", "note", {"a": 1}),
+    ]
+    assert read_actions(world_action(seen.world, *actions), backend.world) == actions
+    backend.apply(actions)
+    backend._apply_pending()
+    seen.offer(backend.frame())
+    assert seen.world.entity("dog").cbor["note"] == {"a": 1}
 
 
 def test_scene_data_describes_the_world_without_its_robots(scene, robot_model, tmp_path):
@@ -222,7 +235,7 @@ def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model,
 
         def offer(self, frame: Any) -> None:
             super().offer(frame)
-            if self.world.has_event("dog", "events/act"):
+            if self.world.got("dog", ACT):
                 tick_times.append(self.world.time)
                 asyncio.get_running_loop().call_later(
                     0.03, backend.apply, [JointCommand("dog", ("neck",), effort=(0.1,))]
