@@ -893,14 +893,14 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
-      - name: Install Node 24 for the Pi and dimcode CLIs
+      - name: Install Node 24 for the Pi CLI
         uses: actions/setup-node@v7
         with:
           node-version: 24
-      - name: Install the Pi and dimcode CLIs
-        # The agent eval tests (dimos/evals/agents) drive both. Installed outside
+      - name: Install the Pi CLI
+        # The agent eval tests (dimos/evals/agents) drive it. Installed outside
         # the workspace: the no_dimos evals drop PATH entries with a "dimos" path
-        # component, and the CLIs must survive that.
+        # component, and the CLI must survive that.
         run: |
           bin/install-test-clis "$RUNNER_TEMP/test-clis"
           echo "$RUNNER_TEMP/test-clis/node_modules/.bin" >> "$GITHUB_PATH"

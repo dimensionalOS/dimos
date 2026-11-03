@@ -89,7 +89,7 @@ class EvalSubject(Configurable, ABC):
     """The thing under evaluation, behind one interface.
 
     A subclass adapts one way of answering a case: a coding harness plus a model
-    (Pi, dimcode), dimOS's own agent loop (the MCP client), or a single model call
+    (Pi, the dimOS agent), dimOS's own agent loop (the MCP client), or a single model call
     with no tools (question/answer, blind). The runner gives it the case prompt and
     a running environment and gets back a trajectory; grading happens elsewhere.
 

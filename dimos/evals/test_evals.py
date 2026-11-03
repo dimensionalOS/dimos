@@ -770,7 +770,6 @@ def test_suites_and_agents_importable() -> None:
         "blind",
         "mcp_client_adapter",
         "pi",
-        "dimcode",
         "dimos_agent",
     }
     for module_name in agents:

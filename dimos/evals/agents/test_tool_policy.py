@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The same provider and tool contract across native Pi and dimcode runtimes."""
+"""The provider and tool contract of the native Pi runtime."""
 
 from dataclasses import replace
 import json
@@ -26,7 +26,7 @@ import pytest
 from dimos.evals.agents.conftest import NativeHarness, ScriptedProvider
 from dimos.evals.agents.lib.pi_config import RunPaths
 
-# The Pi and dimcode CLIs are installed on the self-hosted runners only (bin/install-test-clis).
+# The Pi CLI is installed on the self-hosted runners only (bin/install-test-clis).
 pytestmark = pytest.mark.self_hosted
 
 
@@ -92,16 +92,6 @@ def test_no_tools_blocks_even_a_provider_requested_call(
     assert result.extra.ended_by == "answer", result.extra
     assert all(request.get("tools", []) == [] for request in provider.requests)
     assert not (harness.workspace / "forbidden.txt").exists()
-
-
-@pytest.mark.parametrize("harness", ["dimcode"], indirect=True)
-def test_unknown_tool_fails_before_inference(
-    harness: NativeHarness, provider: ScriptedProvider
-) -> None:
-    result = harness.run(harness.agent(provider, ("unknown_tool",)))
-    assert result.extra.ended_by == "error"
-    assert "unknown_tool" in result.extra.error
-    assert provider.requests == []
 
 
 def test_missing_runtime_extension_fails_before_inference(

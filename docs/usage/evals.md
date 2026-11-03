@@ -39,9 +39,9 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
 
-## Baseline without dimOS versus dimcode + dimOS
+## Baseline without dimOS versus the dimOS agent
 
-For the product comparison, run `PiAdapter` with `no_dimos=true` against `DimcodeAdapter`
+For the product comparison, run `PiAdapter` with `no_dimos=true` against `DimosAgentAdapter`
 with the **same model**. The baseline keeps Pi's normal tools, the internet, pip, git and any
 public SDK; the only thing withheld is dimOS.
 
@@ -50,7 +50,7 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
   --set no_dimos=true --set model=gpt-6-astra --set thinking=medium \
   --set max_steps=250 --set max_output_tokens=4096
 
-dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimos_agent \
   --set model=gpt-6-astra --set thinking=medium \
   --set max_steps=250 --set max_output_tokens=4096
 ```
@@ -72,7 +72,7 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
   --allow "" --set model=gpt-6-astra
 ```
 
-`no_dimos` is a field of the shared `AgentConfig`. Agents that are dimOS, dimcode, the dimOS agent and the MCP client, reject it; tool-less agents satisfy it as they are. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
+`no_dimos` is a field of the shared `AgentConfig`. Agents that are dimOS, the dimOS agent and the MCP client, reject it; tool-less agents satisfy it as they are. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
 venv, no `PYTHONPATH` and no `DIMOS_*` variables, so `import dimos` and `dimos` fail. A robot
 is exposed as live topics through `raw-robot-bridge` (below) and nothing else: no recording,
 no MCP tool listing, no `dimos mcp call` guidance. `excluded_keywords` defaults to
@@ -85,14 +85,14 @@ because the memory store needs dimOS to read.
 changes only what it is handed. For a `Dataset` case the baseline receives selected point
 coordinates and colors as CSV, camera frames as lossless PNG and primitive observations as
 JSON, with timestamps and hashes; no `agent_encode` summaries, labels, semantic tags or the
-original database. For a robot case it receives the raw topics and `ROBOT.md`. Dimcode
+original database. For a robot case it receives the raw topics and `ROBOT.md`. The dimOS agent
 receives the same selected observations through the dimOS store, the robot through MCP, and
-keeps its production tools and skills. Representation and delivery differences between the
+keeps its own tools and skills. Representation and delivery differences between the
 arms are part of the comparison and belong in the report.
 
 The baseline runs on the host with the host's system packages; record their versions when
 freezing a pilot, this is not a pinned container image. Neither arm may receive task-specific
-solutions or hidden truth, and dimcode's production environment must not be able to reach
+solutions or hidden truth, and the dimOS agent's environment must not be able to reach
 graders or reference data.
 
 ### Keyword guard
@@ -105,8 +105,8 @@ workspace and config paths are stripped first, so a case directory under `~/.loc
 is not a hit. A denied call never executes; the model receives
 `Tool call denied: its arguments mention the excluded keyword "dimos"...` and continues. The
 guard reads arguments only: reasoning or answers that mention dimOS are untouched, and so is
-tool output. Denied calls are counted in the trajectory's `extra.blocked_calls`. Pi and dimcode
-both enforce it; single-call agents have no tools to guard.
+tool output. Denied calls are counted in the trajectory's `extra.blocked_calls`. Pi enforces it;
+the dimOS agent has no live tool guard and rejects it; single-call agents have no tools to guard.
 
 After the run, the runner re-checks executed calls (denied ones are recognised by their result
 text) and marks a trial `invalid: ...` in `error` if a keyword got through, for example a
@@ -141,7 +141,7 @@ for the Go2, `RAW_ARM_README` for arms; a suite appends its robot facts (`XARM7_
 That is the surface a vendor SDK exposes: sensors out, body velocity with a deadman in. Nothing
 above the connection (map, costmap, planner, `move_to`, memory) and nothing beneath it (simulator
 state, scene assets). The baseline agent gets a `ROBOT.md` describing the endpoint and builds
-whatever it needs from there. The bridge is inert for the dimcode arm, which keeps both
+whatever it needs from there. The bridge is inert for the dimOS agent arm, which keeps both
 simulator launches identical. On real hardware there is no bridge: the baseline gets the
 robot's address and uses the vendor SDK directly, while dimOS records through its own connection.
 
@@ -151,20 +151,19 @@ at 250 requests and an hour per case for both arms.
 ### Shared Pi runtime
 
 Use the same model, reasoning setting, output cap, case selection and timeout
-for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
-registry; model capabilities and prices are not redefined by dimOS. Pin the
-same Pi version in both installations. The integration uses Pi 0.85.1 and
-dimcode's local gateway protocol (`0.1.0-next.2` / `0.1.0-next.3`).
-`DimcodeAdapter` extends `PiAdapter`, overriding gateway startup, session
-configuration and event transport. Provider setup, budgets, tracing and
-cleanup remain shared. No second model loop or SDK wrapper is introduced.
+for each harness. Pi and the dimOS agent use Pi's provider SDKs and built-in model
+registry; model capabilities and prices are not redefined by dimOS. The Pi baseline
+uses Pi 0.85.1; the dimOS agent pins its own Pi packages in
+[package.json](/dimos/agents/package.json). `DimosAgentAdapter` extends `PiAdapter`,
+overriding gateway configuration, the command and event parsing. Provider setup,
+budgets, tracing and cleanup remain shared.
 
 To compare another model, change both commands together: `model=gpt-5.6-sol`,
 or `provider=anthropic` and `model=claude-fable-5-1`, or `provider=google` and
 `model=gemini-4-argon`. Each provider needs its own key: `OPENAI_API_KEY`,
 `ANTHROPIC_API_KEY` or `GEMINI_API_KEY`.
 
-`cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL`,
+`cli=` selects a specific Pi or `dimos` executable. `OPENAI_BASE_URL`,
 `ANTHROPIC_BASE_URL` and `GOOGLE_BASE_URL` optionally override the upstream endpoints. API keys stay
 in process environment variables; a shared Pi extension registers the trace
 proxy URL and key variable through Pi's provider API. It also applies output
@@ -175,11 +174,9 @@ Per-case adapter configuration lives under `dimos.constants.CONFIG_DIR / "evals"
 temporary gateway sockets use `CACHE_DIR / "evals"`. Home, XDG config/state/cache
 and Pi's agent-directory settings are inherited. Both adapters start new sessions
 with a copy of the selected recording observations. Pi retains its stock system
-prompt with shared case guidance appended. Dimcode retains its production prompt, skills,
-MCP integration and rendering tool; shared case guidance accompanies the user
-instruction. Each case starts and stops its own dimcode gateway and session.
-An existing personal gateway is never attached. Dimcode retains its production
-skills; its tools can be restricted with the shared allowlist.
+prompt with shared case guidance appended. The dimOS agent retains its own prompt, tools
+and skills; shared case guidance accompanies the user instruction. Each case starts and
+stops its own dimOS agent gateway. An existing personal gateway is never attached.
 
 Freeze code/data, record runtime versions, balance execution order, repeat
 each case and retain failed trials before interpreting the comparison.
@@ -193,11 +190,9 @@ tools. Exact tool names are required. Unknown names, duplicates and conflicting
 `--allow` / `--set allowed_tools` inputs are errors. The manifest retains the
 requested allowlist, and raw requests retain the actual provider schemas.
 
-Pi and dimcode share a Pi extension that selects active tools and blocks excluded
-calls. Pi also passes the selection to its CLI. The dimcode adapter verifies that
-the extension applied the selection before sending the first prompt. Native MCP
-names are those advertised by dimcode, including its endpoint prefix and suffix.
-The production MCP-client adapter does not yet implement filtering and rejects
+Pi uses a Pi extension that selects active tools and blocks excluded calls, and
+also passes the selection to its CLI. The dimOS agent's tool set is fixed, so it
+rejects an allowlist. The production MCP-client adapter does not yet implement filtering and rejects
 explicit allowlists; single-call agents accept only an empty list or defaults.
 Adapters must enforce selection or reject it, never silently ignore it.
 
@@ -216,7 +211,7 @@ program on the shell's PATH. Use `no_dimos` to keep dimOS off that path.
   startup, settling, teardown and grading.
 - Prompt tokens include cache reads and writes; completion tokens include
   reasoning when reported by the provider. `cached_tokens` means cache reads.
-- Pi/dimcode `cost_usd` is Pi's registry-based estimate, not a billing receipt.
+- Pi and dimOS agent `cost_usd` is Pi's registry-based estimate, not a billing receipt.
   Unknown costs remain null (or omitted in ATIF), never a fabricated zero.
   Totals cover recorded assistant responses; interrupted requests may have
   unreported usage. Keep raw attempts when auditing spend.
@@ -339,7 +334,7 @@ change it.
 subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
-`launch_timeout_s`. Pi, dimcode and the dimOS agent bound model HTTP requests with `max_steps`
+`launch_timeout_s`. Pi and the dimOS agent bound model HTTP requests with `max_steps`
 (including retries), and optionally cap output per request with `max_output_tokens`.
 There is no aggregate token or dollar cap; usage is recorded when the agent supplies it.
 
