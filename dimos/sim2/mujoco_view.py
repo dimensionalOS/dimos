@@ -24,7 +24,7 @@ from numpy.typing import NDArray
 
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world import compile_world
-from dimos.sim2.world_observations import JOINT, OBJECT, ROBOT, Entity, WorldMirror
+from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
 _GRAVITY = np.array([0.0, 0.0, -9.81])
@@ -53,21 +53,25 @@ class MujocoView:
     def update(self, world: WorldMirror) -> None:
         model, data = self.model, self.data
         with world.lock:
-            for entity in world.entities.values():
-                if ROBOT in entity.tags:
-                    self._pose_entity(entity, self._root(entity.path))
-                elif OBJECT in entity.tags:
-                    body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.path)
-                    # An object spawned after the world was described is not in this view.
-                    if body >= 0:
-                        self._pose_entity(entity, body)
-                elif JOINT in entity.tags and entity.joint is not None:
-                    owner, _, name = entity.path.partition("/")
+            for entity_id, entity in world.entities.items():
+                owner, joint_of, name = entity.path.partition("/")
+                if entity_id == WORLD:
+                    continue
+                if joint_of:
+                    if entity.joint is None:
+                        continue
                     # A robot's joints are named "<robot>/<joint>" in this model too; an object's are its own.
                     joint = self._joint(entity.path if owner in self._robots else name)
                     if joint >= 0:
                         data.qpos[model.jnt_qposadr[joint]] = entity.joint[0]
                         data.qvel[model.jnt_dofadr[joint]] = entity.joint[1]
+                elif entity.path in self._robots:
+                    self._pose_entity(entity, self._root(entity.path))
+                else:
+                    body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.path)
+                    # An object spawned after the world was described is not in this view.
+                    if body >= 0:
+                        self._pose_entity(entity, body)
             data.time = world.time
         mujoco.mj_kinematics(self.model, self.data)
         self._velocities_current = False
