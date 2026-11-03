@@ -30,7 +30,6 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
-    keyboard_teleop_openyam_mock,
     keyboard_teleop_openyam_planner,
     teleop_webxr_openyam,
 )
@@ -258,17 +257,15 @@ def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
 
 
-def test_keyboard_mock_hardware_without_simulation(monkeypatch) -> None:
-    monkeypatch.setattr(global_config, "simulation", "")
+def test_mock_hardware_starts_at_home(monkeypatch) -> None:
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
 
-    hardware = openyam_hardware(mock=True)
-    configured = _coordinator_kwargs(keyboard_teleop_openyam_mock)["hardware"]
+    hardware = openyam_hardware()
 
     assert hardware.adapter_type == "mock_whole_body"
     assert "runtime_config" not in hardware.adapter_kwargs
     assert hardware.limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
-    assert [component.adapter_type for component in configured] == ["mock_whole_body"]
-    adapter = MockWholeBodyAdapter(dof=len(configured[0].joints), **configured[0].adapter_kwargs)
+    adapter = MockWholeBodyAdapter(dof=len(hardware.joints), **hardware.adapter_kwargs)
     assert [state.q for state in adapter.read_motor_states()] == [
         0.0,
         1.047,

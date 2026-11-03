@@ -86,19 +86,6 @@ keyboard_teleop_openyam = autoconnect(
     ),
 )
 
-keyboard_teleop_openyam_mock = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[openyam_hardware(mock=True)],
-        tasks=[_eef_twist_task(), _gripper_task()],
-    ),
-    ManipulationModule.blueprint(
-        model=_openyam_model,
-        visualization={"backend": "viser"},
-    ),
-)
-
 OPENYAM_WEBXR_TASK_NAME = "teleop_openyam"
 
 _openyam_webxr_pink = PinkKinematicsConfig(
