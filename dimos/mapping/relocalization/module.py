@@ -36,10 +36,17 @@ The locations are seeded from the last ``locations_stream`` snapshot of ``locati
 (by default the ``map_file`` recording itself), and every list adopted is appended to
 ``save_locations_to``. With no map and ``new_map`` set, this run's world frame is the map:
 the module submits an identity ``world -> map`` fix itself.
+
+AprilTags come in two sets that never mix. The old map's tags are clustered from the
+``tags_streams`` glimpses of the ``map_file`` recording, kept in ``map`` and published as
+``old_april_tags`` plus tf frames ``tag_old_<id>`` under ``map``, so each new fix carries
+them along. Tags seen this run (``marker_detections``) are clustered live in ``world`` and
+published as ``new_april_tags`` plus frames ``tag_<id>`` under ``world``.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 import math
 from pathlib import Path
 import threading
@@ -52,6 +59,18 @@ from reactivex import Observable, Subject, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
+from dimos.mapping.relocalization.apriltags import (
+    TagClustering,
+    TagDetection,
+    TagGates,
+    as_pose,
+    cluster_tags,
+    marker_poses,
+    pose_list,
+    recording_tags,
+    tag_frame,
+    tags_message,
+)
 from dimos.mapping.relocalization.named_locations import (
     load_locations,
     location_frame,
@@ -64,6 +83,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
     InteractiveMarkerUpdate,
     named_pose,
@@ -147,6 +167,16 @@ class Config(ModuleConfig):
     save_locations_to: str | None = None
     # Stream (recorded topic) the named-location snapshots live on
     locations_stream: str = "named_locations"
+    # Recording streams (first present wins) of AprilTag glimpses that seed the old map's
+    # tags: camera-frame PoseStamped with a `marker_id` tag, or a marker detector's
+    # Detection3DArray; empty loads none
+    tags_streams: tuple[str, ...] = ("april_tags_raw", "marker_detections")
+    tag_gates: TagGates = TagGates()
+    tag_clustering: TagClustering = TagClustering()
+    old_tag_prefix: str = "tag_old_"
+    new_tag_prefix: str = "tag_"
+    # Live glimpses kept per tag for its pose (the most recent)
+    max_tag_glimpses: int = 300
 
 
 class RelocalizationModule(Module):
@@ -157,6 +187,9 @@ class RelocalizationModule(Module):
     named_locations_request: In[String]
     go_to_named_location: In[String]
     goal: Out[PointStamped]
+    marker_detections: In[Detection3DArray]
+    old_april_tags: Out[Detection3DArray]
+    new_april_tags: Out[Detection3DArray]
 
     _placed: bool = False
 
@@ -170,6 +203,12 @@ class RelocalizationModule(Module):
         self._locations: dict[str, PoseStamped] = {}
         self._seq = 0
         self._locations_store: SqliteStore | None = None
+        # marker id -> clustered pose; old in map_frame, new in world_frame
+        self.old_tags: dict[int, TagDetection] = {}
+        self.new_tags: dict[int, TagDetection] = {}
+        self._tag_glimpses: dict[int, deque[TagDetection]] = defaultdict(
+            lambda: deque(maxlen=self.config.max_tag_glimpses)
+        )
 
     @rpc
     def start(self) -> None:
@@ -193,27 +232,83 @@ class RelocalizationModule(Module):
 
     def _load_premap(self, map_file: str) -> None:
         premap = load_premap(map_file, self.config.map_stream)
+        recorded_frame = premap.frame_id
 
         premap.frame_id = self.config.map_frame
         self.premap = premap
+        if is_recording(map_file) and self.config.tags_streams:
+            self.old_tags = recording_tags(
+                str(resolve_named_path(map_file, Path(map_file).suffix)),
+                self.config.tags_streams,
+                recorded_frame,
+                self.config.tag_gates,
+                self.config.tag_clustering,
+            )
 
         self.register_disposable(
             fix_stream(self.fixes, self.config.republish_loaded_map).subscribe(
-                lambda _: self.loaded_map.publish(premap)
+                lambda _: self._publish_map_layers(premap)
             )
         )
 
+    def _publish_map_layers(self, premap: PointCloud2) -> None:
+        self.loaded_map.publish(premap)
+        if self.old_tags:
+            self.old_april_tags.publish(
+                tags_message(self.old_tags, self.config.map_frame, time.time())
+            )
+
     def map_anchored(self) -> list[Transform]:
-        """Frames that hang off the old map (they move with every fix); subclasses add theirs."""
+        """Frames that hang off the old map, so every fix moves them: locations and old tags."""
         with self._lock:
             locations = list(self._locations.items())
-        return [Transform.from_pose(location_frame(name), pose).now() for name, pose in locations]
+        map_frame = self.config.map_frame
+        return [
+            *(Transform.from_pose(location_frame(name), pose).now() for name, pose in locations),
+            *(
+                Transform.from_pose(
+                    tag_frame(marker_id, self.config.old_tag_prefix), as_pose(tag, map_frame)
+                ).now()
+                for marker_id, tag in self.old_tags.items()
+            ),
+        ]
+
+    def world_anchored(self) -> list[Transform]:
+        """Frames placed in this run's world: the tags seen live."""
+        world = self.config.world_frame
+        return [
+            Transform.from_pose(
+                tag_frame(marker_id, self.config.new_tag_prefix), as_pose(tag, world)
+            ).now()
+            for marker_id, tag in self.new_tags.items()
+        ]
 
     def publish_tf(self) -> None:
-        """The current fix plus every frame anchored to the old map."""
-        if self.fix is None:
-            return
-        self.tf.publish(TFMessage(self.fix.now(), *self.map_anchored()))
+        """The current fix with the old map's frames, and the live tags' frames."""
+        transforms = [self.fix.now(), *self.map_anchored()] if self.fix is not None else []
+        transforms += self.world_anchored()
+        if transforms:
+            self.tf.publish(TFMessage(*transforms))
+
+    async def handle_marker_detections(self, message: Detection3DArray) -> None:
+        """Live glimpses re-clustered per tag in the world frame; never merged with old tags."""
+        changed = False
+        for marker_id, pose in marker_poses(message):
+            placed = self.reexpress(pose, self.config.world_frame)
+            if placed is None:
+                logger.warning(f"tag {marker_id}: no transform from {pose.frame_id!r} to world")
+                continue
+            glimpses = self._tag_glimpses[marker_id]
+            glimpses.append(TagDetection(message.ts, marker_id, pose_list(placed)))
+            clustered = cluster_tags(list(glimpses), self.config.tag_clustering).get(marker_id)
+            if clustered is not None:
+                self.new_tags[marker_id] = clustered
+                changed = True
+        if changed:
+            self.new_april_tags.publish(
+                tags_message(self.new_tags, self.config.world_frame, message.ts)
+            )
+            self.publish_tf()
 
     @property
     def placed(self) -> bool:
