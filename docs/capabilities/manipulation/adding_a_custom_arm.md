@@ -505,6 +505,51 @@ an explicit robot-level default before building `RobotModelConfig`:
 model = RobotModel.from_file(urdf_path).with_default_joint_acceleration_limit(2.0)
 ```
 
+To weld another URDF tree onto an existing link, use `with_attached_model`.
+The child is a regular `RobotModel`, so its own model transforms and package,
+mesh, and texture resolution are applied before attachment.
+
+```python skip
+model = base_model.with_attached_model(
+    arm_model,
+    parent_link="mount_link",
+    joint_name="left_mount",
+    prefix="left_",
+    xyz=(0.0, 0.3, 0.0),
+    rpy=(0.0, 0.0, 0.0),
+)
+```
+
+For a shared mounting frame with no geometry, create the root directly:
+
+```python skip
+base_model = RobotModel.from_root_link("mount_link", name="dual_arm")
+```
+
+This requires no URDF file. Its `source_path` is `None`, including after loading;
+each attached model still resolves assets relative to its own source. Automatic
+SRDF discovery is skipped for an in-memory root, but explicit SRDF paths work.
+
+The named fixed joint connects the parent's specified link to the child's root.
+The optional prefix namespaces the child's links, joints, materials, and mimic
+references. Translations are in meters; `rpy` uses extrinsic xyz rotations in
+radians. Construction returns a new immutable model without loading assets.
+The host's source subtree filters and planar base compile first. Fixed frames
+and attachments then apply in declaration order to the current XML tree. Host
+joint fixes, position limits, joint renames, and acceleration defaults compile
+last, in that order, and can address namespaced child joints. Child models use
+their own complete load pipeline before attachment. Further attachments can
+target links introduced by earlier attachments or fixed frames. No host-model
+wrapper or replay of nested host snapshots is involved.
+
+`load()` uses the existing in-memory model pipeline. It does not write a generated
+URDF or introduce a separate cache. The model retains its host's `source_path` (if any);
+backends consume the transformed XML from `load()`, as with other model views.
+Each child resolves its assets separately, so package names can be reused by
+different inputs. Missing parent links, duplicate names, and invalid child trees
+fail explicitly. Controller/simulator extensions in child descriptions are
+rejected rather than silently copying unrewritten deployment references.
+
 The model is materialized and validated once. All planning backends then use
 the same compiled position, velocity, and acceleration semantics. Missing,
 zero, negative, or non-finite limits fail startup and identify the affected
