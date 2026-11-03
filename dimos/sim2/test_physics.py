@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.sim_msgs import Observations
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -19,6 +20,7 @@ from scipy.spatial.transform import Rotation
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.mujoco import MujocoBackend
+from dimos.sim2.observations import observations, read_poses
 from dimos.sim2.runtime import Runtime
 from dimos.sim2.sensors import MujocoSensors
 from dimos.sim2.types import JointEfforts, JointTargets, Wrench
@@ -117,9 +119,20 @@ def test_sensor_history_and_image_follow_mounted_frame(runtime, world):
     try:
         for _ in range(10):
             runtime.advance(10)
-            reader.observe(runtime.snapshot())
+            reader.observe(
+                Observations.lcm_decode(
+                    observations(
+                        runtime.run_id, runtime.backend.layout, runtime.snapshot()
+                    ).lcm_encode()
+                )
+            )
         state = runtime.snapshot()
-        rgb, depth = reader.camera("left/camera", state)
+        rgb, depth = reader.camera(
+            "left/camera",
+            read_poses(
+                observations(runtime.run_id, runtime.backend.layout, state), runtime.backend.layout
+            ),
+        )
         assert rgb.shape == (240, 320, 3) and rgb.std() > 5
         assert depth.shape == (240, 320) and np.isfinite(depth).all()
         scan = reader.lidar("left/lidar")
@@ -128,9 +141,15 @@ def test_sensor_history_and_image_follow_mounted_frame(runtime, world):
         assert np.min(np.abs(scan.points[:, 2])) < 0.005  # actual floor hits
         runtime.submit(JointTargets(runtime.epoch, ("left/slide_x",), (0.2,), ttl=2.0))
         runtime.advance(300)
-        moved_rgb, _ = reader.camera("left/camera", runtime.snapshot())
+        moved_rgb, _ = reader.camera(
+            "left/camera",
+            read_poses(
+                observations(runtime.run_id, runtime.backend.layout, runtime.snapshot()),
+                runtime.backend.layout,
+            ),
+        )
         assert np.mean(np.abs(moved_rgb.astype(float) - rgb)) > 2
-        reader.observe(runtime.reset())
+        reader.observe(observations(runtime.run_id, runtime.backend.layout, runtime.reset()))
         assert reader.lidar("left/lidar") is None  # no scan bridges a reset
     finally:
         reader.close()
@@ -163,9 +182,21 @@ def test_world_state_is_an_owned_sample_not_a_live_native_view(runtime):
 def test_lidar_rejects_a_missing_interval_instead_of_bridging_it(runtime, world):
     reader = MujocoSensors(world, runtime.backend.layout)
     try:
-        reader.observe(runtime.snapshot())
+        reader.observe(
+            Observations.lcm_decode(
+                observations(
+                    runtime.run_id, runtime.backend.layout, runtime.snapshot()
+                ).lcm_encode()
+            )
+        )
         runtime.advance(100)
-        reader.observe(runtime.snapshot())
+        reader.observe(
+            Observations.lcm_decode(
+                observations(
+                    runtime.run_id, runtime.backend.layout, runtime.snapshot()
+                ).lcm_encode()
+            )
+        )
         assert reader.lidar("left/lidar") is None
         assert reader.gaps == 1
     finally:

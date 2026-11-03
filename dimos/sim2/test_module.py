@@ -18,6 +18,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.module import SimModule
 from dimos.sim2.mujoco import MujocoBackend
 from dimos.sim2.sensor_module import SimSensorModule
@@ -33,13 +34,12 @@ def deployed_world(world, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     blueprint = autoconnect(
+        UrdfManager.blueprint(models={i.id: i.model for i in world.instances}),
         SimModule.blueprint(world=world, backend=MujocoBackend),
         SimSensorModule.blueprint(
-            world=world,
             reader=MujocoSensors,
             camera="left/camera",
             lidar="left/lidar",
-            imu="left/imu",
         ),
     ).global_config(
         viewer="none",

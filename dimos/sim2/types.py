@@ -19,17 +19,25 @@ origins [vx,vy,vz,wx,wy,wz] in world axes. Scalar joints use m/rad and N/Nm.
 WorldState is sampled truth, not a solver checkpoint or an agent observation.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from functools import cached_property
 import hashlib
 import json
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.spec.utils import Spec
+
+if TYPE_CHECKING:
+    from dimos_lcm.sim_msgs import Observations
+
+    from dimos.sim2.observations import SceneSample
 
 Array = NDArray[np.float64]
 
@@ -47,11 +55,21 @@ class Drive:
 @dataclass(frozen=True)
 class Instance:
     id: str
-    model: RobotModel
+    model: RobotModel | LoadedRobotModel | None = None
     xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     floating: bool = False
     drives: tuple[Drive, ...] = ()
     rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    @property
+    def description(self) -> LoadedRobotModel:
+        if self.model is None:
+            raise ValueError(f"model {self.id} has not been resolved")
+        return self.model.load() if isinstance(self.model, RobotModel) else self.model
+
+
+class ModelSourceSpec(Spec, Protocol):
+    def resolved_models(self) -> dict[str, LoadedRobotModel]: ...
 
 
 @dataclass(frozen=True)
@@ -91,6 +109,17 @@ class World:
     sensors: tuple[Camera | Lidar | Imu, ...] = ()
     dt: float = 0.002
 
+    def resolve(self, models: dict[str, LoadedRobotModel]) -> World:
+        instances = []
+        for instance in self.instances:
+            model = models.get(instance.id)
+            if model is None:
+                model = instance.description
+            elif instance.model is not None and instance.description.xml != model.xml:
+                raise ValueError(f"conflicting model definitions for {instance.id}")
+            instances.append(replace(instance, model=model))
+        return replace(self, instances=tuple(instances))
+
     @cached_property
     def revision(self) -> str:
         """Identity of the materialized description; not a native solver checkpoint."""
@@ -99,7 +128,7 @@ class World:
             "instances": [
                 {
                     "id": i.id,
-                    "xml": i.model.load().xml,
+                    "xml": i.description.xml,
                     "xyz": i.xyz,
                     "rpy": i.rpy,
                     "floating": i.floating,
@@ -128,7 +157,7 @@ class Layout:
 
 @dataclass(frozen=True)
 class WorldState:
-    epoch: str
+    epoch: int
     tick: int
     sim_time: float
     wall_time: float  # publication time, for existing DimOS/TF consumers
@@ -149,7 +178,7 @@ class Frame:
 
 @dataclass(frozen=True)
 class JointEfforts:
-    epoch: str
+    epoch: int
     joints: tuple[str, ...]
     efforts: tuple[float, ...]
     ttl: float = 0.25
@@ -157,7 +186,7 @@ class JointEfforts:
 
 @dataclass(frozen=True)
 class JointTargets:
-    epoch: str
+    epoch: int
     joints: tuple[str, ...]
     positions: tuple[float, ...]
     ttl: float = 0.25  # simulation seconds; expiration holds measured position
@@ -167,11 +196,12 @@ class JointTargets:
     kp: tuple[float, ...] = ()
     kd: tuple[float, ...] = ()
     feedforward: tuple[float, ...] = ()
+    tick: int | None = None  # the feedback tick answered by a paced controller
 
 
 @dataclass(frozen=True)
 class Wrench:
-    epoch: str
+    epoch: int
     body: str
     force: tuple[float, float, float]
     torque: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -197,7 +227,7 @@ class PhysicsBackend(Protocol):
     def hold(self, joints: tuple[str, ...]) -> None: ...
     def validate_wrench(self, wrench: Wrench) -> None: ...
     def step(self, wrenches: tuple[Wrench, ...]) -> None: ...
-    def snapshot(self, epoch: str, tick: int) -> Frame: ...
+    def snapshot(self, epoch: int, tick: int) -> Frame: ...
     def reset(self) -> None: ...
     def place(self, body: str, pose: tuple[float, ...]) -> None:
         """Privileged scene edit: free root only, zero its velocity; not robot control."""
@@ -208,7 +238,7 @@ class PhysicsBackend(Protocol):
 class Scan:
     points: Array  # world-frame hits, preserving acquisition time per point
     times: Array
-    epoch: str
+    epoch: int
 
 
 class SensorReader(Protocol):
@@ -216,9 +246,9 @@ class SensorReader(Protocol):
 
     gaps: int
 
-    def observe(self, state: WorldState) -> None: ...
+    def observe(self, message: Observations) -> SceneSample | None: ...
     def camera(
-        self, frame: str, state: WorldState
+        self, frame: str, state: SceneSample
     ) -> tuple[NDArray[np.uint8], NDArray[np.float32]]: ...
     def lidar(self, frame: str, duration: float = 0.1) -> Scan | None: ...
     def close(self) -> None: ...

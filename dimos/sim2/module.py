@@ -21,20 +21,25 @@ import threading
 import time
 from typing import Any, ClassVar, Protocol
 
+from dimos_lcm.sim_msgs import Actions, Observations
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.sim2.control import feedback, joint_targets
+from dimos.sim2.observations import observations
 from dimos.sim2.runtime import Runtime
 from dimos.sim2.types import (
     Frame,
-    JointEfforts,
-    JointTargets,
     Layout,
+    ModelSourceSpec,
     PhysicsBackend,
     World,
     WorldState,
@@ -46,6 +51,8 @@ from dimos.spec.utils import Spec
 class SimulationSpec(Spec, Protocol):
     def describe(self) -> Layout: ...
     def state(self) -> WorldState: ...
+    def describe_world(self) -> World: ...
+    def sample(self) -> Observations: ...
     def reset(self) -> WorldState: ...
     def place(self, body: str, pose: tuple[float, ...]) -> WorldState: ...
     def apply_wrench(self, wrench: Wrench) -> None: ...
@@ -56,17 +63,18 @@ class SimConfig(ModuleConfig):
     world: World
     backend: Callable[[World], PhysicsBackend]
     publish_hz: float = 50.0
+    control_joints: tuple[str, ...] = ()
 
 
 class SimModule(Module):
     config: SimConfig
     dedicated_worker: ClassVar[bool] = True
+    _models: ModelSourceSpec
     tf: IO[TFMessage]
-    targets: In[JointTargets]
-    wrench: In[Wrench]
-    world_frame: Out[Frame]
-    world_layout: Out[Layout]
-    efforts: In[JointEfforts]
+    actions: In[Actions]
+    observations: Out[Observations]
+    robot_feedback: Out[ControlValues]
+    imu: Out[Imu]
     joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -85,6 +93,7 @@ class SimModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._world = self.config.world.resolve(self._models.resolved_models())
         if not 0 < self.config.publish_hz <= 1 / self.config.world.dt:
             raise ValueError("publication rate must be positive and no faster than physics")
         self._owner = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
@@ -95,11 +104,13 @@ class SimModule(Module):
 
     def _run(self) -> None:
         try:
-            backend = self.config.backend(self.config.world)
+            backend = self.config.backend(self._world)
             every = max(1, round(1 / (self.config.publish_hz * backend.dt)))
-            runtime = Runtime(backend)
+            runtime = Runtime(backend, self.config.control_joints)
             self._latest = runtime.snapshot()
             self._ready.set_result(runtime)
+            last_sent = (-1, -1)
+            sent_at = 0.0
             deadline = time.monotonic()
             while not self._done.is_set():
                 try:
@@ -113,10 +124,20 @@ class SimModule(Module):
                         deadline = time.monotonic()
                     except Exception as error:
                         future.set_exception(error)
+                runtime.prepare()
                 if runtime.tick % every == 0:
-                    frame = runtime.capture()
-                    self._latest = frame.state
-                    self._queue_frame(frame)
+                    identity = (runtime.epoch, runtime.tick)
+                    if identity != last_sent or time.monotonic() - sent_at > 0.1:
+                        frame = runtime.capture()
+                        self._latest = frame.state
+                        self._queue_frame(frame)
+                        last_sent, sent_at = identity, time.monotonic()
+                    if not runtime.controlled():
+                        # Inference waits slow simulation time, never reset it or
+                        # let the robot run ahead with stale policy commands.
+                        deadline = time.monotonic()
+                        self._done.wait(0.001)
+                        continue
                 runtime.advance()
                 deadline += runtime.backend.dt
                 delay = deadline - time.monotonic()
@@ -152,17 +173,27 @@ class SimModule(Module):
     def _publish_frames(self) -> None:
         layout = self.describe()
         roots = [(name, layout.bodies.index(name)) for name in layout.roots]
-        last_layout = 0.0
         while not self._done.is_set():
             try:
                 frame = self._frames.get(timeout=0.1)
             except Empty:
                 continue
             state = frame.state
-            if time.monotonic() - last_layout >= 1.0:
-                self.world_layout.publish(layout)
-                last_layout = time.monotonic()
-            self.world_frame.publish(frame)
+            runtime = self._ready.result()
+            self.observations.publish(observations(runtime.run_id, layout, state))
+            self.robot_feedback.publish(feedback(runtime.run_id, layout, frame))
+            for index, name in enumerate(layout.imu_frames):
+                sample = frame.imu[index]
+                pose = state.poses[layout.bodies.index(name)]
+                self.imu.publish(
+                    Imu(
+                        ts=state.wall_time,
+                        frame_id=name,
+                        orientation=Quaternion(*pose[3:]),
+                        linear_acceleration=Vector3(*sample[:3]),
+                        angular_velocity=Vector3(*sample[3:]),
+                    )
+                )
             self.joint_state.publish(
                 JointState(
                     ts=state.wall_time,
@@ -186,14 +217,25 @@ class SimModule(Module):
                 )
             )
 
-    async def handle_targets(self, command: JointTargets) -> None:
-        self._ready.result(timeout=30).submit(command)
+    async def handle_actions(self, message: Actions) -> None:
+        runtime = self._ready.result(timeout=30)
+        try:
+            runtime.submit(joint_targets(message, runtime.run_id, runtime.backend.layout))
+        except ValueError as error:
+            runtime.rejected += 1
+            runtime.last_error = str(error)
 
-    async def handle_efforts(self, command: JointEfforts) -> None:
-        self._ready.result(timeout=30).submit(command)
+    @rpc
+    def describe_world(self) -> World:
+        """The same configured models/mounts used by physics, available to late readers."""
+        self._ready.result(timeout=30)
+        return self._world
 
-    async def handle_wrench(self, command: Wrench) -> None:
-        self._ready.result(timeout=30).submit(command)
+    @rpc
+    def sample(self) -> Observations:
+        """A self-contained baseline; subscribing readers can also start at any next batch."""
+        runtime = self._ready.result(timeout=30)
+        return observations(runtime.run_id, runtime.backend.layout, self.state())
 
     @rpc
     def describe(self) -> Layout:

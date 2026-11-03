@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only native query replica: RGB/depth, timed lidar and solver IMU samples.
+"""Pose-driven query scene: RGB/depth and timed lidar, without joint state.
 
 This object never calls mj_step or owns dynamics. All native query/render state
 belongs to its acquisition thread. Physics sends portable snapshots at 50 Hz.
@@ -20,22 +20,24 @@ belongs to its acquisition thread. Physics sends portable snapshots at 50 Hz.
 
 from collections import deque
 
+from dimos_lcm.sim_msgs import Observations
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.sim2.mujoco import compile_world
-from dimos.sim2.types import Array, Camera, Layout, Lidar, Scan, World, WorldState
+from dimos.sim2.observations import SceneSample, read_poses
+from dimos.sim2.types import Array, Camera, Layout, Lidar, Scan, World
 
 
 class MujocoSensors:
     def __init__(self, world: World, layout: Layout) -> None:
         if world.revision != layout.revision:
             raise ValueError("sensor/world description mismatch")
-        self.model = compile_world(world)
+        self.model = compile_world(world, kinematic=True)
         self.data = mujoco.MjData(self.model)
         self.layout = layout
-        self.history: deque[WorldState] = deque(maxlen=64)
+        self.history: deque[SceneSample] = deque(maxlen=64)
         self.gaps = 0
         self._renderer: mujoco.Renderer | None = None
         self._cameras = {s.frame: s for s in world.sensors if isinstance(s, Camera)}
@@ -60,36 +62,34 @@ class MujocoSensors:
                 )
             )
 
-        self._q = np.array([self.model.joint(n).qposadr[0] for n in layout.joints])
-        self._free = [
-            (layout.bodies.index(n), int(self.model.body(n).jntadr[0]))
-            for n in layout.roots
-            if self.model.body(n).jntnum[0] == 1
-            and self.model.jnt_type[self.model.body(n).jntadr[0]] == mujoco.mjtJoint.mjJNT_FREE
-        ]
+        self._mocap = np.array([self.model.body(n).mocapid[0] for n in layout.bodies], dtype=int)
+        self._run_id: str | None = None
 
-    def observe(self, state: WorldState) -> None:
-        if state.revision != self.layout.revision:
-            raise ValueError("state belongs to a different model revision")
-        if self.history and state.epoch != self.history[-1].epoch:
+    def observe(self, message: Observations) -> SceneSample | None:
+        state = read_poses(message, self.layout)
+        if self._run_id is not None and state.run_id != self._run_id:
+            raise ValueError("simulation restarted; rebind the scene description")
+        if self.history and (state.epoch, state.tick) <= (
+            self.history[-1].epoch,
+            self.history[-1].tick,
+        ):
+            return None
+        if self.history and state.epoch > self.history[-1].epoch:
             self.history.clear()
-        if self.history and state.tick <= self.history[-1].tick:
-            return
+        self._run_id = state.run_id
         self.history.append(state)
+        return state
 
-    def _load(self, state: WorldState) -> None:
-        self.data.qpos[self._q] = state.position
-        for index, joint in self._free:
-            pose = state.poses[index]
-            q = self.model.jnt_qposadr[joint]
-            self.data.qpos[q : q + 7] = (*pose[:3], *pose[[6, 3, 4, 5]])
+    def _load(self, state: SceneSample) -> None:
+        self.data.mocap_pos[self._mocap] = state.poses[:, :3]
+        self.data.mocap_quat[self._mocap] = state.poses[:, [6, 3, 4, 5]]
         self.data.time = state.sim_time
         mujoco.mj_kinematics(self.model, self.data)
         mujoco.mj_comPos(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)
 
     def camera(
-        self, frame: str, state: WorldState
+        self, frame: str, state: SceneSample
     ) -> tuple[NDArray[np.uint8], NDArray[np.float32]]:
         self._load(state)
         profile = self._cameras[frame]

@@ -18,10 +18,11 @@ import numpy as np
 import pytest
 
 from dimos.sim2.mujoco import MujocoBackend
+from dimos.sim2.observations import observations, read_poses
 from dimos.sim2.runtime import Runtime
 from dimos.sim2.sensor_module import SimSensorModule
 from dimos.sim2.sensors import MujocoSensors
-from dimos.sim2.types import Camera, Imu, Lidar, Scan, SensorReader
+from dimos.sim2.types import Camera, Lidar, Scan, SensorReader
 
 
 @pytest.fixture
@@ -43,7 +44,6 @@ def sensor_module_factory():
     [
         ("camera", Camera("right/tool", hz=15), "color_image"),
         ("lidar", Lidar("right/tool"), "lidar"),
-        ("imu", Imu("right/tool"), "imu"),
     ],
 )
 def test_one_explicit_sensor_needs_no_other_sensors(
@@ -51,11 +51,11 @@ def test_one_explicit_sensor_needs_no_other_sensors(
 ):
     world = replace(world, sensors=(profile,))
     runtime = Runtime(MujocoBackend(world))
-    module = sensor_module_factory(world=world, **{kind: profile.frame})
-    module.bind(runtime.backend.layout)
+    module = sensor_module_factory(**{kind: profile.frame})
+    module.bind(world, runtime.backend.layout)
     published = {
         name: mocker.patch.object(getattr(module, name), "publish")
-        for name in ("color_image", "depth_image", "camera_info", "lidar", "imu")
+        for name in ("color_image", "depth_image", "camera_info", "lidar")
     }
     reader = mocker.Mock(spec=SensorReader)
     reader.gaps = 0
@@ -64,7 +64,13 @@ def test_one_explicit_sensor_needs_no_other_sensors(
         np.ones((240, 320), dtype=np.float32),
     )
     reader.lidar.return_value = Scan(np.array([[1.0, 2.0, 3.0]]), np.array([0.0]), runtime.epoch)
-    module.publish_sample(runtime.capture(), reader)
+    module.publish_sample(
+        read_poses(
+            observations(runtime.run_id, runtime.backend.layout, runtime.snapshot()),
+            runtime.backend.layout,
+        ),
+        reader,
+    )
     published[output].assert_called_once()
     enabled = {"color_image", "depth_image", "camera_info"} if kind == "camera" else {kind}
     for name in published.keys() - enabled:
@@ -75,6 +81,6 @@ def test_one_explicit_sensor_needs_no_other_sensors(
 
 
 def test_sensor_binding_reports_missing_frame_before_starting(world, sensor_module_factory):
-    module = sensor_module_factory(world=world, camera="unknown")
+    module = sensor_module_factory(camera="unknown")
     with pytest.raises(ValueError, match="configured Camera"):
-        module.bind(MujocoBackend(world).layout)
+        module.bind(world, MujocoBackend(world).layout)

@@ -45,10 +45,8 @@ WORLD = World(
 
 sim2_basic = autoconnect(
     SimModule.blueprint(world=WORLD, backend=MujocoBackend),
-    SimSensorModule.blueprint(
-        world=WORLD, reader=MujocoSensors, camera="camera", lidar="lidar", imu="imu"
-    ),
-    UrdfManager.blueprint(model=_pusher).remappings(
+    SimSensorModule.blueprint(reader=MujocoSensors, camera="camera", lidar="lidar"),
+    UrdfManager.blueprint(models={i.id: i.model for i in WORLD.instances}).remappings(
         [("urdfmanager", "coordinator_joint_state", "joint_state")]
     ),
 ).global_config(viewer="none", transport="zenoh", n_workers=4)

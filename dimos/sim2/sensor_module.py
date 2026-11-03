@@ -19,21 +19,19 @@ from queue import Empty, Full, Queue
 import threading
 from typing import Any, ClassVar
 
+from dimos_lcm.sim_msgs import Observations
 import numpy as np
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import SimulationSpec
+from dimos.sim2.observations import SceneSample
 from dimos.sim2.types import (
     Camera,
-    Frame,
-    Imu as ImuProfile,
     Layout,
     Lidar,
     SensorFactory,
@@ -43,39 +41,36 @@ from dimos.sim2.types import (
 
 
 class SensorConfig(ModuleConfig):
-    world: World
     reader: SensorFactory
     camera: str | None = None
     lidar: str | None = None
-    imu: str | None = None
 
 
 class SimSensorModule(Module):
     config: SensorConfig
     dedicated_worker: ClassVar[bool] = True
     _sim: SimulationSpec
-    world_frame: In[Frame]
+    observations: In[Observations]
     color_image: Out[Image]
     depth_image: Out[Image]
     camera_info: Out[CameraInfo]
     lidar: Out[PointCloud2]
-    imu: Out[Imu]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._queue: Queue[Frame] = Queue(64)
+        self._queue: Queue[Observations] = Queue(64)
         self._done = threading.Event()
         self._thread: threading.Thread | None = None
         self._error = ""
         self._dropped = 0
+        self._rejected = 0
         self._scans = 0
         self._images = 0
         self._gaps = 0
         self._camera: Camera | None = None
         self._lidar: Lidar | None = None
-        self._imu_index: int | None = None
         self._camera_info: CameraInfo | None = None
-        self._epoch = ""
+        self._epoch = -1
         self._next_camera = self._next_lidar = 0.0
 
     @rpc
@@ -83,11 +78,12 @@ class SimSensorModule(Module):
         PointCloud2.lcm_warmup()
         super().start()
         self._layout = self._sim.describe()
-        self.bind(self._layout)
+        self._world = self._sim.describe_world()
+        self.bind(self._world, self._layout)
         self._thread = threading.Thread(target=self._acquire, name="sim2-sensors", daemon=True)
         self._thread.start()
 
-    async def handle_world_frame(self, frame: Frame) -> None:
+    async def handle_observations(self, frame: Observations) -> None:
         try:
             self._queue.put_nowait(frame)
         except Full:
@@ -99,15 +95,14 @@ class SimSensorModule(Module):
                 pass
             self._queue.put_nowait(frame)
 
-    def bind(self, layout: Layout) -> None:
+    def bind(self, world: World, layout: Layout) -> None:
         """Validate explicit sensor-to-output bindings before starting acquisition."""
-        profiles = {s.frame: s for s in self.config.world.sensors}
-        if not any((self.config.camera, self.config.lidar, self.config.imu)):
+        profiles = {s.frame: s for s in world.sensors}
+        if not any((self.config.camera, self.config.lidar)):
             raise ValueError("select at least one sensor frame")
         for name, kind in (
             (self.config.camera, Camera),
             (self.config.lidar, Lidar),
-            (self.config.imu, ImuProfile),
         ):
             if name is not None and not isinstance(profiles.get(name), kind):
                 raise ValueError(f"{name!r} is not a configured {kind.__name__} sensor")
@@ -123,44 +118,35 @@ class SimSensorModule(Module):
         if self._camera is not None:
             c = self._camera
             self._camera_info = CameraInfo.from_fov(c.fovy, c.width, c.height, frame_id=c.frame)
-        self._imu_index = (
-            layout.imu_frames.index(self.config.imu) if self.config.imu is not None else None
-        )
 
     def _acquire(self) -> None:
         reader: SensorReader | None = None
         try:
-            reader = self.config.reader(self.config.world, self._layout)
+            reader = self.config.reader(self._world, self._layout)
             while not self._done.is_set():
                 try:
                     frame = self._queue.get(timeout=0.1)
                 except Empty:
                     continue
-                reader.observe(frame.state)
-                self.publish_sample(frame, reader, render=self._queue.empty())
+                try:
+                    state = reader.observe(frame)
+                except ValueError:
+                    self._rejected += 1
+                    continue
+                if state is not None:
+                    self.publish_sample(state, reader, render=self._queue.empty())
         except Exception as error:
             self._error = repr(error)
         finally:
             if reader is not None:
                 reader.close()
 
-    def publish_sample(self, frame: Frame, reader: SensorReader, *, render: bool = True) -> None:
+    def publish_sample(
+        self, state: SceneSample, reader: SensorReader, *, render: bool = True
+    ) -> None:
         """Publish configured measurements; expensive acquisition uses the newest queued state."""
-        state = frame.state
         if state.epoch != self._epoch:
             self._epoch, self._next_camera, self._next_lidar = state.epoch, 0.0, 0.0
-        if self._imu_index is not None:
-            assert self.config.imu is not None
-            sample = frame.imu[self._imu_index]
-            self.imu.publish(
-                Imu(
-                    ts=state.wall_time,
-                    frame_id=self.config.imu,
-                    linear_acceleration=Vector3(*sample[:3]),
-                    angular_velocity=Vector3(*sample[3:]),
-                    orientation_covariance=[-1.0] + [0.0] * 8,
-                )
-            )
         if not render:
             return
         camera = self._camera
@@ -202,6 +188,7 @@ class SimSensorModule(Module):
             "scans": self._scans,
             "gaps": self._gaps,
             "dropped_samples": self._dropped,
+            "rejected_samples": self._rejected,
             "error": self._error,
         }
 

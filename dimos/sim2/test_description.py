@@ -12,9 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pydantic import TypeAdapter
+from dataclasses import replace
 
-from dimos.sim2.types import World
+from pydantic import TypeAdapter
+import pytest
+
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.urdf_manager import UrdfManager
+from dimos.sim2.types import Instance, World
 
 
 def test_cli_configuration_roundtrip_keeps_sensor_profiles_and_model_variants(world):
@@ -23,3 +28,29 @@ def test_cli_configuration_roundtrip_keeps_sensor_profiles_and_model_variants(wo
     assert [type(s) for s in restored.sensors] == [type(s) for s in world.sensors]
     assert restored.revision == world.revision
     assert restored.instances[0].model.load().root_link == "left/base_link"
+
+
+def test_model_owner_resolves_mounts_once_for_later_consumers(tmp_path):
+    source = tmp_path / "robot.urdf"
+    source.write_text('<robot name="r"><link name="base"/></robot>')
+    configured = (
+        RobotModel.from_file(source)
+        .with_fixed_frame("camera", "base", xyz=(0.1, 0, 0.3))
+        .with_prefix("robot/")
+    )
+    manager = UrdfManager(models={"robot": configured})
+    try:
+        models = manager.resolved_models()
+        world = World((Instance("robot"),)).resolve(models)
+        # A reader receives the resolved text, not a path it must reload.
+        source.write_text('<robot name="changed"><link name="different"/></robot>')
+        resolved = world.instances[0].description
+        assert resolved.xml == models["robot"].xml
+        assert resolved.root_link == "robot/base"
+        assert resolved.joints[0].child_link == "robot/camera"
+        assert world.revision == World((Instance("robot"),)).resolve(models).revision
+        with pytest.raises(ValueError, match="conflicting model"):
+            conflicting = RobotModel.from_file(source).with_prefix("different/")
+            replace(world, instances=(Instance("robot", conflicting),)).resolve(models)
+    finally:
+        manager.dispose()

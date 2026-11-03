@@ -39,7 +39,7 @@ from dimos.sim2.types import (
 )
 
 
-def compile_world(world: World) -> mujoco.MjModel:
+def compile_world(world: World, *, kinematic: bool = False) -> mujoco.MjModel:
     if not np.isfinite(world.dt) or not 0 < world.dt <= 0.02:
         raise ValueError("dt must be in (0, .02] seconds")
     spec = mujoco.MjSpec()
@@ -72,7 +72,7 @@ def compile_world(world: World) -> mujoco.MjModel:
         if instance.id in ids:
             raise ValueError(f"duplicate instance {instance.id}")
         ids.add(instance.id)
-        model = instance.model.load()
+        model = instance.description
         links = {model.root_link, *(j.child_link for j in model.joints)}
         for sensor in world.sensors:
             if sensor.frame in links:
@@ -187,6 +187,34 @@ def compile_world(world: World) -> mujoco.MjModel:
                 )
         elif sensor.kind != "lidar":
             raise ValueError(f"unsupported sensor kind {sensor.kind}")
+    if kinematic:
+        # A query scene: every described body is independently positioned from
+        # the observation stream. There are no joints, motors or physics state
+        # coordinates to reconstruct. Geometry/materials retain their body-local
+        # transforms; camera mounts retain their local optical-frame transform.
+        xml = ET.fromstring(spec.to_xml())
+        # Attached URDF specs emit empty unnamed child defaults, which the
+        # XML parser rejects even though the in-memory spec compiles them.
+        for defaults in xml.iter("default"):
+            for child_default in list(defaults.findall("default")):
+                if not child_default.attrib and not len(child_default):
+                    defaults.remove(child_default)
+        root = xml.find("worldbody")
+        assert root is not None
+        bodies = list(root.iter("body"))
+        for parent in list(root.iter()):
+            for element in list(parent):
+                if element.tag in {"body", "joint", "freejoint"}:
+                    parent.remove(element)
+        for body in bodies:
+            body.set("mocap", "true")
+            body.set("pos", "0 0 0")
+            body.set("quat", "1 0 0 0")
+            root.append(body)
+        for tag in ("actuator", "sensor", "tendon", "equality", "contact"):
+            for element in xml.findall(tag):
+                xml.remove(element)
+        return mujoco.MjModel.from_xml_string(ET.tostring(xml, encoding="unicode"))
     return spec.compile()
 
 
@@ -204,7 +232,7 @@ class MujocoBackend:
                 if self.model.jnt_type[i] != mujoco.mjtJoint.mjJNT_FREE
             ),
             drives=tuple(self.model.actuator(i).name for i in range(self.model.nu)),
-            roots=tuple(i.model.load().root_link for i in world.instances),
+            roots=tuple(i.description.root_link for i in world.instances),
             imu_frames=tuple(s.frame for s in world.sensors if s.kind == "imu"),
             revision=world.revision,
         )
@@ -313,7 +341,7 @@ class MujocoBackend:
         # Refresh for coherent pose, joint and accelerometer samples at the new time.
         mujoco.mj_forward(self.model, self.data)
 
-    def snapshot(self, epoch: str, tick: int) -> Frame:
+    def snapshot(self, epoch: int, tick: int) -> Frame:
         poses = np.column_stack((self.data.xpos[1:], self.data.xquat[1:, [1, 2, 3, 0]]))
         twists = np.empty((self.model.nbody - 1, 6))
         velocity = np.empty(6)

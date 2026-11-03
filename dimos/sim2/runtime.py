@@ -29,15 +29,23 @@ Command: TypeAlias = JointTargets | JointEfforts | Wrench
 
 
 class Runtime:
-    def __init__(self, backend: PhysicsBackend) -> None:
+    def __init__(self, backend: PhysicsBackend, control_joints: tuple[str, ...] = ()) -> None:
         self.backend = backend
-        self.epoch = uuid.uuid4().hex
+        self.run_id = uuid.uuid4().hex
+        self.epoch = 0
         self.tick = 0
         self._inbox: Queue[Command] = Queue(maxsize=256)
         self._expires: dict[str, float] = {}
         self._wrenches: list[tuple[float, Wrench]] = []
         self.rejected = 0
         self.last_error = ""
+        self._control_joints = frozenset(control_joints)
+        if not self._control_joints.issubset(backend.layout.drives):
+            raise ValueError("paced control requires declared drives")
+        self._answered: dict[str, int] = {}
+
+    def controlled(self) -> bool:
+        return all(self._answered.get(name) == self.tick for name in self._control_joints)
 
     def submit(self, command: Command) -> None:
         """Nonblocking ingress. Full queue is explicit backpressure, not silent loss."""
@@ -68,6 +76,11 @@ class Runtime:
                 if command.epoch != self.epoch:
                     raise ValueError("stale simulation epoch")
                 if isinstance(command, JointTargets | JointEfforts):
+                    paced = self._control_joints.intersection(command.joints)
+                    if paced and (
+                        not isinstance(command, JointTargets) or command.tick != self.tick
+                    ):
+                        raise ValueError("paced joints require the current feedback tick")
                     if not math.isfinite(command.ttl) or not 0 < command.ttl <= 10:
                         raise ValueError("target ttl must be in (0, 10] seconds")
                     if isinstance(command, JointTargets):
@@ -75,6 +88,7 @@ class Runtime:
                     else:
                         self.backend.efforts(command)
                     self._expires.update((name, now + command.ttl) for name in command.joints)
+                    self._answered.update((name, self.tick) for name in paced)
                 else:
                     if not math.isfinite(command.duration) or not 0 < command.duration <= 10:
                         raise ValueError("wrench duration must be in (0, 10] seconds")
@@ -103,9 +117,10 @@ class Runtime:
         return self.snapshot()
 
     def _invalidate(self) -> None:
-        self.epoch = uuid.uuid4().hex
+        self.epoch += 1
         self.tick = 0
         self._expires.clear()
         self._wrenches.clear()
+        self._answered.clear()
         self.backend.hold(self.backend.layout.drives)
         # Queued commands retain their old epoch and will be rejected on the next tick.
