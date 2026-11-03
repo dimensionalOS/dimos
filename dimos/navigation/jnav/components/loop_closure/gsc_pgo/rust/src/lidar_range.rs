@@ -135,10 +135,6 @@ impl LidarRange {
         Some(estimate)
     }
 
-    /// The range estimate so far (m), if a median has been blended in.
-    pub fn estimate_m(&self) -> Option<f64> {
-        self.estimate_m
-    }
 }
 
 #[cfg(test)]
