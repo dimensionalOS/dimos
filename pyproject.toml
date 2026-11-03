@@ -279,6 +279,7 @@ perception = [
 unitree = [
     "dimos[base,mapping]",
     "unitree-webrtc-connect>=2.1.2",
+    "pygame>=2.6.1",  # RouteControl window (dimos/navigation/route_follower/control_window.py)
 ]
 
 unitree-dds = [

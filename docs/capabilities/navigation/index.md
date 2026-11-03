@@ -10,6 +10,7 @@ The Go2 navigation stack uses a simple **column-carving voxel map** strategy: ea
 |-----------------------------|------------------------------------------------------------------------|------------------------------|--------------------------------------------------------------------|
 | **Live mapping**            | Explore a new space, closing loops live to correct drift               | `unitree-go2`                | [Navigation deep dive](/docs/capabilities/navigation/deep_dive.md) |
 | **Permanent map**           | Return to a known space, relocalize and keep the map up to date        | `unitree-go2-map`            | [Go2 mapping and relocalization](/docs/capabilities/navigation/go2/index.md) |
+| **Multi-waypoint route**    | Click a route on the map and drive it waypoint by waypoint             | `unitree-go2-route`          | [Multi-waypoint route](/docs/capabilities/navigation/route.md) |
 
 `unitree-go2` closes loops live with pose-graph optimization (PGO). `unitree-go2-map` also keeps a map across runs, relocalizing against it and saving what it learns.
 

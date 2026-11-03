@@ -17,6 +17,7 @@ class Rect:
 class Surface:
     def get_rect(self, *, center: tuple[int, int] = ...) -> Rect: ...
     def get_width(self) -> int: ...
+    def get_height(self) -> int: ...
     def fill(self, color: tuple[int, int, int]) -> None: ...
     def blit(
         self,
@@ -37,6 +38,7 @@ SWSURFACE: int
 QUIT: int
 KEYDOWN: int
 KEYUP: int
+MOUSEBUTTONDOWN: int
 
 # Key constants — populate the ones dimos imports.
 K_0: int

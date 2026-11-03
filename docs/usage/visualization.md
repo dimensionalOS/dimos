@@ -147,3 +147,9 @@ When a `RerunBridgeModule` is already part of your blueprint, you typically don'
 Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
 
 To use a custom websocket port, set `--rerunwebsocketserver.port`; the bridge in the same blueprint takes the viewer URL from that server. `--rerunbridgemodule.websocket-url` points a bridge at a websocket server elsewhere. Set `host` on each module to override its bind address; both default to the shared `listen_host`.
+
+## Feature overlays
+
+Some features draw their own overlays on the viewer map. The
+[multi-waypoint route](/docs/capabilities/navigation/route.md) shows numbered
+waypoints and a route line next to the planner path, plus a companion Route window.
