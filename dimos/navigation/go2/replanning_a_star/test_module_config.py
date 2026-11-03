@@ -15,7 +15,6 @@
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
-from dimos.navigation.experimental.patrolling.module import PatrollingConfig, PatrollingModule
 from dimos.navigation.go2.replanning_a_star.module import (
     ReplanningAStarPlanner,
     ReplanningAStarPlannerConfig,
@@ -26,14 +25,11 @@ def test_robot_geometry_comes_from_the_shared_global_unless_overridden() -> None
     g = GlobalConfig(robot_width=0.5, robot_rotation_diameter=0.9)
 
     assert ReplanningAStarPlannerConfig(g=g).robot_width == 0.5
-    assert PatrollingConfig(g=g).robot_rotation_diameter == 0.9
     assert ReplanningAStarPlannerConfig(g=g, robot_width=0.4).robot_width == 0.4
 
 
-def test_one_global_flag_reaches_the_planner_and_the_patrol_module() -> None:
-    parser = BlueprintConfigParser(
-        autoconnect(ReplanningAStarPlanner.blueprint(), PatrollingModule.blueprint())
-    )
+def test_one_global_flag_reaches_the_planner() -> None:
+    parser = BlueprintConfigParser(autoconnect(ReplanningAStarPlanner.blueprint()))
     parsed = parser.parse(["--robot-width", "0.5"], environ={})
     g = GlobalConfig(**parsed.global_config_values())
 
@@ -44,4 +40,3 @@ def test_one_global_flag_reaches_the_planner_and_the_patrol_module() -> None:
         ).robot_width
         == 0.5
     )
-    assert PatrollingConfig(g=g, **parsed.module_kwargs("patrollingmodule")).robot_width == 0.5

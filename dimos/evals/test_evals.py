@@ -305,7 +305,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
         scene="empty",
         launch_timeout_s=4.0,
         setup=setup,
-        disable=("wavefront-frontier-explorer", "patrolling-module"),
+        disable=("wavefront-frontier-explorer",),
     )
     mocker.patch.object(env, "_wait_recording", return_value=Path(dataset))
 
@@ -320,8 +320,6 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "speak-skill",
             "--disable",
             "wavefront-frontier-explorer",
-            "--disable",
-            "patrolling-module",
         ]
         assert proc.global_args == ["--record"]
         assert proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] == "empty"
