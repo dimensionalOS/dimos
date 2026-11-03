@@ -12,18 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The odometry error estimate scaled by the lidar's range, for a run whose config states none
-//! (`odometry_error_estimate_from_lidar_range`). Each scan's range is its farthest point from the scan's frame origin
-//! (O(scan)). Every ceil(window / 5) scans the median of the last `window_scans` ranges is blended into the running
-//! range estimate, new = median x decay + current x (1 - decay), with decay halving every `decay_half_life_updates`
-//! blends (1 at the first: the first median is taken whole), so the estimate settles. The odometry error estimate is
-//! then linear in that range between two calibrated lidars: the Go2 L1 (leg odometry) and the Mid-360 (FAST-LIO /
-//! Point-LIO), held at the nearer one's outside them.
+//! Odometry error estimate from the lidar's range (`odometry_error_estimate_from_lidar_range`): a decaying blend of
+//! median scan ranges, mapped linearly between the calibrated Go2 L1 and Mid-360 estimates (clamped outside them).
 
 use std::collections::VecDeque;
 
-/// Per noise source (xy, z, yaw, roll/pitch tilt): [per sqrt m, per sqrt rad], the units of
-/// `Config::odometry_error_estimate_*_per_sqrt_{m,rad}`.
+/// Per noise source (xy, z, yaw, tilt): [per sqrt m, per sqrt rad], as `odometry_error_estimate_*_per_sqrt_{m,rad}`.
 pub type OdometryErrorEstimate = [[f64; 2]; 4];
 
 #[derive(Debug, Clone)]
@@ -33,17 +27,14 @@ pub type OdometryErrorEstimate = [[f64; 2]; 4];
     serde(default, deny_unknown_fields)
 )]
 pub struct LidarRangeConfig {
-    /// Scans whose ranges the median is taken over; it is taken every ceil(window_scans / 5) scans.
+    /// Scans the median range is taken over; a median is blended every ceil(window_scans / 5) scans.
     pub window_scans: usize,
-    /// Blends after which the weight a new median gets has halved. Default 2: of 1..128 it left the most of ten
-    /// recordings (8; 7 Mid-360, 3 L1) within 25% of their lidar's median range.
+    /// Blends after which a new median's blend weight has halved.
     pub decay_half_life_updates: f64,
-    /// The Go2 L1's median scan range (m; median over every scan of small_l1, huge_l1 and grassy_field) and its
-    /// calibrated odometry error estimate (Go2 leg odometry).
+    /// Go2 L1 median scan range (m) and its calibrated odometry error estimate (leg odometry).
     pub l1_range_m: f64,
     pub l1_odometry_error_estimate: OdometryErrorEstimate,
-    /// The Mid-360's median scan range (m; median over every scan of small, gir1, gir2, park1, office555, athens and huge)
-    /// and its calibrated odometry error estimate (FAST-LIO / Point-LIO: the `Config` defaults).
+    /// Mid-360 median scan range (m) and its calibrated odometry error estimate (FAST-LIO / Point-LIO).
     pub mid360_range_m: f64,
     pub mid360_odometry_error_estimate: OdometryErrorEstimate,
 }

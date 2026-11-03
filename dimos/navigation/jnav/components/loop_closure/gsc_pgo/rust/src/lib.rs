@@ -12,18 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! dimos-gsc-pgo: loop closure for a lidar keyframe pose graph, in the order a scan meets the stages:
-//!
-//! - stage 0 (`gsc_pgo`): keyframes and the threads that keep compute bounded.
-//! - stage 1 `uniqueness`: is this scan distinctive enough to place.
-//! - stage 2 `similarity_discovery`: which earlier keyframes it might be (scan context, position).
-//! - stage 3 `connection_fit`: how well the two places line up (ICP).
-//! - stage 4 `proportional_confidence`: extended ICP until the evidence matches the yank.
-//! - stage 5 `big_picture_fit`: the pose graph solve (GNC) deciding which closures agree.
-//!
-//! `mat3` and `pointcloud` are the small math underneath. The module executable (`src/main.rs`,
-//! binary `gsc-pgo`), the offline eval (`src/eval.rs`, binary `pgo-eval`) and the `records` they share build
-//! behind the default `native` feature.
+//! Lidar keyframe loop closure; stages: `gsc_pgo` (keyframes, threads), `uniqueness`, `similarity_discovery`,
+//! `connection_fit` (ICP), `proportional_confidence` (extended ICP), `big_picture_fit` (GNC solve).
 
 pub mod adoption_schedule;
 pub mod big_picture_fit;

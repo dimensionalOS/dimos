@@ -20,10 +20,7 @@ pub const COMPONENTS: usize = 4;
 /// Axes of a 3-D innovation each component shows in; half of it is a component's unit-information prior weight.
 const AXES: [f64; COMPONENTS] = [2.0, 1.0, 2.0, 1.0];
 
-/// A noise source's ln ratio to its reported variance from the solved graph's residuals: they were whitened at
-/// e^(dispatched), and sum ~ e^(u - dispatched) chi-square(redundancy) for the true ln ratio u, so this minimizes
-/// redundancy (u - dispatched) + sum e^(dispatched - u) + prior_weight u^2 (-2 ln of likelihood times prior). Its
-/// standard error is about sqrt(2 / redundancy).
+/// MAP ln ratio of a source's true to reported variance, from residuals whitened at e^(dispatched); SE ~ sqrt(2 / redundancy).
 pub fn residual_ln_ratio(
     sum: f64,
     redundancy: f64,
@@ -72,8 +69,7 @@ pub fn residual_ln_ratio_sd(
     (2.0 / curvature).sqrt()
 }
 
-/// A component's prior weight on its ln ratio squared, in -2 ln units: 1 / sd^2 for a measured spread across
-/// recordings, else one innovation's information (axes / 2, a unit-information prior).
+/// Prior weight on u² (-2 ln units): 1 / sd² when sd > 0, else a unit-information prior (axes / 2).
 fn prior_weight(component: usize, sd: f64) -> f64 {
     if sd > 0.0 {
         1.0 / (sd * sd)

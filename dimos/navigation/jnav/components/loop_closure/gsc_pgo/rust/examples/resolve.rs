@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Re-solve a finished pgo-eval run's pose graph offline: its raw keyframe poses (`a.kf`) and committed closures
-//! (`a.json`) through `big_picture_fit::solve` at a chosen odometry error estimate, so a solve-side change
-//! can be judged in seconds instead of a replay. Writes the solved keyframes in a.kf's format and prints the kept count.
+//! Re-solves a pgo-eval run's a.kf poses + a.json committed closures once via `solve`; writes a.kf format, prints kept count.
 //! usage: resolve <run dir> <out.bin> [odometry error estimate factor, 1] [config overlay json, e.g. '{"closure_gnc_var_scale":4}']
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
@@ -120,7 +118,7 @@ fn main() {
         .filter(|&&w| w > 0.5)
         .count();
     println!("kept {kept} / {}", closures.len());
-    // the same records as a.kf (ts, raw x y z qx qy qz qw, corrected likewise), the corrected pose the solve's
+    // a.kf records with the corrected pose replaced by the solve's
     let mut out = Vec::new();
     for (k, record) in values.as_chunks::<15>().0.iter().enumerate() {
         let q = mat3::quat_from_mat(&solution.rotations[k]);

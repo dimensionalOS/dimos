@@ -12,19 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A finished solve's way into the graph, two logical-execution-time jobs after the solve (which is only the GNC solve):
-//!
-//! - Debounce (`debounce_scans_per_keyframe`): the graph change heat's cost of the solve, measured off the scan thread on
-//!   a snapshot of the accepted graph (`store`, O(1) to take) and the keyframes made since the solve started; at its
-//!   landing the heat check adopts it or holds it as the newest waiting solve (an older one superseded). A solve that
-//!   finishes while a debounce runs waits as the newest pending one.
-//! - Merge (`merge_scans_per_keyframe`): prepares the adoption off the scan thread (the closure verdicts that changed
-//!   against the weights now, the longest kept loop); at its landing the scan thread swaps the new graph version in (the
-//!   solve's pose and weight vectors, moved into `Arc`s) and does the O(changed) bookkeeping. One adoption waiting
-//!   for a busy merge is the newest (an older one superseded).
-//!
-//! Each lands at its dispatch + `ceil(estimate)` advancing scans in deterministic mode (a lockstep replay waiting for it
-//! then), or as soon as it finishes in fast mode. At the end of the data both run inline.
+//! A finished solve reaches the graph via two logical-execution-time jobs: debounce (heat cost, then adopt or hold) and
+//! merge (changed verdicts off-thread, then swap in); each keeps only the newest waiting solve.
 
 use crate::closure_search_schedule::{hold_scans, SearchPool};
 use crate::gsc_pgo::GscPgo;
@@ -46,8 +35,7 @@ impl<T> Default for JobSlot<T> {
     }
 }
 
-/// A dispatched debounce or merge job: its result slot, the advancing scan it was dispatched at, its estimate (scans,
-/// before rounding up) and the keyframes it was sized by.
+/// A dispatched debounce or merge job: result slot, advancing scan at dispatch, and estimate (scans, before rounding).
 pub struct AdoptionJob<T> {
     slot: Arc<JobSlot<T>>,
     dispatch_scan: usize,
@@ -61,8 +49,7 @@ pub struct Debounced {
     seconds: f64,
 }
 
-/// What the merge prepared: the solve, its heat (before, cost, after), the closures whose verdict changes (index, new
-/// weight), the longest kept loop (keyframes between its ends) and the seconds it took.
+/// What the merge prepared: the solve, its heat (before, cost, after), the prepared adoption and its seconds.
 pub struct Merged {
     finished: FinishedSolve,
     heat: Option<(f64, f64, f64)>,
@@ -70,7 +57,7 @@ pub struct Merged {
     seconds: f64,
 }
 
-/// The merge's off-thread preparation, read by `GscPgo::adopt_solution`.
+/// For `GscPgo::adopt_solution`: closures whose verdict changes (index, new weight), longest kept loop (keyframes).
 pub struct MergePrepared {
     pub(crate) changed: Vec<(usize, f64)>,
     pub(crate) longest_kept: usize,
@@ -174,9 +161,7 @@ impl GscPgo {
             estimate_raw_scans,
         });
     }
-    /// Land the debounce and the merge once their holds have passed (deterministic) or they have finished (fast),
-    /// waiting for one due when `wait_for_due_jobs` or `now` (the end of the data, holds ignored). Returns whether a merge
-    /// moved the keyframes.
+    /// Land due debounce/merge jobs (`now`: end of data, ignore holds and wait); returns whether a merge moved keyframes.
     pub(crate) fn step_adoption(&mut self, now: bool) -> bool {
         let mut moved = false;
         if let Some(debounced) = self.land_adoption_job::<Debounced>(true, now) {
@@ -242,7 +227,7 @@ impl GscPgo {
     }
 }
 
-/// The debounce's and the merge's results, each kept in its own job field.
+/// Maps a job result type to its job field on `GscPgo`.
 pub(crate) trait AdoptionKind: Sized {
     fn job(pgo: &GscPgo, debounce: bool) -> Option<&AdoptionJob<Self>>;
     fn clear(pgo: &mut GscPgo, debounce: bool);

@@ -26,9 +26,7 @@ use crate::mat3::{self, Mat3, Vec3};
 
 // ---- the pose graph GSC keeps, re-solved on a background thread whenever closures arrive ----
 
-/// A pose-graph solve running on another thread over the first `keyframes` keyframes (all but keyframe 0 free) and the
-/// first `closures_dispatched` committed closures, adopted once it finishes and its hold has passed (`GscPgo::update`)
-/// or when waited for (`GscPgo::wait_for_due_solve`, `GscPgo::wait_for_solve`).
+/// A background pose-graph solve over the first `keyframes` keyframes (all but 0 free) and `closures_dispatched` closures.
 pub(crate) struct Solving {
     pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
     /// The adopted solves at dispatch (`GscPgo::adopted_solves`): the accepted graph its thread measured its change against.
@@ -48,8 +46,7 @@ pub(crate) struct SolveDispatch {
     closures_before: usize,
 }
 
-/// When a solve was dispatched, its estimated cost and when it was seen finished, in scans (`solve_hold_enabled`), and
-/// the recorded times of its dispatch scan and of the scan its estimate ends at (once reached).
+/// When a solve was dispatched, its estimated cost and when it was seen finished (scans).
 #[derive(Clone, Copy)]
 pub(crate) struct SolveSchedule {
     dispatch_scan: usize,
@@ -102,16 +99,14 @@ fn json_number(value: f64) -> String {
 }
 
 impl GscPgo {
-    /// Half the sum of squared whitened residuals of the newest applied solve (how much its
-    /// constraints conflict).
+    /// Half the sum of squared whitened residuals of the newest applied solve (how much its constraints conflict).
     pub fn graph_error(&self) -> f64 {
         self.graph_error
     }
     pub fn committed_closures(&self) -> &crate::store::Closures {
         &self.committed_closures
     }
-    /// Apply the running solve if it has finished and its hold has passed (`solve_hold_enabled`), and start one when
-    /// closures have arrived since the last. Never blocks. Returns whether keyframes moved.
+    /// Non-blocking: adopt a finished solve past its hold, start one if due; true if moved.
     pub fn update(&mut self) -> bool {
         self.track_solve();
         let hold = self.config.deterministic();
@@ -122,8 +117,7 @@ impl GscPgo {
         });
         self.adopt(ready)
     }
-    /// `update`, but waiting for the running solve once its hold has passed, so a replay gives the same graph on any
-    /// machine (with the hold off, plain `update`).
+    /// `update`, but waiting for the running solve once its hold passes, so a replay gives the same graph on any machine.
     pub fn wait_for_due_solve(&mut self) -> bool {
         self.track_solve();
         let due = self.config.deterministic()
@@ -154,8 +148,7 @@ impl GscPgo {
             }
         }
     }
-    /// An upper bound on a solve's cost in scans over `keyframes` keyframes and every committed closure, from the
-    /// newest adopted solve's rejections and the body's recent speed (`solve_hold_enabled`).
+    /// Upper bound on a solve's cost in scans (raw, held) from keyframe, closure and rejected counts.
     fn solve_estimate_scans(&self, keyframes: usize) -> (f64, usize) {
         let config = &self.config;
         let closures = self.committed_closures.len() as f64;
@@ -199,9 +192,7 @@ impl GscPgo {
                 || self.landmark_sightings.len() > self.landmark_sightings_dispatched
                 || self.odometry_error_estimate_rescale)
     }
-    /// A measured position of a sensor in fixed world frame `frame` at `time`: the sensor sits at `lever` in the body frame
-    /// (its mount, from tf), `position` and `covariance` (m²) are in `frame`. It joins the next solve as a prior on the
-    /// keyframe nearest in time (`solve_with_priors`).
+    /// A sensor's position in world frame `frame` at `time` (mount `lever`, covariance m²): a prior on the nearest keyframe.
     pub fn add_coordinate_factor(
         &mut self,
         time: f64,
@@ -213,10 +204,7 @@ impl GscPgo {
         self.world_positions
             .push((time, frame, lever, position, covariance));
     }
-    /// A landmark `landmark` (any id the caller keeps for it: a tag's number, a matched feature, another robot's
-    /// landmark) seen at `time` with pose (`rotation`, `position`) in the body frame (through the sensor's mount), with
-    /// that pose's 6x6 `information` (`LandmarkSighting`'s order; zero in an unknown dimension). It joins the next solve
-    /// as a sighting from the keyframe nearest in time.
+    /// Landmark `landmark` (any caller id) seen at `time`: body-frame pose and 6x6 `information` (0 = unknown dimension).
     pub fn add_landmark_factor(
         &mut self,
         time: f64,
@@ -232,14 +220,11 @@ impl GscPgo {
     pub fn landmarks(&self) -> &[(u64, Mat3, Vec3)] {
         &self.landmarks
     }
-    /// The newest solve's map -> frame alignments (frame id, yaw about z, translation), one per world frame its
-    /// positions made observable.
+    /// The newest solve's map -> frame alignments (frame id, yaw about z, translation), one per observable world frame.
     pub fn world_alignment(&self) -> &[(u32, f64, Vec3)] {
         &self.world_alignment
     }
-    /// Each world position as a prior on the keyframe nearest its time, its covariance grown by how far the body moves in
-    /// that time gap (the keyframes' own speed there, squared, in each horizontal axis and up); fixes before the first or
-    /// after the last keyframe are left for later.
+    /// World positions as priors on their nearest keyframes, covariance grown by the gap's motion; out-of-range ones wait.
     fn position_priors(&self) -> Vec<PositionPrior> {
         self.world_positions
             .iter()
@@ -259,8 +244,7 @@ impl GscPgo {
             })
             .collect()
     }
-    /// The keyframe nearest `time` and how far (squared, m²) the body moves in that gap at the keyframes' own speed there;
-    /// None before the first or after the last keyframe (left for later).
+    /// The keyframe nearest `time` and the body's squared motion (m²) over that gap; None outside the keyframes' time span.
     fn nearest_keyframe(&self, time: f64) -> Option<(usize, f64)> {
         let n = self.key_poses.len();
         let time_of = |k: usize| self.key_poses.fixed(k).time;
@@ -290,8 +274,7 @@ impl GscPgo {
         )) / gap;
         Some((keyframe, (speed * (time - time_of(keyframe)).abs()).powi(2)))
     }
-    /// Each landmark sighting from the keyframe nearest its time, its known position variances grown by how far the body
-    /// moves in that gap; landmarks numbered densely in order of first sighting, with their ids.
+    /// Sightings from their nearest keyframes (variance grown by the gap's motion), landmarks numbered densely, with ids.
     fn sightings(&self) -> (Vec<LandmarkSighting>, Vec<u64>) {
         let mut ids: Vec<u64> = Vec::new();
         let sightings = self
@@ -324,11 +307,9 @@ impl GscPgo {
     pub fn learned_odometry_error_estimate_measured(&self) -> bool {
         self.learned_evidence_measured
     }
-    /// Wait for the running solve, and solve again until every closure is in; then measure the learned odometry error
-    /// estimate once (`learned_odometry_error_estimate_from_closures`). Returns whether keyframes moved.
+    /// Solve until every closure is in, then measure the learned estimate (`learned_odometry_error_estimate_from_closures`).
     pub fn finish(&mut self) -> bool {
-        // a closure search still running when the data ends lands now, and the debounce and merge finish theirs; from here
-        // on they run inline
+        // a closure search still running lands now; from here on the debounce and merge run inline
         self.land_remaining_closure_search();
         let mut moved = false;
         while self.adoption_busy() {
@@ -336,8 +317,7 @@ impl GscPgo {
         }
         self.adoption_inline = true;
         moved |= self.settle();
-        // the learned odometry error estimate, for the next run's config: measured here from the final kept loops (one more
-        // solve of the same graph with the evidence on), and during the run only after a solve keeps a longer loop
+        // the learned estimate for the next run's config: one more solve of the final graph with the evidence on
         if self.config.learned_odometry_error_estimate_from_closures
             && self.committed_closures.iter().any(|c| c.gnc_weight > 0.5)
         {
@@ -362,8 +342,7 @@ impl GscPgo {
             self.dispatch_solve();
         }
     }
-    /// Start one solve of every committed closure from the odometry, judging each closure afresh (GNC must start from the
-    /// dead-reckoned chain, not an estimate earlier closures already bent).
+    /// Start one solve of every committed closure from the odometry, so GNC judges each afresh from the dead-reckoned chain.
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
@@ -403,8 +382,7 @@ impl GscPgo {
             // the learned estimate's evidence only in `finish`'s last solve
             learned_evidence: config.learned_odometry_error_estimate_from_closures
                 && self.learned_evidence_requested,
-            // or from the accepted graph (the keyframes since the newest adopted solve riding its correction), where it
-            // already fits
+            // or from the accepted graph (newer keyframes riding its correction), where it already fits
             seed_start: if config.solve_seed_from_accepted {
                 (0..n).map(|k| self.key_poses.global(k)).collect()
             } else {
@@ -485,8 +463,7 @@ impl GscPgo {
             dispatched,
         });
     }
-    /// Wait for the running solve and adopt it: its poses, the correction the keyframes since then
-    /// ride on, and its closure verdicts. Returns whether there was one.
+    /// Wait for the running solve and adopt it (poses, ride correction, closure verdicts). Returns whether there was one.
     fn apply_solve(&mut self) -> bool {
         let Some(solving) = self.solving.take() else {
             return false;
@@ -495,8 +472,7 @@ impl GscPgo {
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
         self.solve_join_wait_s += joined.elapsed().as_secs_f64();
-        // a solve waited for was finished at the scan it was waited at; one slower than the data its estimate spanned (a
-        // replay outrunning real time waits on others too) overshot: the estimate was not an upper bound
+        // a waited-for solve finished at the waiting scan; one slower than its estimate's data span overshot
         let schedule = SolveSchedule {
             finished_scan: Some(solving.schedule.finished_scan.unwrap_or(self.scans_seen)),
             overshoot: solving
@@ -524,8 +500,7 @@ impl GscPgo {
             self.key_poses.fixed(dispatched_over - 1).time,
             seconds,
         ));
-        // a solve that stalled short of a minimum would bend the map wrong: the map keeps the previous solve (a real loop
-        // closure can raise the cost a hundredfold, so the cost itself is no test)
+        // an unconverged solve keeps the previous map (cost is no test: a real loop can raise it a hundredfold)
         let previous = self.graph_error;
         if !solution.converged {
             let reason = "lm_not_converged";
@@ -563,8 +538,7 @@ impl GscPgo {
         let cost = graph_change_cost_on(&self.key_poses, &self.config, &finished.solution, finished.keyframes);
         self.debounced(finished, cost, true)
     }
-    /// Adopt a finished solve: its poses, the correction the keyframes since then ride on, and its closure verdicts;
-    /// `heat`, the graph change heat before it, its cost and after it (for the solve log). Returns true.
+    /// Adopt a finished solve; `heat` = graph change heat before, its cost, after (for the solve log). Returns true.
     pub(crate) fn adopt_solution(
         &mut self,
         finished: FinishedSolve,
@@ -617,8 +591,7 @@ impl GscPgo {
         self.solved_relative_covariance =
             Some((n - 1, std::sync::Arc::new(std::mem::take(&mut solution.relative_position_covariance))))
                 .filter(|(_, covariance)| covariance.len() == n);
-        // the solve's poses swapped in (its thread built them), and the correction the keyframes made since it started ride
-        // on: its newest keyframe's (`KeyFrames::global` rides each on it when read)
+        // the solve's poses swapped in; newer keyframes ride its newest keyframe's correction (`KeyFrames::global`)
         let newest = self.key_poses.fixed(n - 1);
         let (newest_rotation, newest_translation) = (solution.rotations[n - 1], solution.positions[n - 1]);
         self.rotation_offset = mat3::mat_mul(
@@ -694,8 +667,7 @@ impl GscPgo {
         if self.learned_evidence_measured {
             self.learned_evidence_requested = false;
         }
-        // a loop longer than any kept before is new information on the odometry's error: measure the learned estimate
-        // with the next solve (logged only, never a decision)
+        // a loop longer than any kept before: measure the learned estimate with the next solve (logged only)
         let longest = match &prepared {
             Some(prepared) => prepared.longest_kept,
             None => self
@@ -710,8 +682,7 @@ impl GscPgo {
             self.learned_evidence_gap = longest;
             self.learned_evidence_requested = true;
         }
-        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (keyframes, kept closure indices, learned odometry error estimate,
-        // and the solve's evidence per source as [sum, redundancy]), for tracing the noise learner against ground truth offline
+        // `GSC_LEARN_LOG=<path>`: one JSON line per adopted solve (kept closures, learned estimate, evidence)
         if let Ok(path) = std::env::var("GSC_LEARN_LOG") {
             use std::io::Write;
             let kept: Vec<usize> = self
@@ -797,8 +768,7 @@ impl GscPgo {
         );
         append_solve_log(&line);
     }
-    /// A `GSC_SOLVE_LOG` line for a solve that was not adopted (its last Levenberg-Marquardt pass did not converge), with
-    /// why and the previous adopted solve's final cost.
+    /// A `GSC_SOLVE_LOG` line for a solve not adopted (LM did not converge), with why and the previous final cost.
     #[allow(clippy::too_many_arguments)]
     fn log_rejected_solve(
         &self,
@@ -818,8 +788,7 @@ impl GscPgo {
         );
         append_solve_log(&line);
     }
-    /// The solve log fields every line has: when it was dispatched and finished, its schedule in scans (the scan count
-    /// now as `adopted_scan`, the data seconds its estimate spanned once reached), its closures, and its GNC's path.
+    /// The fields every solve log line has: dispatch/finish times, schedule in scans, closures and the GNC's path.
     fn solve_fields(
         &self,
         n: usize,
@@ -877,8 +846,7 @@ pub(crate) struct FinishedSolve {
     arrived_keyframes: usize,
 }
 
-/// The solve log's graph change heat fields for an adopted solve: when it finished, and the heat before, its cost and
-/// the heat after (none with the heat off).
+/// The solve log's graph change heat fields: when it finished, heat before, its cost, heat after (none with the heat off).
 fn heat_fields(arrived_keyframes: usize, heat: Option<(f64, f64, f64)>) -> String {
     match heat {
         Some((before, cost, after)) => format!(
@@ -900,8 +868,7 @@ impl GscPgo {
                 .graph_change_heat_decay
                 .powi(keyframes.saturating_sub(self.heat_keyframes) as i32)
     }
-    /// Adopt the waiting solve if the heat at keyframe count `keyframes` is at or under `graph_change_heat_threshold`,
-    /// adding its cost to the heat. Returns whether it was adopted.
+    /// Adopt the waiting solve if the heat at `keyframes` is <= `graph_change_heat_threshold`, adding its cost.
     pub(crate) fn release_pending_solve(&mut self, keyframes: usize) -> bool {
         if self.pending_solve.is_none() {
             return false;
@@ -912,8 +879,7 @@ impl GscPgo {
         }
         self.adopt_pending_solve(keyframes, heat)
     }
-    /// Adopt the waiting solve whatever the heat (`finish`, so the final graph is the solver's last output): its cost
-    /// joins the heat, and it goes to the merge (inline at the end of the data).
+    /// Adopt the waiting solve whatever the heat (`finish`); its cost joins the heat and it goes to the merge.
     pub(crate) fn adopt_pending_solve(&mut self, keyframes: usize, heat: f64) -> bool {
         let Some((waiting, cost)) = self.pending_solve.take() else {
             return false;
@@ -927,8 +893,7 @@ impl GscPgo {
         self.offer_merge(waiting, heat);
         false
     }
-    /// A debounced solve (its graph change heat cost measured): adopted at once if the heat allows, else held as the
-    /// newest waiting solve (an older one superseded); `inline` at the end of the data. Returns whether it was adopted.
+    /// A debounced solve and its heat cost: adopted now if the heat allows, else held as the newest waiting one.
     pub(crate) fn debounced(&mut self, finished: FinishedSolve, cost: f64, inline: bool) -> bool {
         let arrived = self.key_poses.len();
         let heat = self.heat_at(arrived);
@@ -965,9 +930,7 @@ impl GscPgo {
     }
 }
 
-/// A yank's cost in yank units when the odometry may drift up to `drift_range` times its stated error estimate: about
-/// z^2 / 2 for a small yank, about 3 ln z for a large one (`proportional_confidence::yank_evidence`), summed in log
-/// space so a yank far past the range keeps growing instead of overflowing.
+/// Yank cost (yank units) with drift up to `drift_range` x stated error: ~z²/2 small, ~3 ln z large, in log space.
 fn curbed_yank(z: f64, drift_range: f64) -> f64 {
     const STEPS: usize = 64;
     let top = drift_range.ln();
@@ -1000,10 +963,7 @@ fn append_solve_log(line: &str) {
     }
 }
 
-/// The graph change heat's scan along the keyframes in order (`GscPgo::graph_change_cost`): the path travelled and
-/// turned so far by the odometry (from the start), the previous keyframe's odometry pose, and the largest keyframe move
-/// from the accepted graph to the new one so far, in standard deviations of the stated odometry error accumulated along
-/// the path (xy, z and yaw combined; 1 m of travel at least); and the seconds a solve's thread spent on its part.
+/// Graph change heat scan state: odometry travel/turn so far, previous odometry pose, largest move so far (odometry sds).
 #[derive(Clone, Default)]
 pub(crate) struct ChangeScan {
     travelled: f64,
@@ -1060,11 +1020,7 @@ impl ChangeScan {
     }
 }
 
-/// What adopting `solution` (solved over the first `solved` keyframes) costs in graph change heat, against `keys` (a
-/// snapshot of the accepted graph): the largest keyframe move from it to the new one (the keyframes after `solved`
-/// riding its newest's correction), in standard deviations of the stated odometry error accumulated along the path from
-/// the start (xy, z and yaw combined; 1 m of travel at least), curbed (`curbed_yank`, drift range
-/// `closure_yank_drift_range`), above `graph_change_heat_floor`.
+/// Heat cost of adopting `solution` over `keys`: largest move in accumulated-odometry sds, `curbed_yank`, minus the floor.
 pub(crate) fn graph_change_cost_on(
     keys: &crate::store::KeyFrames,
     config: &crate::gsc_pgo::Config,

@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Standalone helpers for the native PGO module: odometry interpolation, quaternion slerp, the
-//! published-message builders and the inbound PointCloud2 parser.
+//! Native PGO module helpers: the published-message builders and the inbound PointCloud2 parser.
 
 use dimos_gsc_pgo::store::KeyFrames;
 use dimos_gsc_pgo::gsc_pgo::{ClosureEdgeEvent, KeyPoseWithCloud, CLOSURE_EDGE_RECORD_BYTES};
@@ -86,8 +85,7 @@ pub fn build_tf_message(
     }
 }
 
-/// One little-endian record per keyframe, the layout fast-reform consumers
-/// decode: x, y, z (f32), node_id (u32), ts (f64), qx, qy, qz, qw (f32).
+/// One little-endian keyframe record: x, y, z (f32), node_id (u32), ts (f64), qx, qy, qz, qw (f32).
 fn put_keyframe_record(
     data: &mut Vec<u8>,
     id: usize,
@@ -181,8 +179,7 @@ pub fn build_pose_graph_records(
     record_cloud(&KEYFRAME_FIELDS, data, frame_id, ts)
 }
 
-/// loop_closure_event as packed records: each keyframe's pre pose, then the
-/// delta with post = delta * pre.
+/// loop_closure_event as packed records: each keyframe's pre pose, then the delta with post = delta * pre.
 pub fn build_loop_closure_records(
     pre_poses: &[(Mat3, Vec3)],
     post_poses: &KeyFrames,
@@ -253,8 +250,7 @@ impl std::fmt::Display for ExtractError {
     }
 }
 
-/// Parse a PointCloud2 into xyz points (x/y/z float32 offsets; intensity is
-/// dropped — the PGO core never reads it).
+/// Parse a PointCloud2's float32 x/y/z into points; other fields are dropped.
 pub fn extract_xyz(msg: &PointCloud2) -> Result<PointCloud, ExtractError> {
     let mut ox = None;
     let mut oy = None;

@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Time the single closure ICP's speed options on dumped candidates (`closure_icp_dump_dir`, single-scan files only):
-//! each candidate's ICP is re-run from its real initial guess (version 2 dumps; a version 1 dump has none, so it starts a
-//! metre off its dumped result), as is, with the early stop, and with the target thinned, and compared with the as-is
-//! result (pass/fail). With stems given, each one's every variant is printed.
+//! Times closure ICP variants (as is / early stop / thinned target) on `closure_icp_dump_dir` dumps, counting pass flips.
 //! usage: icp_speed_bench <dump dir> [max files] [per-candidate csv out] [stem,stem,... e.g. 3014_27]
 use dimos_gsc_pgo::connection_fit::{icp_thinned, IcpParams, IcpResult, ICP_DUMP_VERSION};
 use dimos_gsc_pgo::gsc_pgo::Config;
@@ -26,7 +23,6 @@ use std::time::Instant;
 /// A dump's source and target clouds, its initial guess and whether that guess is the real one.
 type Dump = (Vec<[f32; 3]>, Vec<[f32; 3]>, (Mat3, Vec3), bool);
 
-/// Reads a dump (see `Dump`).
 fn read_dump(bytes: &[u8]) -> Dump {
     let ns = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
     let nt = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
@@ -44,7 +40,7 @@ fn read_dump(bytes: &[u8]) -> Dump {
             [f(at + 72), f(at + 80), f(at + 88)],
         )
     };
-    // version 1: result pose (12 f64), fitness, converged; version 2 adds the guess (12 f64), iterations, stop, version
+    // v1: result pose, fitness, converged; v2 adds guess, iterations, stop, version (v1 guesses ~1 m off the result)
     let version = if tail.len() >= 105 + 96 + 9 {
         u32::from_le_bytes(tail[tail.len() - 4..].try_into().unwrap())
     } else {

@@ -12,20 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stage 1, uniqueness: is this scan distinctive enough to place, in O(scan). Universal uniqueness is
-//! measured on the scan alone: how many scan-context cells it fills (`similarity_discovery`'s
-//! descriptor occupancy) and its geometric degeneracy here. Current-map uniqueness (how unlike the
-//! rest of the map it is) is not measured yet.
+//! Stage 1, uniqueness: is this scan distinctive enough to place, measured on the scan alone (descriptor
+//! occupancy in `similarity_discovery`, geometric degeneracy here); uniqueness vs the current map is not measured.
 
 use rayon::prelude::*;
 
 use crate::mat3;
 use crate::pointcloud::KdTree;
 
-/// Geometric degeneracy (Zhang 2016 / X-ICP): the spread of the scan's surface normals, as the smallest
-/// eigenvalue of their scatter matrix over its trace. Near 0 means every surface faces about the same way
-/// (a corridor, a plane), which leaves ICP free to slide; 1/3 is the most spread. -1 for fewer than 20
-/// points or normals.
+/// Normal spread (smallest scatter eigenvalue / trace): ~0 = corridor/plane (ICP can slide), 1/3 = max; -1 if <20 points.
 pub fn degeneracy(cloud: &[[f32; 3]]) -> f32 {
     if cloud.len() < 20 {
         return -1.0;

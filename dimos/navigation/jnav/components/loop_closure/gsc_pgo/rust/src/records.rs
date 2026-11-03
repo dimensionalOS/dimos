@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! What the native binaries (`gsc-pgo`, `pgo-eval`) send and dump: the published messages, the packed keyframe,
-//! pose-change and closure-edge records, the keyframe / pose-change dump files, and the inbound PointCloud2 parser.
+//! Messages, packed records and dump files the native binaries send/write, plus the inbound PointCloud2 parser.
 
 use std::io::Write;
 use std::path::Path;
@@ -71,8 +70,7 @@ pub fn build_odometry(
     odom
 }
 
-/// One little-endian record per keyframe, the layout fast-reform consumers
-/// decode: x, y, z (f32), node_id (u32), ts (f64), qx, qy, qz, qw (f32).
+/// One little-endian keyframe record (40 B): x, y, z (f32), node_id (u32), ts (f64), qx, qy, qz, qw (f32).
 fn put_keyframe_record(
     data: &mut Vec<u8>,
     id: usize,
@@ -187,8 +185,7 @@ impl HeardPoses {
             .extend((self.0.len()..key_poses.len()).map(|k| key_poses.global(k)));
     }
 
-    /// When a closure closed or any keyframe moved past POSE_CHANGE_*, every heard keyframe's pose change as packed
-    /// records (pre x y z, id, ts, pre q (xyzw), then dt, dq with post = delta * pre; f32 but id u32, ts f64), now heard.
+    /// On a closure or a move past POSE_CHANGE_*: per keyframe, pre-pose record + delta (post = delta * pre).
     pub fn take_changes(
         &mut self,
         key_poses: &KeyFrames,
@@ -243,8 +240,7 @@ pub fn append_pose_changes(file: &mut impl Write, ts: f64, records: &[u8]) -> st
     file.write_all(&bytes)
 }
 
-/// Write each keyframe as little-endian f64s: ts, raw (local) x y z qx qy qz qw, then corrected (global) x y z qx qy
-/// qz qw, atomically.
+/// Atomically write per keyframe 15 LE f64s: ts, local xyz + qxyzw, global xyz + qxyzw.
 pub fn write_keyframes(path: &Path, key_poses: &KeyFrames) -> std::io::Result<()> {
     let mut bytes = Vec::with_capacity(key_poses.len() * 15 * 8);
     for kp in key_poses.iter() {
@@ -317,8 +313,7 @@ impl std::fmt::Display for ExtractError {
     }
 }
 
-/// Parse a PointCloud2 into xyz points (x/y/z float32 offsets; intensity is
-/// dropped — the PGO core never reads it).
+/// Parse a PointCloud2's x/y/z (assumed float32) into points; other fields are dropped.
 pub fn extract_xyz(msg: &PointCloud2) -> Result<PointCloud, ExtractError> {
     let mut ox = None;
     let mut oy = None;

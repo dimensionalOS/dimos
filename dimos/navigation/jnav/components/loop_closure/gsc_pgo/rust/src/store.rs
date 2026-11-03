@@ -12,15 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Versioned stores for what the jobs off the scan thread read, so a snapshot of them costs O(1):
-//!
-//! - `Appended<T>`: an append-only sequence in a chunked arena (chunks never move once allocated, each item set once), a
-//!   snapshot being the shared arena and a length, read as a prefix without locks.
-//! - `KeyFrames`: each keyframe's fixed data (odometry pose, time, cloud) appended; its global pose either from the
-//!   newest adopted solve (an `Arc` its thread built, swapped in at adoption) or, for the keyframes past that solve's,
-//!   its odometry pose ridden on the solve's newest correction, computed when read (as each was when inserted).
-//! - `Closures`: each committed closure's fixed data appended; their solve weights an `Arc` the newest adopted solve
-//!   built (NaN for one committed after it was dispatched).
+//! O(1)-snapshot stores for the off-scan-thread jobs: `Appended<T>` (append-only chunked arena read without locks),
+//! `KeyFrames`/`Closures` (fixed data appended; the adopted solve's poses/weights swapped in as an `Arc`).
 
 use crate::gsc_pgo::{CommittedClosure, KeyPoseWithCloud};
 use crate::mat3::{self, Mat3, Vec3};

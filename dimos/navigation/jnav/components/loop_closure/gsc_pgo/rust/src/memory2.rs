@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Minimal reader for a dimos memory2 SQLite recording, decoding the raw
-//! LCM blobs the eval binary feeds through GscPgo.
-//!
-//! Each stream `S` is two tables: `"S"` (metadata: id, ts, ...) and `"S_blob"`
-//! (id, data BLOB). The blob is exactly `value.lcm_encode()` — an 8-byte
-//! fingerprint followed by the packed message — so a stream is discriminated by
-//! trying each candidate decoder and letting the fingerprint check reject
-//! mismatches. Pose values in the metadata columns are deprecated; everything
-//! here comes from decoding the blob.
+//! Minimal reader for a dimos memory2 SQLite recording: stream `S` is tables `"S"` (id, ts, ...) and `"S_blob"` (id, data).
+//! A blob is `value.lcm_encode()` (8-byte fingerprint + message), so a stream's type is found by trying each decoder.
+//! Pose values in the metadata columns are deprecated; everything here comes from decoding the blob.
 
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::records::extract_xyz;
@@ -30,10 +24,7 @@ use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::tf2_msgs::TFMessage;
 use rusqlite::Connection;
 
-/// One odometry sample: world pose at a timestamp. `frame_id` is the pose's
-/// reference (parent) frame; `child_frame_id` is the frame the pose moves (the
-/// eval re-expresses it for the body frame through the recording's tf).
-/// `child_frame_id` is empty for `PoseStamped` payloads, which carry no child.
+/// World pose at a timestamp: `frame_id` is its parent frame, `child_frame_id` the frame it moves (empty for PoseStamped).
 pub struct OdomRow {
     pub ts: f64,
     pub translation: Vec3,
@@ -57,9 +48,7 @@ fn quote_ident(name: &str) -> Result<String, String> {
     Ok(format!("\"{name}\""))
 }
 
-/// Join a stream's metadata + blob tables on id, ordered by timestamp, and hand
-/// each `(ts, blob)` to `decode`. Rows the decoder returns `None` for are
-/// skipped (e.g. a corrupt frame), so a single bad message never aborts a run.
+/// Each `(ts, blob)` of a stream, in time order, through `decode`; rows it returns `None` for (e.g. corrupt) are skipped.
 fn read_stream<T>(
     connection: &Connection,
     stream: &str,
@@ -84,8 +73,7 @@ fn for_each_row(
 ) -> Result<(), String> {
     let table = quote_ident(stream)?;
     let blob_table = quote_ident(&format!("{stream}_blob"))?;
-    // order the (small) metadata alone, then fetch each kept blob by id: sorting the joined blobs would spill the whole
-    // stream into a temp b-tree (tens of GB on a long recording, enough to fill the disk)
+    // sort only the small metadata, then fetch each blob by id: sorting joined blobs spills the stream to a temp b-tree (GBs)
     let sql = format!("SELECT id, ts FROM {table} ORDER BY ts");
     let mut statement = connection.prepare(&sql).map_err(|e| e.to_string())?;
     let mut rows = statement.query([]).map_err(|e| e.to_string())?;
@@ -159,9 +147,7 @@ fn odom_from_pose(
     }
 }
 
-/// Read an odometry stream, accepting either `nav_msgs/Odometry` or
-/// `geometry_msgs/PoseStamped` payloads (legacy go2 recordings store the
-/// latter). The fingerprint check makes the choice unambiguous per blob.
+/// Read an odometry stream of `nav_msgs/Odometry` or `geometry_msgs/PoseStamped` (legacy go2) payloads.
 pub fn read_odometry(connection: &Connection, stream: &str) -> Result<Vec<OdomRow>, String> {
     let rows = read_stream(connection, stream, |ts, data| {
         if let Ok(message) = Odometry::decode(data) {
@@ -180,8 +166,7 @@ pub fn read_odometry(connection: &Connection, stream: &str) -> Result<Vec<OdomRo
     Ok(rows)
 }
 
-/// Call `visit` with each scan of a lidar stream of PointCloud2s, in time order, one at a time, stopping after the
-/// stream's first `until_s` seconds.
+/// Call `visit` with each PointCloud2 scan of a lidar stream in time order, one at a time, for its first `until_s` seconds.
 pub fn for_each_scan(
     connection: &Connection,
     stream: &str,
@@ -246,8 +231,7 @@ impl Rigid {
     }
 }
 
-/// One tf edge as recorded: its first value, and whether every later message repeated it (a static mount) or not
-/// (a moving frame, e.g. odom -> mid360_link, which a mount lookup must not use).
+/// One tf edge: its first value, and whether every later message repeated it (a static mount; moving edges are never looked up).
 struct TfEdge {
     parent: String,
     child: String,
@@ -313,8 +297,7 @@ impl TfTree {
         Ok(TfTree { edges })
     }
 
-    /// The fixed transform taking points in `source` to `target`, chained through the tree's constant edges (walked
-    /// either way). Identity when the frames are one; an error naming the frames when no constant chain joins them.
+    /// The fixed transform taking points in `source` to `target` through constant edges (walked either way); Err if none.
     pub fn lookup(&self, target: &str, source: &str) -> Result<Rigid, String> {
         if target == source {
             return Ok(Rigid::identity());

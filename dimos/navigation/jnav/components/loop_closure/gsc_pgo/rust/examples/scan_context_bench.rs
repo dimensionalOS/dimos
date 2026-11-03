@@ -12,15 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The scan-context lookup's cost against map size: the same two stages a proposal runs (`search_by_scan_context`:
-//! every earlier keyframe's ring-key distance, the closest `candidate_top_k` scored on the full descriptor) over N
-//! synthetic keyframes made from real descriptors (a run's dumped single-ICP source scans, `<run>/icp`, each moved back
-//! into its keyframe's body frame by the run's `a.kf`), keyframe i from real descriptor i mod their count, perturbed so
-//! the ring-key search sees realistic structure. `full`: every keyframe stores its own perturbed descriptor and the ring
-//! key made from it, as GscPgo does (about 5 KB each). `pool`: only the perturbed ring key, the top k scored against the
-//! real descriptors (about 100 B each, for larger maps). Sizes past the memory budget (GB) are skipped. Prints, per N,
-//! the insertion seconds and the median microseconds of a lookup (and of its ring-key stage alone), the query a
-//! perturbed real descriptor.
+//! Scan-context lookup time vs map size, over N keyframes perturbed from a run's real `<run>/icp` scan descriptors.
 //! usage: scan_context_bench <run dir> <full|pool> <memory GB> [N,N,...]
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::similarity_discovery::{
@@ -29,7 +21,7 @@ use dimos_gsc_pgo::similarity_discovery::{
 };
 use std::time::Instant;
 
-/// A small deterministic generator (xorshift), so every run perturbs the same way.
+/// Deterministic xorshift noise.
 struct Noise(u64);
 
 impl Noise {
@@ -39,13 +31,13 @@ impl Noise {
         self.0 ^= self.0 << 17;
         (self.0 >> 40) as f32 / (1u64 << 24) as f32
     }
-    /// About normal, mean 0 and sd 1 (the sum of 4 uniforms).
+    /// Approximately standard normal (sum of 4 uniforms).
     fn normal(&mut self) -> f32 {
         ((0..4).map(|_| self.uniform()).sum::<f32>() - 2.0) * 3f32.sqrt()
     }
 }
 
-/// The run's keyframe poses (`a.kf`: time, raw and corrected pose per keyframe), corrected (rotation, translation).
+/// The corrected (rotation, translation) of each keyframe in the run's a.kf.
 fn keyframe_poses(run: &std::path::Path) -> Vec<(mat3::Mat3, mat3::Vec3)> {
     let bytes = std::fs::read(run.join("a.kf")).expect("read a.kf");
     bytes
@@ -62,7 +54,7 @@ fn keyframe_poses(run: &std::path::Path) -> Vec<(mat3::Mat3, mat3::Vec3)> {
         .collect()
 }
 
-/// Up to `limit` real descriptors: each dumped single-ICP source scan (global frame) moved into its keyframe's body frame.
+/// Up to `limit` descriptors of dumped single-ICP source scans, moved into their keyframe's body frame.
 fn real_descriptors(run: &std::path::Path, limit: usize) -> (Vec<Descriptor>, Config) {
     let poses = keyframe_poses(run);
     let mut dumps: Vec<(usize, std::path::PathBuf)> = std::fs::read_dir(run.join("icp"))
@@ -112,11 +104,10 @@ fn main() {
         || vec![1_000, 10_000, 100_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000],
         |s| s.split(',').map(|n| n.parse::<f64>().unwrap() as usize).collect(),
     );
-    // per keyframe: a ring key (and with `full` a descriptor), each a Vec's header plus its f32s, and its ranked entry
     let header = std::mem::size_of::<Vec<f32>>();
     let (pool, config) = real_descriptors(run, 2000);
     let pool_keys: Vec<RingKey> = pool.iter().map(make_ring_key).collect();
-    // the ring keys' own spread, which scales the perturbation (5% of a typical key value)
+    // ring-key perturbation sd: 5% of the mean key value
     let mean_key = pool_keys.iter().flatten().sum::<f32>() / (pool_keys.len() * config.n_rings) as f32;
     let sd = 0.05 * mean_key;
     println!(
@@ -138,6 +129,7 @@ fn main() {
         }
         copy
     };
+    // bytes per keyframe: ring key (+ descriptor with `full`) plus its ranked entry
     let per_keyframe = (header + 4 * config.n_rings)
         + if full {
             header + 4 * config.n_rings * config.n_sectors + std::mem::size_of::<Descriptor>()

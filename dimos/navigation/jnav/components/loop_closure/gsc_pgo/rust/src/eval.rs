@@ -12,16 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Offline PGO eval: replay a recorded db straight through `GscPgo` as fast as
-//! the machine allows, then dump an eval.py-shaped JSON (raw odom trajectory,
-//! optimized keyframe graph, closures, keyframes, runtime, realtime factor).
-//!
-//! This deliberately bypasses the module/transport/replay scaffolding: it opens
-//! the SQLite recording directly, decodes the LCM blobs, and drives the same
-//! worker-loop logic as `main.rs` (pair each scan with the latest odom pose →
-//! add_key_pose → on keyframe: search_for_closure_pairs + update).
-//! Trajectory-warp / map / tag scoring is left to a thin Python postprocess that
-//! reuses `trajectory_metrics`.
+//! Offline PGO eval: replay a recorded db through `GscPgo` as fast as possible, then dump an eval.py-shaped JSON.
+//! Reads the SQLite recording directly (no module/transport scaffolding) and drives the same worker loop as `main.rs`.
+//! Usage: pgo-eval --db <db> --odom-stream <s> --lidar-stream <s> --output <json> [--config <json>] [--live] ...
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -45,10 +38,7 @@ use serde::{Deserialize, Serialize};
 mod memory2;
 use memory2::{for_each_scan, read_odometry, OdomRow, Rigid};
 
-/// Eval config: the PGO core's config (defaults mirror `module.py`'s `PGOConfig`, so a bare run reproduces
-/// the module default) plus how the scans arrive; a `--config` JSON overlays any subset.
-// Unknown keys are ignored on purpose: the resolved config is dumped from the Python PGOConfig, which
-// carries module-lifecycle fields (executable, cwd, global_map_*, ...) this eval never uses.
+/// `PgoConfig` (module.py defaults) plus scan arrival; `--config` JSON overlays any subset, unknown keys ignored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct EvalConfig {
@@ -56,13 +46,11 @@ struct EvalConfig {
     pgo: PgoConfig,
     /// `--live`: once more than this many scans wait, all but the newest are dropped (the module's max_scan_queue; <= 0 = unbounded).
     max_scan_queue: i32,
-    /// Multiplies every stated odometry_error_estimate_* sd term; < 1 states the odometry as better than it is (over-trust test: 0.1).
+    /// Multiplies every odometry_error_estimate_* term; < 1 states the odometry as better than it is.
     odometry_error_estimate_scale: f64,
-    /// The frame the odometry's poses are really of, where its child_frame_id misnames it (office555's Point-LIO names
-    /// base_link but reports the lidar's pose: "livox_frame"); empty = the child frame.
+    /// The frame the odometry poses are really of when child_frame_id misnames it (e.g. "livox_frame"); empty = child frame.
     odom_pose_frame: String,
-    /// Threads closure search and solves may use (the module's `worker_threads`): the rayon pool pgo-eval builds, so a
-    /// replay runs as fast as the module would. 0 (the default) = every core: no GSC run times itself handicapped.
+    /// Rayon pool size for closure search and solves (the module's `worker_threads`); 0 = every core.
     worker_threads: usize,
 }
 
@@ -78,8 +66,7 @@ impl Default for EvalConfig {
     }
 }
 
-/// A committed closure's ICP-refined relative pose (target frame -> source), so an
-/// offline PCM pass can compose it with odometry. `rotation` is row-major 3x3.
+/// A committed closure's ICP-refined relative pose (target frame -> source, row-major rotation) for an offline PCM pass.
 #[derive(Serialize)]
 struct CommittedClosureEdge {
     source_id: usize,
@@ -126,8 +113,7 @@ struct EvalOutput {
     finish_s: f64,
     /// Data seconds per replay second up to the last scan, `finish` left out.
     realtime_factor: f64,
-    /// `--live` replay (else lockstep), the scans it dropped from a full queue, and each processed scan's ms from arriving
-    /// to done (queue wait + processing).
+    /// `--live` replay (else lockstep), scans dropped from a full queue, and each processed scan's arrival-to-done ms.
     live: bool,
     scans_dropped: usize,
     scan_latency_ms: Vec<f32>,
@@ -135,41 +121,33 @@ struct EvalOutput {
     keyframe_scan_thread_ms: Vec<f32>,
     /// Per keyframe, ms in `update` (adopting a finished solve, waiting for it when due, and starting the next).
     keyframe_gnc_ms: Vec<f32>,
-    /// Per scan, ms of the scan thread's own work (add_key_pose, and on a keyframe its closure search and solve steps),
-    /// the lockstep replay's waits on due jobs left out.
+    /// Per scan, ms of the scan thread's own work (add_key_pose, closure search, solve steps), lockstep waits left out.
     scan_thread_ms: Vec<f32>,
-    /// Per pressure computation (inline, or as a job: `pressure_let_enabled`): keyframes, committed closures, seconds.
+    /// Per pressure computation: keyframes, committed closures, seconds.
     pressure_calls: Vec<(usize, usize, f64)>,
-    /// Per adopted solve, the graph change heat cost's part on the solve's thread: keyframes, seconds; and the solves
-    /// whose cost the scan thread recomputed (a solve adopted while they ran).
+    /// Per adopted solve, (keyframes, seconds) of its change cost on the solve's thread; and how many the scan thread redid.
     change_cost_calls: Vec<(usize, f64)>,
     change_cost_recomputed: usize,
-    /// The LET coefficients this run measured (`GscPgo::runtime_profile`): per LET the 99th percentile of measured /
-    /// estimated scans, its jobs, and its coefficients scaled by it (a config block ready to paste; diagnostics only).
+    /// Per LET (`GscPgo::runtime_profile`): p99 measured/estimated scans, its jobs, its coefficients scaled by it (diagnostics).
     runtime_profile: Vec<RuntimeProfileRow>,
     /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
     stage_seconds: BTreeMap<String, f64>,
     /// How much faster than real each part of the module runs (`Speed`).
     speed: Speed,
-    /// Each loop-overlap pressure recompute (every pressure_check_frequency-th scan): the scan's time, the pressure and the
-    /// scan count (the module's debug_log numbers).
+    /// Each loop-overlap pressure recompute: (scan time, pressure, scan count).
     loop_overlap: Vec<(f64, LoopOverlap, usize)>,
     /// Count of closure-search outcomes by gate name (accepted + each reject gate).
     gate_counts: BTreeMap<String, usize>,
-    /// One record per closure-search evaluation (accepted + rejected), with the
-    /// metric at each gate and the source/target locations.
+    /// One record per closure-search evaluation (accepted + rejected): each gate's metric and the source/target locations.
     closure_diagnostics: Vec<ClosureCandidateDiag>,
-    /// Total nonlinear error of the final factor graph (½·Σ whitened residual²,
-    /// robust kernels applied) — how much all the constraints conflict.
+    /// Total nonlinear error of the final factor graph (½·Σ whitened residual², robust kernels applied).
     graph_error: f64,
-    /// Every committed closure's refined relative pose (target->source), in commit
-    /// order — the raw constraints an offline consistency pass needs.
+    /// Every committed closure's refined relative pose (target->source), in commit order.
     committed_closure_edges: Vec<CommittedClosureEdge>,
     /// With an ICP cache replay: the cloud computations answered from it, and those it lacked (computed live).
     icp_cache_hits: usize,
     icp_cache_misses: usize,
-    /// The odometry error estimate the run measured, as next run's config inputs (`GscPgo::odometry_error_estimate_for_next_run`): per
-    /// source xy, z, yaw, tilt, [per sqrt m, per sqrt rad], and whether a kept closure measured it.
+    /// Measured odometry error estimate for next run ([per sqrt m, per sqrt rad] x xy, z, yaw, tilt); was each measured.
     odometry_drift: [[f64; 2]; 4],
     odometry_drift_measured: [bool; 4],
 }
@@ -180,23 +158,15 @@ struct Args {
     lidar_stream: String,
     config_path: Option<PathBuf>,
     output: PathBuf,
-    /// Write the keyframes (`<path>`, as the module's dump_path) and every
-    /// keyframe pose change as the module publishes it (`<path>.closures`).
+    /// `--event-dump <path>`: keyframes at `<path>` (as the module's dump_path), pose changes at `.closures`, edges at `.edges`.
     event_dump: Option<PathBuf>,
-    /// `--icp-cache-record <path>`: write every closure search's cloud computations there (`icp_cache`).
-    /// `--icp-cache-replay <path>`: answer them from such a file, computing (and counting) any it lacks.
+    /// `--icp-cache-record`/`--icp-cache-replay <path>`: write every closure search's cloud computations, or answer from them.
     icp_cache: Option<(dimos_gsc_pgo::icp_cache::Mode, PathBuf)>,
-    /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
-    /// max_scan_queue (all but the newest dropped when it overflows), and the closure search and solves run in the background.
+    /// `--live`: scans arrive at recorded times into a max_scan_queue queue (overflow keeps newest); search/solves in background.
     live: bool,
-    /// World-frame position fixes to feed as the scans reach their times (`GscPgo::add_coordinate_factor`), a CSV with one
-    /// fix per line: time, frame id, x, y, z, the 3x3 covariance row-major (m²), the sensor's offset in the body frame
-    /// (x, y, z). Lockstep replay only.
+    /// `--world-positions` CSV per line: time, frame id, xyz, row-major 3x3 covariance (m²), body-frame lever xyz. Lockstep only.
     world_positions: Option<PathBuf>,
-    /// Landmark sightings to feed the same way (`GscPgo::add_landmark_factor`), a CSV with one per line: time,
-    /// landmark id, x, y, z in the body frame, then either the 3x3 position covariance row-major (m², a point) or a
-    /// rotation vector (rad) and the 6x6 covariance row-major in `LandmarkSighting`'s order (a pose; a variance that is
-    /// not a positive finite number is unknown). Lockstep replay only.
+    /// `--landmark-sightings` CSV: time, id, body xyz, then 3x3 cov (point) or rotvec + LandmarkSighting-order 6x6 cov. Lockstep only.
     landmark_sightings: Option<PathBuf>,
     /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
     until_s: f64,
@@ -263,8 +233,7 @@ fn rotation_vector(w: [f64; 3]) -> [[f64; 3]; 3] {
     ])
 }
 
-/// A `runtime_profile` row in a.json: a job kind, its 99th-percentile measured / estimated scans, its count and its
-/// coefficients scaled by it.
+/// A `runtime_profile` row: job kind, p99 measured/estimated scans, job count, coefficients scaled by it.
 type RuntimeProfileRow = (String, f64, usize, Vec<(String, f64)>);
 
 /// A `--world-positions` fix: time, frame, sensor lever, position and covariance.
@@ -378,12 +347,10 @@ fn unique_frame(frames: impl Iterator<Item = String>, what: &str) -> Result<Stri
     }
 }
 
-/// The level robot body frame GscPgo works in: odometry poses and lidar points are re-expressed in it through the
-/// recording's tf (closure search assumes level clouds, so a pitched sensor's own frame will not do).
+/// The level body frame GscPgo works in (closure search assumes level clouds); odom poses and lidar points move into it via tf.
 const BODY_FRAME: &str = "base_link";
 
-/// Per odometry (by the odom child frame it moves), its ideal stated odometry error estimate: [per sqrt m, per sqrt rad] for xy, z, yaw,
-/// tilt. Mid-360 (FAST-LIO / Point-LIO) is the Config default; Go2 L1 leg odometry is its calibrated drift.
+/// Stated odometry error estimate per odom child frame ([per sqrt m, per sqrt rad] for xy, z, yaw, tilt); None = unknown.
 fn stated_odometry_error_estimate(odom_child_frame: &str) -> Option<[[f64; 2]; 4]> {
     match odom_child_frame {
         // livox_frame: the Mid-360 frame name Point-LIO recordings like office555 use
@@ -438,8 +405,7 @@ const ODOMETRY_ERROR_ESTIMATE_KEYS: [[&str; 2]; 4] = [
     ],
 ];
 
-/// The eval config: `--config` JSON over the odometry's stated odometry error estimate (`stated_odometry_error_estimate`) over the defaults, then every
-/// drift term times `odometry_error_estimate_scale`.
+/// `--config` JSON over the frame's stated error estimate over the defaults, then drift terms times odometry_error_estimate_scale.
 fn load_config(
     path: Option<&std::path::Path>,
     odom_child_frame: &str,
@@ -495,9 +461,7 @@ fn load_config(
     Ok(config)
 }
 
-/// Latest odom sample at or before `ts` (the module pairs each scan with the
-/// most recent odometry message). `cursor` advances monotonically as scans are
-/// processed in time order.
+/// Latest odom sample at or before `ts` (as the module pairs scans); `cursor` only advances, so call in time order.
 fn advance_latest<'a>(odoms: &'a [OdomRow], ts: f64, cursor: &mut usize) -> Option<&'a OdomRow> {
     while *cursor + 1 < odoms.len() && odoms[*cursor + 1].ts <= ts {
         *cursor += 1;
@@ -529,8 +493,7 @@ fn run() -> Result<(), String> {
     )?;
     let config = load_config(args.config_path.as_deref(), &odom_child_frame)?;
     let tf_tree = memory2::TfTree::read(&connection)?;
-    // the body's pose in the odom child frame: each odom pose (odom -> child) becomes odom -> child * child -> body. A
-    // PoseStamped odom names no child, so it is taken as the body already (and its clouds as in the body frame).
+    // the body's pose in the odom child frame (odom->body = odom->child * child->body); PoseStamped (no child) is the body
     let child_to_body = if odom_child_frame.is_empty() {
         eprintln!(
             "pgo-eval: WARNING: odom payload has no child frame (PoseStamped); \
@@ -690,8 +653,7 @@ fn run() -> Result<(), String> {
         Ok(Some((cloud_with_pose, latest.ts)))
     };
     if args.live {
-        // as the module runs: scans arrive at their recorded times into a queue of max_scan_queue (all but the newest dropped when
-        // full), the closure search runs on its own thread and only starts while no scans wait, solves adopt when done
+        // as the module: scans arrive at recorded times; closure search runs on its own thread, starting only while no scans wait
         let queue = std::sync::Mutex::new((std::collections::VecDeque::new(), false));
         let arrived = std::sync::Condvar::new();
         let wall_start = Instant::now();
@@ -871,8 +833,7 @@ fn run() -> Result<(), String> {
         }
         None => (0, 0),
     };
-    // lockstep waits for every due solve on the keyframe thread, and for the last ones in `finish`; live they run on
-    // their own thread
+    // lockstep waits for due solves on the keyframe thread and in `finish`; live they run on their own thread
     let replay_solve_wait_s = if args.live {
         finish_s
     } else {
@@ -1008,8 +969,7 @@ fn run() -> Result<(), String> {
             ms.len()
         );
     }
-    // the LET coefficients this run measured, a config block ready to paste (each LET's coefficients scaled by its jobs'
-    // 99th-percentile measured / estimated scans; diagnostics only)
+    // each LET's p99 measured/estimated scans and the suggested deterministic_config to paste (diagnostics only)
     {
         let mut block = Vec::new();
         let mut ratios = Vec::new();
@@ -1023,7 +983,6 @@ fn run() -> Result<(), String> {
         }
         eprintln!("pgo-eval: LET measured / estimated scans, 99th percentile: {}", ratios.join(", "));
         let _ = block;
-        // the exact `deterministic_config` object to paste (diagnostics only)
         eprintln!(
             "pgo-eval: suggested deterministic_config: {}",
             serde_json::to_string(&pgo.suggested_deterministic_config()).unwrap_or_default()
@@ -1097,20 +1056,13 @@ impl Pace {
     }
 }
 
-/// The module's speed by thread. `keyframe_thread`, the headline, is the keyframe thread's measured work (every scan's,
-/// waits left out): the per-scan work (`scan`: drop-reseen, aggregation, voxelizing, the keyframe and its scan-context
-/// descriptor, plus the degeneracy check), the scan-context lookup and proposals, and dispatching the jobs, never a
-/// solve. `search_workers` is the closure search's job seconds (the fast-match and verification pools, the pressure),
-/// summed over the jobs: off the keyframe thread, so over its pools' threads it can pass the wall time. The solver is its own thread live: its solves' seconds, and each solve's lag, the
-/// keyframes and data seconds from its dispatch to the first keyframe that arrives after it would have finished live.
-/// `replay_solve_wait_s` is what this deterministic replay spent waiting for solves (not a cost live).
+/// Speed per thread: keyframe thread (no waits/solves), search jobs summed over pools, solves and lag (dispatch -> next keyframe).
 #[derive(Serialize)]
 struct Speed {
     scan: Pace,
     search_workers: Pace,
     keyframe_thread: Pace,
-    /// The search's parts in seconds: scan-context lookup, the rest of proposing, pressure checks, single ICP, extension
-    /// and everything else a search does (submaps, gates, likelihoods).
+    /// Seconds per search part; "other" = submaps, gates, likelihoods.
     search_parts: BTreeMap<String, f64>,
     solves: usize,
     solve_median_s: f64,
@@ -1186,9 +1138,7 @@ impl Speed {
     }
 }
 
-/// What both replays record per scan and keyframe: the loop-overlap pressures, per-keyframe timings and closures, and
-/// with `--event-dump` every keyframe pose change as the module publishes it (`<path>.closures`) and the closure-edge
-/// events (`<path>.edges`).
+/// What both replays record: loop-overlap pressures, per-keyframe timings and closures, and the `--event-dump` files.
 struct Recorder {
     heard: HeardPoses,
     events: Option<(std::fs::File, std::fs::File)>,
@@ -1197,7 +1147,7 @@ struct Recorder {
     keyframe_scan_thread_ms: Vec<f32>,
     keyframe_gnc_ms: Vec<f32>,
     loop_overlap: Vec<(f64, LoopOverlap, usize)>,
-    /// Per scan, ms of the scan thread's own work (`Output::scan_thread_ms`), and the waits when this scan began.
+    /// Per scan, ms of the scan thread's own work, and the thread waits when the current scan began.
     scan_thread_ms: Vec<f32>,
     step_waits_s: f64,
 }
@@ -1274,8 +1224,7 @@ impl Recorder {
         self.dump(pgo, had_closure, ts)
     }
 
-    /// With `--event-dump`, append the pose changes (when a closure closed or a keyframe moved) and the new closure-edge
-    /// events.
+    /// With `--event-dump`, append pose changes (on a closure or a moved keyframe) and the new closure-edge events.
     fn dump(&mut self, pgo: &GscPgo, closure_closed: bool, ts: f64) -> Result<(), String> {
         let Some((events, edges)) = &mut self.events else {
             return Ok(());
