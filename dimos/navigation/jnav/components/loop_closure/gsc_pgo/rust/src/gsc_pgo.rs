@@ -781,7 +781,7 @@ impl Default for Config {
             pressure_check_frequency: 5,
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
-            graph_simplify: false,
+            graph_simplify: true,
             graph_simplify_frontier_keyframes: 1000,
             graph_simplify_pass_gap_keyframes: 200,
             graph_simplify_place_radius_m: 1.0,

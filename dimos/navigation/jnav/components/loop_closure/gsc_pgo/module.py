@@ -135,7 +135,7 @@ class PGOConfig(NativeModuleConfig):
     # a keyframe kept on an older pass within graph_simplify_place_radius_m (cloud and descriptor freed) when a kept closure
     # is within graph_simplify_localized_keyframes of it; a closure folded onto riding keyframes goes to the solve only while
     # its pair of places has fewer than graph_simplify_closures_per_pair
-    graph_simplify: bool = False
+    graph_simplify: bool = True
     graph_simplify_frontier_keyframes: int = 1000
     # a keyframe revisits a place only if the kept keyframe there is at least this many keyframes older
     graph_simplify_pass_gap_keyframes: int = 200
