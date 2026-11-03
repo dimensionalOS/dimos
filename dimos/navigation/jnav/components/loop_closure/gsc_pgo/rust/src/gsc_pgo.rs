@@ -604,7 +604,8 @@ pub struct Config {
     pub soft_pressure_decades: f64,
     /// Reduced pose graph for long runs (`graph_simplify`): keyframes revisiting a mapped, localized place ride a kept one.
     pub graph_simplify: bool,
-    /// The newest this many keyframes are never simplified (each is decided once it is this far behind the newest).
+    /// The newest this many keyframes are never simplified (each is decided once it is this far behind the newest); the
+    /// default (~30 min of keyframes) leaves runs shorter than that untouched, where nothing needs bounding.
     pub graph_simplify_frontier_keyframes: usize,
     /// A keyframe may ride a keyframe kept on an older pass within this distance (m).
     pub graph_simplify_place_radius_m: f64,
@@ -760,7 +761,7 @@ impl Default for Config {
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
             graph_simplify: false,
-            graph_simplify_frontier_keyframes: 200,
+            graph_simplify_frontier_keyframes: 2000,
             graph_simplify_place_radius_m: 1.0,
             graph_simplify_localized_keyframes: 50,
             graph_simplify_closures_per_pair: 1,
