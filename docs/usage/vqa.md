@@ -90,8 +90,10 @@ Localize-backed families (`ego_fore_aft`, `height_order`, `ego_turn`, `ego_any_f
 `cross_view_same_object`) are **off by default**. Enable them with `--with-localize`.
 Generation then:
 
-1. Discovers object names in a padded time window with prompt-free YOLO-E (or uses optional
-   `--localize-query` overrides)
+1. Discovers object names in a padded time window (default `--localize-discover vlm`:
+   OpenAI names the frame, OWLv2 warms in parallel; needs `OPENAI_API_KEY`. Use
+   `--localize-discover lvis` for detector-vocab discovery without OpenAI, or pass
+   explicit `--localize-query` overrides)
 2. Runs Dan localize **once** with a room-scale Go2 policy (not the xArm desktop defaults) to
    verify those names in 3D, build first-sighting timestamps, collect multi-view sightings per
    instance, and cache window `color_image` frames

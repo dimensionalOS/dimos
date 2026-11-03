@@ -69,3 +69,48 @@ def test_proposals_from_detected_names_fill_templates() -> None:
         p.family == "largest_visible_area" and set(p.object_names) == {"chair", "plant"}
         for p in proposals
     )
+
+
+def test_localize_sighting_catalog_scopes_to_camera_and_dedupes_instance() -> None:
+    """Wrong-camera / multi-ts sightings must not invent presence or inflate counts."""
+    from dimos.evals.vqa.primitives.cross_view_identity import SightingView
+    from dimos.evals.vqa.template_author import LocalizeSightingCatalog
+
+    front = Image.from_numpy(
+        np.zeros((20, 20, 3), dtype=np.uint8), format=ImageFormat.RGB, frame_id="front", ts=5.0
+    )
+    rear_rgb = np.full((20, 20, 3), 90, dtype=np.uint8)
+    rear = Image.from_numpy(rear_rgb, format=ImageFormat.RGB, frame_id="rear", ts=5.0)
+    box = (5.0, 5.0, 15.0, 15.0)
+
+    def view(*, camera: str, ts: float, instance_id: str, image: Image) -> SightingView:
+        return SightingView(
+            query="chair",
+            instance_id=instance_id,
+            image=image,
+            bbox=box,
+            confidence=0.8,
+            timestamp=ts,
+            n_views=3,
+            semantic_score=0.8,
+            camera_frame=camera,
+        )
+
+    catalog = LocalizeSightingCatalog(
+        {
+            "chair": {
+                "a": (
+                    view(camera="rear", ts=5.0, instance_id="a", image=rear),
+                    view(camera="front", ts=4.9, instance_id="a", image=front),
+                    view(camera="front", ts=5.1, instance_id="a", image=front),
+                )
+            }
+        }
+    )
+    # Empty front frame must not answer from the rear sighting.
+    empty_front = Image.from_numpy(
+        np.zeros((20, 20, 3), dtype=np.uint8), format=ImageFormat.RGB, frame_id="front", ts=5.0
+    )
+    dets = catalog.query_detections(empty_front, "chair")
+    assert len(dets.detections) == 1  # one instance, not three
+    assert catalog.names_for(empty_front) == ("chair",)

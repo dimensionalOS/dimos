@@ -118,6 +118,17 @@ def difficulty_for(
     return 0.5
 
 
+def _audit_question_matches(published_question: str, audit_question: str) -> bool:
+    """True when audit text matches the published question (ego clips add a prefix)."""
+    if audit_question == published_question:
+        return True
+    # Ego memory clips prepend "This clip covers …). " before the original question.
+    marker = "). "
+    if published_question.startswith("This clip covers ") and marker in published_question:
+        return audit_question == published_question.split(marker, 1)[1]
+    return False
+
+
 def candidates_from_answered_audit(
     *,
     case_id: str,
@@ -129,23 +140,35 @@ def candidates_from_answered_audit(
     """Build one diversity candidate from a published case + its answered audit row."""
     object_names: tuple[str, ...] = ()
     evidence: dict[str, object] | None = None
+    matched: Mapping[str, object] | None = None
     for row in audit_rows:
         if row.get("status") != "answered":
             continue
         ans_obj = row.get("answer")
         if not isinstance(ans_obj, Mapping):
             continue
-        if str(ans_obj.get("question") or "") != question:
-            continue
+        audit_q = str(ans_obj.get("question") or "")
         proposal = row.get("proposal")
+        proposal_family = str(proposal.get("family") or "") if isinstance(proposal, Mapping) else ""
+        # Prefer exact / ego-prefix question match; else same-family proposal on this case.
+        if _audit_question_matches(question, audit_q) or (
+            not audit_q and proposal_family == family
+        ):
+            matched = row
+            break
+        if proposal_family == family and matched is None:
+            matched = row
+    if matched is not None:
+        ans_obj = matched.get("answer")
+        proposal = matched.get("proposal")
         if isinstance(proposal, Mapping):
             names = proposal.get("object_names")
             if isinstance(names, (list, tuple)):
                 object_names = tuple(str(name) for name in names)
-        ev = ans_obj.get("evidence")
-        if isinstance(ev, dict):
-            evidence = ev
-        break
+        if isinstance(ans_obj, Mapping):
+            ev = ans_obj.get("evidence")
+            if isinstance(ev, dict):
+                evidence = ev
     if not object_names:
         object_names = _proposal_names(audit_rows, case_id)
     category = coverage_category(family, object_names, evidence)

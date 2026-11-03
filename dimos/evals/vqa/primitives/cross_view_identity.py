@@ -379,20 +379,26 @@ def dedupe_identity_pairs(pairs: Sequence[IdentityPair]) -> tuple[IdentityPair, 
 
 
 def _drop_competitor_contaminated_views(
-    instances: Mapping[str, Sequence[SightingView]],
+    endpoints: Mapping[str, Sequence[SightingView]],
+    *,
+    competitors: Mapping[str, Sequence[SightingView]] | None = None,
 ) -> dict[str, tuple[SightingView, ...]]:
-    """Drop views whose full frame also has another same-category instance.
+    """Drop endpoint views whose full frame also has another same-category instance.
 
     Full-frame identity questions cannot mark which box is the referent, so a
     co-visible competitor makes both "yes" and "no" labels unreliable.
+
+    ``competitors`` should be the **unfiltered** sighting map: short tracks and
+    poorly framed boxes still appear in the published image and must block pairs.
     """
+    source = competitors if competitors is not None else endpoints
     cleaned: dict[str, tuple[SightingView, ...]] = {}
-    for instance_id, views in instances.items():
+    for instance_id, views in endpoints.items():
         kept = tuple(
             view
             for view in views
             if not _competing_instance_visible_at(
-                instances,
+                source,
                 instance_id,
                 view.timestamp,
                 camera_frame=view.camera_frame,
@@ -409,6 +415,10 @@ def propose_identity_pairs(
     min_views: int = MIN_INSTANCE_VIEWS,
 ) -> tuple[IdentityPair, ...]:
     """Build same/different pairs for one query's filtered instance→views map."""
+    # Framing / min_views gate endpoint eligibility only. Competitor checks use
+    # the raw map so a one-sighting or poorly framed co-visible instance still
+    # makes a "yes" label ambiguous.
+    raw = instances
     kept: dict[str, tuple[SightingView, ...]] = {}
     for instance_id, views in instances.items():
         filtered = filter_instance_views(views, min_views=min_views)
@@ -419,13 +429,13 @@ def propose_identity_pairs(
             kept[instance_id] = filtered
 
     # Strip frames where two category instances co-appear before pairing.
-    kept = _drop_competitor_contaminated_views(kept)
+    kept = _drop_competitor_contaminated_views(kept, competitors=raw)
 
     same: list[IdentityPair] = []
     for views in kept.values():
         if len(views) >= 2:
             # Reject "yes" when another same-category instance shares either endpoint.
-            same.extend(_pick_same_pairs(views, by_instance=kept))
+            same.extend(_pick_same_pairs(views, by_instance=raw))
 
     # Diff only among instances that have ≥1 framing-OK view.
     diff_pool = {i: v for i, v in kept.items() if v}

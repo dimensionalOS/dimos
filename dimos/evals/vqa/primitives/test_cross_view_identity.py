@@ -252,6 +252,26 @@ def test_contaminated_shared_frame_views_are_dropped_before_pairing() -> None:
         assert {pair.left.timestamp, pair.right.timestamp}.isdisjoint({10.0})
 
 
+def test_same_pairs_reject_endpoint_when_short_track_competitor_co_visible() -> None:
+    """Competitor checks use raw sightings — min_views must not hide co-visible B.
+
+    Greptile P1: three A views + one B view at A's first frame; filtering drops B
+    before pairing, but the published image still shows both boxes.
+    """
+    centered = (70.0, 70.0, 130.0, 130.0)
+    a = (
+        _view(instance_id="a", bbox=centered, ts=0.0, n_views=3, score=0.9),
+        _view(instance_id="a", bbox=centered, ts=10.0, n_views=3, score=0.9),
+        _view(instance_id="a", bbox=centered, ts=20.0, n_views=3, score=0.9),
+    )
+    b = (_view(instance_id="b", bbox=centered, ts=0.0, n_views=1, score=0.8),)
+    pairs = propose_identity_pairs({"a": a, "b": b}, min_views=3)
+    # Contaminated t=0 must not be a same-pair endpoint; A10↔A20 is fine.
+    for pair in pairs:
+        if pair.same_object:
+            assert 0.0 not in {pair.left.timestamp, pair.right.timestamp}
+
+
 def test_greptile_f1_co_visible_scene_emits_no_conflicting_labels() -> None:
     """Two co-visible boxes on identical stationary frames must not yield yes+no.
 

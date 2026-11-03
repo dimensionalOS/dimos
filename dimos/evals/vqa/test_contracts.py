@@ -864,7 +864,7 @@ def test_materialize_cross_view_from_shared_localize_views(tmp_path: Path) -> No
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "audit").mkdir()
-    cases, labels, stats = _materialize_cross_view_clips(
+    cases, labels, stats, audit_by_id = _materialize_cross_view_clips(
         staging,
         [],
         [],
@@ -877,6 +877,7 @@ def test_materialize_cross_view_from_shared_localize_views(tmp_path: Path) -> No
     assert all(case.clips is not None and case.image is None for case in cases)
     assert any((staging / "assets" / "clips").rglob("manifest.json"))
     assert "first_clip" in cases[0].question and "second_clip" in cases[0].question
+    assert set(audit_by_id) == {case.id for case in cases}
 
 
 def test_materialize_cross_view_empty_views_is_noop(tmp_path: Path) -> None:
@@ -885,7 +886,7 @@ def test_materialize_cross_view_empty_views_is_noop(tmp_path: Path) -> None:
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "audit").mkdir()
-    cases, labels, stats = _materialize_cross_view_clips(
+    cases, labels, stats, audit = _materialize_cross_view_clips(
         staging,
         [],
         [],
@@ -896,6 +897,7 @@ def test_materialize_cross_view_empty_views_is_noop(tmp_path: Path) -> None:
     assert cases == [] and labels == []
     assert stats["question_count"] == 0
     assert stats["n_pairs_proposed"] == 0
+    assert audit == {}
 
 
 def test_generate_frames_publishes_cross_view_when_frame_cases_empty(
@@ -1008,7 +1010,7 @@ def test_materialize_cross_view_audits_rejected_pairs(
     staging = tmp_path / "staging"
     staging.mkdir()
     (staging / "audit").mkdir()
-    cases, _labels, stats = _materialize_cross_view_clips(
+    cases, _labels, stats, _audit_by_id = _materialize_cross_view_clips(
         staging,
         [],
         [],
@@ -1613,6 +1615,20 @@ def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path)
 
     assert existing.read_text() == "keep me"
     assert list(output.iterdir()) == [existing]
+
+
+def test_generation_accepts_precreated_empty_output_directory(tmp_path: Path) -> None:
+    """CLI allows absent or empty destinations; empty dirs must not be rejected."""
+    output = tmp_path / "vqa"
+    output.mkdir()
+    result = generate_frames_dataset(
+        GenerationRequest(dataset="recording.db", image_index=4, output=output),
+        (GenerationFrame(4, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))),),
+        _Author(),
+        _Detector(present=True),
+    )
+    assert result.cases
+    assert (output / "cases.jsonl").is_file()
 
 
 def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path) -> None:

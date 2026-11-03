@@ -484,8 +484,12 @@ def localize_window(
                 target=_warm, name="localize-detector-warmup", daemon=True
             )
             warm_thread.start()
-            query_list = list(discover_object_names_vlm(rig, after, before))
-            warm_thread.join()
+            try:
+                query_list = list(discover_object_names_vlm(rig, after, before))
+            finally:
+                # Always join before the outer finally stops the detector, even
+                # when discovery raises — otherwise warmup can allocate after stop.
+                warm_thread.join()
             if warm_error:
                 raise RuntimeError("localize detector warmup failed") from warm_error[0]
         elif not query_list:

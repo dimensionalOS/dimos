@@ -534,7 +534,9 @@ def generate_frames_dataset(
                     generated_frames, all_cases, all_labels, k=coverage_k
                 )
 
-            if request.with_localize and color_frames:
+            # Multi-cam windows leave color_frames empty and fill by_camera only.
+            has_color_streams = bool(color_frames) or bool(color_frames_by_camera)
+            if request.with_localize and has_color_streams:
                 all_cases, all_labels = _materialize_ego_memory_clips(
                     staging,
                     generated_frames,
@@ -545,15 +547,18 @@ def generate_frames_dataset(
                 )
 
             cross_view_stats: dict[str, object] | None = None
-            if request.with_localize and color_frames and views_by_query:
-                all_cases, all_labels, cross_view_stats = _materialize_cross_view_clips(
-                    staging,
-                    all_cases,
-                    all_labels,
-                    color_frames=color_frames,
-                    color_frames_by_camera=color_frames_by_camera or {},
-                    views_by_query=views_by_query,
-                    min_views=request.min_views,
+            cross_view_audit: dict[str, tuple[dict[str, object], ...]] = {}
+            if request.with_localize and has_color_streams and views_by_query:
+                all_cases, all_labels, cross_view_stats, cross_view_audit = (
+                    _materialize_cross_view_clips(
+                        staging,
+                        all_cases,
+                        all_labels,
+                        color_frames=color_frames,
+                        color_frames_by_camera=color_frames_by_camera or {},
+                        views_by_query=views_by_query,
+                        min_views=request.min_views,
+                    )
                 )
                 if cross_view_stats.get("question_count", 0):
                     used_family_names.add("cross_view_same_object")
@@ -568,6 +573,7 @@ def generate_frames_dataset(
                     all_labels,
                     max_per_category=config.diversity_max_per_category,
                     max_per_family_category=config.diversity_max_per_family_category,
+                    extra_audit_by_id=cross_view_audit,
                 )
 
             # Cross-view (and ego clip rewrites) may be the only published cases.
@@ -663,7 +669,12 @@ def _materialize_cross_view_clips(
     views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]],
     min_views: int,
     color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
-) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
+) -> tuple[
+    list[PublicCase],
+    list[PrivateLabel],
+    dict[str, object],
+    dict[str, tuple[dict[str, object], ...]],
+]:
     """Append cross-view identity cases from the shared localize window (no second localize)."""
     by_camera = color_frames_by_camera or {}
     proposed: list[IdentityPair] = []
@@ -689,6 +700,7 @@ def _materialize_cross_view_clips(
     out_cases = list(cases)
     out_labels = list(labels)
     audit_rows: list[dict[str, object]] = []
+    audit_by_id: dict[str, tuple[dict[str, object], ...]] = {}
     rejected = 0
     published = 0
     for pair_index, pair in enumerate(all_pairs):
@@ -735,15 +747,20 @@ def _materialize_cross_view_clips(
         )
         out_labels.append(PrivateLabel(id=case_id, answer=answered.answer))
         published += 1
-        audit_rows.append(
-            {
-                "status": "answered",
-                "case_id": case_id,
-                "answer": answered.model_dump(mode="json"),
-                "first_clip_duration_s": first_dur,
-                "second_clip_duration_s": second_dur,
-            }
-        )
+        answered_row: dict[str, object] = {
+            "status": "answered",
+            "case_id": case_id,
+            # Proposal + evidence so diversity can recover the category after publish.
+            "proposal": {
+                "family": "cross_view_same_object",
+                "object_names": [pair.query],
+            },
+            "answer": answered.model_dump(mode="json"),
+            "first_clip_duration_s": first_dur,
+            "second_clip_duration_s": second_dur,
+        }
+        audit_rows.append(answered_row)
+        audit_by_id[case_id] = (answered_row,)
 
     if audit_rows:
         _write_json(staging / "audit" / "pairs.json", audit_rows)
@@ -753,7 +770,7 @@ def _materialize_cross_view_clips(
         "question_count": published,
         "rejected_question_count": rejected,
     }
-    return out_cases, out_labels, stats
+    return out_cases, out_labels, stats, audit_by_id
 
 
 def _generate_frame(
@@ -1056,6 +1073,7 @@ def _apply_diversity_budget(
     *,
     max_per_category: int,
     max_per_family_category: int,
+    extra_audit_by_id: Mapping[str, Sequence[Mapping[str, object]]] | None = None,
 ) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
     """Thin published cases toward difficulty + category diversity (not coverage)."""
     labels_by_id = {label.id: label for label in labels}
@@ -1063,6 +1081,9 @@ def _apply_diversity_budget(
     for frame in frames:
         for case in frame.cases:
             audit_by_id[case.id] = frame.audit_rows
+    if extra_audit_by_id:
+        for case_id, rows in extra_audit_by_id.items():
+            audit_by_id[case_id] = tuple(dict(row) for row in rows)
 
     candidates = []
     for case in cases:
@@ -1193,12 +1214,18 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
 
 
 def _prepare_output(output: Path) -> None:
-    """Claim ``output`` exclusively so concurrent runs cannot share the path."""
-    try:
-        output.mkdir(parents=True, exist_ok=False)
-    except FileExistsError as exc:
-        detail = "is not empty" if output.is_dir() and any(output.iterdir()) else "already exists"
-        raise FileExistsError(f"VQA output directory {detail}: {output}") from exc
+    """Claim ``output`` so concurrent runs cannot share a non-empty path.
+
+    The CLI contract allows an absent **or empty** destination; an existing empty
+    directory is accepted. Non-empty directories and non-directory paths are rejected.
+    """
+    if output.exists():
+        if not output.is_dir():
+            raise FileExistsError(f"VQA output path already exists: {output}")
+        if any(output.iterdir()):
+            raise FileExistsError(f"VQA output directory is not empty: {output}")
+        return
+    output.mkdir(parents=True, exist_ok=False)
 
 
 def _remove_incomplete_output(output: Path) -> None:

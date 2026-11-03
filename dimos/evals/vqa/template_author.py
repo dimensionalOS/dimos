@@ -280,17 +280,35 @@ class LocalizeSightingCatalog:
         return
 
     def _sightings_near(self, image: Image, query: str | None = None) -> list[SightingView]:
+        """Same-camera sightings near ``image.ts``, at most one per instance.
+
+        Other cameras and duplicate observations of the same track must not
+        invent presence or inflate counts on the selected frame.
+        """
         want = _normalize_name(query) if query is not None else None
         ts = float(image.ts)
-        out: list[SightingView] = []
+        camera = str(getattr(image, "frame_id", "") or "")
+        best_by_instance: dict[str, SightingView] = {}
         for name, by_id in self._views.items():
             if want is not None and _normalize_name(name) != want:
                 continue
-            for views in by_id.values():
+            for instance_id, views in by_id.items():
                 for view in views:
-                    if abs(float(view.timestamp) - ts) <= self._tol:
-                        out.append(view)
-        return out
+                    if abs(float(view.timestamp) - ts) > self._tol:
+                        continue
+                    if camera and view.camera_frame and view.camera_frame != camera:
+                        continue
+                    prev = best_by_instance.get(instance_id)
+                    if prev is None:
+                        best_by_instance[instance_id] = view
+                        continue
+                    prev_dt = abs(float(prev.timestamp) - ts)
+                    view_dt = abs(float(view.timestamp) - ts)
+                    if view_dt < prev_dt or (
+                        view_dt == prev_dt and float(view.confidence) > float(prev.confidence)
+                    ):
+                        best_by_instance[instance_id] = view
+        return list(best_by_instance.values())
 
     def names_for(self, image: Image) -> tuple[str, ...]:
         counts: Counter[str] = Counter()
