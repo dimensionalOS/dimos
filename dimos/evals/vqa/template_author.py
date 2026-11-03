@@ -279,6 +279,27 @@ class LocalizeSightingCatalog:
     def stop(self) -> None:
         return
 
+    @staticmethod
+    def _view_camera(view: SightingView) -> str:
+        """Camera id for a sighting: explicit frame, else the view image's frame_id."""
+        explicit = str(view.camera_frame or "")
+        if explicit:
+            return explicit
+        return str(getattr(view.image, "frame_id", "") or "")
+
+    def _same_camera(self, image: Image, view: SightingView) -> bool:
+        """True only when the sighting belongs on the selected image's camera.
+
+        A named selected frame must not accept other or unknown cameras. A blank
+        selected frame must not accept a named camera either — otherwise rear
+        evidence can answer an unlabeled / empty front crop.
+        """
+        selected = str(getattr(image, "frame_id", "") or "")
+        sighting = self._view_camera(view)
+        if selected:
+            return bool(sighting) and sighting == selected
+        return not sighting
+
     def _sightings_near(self, image: Image, query: str | None = None) -> list[SightingView]:
         """Same-camera sightings near ``image.ts``, at most one per instance.
 
@@ -287,7 +308,6 @@ class LocalizeSightingCatalog:
         """
         want = _normalize_name(query) if query is not None else None
         ts = float(image.ts)
-        camera = str(getattr(image, "frame_id", "") or "")
         best_by_instance: dict[str, SightingView] = {}
         for name, by_id in self._views.items():
             if want is not None and _normalize_name(name) != want:
@@ -296,8 +316,7 @@ class LocalizeSightingCatalog:
                 for view in views:
                     if abs(float(view.timestamp) - ts) > self._tol:
                         continue
-                    # Selected image with a frame_id must not accept other/unknown cameras.
-                    if camera and (not view.camera_frame or view.camera_frame != camera):
+                    if not self._same_camera(image, view):
                         continue
                     prev = best_by_instance.get(instance_id)
                     if prev is None:

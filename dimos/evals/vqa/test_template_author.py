@@ -124,3 +124,9 @@ def test_localize_sighting_catalog_scopes_to_camera_and_dedupes_instance() -> No
         }
     )
     assert blank.query_detections(empty_front, "chair").detections == []
+
+    # Named rear evidence must not answer an unlabeled selected crop.
+    unlabeled = Image.from_numpy(
+        np.zeros((20, 20, 3), dtype=np.uint8), format=ImageFormat.RGB, frame_id="", ts=5.0
+    )
+    assert catalog.query_detections(unlabeled, "chair").detections == []
