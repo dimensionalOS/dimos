@@ -330,7 +330,6 @@ all_modules = {
     "operator-hold-coordinator": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim.OperatorHoldCoordinator",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",
-    "patrolling-module": "dimos.navigation.experimental.patrolling.module.PatrollingModule",
     "perceive-loop-skill": "dimos.perception.experimental.perceive_loop_skill.PerceiveLoopSkill",
     "perception-localize": "dimos.perception.localize.module.PerceptionLocalize",
     "person-follow-skill-container": "dimos.agents.skills.person_follow.PersonFollowSkillContainer",
