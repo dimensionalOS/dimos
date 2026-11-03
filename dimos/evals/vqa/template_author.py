@@ -29,7 +29,7 @@ from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
-# Cap how many image-family proposals one frame emits before diversity filtering.
+# Cap how many image-family proposals one frame emits.
 _MAX_NAMES_PER_FRAME = 8
 _MAX_LARGEST_PAIRS = 4
 _MAX_LARGEST_TRIPLES = 2

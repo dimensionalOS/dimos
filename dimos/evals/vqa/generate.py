@@ -49,12 +49,6 @@ from dimos.evals.vqa.contracts import (
     ObjectRangeEstimator,
     QuestionProposal,
 )
-from dimos.evals.vqa.diversity import (
-    DEFAULT_MAX_PER_CATEGORY,
-    DEFAULT_MAX_PER_FAMILY_CATEGORY,
-    candidates_from_answered_audit,
-    select_diverse_case_ids,
-)
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
@@ -93,7 +87,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.evals.vqa.localize_evidence import LocalizeEvidenceDocument
     from dimos.evals.vqa.localize_recording import LocalizeWindowResult
 
 logger = setup_logger()
@@ -109,9 +102,10 @@ class GenerationRequest(BaseModel):
     Frame selection (``image_index`` or ``start``/``stop``) drives image families.
     With ``with_localize``, Dan localize runs **once** over the padded window and
     feeds ego memory clips **and** cross-view identity pairs from the same hits /
-    first-sighting timestamps / color frames — no second ``--query`` localize pass.
-    Pass ``localize_evidence`` to reuse a prior ``audit/localize_evidence.json``
-    and skip Dan (color frames are still read from the recording).
+    first-sighting timestamps / color frames — no second localize pass.
+
+    Extra localize knobs below are programmatic defaults (CLI only exposes
+    ``--with-localize``).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -131,9 +125,7 @@ class GenerationRequest(BaseModel):
     localize_coverage_k: int | None = Field(default=None, ge=0)
     # Minimum distinct camera poses for a cross-view identity instance.
     min_views: int = Field(default=3, ge=1)
-    # Prior lightweight evidence dump; skips Dan when window/dataset match.
-    localize_evidence: Path | None = None
-    # Dan open-vocab detector registry name (owlv2 / omdet / gdino / yoloe).
+    # Dan open-vocab detector registry name (owlv2 / omdet / gdino).
     localize_detector: NonEmptyString = "owlv2"
     # Name discovery: vlm (OpenAI, parallel OWL warmup) or lvis (detector vocab).
     localize_discover: NonEmptyString = "vlm"
@@ -144,8 +136,6 @@ class GenerationRequest(BaseModel):
             raise ValueError("localize_queries requires with_localize=True")
         if self.localize_coverage_k is not None and not self.with_localize:
             raise ValueError("localize_coverage_k requires with_localize=True")
-        if self.localize_evidence is not None and not self.with_localize:
-            raise ValueError("localize_evidence requires with_localize=True")
         if self.localize_detector != "owlv2" and not self.with_localize:
             raise ValueError("localize_detector requires with_localize=True")
         if self.localize_discover not in {"vlm", "lvis"}:
@@ -205,12 +195,9 @@ class VqaGenerationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     synchronization_tolerance_s: float = Field(default=0.1, gt=0)
-    # template = OWL (+ VLM names if no localize queries) → family slots.
-    # openai = legacy VLM author + Moondream detector.
-    question_author: NonEmptyString = "template"
-    # Publish budget: cap repeats by category; prefer harder answers / rarer families.
-    diversity_max_per_category: int = Field(default=DEFAULT_MAX_PER_CATEGORY, ge=1)
-    diversity_max_per_family_category: int = Field(default=DEFAULT_MAX_PER_FAMILY_CATEGORY, ge=1)
+    # openai = VLM author + Moondream detector (default without --with-localize).
+    # template = OWL / sighting catalog → family slots (used automatically with localize).
+    question_author: NonEmptyString = "openai"
 
     @model_validator(mode="after")
     def valid_question_author(self) -> VqaGenerationConfig:
@@ -330,40 +317,22 @@ def generate_dataset(
             indices = resolve_generation_frame_indices(request, loader.image_count)
 
         localize_ctx: AbstractContextManager[LocalizeWindowResult | None] = nullcontext(None)
-        localize_after: float | None = None
-        localize_before: float | None = None
-        localize_evidence_doc = None
         if request.with_localize:
+            from dimos.evals.vqa.localize_recording import localize_window
+
             timestamps = tuple(
                 float(loader.images.offset(index).limit(1).first().ts) for index in indices
             )
             localize_after = min(timestamps) - request.localize_pad_s
             localize_before = max(timestamps) + request.localize_pad_s
-            if request.localize_evidence is not None:
-                from dimos.evals.vqa.localize_evidence import (
-                    load_localize_evidence,
-                    localize_window_from_evidence,
-                )
-
-                localize_evidence_doc = load_localize_evidence(request.localize_evidence)
-                localize_ctx = localize_window_from_evidence(
-                    request.dataset,
-                    localize_evidence_doc,
-                    localize_after,
-                    localize_before,
-                    localize_queries=request.localize_queries,
-                )
-            else:
-                from dimos.evals.vqa.localize_recording import localize_window
-
-                localize_ctx = localize_window(
-                    request.dataset,
-                    request.localize_queries,
-                    localize_after,
-                    localize_before,
-                    detector=request.localize_detector,
-                    discover=request.localize_discover,
-                )
+            localize_ctx = localize_window(
+                request.dataset,
+                request.localize_queries,
+                localize_after,
+                localize_before,
+                detector=request.localize_detector,
+                discover=request.localize_discover,
+            )
 
         with localize_ctx as localize_result:
             author_model: object | None = None
@@ -371,17 +340,7 @@ def generate_dataset(
             catalog: OpenVocabDetectionCatalog | LocalizeSightingCatalog | None = None
             detector: ObjectDetector
             try:
-                if config.question_author == "openai":
-                    author_model = OpenAIVlModel()
-                    detector_model = MoondreamVlModel()
-                    author: QuestionAuthor = OpenAIQuestionAuthor(author_model)
-                    detector = detector_model
-                    model_names = {
-                        "author": author_model.config.model_name,
-                        "detector": detector_model.config.model_name,
-                        "question_author": "openai",
-                    }
-                elif localize_result is not None:
+                if localize_result is not None:
                     # Reuse Dan 2D sightings — no second OWL for image families.
                     catalog = LocalizeSightingCatalog(localize_result.views_by_query)
                     author = TemplateDetectionAuthor(catalog)
@@ -391,6 +350,16 @@ def generate_dataset(
                         "detector": catalog.config.model_name,
                         "question_author": "template",
                         "catalog_queries": str(len(localize_result.queries)),
+                    }
+                elif config.question_author == "openai":
+                    author_model = OpenAIVlModel()
+                    detector_model = MoondreamVlModel()
+                    author: QuestionAuthor = OpenAIQuestionAuthor(author_model)
+                    detector = detector_model
+                    model_names = {
+                        "author": author_model.config.model_name,
+                        "detector": detector_model.config.model_name,
+                        "question_author": "openai",
                     }
                 else:
                     catalog = OpenVocabDetectionCatalog()
@@ -402,23 +371,10 @@ def generate_dataset(
                         "question_author": "template",
                     }
                 if request.with_localize:
-                    reused = request.localize_evidence is not None
-                    model_names["localize"] = "evidence" if reused else "dandetect"
+                    model_names["localize"] = "dandetect"
                     if localize_result is not None:
                         model_names["localize_queries"] = ", ".join(localize_result.queries)
                         model_names["localize_hits"] = str(len(localize_result.named_hits))
-                    if localize_result is not None and localize_after is not None:
-                        from dimos.evals.vqa.localize_evidence import evidence_from_window_result
-
-                        # Fresh Dan pass: build dump from live result. Evidence reuse:
-                        # re-emit the loaded document (same window) into the new dataset audit.
-                        if localize_evidence_doc is None:
-                            localize_evidence_doc = evidence_from_window_result(
-                                localize_result,
-                                dataset=request.dataset,
-                                after=localize_after,
-                                before=float(localize_before or localize_after),
-                            )
                 mask_estimator = EdgeTAMObjectMaskPipeline(detector)
 
                 def pointcloud_frames() -> Iterable[GenerationFrame]:
@@ -471,7 +427,6 @@ def generate_dataset(
                     color_frames=color_frames,
                     color_frames_by_camera=color_frames_by_camera,
                     views_by_query=views_by_query,
-                    localize_evidence=localize_evidence_doc,
                 )
             finally:
                 if author_model is not None:
@@ -495,7 +450,6 @@ def generate_frames_dataset(
     color_frames: Sequence[tuple[float, Image]] = (),
     color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
     views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]] | None = None,
-    localize_evidence: LocalizeEvidenceDocument | None = None,
 ) -> GenerationResult:
     """Generate and write one dataset from already loaded indexed images."""
     config = config or VqaGenerationConfig()
@@ -548,9 +502,8 @@ def generate_frames_dataset(
                 )
 
             cross_view_stats: dict[str, object] | None = None
-            cross_view_audit: dict[str, tuple[dict[str, object], ...]] = {}
             if request.with_localize and has_color_streams and views_by_query:
-                all_cases, all_labels, cross_view_stats, cross_view_audit = (
+                all_cases, all_labels, cross_view_stats, _cross_view_audit = (
                     _materialize_cross_view_clips(
                         staging,
                         all_cases,
@@ -563,19 +516,6 @@ def generate_frames_dataset(
                 )
                 if cross_view_stats.get("question_count", 0):
                     used_family_names.add("cross_view_same_object")
-
-            diversity_stats: dict[str, object] | None = None
-            # Diversity thinning is for large with-localize publishes; keep every
-            # case on image-only / unit-test paths that do not opt into it.
-            if request.with_localize and all_cases:
-                all_cases, all_labels, diversity_stats = _apply_diversity_budget(
-                    generated_frames,
-                    all_cases,
-                    all_labels,
-                    max_per_category=config.diversity_max_per_category,
-                    max_per_family_category=config.diversity_max_per_family_category,
-                    extra_audit_by_id=cross_view_audit,
-                )
 
             # Cross-view (and ego clip rewrites) may be the only published cases.
             if not all_cases:
@@ -602,25 +542,8 @@ def generate_frames_dataset(
             }
             if coverage_stats is not None:
                 run_payload["localize_coverage"] = coverage_stats
-            if diversity_stats is not None:
-                run_payload["diversity"] = diversity_stats
             if cross_view_stats is not None:
                 run_payload["cross_view"] = cross_view_stats
-            if localize_evidence is not None:
-                from dimos.evals.vqa.localize_evidence import (
-                    LocalizeEvidenceDocument,
-                    write_localize_evidence,
-                )
-
-                if isinstance(localize_evidence, LocalizeEvidenceDocument):
-                    write_localize_evidence(
-                        staging / "audit" / "localize_evidence.json", localize_evidence
-                    )
-                    run_payload["localize_evidence"] = {
-                        "path": "audit/localize_evidence.json",
-                        "n_instances": len(localize_evidence.instances),
-                        "reused": request.localize_evidence is not None,
-                    }
             _write_json(staging / "audit" / "run.json", run_payload)
             if output.exists():
                 claim = output / _OUTPUT_CLAIM
@@ -754,7 +677,7 @@ def _materialize_cross_view_clips(
         answered_row: dict[str, object] = {
             "status": "answered",
             "case_id": case_id,
-            # Proposal + evidence so diversity can recover the category after publish.
+            # Proposal + evidence kept on the case audit for coverage / debug.
             "proposal": {
                 "family": "cross_view_same_object",
                 "object_names": [pair.query],
@@ -1068,65 +991,6 @@ def _effective_localize_coverage_k(request: GenerationRequest) -> int | None:
     if request.localize_coverage_k == 0:
         return None
     return request.localize_coverage_k
-
-
-def _apply_diversity_budget(
-    frames: Sequence[_GeneratedFrame],
-    cases: Sequence[PublicCase],
-    labels: Sequence[PrivateLabel],
-    *,
-    max_per_category: int,
-    max_per_family_category: int,
-    extra_audit_by_id: Mapping[str, Sequence[Mapping[str, object]]] | None = None,
-) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
-    """Thin published cases toward difficulty + category diversity (not coverage)."""
-    labels_by_id = {label.id: label for label in labels}
-    audit_by_id: dict[str, tuple[dict[str, object], ...]] = {}
-    for frame in frames:
-        for case in frame.cases:
-            audit_by_id[case.id] = frame.audit_rows
-    if extra_audit_by_id:
-        for case_id, rows in extra_audit_by_id.items():
-            audit_by_id[case_id] = tuple(dict(row) for row in rows)
-
-    candidates = []
-    for case in cases:
-        label = labels_by_id.get(case.id)
-        if label is None:
-            continue
-        family = case_family_from_id(case.id)
-        candidates.append(
-            candidates_from_answered_audit(
-                case_id=case.id,
-                family=family,
-                question=case.question,
-                answer=label.answer,
-                audit_rows=audit_by_id.get(case.id, ()),
-            )
-        )
-    kept_ids = select_diverse_case_ids(
-        candidates,
-        max_per_category=max_per_category,
-        max_per_family_category=max_per_family_category,
-    )
-    filtered_cases = [case for case in cases if case.id in kept_ids]
-    filtered_labels = [label for label in labels if label.id in kept_ids]
-    by_family: dict[str, int] = {}
-    by_category: dict[str, int] = {}
-    for cand in candidates:
-        if cand.case_id not in kept_ids:
-            continue
-        by_family[cand.family] = by_family.get(cand.family, 0) + 1
-        by_category[cand.category] = by_category.get(cand.category, 0) + 1
-    stats: dict[str, object] = {
-        "max_per_category": max_per_category,
-        "max_per_family_category": max_per_family_category,
-        "total_before": len(cases),
-        "total_after": len(filtered_cases),
-        "kept_per_family": dict(sorted(by_family.items())),
-        "kept_per_category": dict(sorted(by_category.items())),
-    }
-    return filtered_cases, filtered_labels, stats
 
 
 def _apply_localize_coverage_budget(

@@ -189,7 +189,7 @@ def test_filter_instance_views_honors_min_views() -> None:
 
 
 def test_filter_instance_views_ignores_stale_n_views_metadata() -> None:
-    """``--min-views`` must use sighting count, not Localization.n_views."""
+    """min_views must use sighting count, not Localization.n_views."""
     centered = (70.0, 70.0, 130.0, 130.0)
     two = (
         _view(instance_id="a", bbox=centered, ts=1.0, n_views=99, score=0.9),

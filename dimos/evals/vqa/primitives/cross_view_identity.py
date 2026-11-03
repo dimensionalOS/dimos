@@ -115,7 +115,7 @@ def instance_pool_ok(*, n_views: int, min_views: int = MIN_INSTANCE_VIEWS) -> bo
     """True when there are enough sightings for the pool (≥ ``min_views``, default 3).
 
     ``n_views`` is the count of available sightings (trace length), not a stale
-    Localization metadata field that would ignore a lowered ``--min-views``.
+    Localization metadata field that would ignore a lowered ``min_views``.
     """
     return n_views >= min_views
 

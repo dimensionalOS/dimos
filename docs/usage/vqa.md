@@ -87,13 +87,11 @@ winning EdgeTAM mask contains at least 20% more pixels than the runner-up. Both 
 point-cloud data.
 
 Localize-backed families (`ego_fore_aft`, `height_order`, `ego_turn`, `ego_any_fore_aft`,
-`cross_view_same_object`) are **off by default**. Enable them with `--with-localize`.
-Generation then:
+`cross_view_same_object`) are **off by default**. Enable them with `--with-localize`
+(no other localize flags). Generation then:
 
-1. Discovers object names in a padded time window (default `--localize-discover vlm`:
-   OpenAI names the frame, OWLv2 warms in parallel; needs `OPENAI_API_KEY`. Use
-   `--localize-discover lvis` for detector-vocab discovery without OpenAI, or pass
-   explicit `--localize-query` overrides)
+1. Discovers object names in a padded time window (default VLM discovery: OpenAI names
+   the frame, OWLv2 warms in parallel; needs `OPENAI_API_KEY`)
 2. Runs Dan localize **once** with a room-scale Go2 policy (not the xArm desktop defaults) to
    verify those names in 3D, build first-sighting timestamps, collect multi-view sightings per
    instance, and cache window `color_image` frames
@@ -132,38 +130,20 @@ multi-instance disambiguation uses nearest / next-to instead).
 Published localize cases are budgeted to at most **K=5 per frame**. Selection
 round-robins `(family, selector)` types across frames so every frame with ego
 candidates keeps at least one localize question and later frames are not starved.
-Within the target type, under-represented categories win. Override with
-`--localize-coverage-k`, or pass `0` to publish every answered localize case.
-Image-path families are never budgeted.
+Within the target type, under-represented categories win. Image-path families are
+never budgeted.
 
-After ego clips, the same localize evidence materializes **cross-view identity** pairs
+After ego clips, the same localize pass materializes **cross-view identity** pairs
 (`cross_view_same_object`): propose same/different instance pairs from multi-view
-sightings (≥ `--min-views` distinct poses), then cut two short dense clips from the
-cached `color_frames` at each sighting timestamp - **no second localize / `--query` pass**.
-
-Each `--with-localize` run also writes a lightweight
-`audit/localize_evidence.json` (object name, instance id, world xyz, first_seen,
-sighting timestamps + bbox - no RGB/point clouds). Reuse it to skip Dan:
-
-```bash skip
-dimos evals vqa generate /path/to/calibrated-recording.db \
-  --start 180 --stop 280 --stride 20 \
-  --with-localize \
-  --localize-evidence /path/to/prior-dataset/audit/localize_evidence.json
-```
-
-Window/`dataset` must match the dump (pad + selected frames → same `[after, before]`).
-Color frames are still read from the recording at those timestamps.
+sightings (≥ 3 distinct poses), then cut two short dense clips from the cached
+`color_frames` at each sighting timestamp — **no second localize pass**.
 
 Without `--with-localize`, those families are not offered.
 
 ```bash skip
 dimos evals vqa generate /path/to/calibrated-recording.db \
   --start 180 --stop 280 --stride 20 \
-  --with-localize \
-  --localize-pad 20 \
-  --localize-coverage-k 5 \
-  --min-views 3
+  --with-localize
 ```
 
 ## Dataset Layout
@@ -177,7 +157,6 @@ dataset/
     clips/<case-id>/…         # memory-clip families (ego, cross-view)
   audit/
     run.json
-    localize_evidence.json  # lightweight hits for --localize-evidence reuse
     frame-000100/
       frame.json
       ground_truth.json

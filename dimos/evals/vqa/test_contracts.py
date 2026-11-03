@@ -1037,7 +1037,7 @@ def test_answer_question_rejects_cross_view_on_frame_path() -> None:
 
 def test_generation_config_validates_synchronization_tolerance() -> None:
     assert VqaGenerationConfig().synchronization_tolerance_s == 0.1
-    assert VqaGenerationConfig().question_author == "template"
+    assert VqaGenerationConfig().question_author == "openai"
     with pytest.raises(ValidationError):
         VqaGenerationConfig(synchronization_tolerance_s=0.0)
     with pytest.raises(ValidationError):
@@ -1379,15 +1379,6 @@ def test_generation_request_rejects_queries_without_localize_flag() -> None:
             dataset="go2_short",
             image_index=4,
             localize_queries=("chair",),
-        )
-
-
-def test_generation_request_rejects_evidence_without_localize_flag(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="localize_evidence"):
-        GenerationRequest(
-            dataset="go2_short",
-            image_index=4,
-            localize_evidence=tmp_path / "localize_evidence.json",
         )
 
 
@@ -1849,9 +1840,7 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     assert run["generation"]["stop"] == 5
     assert run["generation"]["stride"] == 2
     assert run["configuration"]["synchronization_tolerance_s"] == 0.025
-    assert run["configuration"]["diversity_max_per_category"] == 2
-    assert run["configuration"]["diversity_max_per_family_category"] == 1
-    assert "diversity" not in run  # image-only path does not thin
+    assert "diversity" not in run
     assert run["models"] == {
         "author": "gpt-4o-mini",
         "detector": "vikhyatk/moondream2",
