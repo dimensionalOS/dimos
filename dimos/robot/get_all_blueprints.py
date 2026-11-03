@@ -29,7 +29,7 @@ from dimos.robot.external_blueprints import (
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
 
 # Optional dependencies that are allowed to be missing
-OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
+OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py", "xarm"}
 OPTIONAL_ERROR_SUBSTRINGS = {
     "Unable to locate turbojpeg library automatically",
     "ZED SDK not installed",

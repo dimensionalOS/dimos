@@ -34,6 +34,8 @@ from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.limits import limits
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.get_all_blueprints import get_by_name
 from dimos.robot.manipulators.xarm import connection
 from dimos.robot.manipulators.xarm.config import XARM_ARMS, xarm_model
 from dimos.robot.manipulators.xarm.connection import XArmConfig, XArmConnection, XArmError
@@ -45,6 +47,30 @@ DEADMAN_S = 5.0
 REST = [0.0] * 7
 
 Call = tuple[str, tuple[Any, ...], dict[str, Any]]
+
+
+@pytest.mark.parametrize("arm", ["xarm6", "xarm7"])
+def test_keyboard_blueprint_composes_without_loading_assets_or_opening_sdk(arm, monkeypatch):
+    def unexpected_runtime_work(*args, **kwargs):
+        pytest.fail("Composing a blueprint must not load assets or open the SDK")
+
+    monkeypatch.setattr(RobotModel, "load", unexpected_runtime_work)
+    monkeypatch.setattr(RobotDescriptionSource, "checkout_path", unexpected_runtime_work)
+    monkeypatch.setattr(connection, "XArmAPI", unexpected_runtime_work)
+
+    blueprint = get_by_name(f"{arm}-keyboard-teleop")
+
+    assert [atom.module.__name__ for atom in blueprint.blueprints] == [
+        "KeyboardTeleopModule",
+        "XArmTwistCoordinator",
+        "XArmConnection",
+    ]
+    assert blueprint.blueprints[-1].kwargs == {"arm": arm}
+    assert dict(blueprint.remapping_map) == {
+        ("xarmconnection", "position_command"): "arm_position_command",
+        ("xarmconnection", "velocity_command"): "arm_velocity_command",
+        ("ControlCoordinator", "arm_joint_state"): "joint_state",
+    }
 
 
 class FakeXArmAPI:

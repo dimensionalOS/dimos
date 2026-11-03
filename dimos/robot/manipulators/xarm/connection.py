@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
+from xarm.wrapper import XArmAPI
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import (
@@ -126,7 +127,7 @@ class XArmConnection(ConnectionModule):
         dof = XARM_ARMS[self.config.arm][0]
         self._joints = [f"{prefix}joint{i}" for i in range(1, dof + 1)]
         self._gripper = f"{prefix}drive_joint" if self.config.gripper else None
-        self._sdk: Any = None
+        self._sdk: XArmAPI | None = None
         self._mode: int | None = None
         # Set when the arm reports an error or is stopped; only clear_errors()
         # clears it.
@@ -141,6 +142,12 @@ class XArmConnection(ConnectionModule):
         self._reach: list[float] = []
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
+
+    @property
+    def _connected_sdk(self) -> XArmAPI:
+        if self._sdk is None:
+            raise XArmError("not connected")
+        return self._sdk
 
     @rpc
     def start(self) -> None:
@@ -254,7 +261,7 @@ class XArmConnection(ConnectionModule):
             self._use_mode(_VELOCITY)
             self._send_motion(
                 "vc_set_joint_velocity",
-                lambda: self._sdk.vc_set_joint_velocity(
+                lambda: self._connected_sdk.vc_set_joint_velocity(
                     [speed or 0.0 for speed in speeds],
                     is_radian=True,
                     # The arm stops by itself if no newer speed arrives in time.
@@ -264,11 +271,14 @@ class XArmConnection(ConnectionModule):
         elif angles is not None:
             self._use_mode(_SERVO)
             self._send_motion(
-                "set_servo_angle_j", lambda: self._sdk.set_servo_angle_j(angles, is_radian=True)
+                "set_servo_angle_j",
+                lambda: self._connected_sdk.set_servo_angle_j(angles, is_radian=True),
             )
         if gripper is not None and gripper != self._gripper_sent:
             pulses = _GRIPPER_OPEN_SDK * (1.0 - gripper / _GRIPPER_CLOSED_RAD)
-            _check("set_gripper_position", self._sdk.set_gripper_position(pulses, wait=False))
+            _check(
+                "set_gripper_position", self._connected_sdk.set_gripper_position(pulses, wait=False)
+            )
             self._gripper_sent = gripper
 
     def halt(self) -> None:
@@ -276,7 +286,10 @@ class XArmConnection(ConnectionModule):
         # a fault is stopped.
         if self._mode == _VELOCITY and self._fault is None:
             zeros = [0.0] * len(self._joints)
-            _check("vc_set_joint_velocity", self._sdk.vc_set_joint_velocity(zeros, is_radian=True))
+            _check(
+                "vc_set_joint_velocity",
+                self._connected_sdk.vc_set_joint_velocity(zeros, is_radian=True),
+            )
 
     def _listen(self, port: In[JointState], field: Interface) -> None:
         """Pass each message on ``port`` to ``command``, reading only its ``field``."""
@@ -288,19 +301,19 @@ class XArmConnection(ConnectionModule):
 
     def _enable(self) -> None:
         """Turn the motors on and make the arm ready for joint targets."""
-        _check("motion_enable", self._sdk.motion_enable(enable=True))
+        _check("motion_enable", self._connected_sdk.motion_enable(enable=True))
         self._mode = None
         self._use_mode(_SERVO)
         if self._gripper is not None:
-            _check("set_gripper_enable", self._sdk.set_gripper_enable(True))
+            _check("set_gripper_enable", self._connected_sdk.set_gripper_enable(True))
             self._gripper_sent = None
 
     def _use_mode(self, mode: int) -> None:
         """Put the arm in ``mode`` and make it ready, unless it is already in it."""
         if mode == self._mode:
             return
-        _check("set_mode", self._sdk.set_mode(mode))
-        _check("set_state", self._sdk.set_state(_READY))
+        _check("set_mode", self._connected_sdk.set_mode(mode))
+        _check("set_state", self._connected_sdk.set_state(_READY))
         self._mode = mode
 
     def _send_motion(self, call: str, send: Callable[[], int]) -> None:
@@ -336,7 +349,7 @@ class XArmConnection(ConnectionModule):
 
     def _read_joints(self) -> tuple[list[float], list[float], list[float]]:
         """The arm joints' positions (rad), speeds (rad/s) and torques (Nm)."""
-        code, states = self._sdk.get_joint_states(is_radian=True)
+        code, states = self._connected_sdk.get_joint_states(is_radian=True)
         _check("get_joint_states", code)
         dof = len(self._joints)
         positions, speeds, efforts = ([float(v) for v in column[:dof]] for column in states)
@@ -362,7 +375,7 @@ class XArmConnection(ConnectionModule):
                     )
                 )
                 if self._gripper is not None and count % _GRIPPER_READ_EVERY == 0:
-                    code, pulses = self._sdk.get_gripper_position()
+                    code, pulses = self._connected_sdk.get_gripper_position()
                     _check("get_gripper_position", code)
                     # The gripper reports no speed or effort, so it has a message of its own.
                     self.joint_state.publish(
@@ -377,11 +390,8 @@ class XArmConnection(ConnectionModule):
             count += 1
 
 
-def _open_sdk(ip: str) -> Any:
+def _open_sdk(ip: str) -> XArmAPI:
     """Connect the SDK to the arm at ``ip``, with angles in radians."""
-    # Imported here so blueprints that use this module load without the SDK installed.
-    from xarm.wrapper import XArmAPI
-
     return XArmAPI(ip, is_radian=True)
 
 
