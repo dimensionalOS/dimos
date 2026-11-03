@@ -119,6 +119,7 @@ fn config() -> SolveConfig {
         evidence_core: false,
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
+        seed_start: Vec::new(),
     }
 }
 

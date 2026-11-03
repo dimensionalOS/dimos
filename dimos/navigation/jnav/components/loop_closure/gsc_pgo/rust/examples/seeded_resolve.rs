@@ -15,8 +15,9 @@
 //! Replay a finished pgo-eval run's solves offline, each from scratch or seeded from the one before, so the seeded
 //! solve (`solve_seed_from_accepted`, `solve_seed_gnc_verdicts`) can be judged in seconds: its raw keyframe poses
 //! (`a.kf`) and committed closures (`a.json`, in commit order) are solved after every `step` closures, over the
-//! keyframes up to the newest closure's source, three ways: from the odometry, from the previous solve's poses (the
-//! keyframes since riding its newest correction), and from those poses plus its closure verdicts. Prints one JSON line
+//! keyframes up to the newest closure's source, three ways: from the odometry, seeded with the previous solve's poses
+//! (the keyframes since riding its newest correction; taken only where they already fit), and with those poses plus
+//! its closure verdicts. Prints one JSON line
 //! per solve (seconds, GNC iterations, kept closures, largest position gap to the unseeded solve) and a summary.
 //! usage: seeded_resolve <run dir> [step, 1]
 
@@ -25,6 +26,7 @@ use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
 struct Chain {
     previous: Option<(usize, Solution)>,
+    seeded: usize,
     seconds: Vec<f64>,
     iterations: Vec<usize>,
 }
@@ -92,6 +94,7 @@ fn main() {
     let mut chains: Vec<Chain> = (0..3)
         .map(|_| Chain {
             previous: None,
+            seeded: 0,
             seconds: Vec::new(),
             iterations: Vec::new(),
         })
@@ -107,8 +110,8 @@ fn main() {
         let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
         let mut solutions: Vec<Solution> = Vec::new();
         for (way, chain) in chains.iter_mut().enumerate() {
-            let (mut rotations, mut positions): (Vec<Mat3>, Vec<Vec3>) = poses[..n].iter().copied().unzip();
-            let mut seed_closure_weights = Vec::new();
+            let (rotations, positions): (Vec<Mat3>, Vec<Vec3>) = poses[..n].iter().copied().unzip();
+            let (mut seed_start, mut seed_closure_weights) = (Vec::new(), Vec::new());
             if way > 0 {
                 if let Some((before, previous)) = &chain.previous {
                     // the keyframes the previous solve placed where it put them, the rest riding its newest correction
@@ -119,16 +122,18 @@ fn main() {
                         &previous.positions[last],
                         &mat3::mat_vec(&ride_rotation, &poses[last].1),
                     );
-                    for k in 0..n {
-                        if k < *before {
-                            rotations[k] = previous.rotations[k];
-                            positions[k] = previous.positions[k];
-                        } else {
-                            rotations[k] = mat3::mat_mul(&ride_rotation, &poses[k].0);
-                            positions[k] =
-                                mat3::add(&mat3::mat_vec(&ride_rotation, &poses[k].1), &ride_translation);
-                        }
-                    }
+                    seed_start = (0..n)
+                        .map(|k| {
+                            if k < *before {
+                                (previous.rotations[k], previous.positions[k])
+                            } else {
+                                (
+                                    mat3::mat_mul(&ride_rotation, &poses[k].0),
+                                    mat3::add(&mat3::mat_vec(&ride_rotation, &poses[k].1), &ride_translation),
+                                )
+                            }
+                        })
+                        .collect();
                     if way == 2 {
                         seed_closure_weights = (0..count)
                             .map(|i| previous.closure_weights.get(i).copied().unwrap_or(f64::NAN))
@@ -143,6 +148,7 @@ fn main() {
                 evidence_core: false,
                 learned_evidence: false,
                 seed_closure_weights,
+                seed_start,
             };
             let started = std::time::Instant::now();
             let solution = solve(
@@ -176,7 +182,7 @@ fn main() {
         }
         let kept = |s: &Solution| s.closure_weights.iter().filter(|&&w| w > 0.5).count();
         println!(
-            "{{\"closures\":{count},\"keyframes\":{n},\"seconds\":[{:.4},{:.4},{:.4}],\"gnc_iterations\":[{},{},{}],\"kept\":[{},{},{}],\"gap_m\":[{:.3},{:.3},{:.3}],\"error\":[{:.3},{:.3},{:.3}],\"converged\":[{},{},{}]}}",
+            "{{\"closures\":{count},\"keyframes\":{n},\"seconds\":[{:.4},{:.4},{:.4}],\"gnc_iterations\":[{},{},{}],\"kept\":[{},{},{}],\"gap_m\":[{:.3},{:.3},{:.3}],\"error\":[{:.3},{:.3},{:.3}],\"converged\":[{},{},{}],\"seeded\":[{},{},{}]}}",
             chains[0].seconds.last().unwrap(),
             chains[1].seconds.last().unwrap(),
             chains[2].seconds.last().unwrap(),
@@ -195,8 +201,12 @@ fn main() {
             solutions[0].converged,
             solutions[1].converged,
             solutions[2].converged,
+            solutions[0].seeded,
+            solutions[1].seeded,
+            solutions[2].seeded,
         );
         for (chain, solution) in chains.iter_mut().zip(solutions) {
+            chain.seeded += solution.seeded as usize;
             chain.previous = Some((n, solution));
         }
     }
@@ -209,8 +219,9 @@ fn main() {
         let chain = &chains[way];
         let iterations: Vec<f64> = chain.iterations.iter().map(|&i| i as f64).collect();
         println!(
-            "SUMMARY {name}: solves {} total {:.2} s median {:.4} s max {:.3} s, GNC iterations median {} max {}, kept differs from odometry-start in {} solves, largest gap {:.3} m, final gap {:.3} m",
+            "SUMMARY {name}: solves {} (seeded {}) total {:.2} s median {:.4} s max {:.3} s, GNC iterations median {} max {}, kept differs from odometry-start in {} solves, largest gap {:.3} m, final gap {:.3} m",
             chain.seconds.len(),
+            chain.seeded,
             chain.seconds.iter().sum::<f64>(),
             median(&chain.seconds),
             chain.seconds.iter().copied().fold(0.0, f64::max),

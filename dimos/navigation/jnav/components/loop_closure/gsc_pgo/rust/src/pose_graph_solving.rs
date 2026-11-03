@@ -392,24 +392,15 @@ impl GscPgo {
             &mat3::mat_vec(&offset_rotation, &pinned.translation_local),
         );
         let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
-        if config.solve_seed_from_accepted {
-            // or from the accepted graph, the keyframes since the newest adopted solve riding its correction
-            for k in 0..n {
-                let (rotation, position) = self.key_poses.global(k);
-                rotations.push(rotation);
-                positions.push(position);
-            }
-        } else {
-            rotations.push(pinned.rotation_global);
-            positions.push(pinned.translation_global);
-            for k in 1..n {
-                let key_pose = self.key_poses.fixed(k);
-                rotations.push(mat3::mat_mul(&offset_rotation, &key_pose.rotation_local));
-                positions.push(mat3::add(
-                    &mat3::mat_vec(&offset_rotation, &key_pose.translation_local),
-                    &offset_translation,
-                ));
-            }
+        rotations.push(pinned.rotation_global);
+        positions.push(pinned.translation_global);
+        for k in 1..n {
+            let key_pose = self.key_poses.fixed(k);
+            rotations.push(mat3::mat_mul(&offset_rotation, &key_pose.rotation_local));
+            positions.push(mat3::add(
+                &mat3::mat_vec(&offset_rotation, &key_pose.translation_local),
+                &offset_translation,
+            ));
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
         let solve_error_estimate = self.odometry_error_estimate();
@@ -424,6 +415,13 @@ impl GscPgo {
             // the learned estimate's evidence only in `finish`'s last solve
             learned_evidence: config.learned_odometry_error_estimate_from_closures
                 && self.learned_evidence_requested,
+            // or from the accepted graph (the keyframes since the newest adopted solve riding its correction), where it
+            // already fits
+            seed_start: if config.solve_seed_from_accepted {
+                (0..n).map(|k| self.key_poses.global(k)).collect()
+            } else {
+                Vec::new()
+            },
             seed_closure_weights: if config.solve_seed_gnc_verdicts {
                 self.committed_closures.iter().map(|c| c.gnc_weight).collect()
             } else {
