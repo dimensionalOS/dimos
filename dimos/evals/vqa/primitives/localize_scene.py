@@ -201,7 +201,10 @@ def resolve_referent(
     parsed = parse_referent(referent) if parsed is None else parsed
     if parsed.selector == "next_to":
         assert parsed.landmark is not None
-        return _resolve_next_to(scene, parsed.category, parsed.landmark, referent=referent)
+        anchor, _landmark = resolve_next_to_pair(
+            scene, parsed.category, parsed.landmark, referent=referent
+        )
+        return anchor
     hits = instances_named(scene, parsed.category)
     if parsed.selector == "unique":
         if len(hits) != 1:
@@ -228,13 +231,14 @@ def _horizontal_distance_m(a: tuple[float, float, float], b: tuple[float, float,
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def _resolve_next_to(
+def resolve_next_to_pair(
     scene: LocalizeSceneEvidence,
     anchor_category: str,
     landmark_category: str,
     *,
     referent: str,
-) -> LocalizeInstanceEvidence:
+) -> tuple[LocalizeInstanceEvidence, LocalizeInstanceEvidence]:
+    """Return the unambiguous ``(anchor, landmark)`` pair for a next-to referent."""
     anchors = instances_named(scene, anchor_category)
     landmarks = instances_named(scene, landmark_category)
     if not anchors:
@@ -247,7 +251,7 @@ def _resolve_next_to(
             dist = _horizontal_distance_m(anchor.position_world_xyz, landmark.position_world_xyz)
             pairs.append((dist, anchor, landmark))
     pairs.sort(key=lambda item: item[0])
-    best_dist, best_anchor, _best_landmark = pairs[0]
+    best_dist, best_anchor, best_landmark = pairs[0]
     if best_dist > NEXT_TO_MAX_RANGE_M:
         raise InsufficientEvidenceError(
             f"{referent!r} has no pair within {NEXT_TO_MAX_RANGE_M} m "
@@ -258,7 +262,7 @@ def _resolve_next_to(
             f"{referent!r} is ambiguous: top pairs differ by less than "
             f"{NEXT_TO_UNIQUENESS_MARGIN_M} m"
         )
-    return best_anchor
+    return best_anchor, best_landmark
 
 
 def next_to_referents(scene: LocalizeSceneEvidence, *, max_pairs: int = 6) -> tuple[str, ...]:

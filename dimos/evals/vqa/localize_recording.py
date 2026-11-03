@@ -27,8 +27,9 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
+import math
 from pathlib import Path
 import threading
 from typing import Any
@@ -91,6 +92,14 @@ _DISCOVERY_VLM_BAN = frozenset(
 )
 
 
+# (ts, x, y, z) samples from Detection3DPC centers along a track.
+PositionSample = tuple[float, float, float, float]
+# Horizontal drift above this → treat track as moving (people / vehicles).
+_MOVING_TRACK_DISPLACEMENT_M = 0.75
+# Prefer a sighting within this many seconds of the question timestamp.
+_POSITION_AT_TS_MAX_DT_S = 2.0
+
+
 @dataclass(frozen=True)
 class LocalizeWindowResult:
     """Verified hits plus a rig whose tf covers the localize window.
@@ -112,6 +121,10 @@ class LocalizeWindowResult:
     color_frames_by_camera: dict[str, tuple[tuple[float, Image], ...]] = field(default_factory=dict)
     # query → instance_id → framing sightings (from localize traces; no second pass).
     views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = field(default_factory=dict)
+    # Per-instance (ts, xyz) from Detection3DPC centers — time-local ego labels.
+    position_timeline_by_instance: dict[str, tuple[PositionSample, ...]] = field(
+        default_factory=dict
+    )
 
 
 def robot_pose_xyz_yaw(
@@ -156,22 +169,129 @@ def color_frames_from_rig(rig: Rig, after: float, before: float) -> tuple[tuple[
     return ()
 
 
+def _det_world_xyz(det: Any) -> tuple[float, float, float] | None:
+    """World-frame centroid of one Detection3DPC sighting, if finite."""
+    try:
+        center = det.center
+        xyz = (float(center.x), float(center.y), float(center.z))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in xyz):
+        return None
+    return xyz
+
+
+def timeline_from_sightings(sightings: Sequence[Any]) -> tuple[PositionSample, ...]:
+    """Build sorted ``(ts, x, y, z)`` samples from Detection3DPC sightings."""
+    samples: list[PositionSample] = []
+    for det in sightings:
+        xyz = _det_world_xyz(det)
+        if xyz is None:
+            continue
+        ts = float(getattr(det, "ts", 0.0) or 0.0)
+        image = getattr(det, "image", None)
+        if image is not None and getattr(image, "ts", None) is not None:
+            ts = float(image.ts)
+        samples.append((ts, xyz[0], xyz[1], xyz[2]))
+    samples.sort(key=lambda row: row[0])
+    return tuple(samples)
+
+
+def track_horizontal_displacement_m(timeline: Sequence[PositionSample]) -> float:
+    """Max pairwise horizontal drift of a track (meters)."""
+    if len(timeline) < 2:
+        return 0.0
+    max_d = 0.0
+    for index, left in enumerate(timeline):
+        for right in timeline[index + 1 :]:
+            dist = math.hypot(left[1] - right[1], left[2] - right[2])
+            if dist > max_d:
+                max_d = dist
+    return max_d
+
+
+def position_at_timestamp(
+    timeline: Sequence[PositionSample],
+    timestamp: float,
+    *,
+    max_dt_s: float = _POSITION_AT_TS_MAX_DT_S,
+) -> tuple[float, float, float] | None:
+    """Nearest sighting position at/near ``timestamp``, or ``None`` if too far in time."""
+    if not timeline or max_dt_s < 0.0:
+        return None
+    before = [sample for sample in timeline if sample[0] <= timestamp + 1e-9]
+    if before:
+        best = before[-1]
+        if timestamp - best[0] <= max_dt_s + 1e-9:
+            return (best[1], best[2], best[3])
+    nearest = min(timeline, key=lambda sample: abs(sample[0] - timestamp))
+    if abs(nearest[0] - timestamp) <= max_dt_s + 1e-9:
+        return (nearest[1], nearest[2], nearest[3])
+    return None
+
+
+def first_seen_by_instance_for_camera(
+    views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]],
+    camera_frame: str,
+) -> dict[str, float]:
+    """Earliest same-camera sighting per instance (empty camera = no filter).
+
+    Cross-camera first_seen must not anchor an ego clip cut from another stream.
+    """
+    out: dict[str, float] = {}
+    for by_id in views_by_query.values():
+        for instance_id, views in by_id.items():
+            times = [
+                float(view.timestamp)
+                for view in views
+                if not camera_frame
+                or not view.camera_frame
+                or view.camera_frame == camera_frame
+            ]
+            if not times:
+                continue
+            earliest = min(times)
+            prev = out.get(instance_id)
+            if prev is None or earliest < prev:
+                out[instance_id] = earliest
+    return out
+
+
 def scene_at_timestamp(
     named_hits: Sequence[tuple[str, Localization]],
     rig: Rig,
     timestamp: float,
     *,
     first_seen_by_instance: Mapping[str, float] | None = None,
+    position_timeline_by_instance: Mapping[str, Sequence[PositionSample]] | None = None,
 ) -> LocalizeSceneEvidence | None:
-    """Attach robot pose at ``timestamp`` to verified hits; ``None`` without base_link."""
+    """Attach robot pose at ``timestamp`` to verified hits; ``None`` without base_link.
+
+    Object positions come from sightings near ``timestamp`` when a timeline is
+    available. Tracks that move across the window without a nearby sighting are
+    omitted so later motion cannot rewrite earlier ego answers.
+    """
     pose = robot_pose_xyz_yaw(rig, timestamp)
     if pose is None:
         return None
     robot_xyz, robot_yaw = pose
+    timelines = position_timeline_by_instance or {}
+    adjusted: list[tuple[str, Localization]] = []
+    for name, hit in named_hits:
+        timeline = tuple(timelines.get(hit.instance_id, ()))
+        if not timeline:
+            # Fixtures / hits without Detection3DPC samples keep Localization latest.
+            adjusted.append((name, hit))
+            continue
+        xyz = position_at_timestamp(timeline, timestamp)
+        if xyz is None:
+            # No sighting near question time — omit so later motion cannot rewrite GT.
+            continue
+        adjusted.append((name, replace(hit, position_world_xyz=xyz)))
     return scene_from_named_hits(
         robot_xyz,
         robot_yaw,
-        named_hits,
+        adjusted,
         first_seen_by_instance=dict(first_seen_by_instance or {}),
     )
 
@@ -523,6 +643,7 @@ def localize_window(
         named: list[tuple[str, Localization]] = []
         first_seen_by_instance: dict[str, float] = {}
         views_by_query: dict[str, dict[str, tuple[SightingView, ...]]] = {}
+        position_timeline_by_instance: dict[str, tuple[PositionSample, ...]] = {}
         traces = [LocalizeTrace() for _ in query_list]
         with DanDetector(embedder, shared_detector, segmenter) as dan:
             # Enter succeeded: DanDetector.stop() owns embedder/detector/segmenter.
@@ -547,6 +668,16 @@ def localize_window(
                         earliest = min(times)
                         if prev is None or earliest < prev:
                             first_seen_by_instance[hit.instance_id] = earliest
+                    samples = timeline_from_sightings(list(sightings))
+                    if samples:
+                        prev_tl = position_timeline_by_instance.get(hit.instance_id, ())
+                        merged = tuple(
+                            sorted(
+                                {*prev_tl, *samples},
+                                key=lambda row: (row[0], row[1], row[2], row[3]),
+                            )
+                        )
+                        position_timeline_by_instance[hit.instance_id] = merged
 
         by_camera = color_frames_by_camera_from_rig(rig, after, before)
         # Single-cam convenience only; multi-cam clips must use by_camera + sighting camera.
@@ -560,6 +691,7 @@ def localize_window(
             color_frames=tuple(color_frames),
             color_frames_by_camera=dict(by_camera),
             views_by_query=views_by_query,
+            position_timeline_by_instance=position_timeline_by_instance,
         )
     finally:
         if shared_detector is not None:

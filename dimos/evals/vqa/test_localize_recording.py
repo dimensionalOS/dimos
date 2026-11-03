@@ -80,6 +80,104 @@ def test_scene_at_timestamp_builds_named_evidence(monkeypatch: pytest.MonkeyPatc
     )
 
 
+def test_scene_at_timestamp_uses_time_local_position(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Later sightings must not rewrite object position at an earlier question time."""
+    from dimos.evals.vqa.localize_recording import position_at_timestamp
+
+    monkeypatch.setattr(
+        localize_recording_module,
+        "robot_pose_xyz_yaw",
+        lambda rig, ts: ((0.0, 0.0, 0.0), 0.0),
+    )
+    # Localization.latest is behind the robot; earlier sighting was ahead.
+    hit = _hit((-2.0, 0.0, 0.5))
+    timeline = {
+        "g0": (
+            (1.0, 2.0, 0.0, 0.5),
+            (5.0, -2.0, 0.0, 0.5),
+        )
+    }
+    scene = scene_at_timestamp(
+        (("person", hit),),
+        SimpleNamespace(),
+        1.0,
+        position_timeline_by_instance=timeline,
+    )
+    assert scene is not None
+    assert scene.instances[0].position_world_xyz == (2.0, 0.0, 0.5)
+    assert position_at_timestamp(timeline["g0"], 1.0) == (2.0, 0.0, 0.5)
+
+
+def test_scene_at_timestamp_drops_track_without_nearby_sighting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        localize_recording_module,
+        "robot_pose_xyz_yaw",
+        lambda rig, ts: ((0.0, 0.0, 0.0), 0.0),
+    )
+    hit = _hit((2.0, 0.0, 0.5))
+    timeline = {"g0": ((10.0, 2.0, 0.0, 0.5), (12.0, -2.0, 0.0, 0.5))}
+    scene = scene_at_timestamp(
+        (("person", hit),),
+        SimpleNamespace(),
+        1.0,
+        position_timeline_by_instance=timeline,
+    )
+    assert scene is not None
+    assert scene.instances == ()
+
+
+def test_first_seen_by_instance_for_camera_scopes_to_optical_frame() -> None:
+    from dimos.evals.vqa.localize_recording import first_seen_by_instance_for_camera
+    from dimos.evals.vqa.primitives.cross_view_identity import SightingView
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+    front = Image.from_numpy(
+        np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB, frame_id="front", ts=2.0
+    )
+    rear = Image.from_numpy(
+        np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB, frame_id="rear", ts=1.0
+    )
+    box = (1.0, 1.0, 4.0, 4.0)
+
+    def view(*, camera: str, ts: float, image: object) -> SightingView:
+        return SightingView(
+            query="chair",
+            instance_id="a",
+            image=image,  # type: ignore[arg-type]
+            bbox=box,
+            confidence=0.9,
+            timestamp=ts,
+            n_views=2,
+            semantic_score=0.9,
+            camera_frame=camera,
+        )
+
+    views = {
+        "chair": {
+            "a": (
+                view(camera="rear", ts=1.0, image=rear),
+                view(camera="front", ts=2.0, image=front),
+            )
+        }
+    }
+    assert first_seen_by_instance_for_camera(views, "front") == {"a": 2.0}
+    assert first_seen_by_instance_for_camera(views, "rear") == {"a": 1.0}
+
+
+def test_track_horizontal_displacement_flags_movers() -> None:
+    from dimos.evals.vqa.localize_recording import (
+        _MOVING_TRACK_DISPLACEMENT_M,
+        track_horizontal_displacement_m,
+    )
+
+    static = ((1.0, 1.0, 0.0, 0.5), (2.0, 1.05, 0.02, 0.5))
+    moving = ((1.0, 2.0, 0.0, 0.5), (5.0, -2.0, 0.0, 0.5))
+    assert track_horizontal_displacement_m(static) < _MOVING_TRACK_DISPLACEMENT_M
+    assert track_horizontal_displacement_m(moving) > _MOVING_TRACK_DISPLACEMENT_M
+
+
 def _rig_with_one_frame() -> SimpleNamespace:
     from unittest.mock import Mock
 

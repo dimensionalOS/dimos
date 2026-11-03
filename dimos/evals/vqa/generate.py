@@ -25,7 +25,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -378,7 +378,10 @@ def generate_dataset(
                 mask_estimator = EdgeTAMObjectMaskPipeline(detector)
 
                 def pointcloud_frames() -> Iterable[GenerationFrame]:
-                    from dimos.evals.vqa.localize_recording import scene_at_timestamp
+                    from dimos.evals.vqa.localize_recording import (
+                        first_seen_by_instance_for_camera,
+                        scene_at_timestamp,
+                    )
 
                     for index in indices:
                         try:
@@ -390,12 +393,20 @@ def generate_dataset(
                             pc_frame = None
                         localize_scene = None
                         if localize_result is not None:
+                            camera_frame = str(getattr(image, "frame_id", "") or "")
+                            views = getattr(localize_result, "views_by_query", {}) or {}
+                            camera_first_seen = (
+                                first_seen_by_instance_for_camera(views, camera_frame)
+                                if views and camera_frame
+                                else dict(getattr(localize_result, "first_seen_by_instance", {}))
+                            )
                             localize_scene = scene_at_timestamp(
                                 localize_result.named_hits,
                                 localize_result.rig,
                                 image.ts,
-                                first_seen_by_instance=getattr(
-                                    localize_result, "first_seen_by_instance", {}
+                                first_seen_by_instance=camera_first_seen,
+                                position_timeline_by_instance=getattr(
+                                    localize_result, "position_timeline_by_instance", {}
                                 ),
                             )
                         yield GenerationFrame(index, image, pc_frame, localize_scene=localize_scene)
@@ -499,6 +510,7 @@ def generate_frames_dataset(
                     all_labels,
                     color_frames=color_frames,
                     color_frames_by_camera=color_frames_by_camera or {},
+                    views_by_query=views_by_query or {},
                 )
 
             cross_view_stats: dict[str, object] | None = None
@@ -849,6 +861,98 @@ def _height_object_first_seens(evidence: Mapping[str, object]) -> tuple[float, .
     return tuple(times)
 
 
+def _first_seen_on_camera(
+    views_by_query: Mapping[str, Mapping[str, Sequence[Any]]],
+    instance_id: str,
+    camera_frame: str,
+) -> float | None:
+    """Earliest sighting of ``instance_id`` on ``camera_frame`` (or any if blank)."""
+    times: list[float] = []
+    for by_id in views_by_query.values():
+        views = by_id.get(instance_id)
+        if not views:
+            continue
+        for view in views:
+            view_cam = str(getattr(view, "camera_frame", "") or "")
+            if camera_frame and view_cam and view_cam != camera_frame:
+                continue
+            times.append(float(view.timestamp))
+    return min(times) if times else None
+
+
+def _ego_required_instance_ids(family: str, evidence: Mapping[str, object]) -> tuple[str, ...]:
+    """Instance ids whose same-camera first sightings must appear in the ego clip."""
+    ids: list[str] = []
+    if family == "height_order":
+        objects = evidence.get("objects")
+        if isinstance(objects, list):
+            for obj in objects:
+                if isinstance(obj, Mapping) and isinstance(obj.get("instance_id"), str):
+                    ids.append(str(obj["instance_id"]))
+        return tuple(ids)
+    if family == "ego_any_fore_aft":
+        instances = evidence.get("instances")
+        if isinstance(instances, list):
+            for inst in instances:
+                if not isinstance(inst, Mapping):
+                    continue
+                iid = inst.get("instance_id")
+                if isinstance(iid, str) and iid:
+                    ids.append(iid)
+        return tuple(ids)
+    raw = evidence.get("instance_id")
+    if isinstance(raw, str) and raw:
+        ids.append(raw)
+    landmark = evidence.get("landmark_instance_id")
+    if isinstance(landmark, str) and landmark:
+        ids.append(landmark)
+    return tuple(ids)
+
+
+def _ego_clip_anchor_times(
+    family: str,
+    evidence: Mapping[str, object],
+    *,
+    camera_frame: str,
+    views_by_query: Mapping[str, Mapping[str, Sequence[Any]]],
+) -> tuple[float, ...] | None:
+    """Same-camera first_seen times for every required instance; ``None`` to skip.
+
+    When views are available, refuse cross-camera first_seen anchors. Without
+    views (tests / single-cam fixtures), fall back to evidence timestamps.
+    """
+    required_ids = _ego_required_instance_ids(family, evidence)
+    if views_by_query and camera_frame and required_ids:
+        times: list[float] = []
+        for instance_id in required_ids:
+            seen = _first_seen_on_camera(views_by_query, instance_id, camera_frame)
+            if seen is None:
+                return None
+            times.append(seen)
+        return tuple(times)
+
+    if family == "height_order":
+        return _height_object_first_seens(evidence)
+
+    times: list[float] = []
+    raw = evidence.get("first_seen_timestamp")
+    if isinstance(raw, (int, float)):
+        times.append(float(raw))
+    landmark_ts = evidence.get("landmark_first_seen_timestamp")
+    if isinstance(landmark_ts, (int, float)):
+        times.append(float(landmark_ts))
+    if family == "ego_any_fore_aft":
+        instances = evidence.get("instances")
+        if isinstance(instances, list):
+            for inst in instances:
+                if not isinstance(inst, Mapping):
+                    continue
+                ts = inst.get("first_seen_timestamp")
+                if isinstance(ts, (int, float)):
+                    times.append(float(ts))
+    return tuple(times) if times else None
+
+
 def _ego_clip_stream(
     color_frames: Sequence[tuple[float, Image]],
     color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]],
@@ -871,9 +975,11 @@ def _materialize_ego_memory_clips(
     *,
     color_frames: Sequence[tuple[float, Image]],
     color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
+    views_by_query: Mapping[str, Mapping[str, Sequence[Any]]] | None = None,
 ) -> tuple[list[PublicCase], list[PrivateLabel]]:
     """Publish ego cases as first-spot→query clips; balance hard/soft; no image fallback."""
     by_camera = color_frames_by_camera or {}
+    views = views_by_query or {}
     audit_by_id: dict[str, dict[str, object]] = {}
     family_by_id: dict[str, str] = {}
     frame_ts_by_id: dict[str, float] = {}
@@ -923,26 +1029,23 @@ def _materialize_ego_memory_clips(
             continue
 
         evidence = answered.get("evidence")
-        first_spot = None
-        extra_anchors: tuple[float, ...] = ()
-        if isinstance(evidence, dict):
-            if family == "height_order":
-                # Both compared objects must appear; reject if either first_seen is missing.
-                height_times = _height_object_first_seens(evidence)
-                if height_times is None:
-                    continue
-                first_spot = min(height_times)
-                extra_anchors = height_times
-            else:
-                raw = evidence.get("first_seen_timestamp")
-                if isinstance(raw, (int, float)):
-                    first_spot = float(raw)
-        if first_spot is None:
-            first_spot = query_ts
+        if not isinstance(evidence, dict):
+            continue
+        camera_frame = frame_cam_by_id.get(case.id, "")
+        anchor_times = _ego_clip_anchor_times(
+            family,
+            evidence,
+            camera_frame=camera_frame,
+            views_by_query=views,
+        )
+        if not anchor_times:
+            continue
+        first_spot = min(anchor_times)
+        extra_anchors = tuple(t for t in anchor_times if t != first_spot)
         if query_ts - first_spot > MAX_EGO_MEMORY_SPAN_S:
             continue
 
-        stream = _ego_clip_stream(color_frames, by_camera, frame_cam_by_id.get(case.id, ""))
+        stream = _ego_clip_stream(color_frames, by_camera, camera_frame)
         if not stream:
             continue
 

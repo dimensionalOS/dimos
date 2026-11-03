@@ -40,6 +40,7 @@ from dimos.evals.vqa.primitives.localize_scene import (
     instances_in_ahead_cone,
     instances_named,
     parse_referent,
+    resolve_next_to_pair,
     resolve_referent,
     robot_relative_xy,
 )
@@ -507,7 +508,14 @@ def _localize_referent_evidence(
 ) -> tuple[LocalizeInstanceEvidence, dict[str, JsonValue]]:
     """Parse + resolve once; shared geometry fields for ego family audits."""
     parsed = parse_referent(referent)
-    instance = resolve_referent(localize_scene, referent, parsed=parsed)
+    landmark_inst: LocalizeInstanceEvidence | None = None
+    if parsed.selector == "next_to":
+        assert parsed.landmark is not None
+        instance, landmark_inst = resolve_next_to_pair(
+            localize_scene, parsed.category, parsed.landmark, referent=referent
+        )
+    else:
+        instance = resolve_referent(localize_scene, referent, parsed=parsed)
     forward, left = robot_relative_xy(localize_scene, instance.position_world_xyz)
     evidence: dict[str, JsonValue] = {
         "primitive": "localize_scene",
@@ -529,6 +537,11 @@ def _localize_referent_evidence(
         evidence["first_seen_timestamp"] = instance.first_seen_timestamp
     if instance.last_seen_timestamp is not None:
         evidence["last_seen_timestamp"] = instance.last_seen_timestamp
+    if landmark_inst is not None:
+        if landmark_inst.instance_id is not None:
+            evidence["landmark_instance_id"] = landmark_inst.instance_id
+        if landmark_inst.first_seen_timestamp is not None:
+            evidence["landmark_first_seen_timestamp"] = landmark_inst.first_seen_timestamp
     return instance, evidence
 
 
@@ -585,6 +598,7 @@ def _answer_height_order(
                     "choice": object_name,
                     "position_world_xyz": list(instance.position_world_xyz),
                     "first_seen_timestamp": instance.first_seen_timestamp,
+                    "instance_id": instance.instance_id,
                 }
                 for object_name, instance in zip(proposal.object_names, instances, strict=True)
             ],
@@ -654,6 +668,7 @@ def _answer_ego_any_fore_aft(
                     "position_world_xyz": list(inst.position_world_xyz),
                     "in_ahead_cone": inst.position_world_xyz in ahead_xyz,
                     "first_seen_timestamp": inst.first_seen_timestamp,
+                    "instance_id": inst.instance_id,
                 }
                 for inst in hits
             ],

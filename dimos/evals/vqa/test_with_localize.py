@@ -684,6 +684,79 @@ def test_ego_fore_aft_nearest_referent() -> None:
     assert answer.evidence["position_world_xyz"] == [1.0, 0.0, 0.5]
 
 
+def test_ego_fore_aft_next_to_records_landmark_first_seen() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    scene = LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(
+            LocalizeInstanceEvidence(
+                object_name="chair",
+                position_world_xyz=(2.0, 0.0, 0.5),
+                instance_id="chair-1",
+                first_seen_timestamp=3.0,
+            ),
+            LocalizeInstanceEvidence(
+                object_name="table",
+                position_world_xyz=(2.2, 0.1, 0.7),
+                instance_id="table-1",
+                first_seen_timestamp=4.0,
+            ),
+        ),
+    )
+    answer = answer_question(
+        QuestionProposal(family="ego_fore_aft", object_names=("chair next to table",)),
+        image,
+        _Detector(present=True),
+        localize_scene=scene,
+    )
+    assert answer.evidence["landmark_instance_id"] == "table-1"
+    assert answer.evidence["landmark_first_seen_timestamp"] == 4.0
+    assert answer.evidence["instance_id"] == "chair-1"
+
+
+def test_ego_clip_anchor_times_require_same_camera_sighting() -> None:
+    from dimos.evals.vqa.generate import _ego_clip_anchor_times
+    from dimos.evals.vqa.primitives.cross_view_identity import SightingView
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    rear = Image.from_numpy(
+        np.zeros((8, 8, 3), dtype=np.uint8), format=ImageFormat.RGB, frame_id="rear", ts=1.0
+    )
+    view = SightingView(
+        query="chair",
+        instance_id="chair-1",
+        image=rear,
+        bbox=(1.0, 1.0, 4.0, 4.0),
+        confidence=0.9,
+        timestamp=1.0,
+        n_views=2,
+        semantic_score=0.9,
+        camera_frame="rear",
+    )
+    evidence = {
+        "instance_id": "chair-1",
+        "first_seen_timestamp": 1.0,
+    }
+    views = {"chair": {"chair-1": (view,)}}
+    # Front-camera ego clip cannot use a rear-only first sighting.
+    assert (
+        _ego_clip_anchor_times(
+            "ego_fore_aft",
+            evidence,
+            camera_frame="front",
+            views_by_query=views,
+        )
+        is None
+    )
+    assert _ego_clip_anchor_times(
+        "ego_fore_aft",
+        evidence,
+        camera_frame="rear",
+        views_by_query=views,
+    ) == (1.0,)
+
+
 def test_localize_families_require_scene_evidence() -> None:
     image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
     with pytest.raises(InsufficientEvidenceError, match="localize scene"):
