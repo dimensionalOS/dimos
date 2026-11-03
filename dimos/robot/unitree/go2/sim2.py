@@ -50,7 +50,7 @@ from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.view import rotation_matrix
-from dimos.sim2.world_observations import WorldMirror
+from dimos.sim2.world_observations import ACT, WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
 from dimos.utils.data import get_data
@@ -124,7 +124,7 @@ class Go2Sim(Module):
 
         # The world holds every CONTROL_DT of sim time until the policy has acted, as in training.
         def on_frame(world: WorldMirror) -> None:
-            if world.has_event(self.config.robot_id, "events/act"):
+            if world.got(self.config.robot_id, ACT):
                 loop.call_soon_threadsafe(self._act)
 
         self._world.on_frame(on_frame)

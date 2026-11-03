@@ -19,15 +19,7 @@ import pytest
 
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 from dimos.sim2.view import open_view, sensor_frame
-from dimos.sim2.world_observations import (
-    OBJECT,
-    ROBOT,
-    WorldMirror,
-    WorldWriter,
-    pose_update,
-    tag_update,
-    velocity_update,
-)
+from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
 
 @pytest.fixture
@@ -72,16 +64,17 @@ class _World:
 
     def __init__(self) -> None:
         self.writer, self.mirror = WorldWriter(), WorldMirror()
+        # Sim time zero at wall time zero, so ts is sim time.
+        self.writer.start_ns = 0
         self.writer.add("world")
-        self.writer.add("dog", tag_update(ROBOT))
-        self.writer.add_joints("dog", ["neck"])
-        self.writer.add("crate", tag_update(OBJECT), pose_update([3.0, 0.0, 0.1, 0, 0, 0, 1]))
+        self.writer.add("dog")
+        self.writer.add("dog/neck")
+        self.writer.add("crate")
+        self.writer.position("crate", [3.0, 0.0, 0.1, 0, 0, 0, 1])
 
-    def at(self, sim_time: float, x: float, neck: float, vx: float = 0.0) -> WorldMirror:
-        self.writer.update(
-            "dog", pose_update([x, 0.0, 1.0, 0, 0, 0, 1]), velocity_update([vx, 0, 0, 0, 0, 0])
-        )
-        self.writer.joints("dog", np.array([[neck, 0.0, 0.0]]))
+    def at(self, sim_time: float, x: float, neck: float) -> WorldMirror:
+        self.writer.position("dog", [x, 0.0, 1.0, 0, 0, 0, 1])
+        self.writer.joint("dog/neck", neck, 0.0, 0.0)
         self.mirror.apply(self.writer.end_frame(sim_time))
         return self.mirror
 
@@ -104,12 +97,13 @@ def test_the_view_is_posed_by_the_world_alone(description):
     view.close()
 
 
-def test_an_imu_reads_gravity_at_rest_and_acceleration_from_velocity_changes(description):
+def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(description):
     view, world = open_view(description), _World()
     view.update(world.at(1.0, 0.0, 0.0))
     gyro, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([0.0, 0.0, 9.81])
     assert gyro == pytest.approx([0.0, 0.0, 0.0])
-    view.update(world.at(1.5, 0.0, 0.0, vx=1.0))
+    # Still, then moving at 1 m/s: 2 m/s^2 over half a second.
+    view.update(world.at(1.5, 0.5, 0.0))
     _, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([2.0, 0.0, 9.81])
