@@ -195,7 +195,7 @@ class PGOConfig(NativeModuleConfig):
     odometry_error_estimate_tilt_per_sqrt_m: float | None = None
     odometry_error_estimate_tilt_per_sqrt_rad: float | None = None
     # scale the odometry error estimate by lidar range (L1..Mid-360); None = on only if no estimate field is given
-    odometry_error_estimate_from_lidar_range: bool | None = False
+    odometry_error_estimate_from_lidar_range: bool | None = None
     # LidarRangeConfig overrides (window_scans, decay_half_life_updates, ...); empty = calibrated defaults
     lidar_range: dict[str, Any] = Field(default_factory=dict)
     # loops' worth of evidence the stated estimate counts as in the learner (0 = closures alone, inf = never learn)
