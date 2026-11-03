@@ -27,6 +27,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -258,8 +259,9 @@ class GscPGO(NativeModule):
     odometry: In[Odometry]
     # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
     coordinate_factor: In[Odometry]
-    # landmark sighting: header.frame_id = sensor, child_frame_id = landmark name, 6x6 covariance (unknown dims: -1)
-    landmark_factor: In[Odometry]
+    # landmark sighting: frame_id = sensor, to_id = landmark, (rotation, position) covariance (unknown dims: -1);
+    # a repeated constraint_instance_id replaces that sighting (TagSightings publishes these)
+    landmark_factor: In[LocationConstraint]
     corrected_odometry: Out[Odometry]
     # the map -> odometry correction, identity until the first one
     tf: IO[TFMessage]

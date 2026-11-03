@@ -172,7 +172,8 @@ struct Args {
     live: bool,
     /// `--world-positions` CSV per line: time, frame id, xyz, row-major 3x3 covariance (m²), body-frame lever xyz. Lockstep only.
     world_positions: Option<PathBuf>,
-    /// `--landmark-sightings` CSV: time, id, body xyz, then 3x3 cov (point) or rotvec + LandmarkSighting-order 6x6 cov. Lockstep only.
+    /// `--landmark-sightings` CSV: [publish time, sighting id,] time, id, body xyz, then 3x3 cov (point) or rotvec +
+    /// LandmarkSighting-order 6x6 cov. With a sighting id a row replaces that sighting's earlier one. Lockstep only.
     landmark_sightings: Option<PathBuf>,
     /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
     until_s: f64,
@@ -191,13 +192,19 @@ fn csv_rows(path: &PathBuf) -> Result<Vec<(String, Vec<f64>)>, String> {
         .collect()
 }
 
-/// The sightings of a `--landmark-sightings` file, in time order.
-#[allow(clippy::type_complexity)]
-fn read_landmark_sightings(
-    path: &PathBuf,
-) -> Result<Vec<(f64, u64, [[f64; 3]; 3], [f64; 3], [[f64; 6]; 6])>, String> {
+/// A `--landmark-sightings` row: when the module would get it, its sighting id (None: never replaced), time, landmark,
+/// body-frame rotation, position and information.
+type LandmarkSightingRow = (f64, Option<u64>, f64, u64, [[f64; 3]; 3], [f64; 3], [[f64; 6]; 6]);
+
+/// The sightings of a `--landmark-sightings` file, in the order the module would get them.
+fn read_landmark_sightings(path: &PathBuf) -> Result<Vec<LandmarkSightingRow>, String> {
     let mut sightings = Vec::new();
-    for (line, v) in csv_rows(path)? {
+    for (line, row) in csv_rows(path)? {
+        // 16 / 46 values lead with the publish time and sighting id; 14 / 44 are sighted and published at once
+        let (published, sighting, v) = match row.len() {
+            16 | 46 => (row[0], Some(row[1] as u64), &row[2..]),
+            _ => (row[0], None, &row[..]),
+        };
         let position = [v[2], v[3], v[4]];
         let (rotation, information) = match v.len() {
             14 => {
@@ -218,12 +225,13 @@ fn read_landmark_sightings(
             _ => {
                 return Err(format!(
                     "{line}: needs 14 values (time, landmark id, xyz, 3x3 covariance) or 44 (time, landmark id, xyz, \
-                     rotation vector, 6x6 covariance)"
+                     rotation vector, 6x6 covariance), either led by publish time and sighting id"
                 ))
             }
         };
-        sightings.push((v[0], v[1] as u64, rotation, position, information));
+        sightings.push((published, sighting, v[0], v[1] as u64, rotation, position, information));
     }
+    // stable: a sighting's republishes keep their file order
     sightings.sort_by(|a, b| a.0.total_cmp(&b.0));
     Ok(sightings)
 }
@@ -752,8 +760,13 @@ fn run() -> Result<(), String> {
                 next_fix += 1;
             }
             while next_sighting < sightings.len() && sightings[next_sighting].0 <= ts {
-                let (time, landmark, rotation, position, information) = sightings[next_sighting];
-                pgo.add_landmark_factor(time, landmark, rotation, position, information);
+                let (_, sighting, time, landmark, rotation, position, information) = sightings[next_sighting];
+                match sighting {
+                    Some(sighting) => {
+                        pgo.replace_landmark_factor(sighting, time, landmark, rotation, position, information)
+                    }
+                    None => pgo.add_landmark_factor(time, landmark, rotation, position, information),
+                }
                 next_sighting += 1;
             }
             let step_started = Instant::now();

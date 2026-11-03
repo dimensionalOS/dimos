@@ -86,8 +86,22 @@ fn main() {
     // sightings on their nearest keyframes, variance grown by the gap's motion (as `GscPgo::sightings`)
     let mut ids: Vec<u64> = Vec::new();
     let mut sightings = Vec::new();
-    for line in std::fs::read_to_string(csv).unwrap().lines() {
+    // a sighting id's newest row (16 values: publish time, sighting id, then a 14-value row) replaces its earlier ones
+    let mut csv_rows: Vec<Vec<f64>> = Vec::new();
+    let mut row_of_sighting = std::collections::HashMap::new();
+    for line in std::fs::read_to_string(csv).unwrap().lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
         let v: Vec<f64> = line.split(',').map(|x| x.trim().parse().unwrap()).collect();
+        if v.len() != 16 {
+            csv_rows.push(v);
+            continue;
+        }
+        let index = *row_of_sighting.entry(v[1] as u64).or_insert_with(|| {
+            csv_rows.push(Vec::new());
+            csv_rows.len() - 1
+        });
+        csv_rows[index] = v[2..].to_vec();
+    }
+    for v in csv_rows {
         let time = v[0];
         if time < times[0] || time > times[n - 1] {
             continue;
