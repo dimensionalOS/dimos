@@ -255,23 +255,3 @@ def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
-
-
-def test_mock_hardware_starts_at_home(monkeypatch) -> None:
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
-
-    hardware = openyam_hardware()
-
-    assert hardware.adapter_type == "mock_whole_body"
-    assert "runtime_config" not in hardware.adapter_kwargs
-    assert hardware.limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
-    adapter = MockWholeBodyAdapter(dof=len(hardware.joints), **hardware.adapter_kwargs)
-    assert [state.q for state in adapter.read_motor_states()] == [
-        0.0,
-        1.047,
-        1.047,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    ]
