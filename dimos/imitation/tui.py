@@ -72,13 +72,13 @@ class ControlSession:
             raise RuntimeError("This stack has no episode controls")
         return self.episodes.command(event)
 
-    def start_policy(self) -> RolloutStatus:
+    def start_policy(self, *, dispatch_actions: bool = False) -> RolloutStatus:
         if self.policy is None:
             raise RuntimeError("This stack has no policy controls")
         ready = self.policy.preflight_rollout()
         if not ready["policy_ready"] or not ready["observations_ready"]:
             return ready
-        return self.policy.start_rollout()
+        return self.policy.start_rollout(dispatch_actions=dispatch_actions)
 
     def stop_policy(self) -> RolloutStatus:
         if self.policy is None:
@@ -146,7 +146,8 @@ class ControlApp(App[None]):
             if self._policy is not None:
                 yield Static(id="policy-status", classes="status")
                 with Horizontal(classes="actions"):
-                    yield Button("Start policy", id="start-policy", variant="success")
+                    yield Button("Start preview", id="start-policy", variant="success")
+                    yield Button("Execute on robot", id="execute-policy", variant="warning")
                     yield Button("Stop policy", id="stop-policy", variant="error")
             yield Static(id="message")
             with Container(id="confirmation"):
@@ -196,12 +197,16 @@ class ControlApp(App[None]):
             self.query_one("#discard-episode", Button).disabled = blocked or not recording
         if self._policy is not None:
             active = self._policy["active"]
+            busy = self._policy["busy"]
+            mode = "EXECUTE" if self._policy["dispatch_actions"] else "PREVIEW"
+            state = "ACTIVE" if active else "DRAINING" if busy else "STOPPED"
             self.query_one("#policy-status", Static).update(
-                f"POLICY | {'ACTIVE' if active else 'STOPPED'} | {self._policy['task']}\n"
+                f"POLICY | {state} | {mode} | {self._policy['task']}\n"
                 f"{self._policy['last_error'] or ''}"
             )
-            self.query_one("#start-policy", Button).disabled = blocked or active
-            self.query_one("#stop-policy", Button).disabled = blocked or not active
+            self.query_one("#start-policy", Button).disabled = blocked or active or busy
+            self.query_one("#execute-policy", Button).disabled = blocked or active or busy
+            self.query_one("#stop-policy", Button).disabled = blocked or not (active or busy)
         self.query_one("#message", Static).update(self._audio_error or self._message)
         self.query_one("#confirmation").display = self._confirming_stop
         self.query_one("#stop-stack", Button).disabled = self._disconnected
@@ -254,8 +259,10 @@ class ControlApp(App[None]):
                 self._set_episode_status(status)
                 self._message = f"Episode: {status.last_event}."
                 self._quit_armed = False
-            elif action == "start-policy":
-                self._policy = self._session.start_policy()
+            elif action in {"start-policy", "execute-policy"}:
+                self._policy = self._session.start_policy(
+                    dispatch_actions=action == "execute-policy"
+                )
             elif action == "stop-policy":
                 self._policy = self._session.stop_policy()
             elif action == "stop-stack":

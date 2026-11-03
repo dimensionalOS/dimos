@@ -31,6 +31,14 @@ Neither blueprint starts rollout automatically.
 
 ## Preflight and preview
 
+Attach the operator panel with `dimos imitation control`. **Start preview** runs
+inference without dispatching actions. **Execute on robot** explicitly enables
+trajectory dispatch. Both actions run preflight first; **Stop policy** stops
+either mode. The panel shows PREVIEW or EXECUTE and blocks restarting while a
+stopped rollout is still DRAINING. Preview uploads images and state just like
+execution.
+
+
 Attach with `dimos shell` and use the policy module's RPCs:
 
 ```python
