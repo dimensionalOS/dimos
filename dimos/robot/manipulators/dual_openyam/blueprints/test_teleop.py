@@ -52,7 +52,15 @@ def test_visualization_configuration_preserves_teleop_composition(mocker):
     ]
 
     parsed = BlueprintConfigParser(configured).parse(
-        ["--manipulationmodule.visualization.host", "127.0.0.1"], environ={}
+        [
+            "--manipulationmodule.visualization.host",
+            "127.0.0.1",
+            "--left-can-port",
+            "left",
+            "--right-can-port",
+            "right",
+        ],
+        environ={},
     )
     assert parsed.module_kwargs(updated.name)["visualization"]["host"] == "127.0.0.1"
     download.assert_not_called()

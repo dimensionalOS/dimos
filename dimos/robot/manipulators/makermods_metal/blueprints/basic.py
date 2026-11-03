@@ -12,26 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Metal Arm coordinator with arm trajectory and normalized gripper tasks."""
+"""The main Metal coordinator entry, using its direct connection."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.robot.manipulators.makermods_metal.config import (
-    METAL_ARM_JOINTS,
-    METAL_GRIPPER_JOINT,
-    METAL_HARDWARE_ID,
-)
-from dimos.robot.manipulators.makermods_metal.coordinator import MetalCoordinator
+from dimos.robot.manipulators.damiao.damiao_blueprint import connect_damiao
+from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 
-coordinator_makermods_metal = MetalCoordinator.blueprint(
-    instance_name="ControlCoordinator",
+coordinator_makermods_metal = connect_damiao(
+    MetalConnection,
     tasks=[
-        joint_trajectory_task(list(METAL_ARM_JOINTS)),
+        joint_trajectory_task([f"arm/{name}" for name in MetalConnection.planning.joint_names]),
         TaskConfig(
-            name=f"{METAL_HARDWARE_ID}_gripper",
+            name="metal_gripper",
             type="gripper",
-            joint_names=[METAL_GRIPPER_JOINT],
+            joint_names=["arm/gripper"],
             priority=20,
         ),
     ],
-)
+).remappings([])

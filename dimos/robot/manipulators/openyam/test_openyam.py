@@ -110,14 +110,13 @@ def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
 
 
 def test_openyam_connection_requires_an_explicit_selector() -> None:
-    default = OpenYamConnection()
+    with pytest.raises(ValueError, match="Field required"):
+        OpenYamConnection()
     physical = OpenYamConnection(can_port="can1")
     try:
-        assert default.config.source == "yam"
-        assert default._can_devices() is None
+        assert physical.config.source == "yam"
         assert physical._can_devices() == {"openyam": "can1"}
     finally:
-        default.stop()
         physical.stop()
 
 

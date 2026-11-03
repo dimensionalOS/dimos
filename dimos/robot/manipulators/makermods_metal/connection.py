@@ -28,17 +28,17 @@ from dimos.robot.manipulators.damiao.damiao_connection import (
 from dimos.robot.manipulators.makermods_metal.config import (
     METAL_ARM_JOINTS,
     METAL_MODEL,
-    make_metal_model_config,
 )
+from dimos.robot.manipulators.makermods_metal.model import make_metal_model_config
 
 
 class MetalConnectionConfig(DamiaoConnectionConfig):
     source: str = "metal"
-    can_port: str | None = None
+    can_port: str
 
     @model_validator(mode="after")
     def _set_model(self) -> Self:
-        if self.can_port is not None and not self.can_port.strip():
+        if not self.can_port.strip():
             raise ValueError("CAN selector must not be empty")
         if self.model is None:
             self.model = MetalConnection.control_model()
@@ -59,39 +59,40 @@ class MetalConnection(DamiaoConnection):
     # The encoder reports -0.05050 rad at joint3's nominal zero stop.
     feedback_clamp_margin_rad = 0.06
 
-    def _can_devices(self) -> dict[str, str] | None:
-        return None if self.config.can_port is None else {"metal": self.config.can_port}
+    def _can_devices(self) -> dict[str, str]:
+        return {"metal": self.config.can_port}
 
     def _build_robot(self) -> can_motor_control.Robot:
-        profile_type = getattr(damiao, "MotorProfile", None)
-        if profile_type is None:
-            raise RuntimeError(
-                f"{type(self).__name__} requires can-motor-control>=0.0.11 with custom MotorProfile support; "
-                "stock DM profiles use incompatible firmware scaling"
-            )
-        # Firmware ranges from MakerMods, registered only on this robot's codec.
-        low = profile_type(0x8000, p_max=6.28, v_max=10.0, t_max=30.0)
-        shoulder = profile_type(0x8001, p_max=6.28, v_max=10.0, t_max=120.0)
-        high = profile_type(0x8002, p_max=6.28, v_max=30.0, t_max=20.0)
-        codec = damiao.DamiaoCodec(profiles=[low, shoulder, high])
-        profiles = [low, shoulder, low, low, high, high]
-        gripper_profile = high
+        return build_metal_robot(self)
+
+
+def build_metal_robot(connection: DamiaoConnection) -> can_motor_control.Robot:
+    """Use the same MakerMods profiles and motor addresses on each independent bus."""
+    profile_type = getattr(damiao, "MotorProfile", None)
+    if profile_type is None:
+        raise RuntimeError(
+            f"{type(connection).__name__} requires can-motor-control>=0.0.11 with custom MotorProfile support; "
+            "stock DM profiles use incompatible firmware scaling"
+        )
+    low = profile_type(0x8000, p_max=6.28, v_max=10.0, t_max=30.0)
+    shoulder = profile_type(0x8001, p_max=6.28, v_max=10.0, t_max=120.0)
+    high = profile_type(0x8002, p_max=6.28, v_max=30.0, t_max=20.0)
+    profiles = [low, shoulder, low, low, high, high]
+    builder = can_motor_control.Robot.builder()
+    for bus, (arm, joints), gripper in zip(
+        connection.bus_names, connection.arm_joints.items(), connection.gripper_joints, strict=True
+    ):
         motors = [
             can_motor_control.MotorSpec(name, profile, index, index + 0x10)
-            for index, (name, profile) in enumerate(
-                zip(self.kinematic_joint_names, profiles, strict=True), start=1
-            )
+            for index, (name, profile) in enumerate(zip(joints, profiles, strict=True), start=1)
         ]
-        return (
-            can_motor_control.Robot.builder()
-            .add_bus("metal", self._make_can_bus("metal"), codec)
-            .add_arm("arm", bus="metal", motors=motors)
-            .add_gripper(
-                "gripper",
-                bus="metal",
-                motor=can_motor_control.MotorSpec("gripper", gripper_profile, 0x07, 0x17),
-                opening_direction="increasing_position",
-                default_current=0.1,
-            )
-            .build()
+        builder.add_bus(
+            bus, connection._make_can_bus(bus), damiao.DamiaoCodec(profiles=[low, shoulder, high])
+        ).add_arm(arm, bus=bus, motors=motors).add_gripper(
+            gripper,
+            bus=bus,
+            motor=can_motor_control.MotorSpec(gripper, high, 0x07, 0x17),
+            opening_direction="increasing_position",
+            default_current=0.1,
         )
+    return builder.build()

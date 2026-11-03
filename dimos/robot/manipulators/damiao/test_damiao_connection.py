@@ -133,18 +133,6 @@ def test_connect_does_not_enable_or_accept_commands(connection_class, boundary):
         module.stop()
 
 
-def test_missing_can_selectors_fail_before_native_construction(connection_class, boundary):
-    module = connection_class(native=False)
-    try:
-        with pytest.raises(ValueError, match="CAN selectors are required"):
-            module.start()
-        boundary[1].assert_not_called()
-        assert boundary[0].events == []
-        assert not module.status().connected
-    finally:
-        module.stop()
-
-
 def test_topology_mismatch_fails_before_bus(connection_class, boundary):
     module = connection_class(model=connection_class.planning.model)
     with pytest.raises(ValueError, match="topology"):

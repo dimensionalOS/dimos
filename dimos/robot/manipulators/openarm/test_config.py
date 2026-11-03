@@ -97,8 +97,8 @@ def test_openarm_model_fixes_fingers_without_removing_grasp_frames() -> None:
 @pytest.mark.parametrize(
     ("left_can_port", "right_can_port", "message"),
     [
-        ("can1", None, "requires both CAN selectors"),
-        (None, "can0", "requires both CAN selectors"),
+        ("can1", None, "Input should be a valid string"),
+        (None, "can0", "Input should be a valid string"),
         ("can0", "can0", "requires distinct CAN selectors"),
         ("", "can0", "CAN selector must not be empty"),
         ("can1", "  ", "CAN selector must not be empty"),

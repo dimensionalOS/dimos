@@ -54,18 +54,16 @@ def _gripper_motor(side: str) -> can_motor_control.MotorSpec:
 
 class OpenArmConnectionConfig(DamiaoConnectionConfig):
     source: str = "openarm"
-    left_can_port: str | None = None
-    right_can_port: str | None = None
+    left_can_port: str
+    right_can_port: str
 
     @model_validator(mode="after")
     def _set_model(self) -> Self:
-        if self.left_can_port is not None and not self.left_can_port.strip():
+        if not self.left_can_port.strip():
             raise ValueError("CAN selector must not be empty")
-        if self.right_can_port is not None and not self.right_can_port.strip():
+        if not self.right_can_port.strip():
             raise ValueError("CAN selector must not be empty")
-        if (self.left_can_port is None) != (self.right_can_port is None):
-            raise ValueError("OpenArm requires both CAN selectors")
-        if self.left_can_port is not None and self.left_can_port == self.right_can_port:
+        if self.left_can_port == self.right_can_port:
             raise ValueError("OpenArm requires distinct CAN selectors")
         if self.model is None:
             self.model = OpenArmConnection.control_model()
@@ -87,9 +85,7 @@ class OpenArmConnection(DamiaoConnection):
     kinematic_model = OPENARM_BIMANUAL_MODEL
     planning = openarm_bimanual_model_config()
 
-    def _can_devices(self) -> dict[str, str] | None:
-        if self.config.left_can_port is None or self.config.right_can_port is None:
-            return None
+    def _can_devices(self) -> dict[str, str]:
         return {"left": self.config.left_can_port, "right": self.config.right_can_port}
 
     def _build_robot(self) -> can_motor_control.Robot:

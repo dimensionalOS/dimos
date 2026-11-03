@@ -40,6 +40,9 @@ to 1 open and remain separate from angular arm coordinates. Physical startup
 calibrates the grippers. See [connection testing and CAN selection](/docs/capabilities/manipulation/damiao-connections.md)
 for mock checks, explicit selectors, planner/teleop entries, and hardware acceptance.
 
+[MakerMods Metal](/docs/capabilities/manipulation/makermods_metal_integration.md) covers the single- and dual-arm
+connections, CAN selectors, and configurable mounting geometry.
+
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
 Keyboard controls:

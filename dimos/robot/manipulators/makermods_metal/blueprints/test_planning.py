@@ -12,71 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.control.coordinator import ControlCoordinator
+"""The main single-Metal planner entry uses the deployed connection schema."""
+
+from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.makermods_metal.blueprints.planning import (
     makermods_metal_planner_coordinator,
 )
-from dimos.robot.manipulators.makermods_metal.config import METAL_ARM_JOINTS
-from dimos.robot.manipulators.makermods_metal.coordinator import (
-    MetalCoordinator,
-    MetalCoordinatorConfig,
-)
 
 
-def test_planner_and_coordinator_share_arm_joints_and_state_topic() -> None:
+def test_planner_joint_names_gripper_task_and_can_selection_match():
     blueprint = makermods_metal_planner_coordinator
-    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
-    planner = next(
-        atom for atom in blueprint.active_blueprints if atom.module is ManipulationModule
-    )
-    coordinator = next(
-        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
-    )
-    config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(planner.name))
-    assert isinstance(config.visualization, ViserVisualizationConfig)
-    assert config.model.joint_names == list(METAL_ARM_JOINTS)
-    assert config.model.planning_groups[0].joint_names == METAL_ARM_JOINTS
-    assert config.model.planning_groups[0].tip_link == "gripper_base"
-    assert config.gripper_tasks == {"arm": "metal_gripper"}
-    tasks = MetalCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name)).tasks
-    assert config.gripper_tasks["arm"] == next(
-        task.name for task in tasks if task.type == "gripper"
-    )
-    trajectory = next(task for task in tasks if task.type == "trajectory")
-    assert trajectory.joint_names == config.model.joint_names
-    for atom in (planner, coordinator):
-        assert "coordinator_joint_state" in [stream.name for stream in atom.streams]
-        assert (
-            blueprint.remapping_map.get(
-                (atom.name, "coordinator_joint_state"), "coordinator_joint_state"
-            )
-            == "coordinator_joint_state"
-        )
-
-
-def test_planner_preserves_physical_can_configuration() -> None:
-    parsed = BlueprintConfigParser(makermods_metal_planner_coordinator).parse(
-        [
-            "--can-port",
-            "serial123",
-        ],
-        environ={},
-    )
-    config = MetalCoordinatorConfig.model_validate(parsed.module_kwargs("ControlCoordinator"))
-    assert config.can_port == "serial123"
-    assert "gripper_current" not in MetalCoordinatorConfig.model_fields
-    assert "gripper_opening_direction" not in MetalCoordinatorConfig.model_fields
-
-
-def test_planner_defaults_to_mock_hardware() -> None:
-    parsed = BlueprintConfigParser(makermods_metal_planner_coordinator).parse([], environ={})
-    coordinator = MetalCoordinator(**parsed.module_kwargs("ControlCoordinator"))
-    try:
-        coordinator._setup_from_config()
-        assert coordinator.config.hardware[0].adapter_type == "mock_whole_body"
-        assert list(coordinator._tasks) == ["joint_trajectory", "metal_gripper"]
-    finally:
-        coordinator.stop()
+    parsed = BlueprintConfigParser(blueprint).parse(["--can-port", "serial123"], environ={})
+    [planner] = [a for a in blueprint.blueprints if a.module is ManipulationModule]
+    [coordinator] = [a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator)]
+    model = ManipulationModuleConfig.model_validate(parsed.module_kwargs(planner.name)).model
+    tasks = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name)).tasks
+    assert model.joint_names == [f"arm/joint{i}" for i in range(1, 7)]
+    assert tasks[0].joint_names == model.joint_names
+    assert model.gripper_hardware_id == "metal"
+    assert tasks[1].name == "metal_gripper"
+    assert tasks[1].joint_names == ["arm/gripper"]
+    assert parsed.module_kwargs("metalconnection")["can_port"] == "serial123"
