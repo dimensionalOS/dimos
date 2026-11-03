@@ -17,6 +17,7 @@
 //! across walls.
 
 use ahash::{AHashMap, AHashSet};
+use dimos_module::warn_throttled;
 use rayon::prelude::*;
 
 use crate::bit_grid::BitGrid;
@@ -220,6 +221,10 @@ fn has_support(by_col: &ColumnIz, ix: i32, iy: i32, iz: i32) -> bool {
     false
 }
 
+/// Largest box a cluster is closed over: past it the dense grids alone would
+/// take hundreds of MB, which only a stray voxel far from the rest causes.
+const MAX_CLOSING_CELLS: usize = 250_000_000;
+
 /// Close holes in one cluster of an xy slice.
 fn close_at_z(
     xys: &[(i32, i32)],
@@ -243,6 +248,18 @@ fn close_at_z(
     let h = (max_y - min_y + 1 + 2 * pad) as usize;
     let x0 = min_x - pad;
     let y0 = min_y - pad;
+    if w.saturating_mul(h) > MAX_CLOSING_CELLS {
+        warn_throttled!(
+            std::time::Duration::from_secs(5),
+            cells = w.saturating_mul(h),
+            columns = xys.len(),
+            iz,
+            x = ?(min_x, max_x),
+            y = ?(min_y, max_y),
+            "A surface cluster spans too large a box to close; left unclosed."
+        );
+        return xys.iter().map(|&(ix, iy)| (ix, iy, iz)).collect();
+    }
 
     let mut grid = BitGrid::new(w, h);
     for &(ix, iy) in xys {

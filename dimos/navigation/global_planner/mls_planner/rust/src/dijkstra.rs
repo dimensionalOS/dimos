@@ -30,6 +30,15 @@ pub struct DijkstraState {
     pub pred: Vec<CellId>,
     pub source: Vec<u32>,
     heap: BinaryHeap<Scored<u128>>,
+    /// The same order packed in a u64, for cells whose ids follow their coordinates.
+    packed: BinaryHeap<std::cmp::Reverse<u64>>,
+}
+
+/// A distance and an id as one u64 that orders like Scored(dist, heap_key) when
+/// ids follow coordinates: least distance first, then the larger key.
+#[inline]
+fn packed_key(dist: f32, id: CellId) -> u64 {
+    (dist.to_bits() as u64) << 32 | (u32::MAX - id) as u64
 }
 
 /// Heap tie-breaker for the ordering. This is totally swappable, this is
@@ -55,6 +64,7 @@ impl DijkstraState {
         self.source.clear();
         self.source.resize(n, 0);
         self.heap.clear();
+        self.packed.clear();
     }
 
     /// Grow the vecs to n slots without disturbing existing labels. New slots
@@ -95,6 +105,12 @@ pub fn dijkstra(
     weight: Weight,
 ) {
     state.reset(cells.slot_capacity());
+    if cells.coord_ordered() {
+        if cells.slot_capacity() >= BANDED_MIN_CELLS && rayon::current_num_threads() > 1 {
+            return dijkstra_banded(cells, sources, state, weight);
+        }
+        return dijkstra_packed(cells, sources, state, weight);
+    }
 
     for &s in sources {
         if !cells.is_live(s) {
@@ -125,6 +141,173 @@ pub fn dijkstra(
             }
         }
     }
+}
+
+/// dijkstra over cells whose ids follow their coordinates: the same labels from a
+/// heap of packed u64s, a quarter the size of Scored(f32, u128).
+fn dijkstra_packed(
+    cells: &SurfaceCells,
+    sources: &[CellId],
+    state: &mut DijkstraState,
+    weight: Weight,
+) {
+    use std::cmp::Reverse;
+    for &s in sources {
+        if !cells.is_live(s) {
+            continue;
+        }
+        state.dist[s as usize] = 0.0;
+        state.source[s as usize] = s;
+        state.packed.push(Reverse(packed_key(0.0, s)));
+    }
+    while let Some(Reverse(key)) = state.packed.pop() {
+        let d = f32::from_bits((key >> 32) as u32);
+        let u = u32::MAX - key as u32;
+        if d > state.dist[u as usize] {
+            continue;
+        }
+        let su = state.source[u as usize];
+        for edge in cells.neighbors(u) {
+            let nd = d + weight.of(edge);
+            let v = edge.dest as usize;
+            if nd < state.dist[v] {
+                state.dist[v] = nd;
+                state.pred[v] = u;
+                state.source[v] = su;
+                state.packed.push(Reverse(packed_key(nd, edge.dest)));
+            }
+        }
+    }
+}
+
+/// Graphs at least this big search in parallel bands.
+const BANDED_MIN_CELLS: usize = 100_000;
+
+/// dijkstra over cells whose ids follow their coordinates, in parallel and with
+/// the same labels. Ids then run x-major, so each band of ids is a strip of the
+/// map: the bands search on their own and trade the relaxations that cross into
+/// another band until none improves anything, which gives every cell its exact
+/// shortest distance. Labels then follow the sequential search's tie rule.
+fn dijkstra_banded(
+    cells: &SurfaceCells,
+    sources: &[CellId],
+    state: &mut DijkstraState,
+    weight: Weight,
+) {
+    use std::cmp::Reverse;
+    let n = cells.slot_capacity();
+    let bands = (rayon::current_num_threads() * 4).min(n / 4096).max(1);
+    let bounds: Vec<usize> = (0..=bands).map(|i| i * n / bands).collect();
+    let band_of = |id: CellId| bounds.partition_point(|&b| b <= id as usize) - 1;
+    let mut seeds: Vec<Vec<(CellId, f32)>> = vec![Vec::new(); bands];
+    for &s in sources {
+        if cells.is_live(s) {
+            seeds[band_of(s)].push((s, 0.0));
+        }
+    }
+    loop {
+        let mut slices: Vec<&mut [f32]> = Vec::with_capacity(bands);
+        let mut rest: &mut [f32] = &mut state.dist;
+        for b in 0..bands {
+            let (head, tail) = rest.split_at_mut(bounds[b + 1] - bounds[b]);
+            slices.push(head);
+            rest = tail;
+        }
+        let offers: Vec<Vec<(CellId, f32)>> = slices
+            .into_par_iter()
+            .zip(seeds.par_iter())
+            .enumerate()
+            .map(|(b, (dist, seeds))| {
+                let (lo, hi) = (bounds[b] as CellId, bounds[b + 1] as CellId);
+                let mut heap: BinaryHeap<Reverse<u64>> = BinaryHeap::new();
+                for &(v, d) in seeds {
+                    if d < dist[(v - lo) as usize] {
+                        dist[(v - lo) as usize] = d;
+                        heap.push(Reverse(packed_key(d, v)));
+                    }
+                }
+                let mut out = Vec::new();
+                while let Some(Reverse(key)) = heap.pop() {
+                    let d = f32::from_bits((key >> 32) as u32);
+                    let u = u32::MAX - key as u32;
+                    if d > dist[(u - lo) as usize] {
+                        continue;
+                    }
+                    for edge in cells.neighbors(u) {
+                        let nd = d + weight.of(edge);
+                        let v = edge.dest;
+                        if v < lo || v >= hi {
+                            out.push((v, nd));
+                        } else if nd < dist[(v - lo) as usize] {
+                            dist[(v - lo) as usize] = nd;
+                            heap.push(Reverse(packed_key(nd, v)));
+                        }
+                    }
+                }
+                out
+            })
+            .collect();
+        let mut any = false;
+        for list in &mut seeds {
+            list.clear();
+        }
+        for (v, nd) in offers.into_iter().flatten() {
+            if nd < state.dist[v as usize] {
+                seeds[band_of(v)].push((v, nd));
+                any = true;
+            }
+        }
+        if !any {
+            break;
+        }
+    }
+
+    // A cell's predecessor is the first neighbor the sequential search would pop
+    // that reaches it at its distance: the nearest, then the larger id. Weights are
+    // symmetric, so a cell's own edges give each neighbor's weight to it.
+    let dist = &state.dist;
+    state.pred.par_iter_mut().enumerate().for_each(|(v, pred)| {
+        let dv = dist[v];
+        if dv == 0.0 || !dv.is_finite() || !cells.is_live(v as CellId) {
+            return;
+        }
+        let mut best: Option<(f32, CellId)> = None;
+        for edge in cells.neighbors(v as CellId) {
+            let u = edge.dest;
+            let du = dist[u as usize];
+            if du + weight.of(edge) != dv {
+                continue;
+            }
+            if best.is_none_or(|(bd, bu)| du < bd || (du == bd && u > bu)) {
+                best = Some((du, u));
+            }
+        }
+        *pred = best.map_or(NO_CELL, |(_, u)| u);
+    });
+    // Each cell's source is the root of its predecessor chain, by pointer jumping.
+    let mut root: Vec<CellId> = (0..n as CellId)
+        .into_par_iter()
+        .map(|v| match state.pred[v as usize] {
+            NO_CELL => v,
+            p => p,
+        })
+        .collect();
+    loop {
+        let next: Vec<CellId> = root.par_iter().map(|&r| root[r as usize]).collect();
+        if next == root {
+            break;
+        }
+        root = next;
+    }
+    state
+        .source
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(v, source)| {
+            if dist[v].is_finite() && cells.is_live(v as CellId) {
+                *source = root[v];
+            }
+        });
 }
 
 /// The window split into its connected pieces over cell adjacency. Pieces
@@ -160,6 +343,60 @@ pub fn window_clusters(
             }
         }
         clusters.push(cluster);
+    }
+    clusters
+}
+
+/// Every live cell split into its connected clusters, as window_clusters over
+/// all live cells gives them (clusters ordered by their least id), found in
+/// parallel by a lock-free union-find that links each root under the smaller.
+/// The cells within a cluster come in id order rather than walk order.
+pub fn all_clusters(cells: &SurfaceCells) -> Vec<Vec<CellId>> {
+    use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+    let n = cells.slot_capacity();
+    let parent: Vec<AtomicU32> = (0..n as u32).map(AtomicU32::new).collect();
+    let find = |mut v: u32| loop {
+        let p = parent[v as usize].load(Relaxed);
+        if p == v {
+            return v;
+        }
+        // Halve the path as it is walked.
+        let gp = parent[p as usize].load(Relaxed);
+        let _ = parent[v as usize].compare_exchange(p, gp, Relaxed, Relaxed);
+        v = gp;
+    };
+    (0..n as CellId)
+        .into_par_iter()
+        .filter(|&u| cells.is_live(u))
+        .for_each(|u| {
+            for e in cells.neighbors(u) {
+                let (mut a, mut b) = (find(u), find(e.dest));
+                while a != b {
+                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                    match parent[hi as usize].compare_exchange(hi, lo, Relaxed, Relaxed) {
+                        Ok(_) => break,
+                        Err(_) => {
+                            a = find(lo);
+                            b = find(hi);
+                        }
+                    }
+                }
+            }
+        });
+    let mut tagged: Vec<(CellId, CellId)> = (0..n as CellId)
+        .into_par_iter()
+        .filter(|&v| cells.is_live(v))
+        .map(|v| (find(v), v))
+        .collect();
+    tagged.par_sort_unstable();
+    let mut clusters: Vec<Vec<CellId>> = Vec::new();
+    let mut last = None;
+    for (root, v) in tagged {
+        if last != Some(root) {
+            clusters.push(Vec::new());
+            last = Some(root);
+        }
+        clusters.last_mut().expect("pushed above").push(v);
     }
     clusters
 }
@@ -281,7 +518,8 @@ pub enum Frontier<'a> {
 const MAX_CHAIN: usize = 4096;
 
 /// The live source a cell's cached chain reaches without entering the window.
-/// None when the chain enters the window, hits a dead cell or ends elsewhere.
+/// None when the chain enters the window, hits a dead cell, steps between
+/// cells that are no longer neighbors or ends elsewhere.
 pub fn chain_source(
     cells: &SurfaceCells,
     state: &DijkstraState,
@@ -301,6 +539,10 @@ pub fn chain_source(
         let pred = state.pred[i];
         if pred == NO_CELL {
             return is_source(cur).then_some(cur);
+        }
+        // A region update that rebuilt adjacency can leave a cached hop the graph no longer has.
+        if !cells.neighbors(cur).iter().any(|e| e.dest == pred) {
+            return None;
         }
         cur = pred;
     }
@@ -602,6 +844,105 @@ mod tests {
             source: full.source.clone(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn packed_search_labels_exactly_like_the_general_one() {
+        // A grid with steps and equal-cost ties everywhere, many sources.
+        let cells: Vec<VoxelKey> = (-20i32..20)
+            .flat_map(|x| (-15..15).map(move |y| (x, y, (x * y).rem_euclid(3))))
+            .collect();
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&cells, &mut lookup);
+        let mut sc = SurfaceCells::default();
+        build_surface_cells(&mut sc, &lookup, 0.1, 2);
+        assert!(sc.coord_ordered());
+        let sources: Vec<CellId> = cells
+            .iter()
+            .step_by(37)
+            .map(|&k| sc.id(k).unwrap())
+            .collect();
+        for weight in [Weight::Base, Weight::Penalized] {
+            let mut packed = DijkstraState::default();
+            dijkstra(&sc, &sources, &mut packed, weight);
+            sc.unorder();
+            let mut general = DijkstraState::default();
+            dijkstra(&sc, &sources, &mut general, weight);
+            assert_eq!(packed.dist, general.dist);
+            assert_eq!(packed.pred, general.pred);
+            assert_eq!(packed.source, general.source);
+            build_surface_cells(&mut sc, &lookup, 0.1, 2);
+        }
+    }
+
+    /// Uneven but symmetric costs, as the wall penalty makes them: each edge
+    /// scales by the mean of its endpoints' factors.
+    fn uneven(sc: &mut SurfaceCells) {
+        let factor = |id: CellId| 1.0 + (id % 5) as f32 * 0.25;
+        for (src, edges) in sc.edge_lists_mut() {
+            for e in edges {
+                e.cost = e.base_cost * (factor(src) + factor(e.dest)) / 2.0;
+            }
+        }
+    }
+
+    #[test]
+    fn banded_search_labels_exactly_like_the_general_one() {
+        // Two levels with ramps, ties everywhere, enough cells for several bands,
+        // with a gap so some cells are unreachable.
+        let cells: Vec<VoxelKey> = (-90i32..90)
+            .flat_map(|x| (-60i32..60).map(move |y| (x, y)))
+            .filter(|&(x, y)| !(x == 10 && y.abs() < 55) && !(x > 70 && y > 50))
+            .flat_map(|(x, y)| {
+                let floor = (x * y).rem_euclid(3);
+                std::iter::once((x, y, floor)).chain((x % 7 == 0).then_some((x, y, floor + 9)))
+            })
+            .collect();
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&cells, &mut lookup);
+        let mut sc = SurfaceCells::default();
+        build_surface_cells(&mut sc, &lookup, 0.1, 2);
+        uneven(&mut sc);
+        let mut sources: Vec<CellId> = cells
+            .iter()
+            .step_by(301)
+            .map(|&k| sc.id(k).unwrap())
+            .collect();
+        sources.push(sources[0]);
+        for weight in [Weight::Base, Weight::Penalized] {
+            let mut banded = DijkstraState::default();
+            banded.reset(sc.slot_capacity());
+            dijkstra_banded(&sc, &sources, &mut banded, weight);
+            let mut general = DijkstraState::default();
+            sc.unorder();
+            dijkstra(&sc, &sources, &mut general, weight);
+            assert_eq!(banded.dist, general.dist);
+            assert_eq!(banded.pred, general.pred);
+            assert_eq!(banded.source, general.source);
+            build_surface_cells(&mut sc, &lookup, 0.1, 2);
+            uneven(&mut sc);
+        }
+    }
+
+    #[test]
+    fn all_clusters_match_the_window_walk_over_every_cell() {
+        let cells: Vec<VoxelKey> = (-40i32..40)
+            .flat_map(|x| (-30i32..30).map(move |y| (x, y)))
+            .filter(|&(x, y)| x % 9 != 0 && (y + x) % 13 != 0)
+            .map(|(x, y)| (x, y, (x * y).rem_euclid(5)))
+            .collect();
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&cells, &mut lookup);
+        let mut sc = SurfaceCells::default();
+        build_surface_cells(&mut sc, &lookup, 0.1, 2);
+        let live: Vec<CellId> = sc.ids().collect();
+        let mut walked = window_clusters(&sc, &live, &mut Vec::new());
+        for c in &mut walked {
+            c.sort_unstable();
+        }
+        let found = all_clusters(&sc);
+        assert!(walked.len() > 1);
+        assert_eq!(found, walked);
     }
 
     #[test]

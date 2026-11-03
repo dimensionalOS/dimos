@@ -15,7 +15,9 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use crate::mapper::{register, Mapper, Pose};
+use crate::background_warp::{BackgroundWarp, WarpJob};
+use crate::mapper::{register, Mapper, Pose, WarpReport};
+use crate::reform::Warp;
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
@@ -34,14 +36,21 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 /// Messages queued to the worker in arrival order.
-enum Job {
+pub(crate) enum Job {
     /// A live cloud and when it was queued.
     Lidar(PointCloud2, Instant),
     LoadedMap(PointCloud2),
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
     SeedPrepared(Option<SeedPartition>),
+    /// A loop closure's warp, run on a copy of the map off the scan path.
+    Warp(Warp),
+    /// A warp finished on its copy, ready to swap in.
+    WarpDone(Box<WarpJob>, WarpReport),
 }
+
+/// How often the reform ray tracer logs its memory and container sizes.
+const MEMORY_LOG_PERIOD: Duration = Duration::from_secs(10);
 
 /// Messages the handlers can queue ahead of the worker before they wait.
 const JOB_QUEUE_CAPACITY: usize = 256;
@@ -93,8 +102,7 @@ pub struct RayTracingVoxelMap {
     #[config]
     config: Config,
 
-    jobs: Option<mpsc::Sender<Job>>,
-    worker: Option<JoinHandle<()>>,
+    worker: WorkerHandle,
 }
 
 /// Whether transforms have already moved past a cloud's stamp, so the one it needs will never
@@ -109,42 +117,58 @@ fn is_stale(stamp: f64, latest_tf: Option<f64>, max_age_s: f64) -> bool {
     max_age_s > 0.0 && latest_tf.is_some_and(|latest| latest - stamp > max_age_s)
 }
 
-impl RayTracingVoxelMap {
-    async fn spawn_worker(&mut self) {
+/// The worker's outputs, cloned from whichever module owns them.
+pub(crate) struct WorkerOutputs {
+    pub global_map: Output<PointCloud2>,
+    pub local_map: Output<PointCloud2>,
+    pub local_map_fine: Output<PointCloud2>,
+    pub region_bounds: Output<PoseStamped>,
+    pub map_regions: Output<PointCloud2>,
+    pub seed_map: Output<PointCloud2>,
+    pub seed_bounds: Output<PoseStamped>,
+}
+
+/// The worker's queue and task, shared by the plain and reform modules.
+#[derive(Default)]
+pub(crate) struct WorkerHandle {
+    jobs: Option<mpsc::Sender<Job>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl WorkerHandle {
+    /// Start the worker. `track_voxel_times` stamps each voxel as it lands, for warps;
+    /// `dump_path` gets the healthy voxel centers every MEMORY_LOG_PERIOD, for offline checks.
+    pub fn spawn(
+        tf: Tf,
+        config: Config,
+        outputs: WorkerOutputs,
+        track_voxel_times: bool,
+        dump_path: Option<String>,
+    ) -> Self {
         let (tx, rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
         let worker = Worker {
             jobs: rx,
             job_sender: tx.downgrade(),
-            tf: self.tf.clone(),
-            config: self.config.clone(),
-            global_map: self.global_map.clone(),
-            local_map: self.local_map.clone(),
-            local_map_fine: self.local_map_fine.clone(),
-            region_bounds: self.region_bounds.clone(),
-            map_regions: self.map_regions.clone(),
-            seed_map: self.seed_map.clone(),
-            seed_bounds: self.seed_bounds.clone(),
+            tf,
+            config,
+            outputs,
+            track_voxel_times,
+            dump_path,
         };
-        self.jobs = Some(tx);
-        self.worker = Some(tokio::spawn(worker.run()));
+        Self {
+            jobs: Some(tx),
+            worker: Some(tokio::spawn(worker.run())),
+        }
     }
 
-    async fn stop_worker(&mut self) {
+    pub fn stop(&mut self) {
         self.jobs = None;
         if let Some(handle) = self.worker.take() {
             handle.abort();
         }
     }
 
-    async fn on_lidar(&mut self, msg: PointCloud2) {
-        self.enqueue(Job::Lidar(msg, Instant::now())).await;
-    }
-
-    async fn on_loaded_map(&mut self, msg: PointCloud2) {
-        self.enqueue(Job::LoadedMap(msg)).await;
-    }
-
-    async fn enqueue(&self, job: Job) {
+    pub async fn enqueue(&self, job: Job) {
         let Some(jobs) = &self.jobs else {
             return;
         };
@@ -154,6 +178,42 @@ impl RayTracingVoxelMap {
                 "Ray tracing worker is gone, dropped a message.",
             );
         }
+    }
+}
+
+impl RayTracingVoxelMap {
+    fn outputs(&self) -> WorkerOutputs {
+        WorkerOutputs {
+            global_map: self.global_map.clone(),
+            local_map: self.local_map.clone(),
+            local_map_fine: self.local_map_fine.clone(),
+            region_bounds: self.region_bounds.clone(),
+            map_regions: self.map_regions.clone(),
+            seed_map: self.seed_map.clone(),
+            seed_bounds: self.seed_bounds.clone(),
+        }
+    }
+
+    async fn spawn_worker(&mut self) {
+        self.worker = WorkerHandle::spawn(
+            self.tf.clone(),
+            self.config.clone(),
+            self.outputs(),
+            false,
+            None,
+        );
+    }
+
+    async fn stop_worker(&mut self) {
+        self.worker.stop();
+    }
+
+    async fn on_lidar(&mut self, msg: PointCloud2) {
+        self.worker.enqueue(Job::Lidar(msg, Instant::now())).await;
+    }
+
+    async fn on_loaded_map(&mut self, msg: PointCloud2) {
+        self.worker.enqueue(Job::LoadedMap(msg)).await;
     }
 }
 
@@ -261,6 +321,7 @@ struct State {
     last_frame_stamp: Time,
     seed: SeedState,
     viz: RegionSweep,
+    background_warp: BackgroundWarp,
 }
 
 fn warn_if_seed_starved(seed: &SeedState) {
@@ -282,6 +343,8 @@ fn warn_if_seed_starved(seed: &SeedState) {
 enum Turn {
     Job(Job),
     SeedTile,
+    /// Nothing arrived for a while.
+    Idle,
     Closed,
 }
 
@@ -289,7 +352,11 @@ enum Turn {
 /// waiting, and without a load the worker waits for a job.
 async fn next_turn(jobs: &mut mpsc::Receiver<Job>, loading: bool) -> Turn {
     if !loading {
-        return jobs.recv().await.map_or(Turn::Closed, Turn::Job);
+        // Wake at least once a period, so the memory log and dump keep up when idle.
+        return match tokio::time::timeout(MEMORY_LOG_PERIOD, jobs.recv()).await {
+            Ok(job) => job.map_or(Turn::Closed, Turn::Job),
+            Err(_) => Turn::Idle,
+        };
     }
     match jobs.try_recv() {
         Ok(job) => Turn::Job(job),
@@ -307,24 +374,44 @@ struct Worker {
     job_sender: mpsc::WeakSender<Job>,
     tf: Tf,
     config: Config,
-    global_map: Output<PointCloud2>,
-    local_map: Output<PointCloud2>,
-    local_map_fine: Output<PointCloud2>,
-    region_bounds: Output<PoseStamped>,
-    map_regions: Output<PointCloud2>,
-    seed_map: Output<PointCloud2>,
-    seed_bounds: Output<PoseStamped>,
+    outputs: WorkerOutputs,
+    track_voxel_times: bool,
+    dump_path: Option<String>,
 }
 
 impl Worker {
     async fn run(mut self) {
+        let mut mapper = Mapper::new(self.config.clone());
+        if self.track_voxel_times {
+            mapper.track_voxel_times();
+        }
         let mut state = State {
-            mapper: Mapper::new(self.config.clone()),
+            mapper,
             last_frame_stamp: Time::default(),
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
+            background_warp: BackgroundWarp::default(),
         };
+        let mut last_memory_log = Instant::now();
         loop {
+            if self.track_voxel_times && last_memory_log.elapsed() >= MEMORY_LOG_PERIOD {
+                last_memory_log = Instant::now();
+                let (voxels, chunks, voxel_times) = state.mapper.sizes();
+                warn!(
+                    rss_mb = crate::rss::rss_mb().unwrap_or(f64::NAN),
+                    voxels,
+                    chunks,
+                    voxel_times,
+                    queued_jobs = self.jobs.len(),
+                    "Ray tracer memory."
+                );
+                if let Some(path) = &self.dump_path {
+                    let centers = state.mapper.healthy_centers();
+                    if let Err(e) = crate::rss::dump_f32(path, &centers) {
+                        warn!(error = %e, path, "Failed to dump the voxel map.");
+                    }
+                }
+            }
             let loading = matches!(state.seed, SeedState::Loading(_));
             match next_turn(&mut self.jobs, loading).await {
                 Turn::Job(job) => self.handle(&mut state, job).await,
@@ -332,6 +419,7 @@ impl Worker {
                     self.seed_step(&mut state).await;
                     tokio::task::yield_now().await;
                 }
+                Turn::Idle => {}
                 Turn::Closed => return,
             }
         }
@@ -357,7 +445,66 @@ impl Worker {
                 }
                 state.seed.placed(partition);
             }
+            Job::Warp(warp) => {
+                let background = &mut state.background_warp;
+                let live = &state.mapper;
+                if let Some(job) = tokio::task::block_in_place(|| background.on_warp(warp, live)) {
+                    self.spawn_warp(job);
+                }
+            }
+            Job::WarpDone(job, report) => {
+                let (median_shift_m, max_shift_m) = job.warp.keyframe_shift_m();
+                warn!(
+                    keyframes = job.warp.keyframes(),
+                    keyframes_moved = job.warp.moved_keyframes(),
+                    keyframes_blended = job.warp.blended_keyframes(),
+                    median_shift_m,
+                    max_shift_m,
+                    voxels_warped = report.voxels_warped,
+                    voxels_rebinned = report.voxels_rebinned,
+                    warp_ms = report.warp_ms,
+                    voxel_ms = report.voxel_ms,
+                    "Warped the map through a loop closure."
+                );
+                if let Some((from, to)) = report.worst_implausible {
+                    warn!(
+                        held_in_place = report.implausible,
+                        limit_m = job.warp.max_plausible_move_m(),
+                        worst_from = ?from,
+                        worst_to = ?to,
+                        "A warp sent voxels somewhere non-finite or implausibly far; they stayed put."
+                    );
+                }
+                let WarpJob { epoch, map, .. } = *job;
+                let background = &mut state.background_warp;
+                let live = &mut state.mapper;
+                let swap_start = Instant::now();
+                let next = tokio::task::block_in_place(|| background.on_done(epoch, map, live));
+                info!(
+                    swap_ms = swap_start.elapsed().as_secs_f64() * 1e3,
+                    "Swapped in the warped map and replayed the scans that came in meanwhile."
+                );
+                if let Some(next) = next {
+                    self.spawn_warp(next);
+                }
+            }
         }
+    }
+
+    /// Run a warp on its copy of the map off the scan path, then queue it back to swap in.
+    fn spawn_warp(&self, job: WarpJob) {
+        let sender = self.job_sender.clone();
+        tokio::spawn(async move {
+            let warped = tokio::task::spawn_blocking(move || {
+                let mut job = job;
+                let report = job.map.apply_warp(&job.warp);
+                (job, report)
+            })
+            .await;
+            if let (Ok((job, report)), Some(sender)) = (warped, sender.upgrade()) {
+                let _ = sender.send(Job::WarpDone(Box::new(job), report)).await;
+            }
+        });
     }
 
     /// Fold one lidar frame into the map and publish whatever is due.
@@ -410,12 +557,15 @@ impl Worker {
             return;
         }
 
+        let pose = tf_to_pose(&tf_pose);
+        state.background_warp.on_frame(stamp, &points, pose);
         let mapper = &mut state.mapper;
         let emit_fine = self.config.emit_fine;
         let process_start = Instant::now();
         let (region, global_points, local_points, fine_points) =
             tokio::task::block_in_place(|| {
-                mapper.add_frame(points, tf_to_pose(&tf_pose));
+                mapper.set_clock(stamp);
+                mapper.add_frame(points, pose);
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
                 let cylinder = region.map(|c| c.bounds());
                 let global_points = mapper.global_due().then(|| mapper.global_points());
@@ -437,21 +587,36 @@ impl Worker {
 
         // Bounds pair with local_map by stamp, so publish them on its cadence.
         if let Some(c) = region {
+            let limit = 2.0 * self.config.max_range;
+            if !(c.radius.is_finite() && c.cx.is_finite() && c.cy.is_finite())
+                || (limit > 0.0 && c.radius > limit)
+            {
+                warn_throttled!(
+                    Duration::from_secs(5),
+                    radius = c.radius,
+                    center_x = c.cx,
+                    center_y = c.cy,
+                    z_min = c.z_min,
+                    z_max = c.z_max,
+                    cloud_frame = %msg.header.frame_id,
+                    "Local region is far larger than the lidar's range: a cloud or its pose is off."
+                );
+            }
             let bounds_msg = bounds_to_pose(&c, out_frame_id, stamp.clone());
-            publish_bounds(&self.region_bounds, &bounds_msg).await;
+            publish_bounds(&self.outputs.region_bounds, &bounds_msg).await;
         }
 
         if let Some(points) = global_points {
             let global = points_to_cloud(&points, out_frame_id, stamp.clone());
-            publish_cloud(&self.global_map, &global).await;
+            publish_cloud(&self.outputs.global_map, &global).await;
         }
         if let Some(points) = local_points {
             let local = points_to_cloud(&points, out_frame_id, stamp.clone());
-            publish_cloud(&self.local_map, &local).await;
+            publish_cloud(&self.outputs.local_map, &local).await;
         }
         if let Some(points) = fine_points {
             let fine = points_to_cloud(&points, out_frame_id, stamp.clone());
-            publish_cloud(&self.local_map_fine, &fine).await;
+            publish_cloud(&self.outputs.local_map_fine, &fine).await;
         }
 
         if state.mapper.viz_due() {
@@ -480,7 +645,7 @@ impl Worker {
         for (cell, points) in due {
             let mut cloud = points_to_cloud(&points, &self.config.world_frame, stamp.clone());
             cloud.header.seq = pack_cell(cell);
-            publish_cloud(&self.map_regions, &cloud).await;
+            publish_cloud(&self.outputs.map_regions, &cloud).await;
         }
     }
 
@@ -574,8 +739,8 @@ impl Worker {
         let points = tokio::task::block_in_place(|| mapper.local_points(&cylinder.bounds()));
         let (bounds_msg, cloud) =
             seed_region_messages(cylinder, &points, seq, &self.config.world_frame, stamp);
-        publish_bounds(&self.seed_bounds, &bounds_msg).await;
-        publish_cloud(&self.seed_map, &cloud).await;
+        publish_bounds(&self.outputs.seed_bounds, &bounds_msg).await;
+        publish_cloud(&self.outputs.seed_map, &cloud).await;
     }
 }
 

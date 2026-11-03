@@ -72,7 +72,7 @@ fn clearance_map(p: &Planner, cfg: &Config) -> BTreeMap<VoxelKey, u32> {
 const PATH_LEN_RATIO: f32 = 1.6;
 const PATH_LEN_SLACK_M: f32 = 0.5;
 
-fn test_config() -> Config {
+pub(super) fn test_config() -> Config {
     Config {
         world_frame: String::new(),
         base_frame: String::new(),
@@ -213,11 +213,11 @@ fn world_points() -> Vec<(f32, f32, f32)> {
     pts
 }
 
-fn surface_set(p: &Planner) -> BTreeSet<VoxelKey> {
+pub(super) fn surface_set(p: &Planner) -> BTreeSet<VoxelKey> {
     p.surface().collect()
 }
 
-fn voxel_set(p: &Planner) -> BTreeSet<VoxelKey> {
+pub(super) fn voxel_set(p: &Planner) -> BTreeSet<VoxelKey> {
     p.voxel_map.iter().copied().collect()
 }
 
@@ -525,7 +525,7 @@ fn region_update_ignores_points_outside_bounds() {
 
 /// Floor 8m x 8m with a wall at x=4m that only a gap at y in [3.5, 4.5]
 /// passes through, so crossing the wall is a non-trivial route.
-fn big_world() -> Vec<(f32, f32, f32)> {
+pub(super) fn big_world() -> Vec<(f32, f32, f32)> {
     let vs = 0.1_f32;
     let half = vs * 0.5;
     let mut pts = Vec::new();
@@ -549,14 +549,14 @@ fn big_world() -> Vec<(f32, f32, f32)> {
     pts
 }
 
-fn slice(all: &[(f32, f32, f32)], b: &RegionBounds, vs: f32) -> Vec<(f32, f32, f32)> {
+pub(super) fn slice(all: &[(f32, f32, f32)], b: &RegionBounds, vs: f32) -> Vec<(f32, f32, f32)> {
     all.iter()
         .copied()
         .filter(|&p| b.contains_voxel(voxelize(p, vs), vs))
         .collect()
 }
 
-fn path_len(w: &[(f32, f32, f32)]) -> f32 {
+pub(super) fn path_len(w: &[(f32, f32, f32)]) -> f32 {
     w.windows(2)
         .map(|p| {
             let dx = p[1].0 - p[0].0;
@@ -575,7 +575,7 @@ const PLAN_PAIRS: [(Pose, Pose); 4] = [
     ((7.5, 0.5, 0.05), (7.5, 7.5, 0.05)),
 ];
 
-fn assert_plans_equivalent(full: &Planner, region: &Planner, cfg: &Config) {
+pub(super) fn assert_plans_equivalent(full: &Planner, region: &Planner, cfg: &Config) {
     for (s, g) in PLAN_PAIRS {
         let pf = full.plan(s, g, cfg);
         let pr = region.plan(s, g, cfg);
@@ -1343,7 +1343,7 @@ fn flicker_between_nodes_does_not_seed_more_nodes() {
 /// Every labeled cell's cached chain walks live, adjacent cells back to the
 /// node it is labeled with, and no cell a labeled neighbor can step into is
 /// left unreached.
-fn assert_chains_reach_their_nodes(p: &Planner) {
+pub(super) fn assert_chains_reach_their_nodes(p: &Planner) {
     let g = p.graph();
     for id in g.cells.ids() {
         let i = id as usize;
@@ -1437,4 +1437,121 @@ fn chains_reach_their_nodes_through_a_stream_of_changes() {
             assert_chains_reach_their_nodes(&p);
         }
     }
+}
+
+#[test]
+fn a_region_with_bad_bounds_is_rejected_before_it_allocates() {
+    let cfg = test_config();
+    let mut p = Planner::new(2);
+    let floor: Vec<(f32, f32, f32)> = world_points();
+    let sane = RegionBounds {
+        origin_x: 0.0,
+        origin_y: 0.0,
+        radius: 5.0,
+        z_min: -1.0,
+        z_max: 2.0,
+    };
+    for bad in [
+        RegionBounds {
+            radius: 5_000.0,
+            ..sane
+        },
+        RegionBounds {
+            radius: f32::INFINITY,
+            ..sane
+        },
+        RegionBounds {
+            origin_x: f32::NAN,
+            ..sane
+        },
+        RegionBounds { z_min: 3.0, ..sane },
+    ] {
+        let started = Instant::now();
+        assert!(p.update_region(&floor, &bad, &cfg).is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "it allocated over the box"
+        );
+    }
+    assert_eq!(p.sizes().voxels, 0);
+}
+
+#[test]
+fn far_and_non_finite_points_in_a_sane_region_are_dropped() {
+    let cfg = test_config();
+    let mut p = Planner::new(2);
+    let mut cloud = world_points();
+    let n = cloud.len();
+    cloud.extend([
+        (f32::NAN, 0.0, 0.0),
+        (0.0, f32::INFINITY, 0.0),
+        (1.0e9, 1.0e9, 0.0),
+    ]);
+    let bounds = RegionBounds {
+        origin_x: 0.0,
+        origin_y: 0.0,
+        radius: 30.0,
+        z_min: -5.0,
+        z_max: 5.0,
+    };
+    p.update_region(&cloud, &bounds, &cfg);
+    let mut clean = Planner::new(2);
+    clean.update_region(&cloud[..n], &bounds, &cfg);
+    assert_eq!(p.sizes().voxels, clean.sizes().voxels);
+}
+
+/// Floor 6 x 4 m; a wall along y = 2 with a door at x 1..2 (`door_open`), and a
+/// wall along x = 3 for y < 2 that splits the near side into two rooms.
+fn door_world(door_open: bool) -> Vec<(f32, f32, f32)> {
+    let vs = 0.1_f32;
+    let half = vs * 0.5;
+    let mut pts = Vec::new();
+    for ix in 0..60 {
+        for iy in 0..40 {
+            pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
+        }
+    }
+    let wall = |pts: &mut Vec<(f32, f32, f32)>, ix: i32, iy: i32| {
+        for iz in 0..7 {
+            pts.push((
+                ix as f32 * vs + half,
+                iy as f32 * vs + half,
+                iz as f32 * vs + half,
+            ));
+        }
+    };
+    for ix in 0..60 {
+        if !(door_open && (10..20).contains(&ix)) {
+            wall(&mut pts, ix, 20);
+        }
+    }
+    for iy in 0..20 {
+        wall(&mut pts, 30, iy);
+    }
+    pts
+}
+
+/// The door to the goal closes after a route through it was planned, and the
+/// robot is in the other room: no full route exists, so the planner returns no
+/// path at all (no partial route, no line back to the stale route through a wall).
+#[test]
+fn an_unreachable_goal_gets_no_path() {
+    let mut cfg = test_config();
+    cfg.wall_clearance_m = 0.1;
+    let goal = (1.5, 3.5, 0.1);
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&door_world(true), &cfg);
+    assert!(
+        !p.replan((1.5, 0.5, 0.1), goal, &cfg).is_empty(),
+        "the open door gives a route"
+    );
+
+    p.update_global_map(&door_world(false), &cfg);
+    let robot = (4.5, 1.0, 0.1);
+    assert!(
+        p.plan(robot, goal, &cfg).is_none(),
+        "the closed door leaves no route"
+    );
+    let wp = p.replan(robot, goal, &cfg);
+    assert!(wp.is_empty(), "no route must give no path, got {wp:?}");
 }

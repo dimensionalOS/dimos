@@ -24,8 +24,8 @@ use rayon::prelude::*;
 use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
 use crate::columns::ColumnIz;
 use crate::dijkstra::{
-    chain_source, dijkstra, dijkstra_clusters, window_clusters, ClusterIndex, DijkstraState,
-    Frontier, RepairWindow, Weight,
+    all_clusters, chain_source, dijkstra, dijkstra_clusters, ClusterIndex, DijkstraState, Frontier,
+    RepairWindow, Weight,
 };
 use crate::surfaces::is_standable;
 use crate::voxel::{surface_point_xyz, VoxelKey};
@@ -168,6 +168,29 @@ impl Nodes {
         }
     }
 
+    /// Re-bin every node by its cell's key, after cells were re-keyed.
+    pub(crate) fn rebin(&mut self, cells: &SurfaceCells, params: &PlacementParams) {
+        self.bins.clear();
+        for n in &self.list {
+            if n.cell_id != NO_CELL {
+                let bin = bin_of(cells.coord(n.cell_id), params);
+                self.bins.entry(bin).or_default().push(n.cell_id);
+            }
+        }
+    }
+
+    /// Set each node's point to its cell's, after a warp moved the cells.
+    pub(crate) fn follow_cells(&mut self, cells: &SurfaceCells, voxel_size: f32) {
+        for n in &mut self.list {
+            if n.cell_id != NO_CELL {
+                let (ix, iy, iz) = cells.coord(n.cell_id);
+                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+                let o = cells.offset(n.cell_id);
+                n.pos = (x + o[0], y + o[1], z + o[2]);
+            }
+        }
+    }
+
     pub(crate) fn push(&mut self, cells: &SurfaceCells, params: &PlacementParams, node: NodeData) {
         self.list.push(node);
         self.index(cells, params, self.list.len() - 1);
@@ -214,6 +237,7 @@ impl Nodes {
 /// Move each dead node to a live neighbor cell, or drop it when none is
 /// free or the move would crowd another node. Returns the ids the dead nodes
 /// gave up, so their edges can go.
+#[cfg(test)]
 pub fn relocate_dead_nodes(
     cells: &SurfaceCells,
     lookup: &SurfaceLookup,
@@ -221,18 +245,35 @@ pub fn relocate_dead_nodes(
     dead_nodes: &[(usize, VoxelKey)],
     params: &PlacementParams,
 ) -> Vec<NodeId> {
-    let mut gone: Vec<NodeId> = Vec::with_capacity(dead_nodes.len());
+    let moves: Vec<(usize, VoxelKey, VoxelKey)> = dead_nodes
+        .iter()
+        .map(|&(ni, coord)| (ni, coord, coord))
+        .collect();
+    relocate_nodes(cells, lookup, nodes, &moves, params)
+}
+
+/// relocate_dead_nodes for nodes given as (list index, the coordinate they
+/// sit at, the coordinate to move them to). A node moves to a free live cell
+/// next to its target, or is dropped.
+pub fn relocate_nodes(
+    cells: &SurfaceCells,
+    lookup: &SurfaceLookup,
+    nodes: &mut Nodes,
+    moves: &[(usize, VoxelKey, VoxelKey)],
+    params: &PlacementParams,
+) -> Vec<NodeId> {
+    let mut gone: Vec<NodeId> = Vec::with_capacity(moves.len());
     let step = params.step_cells;
     let crowd_m = RELOCATION_CROWDING_FRAC * params.node_spacing_m;
-    // Dead nodes leave the index before any relocates. The old id is what
+    // Moving nodes leave the index before any relocates. The old id is what
     // the edges still reference.
-    for &(ni, coord) in dead_nodes {
+    for &(ni, coord, _) in moves {
         let old = nodes.list[ni].cell_id;
         gone.push(old);
         nodes.unindex(params, old, coord);
     }
     let mut unplaced: Vec<usize> = Vec::new();
-    for &(ni, (ix, iy, iz)) in dead_nodes {
+    for &(ni, _, (ix, iy, iz)) in moves {
         let mut best: Option<(i32, CellId, VoxelKey)> = None;
         for (dx, dy) in [(0_i32, 0_i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
             let Some(zs) = lookup.get(&(ix + dx, iy + dy)) else {
@@ -284,7 +325,6 @@ pub fn place_nodes(
     by_col: &ColumnIz,
     params: &PlacementParams,
     state: &mut DijkstraState,
-    scratch: &mut NodeScratch,
     nodes: &mut Nodes,
 ) {
     nodes.clear();
@@ -310,8 +350,7 @@ pub fn place_nodes(
         .collect();
     place_from_candidates(cells, candidates, &state.dist, params, nodes);
 
-    let live: Vec<CellId> = cells.ids().collect();
-    let clusters = window_clusters(cells, &live, &mut scratch.seen);
+    let clusters = all_clusters(cells);
     ensure_node_per_component(cells, &state.dist, params, &clusters, None, nodes);
 
     apply_wall_safe_penalty(cells, &state.dist, params);
@@ -581,7 +620,7 @@ fn collect_wall_adjacent_cells(
 /// Scale each edge by its endpoints' average wall penalty and add the step
 /// penalty. Unreached cells (dist +INFINITY) collapse the wall penalty to 1.0.
 fn apply_wall_safe_penalty(cells: &mut SurfaceCells, dist: &[f32], params: &PlacementParams) {
-    let mut edge_lists: Vec<(CellId, &mut Vec<Edge>)> = cells.iter_edges_mut().collect();
+    let mut edge_lists = cells.edge_lists_mut();
     edge_lists
         .par_iter_mut()
         .for_each(|(src, edges)| scale_edges(edges, *src, dist, params));
@@ -900,14 +939,12 @@ mod tests {
         cells_in.extend((0..3).map(|ix| (ix, 20, 0)));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.5, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert_eq!(nodes.len(), 1, "only the big strip gets a node");
@@ -918,14 +955,12 @@ mod tests {
     fn open_patch_places_at_least_one_node() {
         let mut sc = build_cells(&open_patch(0, 0, 10), 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.0, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert!(!nodes.is_empty());
@@ -944,14 +979,12 @@ mod tests {
         cells_in.extend((0..8).map(|ix| (ix, 20, 0)));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.5, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert_eq!(
@@ -969,14 +1002,12 @@ mod tests {
         cells_in.extend(open_patch(20, 0, 10));
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.0, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         assert!(nodes.len() >= 2);
@@ -1011,14 +1042,12 @@ mod tests {
         let cells_in: Vec<VoxelKey> = (0..10).map(|ix| (ix, 0, 0)).collect();
         let mut sc = build_cells(&cells_in, 2);
         let mut state = DijkstraState::default();
-        let mut scratch = NodeScratch::default();
         let mut nodes = Nodes::default();
         place_nodes(
             &mut sc,
             &ColumnIz::default(),
             &params(0.0, 0.0),
             &mut state,
-            &mut scratch,
             &mut nodes,
         );
         let id = sc.id((5, 0, 0)).unwrap();
@@ -1033,14 +1062,12 @@ mod tests {
         let cost_with = |step_weight: f32| {
             let mut sc = build_cells(&cells_in, 2);
             let mut state = DijkstraState::default();
-            let mut scratch = NodeScratch::default();
             let mut nodes = Nodes::default();
             place_nodes(
                 &mut sc,
                 &ColumnIz::default(),
                 &params(0.0, step_weight),
                 &mut state,
-                &mut scratch,
                 &mut nodes,
             );
             let id = sc.id((0, 0, 0)).unwrap();

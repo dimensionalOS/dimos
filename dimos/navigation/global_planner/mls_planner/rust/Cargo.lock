@@ -595,7 +595,9 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "dimos-module",
+ "fast-reform",
  "lcm-msgs",
+ "libc",
  "rayon",
  "serde",
  "smallvec",
@@ -721,6 +723,15 @@ checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
  "parking",
  "pin-project-lite",
+]
+
+[[package]]
+name = "fast-reform"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86745d8d58bfe3e9a731ce1b7426f13f8ab0c96399ebe261a88973ac626eb8cb"
+dependencies = [
+ "rayon",
 ]
 
 [[package]]

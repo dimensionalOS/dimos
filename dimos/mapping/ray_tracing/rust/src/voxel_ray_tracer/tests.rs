@@ -157,6 +157,42 @@ fn find_misses_along_ray_hits_correct_voxels() {
     assert!(walk.deferred.is_empty());
 }
 
+/// A ray that never moves along y or z, from an origin on a y and z voxel boundary that
+/// floor() puts one voxel low (0.4 = 5 * 0.08 floors to voxel 4 in f32), used to step those
+/// axes with a 0/0 crossing time and walk forever.
+#[test]
+fn axis_aligned_ray_from_a_voxel_boundary_ends() {
+    let voxel_size = 0.08_f32;
+    let on_boundary = 5.0 * voxel_size;
+    let origin = (0.01, on_boundary, on_boundary);
+    let end = (0.5, on_boundary, on_boundary);
+    let inv = 1.0 / voxel_size;
+    let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
+    let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
+    let crossed = (3, origin_voxel.1, origin_voxel.2);
+    let mut voxels = ChunkMap::default();
+    let mut voxel = Voxel::with_health(1);
+    voxel.normal = NormalFit::Fitted(None);
+    voxels.insert(crossed, voxel, 0);
+    let hits = AHashSet::new();
+    let frame = RayFrame {
+        voxels: &voxels,
+        hits: &hits,
+        origin,
+        origin_voxel,
+        voxel_size,
+        shadow_depth: 0.0,
+        grace_depth: 0.0,
+        graze_cos: 0.5,
+        map_frame: 0,
+        graze_recent_frames: u32::MAX,
+        fine_divisor: None,
+    };
+    let mut walk = RayWalk::default();
+    find_misses_along_ray(&mut walk, &frame, end, endpoint);
+    assert_eq!(walk.misses, [crossed].into_iter().collect());
+}
+
 #[test]
 fn batch_bounds_ignore_far_outlier() {
     let origins = [(1.0, 1.0, 0.5), (3.0, 1.0, 0.5)];
