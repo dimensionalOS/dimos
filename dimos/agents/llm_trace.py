@@ -143,11 +143,9 @@ def list_llm_trace_pairs(trace_dir: Path) -> list[tuple[int, Path, Path]]:
 
 
 def last_request_unanswered(trace_dir: Path) -> bool:
-    """Whether the newest request has no response file: the call never got an
-    answer (a connection error or timeout), so no ``AIMessage`` follows it."""
+    """Whether the newest request has no response file."""
     requests = {
-        int(seq): request
-        for request in trace_dir.glob(f"*{REQUEST_SUFFIX}")
+        int(seq): r for r in trace_dir.glob(f"*{REQUEST_SUFFIX}")
         if (seq := request.name.removesuffix(REQUEST_SUFFIX)).isdigit()
     }
     if not requests:
