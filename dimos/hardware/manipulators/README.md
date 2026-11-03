@@ -2,6 +2,12 @@
 
 This module provides manipulator arm drivers: Protocol-only with injectable adapters.
 
+Damiao arms use the shared `DamiaoWholeBodyAdapter` and `can-motor-control`
+under `dimos/hardware/whole_body/`. At the driver level `4340 = 4340P`;
+both use `damiao.MotorType.DM4340`. Add motor profiles or transports to the
+shared driver when needed. Do not start a separate vendor SDK adapter for
+a Damiao arm. See [the custom-arm guide](/docs/capabilities/manipulation/adding_a_custom_arm.md).
+
 ## Architecture Overview
 
 ```
