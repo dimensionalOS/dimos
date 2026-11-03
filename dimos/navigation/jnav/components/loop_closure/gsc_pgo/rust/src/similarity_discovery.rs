@@ -301,7 +301,7 @@ impl LookAlikes {
         &mut self,
         limit: f64,
         query: &Descriptor,
-        descriptors: &crate::store::Appended<Arc<Descriptor>>,
+        descriptor: impl Fn(usize) -> Arc<Descriptor>,
         match_threshold: f64,
         same_place: impl Fn(usize, usize) -> bool,
     ) -> usize {
@@ -315,7 +315,7 @@ impl LookAlikes {
             }
             let idx = self.ranking[self.scored].1;
             self.scored += 1;
-            if (best_distance(query, &descriptors[idx]).0 as f64) < match_threshold
+            if (best_distance(query, &descriptor(idx)).0 as f64) < match_threshold
                 && self.places.iter().all(|&place| !same_place(place, idx))
             {
                 self.places.push(idx);
@@ -337,7 +337,7 @@ impl crate::gsc_pgo::GscPgo {
         (0..self.newest_closure_target())
             .map(|k| mat3::norm(&mat3::sub(&self.key_poses.position(k), &here)))
             .enumerate()
-            .filter(|&(_, d)| d <= self.config.closure_search_radius)
+            .filter(|&(k, d)| d <= self.config.closure_search_radius && !self.key_poses.is_removed(k))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(i, _)| i)
     }
@@ -345,8 +345,10 @@ impl crate::gsc_pgo::GscPgo {
     pub(crate) fn search_by_scan_context(&self) -> ScanContextMatch {
         let (mut best_dist, mut second_dist) = (2.0f32, 2.0f32);
         let Some(query) = self
-            .scan_context_descriptors
-            .last()
+            .key_poses
+            .len()
+            .checked_sub(1)
+            .map(|k| self.key_poses.descriptor(k))
             .filter(|d| !d.is_empty())
         else {
             return (None, 0, best_dist, second_dist, Vec::new(), Vec::new());
@@ -362,7 +364,7 @@ impl crate::gsc_pgo::GscPgo {
         let mut best_shift = 0i32;
         let mut matches = Vec::new();
         for &(_, idx) in ranked.iter().take(top_k) {
-            let (distance, shift) = best_distance(query, &self.scan_context_descriptors[idx]);
+            let (distance, shift) = best_distance(&query, &self.key_poses.descriptor(idx));
             if (distance as f64) < self.scan_context_config.match_threshold {
                 matches.push((distance, idx, shift));
             }

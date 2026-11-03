@@ -124,15 +124,14 @@ impl GscPgo {
             }
         }
     }
-    /// Upper bound on a solve's cost in scans (raw, held) from keyframe, closure and rejected counts.
-    fn solve_estimate_scans(&self, keyframes: usize) -> (f64, usize) {
+    /// Upper bound on a solve's cost in scans (raw, held) from its node count and closures (committed indices) and rejected count.
+    fn solve_estimate_scans(&self, keyframes: usize, closure_index: &[usize]) -> (f64, usize) {
         let config = &self.config;
-        let closures = self.committed_closures.len() as f64;
+        let closures = closure_index.len() as f64;
         // a closure no solve has judged yet has a NaN weight, so it is not counted
-        let rejected = self
-            .committed_closures
+        let rejected = closure_index
             .iter()
-            .filter(|c| c.gnc_weight <= 0.5)
+            .filter(|&&i| self.committed_closures.weight(i) <= 0.5)
             .count() as f64;
         let estimate_raw_scans = config.deterministic_config.solve_scans_scale
             * (keyframes as f64).powf(config.deterministic_config.solve_keyframe_power)
@@ -157,6 +156,8 @@ impl GscPgo {
         if self.solving.is_none() && self.unsolved() {
             self.dispatch_solve();
         }
+        // after the GNC side, so a GNC solve adopted on this step makes a fast path result from before it stale
+        moved |= self.step_fast_path();
         moved
     }
     /// Whether a closure or a world position arrived after the newest solve started.
@@ -287,6 +288,8 @@ impl GscPgo {
     pub fn finish(&mut self) -> bool {
         // a closure search still running lands now; from here on the debounce and merge run inline
         self.land_remaining_closure_search();
+        // the final graph is GNC's: a fast path job still out is dropped
+        self.fast_path_job = None;
         let mut moved = false;
         while self.adoption_busy() {
             moved |= self.step_adoption(true);
@@ -322,9 +325,29 @@ impl GscPgo {
     fn dispatch_solve(&mut self) {
         let n = self.key_poses.len();
         let config = &self.config;
-        let closures = closure_edges(self.committed_closures.iter());
+        let closure_count = self.committed_closures.len();
+        // simplified (`graph_simplify`): the solve's nodes are the kept keyframes then the frontier; else every keyframe
+        let simplified = self.simplifying();
+        let node_keyframes: Vec<usize> = if simplified {
+            let simplify = &self.simplify;
+            (0..simplify.kept.len())
+                .map(|i| simplify.kept[i])
+                .chain(simplify.decided()..n)
+                .collect()
+        } else {
+            (0..n).collect()
+        };
+        let m = node_keyframes.len();
+        let (closure_index, closures): (Vec<usize>, Vec<_>) = if simplified {
+            self.simplify
+                .closures(&self.committed_closures, closure_count, config)
+                .into_iter()
+                .unzip()
+        } else {
+            ((0..closure_count).collect(), closure_edges(self.committed_closures.iter()))
+        };
         // keyframe 0 pins the map; the rest start from the odometry, riding its correction
-        let free: Vec<bool> = (0..n).map(|k| k > 0).collect();
+        let free: Vec<bool> = (0..m).map(|k| k > 0).collect();
         let pinned = &self.key_poses.get(0);
         let offset_rotation = mat3::mat_mul(
             &pinned.rotation_global,
@@ -334,10 +357,10 @@ impl GscPgo {
             &pinned.translation_global,
             &mat3::mat_vec(&offset_rotation, &pinned.translation_local),
         );
-        let (mut rotations, mut positions) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        let (mut rotations, mut positions) = (Vec::with_capacity(m), Vec::with_capacity(m));
         rotations.push(pinned.rotation_global);
         positions.push(pinned.translation_global);
-        for k in 1..n {
+        for &k in &node_keyframes[1..] {
             let key_pose = self.key_poses.fixed(k);
             rotations.push(mat3::mat_mul(&offset_rotation, &key_pose.rotation_local));
             positions.push(mat3::add(
@@ -347,9 +370,46 @@ impl GscPgo {
         }
         // every odometry edge and closure has an end past keyframe 0, so all of them are in
         let solve_error_estimate = self.odometry_error_estimate();
-        let odometry = odometry_edges(&self.key_poses, config, solve_error_estimate);
-        let priors = self.position_priors();
-        let (sightings, landmark_ids) = self.sightings();
+        let (odometry, priors, sightings, landmark_ids) = if simplified {
+            let odometry = self
+                .simplify
+                .odometry(&self.key_poses, n)
+                .iter()
+                .map(|e| e.edge(config, solve_error_estimate))
+                .collect();
+            // a prior on a removed keyframe moves to its node, its lever carried through the offset
+            let priors = self
+                .position_priors()
+                .into_iter()
+                .map(|prior| {
+                    let (node, offset) = self.simplify.place(prior.keyframe);
+                    PositionPrior {
+                        keyframe: node,
+                        lever: mat3::add(&mat3::mat_vec(&offset.0, &prior.lever), &offset.1),
+                        ..prior
+                    }
+                })
+                .collect();
+            // a sighting moves to its keyframe's node only when that keyframe is the node (its information is body-frame)
+            let (sightings, landmark_ids) = self.sightings();
+            let sightings = sightings
+                .into_iter()
+                .filter_map(|sighting| {
+                    let (node, offset) = self.simplify.place(sighting.keyframe);
+                    (offset.1 == [0.0; 3] && offset.0 == mat3::identity())
+                        .then_some(LandmarkSighting { keyframe: node, ..sighting })
+                })
+                .collect();
+            (odometry, priors, sightings, landmark_ids)
+        } else {
+            let (sightings, landmark_ids) = self.sightings();
+            (
+                odometry_edges(&self.key_poses, config, solve_error_estimate),
+                self.position_priors(),
+                sightings,
+                landmark_ids,
+            )
+        };
         let solve_config = SolveConfig {
             gnc_variance_scale: config.closure_gnc_var_scale,
             gnc_inlier_probability: config.closure_gnc_inlier_probability,
@@ -360,16 +420,28 @@ impl GscPgo {
                 && self.learned_evidence_requested,
             // or from the accepted graph (newer keyframes riding its correction), where it already fits
             seed_start: if config.solve_seed_from_accepted {
-                (0..n).map(|k| self.key_poses.global(k)).collect()
+                node_keyframes.iter().map(|&k| self.key_poses.global(k)).collect()
             } else {
                 Vec::new()
             },
             seed_closure_weights: if config.solve_seed_gnc_verdicts {
-                self.committed_closures.iter().map(|c| c.gnc_weight).collect()
+                closure_index.iter().map(|&i| self.committed_closures.weight(i)).collect()
             } else {
                 Vec::new()
             },
         };
+        let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(m, &closure_index);
+        // a simplified solve's nodes expand back to every keyframe (and its closures to every committed one) on its thread
+        let expansion = simplified.then(|| crate::graph_simplify::Expansion {
+            placements: self.simplify.placements.clone(),
+            key_poses: self.key_poses.clone(),
+            kept: self.simplify.kept.len(),
+            keyframes: n,
+            closure_index,
+            closures: self.committed_closures.clone(),
+            closure_count,
+        });
+        self.simplify.last_solve = (m, closures.len());
         let solved = self.solved.clone();
         let closures_before = self.closures_dispatched;
         let handle = std::thread::Builder::new()
@@ -397,6 +469,10 @@ impl GscPgo {
                         &solve_config,
                     )
                 };
+                let solution = match &expansion {
+                    Some(expansion) => expansion.expand(solution),
+                    None => solution,
+                };
                 let seconds = started.elapsed().as_secs_f64();
                 if let Some(solved) = solved {
                     solved();
@@ -414,7 +490,6 @@ impl GscPgo {
             closures: self.closures_dispatched,
             closures_before,
         });
-        let (estimate_raw_scans, estimate_scans) = self.solve_estimate_scans(n);
         self.solving = Some(Solving {
             handle,
             keyframes: n,
@@ -493,7 +568,7 @@ impl GscPgo {
         if !self.config.graph_change_heat_enabled {
             return self.adopt_solution(finished, None, None);
         }
-        let cost = graph_change_cost_on(&self.key_poses, &self.config, &finished.solution, finished.keyframes);
+        let cost = graph_change_cost_on(&self.key_poses, &self.config, finished.poses(), finished.keyframes);
         self.debounced(finished, cost, true)
     }
     /// Adopt a finished solve; `heat` = graph change heat before, its cost, after (for the solve log). Returns true.
@@ -618,8 +693,10 @@ impl GscPgo {
         }
         // the solve's closure weights swapped in (its thread built them): a closure committed while it ran stays unjudged
         let evidence = solution.odometry_error_estimate_evidence;
+        self.fast_path_superseded(&solution.closure_weights);
         self.committed_closures
             .adopt(std::sync::Arc::new(std::mem::take(&mut solution.closure_weights)));
+        self.simplify_note_adoption();
         self.update_learned_odometry_error_estimate(evidence);
         self.learned_evidence_measured = solution.odometry_error_estimate_evidence.is_some();
         if self.learned_evidence_measured {
@@ -770,6 +847,13 @@ pub(crate) struct FinishedSolve {
     dispatched: Option<SolveDispatch>,
     /// The keyframe count when it finished.
     arrived_keyframes: usize,
+}
+
+impl FinishedSolve {
+    /// The solved poses (rotations, positions), for `graph_change_cost_on`.
+    pub(crate) fn poses(&self) -> (&[Mat3], &[Vec3]) {
+        (&self.solution.rotations, &self.solution.positions)
+    }
 }
 
 /// The solve log's graph change heat fields: when it finished, heat before, its cost, heat after (none with the heat off).
@@ -944,11 +1028,11 @@ impl ChangeScan {
     }
 }
 
-/// Heat cost of adopting `solution` over `keys`: largest move in accumulated-odometry sds, `curbed_yank`, minus the floor.
+/// Heat cost of adopting solved poses over `keys`: largest move in accumulated-odometry sds, `curbed_yank`, minus the floor.
 pub(crate) fn graph_change_cost_on(
     keys: &crate::store::KeyFrames,
     config: &crate::gsc_pgo::Config,
-    solution: &Solution,
+    (rotations, positions): (&[Mat3], &[Vec3]),
     solved: usize,
 ) -> f64 {
     let mut scan = ChangeScan::default();
@@ -957,16 +1041,16 @@ pub(crate) fn graph_change_cost_on(
             config,
             (&key_pose.rotation_local, &key_pose.translation_local),
             (&key_pose.rotation_global, &key_pose.translation_global),
-            (solution.rotations[k], solution.positions[k]),
+            (rotations[k], positions[k]),
         );
     }
     let newest = keys.fixed(solved - 1);
     let ride_rotation = mat3::mat_mul(
-        &solution.rotations[solved - 1],
+        &rotations[solved - 1],
         &mat3::transpose(&newest.rotation_local),
     );
     let ride_translation = mat3::sub(
-        &solution.positions[solved - 1],
+        &positions[solved - 1],
         &mat3::mat_vec(&ride_rotation, &newest.translation_local),
     );
     for key_pose in keys.range(solved..keys.len()) {
