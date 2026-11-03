@@ -37,9 +37,6 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import (
     coordinator,
@@ -48,6 +45,7 @@ from dimos.robot.manipulators.common.blueprints import (
 )
 from dimos.robot.manipulators.xarm.config import (
     XARM_HEURISTIC_AIM,
+    XARM_WRIST_CAMERA_TRANSFORM,
     make_xarm7_model_config,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
@@ -100,18 +98,6 @@ XARM_GRASP_FRAME_TO_TCP = (
     (-1.0, 0.0, 0.0, 0.0),
     (0.0, 0.0, 1.0, 0.172),
     (0.0, 0.0, 0.0, 1.0),
-)
-
-# Hand-eye calibration for the eye-in-hand RealSense. RealSenseCamera publishes
-# only its own subtree, so without this edge camera_link has no parent, nothing
-# resolves into world, and every cloud the camera produces is silently unusable.
-# link7 is a frame the model already publishes, so ManipulationModule emits the
-# whole chain from one loop at one rate.
-XARM_WRIST_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
-    frame_id="link7",
-    child_frame_id="camera_link",
 )
 
 
