@@ -234,7 +234,9 @@ def answer_question(
     raise ValueError(f"unsupported VQA family: {proposal.family}")
 
 
-def _answer_presence(proposal: QuestionProposal, image: Image, detector: ObjectDetector) -> FamilyAnswer:
+def _answer_presence(
+    proposal: QuestionProposal, image: Image, detector: ObjectDetector
+) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)
     if not detections.detections:
