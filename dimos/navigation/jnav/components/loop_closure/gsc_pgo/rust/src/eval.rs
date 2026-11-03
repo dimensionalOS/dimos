@@ -111,7 +111,6 @@ struct EvalOutput {
     lidar_stream: String,
     odom_frame: String,
     lidar_frame: String,
-    scan_stride: usize,
     config: serde_json::Value,
     /// Raw odom trajectory: [ts, x, y, z, qx, qy, qz, qw] per row.
     odom_rows: Vec<[f64; 8]>,
@@ -180,19 +179,13 @@ struct Args {
     odom_stream: String,
     lidar_stream: String,
     config_path: Option<PathBuf>,
-    /// `--mode fast|deterministic` and `--deterministic-config <JSON object or path>`, over the config file's.
-    mode: Option<String>,
-    deterministic_config: Option<String>,
     output: PathBuf,
-    scan_stride: usize,
     /// Write the keyframes (`<path>`, as the module's dump_path) and every
     /// keyframe pose change as the module publishes it (`<path>.closures`).
     event_dump: Option<PathBuf>,
     /// `--icp-cache-record <path>`: write every closure search's cloud computations there (`icp_cache`).
     /// `--icp-cache-replay <path>`: answer them from such a file, computing (and counting) any it lacks.
     icp_cache: Option<(dimos_gsc_pgo::icp_cache::Mode, PathBuf)>,
-    /// Multiplies every odometry position, for an odometry that reads distance short or long (Go2 leg odometry ~0.76).
-    odom_scale: f64,
     /// Replay as the module runs live instead of lockstep: scans arrive at their recorded times, wait in a queue of
     /// max_scan_queue (all but the newest dropped when it overflows), and the closure search and solves run in the background.
     live: bool,
@@ -207,12 +200,6 @@ struct Args {
     landmark_sightings: Option<PathBuf>,
     /// `--until-s <seconds>`: replay only the lidar stream's first this many seconds (a quick speed check on a crop).
     until_s: f64,
-    /// `--solve-schedule estimate|fraction`: when a lockstep replay adopts each solve. `estimate` (the default): GSC's
-    /// deterministic mode, held until its estimated cost in scans after dispatch (`solve_hold_enabled`), waiting for it
-    /// only if it overshoots. `fraction`: the old stand-in, kept so old runs reproduce: once the map has grown by
-    /// `--solve-delay-fraction` (0.02) of its free keyframes (at least one), waiting for it if needed.
-    solve_by_fraction: bool,
-    solve_delay_fraction: f64,
 }
 
 /// The sightings of a `--landmark-sightings` file, in time order.
@@ -323,19 +310,13 @@ fn parse_args() -> Result<Args, String> {
     let mut odom_stream = None;
     let mut lidar_stream = None;
     let mut config_path = None;
-    let mut mode = None;
-    let mut deterministic_config = None;
     let mut output = None;
-    let mut scan_stride = 1usize;
     let mut event_dump = None;
-    let mut odom_scale = 1.0;
     let mut live = false;
     let mut world_positions = None;
     let mut landmark_sightings = None;
     let mut icp_cache = None;
     let mut until_s = f64::INFINITY;
-    let mut solve_delay_fraction = 0.02;
-    let mut solve_by_fraction = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -345,28 +326,10 @@ fn parse_args() -> Result<Args, String> {
             "--odom-stream" => odom_stream = Some(value()?),
             "--lidar-stream" => lidar_stream = Some(value()?),
             "--config" => config_path = Some(PathBuf::from(value()?)),
-            "--mode" => mode = Some(value()?),
-            "--deterministic-config" => deterministic_config = Some(value()?),
             "--output" => output = Some(PathBuf::from(value()?)),
-            "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
-            "--odom-scale" => odom_scale = value()?.parse().map_err(|e| format!("{e}"))?,
             "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
             "--live" => live = true,
             "--until-s" => until_s = value()?.parse().map_err(|e| format!("{e}"))?,
-            "--solve-schedule" => {
-                solve_by_fraction = match value()?.as_str() {
-                    "estimate" => false,
-                    "fraction" => true,
-                    other => {
-                        return Err(format!(
-                            "--solve-schedule {other}: not estimate or fraction"
-                        ))
-                    }
-                }
-            }
-            "--solve-delay-fraction" => {
-                solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
-            }
             "--world-positions" => world_positions = Some(PathBuf::from(value()?)),
             "--landmark-sightings" => landmark_sightings = Some(PathBuf::from(value()?)),
             "--icp-cache-record" => {
@@ -390,19 +353,13 @@ fn parse_args() -> Result<Args, String> {
         odom_stream: odom_stream.ok_or("--odom-stream is required")?,
         lidar_stream: lidar_stream.ok_or("--lidar-stream is required")?,
         config_path,
-        mode,
-        deterministic_config,
         output: output.ok_or("--output is required")?,
-        scan_stride: scan_stride.max(1),
         event_dump,
-        odom_scale,
         live,
         world_positions,
         landmark_sightings,
         icp_cache,
         until_s,
-        solve_by_fraction,
-        solve_delay_fraction,
     })
 }
 
@@ -486,8 +443,6 @@ const ODOMETRY_ERROR_ESTIMATE_KEYS: [[&str; 2]; 4] = [
 fn load_config(
     path: Option<&std::path::Path>,
     odom_child_frame: &str,
-    mode: Option<&str>,
-    deterministic_config: Option<&str>,
 ) -> Result<EvalConfig, String> {
     let mut overlay = match path {
         Some(path) => {
@@ -499,31 +454,6 @@ fn load_config(
     let fields = overlay
         .as_object_mut()
         .ok_or("--config must be a JSON object")?;
-    // `--mode` and `--deterministic-config` (a JSON object, or a path to one) over the config file's
-    if let Some(mode) = mode {
-        fields.insert("mode".into(), mode.into());
-    }
-    if let Some(given) = deterministic_config {
-        let text = if given.trim_start().starts_with('{') {
-            given.to_string()
-        } else {
-            std::fs::read_to_string(given).map_err(|e| format!("--deterministic-config {given:?}: {e}"))?
-        };
-        let value: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| format!("--deterministic-config: {e}"))?;
-        fields.insert("deterministic_config".into(), value);
-    }
-    // older configs name these odom_<source>_drift_per_sqrt_<unit>: move them to the new names before filling the rest
-    for (keys, source) in ODOMETRY_ERROR_ESTIMATE_KEYS
-        .iter()
-        .zip(["xy", "z", "yaw", "tilt"])
-    {
-        for (key, unit) in keys.iter().zip(["m", "rad"]) {
-            if let Some(value) = fields.remove(&format!("odom_{source}_drift_per_sqrt_{unit}")) {
-                fields.insert(key.to_string(), value);
-            }
-        }
-    }
     let given = ODOMETRY_ERROR_ESTIMATE_KEYS.iter().flatten().any(|key| fields.contains_key(*key));
     match stated_odometry_error_estimate(odom_child_frame) {
         Some(drift) => {
@@ -597,12 +527,7 @@ fn run() -> Result<(), String> {
         odoms.iter().map(|row| row.child_frame_id.clone()),
         "odom child",
     )?;
-    let config = load_config(
-        args.config_path.as_deref(),
-        &odom_child_frame,
-        args.mode.as_deref(),
-        args.deterministic_config.as_deref(),
-    )?;
+    let config = load_config(args.config_path.as_deref(), &odom_child_frame)?;
     let tf_tree = memory2::TfTree::read(&connection)?;
     // the body's pose in the odom child frame: each odom pose (odom -> child) becomes odom -> child * child -> body. A
     // PoseStamped odom names no child, so it is taken as the body already (and its clouds as in the body frame).
@@ -623,7 +548,6 @@ fn run() -> Result<(), String> {
             .map_err(|e| format!("odometry pose frame {pose_frame:?} -> {BODY_FRAME}: {e}"))?
     };
     for row in &mut odoms {
-        row.translation = row.translation.map(|v| v * args.odom_scale);
         if !child_to_body.is_identity() {
             row.translation = mat3::add(
                 &row.translation,
@@ -788,7 +712,7 @@ fn run() -> Result<(), String> {
                 };
                 let mut recording_start = None;
                 feed_error =
-                    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, args.until_s, |scan| {
+                    for_each_scan(&connection, &args.lidar_stream, args.until_s, |scan| {
                         let Some((cloud_with_pose, ts)) = prepare(scan)? else {
                             return Ok(());
                         };
@@ -852,7 +776,7 @@ fn run() -> Result<(), String> {
             None => Vec::new(),
         };
         let mut next_sighting = 0;
-        for_each_scan(&connection, &args.lidar_stream, args.scan_stride, args.until_s, |scan| {
+        for_each_scan(&connection, &args.lidar_stream, args.until_s, |scan| {
             let Some((cloud_with_pose, ts)) = prepare(scan)? else {
                 return Ok(());
             };
@@ -873,23 +797,7 @@ fn run() -> Result<(), String> {
             }
             pgo.search_for_closure_pairs();
             recorder.keyframe_done(&mut pgo, step_started, ts, |pgo| {
-                if !args.solve_by_fraction {
-                    pgo.wait_for_due_solve();
-                    return;
-                }
-                match pgo.solve_started() {
-                    Some((keyframes, free))
-                        if pgo.key_poses().len()
-                            < keyframes
-                                + ((free as f64 * args.solve_delay_fraction).ceil() as usize).max(1) => {
-                    }
-                    Some(_) => {
-                        pgo.wait_for_solve();
-                    }
-                    None => {
-                        pgo.update();
-                    }
-                }
+                pgo.wait_for_due_solve();
             })?;
             Ok(())
         })?;
@@ -998,7 +906,6 @@ fn run() -> Result<(), String> {
         lidar_stream: args.lidar_stream.clone(),
         odom_frame,
         lidar_frame,
-        scan_stride: args.scan_stride,
         config: serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
         keyframes: graph.len(),
         odom_rows,
