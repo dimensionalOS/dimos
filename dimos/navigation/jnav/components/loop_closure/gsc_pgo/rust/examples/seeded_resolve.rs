@@ -176,7 +176,7 @@ fn main() {
         }
         let kept = |s: &Solution| s.closure_weights.iter().filter(|&&w| w > 0.5).count();
         println!(
-            "{{\"closures\":{count},\"keyframes\":{n},\"seconds\":[{:.4},{:.4},{:.4}],\"gnc_iterations\":[{},{},{}],\"kept\":[{},{},{}],\"gap_m\":[{:.3},{:.3},{:.3}]}}",
+            "{{\"closures\":{count},\"keyframes\":{n},\"seconds\":[{:.4},{:.4},{:.4}],\"gnc_iterations\":[{},{},{}],\"kept\":[{},{},{}],\"gap_m\":[{:.3},{:.3},{:.3}],\"error\":[{:.3},{:.3},{:.3}],\"converged\":[{},{},{}]}}",
             chains[0].seconds.last().unwrap(),
             chains[1].seconds.last().unwrap(),
             chains[2].seconds.last().unwrap(),
@@ -189,6 +189,12 @@ fn main() {
             gaps[0],
             gaps[1],
             gaps[2],
+            solutions[0].error,
+            solutions[1].error,
+            solutions[2].error,
+            solutions[0].converged,
+            solutions[1].converged,
+            solutions[2].converged,
         );
         for (chain, solution) in chains.iter_mut().zip(solutions) {
             chain.previous = Some((n, solution));
