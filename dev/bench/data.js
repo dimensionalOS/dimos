@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793669133226,
+  "lastUpdate": 1793670616815,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime (arm64)": [
@@ -10580,6 +10580,60 @@ window.BENCHMARK_DATA = {
           {
             "name": "instructions",
             "value": 137.944,
+            "unit": "G",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1117/1122, lidar 461/461, color_image 852/855; perf counted 100.0%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "63036454+ruthwikdasyam@users.noreply.github.com",
+            "name": "ruthwikdasyam",
+            "username": "ruthwikdasyam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "73bed0714ba5d3bd299cbe5781c0754797b51b97",
+          "message": "fix(sim): gravity compensation and elliptic contact cone in the xArm scenes (#4978)",
+          "timestamp": "2026-11-02T17:47:34-08:00",
+          "tree_id": "5f6c8c6e687d84210dd5725a010b0b9a00a09e64",
+          "url": "https://github.com/dimensionalOS/dimos/commit/73bed0714ba5d3bd299cbe5781c0754797b51b97"
+        },
+        "date": 1793670615957,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "peak memory",
+            "value": 1769.906,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1117/1122, lidar 461/461, color_image 852/855; perf counted 100.0%"
+          },
+          {
+            "name": "peak threads",
+            "value": 378,
+            "unit": "threads",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1117/1122, lidar 461/461, color_image 852/855; perf counted 100.0%"
+          },
+          {
+            "name": "network (transport)",
+            "value": 2723.992,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1117/1122, lidar 461/461, color_image 852/855; perf counted 100.0%"
+          },
+          {
+            "name": "disk write",
+            "value": 1.508,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1117/1122, lidar 461/461, color_image 852/855; perf counted 100.0%"
+          },
+          {
+            "name": "instructions",
+            "value": 137.278,
             "unit": "G",
             "extra": "cpu: Neoverse-N2; delivered: odom 1117/1122, lidar 461/461, color_image 852/855; perf counted 100.0%"
           }
