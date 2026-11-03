@@ -12,20 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Landmark factors: a between factor from a keyframe to a landmark's pose (itself a variable of the solve), with a
-//! full 6x6 covariance in which any dimension may be unknown. An AprilTag knows all six, a reflector or a ranged
-//! bearing only the position (`LandmarkSighting::point`), so a landmark whose sightings never know a rotation is a
-//! 3-entry point in the solve and every other one a 6-entry pose.
+//! Landmark factors: keyframe -> landmark between factors with a 6x6 information (any dimension may be unknown);
+//! a landmark never sighted with a rotation is a 3-entry point in the solve, else a 6-entry pose.
 
 use crate::big_picture_fit::{edge_residual, linearize_between, Edge, State};
 use crate::mat3::{self, Mat3, Vec3};
 
-/// Landmark `landmark` (a dense index) seen from keyframe `keyframe`: its pose in the keyframe's body frame (through the
-/// sensor's mount) and that pose's information (inverse covariance), ordered like an `Edge`'s variances (rotation about
-/// the landmark's own x, y, z, a perturbation R exp(d), then position along the body's x, y, z). An unknown dimension
-/// is zero information (`known_inverse` makes it from a covariance). Every sighting of one landmark is of the same
-/// fixed pose, so sightings from keyframes far apart in time (or from different robots) tie them together the way a
-/// closure does.
+/// Landmark `landmark` (dense index) seen from `keyframe`: body-frame pose and information (`Edge` order; 0 = unknown).
 #[derive(Clone, Copy, Debug)]
 pub struct LandmarkSighting {
     pub keyframe: usize,
@@ -54,28 +47,7 @@ impl LandmarkSighting {
     }
 }
 
-/// A bearing (unit `direction`) with a range along it, as a point and its covariance: `range_variance` (m²) along the
-/// ray, `bearing_variance` (rad²) about each axis across it (so `range² · bearing_variance` across). A range barely
-/// known is a large `range_variance`, which leaves the sighting a bearing.
-pub fn bearing_and_range(
-    direction: &Vec3,
-    range: f64,
-    bearing_variance: f64,
-    range_variance: f64,
-) -> (Vec3, Mat3) {
-    let b = mat3::scale(direction, 1.0 / mat3::norm(direction));
-    let across = range * range * bearing_variance;
-    let covariance = std::array::from_fn(|i| {
-        std::array::from_fn(|j| {
-            let along = b[i] * b[j];
-            range_variance * along + across * ((i == j) as u8 as f64 - along)
-        })
-    });
-    (mat3::scale(&b, range), covariance)
-}
-
-/// A sighting as the solve uses it: the measured pose as an edge (keyframe -> landmark), its information and how many
-/// dimensions it knows.
+/// A sighting as the solve uses it: a keyframe -> landmark edge, its information and how many dims it knows.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Sighting {
     pub(crate) keyframe: usize,
@@ -126,8 +98,7 @@ impl Sighting {
         (0..6).map(|i| r[i] * ir[i]).sum()
     }
 
-    /// The residual and its 6 x (6 + dims) Jacobian over [keyframe pose (rotation, position), the landmark's `dims`
-    /// entries (rotation then position for 6, position for 3)].
+/// The residual and its 6 x (6 + dims) Jacobian over [keyframe rotation, position, the landmark's last `dims` entries].
     pub(crate) fn linearize(&self, state: &State, dims: usize) -> ([f64; 6], Vec<[f64; 12]>) {
         let k = self.keyframe;
         let (residual, jf, jt) = linearize_between(
@@ -151,9 +122,7 @@ impl Sighting {
         (residual, jacobian)
     }
 
-    /// The landmark's entries in fill order, as (column in the Jacobian, column in it, matrix row, matrix column): the
-    /// keyframe's block (if free), the landmark's block, then landmark rows x keyframe columns. `at` is where the
-    /// landmark's `dims` entries start.
+/// Fill entries (J column, J column, matrix row, matrix column): keyframe block (if free), landmark block (at `at`), cross.
     pub(crate) fn entries(
         &self,
         slot: &[Option<usize>],
@@ -173,9 +142,7 @@ impl Sighting {
     }
 }
 
-/// The inverse of `m` over the dimensions whose diagonal is a positive finite number, zero in the others: a
-/// covariance's information with its unknown dimensions (ROS's -1, an infinite or zero variance) carrying none, or back.
-/// All zero if that block is singular.
+/// Inverse of `m` over its positive finite diagonal dims, zero elsewhere (ROS -1, inf, 0 = unknown); all zero if singular.
 pub fn known_inverse(m: &[[f64; 6]; 6]) -> [[f64; 6]; 6] {
     let known: Vec<usize> = (0..6)
         .filter(|&i| m[i][i].is_finite() && m[i][i] > 0.0)

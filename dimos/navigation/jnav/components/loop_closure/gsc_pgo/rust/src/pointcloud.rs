@@ -19,8 +19,7 @@ use crate::mat3::{self, Mat3, Vec3};
 /// Body/global-frame cloud: xyz as f32 (nothing in the PGO core reads intensity).
 pub type PointCloud = Vec<[f32; 3]>;
 
-/// Transform a cloud by a rotation + translation: p' = rotation*p +
-/// translation (rotation applied in f64, stored back to f32).
+/// p' = rotation*p + translation, computed in f64.
 pub fn transform_cloud(cloud: &[[f32; 3]], rotation: &Mat3, translation: &Vec3) -> PointCloud {
     cloud
         .iter()
@@ -32,9 +31,7 @@ pub fn transform_cloud(cloud: &[[f32; 3]], rotation: &Mat3, translation: &Vec3) 
         .collect()
 }
 
-/// Voxel-grid downsample with cubic leaf size: hash points into cells on
-/// `floor(p * (1/leaf))` (f32 math), emit the centroid of each occupied
-/// cell, ordered by (z, y, x) cell index.
+/// Voxel downsample (cubic `leaf`, m; <= 0 = no-op): one centroid per occupied cell, ordered by (z, y, x) cell.
 pub fn voxel_downsample(cloud: &[[f32; 3]], leaf: f64) -> PointCloud {
     if leaf <= 0.0 || cloud.is_empty() {
         return cloud.to_vec();
@@ -58,7 +55,6 @@ pub fn voxel_downsample(cloud: &[[f32; 3]], leaf: f64) -> PointCloud {
         entry.1 += 1;
     }
     let mut keys: Vec<(i64, i64, i64)> = cells.keys().copied().collect();
-    // Sort leaves by linear index i + j*div_x + k*div_x*div_y -> (z, y, x).
     keys.sort_by_key(|&(x, y, z)| (z, y, x));
     keys.iter()
         .map(|key| {
@@ -69,7 +65,6 @@ pub fn voxel_downsample(cloud: &[[f32; 3]], leaf: f64) -> PointCloud {
         .collect()
 }
 
-/// Exact nearest-neighbour / k-NN over f32 points (median-split k-d tree, branch-and-bound queries).
 struct KdNode {
     /// Index into the original point array.
     point: u32,
@@ -78,19 +73,16 @@ struct KdNode {
     right: i32,
 }
 
-/// Exact 3-D kd-tree (median split, branch-and-bound queries). Distances are
-/// reported as squared f32.
+/// Exact 3-D kd-tree (median split, branch-and-bound queries); distances are squared.
 pub struct KdTree {
     points: Vec<[f32; 3]>,
     nodes: Vec<KdNode>,
     root: i32,
-    /// The same points in leaf buckets stored contiguously, for `nearest` (most of ICP's time): a point-per-node tree
-    /// jumps to a scattered point on every visited node.
+    /// The same points in contiguous leaf buckets, for cache-friendly `nearest` (most of ICP's time).
     buckets: BucketTree,
 }
 
-/// Points reordered so each leaf's (at most `BUCKET` of them) sit together; `original[i]` is `points[i]`'s index in
-/// the cloud the tree was built from.
+/// Points reordered so each leaf's (<= `BUCKET`) sit together; `original[i]` is `points[i]`'s index in the input cloud.
 #[derive(Default)]
 struct BucketTree {
     points: Vec<[f32; 3]>,
@@ -237,45 +229,7 @@ impl KdTree {
         self.buckets.nearest(query)
     }
 
-    /// `nearest` through the point-per-node tree (kept to check the bucket tree against).
-    pub fn nearest_reference(&self, query: &[f32; 3]) -> Option<(usize, f32)> {
-        if self.root < 0 {
-            return None;
-        }
-        let mut best = (usize::MAX, f32::MAX);
-        self.nearest_recursive(self.root, query, &mut best);
-        if best.0 == usize::MAX {
-            None
-        } else {
-            Some(best)
-        }
-    }
-
-    fn nearest_recursive(&self, node_index: i32, query: &[f32; 3], best: &mut (usize, f32)) {
-        let node = &self.nodes[node_index as usize];
-        let p = &self.points[node.point as usize];
-        let d = sq_dist(p, query);
-        if d < best.1 {
-            *best = (node.point as usize, d);
-        }
-        let axis = node.axis as usize;
-        let delta = query[axis] - p[axis];
-        let (near, far) = if delta < 0.0 {
-            (node.left, node.right)
-        } else {
-            (node.right, node.left)
-        };
-        if near >= 0 {
-            self.nearest_recursive(near, query, best);
-        }
-        if far >= 0 && delta * delta < best.1 {
-            self.nearest_recursive(far, query, best);
-        }
-    }
-
-    /// k nearest neighbours, ascending by squared distance (includes the
-    /// query point itself when it is in the cloud). Distance ties on the k-th
-    /// slot keep the earlier find (strict `dist < worstDist()` insertion).
+    /// k nearest neighbours, ascending by squared distance (includes the query if in the cloud; ties keep the earlier find).
     pub fn knn(&self, query: &[f32; 3], k: usize) -> Vec<(usize, f32)> {
         if self.root < 0 || k == 0 {
             return Vec::new();
@@ -340,9 +294,7 @@ impl NearestIndex for KdTree {
     }
 }
 
-/// A growing cloud and its index: appended points go into a new small k-d tree, and the two newest trees are merged
-/// whenever the older is at most twice the newer (logarithmic method), so adding n points costs O(n log^2 n) in all and
-/// a query searches O(log n) trees. Indices are positions in `points()`, in the order they were added.
+/// A growing cloud on O(log n) k-d trees, merging the newest two while older <= 2x newer; indices follow `points()`.
 #[derive(Default)]
 pub struct KdForest {
     points: Vec<[f32; 3]>,
@@ -410,10 +362,9 @@ fn sq_dist(a: &[f32; 3], b: &[f32; 3]) -> f32 {
 mod bucket_tree_tests {
     use super::KdTree;
 
-    /// The bucket tree finds the same nearest distance as the point-per-node tree and as brute force, on a cloud with
-    /// many equal coordinates (a voxel grid's) and on queries far outside it.
+    /// The bucket tree finds the brute-force nearest distance, on a voxel grid's equal coordinates and far queries.
     #[test]
-    fn nearest_matches_the_reference_tree() {
+    fn nearest_matches_brute_force() {
         let mut seed = 12345u64;
         let mut next = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -426,9 +377,7 @@ mod bucket_tree_tests {
         for _ in 0..2000 {
             let q = [next() * 30.0 - 13.0, next() * 30.0 - 13.0, next() * 6.0 - 1.0];
             let (i, d) = tree.nearest(&q).unwrap();
-            let (_, d_ref) = tree.nearest_reference(&q).unwrap();
             let brute = cloud.iter().map(|p| super::sq_dist(p, &q)).fold(f32::MAX, f32::min);
-            assert_eq!(d, d_ref);
             assert_eq!(d, brute);
             assert_eq!(super::sq_dist(&cloud[i], &q), d);
         }

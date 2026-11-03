@@ -12,72 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Landmark sightings (`solve_with_priors`): a drifting square path with no loop closures and no world positions,
-//! seeing a few landmarks by bearing with only a rough range (its uncertainty half the range), or one tag's full pose.
+//! `solve_with_priors` landmark sightings correct a drifting closure-free square: rough-range bearings, or one tag pose.
 
-use dimos_gsc_pgo::big_picture_fit::{
-    bearing_and_range, solve_with_priors, Edge, LandmarkSighting, SolveConfig,
-};
+use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, LandmarkSighting, SolveConfig};
 use dimos_gsc_pgo::landmarks::known_inverse;
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
-const N: usize = 160;
+mod common;
+use common::{noise, odometry, truth, N};
 
-/// A 40 m square, a keyframe every metre: the true (yaw, position) of each.
-fn truth() -> Vec<(f64, Vec3)> {
-    (0..N)
-        .map(|k| {
-            let (side, along) = (k / 40, (k % 40) as f64);
-            let yaw = side as f64 * std::f64::consts::FRAC_PI_2;
-            let c = [[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]][side];
-            (
-                yaw,
-                [c[0] + along * yaw.cos(), c[1] + along * yaw.sin(), 0.0],
-            )
+/// A bearing + range as a point and covariance: `range_variance` along the ray, `range² · bearing_variance` across it.
+fn bearing_and_range(
+    direction: &Vec3,
+    range: f64,
+    bearing_variance: f64,
+    range_variance: f64,
+) -> (Vec3, Mat3) {
+    let b = mat3::scale(direction, 1.0 / mat3::norm(direction));
+    let across = range * range * bearing_variance;
+    let covariance = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            let along = b[i] * b[j];
+            range_variance * along + across * ((i == j) as u8 as f64 - along)
         })
-        .collect()
-}
-
-/// Deterministic noise uniform on [-1, 1).
-fn noise(k: usize, salt: f64) -> f64 {
-    ((k as f64 * 12.9898 + salt * 78.233).sin() * 43758.5453).rem_euclid(1.0) * 2.0 - 1.0
-}
-
-/// Odometry along `truth` with errors as large as it reports, and its dead-reckoned poses.
-fn odometry(truth: &[(f64, Vec3)]) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>) {
-    let (heading_sigma, step_sigma) = (0.02, 0.03);
-    let u = |k: usize, salt: f64, sigma: f64| noise(k, salt) * 3f64.sqrt() * sigma;
-    let edges: Vec<Edge> = (1..N)
-        .map(|k| {
-            let ((yaw_a, a), (yaw_b, b)) = (truth[k - 1], truth[k]);
-            let step = mat3::mat_vec(&mat3::transpose(&mat3::rot_z(yaw_a)), &mat3::sub(&b, &a));
-            Edge {
-                from: k - 1,
-                to: k,
-                rotation: mat3::rot_z(yaw_b - yaw_a + u(k, 1.0, heading_sigma)),
-                translation: [
-                    step[0] + u(k, 2.0, step_sigma),
-                    step[1] + u(k, 3.0, step_sigma),
-                    step[2],
-                ],
-                variances: [
-                    1e-6,
-                    1e-6,
-                    heading_sigma.powi(2),
-                    step_sigma.powi(2),
-                    step_sigma.powi(2),
-                    1e-6,
-                ],
-            }
-        })
-        .collect();
-    let (mut rotations, mut positions) = (vec![mat3::identity()], vec![[0.0; 3]]);
-    for e in &edges {
-        let (r, p) = (rotations[e.from], positions[e.from]);
-        rotations.push(mat3::mat_mul(&r, &e.rotation));
-        positions.push(mat3::add(&p, &mat3::mat_vec(&r, &e.translation)));
-    }
-    (edges, rotations, positions)
+    });
+    (mat3::scale(&b, range), covariance)
 }
 
 #[test]
@@ -87,8 +46,7 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
     let drifted = (0..N)
         .map(|k| mat3::norm(&mat3::sub(&positions[k], &truth[k].1)))
         .fold(0.0, f64::max);
-    // three posts outside the square, each seen from every keyframe within 35 m: a bearing good to 0.01 rad, a range
-    // guessed (from its apparent size, say) to within half of itself
+    // three posts seen from every keyframe within 35 m: bearing to 0.01 rad, range only to within half of itself
     let posts: [Vec3; 3] = [[20.0, -10.0, 2.0], [55.0, 25.0, 2.0], [-12.0, 30.0, 2.0]];
     let bearing_sigma: f64 = 0.01;
     let mut sightings = Vec::new();
@@ -176,19 +134,8 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
 }
 
 #[test]
-fn bearing_and_range_is_tight_across_the_ray_and_loose_along_it() {
-    let (point, covariance) = bearing_and_range(&[0.0, 2.0, 0.0], 100.0, 1e-4, 2500.0);
-    assert!(mat3::norm(&mat3::sub(&point, &[0.0, 100.0, 0.0])) < 1e-9);
-    // along the ray: the range's variance; across it: (range x bearing sigma)^2 = 1 m^2
-    assert!((covariance[1][1] - 2500.0).abs() < 1e-9);
-    assert!((covariance[0][0] - 1.0).abs() < 1e-9 && (covariance[2][2] - 1.0).abs() < 1e-9);
-    assert!(covariance[0][1].abs() < 1e-9);
-}
-
-#[test]
 fn one_tag_seen_at_both_ends_closes_heading_and_position() {
-    // a tag (a full pose: position to 2 cm, rotation to 0.01 rad) on a wall by the start, seen only from the first and
-    // the last few keyframes: one sighting's pose pins the keyframe's heading, which a point never could
+    // a full-pose tag near the start, seen only from the first and last 3 keyframes, pins heading as a point cannot
     let truth = truth();
     let (edges, rotations, positions) = odometry(&truth);
     let heading = |r: &Mat3| r[1][0].atan2(r[0][0]);
@@ -299,12 +246,8 @@ fn unknown_dimensions_carry_no_information() {
 fn factors_before_the_first_keyframe_wait_for_it() {
     // a fix or sighting can reach the module before its first scan; there is nothing to solve yet
     let mut pgo = dimos_gsc_pgo::gsc_pgo::GscPgo::new(dimos_gsc_pgo::gsc_pgo::Config::default());
-    pgo.add_landmark_point(
-        0.0,
-        7,
-        [1.0, 0.0, 0.0],
-        [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]],
-    );
+    let point = LandmarkSighting::point(0, 0, [1.0, 0.0, 0.0], [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]]);
+    pgo.add_landmark_factor(0.0, 7, point.rotation, point.position, point.information);
     pgo.add_coordinate_factor(
         0.0,
         0,

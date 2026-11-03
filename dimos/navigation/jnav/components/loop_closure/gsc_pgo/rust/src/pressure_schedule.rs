@@ -12,28 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The loop-overlap pressure as a logical-execution-time job (`Config::pressure_let_enabled`): where the scan thread
-//! would recompute it (every `pressure_check_frequency`-th scan once the graph has changed), it asks for a pressure job
-//! instead. One worker, logically one job at a time: a job starts when the worker is free (at once, or at the landing of
-//! the one before), with a snapshot of what the pressure reads taken then, so a request made while the worker is busy
-//! waits as the one pending request (a newer request replaces it: the pressure is a state estimate, and the newest
-//! inputs are the ones worth computing). Its result lands at its dispatch + estimate (advancing scans and the data-time
-//! floor, as the closure searches); everything that reads the pressure reads the newest landed value.
+//! Loop-overlap pressure as a logical-execution-time job: one worker, one pending request (newest replaces it); a
+//! result lands at dispatch + estimate, and readers see the newest landed value.
 
 use crate::closure_search_schedule::SearchPool;
 use crate::gsc_pgo::GscPgo;
 use crate::loop_overlap::LoopOverlap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 
-/// A pressure job's outcome (the pressure, None before a sensor range, and its seconds) once it has finished.
-#[derive(Default)]
-pub struct PressureSlot {
-    done: Mutex<Option<(Option<LoopOverlap>, f64)>>,
-    changed: Condvar,
-}
+/// A pressure job's outcome: the pressure (None before a sensor range) and its seconds.
+type PressureSlot = crate::adoption_schedule::JobSlot<(Option<LoopOverlap>, f64)>;
 
-/// A dispatched pressure job and its schedule: the advancing-scan count and recorded time at its dispatch, its estimate
-/// (seconds) and the scan period it is counted in, and the keyframes and committed closures it read.
+/// A dispatched pressure job: advancing scans and data time at dispatch, estimate (raw scans), graph size read.
 pub struct PressureJob {
     slot: Arc<PressureSlot>,
     dispatch_scan: usize,
@@ -44,14 +34,13 @@ pub struct PressureJob {
 }
 
 impl PressureJob {
-    fn estimate_scans(&self, config: &crate::gsc_pgo::Config) -> usize {
-        crate::closure_search_schedule::hold_scans(self.estimate_raw_scans, config)
+    fn estimate_scans(&self) -> usize {
+        crate::closure_search_schedule::hold_scans(self.estimate_raw_scans)
     }
 }
 
 impl GscPgo {
-    /// The scan thread's pressure step: land a due job, take a request when the graph has changed on a check scan, and
-    /// start the pending request when the worker is free (`pressure_let_enabled`).
+    /// Land a due job, request one if the graph changed on a check scan, dispatch it when the worker is free.
     pub(crate) fn step_pressure(&mut self, check_due: bool) {
         self.land_pressure();
         if check_due && self.pressure_version != Some(self.graph_version) {
@@ -63,26 +52,22 @@ impl GscPgo {
             self.dispatch_pressure();
         }
     }
-    /// Per pressure computation: the keyframes and committed closures it read and its seconds (inline or as a job), and
-    /// the pressure jobs that ran past the data time their estimate spanned.
+    /// Per pressure computation: (keyframes, committed closures, seconds).
     pub fn pressure_calls(&self) -> &[(usize, usize, f64)] {
         &self.pressure_calls
     }
     pub fn pressure_overshoots(&self) -> usize {
         self.pressure_overshoots
     }
-    /// Per adopted solve, the graph change heat cost's part measured on its solve's thread (keyframes, seconds), and the
-    /// solves whose cost the scan thread recomputed because a solve was adopted while they ran.
+    /// Per adopted solve (keyframes, change-cost seconds on its thread), and how many costs the scan thread recomputed.
     pub fn change_cost_calls(&self) -> (&[(usize, f64)], usize) {
         (&self.change_cost_calls, self.graph_change_cost_recomputed)
     }
-    /// Seconds the scan thread blocked waiting on jobs (due closure searches and pressure jobs, and solves it joined):
-    /// a lockstep replay's waits, left out of the scan thread's work.
+    /// Seconds the scan thread blocked on due jobs and joined solves (lockstep waits, excluded from its work).
     pub fn thread_waits_s(&self) -> f64 {
         self.closure_search_wait_s + self.solve_join_wait_s
     }
-    /// A lockstep replay waits for a due job that has not finished (pressure jobs here; the closure searches and solves
-    /// are waited for by their own calls), so its results do not depend on the machine's speed.
+    /// Lockstep replay: wait for unfinished due jobs so results don't depend on machine speed.
     pub fn set_wait_for_due_jobs(&mut self, wait: bool) {
         self.wait_for_due_jobs = wait;
     }
@@ -113,15 +98,14 @@ impl GscPgo {
             closures,
         });
     }
-    /// Land the pressure job once its hold has passed (its scans and the data time its seconds span), waiting for it
-    /// then when `wait_for_due_jobs`; a run that does not wait lands it once it finishes (late: an overshoot).
+    /// Land the job once its hold has passed (waiting if `wait_for_due_jobs`, else landing late as an overshoot).
     fn land_pressure(&mut self) {
         let Some(job) = &self.pressure_job else {
             return;
         };
         let spanned = self.newest_scan_time() - job.dispatch_time;
         let deterministic = self.config.deterministic();
-        if deterministic && self.advancing_scans < job.dispatch_scan + job.estimate_scans(&self.config) {
+        if deterministic && self.advancing_scans < job.dispatch_scan + job.estimate_scans() {
             return;
         }
         let mut done = job.slot.done.lock().expect("pressure slot");
@@ -147,7 +131,7 @@ impl GscPgo {
         let (overlap, seconds) = done.take().expect("finished");
         drop(done);
         let job = self.pressure_job.take().expect("checked above");
-        // its work ran past the data time its hold spanned (first reached at the scan it became due), or it landed late
+        // overshoot: its work ran past the data time its hold spanned, or it landed late
         let overshoot = deterministic && (seconds > spanned || std::mem::take(&mut self.pressure_late));
         self.note_overshoot("pressure", overshoot);
         if overshoot {
@@ -158,7 +142,7 @@ impl GscPgo {
                 job.keyframes,
                 job.closures,
                 job.estimate_raw_scans,
-                job.estimate_scans(&self.config),
+                job.estimate_scans(),
             );
         }
         self.pressure_calls.push((job.keyframes, job.closures, seconds));

@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `GscPgo`: keyframe gating, the closure search and its gates, and the pose graph (each keyframe's
-//! odometry plus the closures that passed the gates), re-solved by `pose_graph` on a background thread
-//! whenever new closures arrive. Keyframe ids are their indices; rotations and vectors are `mat3`
-//! (row-major f64).
+//! `GscPgo`: keyframe gating, the closure search and its gates, and the pose graph (odometry + gated closures),
+//! re-solved on a background thread when new closures arrive. Keyframe ids are indices; `mat3` is row-major f64.
 
 use std::sync::Arc;
 
@@ -73,8 +71,7 @@ pub struct KeyPoseWithCloud {
     pub body_cloud: Option<Arc<PointCloud>>,
 }
 
-/// A closure that passed every gate: its relative pose (source in the target's frame), its ICP
-/// fitness, and the newest applied solve's verdict.
+/// A closure that passed every gate: relative pose (source in the target's frame), ICP fitness, newest solve's verdict.
 #[derive(Clone, Copy)]
 pub struct CommittedClosure {
     pub source_id: usize,
@@ -86,16 +83,11 @@ pub struct CommittedClosure {
     pub gnc_weight: f64,
 }
 
-/// Per-search loop-closure diagnostics
-/// one record every time `search_for_closure_pairs` evaluates a keyframe, capturing the metric at each
-/// gate and the outcome (accepted, or the name of the gate that rejected it).
-/// Lets an offline eval reconstruct WHERE and WHY closures are accepted/rejected
+/// Per-search loop-closure diagnostics: each gate's metric and the outcome, so an offline eval sees where/why closures pass.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "native", derive(serde::Serialize))]
 pub struct ClosureCandidateDiag {
-    /// "accepted", "outranked" (a better proposal took the search thread), "stale" (still waiting for the busy search
-    /// thread when a newer keyframe arrived), or the gate that rejected it:
-    /// "low_occupancy", "no_candidate", "degeneracy_reject", "icp_reject", "uninformative", "yank_confidence_reject".
+    /// "accepted", "outranked", "stale", "verification_dropped", or the rejecting gate's name (e.g. "icp_reject", "uninformative").
     pub outcome: &'static str,
     pub source_id: usize,
     pub source_time: f64,
@@ -107,49 +99,35 @@ pub struct ClosureCandidateDiag {
     pub from_scan_context: bool,
     /// Occupied scan-context cells of the source keyframe (the occupancy gate input).
     pub descriptor_occupancy: i32,
-    /// Best / second-best scan-context distances and their Lowe ratio
-    /// (best/second). NaN when the candidate came from the position fallback.
+    /// Best / second-best scan-context distances and their Lowe ratio (best/second); NaN for a position-fallback candidate.
     pub scan_context_best: f32,
     pub scan_context_second: f32,
     pub lowe_ratio: f32,
-    /// The search's inputs from the rest of the run: the loop-overlap pressure when it started (`GscPgo::pressure`, 0
-    /// before any), the share of judged closures with a similar yank_stdevs that the solve kept ((kept + 1) / (judged + 2),
-    /// each weighted by e^(-(yank_stdevs difference)^2 / 2)), the extension budget in
-    /// keyframes (closure_extended_icp_max_keyframes x (1 - (1 - pressure)(1 - target_overlap)), up to the next doubling step), and the separate places the scan matched as well as
-    /// this target, counted only as far as the decision needed (0 when it was never counted).
+    /// Pressure at search start (0 before any); keep_rate = similar-yank judged closures' (kept+1)/(judged+2); look_alike_places 0 = not counted.
     pub pressure: f64,
     /// Pressure 2 when the search started (`LoopOverlap::unclosed_overlap_probability`).
     pub pressure2: f64,
-    /// The odometry error estimate when the search started, as ratios to the reported variances (xy, z, yaw, roll/pitch;
-    /// `GscPgo::odometry_error_estimate`).
+    /// Odometry error estimate at search start, as ratios to the reported variances (xy, z, yaw, roll/pitch).
     pub learned_odometry_error_estimate: [f64; 4],
     /// The same as the uninformative gate measures the graph with (`GscPgo::odometry_error_estimate`, the stated odometry error estimate).
     pub odometry_error_estimate_gate: [f64; 4],
-    /// The closure's innovation: the source keyframe's offset from where the graph put it, relative to the target, in
-    /// world axes (m), and the graph's covariance of that offset at the odometry error estimate in use (m²); NaN before ICP.
+    /// Source keyframe's offset from where the graph put it, vs the target, world axes (m), and its graph covariance (m²); NaN before ICP.
     pub innovation: Vec3,
     pub innovation_covariance: Mat3,
-    /// The chance the source scan overlaps the target keyframe's (`OverlapModel::overlap`): what the extension budget
-    /// scales with.
+    /// Chance the source scan overlaps the target keyframe's (`OverlapModel::overlap`); the extension budget scales with it.
     pub target_overlap: f64,
     pub keep_rate: f64,
     pub extension_budget: usize,
     pub look_alike_places: usize,
-    /// Separate places that had matched the chosen scan-context target, and the generic targets skipped for it.
-    pub generic_places: usize,
-    pub generic_skipped: usize,
     /// Global distance between source and candidate keyframe.
     pub candidate_distance: f64,
-    /// Minimum degeneracy (observability) of the source submap, -1 if not
-    /// computed on this path.
+    /// Minimum degeneracy (observability) of the source submap; -1 if not computed.
     pub degeneracy_min: f32,
     pub icp_converged: bool,
-    /// The single ICP's iterations and why it stopped (`IcpStop::name`; "" if ICP did not run, 0 iterations when read
-    /// from a cache written before these were logged).
+    /// Single ICP's iterations and stop reason (`IcpStop::name`; "" if ICP did not run).
     pub icp_iterations: u32,
     pub icp_stop: &'static str,
-    /// How far ICP moved the source from its initial guess (the scan-context seed): the distance (m) between where the
-    /// guess and the result put the source keyframe, and the rotation (deg) between them; NaN if ICP did not run.
+    /// How far ICP moved the source keyframe from the scan-context seed: distance (m) and rotation (deg); NaN if ICP did not run.
     pub icp_init_offset_m: f64,
     pub icp_init_offset_deg: f64,
     /// ICP fitness (the score-threshold gate input); NaN if ICP did not run.
@@ -158,29 +136,17 @@ pub struct ClosureCandidateDiag {
     pub icp_overlap: f64,
     /// Magnitude of the ICP translation correction, NaN if ICP did not run.
     pub icp_translation_norm: f64,
-    /// How far the accepted constraint pulls the graph away from the current
-    /// odom-chain estimate: translation (m) and rotation (deg) between the
-    /// ICP-refined relative pose and the current relative pose. A large yank on
-    /// a plausible-distance candidate is the signature of a bad closure that
-    /// disagrees with odometry. NaN if ICP did not run.
+    /// Translation (m) / rotation (deg) between the ICP relative pose and the current graph's; a large yank flags a bad closure. NaN before ICP.
     pub yank_translation: f64,
     pub yank_rotation_deg: f64,
-    /// The inputs and outputs of the yank / confidence gate , recorded for every
-    /// candidate that reaches ICP (NaN otherwise) whether the gate is on or not:
-    /// yank_stdevs = the closure's innovation in standard deviations of its predicted spread, sqrt(v^T (P + c I)^-1 v):
-    /// P the graph's covariance of the two ends' relative position, c the closure's variance (its ICP inliers' mean square);
-    /// (infinite before any, so the first candidate only seeds the scale); each factor is its metric normalized by its own gate and clamped to [0, 1];
-    /// confidence = their product; required_confidence = 1 - exp(-yank_stdevs^2 / 2k^2), k = `closure_yank_gate_width`.
+    /// Yank gate (NaN before ICP): yank_stdevs = sqrt(v^T (P + cI)^-1 v); confidence = factors' product; required = 1 - exp(-z²/2k²).
     pub yank_stdevs: f64,
     pub scan_context_factor: f64,
     pub icp_factor: f64,
     pub degeneracy_factor: f64,
     pub confidence: f64,
     pub required_confidence: f64,
-    /// Extended ICP (`closure_extended_icp_max_keyframes`), recorded when it ran (0 / NaN otherwise):
-    /// the source keyframes stacked into the last round, both clouds' sizes, the source points
-    /// within the correspondence distance of the target for the single scan and the extended
-    /// clouds, the extended ICP's fitness, and the confidence that evidence gives.
+    /// Extended ICP (`closure_extended_icp_max_keyframes`) stats (0 / NaN if not run): keyframes, cloud sizes, inliers, fitness, confidence.
     pub extended_keyframes: usize,
     pub extended_source_points: usize,
     pub extended_target_points: usize,
@@ -188,17 +154,11 @@ pub struct ClosureCandidateDiag {
     pub extended_inliers: usize,
     pub extended_fitness: f64,
     pub extended_confidence: f64,
-    /// The extension's confidence ratio per cloud (evidence over the bar, yank units), the single scan's first; the
-    /// candidate's score is their median.
+    /// Extension confidence ratio per cloud (evidence / bar, yank units), single scan first; the candidate's score is their median.
     pub cloud_ratios: Vec<f64>,
-    /// How far each extension step's alignment is from the one before it (first fit, cloud 1, cloud 2, ...) at the
-    /// source keyframe, in inlier distances, and the agreement multiplier through the last step (1 before any; it
-    /// scales only the yank gate's score, `compounding_agreement_sensitivity`).
+    /// Each extension step's alignment distance from the previous at the source keyframe (inlier distances; `compounding_agreement_sensitivity`).
     pub cloud_agreement: Vec<f64>,
-    /// The search's cost, for fitting estimates of it from what is known before it starts (seconds, NaN where a step did
-    /// not run): the scan-context lookup (0 for a retry, which reuses its keyframe's), taking the proposal as a search
-    /// (`begin_closure_search`), building the source scan and target submap, the degeneracy check, the single ICP, the
-    /// extension (each round, and in all), the rest of the search (gates, likelihoods, sharpness), and the whole search.
+    /// Search cost in seconds per step (NaN where it did not run; lookup 0 for a retry), for fitting pre-search cost estimates.
     pub cost_lookup_s: f64,
     pub cost_begin_s: f64,
     pub cost_submap_s: f64,
@@ -208,9 +168,7 @@ pub struct ClosureCandidateDiag {
     pub cost_extension_rounds_s: Vec<f64>,
     pub cost_gates_s: f64,
     pub cost_search_s: f64,
-    /// What was known before the search: the map's keyframes, the scan-context candidates ranked and the alternative
-    /// places left (and this one's try, 1 = the best match), the extension clouds planned and fitted, the single ICP's
-    /// source, target and thinned-target points, the body's speed (m/s, `recent_speed`), and the scan count when the search was proposed and when its result landed.
+    /// Known before the search: map size, scan-context candidates, alternatives (try 1 = best), clouds, ICP points, speed (m/s), scan indices.
     pub map_keyframes: usize,
     pub scan_context_candidates: usize,
     pub alternatives_left: usize,
@@ -223,20 +181,15 @@ pub struct ClosureCandidateDiag {
     pub speed_mps: f64,
     pub scan_index_proposed: usize,
     pub scan_index_finished: usize,
-    /// The deterministic schedule (`closure_search_hold_enabled`): the scan count at the search's dispatch, its estimate
-    /// (seconds, the extension rounds it ran included, and scans after dispatch), and whether it ran past the data time
-    /// its estimate spanned.
+    /// Deterministic schedule: scan count at dispatch, its estimate (raw, and in scans after dispatch), and whether it overshot.
     pub scan_index_dispatched: usize,
     pub estimate_raw_scans: f64,
     pub estimate_scans: usize,
     pub search_overshoot: bool,
-    /// The points the dispatch-time estimate counted: the voxelized source keyframe's, and the single target submap's
-    /// keyframes' summed before merging.
+    /// Points the dispatch estimate counted: the voxelized source keyframe, and the target submap's keyframes summed before merging.
     pub dispatch_source_points: usize,
     pub dispatch_target_points: usize,
-    /// The two-stage search (`closure_search_schedule`): the single scan's confidence ratio a match inside the
-    /// uncertainty range is ranked by in the verification buffer, and its verification job's schedule (as the fast
-    /// match's above); each extension round's separate source cloud and target points.
+    /// Two-stage search (`closure_search_schedule`): single-scan confidence ratio (verification rank), verification schedule, per-round points.
     pub promise: f64,
     pub verification_scan_index_dispatched: usize,
     pub verification_estimate_raw_scans: f64,
@@ -245,11 +198,7 @@ pub struct ClosureCandidateDiag {
     pub extension_rounds_source_points: Vec<usize>,
     pub extension_rounds_target_points: Vec<usize>,
     pub agreement_multiplier: f64,
-    /// `connection_fit::sharpness` of the single-scan and the last extended alignment (NaN when not scored).
-    pub sharpness: f64,
-    pub extended_sharpness: f64,
-    /// `connection_fit::likelihood_ratio` (mean log ratio, yank units) of the single-scan and the last extended alignment, and
-    /// the aligned-distance width it measured (NaN when not scored).
+    /// `connection_fit::likelihood_ratio` (mean log ratio, yank units) of the single and last extended alignment, and its width; NaN unscored.
     pub likelihood_ratio: f64,
     pub extended_likelihood_ratio: f64,
     pub likelihood_width: f64,
@@ -279,8 +228,6 @@ impl ClosureCandidateDiag {
             keep_rate: f64::NAN,
             extension_budget: 0,
             look_alike_places: 0,
-            generic_places: 0,
-            generic_skipped: 0,
             candidate_distance: f64::NAN,
             degeneracy_min: -1.0,
             icp_converged: false,
@@ -343,8 +290,6 @@ impl ClosureCandidateDiag {
             extension_rounds_source_points: Vec::new(),
             extension_rounds_target_points: Vec::new(),
             agreement_multiplier: 1.0,
-            sharpness: f64::NAN,
-            extended_sharpness: f64::NAN,
             likelihood_ratio: f64::NAN,
             extended_likelihood_ratio: f64::NAN,
             likelihood_width: f64::NAN,
@@ -352,8 +297,7 @@ impl ClosureCandidateDiag {
     }
 }
 
-/// Where a closure candidate is in its life: proposed by the search, through the gates, GNC's
-/// votes, in or out of the graph, and applied to the map.
+/// A closure candidate's lifecycle: proposed, gated, GNC's votes, and applied to the map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ClosureEdgeState {
@@ -372,8 +316,7 @@ pub enum ClosureEdgeState {
     Applied = 6,
 }
 
-/// One step in a closure candidate's life, for visualizing proposed / accepted /
-/// rejected / applied edges as they happen. Purely observational.
+/// One step in a closure candidate's life, for visualizing edges as they happen; observational only.
 #[derive(Debug, Clone, Copy)]
 pub struct ClosureEdgeEvent {
     /// Keyframe time of the newest keyframe when it happened.
@@ -381,11 +324,9 @@ pub struct ClosureEdgeEvent {
     pub source_id: usize,
     pub target_id: usize,
     pub state: ClosureEdgeState,
-    /// How likely the edge is right, in [0, 1]: scan-context similarity while only proposed,
-    /// ICP fitness against the fitness its yank requires once ICP ran, then GNC's weight times that.
+    /// How likely the edge is right in [0, 1]: scan-context similarity, then ICP confidence, then times GNC's weight.
     pub confidence: f64,
-    /// How hard the edge pulls the accepted pose graph, in robust standard deviations of the
-    /// yanks of closures committed so far (`ClosureCandidateDiag::yank_stdevs`); NaN before ICP.
+    /// How hard the edge pulls the accepted graph (`ClosureCandidateDiag::yank_stdevs`); NaN before ICP.
     pub yank_stdevs: f64,
 }
 
@@ -393,8 +334,7 @@ pub struct ClosureEdgeEvent {
 pub const CLOSURE_EDGE_RECORD_BYTES: usize = 52;
 
 impl ClosureEdgeEvent {
-    /// Append this event as one packed record: both keyframes where they are now (x y z, then
-    /// target x y z, f32), source and target ids, state as u32, confidence f32, yank_stdevs f32, time f64.
+    /// Append one packed record: source then target xyz (f32, current pose), ids u32, state u32, confidence f32, yank_stdevs f32, time f64.
     pub fn put_record(&self, data: &mut Vec<u8>, key_poses: &KeyFrames) {
         let at = |id: usize| {
             if id < key_poses.len() {
@@ -425,8 +365,7 @@ pub(crate) struct OvershootTally {
 }
 
 impl GscPgo {
-    /// Count a landed job's overshoot verdict; on an overshoot, warn (a log line only: nothing reads it) when
-    /// `overshoot_warning_interval_s` of data has passed since the last warning, with each kind's overshoots and jobs since.
+    /// Count a landed job's overshoot; warn (log only) at most once per `overshoot_warning_interval_s` of data time.
     pub(crate) fn note_overshoot(&mut self, kind: &'static str, overshoot: bool) {
         let tally = self.overshoot_tally.entry(kind).or_default();
         tally.jobs += 1;
@@ -481,9 +420,7 @@ pub enum Mode {
     Deterministic,
 }
 
-/// The deterministic mode's estimates (`Config::deterministic_config`), in scans: a job holds `ceil(estimate)` scans, at
-/// least one. The defaults are the Jetson (R1) fit: each job's measured seconds turned into scans by its recording's scan
-/// rate, bounded at >= 99% of each recording's jobs.
+/// Deterministic-mode job estimates in scans (a job holds `ceil(estimate)`, at least one); defaults are the R1 Jetson fit.
 #[derive(Debug, Clone)]
 #[cfg_attr(
     feature = "native",
@@ -491,20 +428,16 @@ pub enum Mode {
     serde(default, deny_unknown_fields)
 )]
 pub struct DeterministicConfig {
-    /// The fast match (a search up to the extension), at dispatch: fixed, per keyframe (the scan-context lookup; none for
-    /// a retry), per point (the voxelized source keyframe's and the single target submap's keyframes' before merging)
-    /// and per source point.
+    /// Fast match (search up to the extension): fixed, per keyframe (scan-context lookup; none for a retry), per point, per source point.
     pub fast_match_scans_fixed_overhead: f64,
     pub fast_match_scans_per_keyframe: f64,
     pub fast_match_scans_per_point: f64,
     pub fast_match_scans_per_source_point: f64,
-    /// The verification (the extension, in a whole search or its own job): fixed as it starts, and before each round
-    /// that round's own: per round + per point of its source cloud and target (both known as it starts).
+    /// Verification (extension): fixed at start, and per round plus per point of that round's source cloud and target.
     pub verification_scans_fixed_overhead: f64,
     pub verification_scans_per_round: f64,
     pub verification_scans_per_round_point: f64,
-    /// The solve: `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power * (1 +
-    /// rejected)^solve_rejected_power`, the closures in the solve and the ones the newest adopted solve rejected.
+    /// Solve: scale * keyframes^keyframe_power * (1 + closures)^closure_power * (1 + rejected by newest adopted solve)^rejected_power.
     pub solve_scans_scale: f64,
     pub solve_keyframe_power: f64,
     pub solve_closure_power: f64,
@@ -521,8 +454,7 @@ pub struct DeterministicConfig {
 
 impl Default for DeterministicConfig {
     fn default() -> DeterministicConfig {
-        // the R1 Jetson's (gsc_stable_0.0.3 fast mode at 1x under MLS + raytracer load): each key's largest suggested
-        // value over nine maps, solve powers from the Mac fit; a faster machine replays a Jetson run with these
+        // R1 Jetson fit (gsc_stable_0.0.3 fast mode, MLS + raytracer load), max over nine maps; solve powers from the Mac fit
         DeterministicConfig {
             fast_match_scans_fixed_overhead: 1.3885433563125162,
             fast_match_scans_per_keyframe: 1.448251991030438e-07,
@@ -559,48 +491,30 @@ impl Config {
     serde(default)
 )]
 pub struct Config {
-    /// `deterministic` (the default): every logical-execution-time job (solve, closure search, verification, pressure) is
-    /// held to its estimate (`deterministic_config`), so a replay gives the same graph on any machine. `fast` (a real-life
-    /// run): every job lands as soon as it finishes, no holds; the run measures what each job cost in scans and prints the
-    /// `deterministic_config` it suggests (`GscPgo::runtime_profile`), ready to paste.
+    /// `deterministic` (default): every LET job is held to its estimate so replays match on any machine; `fast`: no holds, prints a fitted config.
     pub mode: Mode,
     /// The deterministic mode's estimates, every coefficient in scans (the exponents unitless).
     pub deterministic_config: DeterministicConfig,
-    /// A job past its estimate (an overshoot: a replay waits for it, a live run lands it late) logs a warning at most
-    /// once per this many seconds of data, with each LET kind's overshoots since the last; a warning only, it changes
-    /// nothing (a slower machine running a faster one's `deterministic_config` just waits, the output the same).
+    /// Overshoot warnings (log only) at most once per this many seconds of data.
     pub overshoot_warning_interval_s: f64,
     pub keyframe_min_rotation_degrees: f64,
     pub keyframe_min_distance_meters: f64,
     pub closure_search_radius: f64,
-    /// ICP pairs a source point with its nearest target point only within this distance (m); farther points are
-    /// treated as not seen by the other scan.
+    /// ICP pairs a source point with its nearest target point only within this distance (m).
     pub closure_icp_inlier_distance_m: f64,
     /// A closure whose ICP fit has a larger rms inlier distance (m, sqrt of the fitness) is rejected.
     pub closure_icp_max_fitness_m: f64,
-    /// Closure ICP steps minimise distances along the target's surface normals (point-to-plane); false is the old
-    /// point-to-point.
+    /// Point-to-plane closure ICP (false = point-to-point).
     pub closure_icp_point_to_plane: bool,
-    /// The single-scan closure ICP aligns against its target voxelized at this (m; cheaper search, fewer normals;
-    /// fitness and overlap still measured against the full target). 0 = the full target. Default 1.5 x
-    /// submap_resolution: on 200 small Mid-360 candidates it ran 18% faster and its 5 changed decisions all rejected
-    /// matches GT puts 7-55 m apart (half the inlier distance was faster but accepted one 62 m look-alike).
+    /// Single-scan ICP aligns against the target voxelized at this (m; fitness/overlap still use the full target); 0 = full target.
     pub closure_icp_target_resolution_m: f64,
-    /// The single-scan closure ICP gives up (an ICP reject) once its fitness can no longer reach the gate's largest
-    /// passing fitness (`closure_icp_max_fitness_m`², `connection_fit::icp_with_early_stop`).
+    /// Single-scan ICP stops early (an ICP reject) once its fitness can no longer pass `closure_icp_max_fitness_m`².
     pub closure_icp_early_stop: bool,
-    /// Drop the points a scan re-sends from the scan before (placed by the odometry they land exactly on their copies;
-    /// the Go2 L1 republishes its last seconds of points) from every keyframe cloud, so scan context, ICP and the maps
-    /// see each surface once. On by default.
+    /// Drop points a scan re-sends from the previous scan (e.g. the Go2 L1 republishing) from every keyframe cloud.
     pub drop_reseen_points: bool,
-    /// A keyframe's cloud needs at least this many points (voxelized at the submap resolution): scans are gathered,
-    /// placed by the odometry, and a due keyframe waits until they reach it, so a sparse lidar gives fewer, fuller
-    /// keyframes and everything downstream (scan context, ICP, submaps) sees the gathered cloud (0 = the keyframe's scan).
-    /// 2000 is about the 10th percentile of a Mid-360 scan voxelized at 0.1 m, so about 1 in 10 of its keyframes waits.
+    /// Min points (voxelized at submap_resolution) a keyframe cloud gathers before a due keyframe is made; 0 = the keyframe's own scan.
     pub auto_aggregate_cloud_size: usize,
-    /// The closure target submap's half range (keyframes either side of the target) grows with the extension:
-    /// ceil(clouds x (1 + closure_target_extra_fraction)) + closure_target_extra_keyframes, clouds being the source clouds
-    /// fitted so far (1 for the single scan: 5 at the defaults); see `Config::target_half_range`.
+    /// Target submap half range = ceil(clouds x (1 + extra_fraction)) + extra_keyframes (`Config::target_half_range`).
     pub closure_target_extra_fraction: f64,
     pub closure_target_extra_keyframes: usize,
     pub submap_resolution: f64,
@@ -608,173 +522,65 @@ pub struct Config {
     pub closure_min_occupancy: i32,
     /// Observability gate (Zhang 2016 / X-ICP degeneracy factor). 0 disables.
     pub closure_min_degeneracy: f64,
-    /// A closure's match confidence must clear 1 - exp(-yank_stdevs^2 / 2k^2) (see `ClosureCandidateDiag`): a small yank
-    /// needs little confidence, a large one a near-perfect match. This is k, the sigmas of yank before that.
-    /// Yank is measured per sqrt(keyframe gap), since odometry error estimate is a random walk (on huge_loop this ranks
-    /// closures that help above closures that hurt at AUC 0.82 vs 0.70).
+    /// k in the yank gate's required confidence 1 - exp(-yank_stdevs^2 / 2k^2); yank is per sqrt(keyframe gap).
     pub closure_yank_gate_width: f64,
-    /// How many times the stated odometry error estimate (standard deviation) the true drift may be, unknown within that range
-    /// (`proportional_confidence::yank_evidence`): a candidate's yank is priced averaged over it, so a large jump costs
-    /// about 3 ln z of evidence instead of z^2 / 2 and GNC judges it. 1 = the stated odometry error estimate is trusted exactly.
+    /// How many times the stated odometry error estimate the true drift may be (`proportional_confidence::yank_evidence`); 1 = trust it.
     pub closure_yank_drift_range: f64,
-    /// Don't extend a candidate whose required evidence a full stack could not reach at its single scan's evidence per
-    /// keyframe.
+    /// Skip extending a candidate whose bar a full stack could not reach at its single scan's evidence per keyframe.
     pub closure_extension_skip_unreachable: bool,
-    /// Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give.
-    pub closure_yank_pre_check: bool,
-    /// Stop extending once a step's evidence is no higher than the step before.
-    pub closure_extension_stop_when_flat: bool,
-    /// Stop extending once a step's fit moves a stacked keyframe farther than the search radius from the single fit.
-    pub closure_extension_stop_on_swing: bool,
-    /// The uncertainty range, as ratios of a candidate's evidence to its bar (the required evidence; both in yank units):
-    /// at or above `barely_pass_uncertainty_range` (> 1) the single scan accepts, at or below
-    /// `barely_fail_uncertainty_range` (< 1) it rejects, and in between the match is extended until the ratio leaves the
-    /// range, which narrows toward 1 each step (`proportional_confidence::UncertaintyRange`).
+    /// Uncertainty range as evidence/bar ratios: >= pass (> 1) accepts, <= fail (< 1) rejects, between extends (`UncertaintyRange`).
     pub barely_fail_uncertainty_range: f64,
     pub barely_pass_uncertainty_range: f64,
     /// How much the pressure keeps the uncertainty range wide: its narrowing is stretched by 1 / (1 - pressure)^this.
     pub decisive_pressure_rate: f64,
-    /// The odometry distance between an extension's separate source clouds, as a fraction of the mean scan reach: small
-    /// enough that each still lands inside the target submap's coverage.
+    /// Odometry distance between an extension's source clouds, as a fraction of the mean scan reach.
     pub extension_cloud_spacing: f64,
-    /// The compounding agreement sensitivity: the yank gate scores an extension by the median cloud ratio times
-    /// exp(sensitivity (1 - min(d, 5)^2)) per step, where d is how far that step's alignment is from the one before it at
-    /// the source keyframe (shift and mean reach x turn, in inlier distances): clouds that agree to within an inlier
-    /// distance raise the score, ones that disagree lower it. It never changes a closure's fit or the confidence the
-    /// solve takes. 0 = the plain median.
-    #[cfg_attr(feature = "native", serde(alias = "closure_extension_agreement_alpha"))]
+    /// Yank gate scores an extension by median cloud ratio x exp(s (1 - min(d, 5)^2)) per step (d: disagreement, inlier distances); 0 = median.
     pub compounding_agreement_sensitivity: f64,
-    /// Graph change heat: a finished solve is adopted only while the heat is at or under `graph_change_heat_threshold`;
-    /// adopting one adds its cost, the curbed yank (yank units) of the largest keyframe move it makes from the accepted
-    /// graph, in standard deviations of the stated odometry error accumulated along the path, above
-    /// `graph_change_heat_floor`; the heat decays by `graph_change_heat_decay` per keyframe. A solve finishing while the
-    /// heat is over waits, a newer one replacing it, and is adopted at the first keyframe the heat is back under (always
-    /// at `finish`). The solver itself never sees it.
+    /// Graph change heat: a solve is adopted only at heat <= threshold, adding its curbed yank above floor; decays by decay per keyframe.
     pub graph_change_heat_enabled: bool,
     pub graph_change_heat_threshold: f64,
     pub graph_change_heat_floor: f64,
     pub graph_change_heat_decay: f64,
-    /// Seeded solve: a solve starts from the accepted graph (the newest adopted solve's poses, the keyframes since riding
-    /// its correction) instead of from the odometry when that graph already fits every closure GNC would weigh (so GNC
-    /// has nothing to decide); otherwise, and with position priors or sightings, from the odometry as before.
+    /// Seed a solve from the accepted graph when it already fits every closure GNC would weigh; otherwise from the odometry.
     pub solve_seed_from_accepted: bool,
-    /// GNC starts from the newest adopted solve's verdicts: a closure it rejected starts out, and GNC's starting mu comes
-    /// from the rest's residuals, so one still beyond twice the worst of them stays out.
+    /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
-    /// Deterministic solve schedule: a finished solve is held `ceil(estimate)` scans (at least one) after its dispatch,
-    /// its estimate an upper bound on its cost in scans known before it starts, so the graph is the same however fast the
-    /// machine is; one still running then is an overshoot (logged loudly, counted) and is adopted as soon as it
-    /// finishes. The estimate is `solve_scans_scale * keyframes^solve_keyframe_power * (1 + closures)^solve_closure_power *
-    /// (1 + rejected)^solve_rejected_power`: the closures in the solve and the ones the newest adopted solve rejected
-    /// (GNC takes longer with outliers in). The debounce and merge after it are their own jobs (`adoption_schedule`).
-    /// Deterministic closure-search schedule: a search's result (its closure, or its next alternative) takes effect only
-    /// once `ceil(estimate)` scans (at least one) have passed since its dispatch, an upper bound on its cost in scans fixed
-    /// before each piece of work starts, so which searches run and when their closures land is the same however fast the
-    /// machine is; one still running then is an overshoot (logged loudly, counted) and lands as soon as it finishes. The
-    /// fast match (everything up to the extension) at dispatch: `fast_match_scans_fixed_overhead` +
-    /// `fast_match_scans_per_keyframe` x keyframes (the scan-context lookup, none for a retry) +
-    /// `fast_match_scans_per_point` x (source + target points) + `fast_match_scans_per_source_point` x source points (the
-    /// voxelized source keyframe's, and the single target submap's keyframes' before merging); the verification (the
-    /// extension, in a whole search or its own job) `verification_scans_fixed_overhead` as it starts and
-    /// `verification_scans_per_round` before each round.
-    /// The closure search's pipeline (`closure_search_schedule`): each keyframe's scan-context candidate and each retry
-    /// alternative wait in a priority buffer of `sc_buffer_size`, the most similar first (ties by arrival), the least
-    /// similar dropped when it overflows; each of `fast_match_workers` takes the best one as it frees (at its job's
-    /// landing) for the fast match (cloud build, single ICP, degeneracy and the gates, the `fast_match_scans_*` terms). A
-    /// clear pass or fail lands decided; a match inside the uncertainty range waits in a priority buffer of
-    /// `verification_buffer_slots`, the highest single-scan confidence ratio first (ties by dispatch), the lowest dropped
-    /// when it overflows, for one of `verification_workers` to run its extension rounds and yank verdict as it frees:
-    /// held `verification_scans_fixed_overhead` + each round's own estimate as it starts (one job reporting each round's
-    /// tick).
+    /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
     pub fast_match_workers: usize,
     pub sc_buffer_size: usize,
     pub verification_workers: usize,
     pub verification_buffer_slots: usize,
-    /// The body's recent speed (`recent_speed`: the solve estimate's speed, each closure diagnostic's) is the median over
-    /// the newest this many steps between distinct odometry poses.
+    /// Recent speed (`recent_speed`) is the median over the newest this many steps between distinct odometry poses.
     pub solve_speed_window_poses: usize,
-    /// When set, every candidate ICP scores writes `<dir>/<source>_<target>.icp`: the source cloud
-    /// and target submap exactly as ICP got them (global frame, current graph), then ICP's
-    /// rotation (row-major) and translation, fitness and convergence. Little-endian: u32 source
-    /// count, u32 target count, f32 xyz points, 9 + 3 f64, f64 fitness, u8 converged.
+    /// When set, each candidate ICP writes `<dir>/<source>_<target>.icp` (clouds as ICP got them, then its result; see `dump_icp`).
     pub closure_icp_dump_dir: String,
-    /// A candidate whose single-scan confidence is too low for its yank gets
-    /// a second look on more data instead of an outright reject: each round seeded with the previous
-    /// round's ICP (the first round with the single-scan ICP), the source grows to the last 2, 4, 8, ... keyframes (up to this many), and the target to the
-    /// keyframes near the matched one in time that those land within `closure_search_radius` of.
-    /// Inliers are source points within `closure_icp_inlier_distance_m` of the target after ICP.
-    /// Each round counts as (extended inliers / single-scan inliers) independent checks, each as
-    /// good as the single scan's confidence times how well the overlap held up (extended inlier
-    /// fraction / single inlier fraction, at most 1): confidence = 1 - (1 - c_round)^checks.
-    /// (Mean squared fitness is not used: the stacked clouds see places the other side never did.)
-    /// The first round that clears the gate is kept, and its transform becomes the closure. 0 = off.
+    /// Extension: an uncertain candidate's source grows to the last 2, 4, 8, ... keyframes (up to this many), each seeded by the last; 0 = off.
     pub closure_extended_icp_max_keyframes: usize,
     /// Huber threshold on a kept closure's whitened residual in the final solve; 0 = plain least squares.
     pub closure_robust_huber_k: f64,
     /// Closure-verification ICP: iteration cap and correspondence gate (m).
     pub closure_icp_max_iterations: u64,
     pub closure_icp_max_correspondence_m: f64,
-    /// GNC closure-factor variance is `score * closure_gnc_var_scale`. The raw ICP
-    /// score gives a variance (~1e-3) tight enough that GNC over-rejects; scaling
-    /// it up loosens each closure so GNC keeps the true consensus set.
+    /// GNC closure-factor variance = `score * closure_gnc_var_scale` (the raw ICP score makes GNC over-reject).
     pub closure_gnc_var_scale: f64,
-    /// Probability that a true inlier's residual falls under GNC's chi-squared
-    /// cost threshold, in (0, 1). Lowering it tightens the test so GNC rejects more closures.
+    /// Probability a true inlier's residual falls under GNC's chi-squared threshold, in (0, 1); lower rejects more.
     pub closure_gnc_inlier_probability: f64,
-    /// When true, a closure is uninformative only where the graph's own covariance of its two ends (heading swing and
-    /// solved closures included) is surer than ICP in every direction, instead of the per-keyframe xy step times the
-    /// keyframe gap.
-    pub closure_informative_by_graph_covariance: bool,
-    /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
-    /// passes the other gates is committed, and repeats of a kept closure count again.
+    /// False: no closure is rejected as uninformative (graph surer of its two ends than ICP).
     pub closure_uninformative_gate: bool,
-    /// The odometry's drift as a random walk in the motion itself, so it does not depend on how far apart keyframes
-    /// are: per noise source (xy translation, z translation, yaw, roll/pitch tilt), the standard deviation it adds per
-    /// square root of metres travelled (m/√m for translation, rad/√m for rotation) and per square root of radians
-    /// turned (m/√rad, rad/√rad); a step's variance is the first squared times its distance plus the second squared
-    /// times its turn. Defaults: a Mid-360 with FAST-LIO / Point-LIO, fitted to ground truth over every span of five
-    /// recordings (small_mid, gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all
-    /// from turning. After each solve that keeps closures, the module logs the values these measure (debug_log kind
-    /// "odometry_drift"), to start the next run from.
-    #[cfg_attr(feature = "native", serde(alias = "odom_xy_drift_per_sqrt_m"))]
+    /// Odometry drift random walk per source (xy, z, yaw, tilt): sd per sqrt m travelled and per sqrt rad turned; defaults fit Mid-360 FAST-LIO.
     pub odometry_error_estimate_xy_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_xy_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_xy_per_sqrt_rad: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_z_drift_per_sqrt_m"))]
     pub odometry_error_estimate_z_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_z_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_z_per_sqrt_rad: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_yaw_drift_per_sqrt_m"))]
     pub odometry_error_estimate_yaw_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_yaw_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_yaw_per_sqrt_rad: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_tilt_drift_per_sqrt_m"))]
     pub odometry_error_estimate_tilt_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_tilt_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_tilt_per_sqrt_rad: f64,
-    /// True (the module sets it when the config states no odometry error estimate): the odometry error estimate follows
-    /// the lidar's range (`lidar_range`, linear between the Go2 L1's and the Mid-360's calibrated estimates), replacing the
-    /// `odometry_error_estimate_*` above each time the range estimate updates.
+    /// Odometry error estimate follows the lidar range (`lidar_range`), replacing `odometry_error_estimate_*` on each update.
     pub odometry_error_estimate_from_lidar_range: bool,
     pub lidar_range: crate::lidar_range::LidarRangeConfig,
-    /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
-    /// the next (xy, z, yaw, roll/pitch): the prior that `learned_odometry_error_estimate_from_closures` holds its estimate to. 0 = one
-    /// closure's worth of information (a unit-information prior). Defaults: the spread of those five recordings around
-    /// the fit (their held-out error at 32-keyframe spans).
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_xy"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_xy: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_z"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_z: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_yaw"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_yaw: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_tilt"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_tilt: f64,
-    /// How many closed loops' worth of evidence the stated odometry error estimate counts as for the learner (its plasticity): each
-    /// source's estimate is the stated odometry error estimate held with that many residual checks against the closures' (a closed loop
-    /// gives a source about one), so the first loop nudges it and many agreeing loops decide it. 0 = the closures alone;
-    /// infinite = the stated odometry error estimate is never moved (no learning: the gates and solves use the config's drift). Default 30
-    /// (huge_l1: yaw x4.7 against x40000 at 1, where one loop's misfit moved it x30; small_l1 unchanged).
-    #[cfg_attr(feature = "native", serde(alias = "odom_error_stiffness"))]
+    /// Learner plasticity: how many closed loops' evidence the stated estimate counts as (0 = closures alone, infinite = never learn).
     pub learned_odometry_error_estimate_stiffness: f64,
     pub scan_context_num_rings: i32,
     pub scan_context_num_sectors: i32,
@@ -782,58 +588,21 @@ pub struct Config {
     pub scan_context_top_k: i32,
     pub scan_context_match_threshold: f64,
     pub scan_context_lidar_height_m: f64,
-    /// When above 0, a closure's ICP factor is its sharpness s (`connection_fit::sharpness`) as s / (s + this), and an
-    /// extended stack is scored the same way from its own sharpness, each round started from the single-scan alignment;
-    /// 0 keeps the fitness factor and the inlier-count evidence of extended ICP.
-    pub closure_sharpness_half: f64,
-    /// The nudge `sharpness` measures against: this far (m) along x and y, and this many degrees about z.
-    pub closure_sharpness_nudge_m: f64,
-    pub closure_sharpness_nudge_deg: f64,
-    /// When true, a closure's evidence (yank units) is its likelihood ratio (`connection_fit::likelihood_ratio`, scales measured
-    /// from the clouds, misfit reach = `closure_icp_max_correspondence_m`), as confidence 1 - e^-ratio, in place of scan
-    /// context x ICP x degeneracy, and an extended stack's is the stack's own ratio. It also sets the extension budget: the keyframes the still-needed evidence takes at the
-    /// single scan's evidence per keyframe (at least one bit), up to the next doubling, at most
-    /// `closure_extended_icp_max_keyframes`; a stack's evidence is its ratio per point x its size over the single scan's
-    /// (the new surface it covers).
+    /// Evidence (yank units) is the likelihood ratio (`connection_fit::likelihood_ratio`) not scan context x ICP x degeneracy; sets the budget.
     pub closure_likelihood_confidence: bool,
-    /// When true, a keyframe whose search is rejected tries its next scan-context match (other places under the match
-    /// threshold, closest first), up to 1 + floor(sqrt(min(ceil(1 / (1 - pressure)), scan_context_top_k - 1))) tries per
-    /// keyframe (3 at pressure 0.8, 4 at 0.9 and above with top_k 10); a newer keyframe's better match still outranks a
-    /// waiting retry.
+    /// On rejection, try the keyframe's next scan-context match, up to 1 + floor(sqrt(min(ceil(1 / (1 - pressure)), top_k - 1))) tries.
     pub closure_alternative_places: bool,
-    /// Alternative places are tried only at or above this pressure; below it a keyframe tries only its best match.
-    /// Retries were two-thirds of all closure ICPs (small Mid-360: 2,012 of 3,256 candidates for 48 of 173 right kept
-    /// loops; huge: 12,012 of 16,867 for 69 right and 150 wrong).
+    /// Alternative places are tried only at or above this pressure.
     pub closure_alternative_places_min_pressure: f64,
-    /// When above 0, a scan-context target matched from this many separate places (`similarity_discovery::GenericPlaces`)
-    /// "looks like everything" and is skipped before closure ICP, the next match tried instead; 0 turns it off.
-    pub scan_context_generic_places: usize,
-    /// Scans this close (m, current graph) to one already counted, or to the target, are the same place.
-    pub scan_context_generic_place_radius_m: f64,
-    /// Targets the generic-place cache tracks.
-    pub scan_context_generic_capacity: usize,
-    /// With `closure_likelihood_confidence`: score only the source points the target can speak to, those within ICP's
-    /// inlier distance of it or in space a target scan looked through (`connection_fit::likelihood_ratio_visible`);
-    /// a point no target scan saw counts for nothing instead of as a misfit.
+    /// With `closure_likelihood_confidence`: score only source points a target scan could see (`connection_fit::likelihood_ratio`).
     pub closure_likelihood_visibility: bool,
-    /// When true, the odometry's four noise variances (xy, z, yaw, roll/pitch per keyframe) are estimated from how far the
-    /// kept closures disagreed with the raw odometry (`learned_odometry_error_estimate`), the reported ones as priors, and logged
-    /// (each search's diagnostics, `GSC_LEARN_LOG`); nothing uses them: the solve, pressure and gates take the stated odometry error estimate.
-    #[cfg_attr(feature = "native", serde(alias = "odometry_noise_from_closures"))]
+    /// Estimate the odometry noise variances from kept closures (`learned_odometry_error_estimate`); logged only, nothing uses them.
     pub learned_odometry_error_estimate_from_closures: bool,
-    /// When true, the noise learner reads only the kept closures that agree pairwise around their raw-odometry cycles
-    /// (the PCM core) on every solve: a bend two independent loops agree on is drift, a lone closure's may be a wrong
-    /// one (huge: kept wrong closures read as yaw x41000).
+    /// Noise learner reads only kept closures that agree pairwise around raw-odometry cycles (the PCM core).
     pub odometry_error_estimate_evidence_core: bool,
     /// Recompute the loop-overlap pressure (`loop_overlap`) on every this-many-th scan, reusing it in between; 0 = never.
     pub pressure_check_frequency: usize,
-    /// The pressure off the scan thread (`pressure_schedule`): a job on one worker, started with a snapshot of its inputs
-    /// when the worker is free (the newest request pending meanwhile), landing at its dispatch + `pressure_scans_fixed_overhead` +
-    /// `pressure_scans_per_keyframe` x keyframes + `pressure_scans_per_closure` x committed closures, rounded up (scans). Off: computed inline on the scan thread. The coefficients
-    /// are the cheapest nonnegative ones bounding every Mac pressure computation of small L1, gir1 and huge L1 but each
-    /// recording's hardest 1% (re-chosen over 3 refits), 99% of each one's under it.
-    /// `soft_pressure` (display only, the same probability without the cliff): 50% where log10 of the loop hazard
-    /// (unresolved_loop_probability = 1 - e^-hazard) is this, and 0% this many decades below it (log-compressed).
+    /// `soft_pressure` (display only): 50% where log10 of the loop hazard is this, 0% this many decades below (log-compressed).
     pub soft_pressure_half_log10_hazard: f64,
     pub soft_pressure_decades: f64,
 }
@@ -886,9 +655,9 @@ impl Config {
             if count == 0 {
                 return Err(format!("{name} must be >= 1"));
             }
+        }
         if !(self.overshoot_warning_interval_s >= 0.0) {
             return Err("overshoot_warning_interval_s must be >= 0".into());
-        }
         }
         if let Some((name, value)) = estimates.iter().find(|(_, v)| !(*v >= 0.0)) {
             return Err(format!("{name} must be >= 0 (got {value})"));
@@ -925,9 +694,6 @@ impl Default for Config {
             closure_yank_gate_width: 1.0,
             closure_yank_drift_range: 100.0,
             closure_extension_skip_unreachable: true,
-            closure_yank_pre_check: false,
-            closure_extension_stop_when_flat: true,
-            closure_extension_stop_on_swing: true,
             barely_fail_uncertainty_range: 0.05,
             barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
@@ -951,7 +717,6 @@ impl Default for Config {
             closure_icp_max_correspondence_m: 10.0,
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
-            closure_informative_by_graph_covariance: true,
             closure_uninformative_gate: true,
             odometry_error_estimate_xy_per_sqrt_m: 3.91e-4,
             odometry_error_estimate_xy_per_sqrt_rad: 6.35e-3,
@@ -963,10 +728,6 @@ impl Default for Config {
             odometry_error_estimate_tilt_per_sqrt_rad: 3.3e-3,
             odometry_error_estimate_from_lidar_range: false,
             lidar_range: crate::lidar_range::LidarRangeConfig::default(),
-            learned_odometry_error_estimate_prior_ln_sd_xy: 1.72,
-            learned_odometry_error_estimate_prior_ln_sd_z: 2.05,
-            learned_odometry_error_estimate_prior_ln_sd_yaw: 1.15,
-            learned_odometry_error_estimate_prior_ln_sd_tilt: 0.96,
             learned_odometry_error_estimate_stiffness: 10.0,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
@@ -974,15 +735,9 @@ impl Default for Config {
             scan_context_top_k: 10,
             scan_context_match_threshold: 0.4,
             scan_context_lidar_height_m: 2.0,
-            closure_sharpness_half: 0.0,
-            closure_sharpness_nudge_m: 1.0,
-            closure_sharpness_nudge_deg: 5.0,
             closure_likelihood_confidence: true,
             closure_alternative_places: true,
             closure_alternative_places_min_pressure: 0.8,
-            scan_context_generic_places: 0,
-            scan_context_generic_place_radius_m: 10.0,
-            scan_context_generic_capacity: 256,
             closure_likelihood_visibility: true,
             learned_odometry_error_estimate_from_closures: true,
             odometry_error_estimate_evidence_core: true,
@@ -1001,48 +756,37 @@ pub struct GscPgo {
     pub(crate) committed_closures: crate::store::Closures,
     /// The newest accepted search's fit confidence and yank, for the closure `commit_closure` commits next.
     pub(crate) committed_stats: Option<(f64, f64)>,
-    /// ln of each odometry variance's ratio to the reported one (0: the reported noise), set from the kept closures
-    /// after each solve.
+    /// ln of each odometry variance's ratio to the reported one (0 = reported), set from kept closures after each solve.
     pub(crate) learned_odometry_error_estimate_ln: [f64; 4],
     /// Each `learned_odometry_error_estimate_ln`'s posterior standard deviation once the residuals have measured it (the prior's before).
     pub(crate) learned_odometry_error_estimate_ln_sd: [Option<f64>; 4],
-    /// The ln scale the running (or newest) solve was started with, and whether a re-solve at a moved scale is due.
-    pub(crate) learned_odometry_error_estimate_ln_dispatched: [f64; 4],
-    pub(crate) odometry_error_estimate_rescale: bool,
-    /// The next solve also measures the learned odometry error estimate's evidence: requested after a solve keeps a loop
-    /// longer (in keyframes between its ends) than any kept before, `learned_evidence_gap`, and by `finish`.
+    /// A solve is due only to measure the learned estimate's evidence (at `finish`).
+    pub(crate) evidence_solve_due: bool,
+    /// Next solve also measures the learned estimate's evidence: on a longer kept loop than ever (`learned_evidence_gap`), and at `finish`.
     pub(crate) learned_evidence_requested: bool,
     pub(crate) learned_evidence_gap: usize,
     pub(crate) learned_evidence_measured: bool,
-    /// Whether the newest solve was itself a re-solve at a moved noise (no new closure or fix): one per new piece of
-    /// evidence, since the estimate need not settle (GNC's verdicts can change with the noise) and would re-solve forever.
-    pub(crate) odometry_error_estimate_rescaled: bool,
     /// A closure was committed since the last `update`.
     pub(crate) new_closure: bool,
     /// Committed closures a solve has been started for.
     pub(crate) closures_dispatched: usize,
-    /// World-frame position fixes (`add_coordinate_factor`): time, frame id, sensor offset in the body frame, position,
-    /// covariance; how many a solve has been started for; and the newest solve's map -> frame alignments.
+    /// World-frame position fixes (`add_coordinate_factor`): time, frame id, body sensor offset, position, covariance; dispatched; alignments.
     pub(crate) world_positions: Vec<(f64, u32, Vec3, Vec3, Mat3)>,
     pub(crate) world_positions_dispatched: usize,
     pub(crate) world_alignment: Vec<(u32, f64, Vec3)>,
-    /// Landmark sightings (`add_landmark_factor`): time, landmark id, rotation, position and 6x6 information in the body
-    /// frame; how many a solve has been started for; and the newest solve's landmarks (id, map rotation and position).
+    /// Landmark sightings (`add_landmark_factor`), how many were dispatched, and the newest solve's landmarks (id, map rotation, position).
     pub(crate) landmark_sightings: Vec<LandmarkSightingRecord>,
     pub(crate) landmark_sightings_dispatched: usize,
     pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
     pub(crate) solving: Option<Solving>,
     pub(crate) graph_error: f64,
-    /// Per finished solve (adopted or not): the keyframes it was dispatched over, its newest keyframe's time, and the
-    /// seconds it took on its thread.
+    /// Per finished solve: dispatched keyframes, newest keyframe time, seconds on its thread.
     pub(crate) solve_records: Vec<(usize, f64, f64)>,
-    /// The graph change heat (`graph_change_heat_enabled`), the keyframe count it was last raised at, and the finished
-    /// solve waiting for it to cool.
+    /// Graph change heat, the keyframe count it was last raised at, and the solve waiting for it to cool.
     pub(crate) heat: f64,
     pub(crate) heat_keyframes: usize,
     pub(crate) pending_solve: Option<(crate::pose_graph_solving::FinishedSolve, f64)>,
-    /// The debounce and the merge (`adoption_schedule`): each job out, the newest solve waiting for each, their workers,
-    /// and whether they run inline (the end of the data).
+    /// Debounce and merge (`adoption_schedule`): jobs out, solves waiting, workers, and whether they run inline (end of data).
     pub(crate) debounce_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Debounced>>,
     pub(crate) debounce_waiting: Option<crate::pose_graph_solving::FinishedSolve>,
     pub(crate) merge_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Merged>>,
@@ -1052,36 +796,27 @@ pub struct GscPgo {
     pub(crate) adoption_inline: bool,
     /// A merge landed (keyframes moved) since the last `update`.
     pub(crate) adopted_since_update: bool,
-    /// The newest `solve_speed_window_poses` + 1 distinct odometry poses' times and positions (odometry frame), for the
-    /// body's recent speed.
+    /// Newest `solve_speed_window_poses` + 1 distinct odometry poses (time, odometry-frame position), for `recent_speed`.
     pub(crate) recent_motion: std::collections::VecDeque<(f64, Vec3)>,
-    /// Solves slower than the data their estimate spanned (`solve_hold_enabled`), and the newest scan's recorded time.
+    /// Solves that overshot their estimate, and the newest scan's recorded time.
     pub(crate) solve_overshoots: usize,
     pub(crate) scan_time: f64,
-    /// The newest advancing scan's recorded time (the data time holds are judged by), and the scans whose recorded time
-    /// advanced past every earlier one's, the count logical-execution-time holds run on (a scan repeating an earlier stamp
-    /// spans no data time).
+    /// Newest advancing scan time and count of scans whose stamp advanced (LET holds count these; repeated stamps span no time).
     pub(crate) newest_advancing_time: Option<f64>,
     pub(crate) advancing_scans: usize,
     pub(crate) first_advancing_time: Option<f64>,
-    /// Each landed job's kind, its measured scans (seconds x the scan rate then) over its estimate in scans: what a run
-    /// reports as its measured coefficients (`runtime_profile`); never read by a decision.
+    /// Each landed job's kind and measured / estimated scans, for `runtime_profile`; never read by a decision.
     pub(crate) job_ratios: Vec<(&'static str, f64)>,
     /// Per LET kind, its jobs and overshoots (over the run and since the last warning), and the data time of that warning.
     pub(crate) overshoot_tally: std::collections::BTreeMap<&'static str, OvershootTally>,
     pub(crate) last_overshoot_warning: Option<f64>,
-    /// The closure searches dispatched and not landed yet, in dispatch order (`closure_search_hold_enabled`), the number
-    /// the next one gets, the recorded times of the advancing scans since the oldest one's dispatch (the first is advancing
-    /// scan `search_scan_base`), the worker pool they run on, the searches that overshot
-    /// their estimate and the seconds a lockstep replay waited on them.
+    /// Dispatched, unlanded closure searches in order, the next order number, advancing-scan times since the oldest's dispatch, the pool.
     pub(crate) closure_searches: std::collections::VecDeque<crate::closure_search_schedule::SearchJob>,
     pub(crate) search_order: u64,
     pub(crate) search_scan_times: std::collections::VecDeque<f64>,
     pub(crate) search_scan_base: usize,
     pub(crate) search_pool: Option<crate::closure_search_schedule::SearchPool>,
-    /// The two-stage search (`closure_search_schedule`): the candidates waiting for a fast-match worker (and their
-    /// arrival numbers), the matches waiting for verification (and their fast match's dispatch numbers), the
-    /// verification pool, and the counts its buffers dropped and its verification jobs overshot.
+    /// Two-stage search: candidates awaiting fast match (with arrival numbers), matches awaiting verification, its pool, drop/overshoot counts.
     pub(crate) sc_buffer: Vec<(ClosureProposal, u64)>,
     pub(crate) sc_arrivals: u64,
     pub(crate) verification_buffer: Vec<(Box<PendingExtension>, u64)>,
@@ -1091,21 +826,17 @@ pub struct GscPgo {
     pub(crate) verification_overshoots: usize,
     pub(crate) closure_search_overshoots: usize,
     pub(crate) closure_search_wait_s: f64,
-    /// Scans offered to `add_key_pose`, and the newest loop-overlap pressure with the scan count it was computed at.
+    /// Scans offered to `add_key_pose`.
     pub(crate) scans_seen: usize,
     /// The running lidar range estimate (`odometry_error_estimate_from_lidar_range`).
     pub(crate) lidar_range: crate::lidar_range::LidarRange,
     pub(crate) pressure: Option<(usize, crate::loop_overlap::LoopOverlap)>,
-    /// Bumped whenever a keyframe is added or a solve is adopted: what loop_overlap reads changes only then, so pressure
-    /// is recomputed only when it differs from `pressure_version`, the version it was last computed at.
+    /// Bumped on each keyframe or adopted solve; pressure recomputes only when it differs from `pressure_version`.
     pub(crate) graph_version: u64,
     pub(crate) pressure_version: Option<u64>,
-    /// The pressure job running or held (`pressure_let_enabled`), whether a newer one is pending, its worker, each
-    /// pressure computation's keyframes, closures and seconds, the jobs that overshot, whether the running one is late,
-    /// and whether a lockstep replay waits for due jobs (`set_wait_for_due_jobs`).
+    /// The pressure job running or held (`pressure_schedule`).
     pub(crate) pressure_job: Option<crate::pressure_schedule::PressureJob>,
-    /// The graph change heat's cost per adopted solve measured on its solve's thread (keyframes, seconds), and the solves
-    /// whose cost was recomputed here because a solve was adopted while they ran.
+    /// Graph change heat's cost per adopted solve, measured on its solve's thread (keyframes, seconds).
     pub(crate) change_cost_calls: Vec<(usize, f64)>,
     /// Seconds the scan thread blocked joining finished-or-waited-for solves (a lockstep replay's wait, not work).
     pub(crate) solve_join_wait_s: f64,
@@ -1134,15 +865,10 @@ pub struct GscPgo {
     pub(crate) timing: TimingStats,
     pub(crate) closure_diagnostics: Vec<ClosureCandidateDiag>,
     pub(crate) closure_edge_events: Vec<ClosureEdgeEvent>,
-    /// Rotation (deg) and translation (m) yank of every candidate ICP has scored (per sqrt keyframe
-    /// gap), the scale new yanks are measured against. Every scored
-    /// candidate, not just committed ones: a scale taken only from closures the gate let through would
-    /// shrink with each rejection and reject the rest.
+    /// The newest proposal waiting for the search thread (`offer_proposal`).
     pub(crate) waiting_proposal: Option<ClosureProposal>,
     /// The ICP cache every closure search's cloud computations go through (`set_icp_cache`), if any.
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
-    /// Scan-context targets matched from many separate places (`scan_context_generic_places`).
-    pub(crate) generic_places: similarity_discovery::GenericPlaces,
     /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
@@ -1158,8 +884,7 @@ pub(crate) struct TimingStats {
     pub(crate) degeneracy_s: f64,
     pub(crate) extended_icp_s: f64,
     pub(crate) solve_s: f64,
-    /// `add_key_pose` without the pressure check: drop-reseen, aggregation, voxelizing, the keyframe and its scan-context
-    /// descriptor.
+    /// `add_key_pose` without the pressure check (drop-reseen, aggregation, voxelizing, keyframe, descriptor).
     pub(crate) scan_s: f64,
     /// The loop-overlap pressure checks (`pressure_check_frequency`).
     pub(crate) pressure_s: f64,
@@ -1169,8 +894,7 @@ pub(crate) struct TimingStats {
     pub(crate) search_s: f64,
 }
 
-/// A keyframe through stages 1 and 2, waiting for the search thread: its candidate target, the
-/// scan-context column shift between them, and the match's cosine distance (lower is better).
+/// A keyframe through stages 1 and 2 awaiting the search thread: target, scan-context column shift, cosine distance (lower = better).
 pub struct ClosureProposal {
     pub(crate) diag: ClosureCandidateDiag,
     pub(crate) target_idx: usize,
@@ -1183,8 +907,7 @@ pub struct ClosureProposal {
     pub(crate) tries: usize,
 }
 
-/// The ICP half of one closure search, on its own copy of the keyframes so it can run on another thread
-/// while scans keep arriving (`GscPgo::begin_closure_search` makes it, `finish_closure_search` applies it).
+/// The ICP half of a closure search, on its own keyframe copy so it runs off the scan thread (`begin_closure_search` -> `finish_closure_search`).
 pub struct ClosureSearch {
     pub(crate) key_poses: KeyFrames,
     pub(crate) config: Config,
@@ -1201,8 +924,7 @@ pub struct ClosureSearch {
     pub(crate) ranked: Vec<(f32, usize)>,
     /// Every closure the solve has judged: its yank_stdevs when committed, and whether the solve kept it.
     pub(crate) judged_yanks: Vec<(f64, bool)>,
-    /// The snapshots the search's setup reads where it starts (`prepare`): the committed closures and their weights,
-    /// the keyframes' reach, the odometry error estimate and the newest solve's relative covariances.
+    /// Snapshots the search's setup (`prepare`) reads: committed closures, keyframe reach, odometry error estimate, solved relative covariances.
     pub(crate) closures: crate::store::Closures,
     pub(crate) keyframe_reach: (f64, usize),
     pub(crate) error_estimate: [f64; 4],
@@ -1219,12 +941,11 @@ pub struct ClosureSearch {
     pub(crate) dump_s: Arc<std::sync::Mutex<f64>>,
     /// The keyframes' mean scan reach (m), which spaces an extension's separate source clouds.
     pub(crate) mean_reach: f64,
-    /// Where the search reports each extension round before it starts and its end (`closure_search_hold_enabled`).
+    /// Where the search reports each extension round's start and end.
     pub(crate) progress: Option<Arc<crate::closure_search_schedule::SearchProgress>>,
 }
 
-/// What a `ClosureSearch` found: its diagnostics, the closure it accepts (relative rotation, translation,
-/// fitness), and the time each stage took.
+/// What a `ClosureSearch` found: diagnostics, the accepted closure (relative rotation, translation, fitness), stage timings.
 pub struct ClosureSearchResult {
     pub(crate) diag: ClosureCandidateDiag,
     accepted: Option<(Mat3, Vec3, f64)>,
@@ -1269,16 +990,13 @@ pub enum SearchStage {
     Extend(Box<PendingExtension>),
 }
 
-/// A match inside the uncertainty range, with what its extension needs: the search (its snapshot), the single fit and
-/// its confidence ratio (the verification buffer's promise), the source points, the look-alike count so far, the bar's
-/// base, the retry inputs and the fast match's seconds.
+/// A match inside the uncertainty range and what its extension needs (snapshot, single fit, ratio = verification promise, bar base).
 pub struct PendingExtension {
     pub(crate) search: ClosureSearch,
     pub(crate) diag: ClosureCandidateDiag,
     timing: TimingStats,
     icp: crate::connection_fit::IcpResult,
     pub(crate) ratio: f64,
-    source_points: usize,
     look_alikes: similarity_discovery::LookAlikes,
     error_estimate_sums: Option<Vec<crate::loop_overlap::Sums>>,
     base: f64,
@@ -1287,8 +1005,7 @@ pub struct PendingExtension {
 }
 
 impl PendingExtension {
-    /// The verification stage: the extension rounds and the yank verdict on them, the fast match's seconds included in
-    /// the result's.
+    /// Verification stage: extension rounds and the yank verdict; the result's seconds include the fast match's.
     pub(crate) fn run(mut self) -> ClosureSearchResult {
         let retry = self.retry.take();
         let fast_s = self.fast_s;
@@ -1309,7 +1026,6 @@ impl PendingExtension {
             mut timing,
             icp,
             ratio,
-            source_points,
             mut look_alikes,
             mut error_estimate_sums,
             base,
@@ -1328,7 +1044,6 @@ impl PendingExtension {
         let extended = search.extended_icp(
             cur_idx,
             target_idx,
-            source_points,
             &icp,
             ratio,
             &mut diag,
@@ -1369,15 +1084,7 @@ fn rejected(
 }
 
 impl ClosureSearch {
-    /// The ICP half of a closure search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
-    pub fn run(self) -> ClosureSearchResult {
-        match self.run_stage() {
-            SearchStage::Done(result) => result,
-            SearchStage::Extend(pending) => pending.run(),
-        }
-    }
-    /// The fast match (`closure_search_schedule`): everything up to the extension, which a match inside the uncertainty
-    /// range is handed on to (`SearchStage::Extend`); a clear pass or fail is decided here.
+    /// Fast match (`closure_search_schedule`): up to the extension; a clear pass/fail is decided here, else `SearchStage::Extend`.
     pub(crate) fn run_stage(mut self) -> SearchStage {
         let retry = (
             self.ranked.clone(),
@@ -1402,10 +1109,7 @@ impl ClosureSearch {
             }
         }
     }
-    /// The search's setup from its snapshots, on its own thread (it was the scan thread's): the closures the newest solve
-    /// kept (or has not judged), every judged closure's yank and verdict, the odometry's mean step variance, and the
-    /// overlap model's chance this scan overlaps the target and the graph's covariance of their offset, which set the
-    /// extension's budget.
+    /// Search setup from its snapshots on its own thread: kept closures, judged yanks, mean step variance, target overlap and covariance.
     fn prepare(&mut self) {
         self.mean_step_xy_variance =
             crate::big_picture_fit::mean_step_variances(&self.key_poses, &self.config)[0];
@@ -1432,8 +1136,7 @@ impl ClosureSearch {
                 .map(|(tip, covariance)| (*tip, covariance.as_slice())),
             committed_closures: &self.closures,
         };
-        // extending is worth its cost as far as a real loop is likely here; extension grows by doubling, so the budget is
-        // the doubling step that covers max keyframes x that chance
+        // extension doubles, so the budget is the doubling step covering max keyframes x the chance a real loop is here
         let model = inputs.overlap_model(source_id);
         let diag = &mut self.diag;
         diag.target_overlap = model
@@ -1443,16 +1146,14 @@ impl ClosureSearch {
         if let Some(model) = &model {
             diag.innovation_covariance = model.relative(target_idx);
         }
-        // either reason makes extending worthwhile: a loop is likely somewhere unresolved (pressure), or this scan likely
-        // overlaps this target
+        // either a likely unresolved loop (pressure) or likely overlap with this target makes extending worthwhile
         let worth = 1.0 - (1.0 - diag.pressure) * (1.0 - diag.target_overlap);
         diag.extension_budget = ((self.config.closure_extended_icp_max_keyframes as f64 * worth)
             .ceil() as usize)
             .next_power_of_two()
             .min(self.config.closure_extended_icp_max_keyframes);
     }
-    /// A cloud alignment through the ICP cache (`icp_cache`): stored as the source's pose relative to the target
-    /// (`relative_icp`), the computed value itself returned when it was computed here.
+    /// A cloud alignment through the ICP cache, stored relative to the target (`relative_icp`).
     pub(crate) fn memo_alignment(
         &self,
         key_suffix: &str,
@@ -1510,8 +1211,7 @@ impl ClosureSearch {
             ),
         )
     }
-    /// The evidence a match needs (yank units): `base` plus ln of the look-alike places it fits as well as this one,
-    /// counted only as far as `evidence` makes the count matter (stage 4b).
+    /// Evidence a match needs (yank units): `base` + ln(look-alike places fitting as well), counted only as far as `evidence` needs.
     pub(crate) fn bar_with_places(
         &self,
         evidence: f64,
@@ -1580,10 +1280,7 @@ impl ClosureSearch {
         let (init_rotation, init_translation) = (self.init_rotation, self.init_translation);
         let mut timing = TimingStats::default();
         let half_range = self.config.target_half_range(1);
-        // the source scan, the target submap and its tree, built only when a computation needs them (never when every
-        // result comes from the ICP cache)
-        // the source scan alone (all the degeneracy gate reads), built apart from the target and its tree
-        // seconds spent building them, kept out of the steps that first needed them
+        // source scan (all the degeneracy gate reads) and target submap + tree, built lazily (never on full cache hits); build seconds kept apart
         let built_s = std::cell::Cell::new(0.0);
         let source_cell = std::cell::OnceCell::new();
         let source_cloud = || -> &PointCloud {
@@ -1608,10 +1305,9 @@ impl ClosureSearch {
                 (source.clone(), target_cloud, target_tree)
             })
         };
-        // a cloud computation, through the ICP cache when there is one; a point-to-plane alignment is a different
-        // result from a point-to-point one, so it is part of the key
+        // a cloud computation, through the ICP cache when there is one
         let cache = self.icp_cache.clone();
-        // the thinned target and the early stop change the single ICP's result too, so they are part of the key
+        // point-to-plane, the thinned target and the early stop change ICP's result, so they are part of the key
         let key_suffix = self.icp_key_suffix();
         let memo = |tag: &str, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
             match &cache {
@@ -1626,8 +1322,7 @@ impl ClosureSearch {
             self.memo_alignment(&key_suffix, tag, at, compute)
         };
 
-        // Observability gate: a planar/degenerate source scan leaves the alignment unconstrained in-plane, so fitness
-        // lies. It reads only the source scan, so it runs before ICP (computed for every candidate, gate on or off)
+        // Observability gate: a degenerate source scan leaves in-plane alignment unconstrained; source-only, so it runs before ICP
         let degenerate = |degeneracy_min: f32| {
             self.config.closure_min_degeneracy > 0.0
                 && degeneracy_min >= 0.0
@@ -1642,10 +1337,7 @@ impl ClosureSearch {
             return SearchStage::Done(rejected(diag, "degeneracy_reject", timing));
         }
 
-        // the pose graph takes ICP's fitness as the closure's variance: when the graph is already surer of the two
-        // ends' relative position than that (along the odometry, or across one kept closure; with per-motion noise,
-        // by the graph's own covariance of it), the closure adds only ICP's noise, and repeats of a closure already
-        // kept would count the same evidence twice
+        // uninformative gate: when the graph is already surer of the two ends' relative position than ICP's fitness, the closure adds nothing
         let gate_error_estimate = diag.odometry_error_estimate_gate;
         let odometry_step = self.mean_step_xy_variance * gate_error_estimate[0];
         let step = |a: usize, b: usize| a.abs_diff(b) as f64 * odometry_step;
@@ -1655,9 +1347,7 @@ impl ClosureSearch {
             .flatten()
             .all(|v| v.is_finite());
         let known = if by_graph {
-            // the graph's own covariance of the two ends' relative position (its heading swing and the solved
-            // closures included): the closure adds something only where it is surer than the graph in some direction.
-            // Per-keyframe xy steps say nothing of the heading's swing, which per-motion noise puts most of the drift in
+            // the graph's covariance of the two ends' offset (heading swing and solved closures included): its largest eigenvalue
             mat3::jacobi_eigen(diag.innovation_covariance)
                 .0
                 .into_iter()
@@ -1672,36 +1362,6 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // a candidate whose least yank ICP could leave still needs more evidence than any stack of scans could give is
-        // rejected unaligned: ICP pairs points only within its match distance, so it moves the source from the seed (the
-        // target's position) by about that much at most; the closure's own variance is at most the fitness limit squared;
-        // and a point's likelihood ratio is at most ln(2 reach / (width sqrt(2 pi))) with width no less than a quarter
-        // voxel, times the largest stack
-        if self.config.closure_likelihood_confidence && self.config.closure_yank_pre_check {
-            let reach = self.config.closure_icp_max_correspondence_m;
-            let source_position = self.key_poses.position(cur_idx);
-            let seeded = self.key_poses.position(target_idx);
-            let jump = mat3::norm(&mat3::sub(&seeded, &source_position));
-            let spread = mat3::jacobi_eigen(diag.innovation_covariance)
-                .0
-                .into_iter()
-                .fold(0.0, f64::max)
-                + self.config.closure_icp_max_fitness_m.powi(2);
-            if spread.is_finite() && spread > 0.0 && jump > reach {
-                let least_yank = (jump - reach) / spread.sqrt();
-                let width = self.config.submap_resolution / 4.0;
-                let most_evidence = (2.0 * reach / (width * (2.0 * std::f64::consts::PI).sqrt()))
-                    .ln()
-                    * self.config.closure_extended_icp_max_keyframes.max(1) as f64;
-                let least_required = crate::proportional_confidence::yank_evidence(
-                    least_yank / self.config.closure_yank_gate_width.max(f64::EPSILON),
-                    self.config.closure_yank_drift_range,
-                );
-                if least_required > most_evidence {
-                    return SearchStage::Done(rejected(diag, "yank_confidence_reject", timing));
-                }
-            }
-        }
         let (t0, built_before) = (std::time::Instant::now(), built_s.get());
         let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
@@ -1769,17 +1429,10 @@ impl ClosureSearch {
         if !icp.converged || icp.fitness > self.config.closure_icp_max_fitness_m.powi(2) {
             return SearchStage::Done(rejected(diag, "icp_reject", timing));
         }
-        // the closure's translation variance as the graph will take it: its inliers' mean squared distance
-        // (`IcpResult::inlier_mean_square`)
+        // the closure's translation variance as the graph takes it (`IcpResult::inlier_mean_square`)
         let closure_variance = icp.inlier_mean_square();
         if self.config.closure_uninformative_gate && closure_variance >= known {
             return SearchStage::Done(rejected(diag, "uninformative", timing));
-        }
-        if self.config.closure_sharpness_half > 0.0 {
-            diag.sharpness = memo("sharp", &mut || {
-                let (source_cloud, _, target_tree) = clouds();
-                vec![self.sharpness(source_cloud, target_tree, &icp)]
-            })[0];
         }
         if self.config.closure_likelihood_confidence {
             let window: Vec<usize> = (target_idx.saturating_sub(half_range)
@@ -1803,10 +1456,7 @@ impl ClosureSearch {
         let (rotation_offset, translation_offset) =
             measured(&icp.rotation, &icp.translation);
 
-        // Graph yank: how far this constraint pulls the source keyframe from the
-        // current odom-chain estimate (relative pose closure->cur, in the closure's
-        // frame). A large yank on a plausible-distance candidate = a closure that
-        // disagrees with odometry = the signature of a false closure.
+        // graph yank: how far this constraint pulls the source from the current graph's relative pose (large = likely false closure)
         let (current_relative_rotation, current_relative_translation) =
             measured(&mat3::identity(), &[0.0; 3]);
         diag.yank_translation = mat3::norm(&mat3::sub(
@@ -1821,8 +1471,7 @@ impl ClosureSearch {
         );
 
         self.score_candidate(&mut diag);
-        // the solve's record on closures that pulled about as hard as this one (within about one yank unit): rejected
-        // closures are the hard pullers, so a gentle closure is not charged for them
+        // the solve's record on closures that pulled about as hard as this one, so a gentle closure isn't charged for rejected hard pullers
         let (kept, judged) =
             self.judged_yanks
                 .iter()
@@ -1831,10 +1480,7 @@ impl ClosureSearch {
                     (kept + weight * was_kept as u8 as f64, judged + weight)
                 });
         diag.keep_rate = (kept + 1.0) / (judged + 2.0);
-        // stage 4b, look-alike places, counted only as far as the decision needs: picking one of N places the scan fits
-        // equally well costs ln N of evidence, so with `evidence` in hand only a count above e^(evidence - bar) matters.
-        // Not desperate (low pressure), the candidates checked stay near scan_context_top_k; desperate, they grow
-        // toward every keyframe.
+        // stage 4b, look-alike places: N equally fitting places cost ln N of evidence; the candidates checked grow with pressure
         let cap = (self.scan_context_config.candidate_top_k as f64
             / (1.0 - diag.pressure).max(f64::EPSILON))
         .ceil()
@@ -1859,8 +1505,7 @@ impl ClosureSearch {
             self.config.barely_pass_uncertainty_range,
         );
         if self.config.closure_likelihood_confidence {
-            // extend as far as reaching the uncertainty range's top takes at this scan's own evidence per keyframe (at least one bit):
-            // the yank and the look-alike places it matched set what is needed, not the pressure
+            // extend as far as reaching the range's top takes at this scan's evidence per keyframe (at least one bit)
             let per_keyframe = evidence.max(std::f64::consts::LN_2);
             diag.extension_budget = ((single_required * high / per_keyframe).ceil().max(2.0)
                 as usize)
@@ -1868,8 +1513,7 @@ impl ClosureSearch {
                 .min(self.config.closure_extended_icp_max_keyframes);
         }
         diag.required_confidence = 1.0 - (-single_required).exp();
-        // a stack of keyframes earns about the single scan's evidence per keyframe at best: one that could not climb to
-        // its bar even at the full stack is decided now
+        // a stack earns at most about the single scan's evidence per keyframe: one that can't reach its bar at full stack is decided now
         let reachable = !self.config.closure_extension_skip_unreachable
             || !self.config.closure_likelihood_confidence
             || evidence.max(std::f64::consts::LN_2)
@@ -1881,7 +1525,6 @@ impl ClosureSearch {
         }
         // inside the uncertainty range the extension decides (`PendingExtension::extend`, the verification stage)
         if ratio < high {
-            let source_points = memo("srcn", &mut || vec![source_cloud().len() as f64])[0] as usize;
             diag.promise = ratio;
             return SearchStage::Extend(Box::new(PendingExtension {
                 search: self,
@@ -1889,7 +1532,6 @@ impl ClosureSearch {
                 timing,
                 icp,
                 ratio,
-                source_points,
                 look_alikes,
                 error_estimate_sums,
                 base,
@@ -1922,7 +1564,6 @@ impl GscPgo {
             lidar_height_m: config.scan_context_lidar_height_m,
         };
         GscPgo {
-            generic_places: similarity_discovery::GenericPlaces::new(config.scan_context_generic_capacity),
             config,
             scan_context_config,
             rotation_offset: mat3::identity(),
@@ -1930,8 +1571,7 @@ impl GscPgo {
         }
     }
 
-    /// Send every closure search's cloud computations through `cache` (`icp_cache`): recording them, or answering from
-    /// a recording.
+    /// Send every closure search's cloud computations through `cache` (recording, or answering from a recording).
     pub fn set_icp_cache(&mut self, cache: Arc<crate::icp_cache::IcpCache>) {
         self.icp_cache = Some(cache);
     }
@@ -1950,8 +1590,7 @@ impl GscPgo {
         [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad] = tilt;
     }
 
-    /// The lidar range estimate (m) the odometry error estimate follows, once one is known
-    /// (`odometry_error_estimate_from_lidar_range`).
+    /// The lidar range estimate (m) the odometry error estimate follows, once known.
     pub fn lidar_range_estimate_m(&self) -> Option<f64> {
         self.lidar_range.estimate_m()
     }
@@ -1967,10 +1606,7 @@ impl GscPgo {
         ]
     }
 
-    /// The odometry error estimate in use as ratios to the reported variances (xy, z, yaw, roll/pitch;
-    /// `learned_odometry_error_estimate_from_closures`); all 1 when off or before a kept closure.
-    /// The factor on each odometry variance everything uses: always the stated odometry error estimate (the learned estimate,
-    /// `learned_odometry_error_estimate`, is only logged).
+    /// Factor on each odometry variance everything uses: always 1 (the stated estimate; the learned one is only logged).
     pub fn odometry_error_estimate(&self) -> [f64; 4] {
         [1.0; 4]
     }
@@ -1980,29 +1616,9 @@ impl GscPgo {
         self.learned_odometry_error_estimate_ln.map(f64::exp)
     }
 
-    /// The stated odometry error estimate this run's learned one implies, in the config's own units
-    /// (`odometry_error_estimate_*_per_sqrt_m` and `_per_sqrt_rad`, per source xy, z, yaw, tilt), to start the next run
-    /// from; and per source whether the closures measured it (an unmeasured source repeats the configured one).
+    /// Stated odometry error estimate the learned one implies, in config units, to start the next run from; and which sources were measured.
     pub fn odometry_error_estimate_for_next_run(&self) -> ([[f64; 2]; 4], [bool; 4]) {
-        let c = &self.config;
-        let stated = [
-            [
-                c.odometry_error_estimate_xy_per_sqrt_m,
-                c.odometry_error_estimate_xy_per_sqrt_rad,
-            ],
-            [
-                c.odometry_error_estimate_z_per_sqrt_m,
-                c.odometry_error_estimate_z_per_sqrt_rad,
-            ],
-            [
-                c.odometry_error_estimate_yaw_per_sqrt_m,
-                c.odometry_error_estimate_yaw_per_sqrt_rad,
-            ],
-            [
-                c.odometry_error_estimate_tilt_per_sqrt_m,
-                c.odometry_error_estimate_tilt_per_sqrt_rad,
-            ],
-        ];
+        let stated = self.config_odometry_error_estimate();
         let noise = self.learned_odometry_error_estimate();
         let measured =
             std::array::from_fn(|k| self.learned_odometry_error_estimate_ln_sd[k].is_some());
@@ -2013,14 +1629,12 @@ impl GscPgo {
         )
     }
 
-    /// The prior sd the learner holds each source's ln estimate to: the sd whose weight is `learned_odometry_error_estimate_stiffness`
-    /// residual checks (-2 ln curvature 2 / sd^2 = N; infinite at 0, no prior).
+    /// Prior sd for each source's ln estimate: the sd weighing `learned_odometry_error_estimate_stiffness` residual checks (infinite at 0).
     pub(crate) fn learned_odometry_error_estimate_prior(&self) -> [f64; 4] {
         [(2.0 / self.config.learned_odometry_error_estimate_stiffness).sqrt(); 4]
     }
 
-    /// After a solve: the odometry error estimate from the closures it kept, and a re-solve when it moved by more than its own
-    /// standard error since the solve began, so the graph is solved at the noise its closures imply.
+    /// After a solve: learn the odometry error estimate from its kept closures; request a re-solve if it moved past its standard error.
     pub(crate) fn update_learned_odometry_error_estimate(
         &mut self,
         evidence: Option<[(f64, f64); 6]>,
@@ -2033,20 +1647,14 @@ impl GscPgo {
         {
             return;
         }
-        // the odometry error estimate from the solved graph's own residuals: how far the solve bent each source's part of the
-        // odometry edges against how many independent checks the graph gave it (`odometry_error_estimate_evidence`), which tells
-        // turning from sliding where a closure's single innovation cannot
+        // from the solved graph's residuals per source against the checks the graph gave it (`odometry_error_estimate_evidence`)
         let mut ln_odometry = self.learned_odometry_error_estimate_ln;
-        let mut redundancy = [0.0; 4];
         if let Some(evidence) = evidence {
             for c in 0..4 {
                 let (sum, r) = evidence[c];
-                redundancy[c] = r;
                 if r > 0.5 && sum.is_finite() {
-                    let (dispatched, prior_sd) = (
-                        self.learned_odometry_error_estimate_ln_dispatched[c],
-                        self.learned_odometry_error_estimate_prior()[c],
-                    );
+                    // the solve whitens at the stated estimate, so the residuals' ln scale is 0
+                    let (dispatched, prior_sd) = (0.0, self.learned_odometry_error_estimate_prior()[c]);
                     ln_odometry[c] = crate::odometry_error_estimate::residual_ln_ratio(
                         sum, r, dispatched, c, prior_sd,
                     );
@@ -2060,18 +1668,6 @@ impl GscPgo {
                         ));
                 }
             }
-        }
-        // what the next solve would use (the estimate, or its lower bound) against what the last one did
-        let previous = std::mem::replace(&mut self.learned_odometry_error_estimate_ln, ln_odometry);
-        let next_solve = self.odometry_error_estimate().map(f64::ln);
-        self.learned_odometry_error_estimate_ln = previous;
-        let moved = (0..4).any(|c| {
-            redundancy[c] > 0.5
-                && (next_solve[c] - self.learned_odometry_error_estimate_ln_dispatched[c]).abs()
-                    > (2.0 / redundancy[c]).sqrt()
-        });
-        if moved && !self.odometry_error_estimate_rescaled {
-            self.odometry_error_estimate_rescale = true;
         }
         self.learned_odometry_error_estimate_ln = ln_odometry;
     }
@@ -2123,15 +1719,13 @@ impl GscPgo {
             yank_stdevs,
         });
     }
-    /// Keep a search's diagnostics, and when it found a candidate, its proposal and gate outcome
-    /// as closure-edge events.
+    /// Keep a search's diagnostics and, if it found a candidate, its proposal and gate outcome as closure-edge events.
     pub(crate) fn record_search(&mut self, mut diag: ClosureCandidateDiag) {
         // a search that ended before its proposal was built never saw the noise scales
         if diag.target_id < 0 {
             diag.learned_odometry_error_estimate = self.learned_odometry_error_estimate();
             diag.odometry_error_estimate_gate = self.odometry_error_estimate();
-        }
-        if diag.target_id >= 0 {
+        } else {
             let (source, target) = (diag.source_id, diag.target_id as usize);
             let proposed = if diag.scan_context_best.is_finite() {
                 1.0 - diag.scan_context_best as f64
@@ -2162,8 +1756,7 @@ impl GscPgo {
         }
         self.closure_diagnostics.push(diag);
     }
-    /// Keyframe gating by translation / rotation delta against the last
-    /// keyframe's LOCAL pose.
+    /// Keyframe gating by translation / rotation delta against the last keyframe's local pose.
     pub fn is_key_pose(&self, pose: &PoseWithTime) -> bool {
         if self.key_poses.is_empty() {
             return true;
@@ -2175,8 +1768,7 @@ impl GscPgo {
         delta_trans > self.config.keyframe_min_distance_meters
             || delta_deg > self.config.keyframe_min_rotation_degrees
     }
-    /// Add `cloud_with_pose` as a keyframe if it moved far enough from the last one (returns whether it did); every
-    /// `pressure_check_frequency`-th scan also recomputes the loop-overlap pressure.
+    /// Add the scan as a keyframe if it moved far enough (returns whether it did); every `pressure_check_frequency`-th scan checks pressure.
     pub fn add_key_pose(&mut self, cloud_with_pose: &CloudWithPose) -> bool {
         let started = std::time::Instant::now();
         if self.config.odometry_error_estimate_from_lidar_range {
@@ -2238,8 +1830,7 @@ impl GscPgo {
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
         let check_due = frequency > 0 && self.scans_seen.is_multiple_of(frequency);
-        // the pressure is a job on its own worker (`pressure_schedule`), held to its estimate in deterministic mode; the
-        // debounce and the merge land every scan too, so an adoption is not held to the next keyframe
+        // pressure is its own job (`pressure_schedule`); debounce and merge also land every scan, not only at keyframes
         self.step_pressure(check_due);
         if !self.adoption_inline && self.step_adoption(false) {
             self.adopted_since_update = true;
@@ -2247,8 +1838,7 @@ impl GscPgo {
         self.timing.pressure_s += checked.elapsed().as_secs_f64();
         keyframe
     }
-    /// `auto_aggregate_cloud_size`: add the scan to the gathered points; a due keyframe is made once they reach the minimum,
-    /// its cloud the gathered points in its body frame (and the gathering starts over), else it waits.
+    /// Gather the scan; a due keyframe is made once gathered points reach `auto_aggregate_cloud_size` (cloud in its body frame), else it waits.
     fn gather(
         &mut self,
         pose: &PoseWithTime,
@@ -2289,8 +1879,7 @@ impl GscPgo {
         self.reseen_previous = placed.into_iter().collect();
         Some(Arc::new(fresh))
     }
-    /// The body's speed (m/s): the median over the newest `solve_speed_window_poses` steps between distinct odometry
-    /// poses, by their recorded times (NaN before two).
+    /// Body speed (m/s): median over the newest `solve_speed_window_poses` steps between distinct odometry poses; NaN before two.
     pub(crate) fn recent_speed(&self) -> f64 {
         let mut speeds: Vec<f64> = self
             .recent_motion
@@ -2323,9 +1912,7 @@ impl GscPgo {
         self.new_closure
     }
 
-    /// Stages 1 and 2 for the newest keyframe, inline on every keyframe: it becomes the waiting
-    /// proposal if its scan-context match beats the one already waiting (the loser is recorded as
-    /// "outranked"), so a busy search thread still gets the most promising keyframe it missed.
+    /// Stages 1 and 2 for the newest keyframe: it becomes the waiting proposal if its match beats the waiting one (loser: "outranked").
     pub fn propose_closure(&mut self) {
         let started = std::time::Instant::now();
         self.propose();
@@ -2337,8 +1924,7 @@ impl GscPgo {
             return;
         }
         let cur_idx = self.key_poses.len() - 1;
-        // a proposal still waiting from an older keyframe (the search thread was busy) is dropped, not queued: the
-        // newest keyframe's search replaces it
+        // an older keyframe's waiting proposal is dropped (recorded "stale"), not queued
         if let Some(stale) = self
             .waiting_proposal
             .take_if(|waiting| waiting.diag.source_id < cur_idx)
@@ -2364,44 +1950,8 @@ impl GscPgo {
 
         // stage 2, similarity discovery: scan context, else the nearest past keyframe by position
         let t0 = std::time::Instant::now();
-        let (mut scan_context_target, mut sector_shift, mut sc_best, sc_second, ranked, mut alternatives) =
+        let (scan_context_target, sector_shift, sc_best, sc_second, ranked, alternatives) =
             self.search_by_scan_context();
-        if self.config.scan_context_generic_places > 0 {
-            let (best_shift, best_dist) = (sector_shift, sc_best);
-            let matched = scan_context_target
-                .map(|target| (best_dist, target, best_shift))
-                .into_iter()
-                .chain(alternatives.iter().copied());
-            let (radius, cap) = (
-                self.config.scan_context_generic_place_radius_m,
-                self.config.scan_context_generic_places,
-            );
-            let matched: Vec<_> = matched.collect();
-            let key_poses = &self.key_poses;
-            for &(_, target, _) in &matched {
-                self.generic_places
-                    .record(target, cur_idx, radius, cap, |k| key_poses.position(k));
-            }
-            // a target matched from `cap` separate places looks like everything: try the next match instead
-            let mut kept: Vec<_> = matched
-                .iter()
-                .copied()
-                .filter(|&(_, target, _)| self.generic_places.places(target) < cap)
-                .collect();
-            diag.generic_skipped = matched.len() - kept.len();
-            let first = (!kept.is_empty()).then(|| kept.remove(0));
-            let rest = kept;
-            match first {
-                Some((distance, target, shift)) => {
-                    scan_context_target = Some(target);
-                    sector_shift = shift;
-                    sc_best = distance;
-                }
-                None => scan_context_target = None,
-            }
-            alternatives = rest;
-            diag.generic_places = scan_context_target.map_or(0, |t| self.generic_places.places(t));
-        }
         let lookup_s = t0.elapsed().as_secs_f64();
         self.timing.scan_context_s += lookup_s;
         diag.cost_lookup_s = lookup_s;
@@ -2450,8 +2000,7 @@ impl GscPgo {
         diag.outcome = "outranked";
         self.record_search(diag);
     }
-    /// Take the waiting proposal as a `ClosureSearch` (stages 3 and 4) to run on any thread and hand to
-    /// `finish_closure_search`.
+    /// Take the waiting proposal as a `ClosureSearch` (stages 3 and 4) to run on any thread and hand to `finish_closure_search`.
     pub fn begin_closure_search(&mut self) -> Option<ClosureSearch> {
         let started = std::time::Instant::now();
         let mut search = self.begin();
@@ -2488,9 +2037,7 @@ impl GscPgo {
         diag.odometry_error_estimate_gate = self.odometry_error_estimate();
         let source_position = self.key_poses.position(diag.source_id);
         let target_position = self.key_poses.position(target_idx);
-        // ICP starts with the source keyframe at the target's position, turned by the scan-context yaw:
-        // after a long drift the two positions differ by the whole drift, and seeding at the source's
-        // own position would leave the two submaps without overlap
+        // ICP seeds the source at the target's position turned by the scan-context yaw (after long drift its own position wouldn't overlap)
         let yaw = if sector_shift != 0 {
             similarity_discovery::yaw_from_shift(sector_shift, self.scan_context_config.n_sectors)
         } else {
@@ -2533,9 +2080,7 @@ impl GscPgo {
             },
         })
     }
-    /// Search for a closure at the newest keyframe as a lockstep replay does (`step_closure_search`): deterministic, it
-    /// waits for a job only once its hold has passed; fast, it waits for none, the searches landing as they finish, as
-    /// live (the keyframe thread only dispatches).
+    /// Search at the newest keyframe as a lockstep replay does: deterministic waits for a job only once its hold passed; fast waits for none.
     pub fn search_for_closure_pairs(&mut self) {
         self.step_closure_search(self.config.deterministic());
     }
@@ -2564,8 +2109,7 @@ impl GscPgo {
         self.record_search(diag);
         self.commit_closure(source, target, rotation_offset, translation_offset, score);
     }
-    /// Offer the rejected search's keyframe again at its next scan-context match, while it has tries left: 1 +
-    /// floor(sqrt(min(ceil(1 / (1 - pressure)), scan_context_top_k - 1))) (`closure_alternative_places`).
+    /// Offer the rejected keyframe again at its next scan-context match while tries remain (`closure_alternative_places`).
     fn retry_alternative(
         &mut self,
         rejected: &ClosureCandidateDiag,
@@ -2580,8 +2124,7 @@ impl GscPgo {
         {
             return;
         }
-        // the extra tries grow with pressure as before, but under a square root: retries far down the match list
-        // rarely close (small Mid-360: 1 accept in 419 tries past the second)
+        // extra tries grow with pressure under a square root: retries far down the match list rarely close
         let extra = (1.0 / (1.0 - rejected.pressure).max(f64::EPSILON))
             .ceil()
             .min(self.scan_context_config.candidate_top_k.saturating_sub(1) as f64);
@@ -2622,8 +2165,7 @@ impl GscPgo {
         let keyframes = self.key_poses.len();
         self.release_pending_solve(keyframes);
         self.graph_version += 1;
-        // every use of a keyframe's cloud (submaps, stacked clouds) voxelizes it at submap_resolution, so it is
-        // stored that way: a dense scan (the Go2 L1's ~30k-point local map) would otherwise be kept whole
+        // stored voxelized at submap_resolution, as every use voxelizes it (a dense scan would otherwise be kept whole)
         let stored = match &cloud {
             Some(cloud) if self.config.submap_resolution > 0.0 => Some(Arc::new(voxel_downsample(
                 cloud,
@@ -2647,8 +2189,7 @@ impl GscPgo {
             body_cloud: stored,
         });
 
-        // the scan context descriptor and ring key (empty without a cloud); a non-positive max range is set once from
-        // the first cloud's extent, so every descriptor shares one binning
+        // scan context descriptor and ring key (empty without a cloud); a non-positive max range is set once from the first cloud
         if let Some(cloud) = &cloud {
             if self.scan_context_config.max_range_m <= 0.0 {
                 let auto_range = similarity_discovery::auto_max_range(cloud);
@@ -2700,8 +2241,7 @@ impl GscPgo {
 mod config_tests {
     use super::Config;
 
-    /// The target submap's half range is 5 for the single scan (today's fixed submap) and grows with the extension's
-    /// source clouds.
+    /// The target submap's half range is 5 for the single scan and grows with the extension's source clouds.
     #[test]
     fn the_target_range_grows_with_the_extension() {
         let config = Config::default();
@@ -2729,5 +2269,12 @@ mod config_tests {
             };
             assert!(config.validate().is_err(), "{fail} {pass}");
         }
+    }
+
+    /// The learned odometry error estimate is only logged: the solve and the gates use the stated one.
+    #[test]
+    fn the_solve_and_gates_use_the_stated_odometry_error_estimate() {
+        let config = Config { learned_odometry_error_estimate_from_closures: true, ..Config::default() };
+        assert_eq!(super::GscPgo::new(config).odometry_error_estimate(), [1.0; 4]);
     }
 }

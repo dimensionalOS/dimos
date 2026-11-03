@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Minimal reader for a dimos memory2 SQLite recording, decoding the raw
-//! LCM blobs the eval binary feeds through GscPgo.
-//!
-//! Each stream `S` is two tables: `"S"` (metadata: id, ts, ...) and `"S_blob"`
-//! (id, data BLOB). The blob is exactly `value.lcm_encode()` — an 8-byte
-//! fingerprint followed by the packed message — so a stream is discriminated by
-//! trying each candidate decoder and letting the fingerprint check reject
-//! mismatches. Pose values in the metadata columns are deprecated; everything
-//! here comes from decoding the blob.
+//! Minimal reader for a dimos memory2 SQLite recording: stream `S` is tables `"S"` (id, ts, ...) and `"S_blob"` (id, data).
+//! A blob is `value.lcm_encode()` (8-byte fingerprint + message), so a stream's type is found by trying each decoder.
+//! Pose values in the metadata columns are deprecated; everything here comes from decoding the blob.
 
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::records::extract_xyz;
@@ -30,10 +24,7 @@ use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::tf2_msgs::TFMessage;
 use rusqlite::Connection;
 
-/// One odometry sample: world pose at a timestamp. `frame_id` is the pose's
-/// reference (parent) frame; `child_frame_id` is the frame the pose moves (the
-/// eval re-expresses it for the body frame through the recording's tf).
-/// `child_frame_id` is empty for `PoseStamped` payloads, which carry no child.
+/// World pose at a timestamp: `frame_id` is its parent frame, `child_frame_id` the frame it moves (empty for PoseStamped).
 pub struct OdomRow {
     pub ts: f64,
     pub translation: Vec3,
@@ -57,16 +48,14 @@ fn quote_ident(name: &str) -> Result<String, String> {
     Ok(format!("\"{name}\""))
 }
 
-/// Join a stream's metadata + blob tables on id, ordered by timestamp, and hand
-/// each `(ts, blob)` to `decode`. Rows the decoder returns `None` for are
-/// skipped (e.g. a corrupt frame), so a single bad message never aborts a run.
+/// Each `(ts, blob)` of a stream, in time order, through `decode`; rows it returns `None` for (e.g. corrupt) are skipped.
 fn read_stream<T>(
     connection: &Connection,
     stream: &str,
     mut decode: impl FnMut(f64, &[u8]) -> Option<T>,
 ) -> Result<Vec<T>, String> {
     let mut out = Vec::new();
-    for_each_row(connection, stream, 1, f64::INFINITY, |ts, data| {
+    for_each_row(connection, stream, f64::INFINITY, |ts, data| {
         if let Some(value) = decode(ts, data) {
             out.push(value);
         }
@@ -75,44 +64,35 @@ fn read_stream<T>(
     Ok(out)
 }
 
-/// Call `visit` with every `stride`th row's (ts, blob) in time order, one row in memory at a time: strided-out blobs are
-/// never decoded or retained, so a huge recording can be subsampled without materializing every scan in memory.
+/// Call `visit` with every row's (ts, blob) in time order, one row in memory at a time.
 fn for_each_row(
     connection: &Connection,
     stream: &str,
-    stride: usize,
     until_s: f64,
     mut visit: impl FnMut(f64, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
-    let stride = stride.max(1);
     let table = quote_ident(stream)?;
     let blob_table = quote_ident(&format!("{stream}_blob"))?;
-    // order the (small) metadata alone, then fetch each kept blob by id: sorting the joined blobs would spill the whole
-    // stream into a temp b-tree (tens of GB on a long recording, enough to fill the disk)
+    // sort only the small metadata, then fetch each blob by id: sorting joined blobs spills the stream to a temp b-tree (GBs)
     let sql = format!("SELECT id, ts FROM {table} ORDER BY ts");
     let mut statement = connection.prepare(&sql).map_err(|e| e.to_string())?;
     let mut rows = statement.query([]).map_err(|e| e.to_string())?;
     let mut blob_statement = connection
         .prepare(&format!("SELECT data FROM {blob_table} WHERE id = ?1"))
         .map_err(|e| e.to_string())?;
-    let mut index = 0usize;
     let mut first_ts = None;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        if index.is_multiple_of(stride) {
-            let id: i64 = row.get(0).map_err(|e| e.to_string())?;
-            let ts: f64 = row.get(1).map_err(|e| e.to_string())?;
-            // rows come in time order: past `until_s` of the stream there is nothing more to visit
-            if ts - *first_ts.get_or_insert(ts) > until_s {
-                break;
-            }
-            let mut blob_rows = blob_statement.query([id]).map_err(|e| e.to_string())?;
-            if let Some(blob_row) = blob_rows.next().map_err(|e| e.to_string())? {
-                let data = blob_row.get_ref(0).map_err(|e| e.to_string())?;
-                let data = data.as_blob().map_err(|e| e.to_string())?;
-                visit(ts, data)?;
-            }
+        let id: i64 = row.get(0).map_err(|e| e.to_string())?;
+        let ts: f64 = row.get(1).map_err(|e| e.to_string())?;
+        // rows come in time order: past `until_s` of the stream there is nothing more to visit
+        if ts - *first_ts.get_or_insert(ts) > until_s {
+            break;
         }
-        index += 1;
+        let mut blob_rows = blob_statement.query([id]).map_err(|e| e.to_string())?;
+        if let Some(blob_row) = blob_rows.next().map_err(|e| e.to_string())? {
+            let data = blob_row.get_ref(0).map_err(|e| e.to_string())?;
+            visit(ts, data.as_blob().map_err(|e| e.to_string())?)?;
+        }
     }
     Ok(())
 }
@@ -167,9 +147,7 @@ fn odom_from_pose(
     }
 }
 
-/// Read an odometry stream, accepting either `nav_msgs/Odometry` or
-/// `geometry_msgs/PoseStamped` payloads (legacy go2 recordings store the
-/// latter). The fingerprint check makes the choice unambiguous per blob.
+/// Read an odometry stream of `nav_msgs/Odometry` or `geometry_msgs/PoseStamped` (legacy go2) payloads.
 pub fn read_odometry(connection: &Connection, stream: &str) -> Result<Vec<OdomRow>, String> {
     let rows = read_stream(connection, stream, |ts, data| {
         if let Ok(message) = Odometry::decode(data) {
@@ -188,16 +166,14 @@ pub fn read_odometry(connection: &Connection, stream: &str) -> Result<Vec<OdomRo
     Ok(rows)
 }
 
-/// Call `visit` with each scan of a lidar stream of PointCloud2s, in time order, one at a time, stopping after the
-/// stream's first `until_s` seconds.
+/// Call `visit` with each PointCloud2 scan of a lidar stream in time order, one at a time, for its first `until_s` seconds.
 pub fn for_each_scan(
     connection: &Connection,
     stream: &str,
-    stride: usize,
     until_s: f64,
     mut visit: impl FnMut(ScanRow) -> Result<(), String>,
 ) -> Result<(), String> {
-    for_each_row(connection, stream, stride, until_s, |ts, data| {
+    for_each_row(connection, stream, until_s, |ts, data| {
         let Ok(message) = PointCloud2::decode(data) else {
             return Ok(());
         };
@@ -255,8 +231,7 @@ impl Rigid {
     }
 }
 
-/// One tf edge as recorded: its first value, and whether every later message repeated it (a static mount) or not
-/// (a moving frame, e.g. odom -> mid360_link, which a mount lookup must not use).
+/// One tf edge: its first value, and whether every later message repeated it (a static mount; moving edges are never looked up).
 struct TfEdge {
     parent: String,
     child: String,
@@ -283,7 +258,7 @@ impl TfTree {
         if !has_tf {
             return Ok(TfTree { edges });
         }
-        for_each_row(connection, "tf", 1, f64::INFINITY, |_, data| {
+        for_each_row(connection, "tf", f64::INFINITY, |_, data| {
             let Ok(message) = TFMessage::decode(data) else {
                 return Ok(());
             };
@@ -322,8 +297,7 @@ impl TfTree {
         Ok(TfTree { edges })
     }
 
-    /// The fixed transform taking points in `source` to `target`, chained through the tree's constant edges (walked
-    /// either way). Identity when the frames are one; an error naming the frames when no constant chain joins them.
+    /// The fixed transform taking points in `source` to `target` through constant edges (walked either way); Err if none.
     pub fn lookup(&self, target: &str, source: &str) -> Result<Rigid, String> {
         if target == source {
             return Ok(Rigid::identity());

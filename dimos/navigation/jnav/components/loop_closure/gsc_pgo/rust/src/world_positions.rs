@@ -18,9 +18,7 @@
 use crate::big_picture_fit::{solve_core, Edge, LandmarkSighting, Solution, SolveConfig, Unary};
 use crate::mat3::{self, Mat3, Vec3};
 
-/// A measured position, in fixed world frame `frame` (GPS after projection to a local east-north-up frame, a total
-/// station, motion capture, ...; one id per coordinate system), of a sensor mounted at `lever` in keyframe `keyframe`'s
-/// body frame (an antenna's offset from the body origin, from tf), with its covariance (m²).
+/// A sensor's position (m) in world frame `frame` (one id per coordinate system), mounted at `lever` on `keyframe`; cov m².
 #[derive(Clone, Copy, Debug)]
 pub struct PositionPrior {
     pub keyframe: usize,
@@ -30,15 +28,7 @@ pub struct PositionPrior {
     pub covariance: Mat3,
 }
 
-/// `solve` with absolute position priors, in any number of world frames (each gravity-aligned, each differing from the
-/// map by an unknown rotation about the vertical and a translation). A frame is used once its priors pin its heading
-/// (horizontal spread more than twice their noise). The frame with the most usable priors is primary: a first fit of
-/// it (weighted Procrustes of the prior-free solution onto its priors) moves the graph into it, every keyframe is freed
-/// (the priors, not keyframe 0, fix where the map sits) and the priors are unary factors, GNC-weighted like closures
-/// (3-DoF chi-square cutoff). Every other frame's primary -> frame alignment is fitted to the primary-only solution and
-/// its priors are carried into the primary frame through it for one solve of everything (a two-stage estimate: the
-/// alignments are not refined jointly with the graph). The map -> frame alignments are
-/// read back at keyframe 0, and the solution is returned in map coordinates.
+/// `solve` plus GNC-weighted position priors; other frames align to the most-observed one's solve (two-stage).
 #[allow(clippy::too_many_arguments)]
 pub fn solve_with_priors(
     rotations: &[Mat3],
@@ -69,9 +59,8 @@ pub fn solve_with_priors(
             .collect()
     };
     // the sensors' positions in a solution, so a mount offset from the body origin is fitted where it was measured
-    let fit = |solution: &Solution, ids: &[usize], weights: &[f64]| {
+    let fit = |solution: &Solution, ids: &[usize]| {
         let chosen: Vec<PositionPrior> = ids.iter().map(|&i| priors[i]).collect();
-        let w: Vec<f64> = ids.iter().map(|&i| weights[i]).collect();
         let sensors: Vec<Vec3> = chosen
             .iter()
             .map(|p| {
@@ -81,13 +70,12 @@ pub fn solve_with_priors(
                 )
             })
             .collect();
-        align_priors(&sensors, &chosen, &w)
+        align_priors(&sensors, &chosen)
     };
-    let ones = vec![1.0; priors.len()];
     // map -> frame, for every frame its priors make observable
     let first: Vec<(u32, (f64, Vec3))> = frames
         .iter()
-        .filter_map(|&f| Some((f, fit(&solution, &of(f), &ones)?)))
+        .filter_map(|&f| Some((f, fit(&solution, &of(f))?)))
         .collect();
     let Some(&(primary, (yaw, translation))) = first.iter().max_by_key(|(f, _)| of(*f).len())
     else {
@@ -156,8 +144,7 @@ pub fn solve_with_priors(
         (used, unary)
     };
     let mut weights = vec![0.0; priors.len()];
-    // stage 1: the primary frame alone; each other frame's primary -> frame alignment is fitted to that solution, so a
-    // frame's own (possibly much tighter) priors cannot hold the graph where a wrong first guess put it
+    // stage 1: primary alone, then refit the other alignments to it so their tighter priors can't hold a wrong first guess
     let (used, unary) = unary_of(&|f| f == primary, &relative);
     let primary_only = solve_core(
         &world_rotations,
@@ -174,7 +161,7 @@ pub fn solve_with_priors(
     }
     for (f, alignment) in relative.iter_mut() {
         let ids = of(*f);
-        if let Some(refit) = fit(&primary_only, &ids, &ones) {
+        if let Some(refit) = fit(&primary_only, &ids) {
             *alignment = refit;
         }
     }
@@ -193,9 +180,7 @@ pub fn solve_with_priors(
     for (&i, &w) in used.iter().zip(&world.prior_weights) {
         weights[i] = w;
     }
-    // map -> primary: keyframe 0's map pose (held in the map) onto its solved pose in the primary frame
-    // a turn about the vertical (the frames are gravity-aligned), so it stays exactly a rotation however many solves it
-    // passes through
+    // map -> primary: keyframe 0's map pose onto its solved pose, kept a pure yaw (the frames are gravity-aligned)
     let turned = mat3::mat_mul(&world.rotations[0], &mat3::transpose(&rotations[0]));
     let align_rotation = mat3::rot_z(turned[1][0].atan2(turned[0][0]));
     let align_translation = mat3::sub(
@@ -239,17 +224,12 @@ pub fn solve_with_priors(
     solution
 }
 
-/// The map -> world alignment (yaw about z, translation) that best puts the kept priors' keyframes on their world
-/// positions, each weighted by its inverse horizontal variance; None until their horizontal spread exceeds twice their
-/// typical noise (heading unobservable).
-fn align_priors(points: &[Vec3], priors: &[PositionPrior], weights: &[f64]) -> Option<(f64, Vec3)> {
-    // `points[i]` is where the current solution has prior i's sensor
+/// Weighted yaw + translation putting `points` on the priors' world positions; None while spread sd <= 2x noise sd.
+fn align_priors(points: &[Vec3], priors: &[PositionPrior]) -> Option<(f64, Vec3)> {
     let used: Vec<(Vec3, &PositionPrior, f64)> = priors
         .iter()
         .zip(points)
-        .zip(weights)
-        .filter(|(_, &w)| w >= 0.5)
-        .map(|((p, &point), _)| {
+        .map(|(p, &point)| {
             (
                 point,
                 p,

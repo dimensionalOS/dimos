@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Unit tests for the voxel grid, connection fit (ICP recovers a known transform) and
-//! uniqueness (normal-scatter degeneracy).
+//! Unit tests for voxel downsampling, ICP (recovers a known transform) and normal-scatter degeneracy.
 
-// Index loops mirror the reference matrix asserts (r[i][j] / t[i]); keep them.
 #![allow(clippy::needless_range_loop)]
 
 use dimos_gsc_pgo::connection_fit::{icp, IcpParams};
@@ -26,12 +24,12 @@ use dimos_gsc_pgo::uniqueness::degeneracy;
 #[test]
 fn voxel_downsample_emits_per_voxel_centroids() {
     let cloud = vec![
-        // Voxel (0,0,0) for leaf 1.0: centroid (0.2, 0.3, 0.4).
+        // voxel (0,0,0): centroid (0.2, 0.3, 0.4)
         [0.1, 0.1, 0.1],
         [0.3, 0.5, 0.7],
-        // Voxel (1,0,0): single point survives untouched.
+        // voxel (1,0,0): a lone point survives untouched
         [1.5, 0.25, 0.75],
-        // Voxel (-1,0,0): floor semantics, NOT truncation toward zero.
+        // voxel (-1,0,0): floor, not truncation toward zero
         [-0.5, 0.5, 0.5],
     ];
     let out = voxel_downsample(&cloud, 1.0);
@@ -54,12 +52,11 @@ fn voxel_downsample_emits_per_voxel_centroids() {
         (c2[1] - 0.5).abs() < 1e-6,
         "negative coords bin by floor: {c2:?}"
     );
-    // resolution <= 0 passes through.
+    // resolution <= 0 passes through
     assert_eq!(voxel_downsample(&cloud, 0.0).len(), cloud.len());
 }
 
-/// A synthetic structured cloud: three orthogonal wall grids (well
-/// conditioned for point-to-point ICP).
+/// Three orthogonal regular wall grids (floor, y=0, x=0).
 fn synthetic_corner_cloud() -> Vec<[f32; 3]> {
     let mut cloud = Vec::new();
     for i in 0..20 {
@@ -74,10 +71,7 @@ fn synthetic_corner_cloud() -> Vec<[f32; 3]> {
     cloud
 }
 
-/// An irregular (deterministic-pseudo-random) three-wall cloud. ICP needs
-/// non-repeating structure: on a regular lattice, point-to-point NN
-/// correspondences alias to the wrong lattice cell and ICP (PCL's exactly
-/// as much as ours) locks into a local minimum.
+/// A seeded pseudo-random three-wall cloud (a regular lattice makes ICP correspondences alias).
 fn scattered_corner_cloud() -> Vec<[f32; 3]> {
     let mut state = 42u64;
     let mut next = move || {
@@ -101,13 +95,6 @@ fn scattered_corner_cloud() -> Vec<[f32; 3]> {
     cloud
 }
 
-/// Bit-exact golden test against PCL 1.15 `IterativeClosestPoint<PointXYZI,
-/// PointXYZI>` (Eigen 3.4.1, g++ -O2, x86-64 baseline / SSE2): identical
-/// clouds fed to the real PCL ICP produced these final-transform f32 bits
-/// and fitness f64 bits. The pipeline is IEEE-exact ops only, so the bits
-/// are portable — except the covariance GEMM panel size, which follows
-/// Eigen's L1-cache heuristic; at this cloud size (~1200 correspondences)
-/// every L1 size >= 16 KiB yields the same panel split.
 #[test]
 fn icp_recovers_known_transform() {
     let source = scattered_corner_cloud();
@@ -144,8 +131,6 @@ fn icp_recovers_known_transform() {
     );
 }
 
-/// Degeneracy: a flat plane has all normals vertical -> smallest normalized
-/// normal-scatter eigenvalue ~ 0; a three-wall corner constrains all axes.
 #[test]
 fn cloud_degeneracy_separates_planes_from_corners() {
     let mut plane = Vec::new();

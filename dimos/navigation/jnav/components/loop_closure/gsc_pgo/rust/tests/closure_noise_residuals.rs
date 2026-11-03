@@ -12,25 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Odometry reported at its true noise, closures reported 30x looser than theirs in translation and 300x in rotation: learning the odometry alone from the
-//! residuals calls it too good (the solve put the loops' misfit on the loose closures), learning both groups together
-//! gives each back (`Solution::odometry_error_estimate_evidence`, entry 4 = the closures).
+//! With closures stated 30x too loose, learning odometry noise alone underestimates it; learning closures too fixes both.
 
 use dimos_gsc_pgo::big_picture_fit::{solve, Edge, SolveConfig};
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
-fn uniform(k: usize, salt: f64) -> f64 {
-    ((k as f64 * 12.9898 + salt * 78.233).sin() * 43758.5453)
-        .rem_euclid(1.0)
-        .max(1e-12)
-}
+mod common;
+use common::normal;
 
-fn normal(k: usize, salt: f64) -> f64 {
-    (-2.0 * uniform(k, salt).ln()).sqrt() * (std::f64::consts::TAU * uniform(k, salt + 0.5)).cos()
-}
-
-/// Laps of a 20 m square, a keyframe every metre, a closure at every keyframe after the first lap back to the same
-/// spot a lap earlier; returns the odometry, its dead reckoning and the closures.
+/// Laps of a 20 m square (1 m keyframes), closures back one lap; returns odometry, dead reckoning and closures.
 fn graph(closure_reported_over_true: f64) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>, Vec<Edge>) {
     let (xy, yaw, closure) = (1e-4_f64, 1e-5_f64, 1e-4_f64);
     let n = 400;
@@ -80,7 +70,7 @@ fn graph(closure_reported_over_true: f64) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>, V
         rotations.push(mat3::mat_mul(&r, &e.rotation));
         positions.push(mat3::add(&p, &mat3::mat_vec(&r, &e.translation)));
     }
-    // closure noise in every axis, one shared variance per axis kind (as GSC's ICP fitness is on all six)
+    // closure noise on all six axes, one shared variance per axis kind
     let closures: Vec<Edge> = (80..n)
         .step_by(2)
         .map(|k| {
@@ -100,7 +90,7 @@ fn graph(closure_reported_over_true: f64) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>, V
                     offset[1] + closure.sqrt() * normal(k, 6.0),
                     offset[2] + closure.sqrt() * normal(k, 9.0),
                 ],
-                // rotation stated 10x looser again than translation (as ICP fitness on every axis is)
+                // rotation stated 10x looser than translation
                 variances: [10e-2, 10e-2, 10e-2, 1.0, 1.0, 1.0]
                     .map(|f| f * closure * closure_reported_over_true),
             }
@@ -109,9 +99,7 @@ fn graph(closure_reported_over_true: f64) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>, V
     (odometry, rotations, positions, closures)
 }
 
-/// Helmert's iteration over the odometry's xy and yaw sources and (if `with_closures`) the closures: each group's
-/// variances rescaled by its sum / redundancy until they settle. Returns the odometry xy and yaw scales and the
-/// closures' rotation and translation scales.
+/// Helmert variance-component iteration; returns the learned (odometry xy, odometry yaw, closure rot, closure trans) scales.
 fn helmert(with_closures: bool) -> (f64, f64, f64, f64) {
     let (mut odometry, rotations, positions, mut closures) = graph(30.0);
     let free: Vec<bool> = (0..rotations.len()).map(|k| k > 0).collect();

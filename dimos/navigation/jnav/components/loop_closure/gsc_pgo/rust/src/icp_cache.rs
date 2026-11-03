@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A cache of every cloud computation a closure search makes (ICP, its scores, degeneracy, the fit's covariance, each
-//! extended-ICP round), keyed by source keyframe, target keyframe and what was computed, so a replay can rerun the
-//! whole downstream pipeline (gates, weighting, GNC, the noise learner, the solve) without the clouds. Recording stores
-//! each result as computed; replaying returns it, and computes (and counts) any the recording never made.
+//! Cache of every cloud computation a closure search makes, keyed by (source, target, what), so a replay can rerun the
+//! downstream pipeline without clouds; replay computes and counts as misses any entry the recording lacks.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,10 +22,7 @@ use std::sync::Mutex;
 use crate::connection_fit::IcpResult;
 use crate::mat3::{self, Mat3, Vec3};
 
-/// An encoded alignment's correction (`encode_icp`'s rotation and translation, world axes, moving the source cloud) turned
-/// into the source keyframe's pose relative to the target keyframe's (`forward`), or back. The cache stores the
-/// relative pose: the correction alone depends on where the graph had put the two keyframes when it was computed, so a
-/// replay under any other noise or verdict (a differently corrected graph) read it back tens of metres off (huge).
+/// Encoded world-frame correction <-> source pose relative to target (`forward`); cached fits then survive graph moves.
 pub fn relative_icp(
     encoded: &mut [f64],
     source: (&Mat3, &Vec3),
@@ -150,8 +145,7 @@ pub fn decode_icp(v: &[f64]) -> IcpResult {
     }
 }
 
-/// The cache as bytes, exact for every f64 (NaN and infinities included, which JSON cannot hold): per entry, its key's
-/// length (u32) and bytes, then its value's length (u32) and f64s, all little-endian.
+/// Exact binary form (keeps NaN/inf): per entry, u32 key length + key bytes, u32 value count + f64s, little-endian.
 pub fn to_bytes(entries: &HashMap<String, Vec<f64>>) -> Vec<u8> {
     let mut keys: Vec<&String> = entries.keys().collect();
     keys.sort();
@@ -210,8 +204,7 @@ mod relative_icp_tests {
         })
     }
 
-    /// The same alignment read back under a differently corrected graph (both keyframes moved by one rigid motion, as a
-    /// solve moves them) gives the same source pose relative to the target, where replaying the raw correction would not.
+    /// A cached alignment read back after a rigid motion of both keyframes keeps the same relative pose.
     #[test]
     fn a_cached_alignment_keeps_its_relative_pose_under_a_moved_graph() {
         let (rs, ps) = (rot([0.2, 0.1, 1.0], 0.7), [12.0, -3.0, 1.5]);
@@ -229,7 +222,7 @@ mod relative_icp_tests {
         for (a, b) in same.iter().zip(&encoded) {
             assert!((a - b).abs() < 1e-12, "{same:?} vs {encoded:?}");
         }
-        // under a graph moved by g (rotation rg, then translation pg): the source moved relative to the target the same
+        // under a graph moved by (rg, pg) the relative pose is unchanged
         let (rg, pg) = (rot([0.1, 1.0, 0.3], 0.9), [40.0, -25.0, 7.0]);
         let moved = |r: &Mat3, p: &Vec3| {
             (

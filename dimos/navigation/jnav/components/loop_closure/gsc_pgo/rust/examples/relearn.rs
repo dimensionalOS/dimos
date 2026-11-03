@@ -12,17 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Replay a finished pgo-eval run's solve side offline: its keyframes (`a.kf`, raw poses) are added in order and its
-//! committed closures (`a.json`) committed at their source keyframe, with a solve adopted every `every` keyframes, so the
-//! odometry-noise learner and the solve's gates run as they would live on the same closures (the search is not re-run).
-//! Writes the final keyframes as a.kf and prints the kept count and the learned odometry error estimate.
-//! With a start keyframe, solves are skipped before it (one solve there carries everything up to it), to screen a late
-//! stretch fast. usage: relearn <run dir> <out a.kf> <config overlay json> [every keyframes, 20] [start keyframe, 0]
+//! Replays a pgo-eval run's keyframes + committed closures (no search), solving every N keyframes; writes a.kf, prints kept/noise.
+//! usage: relearn <run dir> <out a.kf> <config overlay json> [every keyframes, 20] [start keyframe, 0]
 
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config, GscPgo, PoseWithTime};
 use dimos_gsc_pgo::mat3::{self, Mat3};
 
-/// A committed closure as a.json has it: source, target, rotation, translation, ICP fitness.
+/// A committed closure from a.json: source, target, rotation, translation, score.
 type Closure = (usize, usize, Mat3, [f64; 3], f64);
 
 fn main() {
