@@ -1,7 +1,7 @@
-import type { ModelImage } from "./lib/model-image.ts";
-import type { PreviewCache, SourceFile } from "./lib/artifacts.ts";
-import type { RenderProgress } from "./types.ts";
-import type { RenderedView } from "../protocol/media.ts";
+import type { ModelImage } from "#dimos/agents/shared/render/lib/model-image.ts";
+import type { PreviewCache, SourceFile } from "#dimos/agents/shared/render/lib/artifacts.ts";
+import type { RenderProgress } from "#dimos/agents/shared/render/types.ts";
+import type { RenderedView } from "#dimos/agents/shared/protocol/media.ts";
 
 type RenderContext = {
   readonly cache: PreviewCache;

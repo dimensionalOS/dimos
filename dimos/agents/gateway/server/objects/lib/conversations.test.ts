@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { AgentModuleName } from "../../../../shared/protocol/runtime/event.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type {
   CommitPublication,
   ConversationId,
@@ -12,10 +12,10 @@ import type {
   SubmissionId,
   TaskId,
 } from "@earendil-works/pi-durable";
-import type { ConversationRow } from "../../../../shared/protocol/conversation/summary.ts";
-import type { DimosInput, UserRequestId } from "../../../../shared/protocol/conversation/input.ts";
-import { epochMs } from "../../../../shared/protocol/time.ts";
-import { foldPublication } from "./conversations.ts";
+import type { ConversationRow } from "#dimos/agents/shared/protocol/conversation/summary.ts";
+import type { DimosInput, UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { foldPublication } from "#dimos/agents/gateway/server/objects/lib/conversations.ts";
 import { test } from "node:test";
 
 const NOW = epochMs(1_760_000_000_000);

@@ -1,4 +1,4 @@
-import type { BuildInfo } from "../../shared/protocol/lifecycle/contract.ts";
+import type { BuildInfo } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";

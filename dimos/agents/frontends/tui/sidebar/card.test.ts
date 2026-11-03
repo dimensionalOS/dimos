@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { StreamCardView } from "./card.ts";
+import { StreamCardView } from "#dimos/agents/frontends/tui/sidebar/card.ts";
 import { setCapabilities, setCellDimensions, visibleWidth } from "@earendil-works/pi-tui";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";

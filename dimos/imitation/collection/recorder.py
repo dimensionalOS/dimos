@@ -12,50 +12,196 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CollectionRecorder — captures teleop collection streams to a memory DB.
-
-A `Recorder` (memory) subscribes each declared `In` port and appends every
-message to a SQLite store, flushing durably on stop(). Only *connected*
-streams are recorded, so the same recorder works for any arm whose
-coordinator publishes `coordinator_joint_state`.
-
-The recorded stream names match what DataPrep reads: `color_image`
-and `coordinator_joint_state` (observation), `status` (episode segmentation).
-"""
+"""Blueprint factory for recorders with profile-defined typed inputs."""
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import replace
+import keyword
+from pathlib import Path
+import sys
+from typing import Any, Literal
 
+from pydantic import Field, field_validator, model_validator
+
+from dimos.core.coordination.blueprints import Blueprint, StreamRef
+from dimos.core.core import rpc
 from dimos.core.stream import In
+from dimos.experimental.memory.rust_recorder import (
+    RustMcapStoreConfig,
+    RustRecorder,
+    RustRecorderConfig,
+    RustRecordingStoreConfig,
+    RustSqliteStoreConfig,
+    RustStreamSpec,
+)
 from dimos.imitation.collection.episode import EpisodeStatus
-from dimos.memory.module import Recorder, RecorderConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.imitation.collection.profile import CollectionProfile
+from dimos.imitation.dataprep.schema import RecordingSchema
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.std_msgs.String import String
 
+PortTypes = tuple[tuple[str, type[Any]], ...]
 
-class CollectionRecorderConfig(RecorderConfig):
+
+def _validate_input_types(
+    module: type[CollectionModule],
+    input_types: Mapping[str, type[Any]],
+) -> dict[str, type[Any]]:
+    annotations = {
+        name for base in module.__mro__ for name in vars(base).get("__annotations__", {})
+    }
+    reserved = set(dir(module)) | annotations | {"ref", "rpc", "input_types"}
+    for name, kind in input_types.items():
+        if (
+            not isinstance(name, str)
+            or not name.isidentifier()
+            or keyword.iskeyword(name)
+            or name.startswith("_")
+            or name in reserved
+        ):
+            raise ValueError(f"Invalid or reserved input name: {name!r}")
+        if not isinstance(kind, type):
+            raise TypeError(f"Input {name!r} requires a message class")
+    return dict(input_types)
+
+
+class CollectionModuleConfig(RustRecorderConfig):
+    recording: Path
+    format: Literal["mcap", "sqlite"] = "mcap"
     record_tf: bool = False
-    stream_codecs: dict[str, str] = {"status": "json"}
+    on_existing: Literal[OnExisting.ERROR] = Field(
+        default=OnExisting.ERROR,
+        description="Collection requires a new recording directory; existing files are errors.",
+    )
+    backup_keep_last: Literal[0] = Field(
+        default=0, description="Collection does not rotate backups."
+    )
+
+    @field_validator("recording", mode="before")
+    @classmethod
+    def _resolve_recording(cls, value: str | Path) -> Path:
+        return Path(value).expanduser().resolve()
+
+    @model_validator(mode="after")
+    def _collection_store(self) -> CollectionModuleConfig:
+        store: RustRecordingStoreConfig
+        if self.format == "sqlite":
+            store = RustSqliteStoreConfig(kind="sqlite", path=str(self.recording / "recording.db"))
+        else:
+            store = RustMcapStoreConfig(kind="mcap", path=str(self.recording / "recording.mcap"))
+        if "store" in self.model_fields_set and self.store != store:
+            raise ValueError("Collection store is derived from recording and format")
+        self.store = store
+        return self
+
+    def to_config_dict(self) -> dict[str, Any]:
+        # Collection settings stay in Python; Rust accepts only its recorder config.
+        return {
+            "store": self.store.model_dump(),
+            "encoding_threads": self.encoding_threads,
+            "streams": [stream.model_dump() for stream in self.streams],
+        }
 
 
-class CollectionRecorder(Recorder):
-    """Records the streams DataPrep consumes from a teleop session."""
+class CollectionModule(RustRecorder):
+    config: CollectionModuleConfig
 
-    config: CollectionRecorderConfig
+    status: In[String]
 
-    color_image: In[Image]  # observation (camera)
-    coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
-    status: In[String]  # episode start/save/discard segmentation
+    def __init__(
+        self,
+        *,
+        recording_schema: RecordingSchema,
+        input_types: Mapping[str, type[Any]],
+        **kwargs: Any,
+    ) -> None:
+        inputs = _validate_input_types(type(self), input_types)
+        for name, kind in inputs.items():
+            setattr(self, name, In(kind, name, self))
+        super().__init__(**kwargs)
+        self.recording_inputs = (*input_types.items(), ("status", String))
+        self._recording_schema = recording_schema
+        self._store_prepared = False
 
-    def _resolve_ts(self, name: str, msg: Any) -> float:
-        if name == "status":
-            return EpisodeStatus.from_json(msg.data).ts
-        return super()._resolve_ts(name, msg)
+    @classmethod
+    def blueprint(cls, **kwargs: Any) -> Blueprint:
+        """Declare this recorder's runtime inputs without extending core Modules."""
+        inputs = _validate_input_types(cls, kwargs["input_types"])
+        blueprint = Blueprint.create(cls, **kwargs)
+        [atom] = blueprint.blueprints
+        streams = (
+            *atom.streams,
+            *(StreamRef(name=name, type=kind, direction="in") for name, kind in inputs.items()),
+        )
+        return replace(blueprint, blueprints=(replace(atom, streams=streams),))
 
-    async def _resolve_pose(self, name: str, msg: object, ts: float) -> Pose | None:
-        if name in self.config.poseless_streams:
-            return None
-        return await super()._resolve_pose(name, msg, ts)
+    @rpc
+    def build(self) -> None:
+        if self.config.g.replay:
+            super().build()
+            return
+        specs = self._stream_specs()
+        super().build()
+        self._prepare_store(specs)
+
+    def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
+        if self._store_prepared:
+            return
+        schema = self._recording_schema.model_copy(deep=True)
+        schema.payload = "recording.db" if self.config.format == "sqlite" else "recording.mcap"
+        streams = {spec.port: spec.name for spec in specs}
+        for feature in (*schema.observation.values(), *schema.action.values()):
+            feature.stream = streams[feature.stream]
+        schema.episodes.status_stream = streams["status"]
+        encoded = schema.model_dump_json(indent=2)
+        self.config.recording.mkdir(parents=True, exist_ok=False)
+        with (self.config.recording / "schema.json").open("x") as file:
+            file.write(encoded + "\n")
+        super()._prepare_store(specs)
+        self._store_prepared = True
+
+    recording_inputs: PortTypes
+
+    def _stream_specs(self) -> list[RustStreamSpec]:
+        specs = super()._stream_specs()
+        connected = {spec.port for spec in specs}
+        missing = sorted(name for name, _ in self.recording_inputs if name not in connected)
+        if missing:
+            raise ValueError(f"Missing required collection inputs: {missing}")
+        for spec in specs:
+            if spec.port == "status":
+                spec.codec = "json"
+                spec.timestamp_field = "ts"
+                spec.json_schema = EpisodeStatus.json_schema()
+        return specs
+
+
+def collect(
+    *,
+    profile: CollectionProfile,
+    recording: Path | None = None,
+    format: Literal["mcap", "sqlite"] = "mcap",
+    instance_name: str = "recorder",
+) -> Blueprint:
+    """Declare profile inputs and record a portable SQLite or MCAP session directory."""
+    inputs = profile.input_types()
+    for kind in inputs.values():
+        if (
+            kind.__module__ == "__main__"
+            or kind.__qualname__ != kind.__name__
+            or getattr(sys.modules.get(kind.__module__), kind.__name__, None) is not kind
+        ):
+            raise ValueError(f"Message type {kind!r} must be importable at module level")
+        if not callable(getattr(kind, "lcm_encode", None)) or not callable(
+            getattr(kind, "lcm_decode", None)
+        ):
+            raise TypeError(f"Message type {kind!r} does not support native recording")
+    return CollectionModule.blueprint(
+        input_types=inputs,
+        recording_schema=profile.to_schema(),
+        format=format,
+        instance_name=instance_name,
+        **({"recording": recording} if recording is not None else {}),
+    )

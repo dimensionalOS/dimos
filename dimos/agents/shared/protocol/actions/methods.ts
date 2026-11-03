@@ -1,7 +1,7 @@
-import type { ActionGroup } from "./base.ts";
-import type { Outcome } from "../outcome.ts";
+import type { ActionGroup } from "#dimos/agents/shared/protocol/actions/base.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
 import type { Static, TUnsafe } from "typebox";
-import { carried } from "../schema.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { method } from "@earendil-works/chord";
 
 /** One action as a Chord method spec: its arguments, and its Outcome as a trusted result. */

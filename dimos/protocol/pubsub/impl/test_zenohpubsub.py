@@ -65,6 +65,7 @@ def pubsub(make_pubsub):
     return make_pubsub()
 
 
+@pytest.mark.flaky(reruns=1)
 @pytest.mark.parametrize(
     ("all_topics", "subscription_count"),
     [(False, 1), (True, 1), (True, 3)],

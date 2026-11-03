@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#dimos/agents/*": "./*"
+  },
   "license": "Apache-2.0",
   "engines": {
     "node": ">=24 <25 || >=26 <27",

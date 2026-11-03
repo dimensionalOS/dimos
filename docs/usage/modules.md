@@ -29,22 +29,22 @@ to_svg(unitree_go2, "assets/go2_nav.svg")
 Let's learn how to build stuff like the above, starting with a simple camera module.
 
 ```python skip session=camera_module_demo output=assets/camera_module.svg
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.core.introspection.svg import to_svg
-to_svg(CameraModule.module_info(), "assets/camera_module.svg")
+to_svg(WebcamModule.module_info(), "assets/camera_module.svg")
 ```
 
 We can also print Module I/O quickly to the console via the `.io()` call. We will do this from now on.
 
 ```python session=camera_module_demo ansi=false
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 
-print(CameraModule.io())
+print(WebcamModule.io())
 ```
 
 ```results
 ┌┴─────────────┐
-│ CameraModule │
+│ WebcamModule │
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
@@ -65,7 +65,7 @@ We can start this module and explore the output of its streams in real time (thi
 ```python skip session=camera_module_demo ansi=false
 import time
 
-camera = CameraModule()
+camera = WebcamModule()
 camera.start()
 # Now this module runs in our main loop in a thread. We can observe its outputs.
 
@@ -77,7 +77,7 @@ camera.stop()
 ```
 
 ```results
-Out color_image[Image] @ CameraModule
+Out color_image[Image] @ WebcamModule
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
@@ -118,9 +118,9 @@ Looks like the detector just needs an image input and outputs some sort of detec
 ```python skip ansi=false
 import time
 from dimos.perception.detection.module2D import Detection2DModule, Config
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 
-camera = CameraModule()
+camera = WebcamModule()
 detector = Detection2DModule()
 
 detector.color_image.connect(camera.color_image)
@@ -255,15 +255,15 @@ a reference to it.
 ```python skip
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 
 coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
 coordinator.start()
-coordinator.load_module(CameraModule)
+coordinator.load_module(WebcamModule)
 
-# ... edit CameraModule source on disk ...
+# ... edit WebcamModule source on disk ...
 
-coordinator.restart_module(CameraModule)
+coordinator.restart_module(WebcamModule)
 ```
 
 ## Async modules (lock-free state)
@@ -470,10 +470,10 @@ Most of the time this is a bad idea, but you can peak behind blueprints, autocon
 ```python skip
 import time
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.msgs.sensor_msgs.Image import Image
 
-camera = CameraModule()
+camera = WebcamModule()
 camera.color_image.transport = LCMTransport("/camera/rgb", Image)
 
 camera.start()
