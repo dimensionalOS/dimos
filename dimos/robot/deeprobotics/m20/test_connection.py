@@ -27,6 +27,7 @@ from pytest_mock import MockerFixture
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.msgs.std_msgs.UInt32 import UInt32
 from dimos.robot.deeprobotics.m20 import connection as m20_connection
 from dimos.robot.deeprobotics.m20.connection import (
     _BASIC_SERVER_HEADER,
@@ -38,6 +39,7 @@ from dimos.robot.deeprobotics.m20.connection import (
     CHARGE_IDLE,
     CHARGE_ON_DOCK,
     DOCK_CHARGING,
+    GAIT_STAIR_AGILE,
     MOTION_RL_CONTROL,
     MOTION_SIT,
     M20Connection,
@@ -331,9 +333,42 @@ def test_dock_failure_names_the_vendor_error_even_after_it_clears(
 
     assert _updates(connection)[-1] == (
         "Docking failed: the robot stopped docking and returned to idle "
-        "(0x8503 no location, reflectors not found)."
+        "(0x8503 no location, reflectors not found). The robot is standing ready to navigate."
     )
     assert server.charge_commands() == [1]
+    connection._stand.assert_called_once()  # type: ignore[attr-defined]
+
+
+def test_dock_failure_leaves_a_sitting_robot_sitting(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+    _wait_until(lambda: server.charge_commands() == [1])
+    server.charge = CHARGE_ERROR
+    _wait_for_status(connection, CHARGE_ERROR)
+    connection._on_motion_state(Int32(MOTION_SIT))
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: connection._charge_task is None)
+
+    assert _updates(connection)[-1].endswith("Call standup() before navigating.")
+    connection._stand.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_gait_is_resent_when_the_robot_drops_it(connection: M20Connection) -> None:
+    connection.config.gait_timeout_s = 0.1
+    sends: list[int] = []
+
+    def publish(msg: UInt32) -> None:
+        sends.append(msg.data)
+        if len(sends) == 2:
+            connection._on_gait_state(msg)
+
+    connection.gait_cmd.publish.side_effect = publish  # type: ignore[attr-defined]
+
+    assert connection._set_gait_and_wait(GAIT_STAIR_AGILE) is True
+    assert sends == [GAIT_STAIR_AGILE, GAIT_STAIR_AGILE]
 
 
 def test_dock_timeout_sends_stop(connection: M20Connection, server: FakeBasicServer) -> None:
@@ -341,11 +376,12 @@ def test_dock_timeout_sends_stop(connection: M20Connection, server: FakeBasicSer
     connection.dock()
     _wait_until(lambda: server.charge_commands() == [1])
     server.charge = CHARGE_ENTERING
+    _wait_until(lambda: server.charge_commands() == [1, 0])
+    server.charge = CHARGE_IDLE
 
     _wait_until(lambda: connection._charge_task is None)
 
     assert "timed out" in _updates(connection)[-1]
-    assert server.charge_commands() == [1, 0]
 
 
 def test_undock_leaves_the_dock_and_stands(

@@ -506,7 +506,28 @@ class M20Connection(Module):
             if status in (CHARGE_ENTERING, CHARGE_ON_DOCK):
                 self._send_charge_command(CHARGE_COMMAND_STOP)
             detail = "" if error is None else f" ({_charge_error_text(error)})"
-            return f"Docking failed: {verdict}{detail}."
+            return f"Docking failed: {verdict}{detail}. {self._resume_navigation()}"
+
+    def _resume_navigation(self) -> str:
+        """Restore navigation mode once the robot is idle, because idle switches it to Basic."""
+        with self._state_condition:
+            self._state_condition.wait_for(
+                lambda: self._charge_task != "dock"
+                or self._link_stop.is_set()
+                or self._fresh_charge_status() == CHARGE_IDLE,
+                timeout=self.config.undock_timeout_s,
+            )
+            if self._charge_task != "dock":
+                return "Undocking took over."
+            if self._link_stop.is_set():
+                return "The module is stopping."
+            if self._fresh_charge_status() != CHARGE_IDLE:
+                return "The robot did not return to idle, so navigation mode was not restored."
+            if self._motion_state != MOTION_RL_CONTROL:
+                return "The robot is not standing. Call standup() before navigating."
+        if not self._stand():
+            return "The robot did not return to navigation mode. Call standup() before navigating."
+        return "The robot is standing ready to navigate."
 
     def _run_undock(self, previous: Thread | None) -> None:
         try:
@@ -614,8 +635,12 @@ class M20Connection(Module):
         return True
 
     def _set_gait_and_wait(self, gait: int) -> bool:
-        self._command(self.gait_cmd, UInt32(gait))
-        return self._wait_for_gait_state(gait, self.config.gait_timeout_s)
+        # The robot drops a gait command that arrives with its own reset to Basic.
+        for _attempt in range(2):
+            self._command(self.gait_cmd, UInt32(gait))
+            if self._wait_for_gait_state(gait, self.config.gait_timeout_s):
+                return True
+        return False
 
     def _command(self, stream: Out[T], msg: T) -> None:
         with self._lock:
