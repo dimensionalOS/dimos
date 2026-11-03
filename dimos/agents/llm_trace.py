@@ -142,6 +142,21 @@ def list_llm_trace_pairs(trace_dir: Path) -> list[tuple[int, Path, Path]]:
     return sorted(pairs)
 
 
+def last_request_unanswered(trace_dir: Path) -> bool:
+    """Whether the newest request has no response file: the call never got an
+    answer (a connection error or timeout), so no ``AIMessage`` follows it."""
+    requests = {
+        int(seq): request
+        for request in trace_dir.glob(f"*{REQUEST_SUFFIX}")
+        if (seq := request.name.removesuffix(REQUEST_SUFFIX)).isdigit()
+    }
+    if not requests:
+        return False
+    newest = requests[max(requests)]
+    seq = newest.name.removesuffix(REQUEST_SUFFIX)
+    return not newest.with_name(f"{seq}{RESPONSE_SUFFIX}").is_file()
+
+
 def latest_pair(trace_dir: Path, after: int) -> tuple[int, Path, Path] | None:
     """The newest complete request/response pair with seq >= *after*, if any.
     A retried call leaves several pairs; the newest is the one that answered."""

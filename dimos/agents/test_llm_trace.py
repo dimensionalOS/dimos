@@ -21,6 +21,7 @@ import httpx
 from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import (
+    last_request_unanswered,
     latest_pair,
     list_llm_trace_pairs,
     request_path,
@@ -103,3 +104,14 @@ def test_trace_discovery_orders_complete_calls_and_respects_sequence_boundary(
     assert list_llm_trace_pairs(tmp_path) == expected
     assert latest_pair(tmp_path, after=1000) == expected[-1]
     assert latest_pair(tmp_path, after=1001) is None
+
+
+def test_last_request_unanswered_looks_only_at_the_newest_call(tmp_path: Path) -> None:
+    assert not last_request_unanswered(tmp_path)  # no calls yet
+    request_path(tmp_path, 0).write_text("{}")  # a retried connection error
+    assert last_request_unanswered(tmp_path)
+    request_path(tmp_path, 1).write_text("{}")
+    response_path(tmp_path, 1).write_text("{}")
+    assert not last_request_unanswered(tmp_path)  # the retry answered
+    request_path(tmp_path, 2).write_text("{}")
+    assert last_request_unanswered(tmp_path)
