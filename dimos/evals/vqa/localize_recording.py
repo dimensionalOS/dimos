@@ -73,9 +73,15 @@ _ROOM_LOCALIZE_PARAMS = LocalizeParams(
 )
 
 _DISCOVERY_VLM_PROMPT = (
-    "List distinct physical objects clearly visible in this image. "
+    "List distinct, countable objects a mobile robot would treat as points of "
+    "interest — things it might navigate to, avoid, manipulate, or talk about "
+    "(furniture, equipment, people, vehicles, signs, doors, stairs, railings, "
+    "plants, appliances, and similar). "
     "Prefer short noun phrases with distinguishing attributes when obvious "
     '(color, material, size), e.g. "green backpack", "blue ceramic mug". '
+    "Skip scene background and large surfaces that fill the frame "
+    "(walls, floors, ceilings, pavement, ground) even if colored or textured; "
+    "prefer freestanding or bounded objects instead. "
     "Do not invent objects that are not visible. "
     'Avoid generic words like "object", "thing", "item", or "stuff". '
     'Return JSON only: {"objects": ["name", ...]} with at most 12 names.'

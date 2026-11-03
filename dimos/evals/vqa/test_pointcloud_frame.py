@@ -349,3 +349,24 @@ def test_select_quality_indices_uses_mem_quality_window() -> None:
         )
         # Dark mid-frame (index 2) is dropped before the window pick.
         assert select_quality_indices(stream, 0, 3, quality_window=1.0, min_brightness=0.2) == (1,)
+
+
+def test_select_quality_indices_applies_brightness_inside_index_window() -> None:
+    """Dark frames before ``start`` must not shift the ``[start, stop)`` window.
+
+    ``Stream.filter`` is a PredicateFilter that disables SQL LIMIT/OFFSET
+    pushdown; brightness must be applied only after the index window is fixed.
+    """
+    from types import SimpleNamespace
+
+    with MemoryStore() as store:
+        images = store.stream("color_image")
+        # Indices 0..2 dark (would steal offset if filtered before range_seek).
+        for i in range(3):
+            images.append(SimpleNamespace(sharpness=0.1, brightness=0.0), ts=float(i))
+        # Indices 3..5: one window, sharpest at index 4.
+        for ts, sharpness in ((3.0, 0.2), (3.4, 0.9), (3.8, 0.1)):
+            images.append(SimpleNamespace(sharpness=sharpness, brightness=0.5), ts=ts)
+
+        stream = store.stream("color_image").order_by("ts")
+        assert select_quality_indices(stream, 3, 6, quality_window=1.0, min_brightness=0.2) == (4,)
