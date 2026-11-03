@@ -8,14 +8,6 @@ coverage:
     project: true
     patch: true
 
-# Deleted adapter paths can remain in carried-forward self-hosted reports.
-ignore:
-  - "dimos/hardware/whole_body/damiao"
-  - "dimos/hardware/whole_body/openyam_damiao"
-  - "dimos/hardware/whole_body/dual_openyam_damiao"
-  - "dimos/hardware/whole_body/openarm_damiao"
-  - "dimos/hardware/whole_body/makermods_metal"
-
 # Carry forward self-hosted, as these are not run on external PRs.
 flag_management:
   individual_flags:
