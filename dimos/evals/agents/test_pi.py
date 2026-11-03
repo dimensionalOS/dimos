@@ -266,8 +266,6 @@ def test_model_proxy_keeps_native_provider_and_no_secret(
     assert config.base_url == "http://provider.test"
     assert config.key_env == key
     assert config.max_output_tokens == 4096
-    # Pi's default "medium"; only Google requests get a thinkingLevel from the runtime.
-    assert config.google_thinking_level == ("MEDIUM" if provider == "google" else None)
     env = agent._build_process_env(paths)
     assert env[key] == "private-value"
     assert "AWS_SECRET_ACCESS_KEY" not in env  # only the allowlist and the provider key pass

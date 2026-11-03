@@ -14,7 +14,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 
-/** @type {{provider: string, base_url: string, key_env: string, allowed_tools: string[] | null, max_output_tokens: number | null, excluded_keywords: string[], ignored_paths: string[], max_tool_seconds: number | null, google_thinking_level: string | null}} */
+/** @type {{provider: string, base_url: string, key_env: string, allowed_tools: string[] | null, max_output_tokens: number | null, excluded_keywords: string[], ignored_paths: string[], max_tool_seconds: number | null}} */
 const config = JSON.parse(
   readFileSync(new URL("./runtime.json", import.meta.url), "utf8"),
 );
@@ -79,8 +79,7 @@ export default function (pi) {
   });
   pi.on("before_provider_request", (event) => {
     const cap = config.max_output_tokens;
-    const level = config.google_thinking_level;
-    if (cap === null && level === null) return;
+    if (cap === null) return;
     if (!event.payload || typeof event.payload !== "object")
       throw new Error("Invalid provider payload");
     const payload = /** @type {Record<string, unknown>} */ (event.payload);
@@ -89,16 +88,11 @@ export default function (pi) {
       const settings = /** @type {Record<string, unknown>} */ ({
         ...(/** @type {object} */ (payload.config) ?? {}),
       });
-      if (level !== null)
-        settings.thinkingConfig = { includeThoughts: true, thinkingLevel: level };
-      if (cap !== null) {
-        const requested = settings.maxOutputTokens;
-        settings.maxOutputTokens =
-          typeof requested === "number" ? Math.min(requested, cap) : cap;
-      }
+      const requested = settings.maxOutputTokens;
+      settings.maxOutputTokens =
+        typeof requested === "number" ? Math.min(requested, cap) : cap;
       return { ...payload, config: settings };
     }
-    if (cap === null) return;
     const field = [
       "max_output_tokens",
       "max_tokens",
