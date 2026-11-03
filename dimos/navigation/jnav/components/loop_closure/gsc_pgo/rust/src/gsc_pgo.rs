@@ -616,6 +616,10 @@ pub struct Config {
     /// one carries this much more variance per such end, so the adopted graph it was read from is not taken as exact.
     pub graph_simplify_offset_sd_m: f64,
     pub graph_simplify_offset_sd_rad: f64,
+    /// Odometry folds between consecutive kept keyframes (true), or follows the nodes removed keyframes ride (false).
+    pub graph_simplify_chain_odometry: bool,
+    /// ...folding at most this many metres between kept keyframes; past it the walk rides the current place's node.
+    pub graph_simplify_chain_fold_max_m: f64,
 }
 
 impl Config {
@@ -762,6 +766,8 @@ impl Default for Config {
             graph_simplify_closures_per_pair: 3,
             graph_simplify_offset_sd_m: 0.05,
             graph_simplify_offset_sd_rad: 0.005,
+            graph_simplify_chain_odometry: true,
+            graph_simplify_chain_fold_max_m: 30.0,
         }
     }
 }

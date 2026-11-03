@@ -452,6 +452,7 @@ impl GscPgo {
         // a simplified solve's nodes expand back to every keyframe (and its closures to every committed one) on its thread
         let expansion = simplified.then(|| crate::graph_simplify::Expansion {
             placements: self.simplify.placements.clone(),
+            key_poses: self.key_poses.clone(),
             kept: self.simplify.kept.len(),
             keyframes: n,
             closure_index,

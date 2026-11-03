@@ -140,6 +140,8 @@ config! {
     graph_simplify_closures_per_pair: usize,
     graph_simplify_offset_sd_m: f64,
     graph_simplify_offset_sd_rad: f64,
+    graph_simplify_chain_odometry: bool,
+    graph_simplify_chain_fold_max_m: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------

@@ -139,6 +139,10 @@ class PGOConfig(NativeModuleConfig):
     # one sd of how far a removed keyframe's frozen offset may be off: edges through one carry this much more variance
     graph_simplify_offset_sd_m: float = 0.05
     graph_simplify_offset_sd_rad: float = 0.005
+    # odometry folds between consecutive kept keyframes (else it follows the nodes removed keyframes ride)
+    graph_simplify_chain_odometry: bool = True
+    # past this much folded odometry (m) the walk rides the current place's node instead
+    graph_simplify_chain_fold_max_m: float = 30.0
 
     # k in the yank gate: confidence must clear 1 - exp(-z^2/2k^2), z = yank in robust std devs of yanks so far
     closure_yank_gate_width: float = 1.0
