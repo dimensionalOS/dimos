@@ -29,33 +29,11 @@ from dimos_lcm.world_msgs import WorldObservations
 import mujoco
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.sim2.actions import (
-    Action,
-    ApplyWrench,
-    JointCommand,
-    Pause,
-    Reset,
-    Resume,
-    SetJointPositions,
-    SetPose,
-    Step,
-)
+from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.backend import Publisher
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.world import compile_world, keyframe
-from dimos.sim2.world_observations import (
-    EPOCH,
-    OBJECT,
-    PAUSED,
-    ROBOT,
-    WorldWriter,
-    cbor_update,
-    pose_update,
-    tag_update,
-    velocity_update,
-)
+from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 
 if TYPE_CHECKING:
     from dimos.sim2.module import SimulationConfig
@@ -113,19 +91,15 @@ class MujocoBackend:
         self.data = mujoco.MjData(self.model)
         self._pending: list[Action] = []
         self._lock = Lock()
-        self._paused = False
-        self._steps_requested = 0
         self._roots = self._entity_roots()
         # Each entity's single-dof joints, and their names as the entity calls them.
         self._joints = {name: self._joints_of(name, body) for name, body in self._roots.items()}
         self.world = WorldWriter()
         self._announced = False
-        # What the world was last told: each entity's pose and velocity, its joints' rows, and whether paused.
-        self._sent: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        # What the world was last told: each entity's pose and its joints' rows.
+        self._sent: dict[str, np.ndarray] = {}
         self._sent_joints: dict[str, np.ndarray] = {}
-        self._sent_paused = False
         self._refusals: list[tuple[str, str]] = []
-        self._wrench_until: dict[int, float] = {}
         self._files = _files_named_by(self._scene, None)
         for robot in self._robots.values():
             self._files.update(_files_named_by(robot.model, None))
@@ -205,22 +179,16 @@ class MujocoBackend:
         max_steps = max(1, int(_MAX_BURST_SECONDS / model.opt.timestep))
         while True:
             self._apply_pending()
-            if self._paused:
-                steps, self._steps_requested = self._steps_requested, 0
-                started = time.monotonic() - data.time / self._config.speed
-            else:
-                steps = int(
-                    ((time.monotonic() - started) * self._config.speed - data.time)
-                    / model.opt.timestep
-                )
-                if steps > max_steps:
-                    started += (steps - max_steps) * model.opt.timestep / self._config.speed
-                    steps = max_steps
+            steps = int(
+                ((time.monotonic() - started) * self._config.speed - data.time) / model.opt.timestep
+            )
+            if steps > max_steps:
+                started += (steps - max_steps) * model.opt.timestep / self._config.speed
+                steps = max_steps
             for _ in range(steps):
                 if await self._hold_for_controllers(world_observations):
                     started = time.monotonic() - data.time / self._config.speed
                 mujoco.mj_step(model, data)
-                self._expire_wrenches()
             if not world_observations.busy:
                 world_observations.offer(self.frame())
             await asyncio.sleep(0.001)
@@ -258,7 +226,6 @@ class MujocoBackend:
 
     def _reset(self) -> None:
         self._next_ticks = [0.0] * len(self._controllers)
-        self._wrench_until.clear()
         mujoco.mj_resetData(self.model, self.data)
         self._hold_initial_pose()
         mujoco.mj_forward(self.model, self.data)
@@ -292,31 +259,12 @@ class MujocoBackend:
             mujoco.mj_forward(self.model, self.data)
 
     def _apply(self, action: Action) -> None:
-        model, data = self.model, self.data
         match action:
             case JointCommand():
                 self._command_joints(action)
-            case SetJointPositions(entity, names, positions):
-                for name, position in zip(names, positions, strict=True):
-                    joint = model.joint(self._joint_name(entity, name))
-                    data.qpos[joint.qposadr[0]] = position
-                    data.qvel[joint.dofadr[0]] = 0.0
-            case SetPose(entity, pose, twist):
-                self._set_pose(self._roots[entity], pose, twist)
-            case ApplyWrench(entity, force, torque, point, duration):
-                index = self._roots[entity]
-                # At point (in the body's frame), the force also turns the body about its origin.
-                lever = data.xmat[index].reshape(3, 3) @ np.asarray(point, float)
-                data.xfrc_applied[index] = [*force, *(np.asarray(torque) + np.cross(lever, force))]
-                self._wrench_until[index] = data.time + duration
-            case Pause():
-                self._paused = True
-            case Resume():
-                self._paused = False
-            case Step(steps):
-                self._steps_requested += steps
-            case Reset():
-                self._reset()
+            case CborKeyValueCommand(entity, key, value):
+                # No key moves anything in MuJoCo yet; the world holds it for whoever reads it.
+                self.world.set(entity, key, value)
 
     def _command_joints(self, command: JointCommand) -> None:
         if command.kp is not None or command.kd is not None:
@@ -358,29 +306,6 @@ class MujocoBackend:
                     position[index] + feedforward / p if p > 0 else feedforward
                 )
 
-    def _set_pose(self, body: int, pose: Pose, twist: Twist | None) -> None:
-        model, data = self.model, self.data
-        position = [pose.position.x, pose.position.y, pose.position.z]
-        quat_wxyz = [pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z]
-        if model.body_mocapid[body] >= 0:
-            data.mocap_pos[model.body_mocapid[body]] = position
-            data.mocap_quat[model.body_mocapid[body]] = quat_wxyz
-            return
-        joint = model.body_jntadr[body]
-        if joint < 0 or model.jnt_type[joint] != mujoco.mjtJoint.mjJNT_FREE:
-            raise ValueError(f"body {model.body(body).name!r} has no free joint to move")
-        qpos, dof = model.jnt_qposadr[joint], model.jnt_dofadr[joint]
-        data.qpos[qpos : qpos + 7] = [*position, *quat_wxyz]
-        # A free joint's linear velocity is in the world frame and its angular one in the body's.
-        velocity = np.zeros(6)
-        if twist is not None:
-            velocity[:3] = [twist.linear.x, twist.linear.y, twist.linear.z]
-            rotation = np.zeros(9)
-            mujoco.mju_quat2Mat(rotation, np.asarray(quat_wxyz, dtype=np.float64))
-            angular = [twist.angular.x, twist.angular.y, twist.angular.z]
-            velocity[3:] = rotation.reshape(3, 3).T @ angular
-        data.qvel[dof : dof + 6] = velocity
-
     def _joint_name(self, entity: str, name: str) -> str:
         return f"{entity}/{name}" if entity in self._robots else name
 
@@ -402,64 +327,47 @@ class MujocoBackend:
         return roots
 
     def frame(self, waiting_for: tuple[str, ...] = ()) -> WorldObservations:
-        """What changed since the last frame: entities that moved, joints, refusals, and the robots the world waits for."""
-        world, data = self.world, self.data
+        """What changed since the last frame: entities and joints that moved, refusals, and the robots the world waits for."""
+        world, data, model = self.world, self.data, self.model
         if not self._announced:
             self._announce()
         for name, body in self._roots.items():
             pose = np.array([*data.xpos[body], *_xyzw(data.xquat[body])])
-            angular_linear = np.zeros(6)
-            # The body origin's velocity (XBODY), world-aligned, not its center of mass's.
-            mujoco.mj_objectVelocity(
-                self.model, data, mujoco.mjtObj.mjOBJ_XBODY, body, angular_linear, 0
-            )
-            velocity = np.concatenate([angular_linear[3:], angular_linear[:3]])
             sent = self._sent.get(name)
-            if sent is None or not (_close(sent[0], pose) and _close(sent[1], velocity)):
-                world.update(name, pose_update(pose), velocity_update(velocity))
-                self._sent[name] = (pose, velocity)
-            joints, _ = self._joints[name]
+            if sent is None or not _close(sent, pose):
+                world.position(name, pose)
+                self._sent[name] = pose
+            joints, joint_names = self._joints[name]
             if joints:
                 rows = np.column_stack(
                     [
-                        data.qpos[self.model.jnt_qposadr[joints]],
-                        data.qvel[self.model.jnt_dofadr[joints]],
-                        data.qfrc_actuator[self.model.jnt_dofadr[joints]],
+                        data.qpos[model.jnt_qposadr[joints]],
+                        data.qvel[model.jnt_dofadr[joints]],
+                        data.qfrc_actuator[model.jnt_dofadr[joints]],
                     ]
                 )
                 sent_rows = self._sent_joints.get(name)
                 if sent_rows is None or not _close(sent_rows, rows):
-                    world.joints(name, rows)
+                    for joint_name, (q, dq, effort) in zip(joint_names, rows, strict=True):
+                        world.joint(f"{name}/{joint_name}", q, dq, effort)
                     self._sent_joints[name] = rows
-        if self._paused != self._sent_paused:
-            world.update("world", tag_update(PAUSED, self._paused))
-            self._sent_paused = self._paused
         for target, reason in self._refusals:
-            world.event(
-                target if target in world.ids else "world", "events/refused", {"reason": reason}
-            )
+            world.set(target if target in world.ids else "world", REFUSED, {"reason": reason})
         self._refusals.clear()
         for robot_id in waiting_for:
-            world.event(robot_id, "events/act")
+            world.set(robot_id, ACT, True)
         return world.end_frame(float(data.time))
 
     def _announce(self) -> None:
         """The first frame adds the world, each entity, and each entity's joints."""
         world = self.world
-        world.add(
-            "world",
-            cbor_update(EPOCH, time.time() - self.data.time / self._config.speed),
-            cbor_update("backend", "mujoco"),
-        )
+        world.add("world", backend="mujoco")
         for name in self._roots:
             robot = self._robots.get(name)
-            updates = [tag_update(ROBOT if robot else OBJECT)]
-            if robot is not None:
-                # What to request on render_file_request to draw it on its own.
-                updates.append(cbor_update("model", str(robot.model)))
-            world.add(name, *updates)
-            if self._joints[name][1]:
-                world.add_joints(name, self._joints[name][1])
+            # What to request on render_file_request to draw a robot on its own.
+            world.add(name, **({"model": str(robot.model)} if robot is not None else {}))
+            for joint_name in self._joints[name][1]:
+                world.add(f"{name}/{joint_name}")
         self._announced = True
 
     def _joints_of(self, name: str, body: int) -> tuple[list[int], list[str]]:
@@ -471,12 +379,6 @@ class MujocoBackend:
         ]
         prefix = f"{name}/" if name in self._robots else ""
         return joints, [model.joint(j).name.removeprefix(prefix) for j in joints]
-
-    def _expire_wrenches(self) -> None:
-        for body, until in list(self._wrench_until.items()):
-            if self.data.time >= until:
-                self.data.xfrc_applied[body] = 0.0
-                del self._wrench_until[body]
 
 
 def _close(a: np.ndarray, b: np.ndarray) -> bool:
