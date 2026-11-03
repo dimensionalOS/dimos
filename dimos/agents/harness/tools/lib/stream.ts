@@ -180,7 +180,7 @@ export function streamTool(options: {
                   export: path,
                 }),
               },
-              ...(rendered === null ? [] : [{ type: "text" as const, text: rendered.text }, ...rendered.images]),
+              ...(rendered === null ? [] : [{ type: "text" as const, text: rendered.text }]),
             ],
             isError: false,
             details: { render: rendered?.details ?? null },
