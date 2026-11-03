@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from dimos.sim2.actions import BASE_VELOCITY, CborKeyValueCommand, JointCommand
+from dimos.sim2.actions import BASE_JOINTS, JointCommand
 from dimos.sim2.dimsim_backend import DimsimBackend
 from dimos.sim2.module import SimulationConfig
 from dimos.sim2.spec import SimulatedRobot
@@ -80,18 +80,19 @@ def backend(scene, robot_model, tmp_path):
 
 
 def test_the_base_pushes_a_box(backend):
-    backend.apply(CborKeyValueCommand("bot", BASE_VELOCITY, [1.0, 0.0, 0.0]))
+    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(1.0, 0.0, 0.0)))
     backend.step()
     assert backend.x("box") == pytest.approx(1.0, abs=0.01)
     for _ in range(100):
         backend.step()
     assert backend.x("box") > 1.1
     assert backend.x("bot") > 0.5
-    assert backend.world.entity("bot").cbor[BASE_VELOCITY] == [1.0, 0.0, 0.0]
+    # Its base joints report the velocities they hold.
+    assert backend.world.joints("bot")[1][:, 1].tolist() == [1.0, 0.0, 0.0]
 
 
 def test_static_geometry_stops_the_base(backend):
-    backend.apply(CborKeyValueCommand("bot", BASE_VELOCITY, [0.0, 1.0, 0.0]))
+    backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(0.0, 1.0, 0.0)))
     world = backend.step(200)
     # The wall's near face is at y=2.9; the base is 0.15 half wide, kept 0.05 off by the controller.
     assert world.entity("bot").pose[1] == pytest.approx(2.7, abs=0.03)
@@ -101,5 +102,5 @@ def test_what_a_kinematic_base_cannot_do_is_refused(backend):
     backend.step()
     backend.apply(JointCommand("bot", ("neck",), position=(1.0,)))
     backend.step()
-    # A kinematic base has no joints to drive, and the world said so.
+    # A kinematic base has no joints but its base joints, and the world said so.
     assert any(key == REFUSED for _, key, _ in backend.received)

@@ -133,5 +133,5 @@ def read_actions(message: WorldAction, world: WorldWriter) -> list[Action]:
     return actions
 
 
-# A kinematic base's held drive command, as a CborKeyValueCommand: [vx, vy, wz] in its heading frame.
-BASE_VELOCITY = "base_velocity"
+# A kinematic base's joints, "<robot>/<joint>", driven by velocity: vx, vy, wz in its heading frame, held until replaced.
+BASE_JOINTS = ("base_vx", "base_vy", "base_wz")

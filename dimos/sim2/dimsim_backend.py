@@ -15,7 +15,7 @@
 """The DimSim backend: DimSim's Rapier physics (misc/DimSim/cli/sim2/world.ts), stepped by sim2.
 
 The scene is the same MJCF file the MuJoCo backend takes, read into dimos.scene_data.v1 bodies. A robot is
-DimSim's kind of robot: a kinematic base the size of its model, moved by its "base_velocity" key, sliding along static
+DimSim's kind of robot: a kinematic base the size of its model, moved by velocity commands to its three base joints, sliding along static
 geometry and pushing dynamic bodies. Each frame is a WorldObservations of what Rapier moved (its sleeping bodies did not);
 sensors draw the world from it, and actions it cannot do (joints) it refuses.
 """
@@ -33,7 +33,7 @@ from dimos_lcm.world_msgs import WorldObservations
 import mujoco
 import numpy as np
 
-from dimos.sim2.actions import BASE_VELOCITY, Action, CborKeyValueCommand
+from dimos.sim2.actions import BASE_JOINTS, Action, JointCommand
 from dimos.sim2.backend import Publisher
 from dimos.sim2.mujoco_backend import scene_bodies
 from dimos.sim2.spec import Simulated, SimulatedRobot
@@ -79,8 +79,9 @@ class DimsimBackend:
         # Entities the frames have added, and the moves Rapier reported since the last frame.
         self._added: set[str] = set()
         self._moved: dict[str, Any] = {}
-        # Keys set since the last frame, observed back on it once their entities are added.
-        self._keys: list[tuple[str, str, Any]] = []
+        # Each robot's base joints' held velocities (vx, vy, wz), and whether the world has been told them since.
+        self._base = {robot.robot_id: [0.0, 0.0, 0.0] for robot in self._robots}
+        self._base_sent: set[str] = set()
         self._refusals: list[tuple[str, str]] = []
         self._world = subprocess.Popen(
             [
@@ -200,8 +201,13 @@ class DimsimBackend:
 
     def _apply(self, action: Action) -> None:
         match action:
-            case CborKeyValueCommand(entity, key, value) if key == BASE_VELOCITY:
-                vx, vy, wz = value
+            case JointCommand(entity, names, None, velocity, None, None, None) if (
+                entity in self._base and velocity is not None and set(names) <= set(BASE_JOINTS)
+            ):
+                held = self._base[entity]
+                for name, value in zip(names, velocity, strict=True):
+                    held[BASE_JOINTS.index(name)] = value
+                vx, vy, wz = held
                 self._call(
                     {
                         "op": "velocity",
@@ -210,10 +216,10 @@ class DimsimBackend:
                         "angular": [0.0, 0.0, wz],
                     }
                 )
-                self._keys.append((entity, key, value))
+                self._base_sent.discard(entity)
             case _:
                 raise ValueError(
-                    f"the dimsim world cannot do {type(action).__name__}: it has no joints, and no key but {BASE_VELOCITY!r}"
+                    f"the dimsim world cannot do {action!r}: a robot has only its base joints {BASE_JOINTS}, by velocity"
                 )
 
     def _publish(self, state: dict[str, Any]) -> None:
@@ -227,6 +233,11 @@ class DimsimBackend:
         if not self._added:
             world.add("world", backend="dimsim")
             self._added.add("world")
+            for robot_id in self._base:
+                world.add(robot_id)
+                for name in BASE_JOINTS:
+                    world.add(f"{robot_id}/{name}")
+                self._added.add(robot_id)
         with self._lock:
             moved, self._moved = self._moved, {}
         for name, entity in moved.items():
@@ -234,9 +245,11 @@ class DimsimBackend:
                 world.add(name)
                 self._added.add(name)
             world.position(name, [*entity["pos"], *entity["quat"]])
-        for entity, key, value in self._keys:
-            world.set(entity, key, value)
-        self._keys.clear()
+        for robot_id, held in self._base.items():
+            if robot_id not in self._base_sent:
+                for name, value in zip(BASE_JOINTS, held, strict=True):
+                    world.joint(f"{robot_id}/{name}", 0.0, value, 0.0)
+                self._base_sent.add(robot_id)
         for target, reason in self._refusals:
             world.set(target if target in world.ids else "world", REFUSED, {"reason": reason})
         self._refusals.clear()

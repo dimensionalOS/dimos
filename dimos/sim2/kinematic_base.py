@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A robot whose base is driven straight from cmd_vel (its "base_velocity" key), with odom/tf like a real connection's."""
+"""A robot whose base is driven straight from cmd_vel (its three base joints' velocities), with odom/tf like a real connection's."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -29,7 +29,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.actions import BASE_VELOCITY, CborKeyValueCommand, world_action
+from dimos.sim2.actions import BASE_JOINTS, JointCommand, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import WorldMirror
@@ -78,7 +78,7 @@ class SimKinematicBase(Module):
         self._expires = time.monotonic() + self.config.cmd_vel_timeout
 
     def _drive(self, velocity: list[float]) -> None:
-        command = CborKeyValueCommand(self.config.robot_id, BASE_VELOCITY, velocity)
+        command = JointCommand(self.config.robot_id, BASE_JOINTS, velocity=tuple(velocity))
         self.actions.publish(world_action(self._world, command))
 
     async def _report(self) -> None:
