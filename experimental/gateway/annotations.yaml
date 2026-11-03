@@ -154,9 +154,6 @@ robots:
           title: Go2 RPP controller
           description: A standalone regulated pure pursuit path-following controller for a Go2.
           recommended_config: *robot_ip_only
-        unitree-go2-security:
-          title: Go2 security patrol
-          description: An agent that patrols with the Go2 and watches for people.
         unitree-go2-spatial:
           title: Go2 with spatial memory
           description: Map and navigation plus a spatial memory of what it has seen.

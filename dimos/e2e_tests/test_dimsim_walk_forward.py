@@ -25,8 +25,6 @@ def test_walk_forward(
         "run",
         "--disable",
         "spatial-memory",
-        "--disable",
-        "security-module",
         "unitree-go2-agentic",
         simulator="dimsim",
     )
