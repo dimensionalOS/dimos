@@ -5,6 +5,8 @@ poses** through generated `sim_msgs.Observations`; camera and lidar do not recei
 joint state or a native simulator checkpoint. Every publication is complete,
 including stationary bodies. There is no change detection or delta replay.
 
+For the articulated G1/GR00T desk example, see [run and trace the G1 proof](/docs/development/sim2/g1.md).
+
 ## The objects and their meanings
 
 | Object | Exact contents and purpose |
