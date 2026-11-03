@@ -18,7 +18,9 @@
 use crate::gsc_pgo::{CommittedClosure, KeyPoseWithCloud};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::PointCloud;
-use std::sync::{Arc, OnceLock};
+use crate::similarity_discovery::Descriptor;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const CHUNK: usize = 1024;
 const CHUNKS: usize = 1 << 15;
@@ -104,12 +106,38 @@ impl<T> std::ops::Index<usize> for Appended<T> {
     }
 }
 
-/// What a keyframe never changes after it is made.
+/// What a keyframe never changes after it is made, except that graph simplification may drop its cloud and descriptor.
 pub struct KeyFixed {
     pub rotation_local: Mat3,
     pub translation_local: Vec3,
     pub time: f64,
-    pub body_cloud: Option<Arc<PointCloud>>,
+    heavy: Mutex<Heavy>,
+    /// The removal stamp it was simplified away at (`KeyFrames::remove`); `u64::MAX` while it keeps its cloud.
+    removed_at: AtomicU64,
+}
+
+/// A keyframe's memory-heavy parts: its body-frame cloud and scan-context descriptor.
+struct Heavy {
+    body_cloud: Option<Arc<PointCloud>>,
+    descriptor: Arc<Descriptor>,
+}
+
+impl KeyFixed {
+    pub fn new(
+        rotation_local: Mat3,
+        translation_local: Vec3,
+        time: f64,
+        body_cloud: Option<Arc<PointCloud>>,
+        descriptor: Arc<Descriptor>,
+    ) -> KeyFixed {
+        KeyFixed {
+            rotation_local,
+            translation_local,
+            time,
+            heavy: Mutex::new(Heavy { body_cloud, descriptor }),
+            removed_at: AtomicU64::new(u64::MAX),
+        }
+    }
 }
 
 /// The newest adopted solve's global poses (the first `rotations.len()` keyframes), built on its thread.
@@ -119,13 +147,16 @@ pub struct SolvedPoses {
     pub positions: Vec<Vec3>,
 }
 
-/// The keyframes (see the module). Cloning is a snapshot.
+/// The keyframes (see the module). Cloning is a snapshot: it never sees a keyframe simplified away after it was taken lose its cloud.
 #[derive(Clone)]
 pub struct KeyFrames {
     fixed: Appended<KeyFixed>,
     solved: Arc<SolvedPoses>,
     ride_rotation: Mat3,
     ride_translation: Vec3,
+    /// Removals this snapshot sees (`removed_at <= removals` reads as removed), and the guard its removals' clouds wait on.
+    removals: u64,
+    guard: Arc<()>,
 }
 
 impl Default for KeyFrames {
@@ -135,6 +166,8 @@ impl Default for KeyFrames {
             solved: Arc::new(SolvedPoses::default()),
             ride_rotation: mat3::identity(),
             ride_translation: [0.0; 3],
+            removals: 0,
+            guard: Arc::new(()),
         }
     }
 }
@@ -163,6 +196,10 @@ impl KeyFrames {
             ),
         )
     }
+    /// Keyframes the newest adopted solve placed (the rest ride its correction).
+    pub fn solved_len(&self) -> usize {
+        self.solved.rotations.len()
+    }
     pub fn position(&self, k: usize) -> Vec3 {
         self.global(k).1
     }
@@ -179,8 +216,39 @@ impl KeyFrames {
             rotation_global,
             translation_global,
             time: fixed.time,
-            body_cloud: fixed.body_cloud.clone(),
+            body_cloud: self.body_cloud(k),
         }
+    }
+    /// Whether keyframe `k` was simplified away as this snapshot sees it (its cloud and descriptor gone).
+    pub fn is_removed(&self, k: usize) -> bool {
+        self.fixed.get(k).removed_at.load(Ordering::Acquire) <= self.removals
+    }
+    /// Keyframe `k`'s body-frame cloud; None without one or once simplified away (as this snapshot sees it).
+    pub fn body_cloud(&self, k: usize) -> Option<Arc<PointCloud>> {
+        if self.is_removed(k) {
+            return None;
+        }
+        self.fixed.get(k).heavy.lock().unwrap().body_cloud.clone()
+    }
+    /// Keyframe `k`'s scan-context descriptor; empty without a cloud or once simplified away (as this snapshot sees it).
+    pub fn descriptor(&self, k: usize) -> Arc<Descriptor> {
+        if self.is_removed(k) {
+            return Arc::new(Descriptor::empty());
+        }
+        self.fixed.get(k).heavy.lock().unwrap().descriptor.clone()
+    }
+    /// Simplify keyframe `k` away: newer snapshots no longer see its cloud or descriptor. Returns the guard older snapshots hold;
+    /// `release` the keyframe once no one else holds it.
+    pub(crate) fn remove(&mut self, k: usize) -> Arc<()> {
+        self.removals += 1;
+        self.fixed.get(k).removed_at.store(self.removals, Ordering::Release);
+        std::mem::replace(&mut self.guard, Arc::new(()))
+    }
+    /// Free a removed keyframe's cloud and descriptor (no snapshot that could read them is left).
+    pub(crate) fn release(&self, k: usize) {
+        let mut heavy = self.fixed.get(k).heavy.lock().unwrap();
+        heavy.body_cloud = None;
+        heavy.descriptor = Arc::new(Descriptor::empty());
     }
     pub fn last(&self) -> Option<KeyPoseWithCloud> {
         self.len().checked_sub(1).map(|k| self.get(k))
@@ -234,6 +302,10 @@ impl Closures {
     /// Closure `i`'s weight from the newest adopted solve (NaN until a solve has judged it).
     pub fn weight(&self, i: usize) -> f64 {
         self.weights.get(i).copied().unwrap_or(f64::NAN)
+    }
+    /// How many closures the newest adopted solve judged (the first ones; the rest are unjudged).
+    pub fn judged(&self) -> usize {
+        self.weights.len()
     }
     pub fn get(&self, i: usize) -> CommittedClosure {
         let fixed = self.fixed.get(i);

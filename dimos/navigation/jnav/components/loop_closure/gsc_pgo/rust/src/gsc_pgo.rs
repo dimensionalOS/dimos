@@ -447,6 +447,10 @@ pub struct DeterministicConfig {
     pub pressure_scans_fixed_overhead: f64,
     pub pressure_scans_per_keyframe: f64,
     pub pressure_scans_per_closure: f64,
+    /// The solver fast path (`fast_path`): fixed, per keyframe it frees, and per keyframe of the graph (its copy and heat cost).
+    pub fast_path_scans_fixed_overhead: f64,
+    pub fast_path_scans_per_window_keyframe: f64,
+    pub fast_path_scans_per_keyframe: f64,
 }
 
 impl Default for DeterministicConfig {
@@ -469,6 +473,10 @@ impl Default for DeterministicConfig {
             pressure_scans_fixed_overhead: 0.0007777038336858567,
             pressure_scans_per_keyframe: 8.708997476399469e-06,
             pressure_scans_per_closure: 1.2578234731596874e-05,
+            // fast path: a loaded Mac's fast-mode p99 (gir1_pointlio, 1000-keyframe window) x4, the Jetson's slowdown on solve-like jobs
+            fast_path_scans_fixed_overhead: 0.42,
+            fast_path_scans_per_window_keyframe: 1.7e-3,
+            fast_path_scans_per_keyframe: 8.4e-5,
         }
     }
 }
@@ -541,6 +549,12 @@ pub struct Config {
     pub graph_change_heat_decay: f64,
     /// Seed a solve from the accepted graph when it already fits every closure GNC would weigh; otherwise from the odometry.
     pub solve_seed_from_accepted: bool,
+    /// Solver fast path (`fast_path`): a new closure whose older end is within `solver_fast_path_max_keyframes` of the newest
+    /// keyframe is applied at once by a local least squares (no GNC) over those keyframes; the GNC solve covering it supersedes.
+    pub solver_fast_path_enabled: bool,
+    pub solver_fast_path_max_keyframes: usize,
+    /// Each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate.
+    pub solver_fast_path_max_lm_steps: usize,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
     /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
@@ -602,6 +616,26 @@ pub struct Config {
     /// `soft_pressure` (display only): 50% where log10 of the loop hazard is this, 0% this many decades below (log-compressed).
     pub soft_pressure_half_log10_hazard: f64,
     pub soft_pressure_decades: f64,
+    /// Reduced pose graph for long runs (`graph_simplify`): keyframes revisiting a mapped, localized place ride a kept one.
+    pub graph_simplify: bool,
+    /// The newest this many keyframes are never simplified (each is decided once it is this far behind the newest).
+    pub graph_simplify_frontier_keyframes: usize,
+    /// A keyframe revisits a place only if the kept keyframe there is at least this many keyframes older (an older pass).
+    pub graph_simplify_pass_gap_keyframes: usize,
+    /// A keyframe may ride a keyframe kept on an older pass within this distance (m).
+    pub graph_simplify_place_radius_m: f64,
+    /// ...only when a closure the newest solve kept has an end within this many keyframes of it.
+    pub graph_simplify_localized_keyframes: usize,
+    /// Closures per node pair that go to the solve (the rest keep their last verdict); 0 = all.
+    pub graph_simplify_closures_per_pair: usize,
+    /// How far a removed keyframe's frozen offset from its node may be off (m, rad, one sd): an edge reaching a node through
+    /// one carries this much more variance per such end, so the adopted graph it was read from is not taken as exact.
+    pub graph_simplify_offset_sd_m: f64,
+    pub graph_simplify_offset_sd_rad: f64,
+    /// Odometry folds between consecutive kept keyframes (true), or follows the nodes removed keyframes ride (false).
+    pub graph_simplify_chain_odometry: bool,
+    /// ...folding at most this many metres between kept keyframes; past it the walk rides the current place's node.
+    pub graph_simplify_chain_fold_max_m: f64,
 }
 
 impl Config {
@@ -642,6 +676,9 @@ impl Config {
             ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
             ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
             ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
+            ("fast_path_scans_fixed_overhead", self.deterministic_config.fast_path_scans_fixed_overhead),
+            ("fast_path_scans_per_window_keyframe", self.deterministic_config.fast_path_scans_per_window_keyframe),
+            ("fast_path_scans_per_keyframe", self.deterministic_config.fast_path_scans_per_keyframe),
         ];
         for (name, count) in [
             ("fast_match_workers", self.fast_match_workers),
@@ -702,6 +739,9 @@ impl Default for Config {
             graph_change_heat_decay: 0.995,
             solve_seed_from_accepted: true,
             solve_seed_gnc_verdicts: false,
+            solver_fast_path_enabled: false,
+            solver_fast_path_max_keyframes: 1000,
+            solver_fast_path_max_lm_steps: 10,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
@@ -741,6 +781,16 @@ impl Default for Config {
             pressure_check_frequency: 5,
             soft_pressure_half_log10_hazard: -0.5,
             soft_pressure_decades: 100.0,
+            graph_simplify: false,
+            graph_simplify_frontier_keyframes: 1000,
+            graph_simplify_pass_gap_keyframes: 200,
+            graph_simplify_place_radius_m: 1.0,
+            graph_simplify_localized_keyframes: 50,
+            graph_simplify_closures_per_pair: 1,
+            graph_simplify_offset_sd_m: 0.05,
+            graph_simplify_offset_sd_rad: 0.005,
+            graph_simplify_chain_odometry: true,
+            graph_simplify_chain_fold_max_m: 30.0,
         }
     }
 }
@@ -842,8 +892,8 @@ pub struct GscPgo {
     pub(crate) gathered: PointCloud,
     /// The newest applied solve's tip keyframe and every solved keyframe's position covariance relative to it.
     pub(crate) solved_relative_covariance: Option<(usize, Arc<Vec<Mat3>>)>,
-    /// Shared, so a closure search can count look-alike places without copying them.
-    pub(crate) scan_context_descriptors: crate::store::Appended<Arc<similarity_discovery::Descriptor>>,
+    /// The reduced pose graph (`graph_simplify`).
+    pub(crate) simplify: crate::graph_simplify::GraphSimplify,
     pub(crate) scan_context_ring_keys: Vec<similarity_discovery::RingKey>,
     pub(crate) rotation_offset: Mat3,
     pub(crate) translation_offset: Vec3,
@@ -858,6 +908,14 @@ pub struct GscPgo {
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
     /// Called when a background solve finishes (`notify_when_solved`).
     pub(crate) solved: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Solver fast path (`fast_path`): the job out, its worker, the committed closures the graph reflects, and its records.
+    pub(crate) fast_path_job: Option<crate::fast_path::FastPathJob>,
+    pub(crate) fast_path_pool: Option<crate::closure_search_schedule::SearchPool>,
+    pub(crate) fast_path_reflected: usize,
+    pub(crate) fast_path_overshoots: usize,
+    pub(crate) fast_path_records: Vec<crate::fast_path::FastPathRecord>,
+    /// Per committed closure, when it was committed, first reflected by the fast path, and judged by an adopted GNC solve.
+    pub(crate) closure_latency: Vec<crate::fast_path::ClosureLatency>,
 }
 
 /// Cumulative per-stage wall time (`GscPgo::stage_seconds`), purely observational (never read back into the pipeline).
@@ -904,7 +962,6 @@ pub struct ClosureSearch {
     pub(crate) target_idx: usize,
     pub(crate) init_rotation: Mat3,
     pub(crate) init_translation: Vec3,
-    pub(crate) scan_context_descriptors: crate::store::Appended<Arc<similarity_discovery::Descriptor>>,
     pub(crate) scan_context_config: similarity_discovery::Config,
     pub(crate) ranked: Vec<(f32, usize)>,
     /// Every closure the solve has judged: its yank_stdevs when committed, and whether the solve kept it.
@@ -1219,8 +1276,8 @@ impl ClosureSearch {
             });
             let places = look_alikes.count_past(
                 (evidence - base).exp(),
-                &self.scan_context_descriptors[cur_idx],
-                &self.scan_context_descriptors,
+                &self.key_poses.descriptor(cur_idx),
+                |k| self.key_poses.descriptor(k),
                 self.scan_context_config.match_threshold,
                 |a, b| {
                     crate::loop_overlap::could_be_same_place(
@@ -1800,9 +1857,13 @@ impl GscPgo {
         self.timing.scan_s += (checked - started).as_secs_f64();
         let frequency = self.config.pressure_check_frequency;
         let check_due = frequency > 0 && self.scans_seen.is_multiple_of(frequency);
-        // pressure is its own job (`pressure_schedule`); debounce and merge also land every scan, not only at keyframes
+        // pressure is its own job (`pressure_schedule`); debounce, merge and fast path also land every scan, not only at keyframes
         self.step_pressure(check_due);
         if !self.adoption_inline && self.step_adoption(false) {
+            self.adopted_since_update = true;
+        }
+        // the solver fast path too, so its correction lands on the scan its hold ends at
+        if self.step_fast_path() {
             self.adopted_since_update = true;
         }
         self.timing.pressure_s += checked.elapsed().as_secs_f64();
@@ -1903,10 +1964,10 @@ impl GscPgo {
         let mut diag = ClosureCandidateDiag::new(cur_idx, current.time, current.translation_global);
 
         // stage 1, universal uniqueness: a scan whose structure barely fills the descriptor can't place itself
-        let descriptor = &self.scan_context_descriptors[cur_idx];
+        let descriptor = self.key_poses.descriptor(cur_idx);
         if !descriptor.is_empty() {
             diag.descriptor_occupancy =
-                similarity_discovery::descriptor_occupancy(descriptor) as i32;
+                similarity_discovery::descriptor_occupancy(&descriptor) as i32;
             if diag.descriptor_occupancy < self.config.closure_min_occupancy {
                 diag.outcome = "low_occupancy";
                 self.record_search(diag);
@@ -2025,7 +2086,6 @@ impl GscPgo {
             target_idx,
             init_rotation,
             init_translation,
-            scan_context_descriptors: self.scan_context_descriptors.clone(),
             scan_context_config: self.scan_context_config,
             ranked,
             judged_yanks: Vec::new(),
@@ -2140,14 +2200,6 @@ impl GscPgo {
                 self.keyframe_reach.1 += 1;
             }
         }
-        // placed by the current correction (`KeyFrames::global` rides it on the odometry pose when read)
-        self.key_poses.push(crate::store::KeyFixed {
-            time: pose.second,
-            rotation_local: pose.rotation,
-            translation_local: pose.translation,
-            body_cloud: stored,
-        });
-
         // scan context descriptor and ring key (empty without a cloud); a non-positive max range is set once from the first cloud
         if let Some(cloud) = &cloud {
             if self.scan_context_config.max_range_m <= 0.0 {
@@ -2169,7 +2221,15 @@ impl GscPgo {
         // an empty descriptor's ring key is empty too
         self.scan_context_ring_keys
             .push(similarity_discovery::make_ring_key(&descriptor));
-        self.scan_context_descriptors.push(Arc::new(descriptor));
+        // placed by the current correction (`KeyFrames::global` rides it on the odometry pose when read)
+        self.key_poses.push(crate::store::KeyFixed::new(
+            pose.rotation,
+            pose.translation,
+            pose.second,
+            stored,
+            Arc::new(descriptor),
+        ));
+        self.simplify_step();
     }
 
     /// Commit a closure that passed every gate; the next `update` starts a solve with it.
@@ -2193,6 +2253,10 @@ impl GscPgo {
             yank_stdevs,
         });
         self.new_closure = true;
+        self.closure_latency.push(crate::fast_path::ClosureLatency::committed(
+            self.scans_seen,
+            self.newest_scan_time(),
+        ));
     }
 }
 
