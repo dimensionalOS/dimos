@@ -189,6 +189,7 @@ def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
         "camera_name": "wrist_camera",
         "base_frame_id": "link7",
         "reset_joint_positions": XARM7_SIM_HOME,
+        "gravity_compensation": True,
     }
 
 

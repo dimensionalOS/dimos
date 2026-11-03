@@ -28,4 +28,9 @@ def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
 
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
-    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=dof),)
+    # Fixed-base arms cancel their own weight in firmware; match that in sim.
+    return (
+        MujocoSimModule.blueprint(
+            address=str(sim_path), headless=False, dof=dof, gravity_compensation=True
+        ),
+    )
