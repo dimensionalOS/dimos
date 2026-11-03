@@ -184,6 +184,14 @@ struct SharedState {
 
 type Shared<T> = Arc<Mutex<T>>;
 
+/// `name`'s index in `names`, appended if new.
+fn index_of(names: &mut Vec<String>, name: &str) -> usize {
+    names.iter().position(|n| n == name).unwrap_or_else(|| {
+        names.push(name.to_string());
+        names.len() - 1
+    })
+}
+
 /// A world-fixed frame name, which a lidar scan's frame should not be.
 fn is_fixed_frame(frame_id: &str) -> bool {
     matches!(frame_id, "odom" | "map" | "world")
@@ -319,17 +327,7 @@ impl GscPgoModule {
             return;
         }
         let mut state = self.state.lock().expect("state");
-        let frame = match state
-            .world_frames
-            .iter()
-            .position(|f| *f == msg.header.frame_id)
-        {
-            Some(i) => i,
-            None => {
-                state.world_frames.push(msg.header.frame_id.clone());
-                state.world_frames.len() - 1
-            }
-        } as u32;
+        let frame = index_of(&mut state.world_frames, &msg.header.frame_id) as u32;
         state.world_fixes.push(WorldFix {
             ts,
             frame,
@@ -405,17 +403,7 @@ impl GscPgoModule {
             return;
         }
         let mut state = self.state.lock().expect("state");
-        let landmark = match state
-            .landmark_names
-            .iter()
-            .position(|n| *n == msg.child_frame_id)
-        {
-            Some(i) => i,
-            None => {
-                state.landmark_names.push(msg.child_frame_id.clone());
-                state.landmark_names.len() - 1
-            }
-        } as u64;
+        let landmark = index_of(&mut state.landmark_names, &msg.child_frame_id) as u64;
         state.landmark_factors.push(LandmarkFix {
             ts,
             landmark,

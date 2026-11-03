@@ -128,18 +128,17 @@ pub struct SearchJob {
 
 impl SearchJob {
     /// Raw estimate (scans) including verification rounds started; `rounds` is the count the caller read.
-    fn estimate_raw_scans(&self, rounds: usize, config: &crate::gsc_pgo::Config) -> f64 {
+    fn estimate_raw_scans(&self, rounds: usize) -> f64 {
         let (counted, round_scans) = self.progress.rounds();
         // newer rounds only raise the hold, so reading the newer sum is safe
         let round_scans = if counted >= rounds { round_scans } else { 0.0 };
-        let _ = config;
         match self.kind {
             JobKind::FastMatch => self.estimate_raw_scans,
             JobKind::Verification => self.estimate_raw_scans + round_scans,
         }
     }
-    fn estimate_scans(&self, rounds: usize, config: &crate::gsc_pgo::Config) -> usize {
-        hold_scans(self.estimate_raw_scans(rounds, config), config)
+    fn estimate_scans(&self, rounds: usize) -> usize {
+        hold_scans(self.estimate_raw_scans(rounds))
     }
 }
 
@@ -302,7 +301,7 @@ impl GscPgo {
     }
     /// Whether `job`'s hold has passed with `rounds` rounds started.
     fn hold_passed(&self, job: &SearchJob, rounds: usize) -> bool {
-        self.advancing_scans >= job.dispatch_scan + job.estimate_scans(rounds, &self.config)
+        self.advancing_scans >= job.dispatch_scan + job.estimate_scans(rounds)
     }
     /// Land finished jobs whose hold passed (all if `now`; `wait` blocks on unfinished) in due order; returns count.
     fn land_due_closure_searches(&mut self, wait: bool, now: bool) -> usize {
@@ -319,7 +318,7 @@ impl GscPgo {
                 }
                 if done {
                     due.push((
-                        job.dispatch_scan + job.estimate_scans(rounds, &self.config),
+                        job.dispatch_scan + job.estimate_scans(rounds),
                         job.order,
                         job.kind as u8,
                     ));
@@ -354,10 +353,9 @@ impl GscPgo {
     /// Apply a finished job: record schedule and overshoot, then finish it or buffer it for verification.
     fn land_closure_search(&mut self, job: SearchJob) {
         let (rounds, _) = job.progress.snapshot();
-        let estimate_scans = job.estimate_scans(rounds, &self.config);
-        let estimate_raw_scans = job.estimate_raw_scans(rounds, &self.config);
-        let stage = job.progress.take_stage().expect("a landing job has finished");
-        let mut stage = stage;
+        let estimate_scans = job.estimate_scans(rounds);
+        let estimate_raw_scans = job.estimate_raw_scans(rounds);
+        let mut stage = job.progress.take_stage().expect("a landing job has finished");
         let handed_on_s = match &stage {
             SearchStage::Extend(pending) => Some(pending.fast_s),
             SearchStage::Done(_) => None,
@@ -528,21 +526,21 @@ impl GscPgo {
         };
         let c = &self.config;
         let groups: [ProfileGroup; 6] = [
-            ("fast_match", &["search", "fast_match"], vec![
+            ("fast_match", vec![
                 ("fast_match_scans_fixed_overhead", c.deterministic_config.fast_match_scans_fixed_overhead),
                 ("fast_match_scans_per_keyframe", c.deterministic_config.fast_match_scans_per_keyframe),
                 ("fast_match_scans_per_point", c.deterministic_config.fast_match_scans_per_point),
                 ("fast_match_scans_per_source_point", c.deterministic_config.fast_match_scans_per_source_point),
             ]),
-            ("verification", &["search", "verification"], vec![
+            ("verification", vec![
                 ("verification_scans_fixed_overhead", c.deterministic_config.verification_scans_fixed_overhead),
                 ("verification_scans_per_round", c.deterministic_config.verification_scans_per_round),
                 ("verification_scans_per_round_point", c.deterministic_config.verification_scans_per_round_point),
             ]),
-            ("solve", &["solve"], vec![("solve_scans_scale", c.deterministic_config.solve_scans_scale)]),
-            ("debounce", &["debounce"], vec![("debounce_scans_per_keyframe", c.deterministic_config.debounce_scans_per_keyframe)]),
-            ("merge", &["merge"], vec![("merge_scans_per_keyframe", c.deterministic_config.merge_scans_per_keyframe)]),
-            ("pressure", &["pressure"], vec![
+            ("solve", vec![("solve_scans_scale", c.deterministic_config.solve_scans_scale)]),
+            ("debounce", vec![("debounce_scans_per_keyframe", c.deterministic_config.debounce_scans_per_keyframe)]),
+            ("merge", vec![("merge_scans_per_keyframe", c.deterministic_config.merge_scans_per_keyframe)]),
+            ("pressure", vec![
                 ("pressure_scans_fixed_overhead", c.deterministic_config.pressure_scans_fixed_overhead),
                 ("pressure_scans_per_keyframe", c.deterministic_config.pressure_scans_per_keyframe),
                 ("pressure_scans_per_closure", c.deterministic_config.pressure_scans_per_closure),
@@ -550,18 +548,11 @@ impl GscPgo {
         ];
         groups
             .into_iter()
-            .map(|(name, kinds, coefficients)| {
-                // fall back to whole-search timings when no per-stage ratios exist
-                let two_stage = self.job_ratios.iter().any(|(k, _)| *k == "fast_match" || *k == "verification");
-                let kinds: Vec<&str> = match name {
-                    "fast_match" | "verification" if !two_stage => vec!["search"],
-                    "fast_match" | "verification" => vec![name],
-                    _ => kinds.to_vec(),
-                };
+            .map(|(name, coefficients)| {
                 let ratios: Vec<f64> = self
                     .job_ratios
                     .iter()
-                    .filter(|(k, _)| kinds.contains(k))
+                    .filter(|(k, _)| *k == name)
                     .map(|&(_, ratio)| ratio)
                     .collect();
                 let count = ratios.len();
@@ -574,7 +565,7 @@ impl GscPgo {
 }
 
 /// Scans a job holds: its estimate rounded up, at least one.
-pub(crate) fn hold_scans(estimate_raw_scans: f64, _config: &crate::gsc_pgo::Config) -> usize {
+pub(crate) fn hold_scans(estimate_raw_scans: f64) -> usize {
     if estimate_raw_scans.is_finite() {
         (estimate_raw_scans.ceil() as usize).max(1)
     } else {
@@ -584,5 +575,5 @@ pub(crate) fn hold_scans(estimate_raw_scans: f64, _config: &crate::gsc_pgo::Conf
 
 /// `runtime_profile` row: job kind, p99 measured/estimated ratio, job count, suggested coefficients.
 pub type RuntimeProfileRow = (&'static str, f64, usize, Vec<(&'static str, f64)>);
-/// Job kind, the timing keys it pools, and its coefficients.
-type ProfileGroup = (&'static str, &'static [&'static str], Vec<(&'static str, f64)>);
+/// Job kind and its coefficients.
+type ProfileGroup = (&'static str, Vec<(&'static str, f64)>);

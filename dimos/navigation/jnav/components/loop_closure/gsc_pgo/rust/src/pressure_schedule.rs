@@ -18,14 +18,10 @@
 use crate::closure_search_schedule::SearchPool;
 use crate::gsc_pgo::GscPgo;
 use crate::loop_overlap::LoopOverlap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 
-/// A pressure job's outcome (the pressure, None before a sensor range, and its seconds) once it has finished.
-#[derive(Default)]
-pub struct PressureSlot {
-    done: Mutex<Option<(Option<LoopOverlap>, f64)>>,
-    changed: Condvar,
-}
+/// A pressure job's outcome: the pressure (None before a sensor range) and its seconds.
+type PressureSlot = crate::adoption_schedule::JobSlot<(Option<LoopOverlap>, f64)>;
 
 /// A dispatched pressure job: advancing scans and data time at dispatch, estimate (raw scans), graph size read.
 pub struct PressureJob {
@@ -38,8 +34,8 @@ pub struct PressureJob {
 }
 
 impl PressureJob {
-    fn estimate_scans(&self, config: &crate::gsc_pgo::Config) -> usize {
-        crate::closure_search_schedule::hold_scans(self.estimate_raw_scans, config)
+    fn estimate_scans(&self) -> usize {
+        crate::closure_search_schedule::hold_scans(self.estimate_raw_scans)
     }
 }
 
@@ -109,7 +105,7 @@ impl GscPgo {
         };
         let spanned = self.newest_scan_time() - job.dispatch_time;
         let deterministic = self.config.deterministic();
-        if deterministic && self.advancing_scans < job.dispatch_scan + job.estimate_scans(&self.config) {
+        if deterministic && self.advancing_scans < job.dispatch_scan + job.estimate_scans() {
             return;
         }
         let mut done = job.slot.done.lock().expect("pressure slot");
@@ -146,7 +142,7 @@ impl GscPgo {
                 job.keyframes,
                 job.closures,
                 job.estimate_raw_scans,
-                job.estimate_scans(&self.config),
+                job.estimate_scans(),
             );
         }
         self.pressure_calls.push((job.keyframes, job.closures, seconds));

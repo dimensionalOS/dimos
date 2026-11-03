@@ -971,18 +971,9 @@ fn run() -> Result<(), String> {
     }
     // each LET's p99 measured/estimated scans and the suggested deterministic_config to paste (diagnostics only)
     {
-        let mut block = Vec::new();
-        let mut ratios = Vec::new();
-        for (name, ratio, jobs, coefficients) in &output.runtime_profile {
-            ratios.push(format!("{name} {ratio:.2} ({jobs} jobs)"));
-            for (field, value) in coefficients {
-                if value.is_finite() {
-                    block.push(format!("\"{field}\": {value:.4e}"));
-                }
-            }
-        }
+        let ratios: Vec<String> =
+            output.runtime_profile.iter().map(|(name, ratio, jobs, _)| format!("{name} {ratio:.2} ({jobs} jobs)")).collect();
         eprintln!("pgo-eval: LET measured / estimated scans, 99th percentile: {}", ratios.join(", "));
-        let _ = block;
         eprintln!(
             "pgo-eval: suggested deterministic_config: {}",
             serde_json::to_string(&pgo.suggested_deterministic_config()).unwrap_or_default()

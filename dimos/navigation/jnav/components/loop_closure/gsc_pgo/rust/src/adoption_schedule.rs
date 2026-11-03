@@ -20,10 +20,10 @@ use crate::gsc_pgo::GscPgo;
 use crate::pose_graph_solving::{graph_change_cost_on, FinishedSolve};
 use std::sync::{Arc, Condvar, Mutex};
 
-/// A job's result once it has finished.
+/// A job's result once it has finished (debounce, merge, pressure).
 pub struct JobSlot<T> {
-    done: Mutex<Option<T>>,
-    changed: Condvar,
+    pub(crate) done: Mutex<Option<T>>,
+    pub(crate) changed: Condvar,
 }
 
 impl<T> Default for JobSlot<T> {
@@ -164,7 +164,7 @@ impl GscPgo {
     /// Land due debounce/merge jobs (`now`: end of data, ignore holds and wait); returns whether a merge moved keyframes.
     pub(crate) fn step_adoption(&mut self, now: bool) -> bool {
         let mut moved = false;
-        if let Some(debounced) = self.land_adoption_job::<Debounced>(true, now) {
+        if let Some(debounced) = self.land_adoption_job::<Debounced>(now) {
             self.change_cost_calls
                 .push((debounced.finished.keyframes, debounced.seconds));
             let estimate = self.config.deterministic_config.debounce_scans_per_keyframe
@@ -175,7 +175,7 @@ impl GscPgo {
                 self.dispatch_debounce(waiting);
             }
         }
-        if let Some(merged) = self.land_adoption_job::<Merged>(false, now) {
+        if let Some(merged) = self.land_adoption_job::<Merged>(now) {
             let estimate = self.config.deterministic_config.merge_scans_per_keyframe
                 * merged.finished.keyframes as f64;
             self.record_job_ratio("merge", merged.seconds, estimate);
@@ -193,12 +193,12 @@ impl GscPgo {
             || self.merge_job.is_some()
             || self.merge_waiting.is_some()
     }
-    fn land_adoption_job<T: AdoptionKind>(&mut self, debounce: bool, now: bool) -> Option<T> {
+    fn land_adoption_job<T: AdoptionKind>(&mut self, now: bool) -> Option<T> {
         let deterministic = self.config.deterministic();
         let advancing = self.advancing_scans;
         let wait = self.wait_for_due_jobs || now;
-        let job = T::job(self, debounce)?;
-        let due = advancing >= job.dispatch_scan + hold_scans(job.estimate_raw_scans, &self.config);
+        let job = T::job(self)?;
+        let due = advancing >= job.dispatch_scan + hold_scans(job.estimate_raw_scans);
         if deterministic && !due && !now {
             return None;
         }
@@ -217,36 +217,36 @@ impl GscPgo {
             let result = done.take();
             drop(done);
             self.closure_search_wait_s += waited;
-            T::clear(self, debounce);
+            T::clear(self);
             return result;
         }
         let result = done.take();
         drop(done);
-        T::clear(self, debounce);
+        T::clear(self);
         result
     }
 }
 
 /// Maps a job result type to its job field on `GscPgo`.
 pub(crate) trait AdoptionKind: Sized {
-    fn job(pgo: &GscPgo, debounce: bool) -> Option<&AdoptionJob<Self>>;
-    fn clear(pgo: &mut GscPgo, debounce: bool);
+    fn job(pgo: &GscPgo) -> Option<&AdoptionJob<Self>>;
+    fn clear(pgo: &mut GscPgo);
 }
 
 impl AdoptionKind for Debounced {
-    fn job(pgo: &GscPgo, _: bool) -> Option<&AdoptionJob<Self>> {
+    fn job(pgo: &GscPgo) -> Option<&AdoptionJob<Self>> {
         pgo.debounce_job.as_ref()
     }
-    fn clear(pgo: &mut GscPgo, _: bool) {
+    fn clear(pgo: &mut GscPgo) {
         pgo.debounce_job = None;
     }
 }
 
 impl AdoptionKind for Merged {
-    fn job(pgo: &GscPgo, _: bool) -> Option<&AdoptionJob<Self>> {
+    fn job(pgo: &GscPgo) -> Option<&AdoptionJob<Self>> {
         pgo.merge_job.as_ref()
     }
-    fn clear(pgo: &mut GscPgo, _: bool) {
+    fn clear(pgo: &mut GscPgo) {
         pgo.merge_job = None;
     }
 }
