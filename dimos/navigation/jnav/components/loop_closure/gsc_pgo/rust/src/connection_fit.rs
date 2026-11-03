@@ -12,35 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stage 3, connection fit quality: how well a discovered connection's two places line up, without the
-//! graph. Point-to-point ICP of the source keyframe's cloud onto the target's submap, and its fitness
-//! (mean squared distance of the points that overlap the target, over the fraction that do).
+//! Stage 3, connection fit quality: how well a connection's two places line up without the graph (ICP of the
+//! source scan onto the target submap, its fitness, sharpness and likelihood ratio).
 
 use rayon::prelude::*;
 
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{transform_cloud, KdTree, NearestIndex};
 
-/// A source point moved by the current guess, its nearest target point, their squared distance, and the target point's index.
+/// (moved source point, nearest target point, squared distance, target index).
 type Correspondence = ([f32; 3], [f32; 3], f32, usize);
 
 pub struct IcpParams {
     pub max_iterations: usize,
-    /// Pairs farther apart than this (m) are not correspondences.
+    /// Meters; farther pairs are not correspondences.
     pub max_correspondence_distance: f64,
-    /// A source point overlaps the target when its nearest neighbour is within this squared distance (m²).
+    /// m²; a source point within this of the target overlaps it.
     pub inlier_squared_distance: f64,
-    /// Each step minimises the pairs' distances along the target's surface normal (point-to-plane) instead of their
-    /// full distances (point-to-point): two scans never sample the same spots, so a point may slide along the surface.
+    /// Minimise distance along the target normal instead of point-to-point, letting points slide along surfaces.
     pub point_to_plane: bool,
 }
 
 /// Why an ICP stopped iterating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IcpStop {
-    /// An iteration barely moved it, or the correspondences' mean squared distance stopped changing.
     Converged,
-    /// The early stop gave up: the fit could no longer get under the gate's fitness (`icp_with_early_stop`).
+    /// The fit could no longer get under the gate's fitness (`icp_with_early_stop`).
     EarlyStop,
     /// It ran `max_iterations` (reported as converged).
     MaxIterations,
@@ -76,25 +73,20 @@ impl IcpStop {
 #[derive(Debug, Clone)]
 pub struct IcpResult {
     pub converged: bool,
-    /// Iterations run, and why it stopped.
     pub iterations: u32,
     pub stop: IcpStop,
-    /// The target points ICP paired against (the thinned target in `icp_thinned`; 0 from a cache entry made before it).
+    /// Target points ICP paired against (thinned in `icp_thinned`; 0 from an old cache entry).
     pub target_points: usize,
-    /// The transform that moves the source onto the target.
+    /// Moves the source onto the target.
     pub rotation: Mat3,
     pub translation: Vec3,
-    /// Mean squared nearest-neighbour distance of the overlapping source points after the transform, over
-    /// `overlap`: a thin overlap scores as a weak fit (f64::MAX when nothing overlaps).
+    /// Overlapping points' mean squared NN distance / `overlap` (m², lower is better; f64::MAX when nothing overlaps).
     pub fitness: f64,
-    /// Fraction of the source points that overlap the target after the transform.
+    /// Fraction of source points overlapping the target (0..1).
     pub overlap: f64,
 }
 
-/// Align `source` onto `target` (whose k-d tree is `tree`), starting from the guess. Converged when an
-/// iteration barely moves it (under 0.26 degrees and 1 mm) or the correspondences' mean squared
-/// distance stops changing (1e-6 relative), or after `max_iterations`; not converged when fewer than
-/// three correspondences remain.
+/// Align `source` onto `target` (indexed by `tree`) from the guess; not converged if < 3 correspondences remain.
 pub fn icp(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
@@ -106,11 +98,7 @@ pub fn icp(
     icp_with_early_stop(source, target, tree, rotation, translation, params, None)
 }
 
-/// `icp`, but given `fail_fitness` (the gate's largest passing fitness, m²) it gives up, unconverged, once the fit's
-/// fitness (as `IcpResult` measures it, over this iteration's pairs) can no longer get under it: even improving every
-/// remaining iteration at its mean rate since it settled, it would still end above `fail_fitness`. A fit settles once a
-/// step moves the source points under the inlier distance: one seeded metres off scores worse while it slides into place
-/// (judged while travelling, by its best step so far, huge's long loops seeded 5-50 m off gave up at iteration 2-4).
+/// `icp` that gives up when, extrapolating its improvement since settling, fitness cannot reach `fail_fitness` (m²).
 pub fn icp_with_early_stop(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
@@ -135,7 +123,6 @@ pub fn icp_with_early_stop(
     } else {
         Vec::new()
     };
-    // the source's centroid and RMS radius about it, for how far a step moves its points
     let centroid = source
         .iter()
         .fold([0.0f64; 3], |c, p| {
@@ -253,9 +240,7 @@ pub fn icp_with_early_stop(
     }
 }
 
-/// `icp_with_early_stop` against `target` voxelized at `resolution` (a coarser target is a cheaper search and fewer
-/// normals; at half the inlier distance every inlier still has a target point within it), the result's fitness and
-/// overlap then measured against the full target (`tree`) as the gate reads them. `resolution` 0 = the full target.
+/// `icp_with_early_stop` against `target` voxelized at `resolution` (0 = full), fitness re-measured on the full `tree`.
 #[allow(clippy::too_many_arguments)]
 pub fn icp_thinned(
     source: &[[f32; 3]],
@@ -283,16 +268,13 @@ pub fn icp_thinned(
 }
 
 impl IcpResult {
-    /// The overlapping points' mean squared distance to the target (the fitness without its division by the overlap):
-    /// a closure's variance on each axis, as LIO-SAM takes PCL's fitness score. On 200 Mid-360 closures with GT it
-    /// matched the real error (median real / claimed 0.94) and ranked right from wrong better than Censi or resampling.
+    /// Overlapping points' mean squared distance (m²), used as a closure's per-axis variance (as LIO-SAM does).
     pub fn inlier_mean_square(&self) -> f64 {
         self.fitness * self.overlap
     }
 }
 
-/// (fitness, overlap) of `points` against the tree's cloud; see `IcpResult`. Points with nothing nearby
-/// are places the target never saw, not misalignment, so only the overlapping ones are scored.
+/// (fitness, overlap) of `points` against the tree's cloud (see `IcpResult`); non-overlapping points are not scored.
 pub fn fit_quality(
     points: &[[f32; 3]],
     tree: &impl NearestIndex,
@@ -314,10 +296,7 @@ pub fn fit_quality(
     )
 }
 
-/// How sharply `points` (already moved by an alignment) sit on the tree's cloud: the share within `close` (m) of it,
-/// times how much the overlap (`fit_quality`) falls when the alignment is nudged `nudge_m` along x and y both ways and
-/// turned `nudge_deg` both ways about the points' centre. A wrong place that fits by chance (a floor, a long wall) fits
-/// about as well nudged; a right one does not.
+/// Share of aligned `points` within `close` (m) x how much overlap drops when nudged ±`nudge_m` in x/y and ±`nudge_deg`.
 pub fn sharpness(
     points: &[[f32; 3]],
     tree: &impl NearestIndex,
@@ -369,9 +348,7 @@ pub fn sharpness(
     near * drop.max(0.0)
 }
 
-/// A cloud's sensor noise and sample spacing, measured from the cloud on about 500 of its points: the noise is the median
-/// thickness (sqrt of the smallest covariance eigenvalue) of each point's 10 nearest neighbours, the spacing the median
-/// distance to its nearest neighbour.
+/// (median local thickness over 10-NN, median NN spacing) in meters, sampled on ~500 points.
 pub fn noise_and_spacing(cloud: &[[f32; 3]], tree: &impl NearestIndex) -> (f64, f64) {
     let step = (cloud.len() / 500).max(1);
     let (mut thickness, mut gaps) = (Vec::new(), Vec::new());
@@ -434,9 +411,7 @@ fn least_spread_direction(cloud: &[[f32; 3]], neighbours: &[(usize, f32)]) -> [f
     [vectors[0][0], vectors[1][0], vectors[2][0]]
 }
 
-/// What one target scan saw, in its sensor frame: the nearest return in each direction (a spherical range image), at
-/// the angular step that gives one bin per point of the scan over the full sphere. It depends on the scan alone, so a
-/// keyframe's is built once and shared (`RangeImage::at` places it at the keyframe's current pose).
+/// Sensor-frame spherical range image of a scan (nearest return per bin, ~one bin per point; 0 = no return).
 pub struct RangeBins {
     step: f64,
     azimuth_bins: usize,
@@ -497,22 +472,7 @@ impl RangeImage {
     fn bin(&self, q: &[f64; 3]) -> Option<(usize, f64)> {
         self.bins.bin(q)
     }
-    /// Whether this scan looked through world point `p`: it saw a return in p's direction farther than p by more than
-    /// the bin's own width there plus `width` (so a point on or behind the seen surface, or in a direction it never
-    /// returned from, does not count).
-    /// Whether this scan could have seen world point `p`: it has a return in p's direction no nearer than p (less the
-    /// bin width there plus `width`), so p lies on or in front of what it saw (the beam model's visible region).
-    pub fn sees(&self, p: &[f32; 3], width: f64) -> bool {
-        let q = mat3::mat_vec(
-            &self.world_to_sensor,
-            &mat3::sub(&p.map(|v| v as f64), &self.origin),
-        );
-        let Some((bin, range)) = self.bin(&q) else {
-            return false;
-        };
-        let surface = self.bins.ranges[bin] as f64;
-        surface > 0.0 && range <= surface + surface * self.bins.step + width
-    }
+    /// Whether this scan's return in `p`'s direction is farther than `p` by more than bin width + `width`.
     pub fn sees_through(&self, p: &[f32; 3], width: f64) -> bool {
         let q = mat3::mat_vec(
             &self.world_to_sensor,
@@ -526,17 +486,13 @@ impl RangeImage {
     }
 }
 
-/// `likelihood_ratio` over only the points the target can speak to: those within ICP's inlier distance of it, and those
-/// some target scan (`views`) looked straight through (seen-through space where the source has a surface is a misfit).
-/// A point no target scan saw, or that sits behind what they saw, says nothing either way.
-pub fn likelihood_ratio_visible(
+/// (mean log ratio/point, half-normal vs uniform-to-`reach`; points; width); `visible`: only inliers + seen-through points.
+pub fn likelihood_ratio(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
     target_tree: &impl NearestIndex,
     reach: f64,
-    inlier_squared_distance: f64,
-    views: &[RangeImage],
-    beam: bool,
+    visible: Option<(f64, &[RangeImage])>,
 ) -> (f64, usize, f64) {
     if source.len() < 3 || target.len() < 3 {
         return (f64::NEG_INFINITY, 0, f64::NAN);
@@ -554,73 +510,25 @@ pub fn likelihood_ratio_visible(
         .par_iter()
         .filter_map(|p| {
             let squared = target_tree.nearest(p)?.1 as f64;
-            // beam model: a point counts where a target scan could see it; otherwise matched points and seen-through ones
-            let counts = if beam {
-                views.iter().any(|v| v.sees(p, width))
-            } else {
-                squared <= inlier_squared_distance || views.iter().any(|v| v.sees_through(p, width))
+            let d = match visible {
+                Some((inlier_squared_distance, views)) => {
+                    if squared > inlier_squared_distance && !views.iter().any(|v| v.sees_through(p, width)) {
+                        return None;
+                    }
+                    squared.sqrt().min(reach)
+                }
+                None => Some(squared.sqrt()).filter(|&d| d < reach)?,
             };
-            if !counts {
-                return None;
-            }
-            let d = squared.sqrt().min(reach);
             Some(log_good_peak - d * d / (2.0 * width * width) - log_bad)
         })
         .collect();
     if ratios.is_empty() {
         return (f64::NEG_INFINITY, 0, width);
     }
-    (
-        ratios.iter().sum::<f64>() / ratios.len() as f64,
-        ratios.len(),
-        width,
-    )
+    (ratios.iter().sum::<f64>() / ratios.len() as f64, ratios.len(), width)
 }
 
-/// How much likelier the aligned `source`'s nearest-neighbour distances to `target` are if the two clouds see the same
-/// surfaces than if they do not, as the mean log likelihood ratio per point (nats). Aligned, a point sits a half-normal
-/// distance from its neighbour, of width hypot(both clouds' noise, the wider sample spacing / 2), measured from the
-/// clouds; not aligned, its distance is anything out to `reach` (the ICP match distance), uniformly. Points farther than
-/// `reach` say nothing either way. Returns (mean ratio, matched points, width); the ratio is -inf when nothing matched.
-pub fn likelihood_ratio(
-    source: &[[f32; 3]],
-    target: &[[f32; 3]],
-    target_tree: &KdTree,
-    reach: f64,
-) -> (f64, usize, f64) {
-    if source.len() < 3 || target.len() < 3 {
-        return (f64::NEG_INFINITY, 0, f64::NAN);
-    }
-    let source_tree = KdTree::build(source);
-    let (source_noise, source_gap) = noise_and_spacing(source, &source_tree);
-    let (target_noise, target_gap) = noise_and_spacing(target, target_tree);
-    let width = source_noise
-        .hypot(target_noise)
-        .hypot(source_gap.max(target_gap) / 2.0)
-        .max(f64::EPSILON);
-    let log_good_peak = (2.0 / (width * (2.0 * std::f64::consts::PI).sqrt())).ln();
-    let log_bad = (1.0 / reach).ln();
-    let ratios: Vec<f64> = source
-        .par_iter()
-        .filter_map(|p| {
-            let d = (target_tree.nearest(p)?.1 as f64).sqrt();
-            (d < reach).then(|| log_good_peak - d * d / (2.0 * width * width) - log_bad)
-        })
-        .collect();
-    if ratios.is_empty() {
-        return (f64::NEG_INFINITY, 0, width);
-    }
-    (
-        ratios.iter().sum::<f64>() / ratios.len() as f64,
-        ratios.len(),
-        width,
-    )
-}
-
-/// The small rotation and translation that best close each pair's gap along the target point's surface normal
-/// (point-to-plane, linearised: rows [p x n, n], gap (p - q).n), as a rotation matrix and translation. Directions no
-/// pair constrains (eigenvalues of the normal equations at rounding level) are left unmoved. None with too few pairs
-/// on a surface.
+/// Linearised point-to-plane step; unconstrained directions stay unmoved; None with < 6 pairs on a surface.
 fn plane_fit(
     pairs: &[Correspondence],
     target: &[[f32; 3]],
@@ -633,7 +541,7 @@ fn plane_fit(
             (neighbours.len() >= 3).then(|| least_spread_direction(target, &neighbours))
         })
     };
-    // the paired target points' normals, found in parallel (each is a 10-neighbour search); the sum below stays in order
+    // compute normals in parallel first; the sum below stays in order
     pairs.par_iter().for_each(|&(_, _, _, i)| {
         normal_of(i);
     });
@@ -687,8 +595,7 @@ fn plane_fit(
     Some((rotation, [step[3], step[4], step[5]]))
 }
 
-/// The rotation and translation that best map each pair's first point onto its second (Horn's
-/// quaternion method: the top eigenvector of a 4x4 built from the cross-covariance).
+/// Best rigid map of each pair's first point onto its second (Horn's quaternion method).
 fn rigid_fit(pairs: &[Correspondence]) -> (Mat3, Vec3) {
     let n = pairs.len() as f64;
     let mean = |pick: fn(&Correspondence) -> [f32; 3]| {
@@ -744,13 +651,10 @@ fn rigid_fit(pairs: &[Correspondence]) -> (Mat3, Vec3) {
     )
 }
 
-/// The `.icp` dump layout version, the file's last 4 bytes (`dump_icp`); a file without it is version 1.
+/// `.icp` dump layout version, the file's last 4 bytes; a file without it is version 1.
 pub const ICP_DUMP_VERSION: u32 = 2;
 
-/// Write an ICP's exact input and result to `<dir>/<source>_<target><suffix>.icp`: u32 source count, u32
-/// target count, f32 xyz points (source, then target), the rotation (row-major) and translation as f64,
-/// f64 fitness, u8 converged (version 1 ends here); then the initial guess's rotation (row-major) and translation as
-/// f64, u32 iterations, u8 stop (`IcpStop::code`), and u32 `ICP_DUMP_VERSION` last.
+/// Write an ICP's input and result (little-endian, layout in the body below) to `<dir>/<source>_<target><suffix>.icp`.
 #[allow(clippy::too_many_arguments)]
 pub fn dump_icp(
     dir: &str,

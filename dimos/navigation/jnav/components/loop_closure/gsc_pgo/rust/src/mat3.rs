@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Small dense linear algebra for the PGO core: 3x3 rotation / vector
-//! helpers and a cyclic-Jacobi symmetric eigensolver (also used for Horn's
-//! 4x4 quaternion matrix in the ICP transformation estimation).
+//! Small dense linear algebra: 3x3 rotation/vector helpers and a cyclic-Jacobi symmetric eigensolver (also 4x4).
 
 pub type Mat3 = [[f64; 3]; 3];
 pub type Vec3 = [f64; 3];
@@ -90,7 +88,6 @@ pub fn det(m: &Mat3) -> f64 {
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
 }
 
-/// Rotation about +z by `yaw` radians (Eigen `AngleAxisd(yaw, UnitZ())`).
 /// The inverse of `m` (adjugate over determinant), or None when it is singular.
 pub fn inverse(m: &Mat3) -> Option<Mat3> {
     let d = det(m);
@@ -105,13 +102,13 @@ pub fn inverse(m: &Mat3) -> Option<Mat3> {
         [c(1, 0, 2, 1) / d, -c(0, 0, 2, 1) / d, c(0, 0, 1, 1) / d],
     ])
 }
+/// Rotation about +z by `yaw` radians.
 pub fn rot_z(yaw: f64) -> Mat3 {
     let (s, c) = yaw.sin_cos();
     [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
 }
 
-/// Rotation matrix -> quaternion `[w, x, y, z]` (Shepperd's method, same
-/// branch structure as Eigen's converting constructor).
+/// Rotation matrix -> quaternion `[w, x, y, z]` (Shepperd's method, Eigen's branch structure).
 pub fn quat_from_mat(m: &Mat3) -> [f64; 4] {
     let trace = m[0][0] + m[1][1] + m[2][2];
     if trace > 0.0 {
@@ -171,9 +168,7 @@ pub fn mat_from_quat(q: &[f64; 4]) -> Mat3 {
     ]
 }
 
-/// Eigen `Quaterniond(r1).angularDistance(Quaterniond(r2))`:
-/// `2 * atan2(|vec(q1 * conj(q2))|, |w(q1 * conj(q2))|)` — the geodesic
-/// rotation angle between the two orientations, in radians.
+/// Geodesic rotation angle between two orientations, in radians (Eigen `angularDistance`).
 pub fn angular_distance(r1: &Mat3, r2: &Mat3) -> f64 {
     let q1 = quat_from_mat(r1);
     let q2 = quat_from_mat(r2);
@@ -187,10 +182,7 @@ pub fn angular_distance(r1: &Mat3, r2: &Mat3) -> f64 {
     2.0 * (dx * dx + dy * dy + dz * dz).sqrt().atan2(dw.abs())
 }
 
-/// Cyclic-Jacobi eigendecomposition of a symmetric N x N matrix. Returns
-/// (eigenvalues ascending, eigenvectors as columns of the returned matrix,
-/// i.e. `vectors[row][col]` with column `col` the eigenvector of
-/// `values[col]`). Robust for the 3x3/4x4 sizes used here.
+/// Symmetric N x N eigendecomposition: (values ascending, vectors) with column `vectors[..][i]` the vector of `values[i]`.
 #[allow(clippy::needless_range_loop)] // index-pair sweeps read clearer than iterators here
 pub fn jacobi_eigen<const N: usize>(mut a: [[f64; N]; N]) -> ([f64; N], [[f64; N]; N]) {
     let mut v = [[0.0; N]; N];

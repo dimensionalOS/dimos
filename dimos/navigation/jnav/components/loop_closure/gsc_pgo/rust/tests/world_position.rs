@@ -12,72 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Absolute position priors (`solve_with_priors`): a drifting square path with no loop closures, and noisy positions of
-//! some keyframes in world frames turned and shifted from the map.
+//! `solve_with_priors` world-position priors on a drifting closure-free square, in world frames rotated/shifted from the map.
 
-use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, Edge, PositionPrior, SolveConfig};
-use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
+use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, PositionPrior, SolveConfig};
+use dimos_gsc_pgo::mat3::{self, Vec3};
 
-const N: usize = 160;
-
-/// A 40 m square, a keyframe every metre: the true (yaw, position) of each.
-fn truth() -> Vec<(f64, Vec3)> {
-    (0..N)
-        .map(|k| {
-            let (side, along) = (k / 40, (k % 40) as f64);
-            let yaw = side as f64 * std::f64::consts::FRAC_PI_2;
-            let c = [[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]][side];
-            (
-                yaw,
-                [c[0] + along * yaw.cos(), c[1] + along * yaw.sin(), 0.0],
-            )
-        })
-        .collect()
-}
-
-/// Deterministic noise uniform on [-1, 1).
-fn noise(k: usize, salt: f64) -> f64 {
-    ((k as f64 * 12.9898 + salt * 78.233).sin() * 43758.5453).rem_euclid(1.0) * 2.0 - 1.0
-}
-
-/// Odometry along `truth` with zero-mean errors as large as it reports (heading ~1.1 deg, position 3 cm per step), which
-/// random-walk into metres of drift, and its dead-reckoned poses.
-fn odometry(truth: &[(f64, Vec3)]) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>) {
-    let (heading_sigma, step_sigma) = (0.02, 0.03);
-    // uniform on [-sqrt3 sigma, sqrt3 sigma] has standard deviation sigma
-    let u = |k: usize, salt: f64, sigma: f64| noise(k, salt) * 3f64.sqrt() * sigma;
-    let edges: Vec<Edge> = (1..N)
-        .map(|k| {
-            let ((yaw_a, a), (yaw_b, b)) = (truth[k - 1], truth[k]);
-            let step = mat3::mat_vec(&mat3::transpose(&mat3::rot_z(yaw_a)), &mat3::sub(&b, &a));
-            Edge {
-                from: k - 1,
-                to: k,
-                rotation: mat3::rot_z(yaw_b - yaw_a + u(k, 1.0, heading_sigma)),
-                translation: [
-                    step[0] + u(k, 2.0, step_sigma),
-                    step[1] + u(k, 3.0, step_sigma),
-                    step[2],
-                ],
-                variances: [
-                    1e-6,
-                    1e-6,
-                    heading_sigma.powi(2),
-                    step_sigma.powi(2),
-                    step_sigma.powi(2),
-                    1e-6,
-                ],
-            }
-        })
-        .collect();
-    let (mut rotations, mut positions) = (vec![mat3::identity()], vec![[0.0; 3]]);
-    for e in &edges {
-        let (r, p) = (rotations[e.from], positions[e.from]);
-        rotations.push(mat3::mat_mul(&r, &e.rotation));
-        positions.push(mat3::add(&p, &mat3::mat_vec(&r, &e.translation)));
-    }
-    (edges, rotations, positions)
-}
+mod common;
+use common::{odometry, truth, N};
 
 /// Fixes of `keyframes` in frame `frame` (the map turned by `yaw` and shifted by `shift`) with `sigma` noise.
 fn fixes(
@@ -144,8 +85,7 @@ fn world_positions_pull_a_drifting_path_onto_the_world() {
         &config(),
     );
 
-    // the map -> world alignment is read at keyframe 0, whose own heading the odometry leaves uncertain, so it is not
-    // compared with the truth; where every keyframe lands in the world is
+    // the alignment itself is not compared with the truth (keyframe 0's heading is uncertain); keyframe placement is
     let &(frame, yaw, shift) = solution
         .world_alignment
         .first()
@@ -184,8 +124,7 @@ fn world_positions_pull_a_drifting_path_onto_the_world() {
 fn two_world_frames_each_get_their_own_alignment() {
     let truth = truth();
     let (edges, rotations, positions) = odometry(&truth);
-    // GPS-like over the whole loop (frame 0) and a precise mocap volume over the first side only (frame 1), in frames
-    // turned and shifted differently
+    // GPS-like fixes over the whole loop (frame 0), precise mocap over the first side only (frame 1)
     let (gps_yaw, gps_shift) = (0.7, [100.0, 50.0, 3.0]);
     let (mocap_yaw, mocap_shift) = (-1.2, [-20.0, 5.0, 1.0]);
     let mut priors = fixes(&truth, (0..N).step_by(10), 0, gps_yaw, gps_shift, 0.5);
@@ -223,8 +162,7 @@ fn two_world_frames_each_get_their_own_alignment() {
     };
     let relative_yaw = mocap_fit - gps_fit;
     let yaw_error = wrap(relative_yaw - (mocap_yaw - gps_yaw));
-    // the translation is defined at the GPS origin, ~100 m away, where any yaw error is magnified; judge it where the
-    // frames overlap: a point in the mocap volume, carried GPS -> mocap by the fitted alignments, vs its true mocap coordinates
+    // judge translation inside the mocap volume, since at the far-off GPS origin any yaw error is magnified
     let fit_relative_t = mat3::sub(&mocap_t, &mat3::mat_vec(&mat3::rot_z(relative_yaw), &gps_t));
     let inside = truth[20].1;
     let in_gps = mat3::add(&mat3::mat_vec(&mat3::rot_z(gps_yaw), &inside), &gps_shift);

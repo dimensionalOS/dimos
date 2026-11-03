@@ -21,8 +21,7 @@ const SIDE: usize = 40;
 
 type Poses = Vec<(Mat3, Vec3)>;
 
-/// A square walk of 4 * SIDE keyframes, 1 m apart, back to the start: the true poses, and the
-/// odometry's, which over-turns every keyframe by `yaw_bias`.
+/// A closed square walk of 4 * SIDE 1 m steps: true poses, and odometry over-turning each keyframe by `yaw_bias`.
 fn square(yaw_bias: f64) -> (Poses, Poses) {
     let (mut truth, mut odometry) = (Vec::new(), Vec::new());
     let (mut true_yaw, mut drift_yaw) = (0.0f64, 0.0f64);
@@ -100,9 +99,7 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
     );
 }
 
-/// On an odometry chain (no closures) a keyframe's position uncertainty relative to the newest one is the chain's noise
-/// between them: each step's translation noise, plus each step's rotation noise swinging the newest keyframe by its lever
-/// arm. The solver's Takahashi readout must give the same.
+/// On a closure-free chain, the solver's relative position covariance must equal the summed per-step odometry noise.
 #[test]
 fn relative_covariance_of_a_chain_is_its_odometry_error_estimate() {
     let (translation_variance, rotation_variances) = (1e-4, [1e-6, 1e-6, 3e-6]);
@@ -184,8 +181,7 @@ fn relative_covariance_of_a_chain_is_its_odometry_error_estimate() {
     }
 }
 
-/// A square walk of 4 * SIDE keyframes plus `revisit` more along its first side again, whose odometry's yaw takes a
-/// random walk of `yaw_sd` rad per keyframe (a fixed seed): the true poses and the odometry's.
+/// The square plus `revisit` steps back along its first side, odometry yaw random-walking `yaw_sd` rad per keyframe.
 fn revisited_square(yaw_sd: f64, revisit: usize) -> (Poses, Poses) {
     let mut seed = 0x2545F4914F6CDD1Du64;
     let mut gauss = || {
@@ -223,9 +219,7 @@ fn revisited_square(yaw_sd: f64, revisit: usize) -> (Poses, Poses) {
     (truth, odometry)
 }
 
-/// The revisited square with its five true closures, then nine look-alikes that agree with each other and with the
-/// dead-reckoned graph (they claim the revisit is where the drifted odometry puts it, as a burst of wrong matches dragged
-/// along by the drift does). A solve, starting from the odometry, keeps the nine and drops the true five.
+/// Solves the revisited square with 5 true closures plus 9 look-alikes that agree with the drifted odometry.
 fn look_alike_square() -> (Vec<f64>, f64, f64) {
     let (yaw_sd, revisit, closure_var) = (0.003, 5, 1e-4);
     let (truth, odometry) = revisited_square(yaw_sd, revisit);
@@ -274,9 +268,7 @@ fn a_cold_solve_follows_a_larger_group_of_look_alikes_that_agree_with_the_drift(
     );
 }
 
-/// A circle driven twice whose second lap's odometry turns a random degree off each step (a heading drift the
-/// stated yaw noise covers): two true closures between the laps agree around their cycle, a closure to the wrong
-/// place agrees with neither.
+/// Two laps of a circle with +-1 deg/step yaw drift on lap two: two true closures agree, a misplaced one does not.
 #[test]
 fn closures_agree_around_a_drifting_cycle() {
     let (steps_per_lap, radius) = (200, 20.0);
@@ -347,7 +339,7 @@ fn closures_agree_around_a_drifting_cycle() {
         consistent_closures(&closures, &odometry, &config),
         vec![true, true, false]
     );
-    // at a tenth of the yaw variance the drift is out of reach, so the true pair disagrees too
+    // at a hundredth of the yaw variance the drift is out of reach, so the true pair disagrees too
     let tight: Vec<Edge> = odometry
         .iter()
         .map(|e| Edge {

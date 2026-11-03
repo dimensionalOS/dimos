@@ -12,30 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The closure search, a two-stage pipeline of logical-execution-time jobs on worker pools: every scan-context candidate
-//! and retry alternative waits in a priority buffer (`sc_buffer_size`, the most similar first, ties by arrival; the
-//! least similar dropped when it overflows); each fast-match worker (`fast_match_workers`, one job at a time logically)
-//! takes the best as it frees, at its job's landing. A fast match decides a clear pass or fail; a match inside the
-//! uncertainty range enters the verification buffer at its landing (`verification_buffer_slots`, the highest single-scan
-//! confidence ratio first, ties by dispatch; the lowest dropped when it overflows), for a verification worker
-//! (`verification_workers`, one job at a time logically) to take as it frees: its extension rounds and their yank
-//! verdict, one job that counts each round's estimate as the round starts (each round's continue-or-stop reads only the
-//! job's own inputs). A job reads only its snapshot (taken at its dispatch), so what an in-flight job finds never
-//! reaches another until it lands.
-//!
-//! Deterministic mode (`Config::mode`): a job lands at its dispatch + `ceil(estimate)` advancing scans, the due ones in
-//! due-scan order (ties by dispatch order), so which jobs run and when their results land does not depend on the
-//! machine's speed. Fast mode: a job lands as soon as it has finished.
+//! Closure search as two stages of logical-execution-time jobs: scan-context buffer -> fast match -> (if uncertain)
+//! verification buffer -> rounds. Jobs land at dispatch + ceil(estimate) scans (deterministic) or on finish (fast).
 
 use crate::gsc_pgo::{ClosureSearch, ClosureSearchResult, GscPgo, SearchStage};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
-/// What a search has reported: the extension rounds it has started, and its outcome once it has finished.
+/// Extension rounds started, their summed estimates (scans), and the outcome once finished.
 #[derive(Default)]
 struct ProgressState {
     rounds: usize,
-    /// The extension rounds' estimates (scans), each counted as its round starts.
     round_scans: f64,
     stage: Option<SearchStage>,
 }
@@ -55,7 +42,6 @@ impl SearchProgress {
         drop(state);
         self.changed.notify_all();
     }
-    /// The rounds started and their estimates' sum (scans).
     fn rounds(&self) -> (usize, f64) {
         let state = self.state.lock().expect("search progress");
         (state.rounds, state.round_scans)
@@ -64,7 +50,7 @@ impl SearchProgress {
         self.state.lock().expect("search progress").stage = Some(stage);
         self.changed.notify_all();
     }
-    /// The rounds started and whether it has finished.
+    /// (rounds started, finished).
     fn snapshot(&self) -> (usize, bool) {
         let state = self.state.lock().expect("search progress");
         (state.rounds, state.stage.is_some())
@@ -119,38 +105,32 @@ impl SearchPool {
     }
 }
 
-/// What a job runs: a fast match or a verification.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum JobKind {
     FastMatch,
     Verification,
 }
 
-/// A dispatched job and its schedule: its dispatch number, the advancing-scan count (`GscPgo::advancing_scans`) and
-/// recorded time at its dispatch, its estimate at dispatch (scans, before rounding up; each extension round adds
-/// `verification_scans_per_round` as it starts), and the seconds
-/// of the search before this job (a verification's fast match), left out of its own.
+/// A dispatched job: dispatch number, advancing scans and data time at dispatch, raw estimate, earlier stage's seconds.
 pub struct SearchJob {
     kind: JobKind,
     progress: Arc<SearchProgress>,
     order: u64,
     dispatch_scan: usize,
-    /// `scans_seen` at dispatch, for the diagnostics (whose scan indices count every scan).
+    /// `scans_seen` at dispatch, for diagnostics.
     dispatch_scans_seen: usize,
     dispatch_time: f64,
     estimate_raw_scans: f64,
     earlier_s: f64,
-    /// Its hold passed while it was still running, in a run that does not wait (live: it lands late).
+    /// Its hold passed while still running in a non-waiting run (lands late).
     late: std::cell::Cell<bool>,
 }
 
 impl SearchJob {
-    /// The estimate (scans, before rounding up) with the extension rounds started so far (each round's own estimate,
-    /// counted as it starts: `verification_scans_per_round` + `verification_scans_per_round_point` x its source and
-    /// target points); `rounds` is the count those were read at.
+    /// Raw estimate (scans) including verification rounds started; `rounds` is the count the caller read.
     fn estimate_raw_scans(&self, rounds: usize, config: &crate::gsc_pgo::Config) -> f64 {
         let (counted, round_scans) = self.progress.rounds();
-        // rounds started after `rounds` was read only raise the hold, never lower it, so reading the newer sum is safe
+        // newer rounds only raise the hold, so reading the newer sum is safe
         let round_scans = if counted >= rounds { round_scans } else { 0.0 };
         let _ = config;
         match self.kind {
@@ -158,25 +138,20 @@ impl SearchJob {
             JobKind::Verification => self.estimate_raw_scans + round_scans,
         }
     }
-    /// The scans after dispatch it holds (`hold_scans`).
     fn estimate_scans(&self, rounds: usize, config: &crate::gsc_pgo::Config) -> usize {
         hold_scans(self.estimate_raw_scans(rounds, config), config)
     }
 }
 
 impl GscPgo {
-    /// One keyframe's closure search: land the jobs that may land (deterministic: their holds passed, a lockstep replay
-    /// waiting for one due then when `wait`; fast: finished), then propose this keyframe's match into the scan-context
-    /// buffer and fill the free workers from the buffers. Every proposal is buffered whatever the load (under a compute
-    /// shortage jobs overshoot, or the buffers drop their least promising).
+    /// Per keyframe: land due jobs (`wait`: lockstep), buffer this keyframe's proposal, and fill free workers.
     pub fn step_closure_search(&mut self, wait: bool) {
         self.land_due_closure_searches(wait, false);
         self.propose_closure();
         self.buffer_waiting_proposal();
         self.fill_workers();
     }
-    /// Land every job still out and run every buffered match whatever its estimate, waiting for each (the end of the
-    /// data).
+    /// End of data: run and land every outstanding and buffered job, waiting for each.
     pub fn land_remaining_closure_search(&mut self) {
         loop {
             if !self.closure_searches.is_empty() {
@@ -188,8 +163,7 @@ impl GscPgo {
             }
         }
     }
-    /// Searches (whole, or fast matches) and verifications that ran past the data time their estimate spanned, the
-    /// seconds a lockstep replay waited on jobs whose estimate had passed, and what the two-stage buffers dropped.
+    /// Fast matches that ran past the data time their estimate spanned.
     pub fn closure_search_overshoots(&self) -> usize {
         self.closure_search_overshoots
     }
@@ -202,7 +176,7 @@ impl GscPgo {
     pub fn buffer_drops(&self) -> (usize, usize) {
         (self.sc_dropped, self.verification_dropped)
     }
-    /// Whether a closure search is running, held for its estimate or buffered.
+    /// Whether a closure search is running, held or buffered.
     pub fn closure_search_running(&self) -> bool {
         !self.closure_searches.is_empty()
             || !self.sc_buffer.is_empty()
@@ -211,19 +185,17 @@ impl GscPgo {
     fn jobs_of(&self, kind: JobKind) -> usize {
         self.closure_searches.iter().filter(|job| job.kind == kind).count()
     }
-    /// The two-stage search's waiting proposal (this keyframe's match, or a rejected search's next alternative) goes into
-    /// the scan-context buffer.
+    /// Move the waiting proposal (new match or a rejected search's next alternative) into the scan-context buffer.
     fn buffer_waiting_proposal(&mut self) {
         if let Some(proposal) = self.waiting_proposal.take() {
             self.sc_arrivals += 1;
             self.sc_buffer.push((proposal, self.sc_arrivals));
         }
     }
-    /// The two-stage search's free workers take the best buffered entries, then each buffer drops its least promising
-    /// past its size.
+    /// Free workers take the best buffered entries, then each buffer drops its worst past its size.
     fn fill_workers(&mut self) {
         while self.jobs_of(JobKind::FastMatch) < self.config.fast_match_workers && !self.sc_buffer.is_empty() {
-            // the most similar candidate (the lowest scan-context distance), ties by arrival
+            // lowest scan-context distance, ties by arrival
             let best = (0..self.sc_buffer.len())
                 .min_by(|&a, &b| {
                     let (pa, oa) = (&self.sc_buffer[a].0, self.sc_buffer[a].1);
@@ -263,8 +235,7 @@ impl GscPgo {
             self.finish_closure_search(ClosureSearchResult::dropped(*pending));
         }
     }
-    /// The verification buffer's most (`best`) or least promising entry: by the single scan's confidence ratio, ties
-    /// by dispatch (the earlier first).
+    /// Index of the best (or worst) verification entry by confidence ratio, earlier dispatch winning ties.
     fn verification_rank(&self, best: bool) -> usize {
         let key = |i: usize| (self.verification_buffer[i].0.ratio, std::cmp::Reverse(self.verification_buffer[i].1));
         let cmp = |a: &usize, b: &usize| {
@@ -277,7 +248,6 @@ impl GscPgo {
             (0..self.verification_buffer.len()).min_by(cmp).expect("not empty")
         }
     }
-    /// Dispatch the waiting proposal's fast match onto the fast-match pool.
     fn dispatch_closure_search(&mut self, kind: JobKind) {
         let Some(mut search) = self.begin_closure_search() else {
             return;
@@ -296,7 +266,7 @@ impl GscPgo {
         let order = self.search_order;
         self.push_job(kind, progress, order, estimate_raw_scans, 0.0);
     }
-    /// Dispatch a buffered match's verification onto the verification pool (`order`: its fast match's dispatch number).
+    /// `order`: its fast match's dispatch number.
     fn dispatch_verification(&mut self, mut pending: Box<crate::gsc_pgo::PendingExtension>, order: u64) {
         let progress = Arc::new(SearchProgress::default());
         pending.search.progress = Some(progress.clone());
@@ -330,16 +300,14 @@ impl GscPgo {
             late: std::cell::Cell::new(false),
         });
     }
-    /// Whether `job`'s hold has passed with `rounds` rounds started: its scans (`hold_scans`).
+    /// Whether `job`'s hold has passed with `rounds` rounds started.
     fn hold_passed(&self, job: &SearchJob, rounds: usize) -> bool {
         self.advancing_scans >= job.dispatch_scan + job.estimate_scans(rounds, &self.config)
     }
-    /// Land the jobs whose hold has passed (all, when `now`) and that have finished, waiting for one to finish or report
-    /// another extension round when `wait`, in due order (ties by dispatch order, a fast match before its own
-    /// verification never being out at once). Returns how many landed.
+    /// Land finished jobs whose hold passed (all if `now`; `wait` blocks on unfinished) in due order; returns count.
     fn land_due_closure_searches(&mut self, wait: bool, now: bool) -> usize {
         let hold = self.config.deterministic() && !now;
-        // each finished job whose hold has passed, by its due scan, dispatch number and kind
+        // (due scan, dispatch number, kind)
         let mut due: Vec<(usize, u64, u8)> = Vec::new();
         let mut waited_s = 0.0;
         for job in &self.closure_searches {
@@ -361,7 +329,7 @@ impl GscPgo {
                     job.late.set(hold);
                     break;
                 }
-                // the replay ran ahead of the job: wait for it to finish or start another round (which moves its hold)
+                // replay is ahead: wait for it to finish or start another round (which moves its hold)
                 let started = std::time::Instant::now();
                 job.progress.wait_past(seen);
                 waited_s += started.elapsed().as_secs_f64();
@@ -383,8 +351,7 @@ impl GscPgo {
         self.trim_search_scan_times();
         due.len()
     }
-    /// Apply a finished job: its schedule into its diagnostics, an overshoot logged and counted, and its result (or, for
-    /// a fast match inside the uncertainty range, the match into the verification buffer).
+    /// Apply a finished job: record schedule and overshoot, then finish it or buffer it for verification.
     fn land_closure_search(&mut self, job: SearchJob) {
         let (rounds, _) = job.progress.snapshot();
         let estimate_scans = job.estimate_scans(rounds, &self.config);
@@ -399,15 +366,14 @@ impl GscPgo {
             SearchStage::Done(result) => &mut result.diag,
             SearchStage::Extend(pending) => &mut pending.diag,
         };
-        // this job's own seconds: the lookup and the search (a fast match's, inside the uncertainty range, until its hand-off)
+        // this job's own seconds (lookup + search, up to a hand-off)
         let lookup = if job.kind == JobKind::Verification || !diag.cost_lookup_s.is_finite() {
             0.0
         } else {
             diag.cost_lookup_s
         };
         let seconds = lookup + handed_on_s.unwrap_or(diag.cost_search_s - job.earlier_s);
-        // the data time from dispatch to the scan its hold ended at (none when the data ended first): advancing scan n is
-        // `search_scan_times[n - search_scan_base]`
+        // data time from dispatch to the hold's end scan (None if data ended first)
         let due = (job.dispatch_scan + estimate_scans).saturating_sub(self.search_scan_base);
         let spanned = self
             .search_scan_times
@@ -421,7 +387,7 @@ impl GscPgo {
             seconds,
             estimate_raw_scans,
         );
-        // its own work ran past the data time its hold spanned, or (live) it was still running, queued or not, when due
+        // ran past the data time its hold spanned, or was still running when due
         let overshoot = self.config.deterministic()
             && (spanned.is_some_and(|spanned| seconds > spanned) || job.late.get());
         if job.kind == JobKind::Verification {
@@ -462,7 +428,6 @@ impl GscPgo {
         }
         match stage {
             SearchStage::Done(result) => self.finish_closure_search(result),
-            // inside the uncertainty range: waits for a verification worker, ranked by its confidence ratio
             SearchStage::Extend(pending) => self.verification_buffer.push((pending, job.order)),
         }
     }
@@ -472,15 +437,12 @@ impl GscPgo {
             self.search_scan_times.clear();
             return;
         };
-        // the first time kept is advancing scan oldest + 1
         while self.search_scan_base <= oldest && !self.search_scan_times.is_empty() {
             self.search_scan_times.pop_front();
             self.search_scan_base += 1;
         }
     }
-    /// The search's estimated cost at dispatch (seconds): the scan-context lookup (none for a retry), building the
-    /// source scan and single target submap, the degeneracy check, the single ICP at its most iterations, and the gates.
-    /// Returns it with the source and target points it counted.
+    /// Fast-match estimate (raw scans) at dispatch, with the source and target points it counted.
     fn fast_match_estimate_raw_scans(&self, search: &ClosureSearch) -> (f64, usize, usize) {
         let config = &self.config;
         let resolution = config.submap_resolution;
@@ -498,7 +460,7 @@ impl GscPgo {
             .map(points)
             .sum::<usize>();
         let (source, target) = (source_points.max(1) as f64, target_points.max(2) as f64);
-        // the scan-context lookup grows with the map (none for a retry, which reuses its keyframe's)
+        // lookup grows with the map (none for a retry)
         let lookup = if search.diag.cost_lookup_s > 0.0 {
             config.deterministic_config.fast_match_scans_per_keyframe * search.diag.map_keyframes as f64
         } else {
@@ -510,12 +472,11 @@ impl GscPgo {
             + config.deterministic_config.fast_match_scans_per_source_point * source;
         (scans, source_points, target_points)
     }
-    /// The newest advancing scan's recorded time (`advancing_scans`; -inf before any).
+    /// Newest advancing scan's data time (-inf before any).
     pub(crate) fn newest_scan_time(&self) -> f64 {
         self.newest_advancing_time.unwrap_or(f64::NEG_INFINITY)
     }
-    /// Note a landed job's measured scans (its seconds x the scan rate so far, by recorded times) over its estimate
-    /// (scans, before rounding up) (`runtime_profile`); never read by a decision.
+    /// Record measured scans (seconds x scan rate) / raw estimate for `runtime_profile`; diagnostics only.
     pub(crate) fn record_job_ratio(&mut self, kind: &'static str, seconds: f64, estimate_raw_scans: f64) {
         let rate = match self.first_advancing_time {
             Some(first) if self.newest_scan_time() > first => {
@@ -527,13 +488,7 @@ impl GscPgo {
             self.job_ratios.push((kind, seconds * rate / estimate_raw_scans));
         }
     }
-    /// The coefficients this run measured, as a config block: each LET's coefficients scaled by the 99th percentile of
-    /// its jobs' measured scans over their estimates (an upper bound on what this machine needed; nothing reads it), with
-    /// that ratio and the jobs counted per LET. A whole search (one job per search) measures the fast-match and
-    /// verification coefficients together.
-    /// The `deterministic_config` this run suggests: each LET's coefficients scaled by its 99th-percentile measured /
-    /// estimated scans (a LET with no jobs keeps its configured coefficients; the solve's exponents are kept), ready to
-    /// paste; diagnostics only.
+    /// `deterministic_config` with each LET's coefficients scaled by its p99 measured/estimated ratio (diagnostics).
     pub fn suggested_deterministic_config(&self) -> crate::gsc_pgo::DeterministicConfig {
         let mut suggested = self.config.deterministic_config.clone();
         for (_, ratio, _, coefficients) in self.runtime_profile() {
@@ -596,7 +551,7 @@ impl GscPgo {
         groups
             .into_iter()
             .map(|(name, kinds, coefficients)| {
-                // two-stage jobs are timed by kind; with one job per search, the whole search times both groups
+                // fall back to whole-search timings when no per-stage ratios exist
                 let two_stage = self.job_ratios.iter().any(|(k, _)| *k == "fast_match" || *k == "verification");
                 let kinds: Vec<&str> = match name {
                     "fast_match" | "verification" if !two_stage => vec!["search"],
@@ -618,7 +573,7 @@ impl GscPgo {
     }
 }
 
-/// The advancing scans a logical-execution-time job holds: its estimate rounded up, at least one.
+/// Scans a job holds: its estimate rounded up, at least one.
 pub(crate) fn hold_scans(estimate_raw_scans: f64, _config: &crate::gsc_pgo::Config) -> usize {
     if estimate_raw_scans.is_finite() {
         (estimate_raw_scans.ceil() as usize).max(1)
@@ -627,7 +582,7 @@ pub(crate) fn hold_scans(estimate_raw_scans: f64, _config: &crate::gsc_pgo::Conf
     }
 }
 
-/// One `runtime_profile` row: a job kind, its 99th-percentile seconds, its count and its estimate's terms.
+/// `runtime_profile` row: job kind, p99 measured/estimated ratio, job count, suggested coefficients.
 pub type RuntimeProfileRow = (&'static str, f64, usize, Vec<(&'static str, f64)>);
-/// A `runtime_profile` job kind, the timing keys it sums and its estimate's terms.
+/// Job kind, the timing keys it pools, and its coefficients.
 type ProfileGroup = (&'static str, &'static [&'static str], Vec<(&'static str, f64)>);

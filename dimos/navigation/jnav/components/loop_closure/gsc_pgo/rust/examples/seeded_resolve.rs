@@ -12,13 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Replay a finished pgo-eval run's solves offline, each from scratch or seeded from the one before, so the seeded
-//! solve (`solve_seed_from_accepted`, `solve_seed_gnc_verdicts`) can be judged in seconds: its raw keyframe poses
-//! (`a.kf`) and committed closures (`a.json`, in commit order) are solved after every `step` closures, over the
-//! keyframes up to the newest closure's source, three ways: from the odometry, seeded with the previous solve's poses
-//! (the keyframes since riding its newest correction; taken only where they already fit), and with those poses plus
-//! its closure verdicts. Prints one JSON line
-//! per solve (seconds, GNC iterations, kept closures, largest position gap to the unseeded solve) and a summary.
+//! Replays a pgo-eval run's solves every `step` closures, unseeded vs seeded (poses / poses+verdicts); JSON line per solve.
 //! usage: seeded_resolve <run dir> [step, 1]
 
 use dimos_gsc_pgo::big_picture_fit::{motion_variances, solve, Edge, Solution, SolveConfig};
@@ -32,7 +26,7 @@ struct Chain {
 }
 
 fn main() {
-    // the solve's trace (GNC iterations) is only kept with a solve log set; solve never writes it
+    // the solve's trace (GNC iterations) is only kept when GSC_SOLVE_LOG is set
     if std::env::var_os("GSC_SOLVE_LOG").is_none() {
         std::env::set_var("GSC_SOLVE_LOG", "/dev/null");
     }
@@ -114,7 +108,7 @@ fn main() {
             let (mut seed_start, mut seed_closure_weights) = (Vec::new(), Vec::new());
             if way > 0 {
                 if let Some((before, previous)) = &chain.previous {
-                    // the keyframes the previous solve placed where it put them, the rest riding its newest correction
+                    // previously solved keyframes where it put them, newer ones shifted by its newest correction
                     let last = before - 1;
                     let ride_rotation =
                         mat3::mat_mul(&previous.rotations[last], &mat3::transpose(&poses[last].0));

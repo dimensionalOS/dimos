@@ -12,17 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native Rust PGO module on top of the `dimos_module` framework (config
-//! arrives as stdin JSON).
-//!
-//! Structure:
-//! - LCM handlers stash the latest odometry and pair each lidar scan with it (CloudWithPose).
-//! - A worker thread, woken by the callbacks, feeds scans into GscPgo oldest-first and publishes:
-//!   corrected_odometry (offset-corrected pose), tf (the map->odom correction), pose_graph (a
-//!   packed record per keyframe), loop_closure_event (a packed record per keyframe a solve moved),
-//!   closure_edges (each closure candidate's lifecycle), debug_log (JSON debugging numbers). Closure
-//!   searches and pose-graph solves run on their own threads; publishes hop back onto the tokio
-//!   runtime via a captured Handle.
+//! Native PGO module (`dimos_module`): LCM handlers pair scans with the latest odometry; a worker thread feeds GscPgo
+//! oldest-first and publishes the corrected odometry, tf, graph records and debug_log.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,15 +51,15 @@ macro_rules! config {
 }
 
 config! {
-    // `map_frame`, not `frame_id`: the Python coordinator strips base-config field names from the config
+    // not `frame_id`: the Python coordinator strips base-config field names
     map_frame: String,
     child_frame_id: String,
     body_frame: String,
-    // where each pose graph snapshot's keyframes go, for offline checks; empty for never
+    // keyframe dump file for offline checks ("" = none)
     dump_path: String,
-    // bounded scan FIFO depth for spikes; overflow drops all but the newest scan (<= 0 = unbounded)
+    // scan FIFO depth; overflow keeps only the newest scan (<= 0 = unbounded)
     max_scan_queue: i32,
-    // threads closure search and solves may use, leaving the other cores to the rest of the robot (0 = every core)
+    // rayon threads for closure search and solves (0 = every core)
     worker_threads: usize,
     ;
     mode: dimos_gsc_pgo::gsc_pgo::Mode,
@@ -182,9 +173,9 @@ struct WorldFix {
 struct SharedState {
     /// World-position fixes not yet handed to the pose graph.
     world_fixes: Vec<WorldFix>,
-    /// Each world frame's name, its index the frame id the pose graph knows it by.
+    /// World frame names; index = frame id in the pose graph.
     world_frames: Vec<String>,
-    /// Landmark sightings not yet handed to the pose graph, and each landmark's name (its index the id).
+    /// Landmark sightings not yet handed to the pose graph, and landmark names (index = id).
     landmark_factors: Vec<LandmarkFix>,
     landmark_names: Vec<String>,
     latest_odom: Option<OdomSample>,
@@ -192,9 +183,9 @@ struct SharedState {
     last_message_time: f64,
     /// Bounded scan FIFO.
     cloud_buffer: VecDeque<CloudWithPose>,
-    /// A background pose-graph solve finished and waits to be adopted.
+    /// A background solve finished and waits to be adopted.
     solve_finished: bool,
-    /// Whether the scans' frame was already found to be a fixed frame (warned once).
+    /// Fixed-frame scan warning already shown.
     fixed_frame_warned: bool,
 }
 
@@ -216,44 +207,32 @@ struct GscPgoModule {
     #[input(decode = Odometry::decode, handler = on_odometry)]
     odometry: Input<Odometry>,
 
-    // A sensor's position in a fixed world frame (GPS, mocap, ...): header.frame_id names the world frame,
-    // child_frame_id the sensor's mount (its offset from body_frame comes from tf), pose.covariance's xyz block (m²)
-    // its uncertainty. Orientation and twist are ignored.
+    // World-frame position fix (GPS, mocap): frame_id = world frame, child_frame_id = sensor mount, xyz cov in m².
     #[input(decode = Odometry::decode, handler = on_coordinate_factor)]
     coordinate_factor: Input<Odometry>,
 
-    // A landmark seen by a sensor (a camera's bearing with a rough range, a reflector, another robot's landmark):
-    // header.frame_id is the sensor (placed on the body through tf), child_frame_id names the landmark (every sighting
-    // with that name is of the same fixed pose), pose.pose is its pose in the sensor's frame and pose.covariance that
-    // pose's uncertainty there; a dimension whose variance is not a positive finite number (ROS's -1, a huge value works
-    // too) is unknown, so a reflector or a ranged bearing is a sighting whose rotation is unknown, and a zero
-    // quaternion leaves the rotation unknown too. Twist is ignored.
+    // Landmark sighting: frame_id = sensor, child_frame_id = name; non-positive variance or zero quaternion = unknown.
     #[input(decode = Odometry::decode, handler = on_landmark_factor)]
     landmark_factor: Input<Odometry>,
 
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
 
-    // The map -> odometry correction.
     #[tf]
     tf: Tf,
 
-    // One packed record per keyframe at its current pose.
     #[output(encode = PointCloud2::encode)]
     pose_graph: Output<PointCloud2>,
 
-    // One packed record per keyframe a solve moved: its pose before, and the delta.
+    // per keyframe a solve moved: its pose before, and the delta
     #[output(encode = PointCloud2::encode)]
     loop_closure_event: Output<PointCloud2>,
 
-    // Each closure candidate's lifecycle as it happens (proposed, gated, GNC votes, accepted,
-    // rejected, applied) with both keyframes' current positions, for drawing closure edges.
+    // closure candidate lifecycle events with both keyframes' positions, for drawing closure edges
     #[output(encode = PointCloud2::encode)]
     closure_edges: Output<PointCloud2>,
 
-    // Debugging numbers as JSON lines tagged with "kind" and "ts": "pressure" (every pressure_check_frequency-th scan),
-    // "closure" (every closure search), "keyframe" (queue, threads, stage seconds), "solve" (each adopted solve). Pressure: {"ts", "unresolved_loop_probability", "expected_overlaps",
-    // "most_likely_keyframe", "most_likely_probability"} (see gsc_pgo::loop_overlap).
+    // JSON lines tagged "kind" (pressure, closure, keyframe, solve, odometry_drift) and "ts"
     #[output(encode = std_msgs::String::encode)]
     debug_log: Output<std_msgs::String>,
 
@@ -261,8 +240,7 @@ struct GscPgoModule {
     config: Config,
 
     state: Shared<SharedState>,
-    /// Signaled by callbacks when new work (a scan or constraint) is enqueued,
-    /// so the worker wakes immediately instead of polling.
+    /// Signaled by callbacks when new work is enqueued.
     wake: Arc<Condvar>,
     worker: Option<WorkerHandle>,
 }
@@ -288,7 +266,6 @@ impl GscPgoModule {
             stop: Arc::clone(&stop),
             wake: Arc::clone(&self.wake),
         };
-        // a dedicated OS thread owns the GscPgo for the module's whole life
         let thread = std::thread::Builder::new()
             .name("gsc-pgo-worker".into())
             .spawn(move || worker.run())
@@ -300,14 +277,11 @@ impl GscPgoModule {
     async fn stop_worker(&mut self) {
         if let Some(WorkerHandle { stop, thread }) = self.worker.take() {
             stop.store(true, Ordering::Relaxed);
-            // Wake the worker out of its Condvar wait so it observes the stop
-            // flag promptly instead of sitting until the wait times out.
             self.wake.notify_all();
             let _ = tokio::task::spawn_blocking(move || thread.join()).await;
         }
     }
 
-    /// Handle an incoming odometry message: record it as the latest sample.
     async fn on_odometry(&mut self, msg: Odometry) {
         let q = &msg.pose.pose.orientation;
         let rotation = mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]);
@@ -328,7 +302,7 @@ impl GscPgoModule {
         let lever = if mount.is_empty() || mount == body {
             [0.0; 3]
         } else {
-            // a fix placed through a guessed mount would bias the map, so one without its mount is dropped
+            // no mount tf: drop rather than bias the map
             let Some(t) = self.tf.lookup(body, mount).at(ts).get() else {
                 return;
             };
@@ -381,8 +355,7 @@ impl GscPgoModule {
         let p = &msg.pose.pose.position;
         let q = &msg.pose.pose.orientation;
         let c = &msg.pose.covariance;
-        // ROS orders the covariance (x, y, z, rotation about x, y, z) with rotations about the sensor's axes; the pose
-        // graph orders it (rotation about the landmark's own axes, position) and takes information, zero where unknown
+        // ROS covariance is (xyz, rpy); the pose graph wants (rotation, position) information, zero where unknown
         let ros = [3, 4, 5, 0, 1, 2];
         let mut information: [[f64; 6]; 6] =
             dimos_gsc_pgo::landmarks::known_inverse(&std::array::from_fn(|i| {
@@ -392,7 +365,6 @@ impl GscPgoModule {
         let seen: Mat3 = if norm > 0.0 {
             mat3::mat_from_quat(&[q.w / norm, q.x / norm, q.y / norm, q.z / norm])
         } else {
-            // no orientation: the rotation is unknown
             for (i, row) in information.iter_mut().enumerate() {
                 for (j, v) in row.iter_mut().enumerate() {
                     if i < 3 || j < 3 {
@@ -405,7 +377,7 @@ impl GscPgoModule {
         let mut mount = mat3::identity();
         let (mut rotation, mut position) = (seen, [p.x, p.y, p.z]);
         if !sensor.is_empty() && sensor != body {
-            // a sighting placed through a guessed mount would bias the map, so one without its mount is dropped
+            // no mount tf: drop rather than bias the map
             let Some(t) = self.tf.lookup(body, sensor).at(ts).get() else {
                 return;
             };
@@ -462,20 +434,18 @@ impl GscPgoModule {
         self.wake.notify_one();
     }
 
-    /// Handle an incoming lidar scan: pair it with the latest odometry pose
-    /// and enqueue it on the bounded scan FIFO.
+    /// Pair a scan with the latest odometry and enqueue it.
     async fn on_cloud(&mut self, msg: PointCloud2) {
         let mut state = self.state.lock().expect("state");
         let Some(latest) = state.latest_odom.clone() else {
             return;
         };
-        // Reject out-of-order messages (by the paired odometry's timestamp).
         if latest.ts < state.last_message_time {
             return;
         }
         state.last_message_time = latest.ts;
 
-        // the lidar range (odometry_error_estimate_from_lidar_range) is measured from the scan's frame origin
+        // lidar range (odometry_error_estimate_from_lidar_range) is measured from the scan frame's origin
         if !state.fixed_frame_warned && is_fixed_frame(&msg.header.frame_id) {
             state.fixed_frame_warned = true;
             warn!(frame = %msg.header.frame_id, "lidar scans should be in the sensor (or body) frame, not a fixed frame like odom, map or world");
@@ -498,7 +468,6 @@ impl GscPgoModule {
         });
         let cap = self.config.max_scan_queue;
         if cap > 0 && state.cloud_buffer.len() as i32 > cap {
-            // the queue only absorbs spikes: once it overflows, keep just the newest scan so latency stays low
             let newest = state.cloud_buffer.pop_back();
             state.cloud_buffer.clear();
             state.cloud_buffer.extend(newest);
@@ -508,22 +477,19 @@ impl GscPgoModule {
     }
 }
 
-// ---- the graph's publisher: pose_graph, loop_closure_event and the keyframe dumps, off the scan thread ----------------
+// ---- graph publisher ------------------------------------------------------------
 
-/// What the publisher sends next: a snapshot of the graph version (O(1), `store::KeyFrames`), whether a closure closed
-/// since the last one it sent (or-ed over any it skipped), and the data time.
+/// Next publish: O(1) graph snapshot, whether a closure closed since the last send (or-ed over skips), data time.
 struct Publish {
     keys: dimos_gsc_pgo::store::KeyFrames,
     closure_closed: bool,
     ts: f64,
 }
 
-/// The newest snapshot waiting to publish and whether the publisher should stop, with its wakeup.
+/// (newest pending snapshot, stop), with its wakeup.
 type PendingPublish = Arc<(Mutex<(Option<Publish>, bool)>, Condvar)>;
 
-/// The thread that publishes each keyframe's graph (every keyframe's pose: O(map)) and the pose changes consumers have
-/// not heard (`HeardPoses`: O(map)), so the scan thread only hands it a snapshot; a newer snapshot replaces one not yet
-/// sent, so a slow publish never queues stale graphs.
+/// Publishes the O(map) graph records off the scan thread; a newer snapshot replaces an unsent one.
 struct GraphPublisher {
     pending: PendingPublish,
 }
@@ -595,7 +561,7 @@ impl GraphPublisher {
             .expect("spawn graph publisher thread");
         GraphPublisher { pending }
     }
-    /// Hand the publisher the graph as it is now (O(1)); an unsent older one is replaced, its closure flag kept.
+    /// Hand over the current graph; an unsent older one is replaced, its closure flag kept.
     fn send(&self, pgo: &GscPgo, closure_closed: bool, ts: f64) {
         let (lock, ready) = &*self.pending;
         let mut state = lock.lock().expect("publisher");
@@ -641,7 +607,6 @@ impl Worker {
     }
 
     fn run(self) {
-        // ICP and the solver's factorization run on rayon's global pool
         if let Err(e) = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.worker_threads)
             .thread_name(|i| format!("gsc-worker-{i}"))
@@ -658,7 +623,7 @@ impl Worker {
         let frame_id = self.config.map_frame.clone();
         let child_frame_id = self.config.child_frame_id.clone();
         let body_frame = self.config.body_frame.clone();
-        // Identity until the first correction, so map -> child resolves from the start.
+        // identity until the first correction, so map -> child resolves from the start
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
@@ -670,21 +635,17 @@ impl Worker {
             &child_frame_id,
         );
 
-        // Backstop for the Condvar wait so the stop flag is still observed even
-        // if a notify is somehow missed; normal wakeups come from callbacks.
+        // backstop in case a notify is missed
         let wake_timeout = Duration::from_secs(1);
 
-        // the graph's publishing (pose_graph, loop_closure_event, the keyframe dumps) runs on its own thread off O(1)
-        // snapshots of the graph version (`GraphPublisher`), the newest pending one replacing an unsent older one
         let publisher = GraphPublisher::spawn(&self, frame_id.clone());
-        // The scan count of the last loop-overlap pressure sent on debug_log, and the closure searches sent there.
+        // progress already sent on debug_log / closure_edges
         let mut pressure_sent = 0usize;
         let mut closures_logged = 0usize;
-        // Closure-edge events already sent on closure_edges.
         let mut edges_sent = 0usize;
 
         while !self.stop.load(Ordering::Relaxed) {
-            // adopt a finished solve now, scans or not, once its hold has passed (`solve_hold_enabled`; else each scan's update)
+            // adopt a finished solve even without scans
             let solve_finished =
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
             if solve_finished && pgo.update() {
@@ -692,7 +653,7 @@ impl Worker {
                 publisher.send(&pgo, false, last_time);
                 self.log_solve(&pgo, last_time);
             }
-            // world-position fixes and landmark sightings join the graph as they arrive; one alone starts a solve
+            // fixes and sightings join as they arrive; one alone starts a solve
             let (fixes, sightings) = {
                 let mut state = self.state.lock().expect("state");
                 (
@@ -721,16 +682,12 @@ impl Worker {
             }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
             self.log_closures(&pgo, &mut closures_logged);
-            // Strict FIFO: process scans oldest-first (backlog bounded at
-            // enqueue time). Loops back immediately when more remain, so a
-            // burst drains at full speed rather than one-per-tick.
             let cloud_with_pose = {
                 let mut state = self.state.lock().expect("state");
                 state.cloud_buffer.pop_front()
             };
             let Some(cloud_with_pose) = cloud_with_pose else {
-                // Nothing to do: block until a callback signals new work,
-                // re-checking under the lock to avoid a lost wakeup.
+                // idle: re-check under the lock to avoid a lost wakeup, then wait
                 let state = self.state.lock().expect("state");
                 if state.cloud_buffer.is_empty()
                     && !state.solve_finished
@@ -745,7 +702,6 @@ impl Worker {
             let cur_time = cloud_with_pose.pose.second;
 
             let keyframe = pgo.add_key_pose(&cloud_with_pose);
-            // the loop-overlap pressure, each time it is recomputed (every pressure_check_frequency-th scan)
             if let Some((scan, overlap)) = pgo.pressure() {
                 if scan != pressure_sent {
                     pressure_sent = scan;
@@ -757,7 +713,6 @@ impl Worker {
                 }
             }
             if !keyframe {
-                // Not a keyframe — still broadcast the corrected odom + TF.
                 self.publish_corrected(
                     &pgo,
                     &cloud_with_pose.pose,
@@ -769,12 +724,8 @@ impl Worker {
                 continue;
             }
 
-            // the closure search's jobs that may land do (deterministic: their holds passed; fast: finished), so a closure
-            // joins this keyframe's update, and this keyframe's match joins the pipeline
             pgo.step_closure_search(false);
-            // a finished solve moves the keyframes
             let moved = pgo.update();
-            // every keyframe's current pose and the pose changes since consumers last heard, published off this thread
             publisher.send(&pgo, moved, cur_time);
             if moved {
                 self.log_solve(&pgo, cur_time);
@@ -802,14 +753,12 @@ impl Worker {
                 }),
             );
         }
-        // stopping: settle the graph and report the odometry error estimate its kept loops measured, once
         pgo.finish();
         pgo.overshoot_report();
         let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
         self.log_odometry_drift(&pgo, last_time);
     }
 
-    /// One debug_log line: `fields` plus its `kind` and `ts`, as JSON.
     fn log(&self, kind: &str, ts: f64, mut fields: serde_json::Value) {
         fields["kind"] = kind.into();
         fields["ts"] = ts.into();
@@ -819,8 +768,7 @@ impl Worker {
         self.publish(&self.debug_log, &msg, "debug_log");
     }
 
-    /// Every closure search since the last call on debug_log (`kind` "closure": the candidate, every gate input and the
-    /// outcome, as `ClosureCandidateDiag`).
+    /// Log each new `ClosureCandidateDiag` as `kind` "closure".
     fn log_closures(&self, pgo: &GscPgo, logged: &mut usize) {
         for diag in &pgo.closure_diagnostics()[*logged..] {
             self.log(
@@ -832,9 +780,7 @@ impl Worker {
         *logged = pgo.closure_diagnostics().len();
     }
 
-    /// An adopted solve on debug_log (`kind` "solve"): the closures it kept and judged, and the graph's error.
     fn log_solve(&self, pgo: &GscPgo, ts: f64) {
-        // a solve that measured the learned odometry error estimate (after a longer loop than any before) reports it
         if pgo.learned_odometry_error_estimate_measured() {
             self.log_odometry_drift(pgo, ts);
         }
@@ -850,16 +796,14 @@ impl Worker {
                 "kept": kept,
                 "graph_error": pgo.graph_error(),
                 "keyframes": pgo.key_poses().len(),
-                // each landmark (its index among `landmark_factor`'s names) and each world frame, where the solve put it
+                // landmark ids index `landmark_factor` names
                 "landmarks": pgo.landmarks().iter().map(|(id, _, p)| serde_json::json!([id, p])).collect::<Vec<_>>(),
                 "world_alignment": pgo.world_alignment().iter().map(|(f, yaw, t)| serde_json::json!([f, yaw, t])).collect::<Vec<_>>(),
             }),
         );
     }
 
-    /// The odometry error estimate the kept loops measured, as the config inputs for the next run (`kind`
-    /// "odometry_drift"): self-calibration, a source no kept loop measured repeating the configured drift. Measured once,
-    /// when the module stops (`GscPgo::finish`).
+    /// If a loop is kept, log the measured odometry error estimate as next-run config (`kind` "odometry_drift").
     fn log_odometry_drift(&self, pgo: &GscPgo, ts: f64) {
         let kept = pgo
             .committed_closures()
@@ -880,8 +824,7 @@ impl Worker {
                 );
                 fields.insert(format!("{source}_measured"), measured[k].into());
             }
-            // beside it, the deterministic_config this run measured (`GscPgo::suggested_deterministic_config`), the exact
-            // object to paste into the config, and each LET's measured / estimated (diagnostics only)
+            // plus the suggested deterministic_config and each LET's measured/estimated ratio (diagnostics)
             if let Ok(suggested) = serde_json::to_value(pgo.suggested_deterministic_config()) {
                 fields.insert("suggested_deterministic_config".into(), suggested);
             }
@@ -894,7 +837,6 @@ impl Worker {
         }
     }
 
-    /// Send the closure-edge events since the last call, if any.
     fn publish_closure_edges(&self, pgo: &GscPgo, sent: &mut usize, frame_id: &str) {
         let events = pgo.closure_edge_events();
         if events.len() <= *sent {
