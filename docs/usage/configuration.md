@@ -124,7 +124,7 @@ A coordinator's `hardware` list names each device's adapter. Device addresses (a
 ```
 
 ```bash skip
-dimos run xarm-grasp-agent --config robot.json
+dimos run coordinator-xarm6 --config robot.json
 CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.0.2.10"}' dimos run coordinator-xarm7
 dimos run keyboard-teleop-piper --controlcoordinator.addresses '{"arm": "can0"}'
 ```
