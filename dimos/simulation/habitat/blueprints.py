@@ -16,7 +16,8 @@
 
 - ``habitat-teleop``: sim, streams, teleop.
 - ``habitat-raycaster``: + :class:`RayTracingVoxelMap` on a sensor-frame scan.
-- ``habitat-nav``: + MLS planner and follower; click the surface to set a goal.
+- ``habitat-nav``: + MLS planner, local planner and trajectory follower; click the surface
+  to set a goal.
 - ``habitat-voxel``: :class:`VoxelGridMapper` on a world-frame scan. An alternative,
   not a layer: the two mappers want the scan in different frames.
 - ``habitat-typesafe``: teleop + :class:`TypeSafeNavigationAgent` steering to a named visible object.
@@ -29,13 +30,15 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.navigation.embodiment.habitat import HABITAT
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNative,
     MLSPlannerNativeConfig,
 )
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.global_planner.viz import render_path
-from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
+from dimos.navigation.local_planner.native import LocalPlannerNative
+from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.simulation.habitat.connection import HabitatConnection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
@@ -152,7 +155,12 @@ _mls_planner = MLSPlannerNative.blueprint(
         step_penalty_weight=4.0,
         viz_publish_hz=planner_viz_hz,
     ).model_dump(exclude_unset=True)
-).remappings([(MLSPlannerNative, "global_map", "global_map_unused")])
+).remappings(
+    [
+        (MLSPlannerNative, "global_map", "global_map_unused"),
+        (MLSPlannerNative, "path", "planner_path"),
+    ]
+)
 
 
 # Newest duplicate wins: re-declared with the sensor-frame scan.
@@ -172,9 +180,10 @@ habitat_nav = autoconnect(
     habitat_raycaster,
     _mls_planner,
     # Defaults to odom; the sim's tf root is world.
-    BasicPathFollower.blueprint(
-        world_frame=WORLD_FRAME, speed=0.5, heading_gain=1.5, max_angular=1.5
-    ).remappings([(BasicPathFollower, "nav_cmd_vel", CMD_VEL_TOPIC)]),
+    LocalPlannerNative.blueprint(embodiment=HABITAT, world_frame=WORLD_FRAME),
+    TrajectoryFollowerNative.blueprint(embodiment=HABITAT).remappings(
+        [(TrajectoryFollowerNative, "nav_cmd_vel", CMD_VEL_TOPIC)]
+    ),
     vis_module(
         global_config.viewer,
         rerun_config=_rerun_config(

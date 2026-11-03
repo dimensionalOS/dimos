@@ -22,7 +22,7 @@ Layered so a failure can be bisected by dropping a level:
 |---------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
 | `habitat-teleop`    | The sim and its streams. Drive it, nothing else.                                                                                             |
 | `habitat-raycaster` | `RayTracingVoxelMap` on a sensor-frame scan.                                                                                                 |
-| `habitat-nav`       | `MLSPlannerNative` and `BasicPathFollower`. Goal by clicking.                                                                                |
+| `habitat-nav`       | `MLSPlannerNative`, `LocalPlannerNative` and `TrajectoryFollowerNative`. Goal by clicking.                                                   |
 | `habitat-voxel`     | `VoxelGridMapper` on a pre-registered scan. An alternative to the raycaster, not a layer: the two mappers want the scan in different frames. |
 | `habitat-typesafe`  | `TypeSafeNavigationAgent` driving to a named visible object: `go to the chair` in `humancli --transport zenoh`. Needs `TYPESAFENAVIGATIONAGENT__API_KEY`.         |
 
