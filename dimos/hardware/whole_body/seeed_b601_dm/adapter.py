@@ -70,16 +70,14 @@ class SeeedB601DMAdapter(DamiaoWholeBodyAdapter):
         return B601_DM_MODEL
 
     def _build_robot(self) -> can_motor_control.Robot:
-        # Seeed's motor table: DM4340P at IDs 1-3, DM4310 at IDs 4-7. Each
-        # motor replies on its ID + 0x10.
+        # Seeed's motor table. DM4340P uses the DM4340 driver profile.
         arm_motors = [
-            can_motor_control.MotorSpec(
-                name,
-                damiao.MotorType.DM4340 if motor_id <= 3 else damiao.MotorType.DM4310,
-                motor_id,
-                motor_id + 0x10,
-            )
-            for motor_id, name in enumerate(B601_DM_ARM_JOINTS, start=1)
+            can_motor_control.MotorSpec("joint1", damiao.MotorType.DM4340, 0x01, 0x11),
+            can_motor_control.MotorSpec("joint2", damiao.MotorType.DM4340, 0x02, 0x12),
+            can_motor_control.MotorSpec("joint3", damiao.MotorType.DM4340, 0x03, 0x13),
+            can_motor_control.MotorSpec("joint4", damiao.MotorType.DM4310, 0x04, 0x14),
+            can_motor_control.MotorSpec("joint5", damiao.MotorType.DM4310, 0x05, 0x15),
+            can_motor_control.MotorSpec("joint6", damiao.MotorType.DM4310, 0x06, 0x16),
         ]
         gripper_motor = can_motor_control.MotorSpec(
             "gripper_motor",
