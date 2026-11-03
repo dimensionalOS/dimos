@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -30,14 +31,11 @@ from dimos.evals.vqa.primitives.localize_scene import (
     LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
 )
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.localize.types import Localization
 
 
 def _hit(xyz: tuple[float, float, float]) -> Localization:
-    cloud = PointCloud2.from_numpy(
-        np.zeros((1, 3), dtype=np.float32), frame_id="world", timestamp=0.0
-    )
+    # Avoid PointCloud2.from_numpy (open3d) — scene_at_timestamp only needs xyz.
     return Localization(
         instance_id="g0",
         semantic_score=0.9,
@@ -45,7 +43,7 @@ def _hit(xyz: tuple[float, float, float]) -> Localization:
         position_world_xyz=xyz,
         frame_id="world",
         last_seen_timestamp=1.0,
-        point_cloud=cloud,
+        point_cloud=SimpleNamespace(),  # type: ignore[arg-type]
         n_views=2,
     )
 
@@ -108,7 +106,7 @@ def test_scene_at_timestamp_uses_time_local_position(monkeypatch: pytest.MonkeyP
     assert position_at_timestamp(timeline["g0"], 1.0) == (2.0, 0.0, 0.5)
 
 
-def test_scene_at_timestamp_drops_track_without_nearby_sighting(
+def test_scene_at_timestamp_drops_mover_without_nearby_sighting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -117,15 +115,46 @@ def test_scene_at_timestamp_drops_track_without_nearby_sighting(
         lambda rig, ts: ((0.0, 0.0, 0.0), 0.0),
     )
     hit = _hit((2.0, 0.0, 0.5))
-    timeline = {"g0": ((10.0, 2.0, 0.0, 0.5), (12.0, -2.0, 0.0, 0.5))}
+    # Moved 4 m; question time has no nearby sample → omit.
+    timeline = {"g0": ((1.0, 2.0, 0.0, 0.5), (5.0, -2.0, 0.0, 0.5))}
     scene = scene_at_timestamp(
         (("person", hit),),
         SimpleNamespace(),
-        1.0,
+        8.0,
         position_timeline_by_instance=timeline,
     )
     assert scene is not None
     assert scene.instances == ()
+
+
+def test_scene_at_timestamp_keeps_static_track_with_sparse_sightings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sparse static detections must not erase a chair and flip existential GT."""
+    monkeypatch.setattr(
+        localize_recording_module,
+        "robot_pose_xyz_yaw",
+        lambda rig, ts: ((0.0, 0.0, 0.0), 0.0),
+    )
+    ahead = _hit((2.0, 0.0, 0.5))
+    ahead = replace(ahead, instance_id="ahead")
+    behind = _hit((-2.0, 0.0, 0.5))
+    behind = replace(behind, instance_id="behind")
+    # Ahead last seen at t=2 (>2s before question); behind seen near t=4.
+    timeline = {
+        "ahead": ((2.0, 2.0, 0.0, 0.5),),
+        "behind": ((4.0, -2.0, 0.0, 0.5),),
+    }
+    scene = scene_at_timestamp(
+        (("chair", ahead), ("chair", behind)),
+        SimpleNamespace(),
+        5.0,
+        position_timeline_by_instance=timeline,
+    )
+    assert scene is not None
+    by_id = {inst.instance_id: inst.position_world_xyz for inst in scene.instances}
+    assert by_id["ahead"] == (2.0, 0.0, 0.5)
+    assert by_id["behind"] == (-2.0, 0.0, 0.5)
 
 
 def test_first_seen_by_instance_for_camera_scopes_to_optical_frame() -> None:

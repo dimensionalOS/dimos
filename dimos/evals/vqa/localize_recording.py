@@ -230,6 +230,35 @@ def position_at_timestamp(
     return None
 
 
+def resolved_position_at_timestamp(
+    timeline: Sequence[PositionSample],
+    timestamp: float,
+    *,
+    max_dt_s: float = _POSITION_AT_TS_MAX_DT_S,
+    moving_displacement_m: float = _MOVING_TRACK_DISPLACEMENT_M,
+) -> tuple[float, float, float] | None:
+    """Position for ego labels at ``timestamp``.
+
+    Prefer a sighting within ``max_dt_s``. Static tracks may reuse the last
+    established sample at or before ``timestamp`` (sparse detections must not
+    erase a chair from the scene). Moving tracks without a nearby sighting
+    return ``None`` so later motion cannot rewrite earlier answers.
+    """
+    if not timeline:
+        return None
+    near = position_at_timestamp(timeline, timestamp, max_dt_s=max_dt_s)
+    if near is not None:
+        return near
+    before = [sample for sample in timeline if sample[0] <= timestamp + 1e-9]
+    if not before:
+        # Only observed after the question time — not yet established.
+        return None
+    if track_horizontal_displacement_m(timeline) > moving_displacement_m:
+        return None
+    best = before[-1]
+    return (best[1], best[2], best[3])
+
+
 def first_seen_by_instance_for_camera(
     views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]],
     camera_frame: str,
@@ -265,9 +294,11 @@ def scene_at_timestamp(
 ) -> LocalizeSceneEvidence | None:
     """Attach robot pose at ``timestamp`` to verified hits; ``None`` without base_link.
 
-    Object positions come from sightings near ``timestamp`` when a timeline is
-    available. Tracks that move across the window without a nearby sighting are
-    omitted so later motion cannot rewrite earlier ego answers.
+    When a Detection3DPC timeline is available, positions are resolved at
+    ``timestamp``: nearby sightings win; static tracks keep their last
+    established sample; movers without a nearby sighting are omitted so later
+    motion cannot rewrite earlier ego answers. Sparse static detections must
+    not erase category members and flip existential / unique labels.
     """
     pose = robot_pose_xyz_yaw(rig, timestamp)
     if pose is None:
@@ -281,9 +312,8 @@ def scene_at_timestamp(
             # Fixtures / hits without Detection3DPC samples keep Localization latest.
             adjusted.append((name, hit))
             continue
-        xyz = position_at_timestamp(timeline, timestamp)
+        xyz = resolved_position_at_timestamp(timeline, timestamp)
         if xyz is None:
-            # No sighting near question time — omit so later motion cannot rewrite GT.
             continue
         adjusted.append((name, replace(hit, position_world_xyz=xyz)))
     return scene_from_named_hits(
