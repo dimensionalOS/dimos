@@ -584,7 +584,45 @@ def test_ego_any_fore_aft_answers_from_localize_scene() -> None:
 
     assert answer.answer == "yes"
     assert answer.choices == ("yes", "no")
-    assert "ahead of the robot" in answer.question
+    assert answer.question == "Is there any chair ahead of the robot?"
+    assert "verified" not in answer.question
+
+
+def test_ego_any_fore_aft_no_when_all_clearly_outside() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    scene = LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.5)),
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 2.0, 0.5)),
+        ),
+    )
+    answer = answer_question(
+        QuestionProposal(family="ego_any_fore_aft", object_names=("chair",)),
+        image,
+        _Detector(present=True),
+        localize_scene=scene,
+    )
+    assert answer.answer == "no"
+
+
+def test_ego_any_fore_aft_rejects_out_of_range_dead_ahead() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    far = LocalizeSceneEvidence(
+        robot_position_xyz=(0.0, 0.0, 0.0),
+        robot_yaw_rad=0.0,
+        instances=(
+            LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(6.0, 0.0, 0.5)),
+        ),
+    )
+    with pytest.raises(InsufficientEvidenceError, match="insufficient evidence"):
+        answer_question(
+            QuestionProposal(family="ego_any_fore_aft", object_names=("chair",)),
+            image,
+            _Detector(present=True),
+            localize_scene=far,
+        )
 
 
 def test_ego_turn_rejects_left_right_referents() -> None:
@@ -674,19 +712,22 @@ def test_generate_localize_families_with_fixed_author(tmp_path: Path) -> None:
         _Detector(present=True),
     )
 
-    case_ids = {case.id for case in result.cases}
-    assert "frame-000007-chair-ego_fore_aft" in case_ids
-    assert "frame-000007-shelf-vs-table-height_order" in case_ids
-    assert "frame-000007-door-ego_turn" in case_ids
-    # Verified scene also seeds deterministic localize proposals (ego_turn/height pairs).
-    assert "frame-000007-chair-ego_turn" in case_ids
-    labels = {
-        json.loads(line)["id"]: json.loads(line)["answer"]
+    # Opaque case / clip ids: no category or family leak for Pi run dirs / artifacts.
+    for case in result.cases:
+        assert case.id.startswith("case-")
+        assert "chair" not in case.id
+        assert "door" not in case.id
+        assert "ego_" not in case.id
+        assert "height_order" not in case.id
+        if case.clip is not None:
+            assert case.clip == f"assets/clips/{case.id}"
+    by_answer = {
+        json.loads(line)["answer"]: json.loads(line)["id"]
         for line in (output / "labels.jsonl").read_text().splitlines()
     }
-    assert labels["frame-000007-chair-ego_fore_aft"] == "ahead"
-    assert labels["frame-000007-shelf-vs-table-height_order"] == "shelf"
-    assert labels["frame-000007-door-ego_turn"] == "left"
+    assert "ahead" in by_answer
+    assert "shelf" in by_answer
+    assert "left" in by_answer
     suite = load_suite(output)
     assert len(suite) == len(result.cases)
 

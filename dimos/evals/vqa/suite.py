@@ -101,7 +101,7 @@ def format_case_inputs(case: PublicCase) -> str:
         lines += [
             "",
             "Spatial answering rules:",
-            "- Images are the robot forward camera in time order; each [t=…] stamp is seconds from the first shown frame.",
+            "- Images are the robot forward camera in time order; each [t=…] stamp is the absolute recording timestamp.",
             "- Earlier frames are history to help you understand where the referent is relative to the robot; they are not the answer moment.",
             "- The LAST image is question time (current robot pose / heading). Judge ahead, behind, left, right, and turn around in the robot body frame at that last frame only.",
             "- Prefer left / right / ahead when the referent's bearing at question time is clearly to that side or already in front.",

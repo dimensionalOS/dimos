@@ -22,10 +22,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import hashlib
 import itertools
 import re
 from typing import Any
 
+from dimos.evals.vqa.clip import format_clip_span
 from dimos.evals.vqa.contracts import FamilyAnswer, InsufficientEvidenceError
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -446,14 +448,16 @@ def propose_identity_pairs(
 def answer_cross_view_same_object(
     pair: IdentityPair,
     *,
-    first_clip_duration_s: float,
-    second_clip_duration_s: float,
+    first_clip_t_start: float,
+    first_clip_t_end: float,
+    second_clip_t_start: float,
+    second_clip_t_end: float,
 ) -> FamilyAnswer:
     """Deterministic yes/no from instance_id equality (already encoded in pair).
 
     ``first_clip`` / ``second_clip`` are short dense MemoryStore streams; the
-    question names each clip's relative ``[0, duration]`` span so the agent is
-    not asked to search an unspecified long video.
+    question names each clip's absolute recording ``[t_start, t_end]`` so a tool
+    agent can seek the same windows in the full store.
     """
     if pair.left.query.casefold() != pair.right.query.casefold():
         raise InsufficientEvidenceError("cross-view pair requires the same category query")
@@ -474,15 +478,15 @@ def answer_cross_view_same_object(
             "different-object pair uses identical full-frame images "
             "(no public referent mark; label would be ambiguous)"
         )
-    if first_clip_duration_s < 0 or second_clip_duration_s < 0:
-        raise InsufficientEvidenceError("cross-view clip durations must be non-negative")
+    if first_clip_t_end < first_clip_t_start or second_clip_t_end < second_clip_t_start:
+        raise InsufficientEvidenceError("cross-view clip windows must have t_end >= t_start")
 
     answer = "yes" if pair.same_object else "no"
     category = pair.query
-    from dimos.evals.vqa.clip import format_clip_span
-
-    first_span = format_clip_span(first_clip_duration_s)
-    second_span = format_clip_span(second_clip_duration_s)
+    first_span = format_clip_span(first_clip_t_start, first_clip_t_end)
+    second_span = format_clip_span(second_clip_t_start, second_clip_t_end)
+    first_clip_duration_s = first_clip_t_end - first_clip_t_start
+    second_clip_duration_s = second_clip_t_end - second_clip_t_start
     return FamilyAnswer(
         question=(
             f"Stream first_clip covers {first_span} and stream second_clip covers "
@@ -507,6 +511,10 @@ def answer_cross_view_same_object(
             "semantic_score_right": pair.right.semantic_score,
             "n_views_left": pair.left.n_views,
             "n_views_right": pair.right.n_views,
+            "first_clip_t_start": first_clip_t_start,
+            "first_clip_t_end": first_clip_t_end,
+            "second_clip_t_start": second_clip_t_start,
+            "second_clip_t_end": second_clip_t_end,
             "first_clip_duration_s": first_clip_duration_s,
             "second_clip_duration_s": second_clip_duration_s,
             "center_max_offset": CENTER_MAX_OFFSET,
@@ -522,8 +530,20 @@ def path_token(value: str) -> str:
 
 
 def pair_case_id(pair: IdentityPair, index: int) -> str:
-    kind = "same" if pair.same_object else "diff"
-    q = path_token(pair.query)
-    left_id = path_token(pair.left.instance_id[:8])
-    right_id = path_token(pair.right.instance_id[:8])
-    return f"xview-{q}-{kind}-{index:04d}-{left_id}-{right_id}"
+    """Opaque ``xview-<hex>`` id for case / clip paths (no query or same/diff leak).
+
+    Query, same/diff, and instance ids stay in audit / FamilyAnswer evidence only.
+    """
+    material = "\0".join(
+        (
+            pair.query.casefold(),
+            "1" if pair.same_object else "0",
+            pair.left.instance_id,
+            pair.right.instance_id,
+            f"{pair.left.timestamp:.6f}",
+            f"{pair.right.timestamp:.6f}",
+            str(index),
+        )
+    )
+    digest = hashlib.sha256(material.encode()).hexdigest()[:12]
+    return f"xview-{digest}"

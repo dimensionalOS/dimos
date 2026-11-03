@@ -34,6 +34,7 @@ from dimos.evals.vqa.primitives.localize_scene import (
     LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
     ego_turn_to,
+    existential_ahead_label,
     fore_aft_of,
     higher_object,
     instances_in_ahead_cone,
@@ -135,8 +136,10 @@ EGO_TURN_FAMILY = FamilySpec(
 EGO_ANY_FORE_AFT_FAMILY = FamilySpec(
     name="ego_any_fore_aft",
     description=(
-        "Ask whether any verified instance of a category lies in the ahead cone "
-        "(|bearing| <= 45 deg, 0.5-5 m). Use a bare category name. Do not infer from the image alone."
+        "Ask whether any instance of a category lies in the ahead cone "
+        "(|bearing| <= 45 deg, 0.5-5 m). Answer no only when every detected instance is "
+        "clearly outside that cone (behind or side) and still in range; otherwise skip. "
+        "Use a bare category name. Do not infer from the image alone."
     ),
     requires_localize=True,
 )
@@ -144,9 +147,9 @@ CROSS_VIEW_SAME_OBJECT_FAMILY = FamilySpec(
     name="cross_view_same_object",
     description=(
         "Ask whether the named category in two short dense memory clips (first_clip / "
-        "second_clip) is the same physical instance. Each clip states its relative "
-        "t=0..duration span; generated from Dan localize multi-view traces. Both "
-        "sightings must pass center/size framing gates on the original full frames."
+        "second_clip) is the same physical instance. Each clip states its absolute "
+        "recording [t_start, t_end] span; generated from Dan localize multi-view traces. "
+        "Both sightings must pass center/size framing gates on the original full frames."
     ),
 )
 AVAILABLE_FAMILIES = (
@@ -629,9 +632,11 @@ def _answer_ego_any_fore_aft(
         )
     bare = parsed.category
     hits = instances_named(localize_scene, bare)
-    ahead = instances_in_ahead_cone(localize_scene, bare, hits=hits)
+    answer = existential_ahead_label(localize_scene, bare, hits=hits)
+    ahead = (
+        instances_in_ahead_cone(localize_scene, bare, hits=hits) if answer == "yes" else ()
+    )
     ahead_xyz = {inst.position_world_xyz for inst in ahead}
-    answer = "yes" if ahead else "no"
     first_seen = min(
         (inst.first_seen_timestamp for inst in hits if inst.first_seen_timestamp is not None),
         default=None,
@@ -640,7 +645,7 @@ def _answer_ego_any_fore_aft(
         "primitive": "localize_scene",
         "object_name": bare,
         "selector": "unique",
-        "answer_rule": "exists_instance_in_ahead_cone_45",
+        "answer_rule": "exists_in_ahead_cone_else_all_clearly_outside",
         "coverage_mode": "existential",
         "robot_position_xyz": cast("JsonValue", list(localize_scene.robot_position_xyz)),
         "robot_yaw_rad": localize_scene.robot_yaw_rad,
@@ -659,7 +664,7 @@ def _answer_ego_any_fore_aft(
     if first_seen is not None:
         evidence["first_seen_timestamp"] = first_seen
     return FamilyAnswer(
-        question=f"Is there any verified {bare} ahead of the robot?",
+        question=f"Is there any {bare} ahead of the robot?",
         choices=("yes", "no"),
         answer=answer,
         evidence=evidence,

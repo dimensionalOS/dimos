@@ -392,6 +392,37 @@ def instances_in_ahead_cone(
     )
 
 
+def _clearly_not_ahead(theta_deg: float, range_m: float) -> bool:
+    """In-range and outside the ahead cone (side or behind) — safe existential ``no``."""
+    return RANGE_MIN_M <= range_m <= RANGE_MAX_M and abs(theta_deg) > AHEAD_ABS_DEG
+
+
+def existential_ahead_label(
+    scene: LocalizeSceneEvidence,
+    category: str,
+    *,
+    hits: Sequence[LocalizeInstanceEvidence] | None = None,
+) -> Literal["yes", "no"]:
+    """Yes if any hit is in the ahead cone; no only when every hit is clearly not ahead.
+
+    Out-of-range hits (e.g. 6 m or 0.4 m dead ahead) are ambiguous — they must not
+    become a confident ``no``. Raise :class:`InsufficientEvidenceError` instead.
+    """
+    named = tuple(hits) if hits is not None else instances_named(scene, category)
+    if not named:
+        raise InsufficientEvidenceError(f"localize scene has no verified {category!r}")
+    bearings = tuple(robot_bearing_deg(scene, inst.position_world_xyz) for inst in named)
+    if any(_in_ahead_cone(theta, range_m) for theta, range_m in bearings):
+        return "yes"
+    if all(_clearly_not_ahead(theta, range_m) for theta, range_m in bearings):
+        return "no"
+    raise InsufficientEvidenceError(
+        f"cannot grade existential ahead for {category!r}: every in-cone miss must be "
+        f"clearly outside (behind or side) within [{RANGE_MIN_M}, {RANGE_MAX_M}] m; "
+        "out-of-range or otherwise ambiguous placements are insufficient evidence"
+    )
+
+
 def higher_object(scene: LocalizeSceneEvidence, object_a: str, object_b: str) -> str:
     """Name of the higher of two resolved referents."""
     a = resolve_referent(scene, object_a)

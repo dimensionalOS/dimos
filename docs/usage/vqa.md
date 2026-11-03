@@ -70,7 +70,7 @@ answers. Every proposal uses `object_names`; single-object families require one 
 | `ego_fore_aft` | ahead, behind | Shared ±45° / ±135° ego cones for a referent: bare unique name, `nearest X`, or `X next to Y` |
 | `height_order` | Two authored object references | Higher world-`z` with a minimum vertical margin (localize scene) |
 | `ego_turn` | left, right, ahead, turn around | Bearing wedges in the robot yaw frame (ahead cone + turn around behind) |
-| `ego_any_fore_aft` | yes, no | Whether any verified instance of a category lies in the ahead cone |
+| `ego_any_fore_aft` | yes, no | Whether any instance of a category lies in the ahead cone; `no` only when every hit is clearly outside (behind/side) and in range |
 
 Proposals without sufficient evidence are rejected and retained in the private audit. If no proposal
 can be answered, generation fails without publishing a dataset.
@@ -101,7 +101,7 @@ Localize-backed families (`ego_fore_aft`, `height_order`, `ego_turn`, `ego_any_f
    - **nearest** `<category>` when multiple hits exist (closest to the robot)
    - **`<anchor> next to <landmark>`** relational referents for `ego_fore_aft` / `ego_turn`
      when a unique nearby pair exists (disambiguates without leaking turn direction)
-   - **existential** yes/no for each selected category (`ego_any_fore_aft`: any instance in the ahead cone)
+   - **existential** yes/no for each selected category (`ego_any_fore_aft`: yes if any hit is in the ahead cone; no only if every hit is clearly outside and in range; out-of-range placements are skipped)
    - **height_order** pairs among unique categories only
 
 Ego geometry uses shared cones (`θ = atan2(left, forward)`, `0.5 ≤ r ≤ 5` m): ahead
@@ -111,8 +111,8 @@ left / right / ahead / **turn around**.
 These families are **pose-grounded for labels** (verified 3D + `base_link`) but
 **memory-clip for the agent**: each ego case publishes a short dense `color_image`
 clip from the referent's **first sighting** through the **question time**
-(``query − first_spot ≤ 8`` s), and the question text states that relative
-`t=0.0s … t=duration` span. Ego cases never fall back to a single RGB frame.
+(``query − first_spot ≤ 8`` s), and the question text states that window in
+**absolute recording timestamps**. Ego cases never fall back to a single RGB frame.
 
 Publish balances two bands (~1:1 when both exist):
 
@@ -168,11 +168,11 @@ Each public case uses exactly one modality: `image`, `clip`, or `clips`.
 
 - **Single-frame** (`image`): image-only families. Evaluated with `ImageFile`.
 - **One short clip** (`clip`): ego-spatial memory. The clip spans **first sighting of the
-  referent through the question time**; the question text states the relative
-  `t=0.0s … t=duration` window. Evaluated with `ImageClip` → MemoryStore `clip` stream.
+  referent through the question time**; the question text states the absolute recording
+  `[t_start, t_end]` window. Evaluated with `ImageClip` → MemoryStore `clip` stream.
 - **Two short clips** (`clips`): cross-view identity. Each sighting gets a short dense
   clip (fully encoded; not a long video sparsely subsampled to 8 frames). Streams are
-  named `first_clip` / `second_clip`; the question names each span.
+  named `first_clip` / `second_clip`; the question names each absolute span.
 
 `cases.jsonl` and `assets/` are public evaluation inputs. `labels.jsonl` and `audit/` contain private
 answers, evidence, rejected proposals, source indices, and timestamps.

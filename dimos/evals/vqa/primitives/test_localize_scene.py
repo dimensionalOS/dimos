@@ -23,6 +23,7 @@ from dimos.evals.vqa.primitives.localize_scene import (
     LocalizeInstanceEvidence,
     LocalizeSceneEvidence,
     ego_turn_to,
+    existential_ahead_label,
     fore_aft_of,
     higher_object,
     instances_in_ahead_cone,
@@ -189,6 +190,41 @@ def test_instances_in_ahead_cone_empty_when_only_lateral() -> None:
         LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 2.0, 0.0)),
     )
     assert instances_in_ahead_cone(scene, "chair") == ()
+
+
+def test_existential_ahead_yes_when_any_in_cone() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.0)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(2.0, 0.0, 0.0)),
+    )
+    assert existential_ahead_label(scene, "chair") == "yes"
+
+
+def test_existential_ahead_no_when_all_clearly_outside() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.0)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(1.0, 2.0, 0.0)),
+    )
+    assert existential_ahead_label(scene, "chair") == "no"
+
+
+def test_existential_ahead_rejects_out_of_range_dead_ahead() -> None:
+    # Far / near dead ahead must not become a confident "no".
+    far = _scene(LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(6.0, 0.0, 0.0)))
+    near = _scene(LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(0.4, 0.0, 0.0)))
+    with pytest.raises(InsufficientEvidenceError, match="insufficient evidence"):
+        existential_ahead_label(far, "chair")
+    with pytest.raises(InsufficientEvidenceError, match="insufficient evidence"):
+        existential_ahead_label(near, "chair")
+
+
+def test_existential_ahead_rejects_mix_of_behind_and_far_ahead() -> None:
+    scene = _scene(
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(-2.0, 0.0, 0.0)),
+        LocalizeInstanceEvidence(object_name="chair", position_world_xyz=(6.0, 0.0, 0.0)),
+    )
+    with pytest.raises(InsufficientEvidenceError, match="insufficient evidence"):
+        existential_ahead_label(scene, "chair")
 
 
 def test_next_to_picks_anchor_nearest_landmark() -> None:

@@ -88,13 +88,12 @@ class QuestionAnswer(SingleCallAgent):
                 observations = [
                     observations[round(i * (len(observations) - 1) / (n - 1))] for i in range(n)
                 ]
-            t0 = observations[0].ts
             multi = len(observations) > 1
             camera = _is_camera_observation(observations[0])
             if camera:
                 header = (
                     f"observations from stream {stream.name!r}: robot forward-camera frames "
-                    f"in time order (t is seconds from the first shown)."
+                    f"in time order (t is absolute recording time)."
                 )
                 if multi:
                     header += (
@@ -103,13 +102,14 @@ class QuestionAnswer(SingleCallAgent):
                     )
             else:
                 header = (
-                    f"observations from stream {stream.name!r} (t is seconds from the first shown):"
+                    f"observations from stream {stream.name!r} "
+                    f"(t is absolute recording time):"
                 )
             blocks.append({"type": "text", "text": header})
             blocks += _legend_block(observations[0])
             last_i = len(observations) - 1
             for i, obs in enumerate(observations):
-                stamp = f"[t={obs.ts - t0:.1f}s]"
+                stamp = f"[t={obs.ts:.3f}s]"
                 if camera:
                     stamp += " robot forward-camera"
                     if multi and i == last_i:

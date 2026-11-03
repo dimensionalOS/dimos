@@ -130,7 +130,9 @@ def test_dense_clip_and_image_clip_env(tmp_path: Path) -> None:
     clip_dir = tmp_path / "clip"
     manifest = write_image_clip(clip_dir, picked, anchors=(11.0,))
     assert manifest.duration_s == pytest.approx(picked[-1][0] - picked[0][0])
-    assert format_clip_span(manifest.duration_s).startswith("t=0.0s to t=")
+    assert format_clip_span(manifest.t_start, manifest.t_end) == (
+        f"t={manifest.t_start:.3f}s to t={manifest.t_end:.3f}s (absolute recording time)"
+    )
 
     env = ImageClip(clip_dir)
     running = env.start(())
@@ -163,7 +165,10 @@ def test_load_suite_wires_clips(tmp_path: Path) -> None:
     case = PublicCase(
         id="c",
         clips=("assets/clips/c/first", "assets/clips/c/second"),
-        question="Stream first_clip covers t=0.0s to t=0.5s. Same object?",
+        question=(
+            "Stream first_clip covers t=1.000s to t=1.500s (absolute recording time). "
+            "Same object?"
+        ),
         choices=("yes", "no"),
     )
     (tmp_path / "cases.jsonl").write_text(

@@ -132,7 +132,9 @@ def test_frames_per_stream_downsamples_not_truncates(
         for block in content
         if block["type"] == "text" and block["text"].startswith("[t=")
     ]
-    assert stamped == [f"[t={float(i):.1f}s] {_pose(float(i), 0.0)}" for i in positions]
+    assert stamped == [
+        f"[t={1000.0 + float(i):.3f}s] {_pose(float(i), 0.0)}" for i in positions
+    ]
 
 
 def test_grader_reads_the_history_the_environment_recorded(

@@ -19,10 +19,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import tempfile
 from typing import TYPE_CHECKING, TypeVar
@@ -56,9 +56,8 @@ from dimos.evals.vqa.families import (
 from dimos.evals.vqa.localize_coverage import (
     DEFAULT_LOCALIZE_COVERAGE_K,
     CoverageCandidate,
-    case_family_from_id,
-    case_frame_from_id,
     collect_coverage_candidates_from_audit,
+    family_from_answered_audit,
     select_localize_coverage_ids,
 )
 from dimos.evals.vqa.pointcloud_frame import (
@@ -642,12 +641,18 @@ def _materialize_cross_view_clips(
             )
             first_frames, _ = dense_clip_around(left_stream, pair.left.timestamp)
             second_frames, _ = dense_clip_around(right_stream, pair.right.timestamp)
+            first_t0 = float(first_frames[0][0])
+            first_t1 = float(first_frames[-1][0])
+            second_t0 = float(second_frames[0][0])
+            second_t1 = float(second_frames[-1][0])
             first_dur = clip_duration_s(first_frames)
             second_dur = clip_duration_s(second_frames)
             answered = answer_cross_view_same_object(
                 pair,
-                first_clip_duration_s=first_dur,
-                second_clip_duration_s=second_dur,
+                first_clip_t_start=first_t0,
+                first_clip_t_end=first_t1,
+                second_clip_t_start=second_t0,
+                second_clip_t_end=second_t1,
             )
         except (InsufficientEvidenceError, ValueError) as exc:
             rejected += 1
@@ -870,15 +875,19 @@ def _materialize_ego_memory_clips(
     """Publish ego cases as first-spot→query clips; balance hard/soft; no image fallback."""
     by_camera = color_frames_by_camera or {}
     audit_by_id: dict[str, dict[str, object]] = {}
+    family_by_id: dict[str, str] = {}
     frame_ts_by_id: dict[str, float] = {}
     frame_cam_by_id: dict[str, str] = {}
     for frame in frames:
         for case in frame.cases:
             frame_ts_by_id[case.id] = frame.image_ts
             frame_cam_by_id[case.id] = frame.camera_frame
-            family = case_family_from_id(case.id)
-            if family not in _EGO_CLIP_FAMILIES:
+            family = family_from_answered_audit(
+                question=case.question, audit_rows=frame.audit_rows
+            )
+            if family is None or family not in _EGO_CLIP_FAMILIES:
                 continue
+            family_by_id[case.id] = family
             for row in frame.audit_rows:
                 if row.get("status") != "answered":
                     continue
@@ -898,8 +907,8 @@ def _materialize_ego_memory_clips(
     soft: list[EgoClipRow] = []
 
     for case in cases:
-        family = case_family_from_id(case.id)
-        if family not in _EGO_CLIP_FAMILIES:
+        family = family_by_id.get(case.id)
+        if family is None or family not in _EGO_CLIP_FAMILIES:
             non_ego_cases.append(case)
             non_ego_labels.append(label_by_id[case.id])
             continue
@@ -952,8 +961,7 @@ def _materialize_ego_memory_clips(
             continue
 
         rel = f"assets/clips/{case.id}"
-        duration = clip_duration_s(picked)
-        span = format_clip_span(duration)
+        span = format_clip_span(float(picked[0][0]), float(picked[-1][0]))
         question = (
             f"This clip covers {span} (first sighting of the referent through the "
             f"question time). {case.question}"
@@ -1005,11 +1013,11 @@ def _apply_localize_coverage_budget(
     candidates: list[CoverageCandidate] = []
     localize_ids: set[str] = set()
     for frame in frames:
+        frame_key = f"frame-{frame.index:06d}"
         for case in frame.cases:
-            family = case_family_from_id(case.id)
             candidate = collect_coverage_candidates_from_audit(
                 case_id=case.id,
-                family=family,
+                frame_key=frame_key,
                 question=case.question,
                 audit_rows=frame.audit_rows,
             )
@@ -1025,13 +1033,12 @@ def _apply_localize_coverage_budget(
     by_cell: dict[str, int] = {}
     by_category: dict[str, int] = {}
     by_frame: dict[str, int] = {}
-    for case_id, cell, _pose, category in candidates:
+    for case_id, frame_key, cell, _pose, category in candidates:
         if case_id not in kept_localize:
             continue
         key = f"{cell[0]}|{cell[1]}"
         by_cell[key] = by_cell.get(key, 0) + 1
         by_category[category] = by_category.get(category, 0) + 1
-        frame_key = case_frame_from_id(case_id)
         by_frame[frame_key] = by_frame.get(frame_key, 0) + 1
     stats: dict[str, object] = {
         "k": k,
@@ -1066,6 +1073,27 @@ def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[Quest
     return tuple(unique)
 
 
+def make_case_id(
+    image_index: int,
+    family: str,
+    object_names: Sequence[str],
+    *,
+    occurrence: int = 1,
+) -> str:
+    """Opaque ``case-<hex>`` id for agent-visible run dirs and clip paths.
+
+    Family / category stay in audit only — never in the public id string.
+    """
+    names = tuple(object_names)
+    if family in _UNORDERED_FAMILIES:
+        names = tuple(sorted(names, key=str.casefold))
+    material = "\0".join(
+        (f"{image_index:06d}", family, "-vs-".join(names).casefold(), str(occurrence))
+    )
+    digest = hashlib.sha256(material.encode()).hexdigest()[:12]
+    return f"case-{digest}"
+
+
 def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tuple[str, ...]:
     counts: dict[str, int] = {}
     identifiers: list[str] = []
@@ -1073,12 +1101,12 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
         object_names = proposal.object_names
         if proposal.family in _UNORDERED_FAMILIES:
             object_names = tuple(sorted(object_names, key=str.casefold))
-        joined_names = "-vs-".join(object_names)
-        object_id = re.sub(r"[^a-z0-9]+", "-", joined_names.casefold()).strip("-")
-        base = f"frame-{image_index:06d}-{object_id or 'object'}-{proposal.family}"
-        count = counts.get(base, 0) + 1
-        counts[base] = count
-        identifiers.append(base if count == 1 else f"{base}-{count}")
+        key = f"{image_index:06d}\0{proposal.family}\0{'-vs-'.join(object_names).casefold()}"
+        count = counts.get(key, 0) + 1
+        counts[key] = count
+        identifiers.append(
+            make_case_id(image_index, proposal.family, object_names, occurrence=count)
+        )
     return tuple(identifiers)
 
 

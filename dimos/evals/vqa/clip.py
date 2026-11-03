@@ -15,9 +15,9 @@
 """Short dense color_image clips for memory-backed VQA.
 
 Each clip is small enough that :class:`~dimos.evals.agents.question_answer.QuestionAnswer`
-encodes **every** frame (``len(frames) ≤ frames_per_stream``). Questions state the
-clip's relative ``[0, duration_s]`` window so the agent is not left to search a
-long video that was sparsely subsampled.
+encodes **every** frame (``len(frames) ≤ frames_per_stream``). Questions name the
+clip's **absolute** recording ``[t_start, t_end]`` window so a tool agent can seek
+the same interval in the full store.
 """
 
 from __future__ import annotations
@@ -57,10 +57,10 @@ class ClipManifest(BaseModel):
 
     frames: tuple[ClipFrameEntry, ...]
     anchors: tuple[float, ...] = ()
-    # Absolute recording times of the first/last kept frame (for audit).
+    # Absolute recording times of the first/last kept frame (agent-facing + audit).
     t_start: float = Field(description="absolute ts of first frame")
     t_end: float = Field(description="absolute ts of last frame")
-    duration_s: float = Field(description="t_end - t_start (relative span the agent sees)")
+    duration_s: float = Field(description="t_end - t_start")
 
 
 def clip_duration_s(frames: Sequence[tuple[float, Image]]) -> float:
@@ -69,9 +69,11 @@ def clip_duration_s(frames: Sequence[tuple[float, Image]]) -> float:
     return float(frames[-1][0] - frames[0][0])
 
 
-def format_clip_span(duration_s: float) -> str:
-    """Human span for prompts: relative seconds from the first shown frame."""
-    return f"t=0.0s to t={duration_s:.1f}s"
+def format_clip_span(t_start: float, t_end: float) -> str:
+    """Human span for prompts: absolute recording timestamps."""
+    if t_end < t_start:
+        raise ValueError("t_end must be >= t_start")
+    return f"t={t_start:.3f}s to t={t_end:.3f}s (absolute recording time)"
 
 
 def dense_clip_around(

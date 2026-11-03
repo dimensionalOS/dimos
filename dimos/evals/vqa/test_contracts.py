@@ -49,6 +49,7 @@ from dimos.evals.vqa.generate import (
     VqaGenerationConfig,
     generate_dataset,
     generate_frames_dataset,
+    make_case_id,
     resolve_generation_frame_indices,
 )
 from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
@@ -1164,7 +1165,9 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
         _Detector(present=True),
     )
 
-    assert result.cases[0].id == "frame-000004-chair-presence"
+    presence_id = make_case_id(4, "presence", ("chair",))
+    assert result.cases[0].id == presence_id
+    assert "chair" not in presence_id and "presence" not in presence_id
     image_path = output / "assets" / "frame-000004.png"
     assert image_path.is_file()
     assert np.array_equal(Image.from_file(image_path).data, image.data)
@@ -1175,7 +1178,7 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     suite = load_suite(output)
     case = suite[0]
 
-    assert case.id == "frame-000004-chair-presence"
+    assert case.id == presence_id
     assert 'Choices: ["yes", "no"]' in case.inputs
     assert isinstance(case.environment, ImageFile)
     assert case.environment.config.path == image_path
@@ -1261,7 +1264,8 @@ def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
         _RangeEstimator(1.5),
     )
 
-    assert result.cases[0].id == "frame-000004-chair-object_distance"
+    distance_id = make_case_id(4, "object_distance", ("chair",))
+    assert result.cases[0].id == distance_id
     assert result.cases[0].choices == (
         "under 1 meter",
         "1 to under 2 meters",
@@ -1269,7 +1273,7 @@ def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
         "3 meters or more",
     )
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
-    assert labels == [{"id": "frame-000004-chair-object_distance", "answer": "1 to under 2 meters"}]
+    assert labels == [{"id": distance_id, "answer": "1 to under 2 meters"}]
 
 
 def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> None:
@@ -1289,7 +1293,9 @@ def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> N
         ),
     )
 
-    case_id = "frame-000004-chair-vs-left-person-vs-right-person-closest_object"
+    case_id = make_case_id(
+        4, "closest_object", ("left person", "right person", "chair")
+    )
     assert result.cases[0].id == case_id
     assert result.cases[0].choices == ("left person", "right person", "chair")
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
@@ -1313,9 +1319,10 @@ def test_generate_image_coverage_case_without_pointcloud(tmp_path: Path) -> None
         mask_estimator=_MaskEstimator({"chair": 24}),
     )
 
-    assert result.cases[0].id == "frame-000004-chair-image_coverage"
+    coverage_id = make_case_id(4, "image_coverage", ("chair",))
+    assert result.cases[0].id == coverage_id
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
-    assert labels == [{"id": "frame-000004-chair-image_coverage", "answer": "15% to under 35%"}]
+    assert labels == [{"id": coverage_id, "answer": "15% to under 35%"}]
 
 
 def test_generation_deduplicates_reordered_closest_object_references(tmp_path: Path) -> None:
@@ -1338,8 +1345,8 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
     )
 
     assert len(result.cases) == 1
-    assert result.cases[0].id == (
-        "frame-000004-chair-vs-left-person-vs-right-person-closest_object"
+    assert result.cases[0].id == make_case_id(
+        4, "closest_object", ("left person", "right person", "chair")
     )
 
 
@@ -1353,7 +1360,9 @@ def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Pat
     )
 
     assert len(result.cases) == 1
-    assert result.cases[0].id == "frame-000004-box-vs-chair-vs-table-largest_visible_area"
+    assert result.cases[0].id == make_case_id(
+        4, "largest_visible_area", ("chair", "table", "box")
+    )
 
 
 def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path) -> None:
@@ -1423,8 +1432,8 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     )
 
     assert [case.id for case in result.cases] == [
-        "frame-000001-chair-presence",
-        "frame-000003-chair-presence",
+        make_case_id(1, "presence", ("chair",)),
+        make_case_id(3, "presence", ("chair",)),
     ]
     assert (output / "assets" / "frame-000001.png").is_file()
     assert (output / "assets" / "frame-000003.png").is_file()
@@ -1483,7 +1492,7 @@ def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Pat
         detector,
     )
 
-    assert [case.id for case in result.cases] == ["frame-000004-chair-presence"]
+    assert [case.id for case in result.cases] == [make_case_id(4, "presence", ("chair",))]
     ground_truth = json.loads((output / "audit" / "frame-000004" / "ground_truth.json").read_text())
     assert [row["status"] for row in ground_truth] == ["rejected", "answered"]
     assert "exactly one" in ground_truth[0]["reason"]
@@ -1556,6 +1565,6 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
     )
 
     assert [case.id for case in result.cases] == [
-        "frame-000004-chair-presence",
-        "frame-000004-chair-presence-2",
+        make_case_id(4, "presence", ("chair",), occurrence=1),
+        make_case_id(4, "presence", ("chair",), occurrence=2),
     ]

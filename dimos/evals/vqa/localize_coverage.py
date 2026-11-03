@@ -37,24 +37,50 @@ _LOCALIZE_FAMILIES = frozenset(
 
 DEFAULT_LOCALIZE_COVERAGE_K = 5
 
-# case_id, (family, selector), pose_bucket, category
-CoverageCandidate = tuple[str, tuple[str, str], tuple[object, ...] | None, str]
+# case_id, frame_key, (family, selector), pose_bucket, category
+CoverageCandidate = tuple[str, str, tuple[str, str], tuple[object, ...] | None, str]
 
 
 def case_family_from_id(case_id: str) -> str:
-    """Parse the family suffix from a generated case id."""
+    """Parse family from legacy descriptive ids or opaque ``xview-`` / ``case-`` prefixes.
+
+    New generation uses opaque ``case-<hex>`` / ``xview-<hex>`` ids that do not
+    embed family or category (agent-visible run dirs and clip paths). Prefer
+    audit ``proposal.family`` for those; this helper remains for legacy datasets.
+    """
     if case_id.startswith("xview-"):
         return "cross_view_same_object"
+    if case_id.startswith("case-"):
+        return "unknown"
     parts = case_id.split("-")
     return parts[-1] if not parts[-1].isdigit() else parts[-2]
 
 
 def case_frame_from_id(case_id: str) -> str:
-    """Parse ``frame-XXXXXX`` from a generated case id."""
+    """Parse ``frame-XXXXXX`` from a legacy descriptive case id."""
     parts = case_id.split("-")
     if len(parts) >= 2 and parts[0] == "frame":
         return f"frame-{parts[1]}"
     return "frame-unknown"
+
+
+def family_from_answered_audit(
+    *,
+    question: str,
+    audit_rows: Sequence[dict[str, Any]],
+) -> str | None:
+    """Family name from the answered audit row whose question matches ``question``."""
+    for row in audit_rows:
+        if row.get("status") != "answered":
+            continue
+        answer = row.get("answer") or {}
+        if answer.get("question") != question:
+            continue
+        proposal = row.get("proposal") or {}
+        family = proposal.get("family")
+        if isinstance(family, str) and family.strip():
+            return family.strip()
+    return None
 
 
 def coverage_cell(family: str, object_names: Sequence[str]) -> tuple[str, str]:
@@ -131,8 +157,8 @@ def select_localize_coverage_ids(
     by_frame: dict[str, list[CoverageCandidate]] = defaultdict(list)
     cells_present: set[tuple[str, str]] = set()
     for candidate in candidates:
-        case_id, cell, _pose, _category = candidate
-        by_frame[case_frame_from_id(case_id)].append(candidate)
+        _case_id, frame_key, cell, _pose, _category = candidate
+        by_frame[frame_key].append(candidate)
         cells_present.add(cell)
     if not by_frame:
         return set()
@@ -151,18 +177,18 @@ def select_localize_coverage_ids(
         unused = [row for row in frame_candidates if row[0] not in kept]
         if not unused:
             return None
-        pool = [row for row in unused if prefer_cell is None or row[1] == prefer_cell]
+        pool = [row for row in unused if prefer_cell is None or row[2] == prefer_cell]
         if not pool:
             return None
 
         def sort_key(row: CoverageCandidate) -> tuple[object, ...]:
-            _case_id, cell, pose, category = row
+            case_id, _frame_key, cell, pose, category = row
             pose_penalty = 0 if pose is not None else 1
             return (
                 cell_category_counts[(cell[0], cell[1], category)],
                 category_counts[category],
                 pose_penalty,
-                _case_id,
+                case_id,
             )
 
         return min(pool, key=sort_key)
@@ -184,7 +210,7 @@ def select_localize_coverage_ids(
                 chosen = _pick_from_frame(frame_candidates, prefer_cell=None)
             if chosen is None:
                 break
-            case_id, cell, _pose, category = chosen
+            case_id, _frame_key, cell, _pose, category = chosen
             kept.add(case_id)
             category_counts[category] += 1
             cell_category_counts[(cell[0], cell[1], category)] += 1
@@ -194,12 +220,14 @@ def select_localize_coverage_ids(
 def collect_coverage_candidates_from_audit(
     *,
     case_id: str,
-    family: str,
+    frame_key: str,
     question: str,
     audit_rows: Sequence[dict[str, Any]],
+    family: str | None = None,
 ) -> CoverageCandidate | None:
     """Build one coverage candidate from a published case + frame audit rows."""
-    if family not in _LOCALIZE_FAMILIES:
+    resolved = family or family_from_answered_audit(question=question, audit_rows=audit_rows)
+    if resolved is None or resolved not in _LOCALIZE_FAMILIES:
         return None
     for row in audit_rows:
         if row.get("status") != "answered":
@@ -209,11 +237,11 @@ def collect_coverage_candidates_from_audit(
             continue
         proposal = row.get("proposal") or {}
         object_names = tuple(proposal.get("object_names") or ())
-        cell = coverage_cell(family, object_names)
+        cell = coverage_cell(resolved, object_names)
         evidence = answer.get("evidence") or {}
         if not isinstance(evidence, dict):
             evidence = {}
-        category = coverage_category(family, object_names, evidence)
-        return case_id, cell, _pose_bucket(evidence), category
+        category = coverage_category(resolved, object_names, evidence)
+        return case_id, frame_key, cell, _pose_bucket(evidence), category
     # Localize case without matching audit row: still count under family/unknown.
-    return case_id, (family, "unknown"), None, "unknown"
+    return case_id, frame_key, (resolved, "unknown"), None, "unknown"
