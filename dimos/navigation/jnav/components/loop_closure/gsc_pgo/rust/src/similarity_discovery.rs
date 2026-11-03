@@ -325,60 +325,6 @@ impl LookAlikes {
     }
 }
 
-/// Per scan-context target, the separate places (> `place_radius_m` apart) that matched it; full = evict fewest places.
-#[derive(Default)]
-pub struct GenericPlaces {
-    targets: std::collections::BTreeMap<usize, (Vec<usize>, usize)>,
-    capacity: usize,
-    touches: usize,
-}
-
-impl GenericPlaces {
-    pub fn new(capacity: usize) -> GenericPlaces {
-        GenericPlaces {
-            targets: std::collections::BTreeMap::new(),
-            capacity,
-            touches: 0,
-        }
-    }
-    /// Separate places that matched `target` so far.
-    pub fn places(&self, target: usize) -> usize {
-        self.targets.get(&target).map_or(0, |(places, _)| places.len())
-    }
-    /// Count `query`'s match of `target` (positions by keyframe), places capped at `cap`.
-    pub fn record(
-        &mut self,
-        target: usize,
-        query: usize,
-        place_radius_m: f64,
-        cap: usize,
-        position: impl Fn(usize) -> mat3::Vec3,
-    ) {
-        let here = position(query);
-        let near = |other: usize| mat3::norm(&mat3::sub(&position(other), &here)) <= place_radius_m;
-        if near(target) {
-            return;
-        }
-        self.touches += 1;
-        if !self.targets.contains_key(&target) && self.targets.len() >= self.capacity {
-            let evict = self
-                .targets
-                .iter()
-                .min_by_key(|(&key, (places, touched))| (places.len(), *touched, key))
-                .map(|(&key, _)| key);
-            if let Some(evict) = evict {
-                self.targets.remove(&evict);
-            }
-        }
-        let touches = self.touches;
-        let (places, touched) = self.targets.entry(target).or_insert_with(|| (Vec::new(), 0));
-        *touched = touches;
-        if places.len() < cap && !places.iter().any(|&place| near(place)) {
-            places.push(query);
-        }
-    }
-}
-
 impl crate::gsc_pgo::GscPgo {
     /// The newest keyframe a closure may close onto: its submap must leave out the source's own scan.
     pub(crate) fn newest_closure_target(&self) -> usize {
