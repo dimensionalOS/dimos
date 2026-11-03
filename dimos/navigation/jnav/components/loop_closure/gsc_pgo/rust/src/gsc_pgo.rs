@@ -763,7 +763,7 @@ impl Default for Config {
             graph_simplify_frontier_keyframes: 200,
             graph_simplify_place_radius_m: 1.0,
             graph_simplify_localized_keyframes: 50,
-            graph_simplify_closures_per_pair: 3,
+            graph_simplify_closures_per_pair: 1,
             graph_simplify_offset_sd_m: 0.05,
             graph_simplify_offset_sd_rad: 0.005,
             graph_simplify_chain_odometry: true,

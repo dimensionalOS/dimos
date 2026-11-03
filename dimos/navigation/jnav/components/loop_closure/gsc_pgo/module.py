@@ -135,7 +135,7 @@ class PGOConfig(NativeModuleConfig):
     graph_simplify_frontier_keyframes: int = 200
     graph_simplify_place_radius_m: float = 1.0
     graph_simplify_localized_keyframes: int = 50
-    graph_simplify_closures_per_pair: int = 3
+    graph_simplify_closures_per_pair: int = 1
     # one sd of how far a removed keyframe's frozen offset may be off: edges through one carry this much more variance
     graph_simplify_offset_sd_m: float = 0.05
     graph_simplify_offset_sd_rad: float = 0.005

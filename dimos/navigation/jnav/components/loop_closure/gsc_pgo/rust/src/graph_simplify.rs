@@ -27,8 +27,9 @@
 //! with their variances summed (each is linear in distance and turn), so a long revisit becomes one loose edge and the map
 //! is held by its closures. A closure's ends ride their nodes at the frozen offsets (one riding a single node drops out),
 //! its variance grown by `graph_simplify_offset_sd_*` per riding end (the offset is the adopted graph's guess); a folded
-//! closure goes to the solve only while its node pair has fewer than `graph_simplify_closures_per_pair` (the rest keep
-//! their last verdict; closures between kept keyframes always go in). The solve's nodes expand back to every keyframe.
+//! closure goes to the solve only while its pair of places (the kept keyframes its ends revisit) has fewer than
+//! `graph_simplify_closures_per_pair` (the rest keep their last verdict; closures between kept keyframes always go in),
+//! which bounds the solve's closures by the mapped area too. The solve's nodes expand back to every keyframe.
 //!
 //! Past `graph_simplify_chain_fold_max_m` of folded odometry the fold is dropped and the walk rides the node the current
 //! removed keyframe rides (its frozen offset adding variance to the next edge): odometry folded over hours of revisits
@@ -67,8 +68,9 @@ fn identity() -> Pose {
 pub enum Placement {
     /// Its own node (index into the kept nodes).
     Node(usize),
-    /// Rides node `node` at `offset` (its pose = node's pose * offset), known to within `spread`.
-    Anchored { node: usize, offset: Pose, spread: Spread },
+    /// Rides node `node` at `offset` (its pose = node's pose * offset), known to within `spread`; `place` is the node of
+    /// the kept keyframe it revisits (the per-pair closure cap counts by it).
+    Anchored { node: usize, offset: Pose, spread: Spread, place: usize },
 }
 
 /// How well a riding keyframe's offset is known: the odometry distance (m) and turn (rad) it was carried over from the
@@ -225,7 +227,7 @@ impl GraphSimplify {
         let frozen = Spread { frozen: true, ..Spread::default() };
         let placement = match (kept, place) {
             (Some(node), _) => Placement::Node(node),
-            (None, Some((node, offset))) => Placement::Anchored { node, offset, spread: frozen },
+            (None, Some((node, offset))) => Placement::Anchored { node, offset, spread: frozen, place: node },
             (None, None) => unreachable!("a keyframe is kept or rides a place"),
         };
         let Some(walk) = self.walk else {
@@ -246,6 +248,7 @@ impl GraphSimplify {
             };
             self.walk = Some(walk);
             return Placement::Anchored {
+                place: node,
                 node: walk.node,
                 offset: walk.offset,
                 spread: Spread { distance: walk.distance, turn: walk.turn, frozen: walk.anchored },
@@ -294,8 +297,9 @@ impl GraphSimplify {
         }
         edges
     }
-    /// Closures as node edges (closure index, edge); one riding a single node drops out, and once a node pair has
-    /// `graph_simplify_closures_per_pair` (0 = no cap) closures, further ones folded onto it wait out of the solve.
+    /// Closures as node edges (closure index, edge); one riding a single node drops out, and once a pair of places (the
+    /// kept keyframes the ends are or revisit) has `graph_simplify_closures_per_pair` (0 = no cap) closures, further
+    /// folded ones wait out of the solve.
     pub fn closures(&self, closures: &Closures, count: usize, config: &Config) -> Vec<(usize, Edge)> {
         let per_pair = config.graph_simplify_closures_per_pair;
         let mut per: HashMap<(usize, usize), usize> = HashMap::new();
@@ -316,7 +320,12 @@ impl GraphSimplify {
                     })
                     .collect();
                 let ends = spreads.len();
-                let taken = per.entry((target.min(source), target.max(source))).or_default();
+                let place = |k: usize, node: usize| match (k < self.decided()).then(|| self.placements[k]) {
+                    Some(Placement::Anchored { place, .. }) => place,
+                    _ => node,
+                };
+                let (a, b) = (place(fixed.target_id, target), place(fixed.source_id, source));
+                let taken = per.entry((a.min(b), a.max(b))).or_default();
                 if ends > 0 && per_pair > 0 && *taken >= per_pair {
                     return None;
                 }
@@ -624,7 +633,7 @@ mod tests {
             };
             let placement = simplify.place_next(&key_poses, k, kept, place, chain_odometry);
             simplify.placements.push(placement);
-            if let (Placement::Anchored { node, offset: rode, spread }, Some(_)) = (placement, chain_odometry) {
+            if let (Placement::Anchored { node, offset: rode, spread, .. }, Some(_)) = (placement, chain_odometry) {
                 // a chain-placed keyframe rides the walk's node by its odometry, its spread that odometry's
                 assert_eq!(node, 0);
                 assert!(close(&rode, &offset));
@@ -659,7 +668,12 @@ mod tests {
         simplify.placements.push(Placement::Node(0));
         simplify.kept.push(1);
         simplify.placements.push(Placement::Node(1));
-        simplify.placements.push(Placement::Anchored { node: 0, offset, spread: Spread { frozen: true, ..Spread::default() } });
+        simplify.placements.push(Placement::Anchored {
+            node: 0,
+            offset,
+            spread: Spread { frozen: true, ..Spread::default() },
+            place: 0,
+        });
         // closure: source 2 seen from target 1
         let mut closures = Closures::default();
         let measured: Pose = (mat3::rot_z(-1.1), [4.0, 1.0, 0.2]);
@@ -701,6 +715,7 @@ mod tests {
             node: 1,
             offset: (mat3::rot_z(0.1), [0.2, 0.0, 0.0]),
             spread: Spread { frozen: true, ..Spread::default() },
+            place: 1,
         });
         let mut closures = Closures::default();
         for i in 0..4 {
