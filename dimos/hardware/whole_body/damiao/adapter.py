@@ -130,13 +130,7 @@ class DamiaoWholeBodyAdapter(ABC):
         index = self._bus_index(name)
         device = self._runtime_config.bus_devices.get(name)
         if device is not None and device.startswith("/dev/"):
-            # Released can-motor-control versions may predate the serial bridge.
-            dm_serial_bus = getattr(can_motor_control, "DmSerialBus", None)
-            if dm_serial_bus is None:
-                raise RuntimeError(
-                    "Damiao serial bridges need a can-motor-control release with DmSerialBus"
-                )
-            return dm_serial_bus(device)
+            return can_motor_control.DmSerialBus(device)
         if sys.platform == "linux":
             return can_motor_control.SocketCanBus(device or f"can{index}")
         if sys.platform == "darwin":

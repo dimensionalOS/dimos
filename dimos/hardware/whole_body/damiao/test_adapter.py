@@ -371,20 +371,6 @@ def test_make_can_bus_serial_device_uses_damiao_serial_bridge(
     dm_serial.assert_called_once_with("/dev/ttyACM0")
 
 
-def test_make_can_bus_serial_device_without_bridge_support_raises_runtime_error(
-    dual_robot: FakeRobot,
-    mocker: MockerFixture,
-) -> None:
-    mocker.patch.object(adapter_module, "can_motor_control", object())
-    adapter = DualAdapter(
-        dual_robot,
-        runtime_config=DamiaoRuntimeConfig(bus_devices={"left": "/dev/ttyACM0"}),
-    )
-
-    with pytest.raises(RuntimeError, match="DmSerialBus"):
-        adapter._make_can_bus("left")
-
-
 def test_init_rehydrates_serialized_runtime_config(dual_robot: FakeRobot) -> None:
     adapter = DualAdapter(
         dual_robot,
