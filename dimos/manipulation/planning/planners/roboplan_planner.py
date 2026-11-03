@@ -484,8 +484,8 @@ class RoboPlanPlanner:
         options.max_angular_speed = config.max_angular_speed
         options.max_linear_acceleration = config.max_linear_acceleration
         options.max_angular_acceleration = config.max_angular_acceleration
-        options.max_position_error = config.max_position_error
-        options.max_orientation_error = config.max_orientation_error
+        options.position_tolerance = config.max_position_error
+        options.orientation_tolerance = config.max_orientation_error
         options.position_cost = config.position_cost
         options.orientation_cost = config.orientation_cost
         options.task_gain = config.task_gain
