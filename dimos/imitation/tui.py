@@ -40,7 +40,6 @@ class ControlSession:
         self._closed = False
         self._coordinator = CoordinatorRPC.connect(timeout=5.0)
         try:
-            self._instance_id = self._coordinator.call("instance_id")
             try:
                 self.episodes = driver.find_module_by_spec(EpisodeControlSpec)
             except NoMatchingModuleError:
@@ -88,7 +87,7 @@ class ControlSession:
         status = self.episode_status()
         if status is not None and status.state == "recording":
             raise RuntimeError("Save or discard the active episode before stopping the stack")
-        self._coordinator.call("shutdown", expected_instance_id=self._instance_id)
+        self._coordinator.call("shutdown")
 
     def close(self) -> None:
         if not self._closed:

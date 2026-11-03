@@ -46,7 +46,6 @@ def controls(mocker):
     policy.start_rollout.return_value = {**policy.rollout_status.return_value, "active": True}
     policy.stop_rollout.return_value = policy.rollout_status.return_value
     coordinator = mocker.patch("dimos.imitation.tui.CoordinatorRPC.connect").return_value
-    coordinator.call.return_value = "original-instance"
     return driver, episode, policy, coordinator
 
 
@@ -81,7 +80,7 @@ async def test_panel_shows_available_controls_and_detach_does_not_operate(
     episode.command.assert_not_called()
     policy.preflight_rollout.assert_not_called()
     policy.stop_rollout.assert_not_called()
-    coordinator.call.assert_called_once_with("instance_id")
+    coordinator.call.assert_not_called()
     coordinator.stop.assert_called_once_with()
     driver.stop.assert_called_once_with()
 
@@ -119,7 +118,7 @@ async def test_episode_buttons_save_and_discard_before_shutdown(controls, mocker
         "start",
         "discard",
     ]
-    coordinator.call.assert_any_call("shutdown", expected_instance_id="original-instance")
+    coordinator.call.assert_called_once_with("shutdown")
 
 
 async def test_policy_start_preflights_and_stop_is_explicit(controls, mocker):
@@ -137,7 +136,7 @@ async def test_policy_start_preflights_and_stop_is_explicit(controls, mocker):
     policy.preflight_rollout.assert_called_once_with()
     policy.start_rollout.assert_called_once_with()
     policy.stop_rollout.assert_called_once_with()
-    coordinator.call.assert_called_once_with("instance_id")
+    coordinator.call.assert_not_called()
 
 
 def test_failed_preflight_does_not_start_policy(controls):
@@ -177,7 +176,7 @@ def test_shutdown_rechecks_episode_at_confirmation(controls):
     try:
         with pytest.raises(RuntimeError, match="Save or discard"):
             session.stop_stack()
-        coordinator.call.assert_called_once_with("instance_id")
+        coordinator.call.assert_not_called()
     finally:
         session.close()
 
@@ -196,22 +195,8 @@ async def test_cancel_shutdown_and_connection_loss_never_stop_stack(controls, mo
         assert app.query_one("#start-policy", Button).disabled
         assert app.query_one("#stop-stack", Button).disabled
         assert "may still be running" in str(app.query_one("#message", Static).render())
-    coordinator.call.assert_called_once_with("instance_id")
+    coordinator.call.assert_not_called()
     policy.stop_rollout.assert_not_called()
-
-
-def test_shutdown_rejects_replacement_coordinator():
-    original = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
-    replacement = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
-    try:
-        with pytest.raises(ValueError, match="Coordinator changed"):
-            replacement.rpcs["shutdown"](expected_instance_id=original.rpcs["instance_id"]())
-        assert not replacement._shutdown_event.is_set()
-        replacement.rpcs["shutdown"](expected_instance_id=replacement.rpcs["instance_id"]())
-        assert replacement._shutdown_event.is_set()
-    finally:
-        original.stop()
-        replacement.stop()
 
 
 def test_confirmed_shutdown_unblocks_loop_and_stops_modules(mocker):
@@ -221,7 +206,7 @@ def test_confirmed_shutdown_unblocks_loop_and_stops_modules(mocker):
     loop = Thread(target=coordinator.loop)
     loop.start()
     try:
-        coordinator.rpcs["shutdown"](expected_instance_id=coordinator.rpcs["instance_id"]())
+        coordinator.rpcs["shutdown"]()
         loop.join(timeout=1)
         assert not loop.is_alive()
         stop.assert_called_once_with()
