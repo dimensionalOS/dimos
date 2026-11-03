@@ -85,7 +85,6 @@ That's it. dimOS connects via WebRTC (no jailbreak required), starts the full na
 
 From the command center ([localhost:7779](http://localhost:7779)):
 - Click on the map to set navigation goals
-- Toggle autonomous exploration
 - Monitor robot pose, costmap, and planned path
 
 ## Agentic Control

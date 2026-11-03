@@ -15,7 +15,6 @@ Control:
 - Set navigation goal
 - Set GPS location goal
 - Keyboard teleop (WASD)
-- Trigger exploration
 
 ## What it Provides
 
