@@ -14,7 +14,7 @@
 
 //! Landmark factors: a between factor from a keyframe to a landmark's pose (itself a variable of the solve), with a
 //! full 6x6 covariance in which any dimension may be unknown. An AprilTag knows all six, a reflector or a ranged
-//! bearing only the position (`LandmarkSighting::point`), so a landmark whose sightings never know a rotation is a
+//! bearing only the position, so a landmark whose sightings never know a rotation is a
 //! 3-entry point in the solve and every other one a 6-entry pose.
 
 use crate::big_picture_fit::{edge_residual, linearize_between, Edge, State};
@@ -52,26 +52,6 @@ impl LandmarkSighting {
             information: known_inverse(&full),
         }
     }
-}
-
-/// A bearing (unit `direction`) with a range along it, as a point and its covariance: `range_variance` (m²) along the
-/// ray, `bearing_variance` (rad²) about each axis across it (so `range² · bearing_variance` across). A range barely
-/// known is a large `range_variance`, which leaves the sighting a bearing.
-pub fn bearing_and_range(
-    direction: &Vec3,
-    range: f64,
-    bearing_variance: f64,
-    range_variance: f64,
-) -> (Vec3, Mat3) {
-    let b = mat3::scale(direction, 1.0 / mat3::norm(direction));
-    let across = range * range * bearing_variance;
-    let covariance = std::array::from_fn(|i| {
-        std::array::from_fn(|j| {
-            let along = b[i] * b[j];
-            range_variance * along + across * ((i == j) as u8 as f64 - along)
-        })
-    });
-    (mat3::scale(&b, range), covariance)
 }
 
 /// A sighting as the solve uses it: the measured pose as an edge (keyframe -> landmark), its information and how many

@@ -622,10 +622,6 @@ pub struct Config {
     pub closure_extension_skip_unreachable: bool,
     /// Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give.
     pub closure_yank_pre_check: bool,
-    /// Stop extending once a step's evidence is no higher than the step before.
-    pub closure_extension_stop_when_flat: bool,
-    /// Stop extending once a step's fit moves a stacked keyframe farther than the search radius from the single fit.
-    pub closure_extension_stop_on_swing: bool,
     /// The uncertainty range, as ratios of a candidate's evidence to its bar (the required evidence; both in yank units):
     /// at or above `barely_pass_uncertainty_range` (> 1) the single scan accepts, at or below
     /// `barely_fail_uncertainty_range` (< 1) it rejects, and in between the match is extended until the ratio leaves the
@@ -642,7 +638,6 @@ pub struct Config {
     /// the source keyframe (shift and mean reach x turn, in inlier distances): clouds that agree to within an inlier
     /// distance raise the score, ones that disagree lower it. It never changes a closure's fit or the confidence the
     /// solve takes. 0 = the plain median.
-    #[cfg_attr(feature = "native", serde(alias = "closure_extension_agreement_alpha"))]
     pub compounding_agreement_sensitivity: f64,
     /// Graph change heat: a finished solve is adopted only while the heat is at or under `graph_change_heat_threshold`;
     /// adopting one adds its cost, the curbed yank (yank units) of the largest keyframe move it makes from the accepted
@@ -721,10 +716,6 @@ pub struct Config {
     /// Probability that a true inlier's residual falls under GNC's chi-squared
     /// cost threshold, in (0, 1). Lowering it tightens the test so GNC rejects more closures.
     pub closure_gnc_inlier_probability: f64,
-    /// When true, a closure is uninformative only where the graph's own covariance of its two ends (heading swing and
-    /// solved closures included) is surer than ICP in every direction, instead of the per-keyframe xy step times the
-    /// keyframe gap.
-    pub closure_informative_by_graph_covariance: bool,
     /// When false, no closure is rejected as uninformative (the graph surer of its two ends than ICP): every one that
     /// passes the other gates is committed, and repeats of a kept closure count again.
     pub closure_uninformative_gate: bool,
@@ -736,45 +727,24 @@ pub struct Config {
     /// recordings (small_mid, gir1, gir2, athens, huge; report_build/odometry_rate_pooled.py); the drift is almost all
     /// from turning. After each solve that keeps closures, the module logs the values these measure (debug_log kind
     /// "odometry_drift"), to start the next run from.
-    #[cfg_attr(feature = "native", serde(alias = "odom_xy_drift_per_sqrt_m"))]
     pub odometry_error_estimate_xy_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_xy_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_xy_per_sqrt_rad: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_z_drift_per_sqrt_m"))]
     pub odometry_error_estimate_z_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_z_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_z_per_sqrt_rad: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_yaw_drift_per_sqrt_m"))]
     pub odometry_error_estimate_yaw_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_yaw_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_yaw_per_sqrt_rad: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_tilt_drift_per_sqrt_m"))]
     pub odometry_error_estimate_tilt_per_sqrt_m: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_tilt_drift_per_sqrt_rad"))]
     pub odometry_error_estimate_tilt_per_sqrt_rad: f64,
     /// True (the module sets it when the config states no odometry error estimate): the odometry error estimate follows
     /// the lidar's range (`lidar_range`, linear between the Go2 L1's and the Mid-360's calibrated estimates), replacing the
     /// `odometry_error_estimate_*` above each time the range estimate updates.
     pub odometry_error_estimate_from_lidar_range: bool,
     pub lidar_range: crate::lidar_range::LidarRangeConfig,
-    /// How far (standard deviation of ln) each noise source's true size spreads around its rates from one recording to
-    /// the next (xy, z, yaw, roll/pitch): the prior that `learned_odometry_error_estimate_from_closures` holds its estimate to. 0 = one
-    /// closure's worth of information (a unit-information prior). Defaults: the spread of those five recordings around
-    /// the fit (their held-out error at 32-keyframe spans).
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_xy"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_xy: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_z"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_z: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_yaw"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_yaw: f64,
-    #[cfg_attr(feature = "native", serde(alias = "odom_noise_prior_ln_sd_tilt"))]
-    pub learned_odometry_error_estimate_prior_ln_sd_tilt: f64,
     /// How many closed loops' worth of evidence the stated odometry error estimate counts as for the learner (its plasticity): each
     /// source's estimate is the stated odometry error estimate held with that many residual checks against the closures' (a closed loop
     /// gives a source about one), so the first loop nudges it and many agreeing loops decide it. 0 = the closures alone;
     /// infinite = the stated odometry error estimate is never moved (no learning: the gates and solves use the config's drift). Default 30
     /// (huge_l1: yaw x4.7 against x40000 at 1, where one loop's misfit moved it x30; small_l1 unchanged).
-    #[cfg_attr(feature = "native", serde(alias = "odom_error_stiffness"))]
     pub learned_odometry_error_estimate_stiffness: f64,
     pub scan_context_num_rings: i32,
     pub scan_context_num_sectors: i32,
@@ -819,7 +789,6 @@ pub struct Config {
     /// When true, the odometry's four noise variances (xy, z, yaw, roll/pitch per keyframe) are estimated from how far the
     /// kept closures disagreed with the raw odometry (`learned_odometry_error_estimate`), the reported ones as priors, and logged
     /// (each search's diagnostics, `GSC_LEARN_LOG`); nothing uses them: the solve, pressure and gates take the stated odometry error estimate.
-    #[cfg_attr(feature = "native", serde(alias = "odometry_noise_from_closures"))]
     pub learned_odometry_error_estimate_from_closures: bool,
     /// When true, the noise learner reads only the kept closures that agree pairwise around their raw-odometry cycles
     /// (the PCM core) on every solve: a bend two independent loops agree on is drift, a lone closure's may be a wrong
@@ -926,8 +895,6 @@ impl Default for Config {
             closure_yank_drift_range: 100.0,
             closure_extension_skip_unreachable: true,
             closure_yank_pre_check: false,
-            closure_extension_stop_when_flat: true,
-            closure_extension_stop_on_swing: true,
             barely_fail_uncertainty_range: 0.05,
             barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
@@ -951,7 +918,6 @@ impl Default for Config {
             closure_icp_max_correspondence_m: 10.0,
             closure_gnc_var_scale: 10.0,
             closure_gnc_inlier_probability: 0.95,
-            closure_informative_by_graph_covariance: true,
             closure_uninformative_gate: true,
             odometry_error_estimate_xy_per_sqrt_m: 3.91e-4,
             odometry_error_estimate_xy_per_sqrt_rad: 6.35e-3,
@@ -963,10 +929,6 @@ impl Default for Config {
             odometry_error_estimate_tilt_per_sqrt_rad: 3.3e-3,
             odometry_error_estimate_from_lidar_range: false,
             lidar_range: crate::lidar_range::LidarRangeConfig::default(),
-            learned_odometry_error_estimate_prior_ln_sd_xy: 1.72,
-            learned_odometry_error_estimate_prior_ln_sd_z: 2.05,
-            learned_odometry_error_estimate_prior_ln_sd_yaw: 1.15,
-            learned_odometry_error_estimate_prior_ln_sd_tilt: 0.96,
             learned_odometry_error_estimate_stiffness: 10.0,
             scan_context_num_rings: 20,
             scan_context_num_sectors: 60,
@@ -1369,13 +1331,6 @@ fn rejected(
 }
 
 impl ClosureSearch {
-    /// The ICP half of a closure search: submaps, ICP, its gates, the yank / confidence gate and extended ICP.
-    pub fn run(self) -> ClosureSearchResult {
-        match self.run_stage() {
-            SearchStage::Done(result) => result,
-            SearchStage::Extend(pending) => pending.run(),
-        }
-    }
     /// The fast match (`closure_search_schedule`): everything up to the extension, which a match inside the uncertainty
     /// range is handed on to (`SearchStage::Extend`); a clear pass or fail is decided here.
     pub(crate) fn run_stage(mut self) -> SearchStage {
@@ -2729,5 +2684,12 @@ mod config_tests {
             };
             assert!(config.validate().is_err(), "{fail} {pass}");
         }
+    }
+
+    /// The learned odometry error estimate is only logged: the solve and the gates use the stated one.
+    #[test]
+    fn the_solve_and_gates_use_the_stated_odometry_error_estimate() {
+        let config = Config { learned_odometry_error_estimate_from_closures: true, ..Config::default() };
+        assert_eq!(super::GscPgo::new(config).odometry_error_estimate(), [1.0; 4]);
     }
 }
