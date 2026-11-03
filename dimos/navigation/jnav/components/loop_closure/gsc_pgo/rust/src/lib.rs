@@ -32,6 +32,7 @@ pub mod connection_fit;
 pub mod gsc_pgo;
 pub mod icp_cache;
 pub mod landmarks;
+pub mod lidar_range;
 pub mod loop_overlap;
 pub mod mat3;
 pub mod odometry_error_estimate;
