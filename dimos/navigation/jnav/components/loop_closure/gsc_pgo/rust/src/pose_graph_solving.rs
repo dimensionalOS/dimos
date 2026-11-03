@@ -188,7 +188,7 @@ impl GscPgo {
             && (self.committed_closures.len() > self.closures_dispatched
                 || self.world_positions.len() > self.world_positions_dispatched
                 || self.landmark_sightings.len() > self.landmark_sightings_dispatched
-                || self.odometry_error_estimate_rescale)
+                || self.evidence_solve_due)
     }
     /// A sensor's position in world frame `frame` at `time` (mount `lever`, covariance m²): a prior on the nearest keyframe.
     pub fn add_coordinate_factor(
@@ -320,7 +320,7 @@ impl GscPgo {
             && self.committed_closures.iter().any(|c| c.gnc_weight > 0.5)
         {
             self.learned_evidence_requested = true;
-            self.odometry_error_estimate_rescale = true;
+            self.evidence_solve_due = true;
             moved |= self.settle();
         }
         // the final graph is the solver's last output, whatever the graph change heat
@@ -426,18 +426,10 @@ impl GscPgo {
                 (solution, seconds, landmark_ids)
             })
             .expect("spawn pose graph thread");
-        // a solve started only because the noise moved (nothing new since the last) is the one re-solve that evidence gets
-        self.odometry_error_estimate_rescaled = self.odometry_error_estimate_rescale
-            && self.committed_closures.len() == self.closures_dispatched
-            && self.world_positions.len() == self.world_positions_dispatched
-            && self.landmark_sightings.len() == self.landmark_sightings_dispatched;
         self.closures_dispatched = self.committed_closures.len();
         self.world_positions_dispatched = self.world_positions.len();
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
-        // the ln the residuals are whitened at (the solve's noise, its lower bound or the estimate)
-        self.learned_odometry_error_estimate_ln_dispatched =
-            self.odometry_error_estimate().map(f64::ln);
-        self.odometry_error_estimate_rescale = false;
+        self.evidence_solve_due = false;
         let dispatched = solve_log_path().map(|_| SolveDispatch {
             keyframe_time: self.key_poses.fixed(n - 1).time,
             wall_time: wall_time(),
