@@ -157,7 +157,7 @@ class PGOConfig(NativeModuleConfig):
     solve_seed_gnc_verdicts: bool = False
     # solver fast path: a new closure whose older end is within max_keyframes of the newest is applied at once by a local
     # least squares (no GNC) over those keyframes, until the GNC solve covering it lands and supersedes it
-    solver_fast_path_enabled: bool = False
+    solver_fast_path_enabled: bool = True
     solver_fast_path_max_keyframes: int = 1000
     # each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate
     solver_fast_path_max_lm_steps: int = 10
