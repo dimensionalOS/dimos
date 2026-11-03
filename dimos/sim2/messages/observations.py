@@ -28,7 +28,7 @@ from dimos_lcm.sim_msgs import Observation, Observations
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.sim2.types import Array, Layout, WorldState
+from dimos.sim2.state import Array, Layout, WorldState
 
 
 @dataclass(frozen=True)

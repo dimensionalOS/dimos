@@ -19,11 +19,11 @@ from dimos_lcm.sim_msgs import Action, Actions, JointCommand, Observation, Obser
 import numpy as np
 import pytest
 
-from dimos.sim2.control import joint_targets
-from dimos.sim2.mujoco import MujocoBackend
-from dimos.sim2.observations import observations, read_poses
-from dimos.sim2.runtime import Runtime
-from dimos.sim2.sensors import MujocoSensors
+from dimos.sim2.messages.control import joint_targets
+from dimos.sim2.messages.observations import observations, read_poses
+from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.physics.runtime import Runtime
+from dimos.sim2.sensors.mujoco import MujocoSensors
 
 
 @pytest.fixture

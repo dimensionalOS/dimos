@@ -20,7 +20,8 @@ from dimos_lcm.sim_msgs import Action, Actions, JointCommand
 import numpy as np
 
 from dimos.msgs.control_msgs.ControlValues import ControlValues
-from dimos.sim2.types import Frame, JointTargets, Layout
+from dimos.sim2.physics.interface import JointTargets
+from dimos.sim2.state import Frame, Layout
 
 
 def feedback(run_id: str, layout: Layout, frame: Frame) -> ControlValues:

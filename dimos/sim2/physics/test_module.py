@@ -19,11 +19,11 @@ import pytest
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.module import SimModule
-from dimos.sim2.mujoco import MujocoBackend
-from dimos.sim2.sensor_module import SimSensorModule
-from dimos.sim2.sensors import MujocoSensors
-from dimos.sim2.types import Wrench
+from dimos.sim2.physics.interface import Wrench
+from dimos.sim2.physics.module import SimModule
+from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.sensors.module import SimSensorModule
+from dimos.sim2.sensors.mujoco import MujocoSensors
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = pytest.mark.native_e2e

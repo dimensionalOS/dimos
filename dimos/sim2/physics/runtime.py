@@ -23,7 +23,8 @@ from queue import Empty, Queue
 from typing import TypeAlias
 import uuid
 
-from dimos.sim2.types import Frame, JointEfforts, JointTargets, PhysicsBackend, WorldState, Wrench
+from dimos.sim2.physics.interface import JointEfforts, JointTargets, PhysicsBackend, Wrench
+from dimos.sim2.state import Frame, WorldState
 
 Command: TypeAlias = JointTargets | JointEfforts | Wrench
 

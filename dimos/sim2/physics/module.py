@@ -33,18 +33,12 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.control import feedback, joint_targets
-from dimos.sim2.observations import observations
-from dimos.sim2.runtime import Runtime
-from dimos.sim2.types import (
-    Frame,
-    Layout,
-    ModelSourceSpec,
-    PhysicsBackend,
-    World,
-    WorldState,
-    Wrench,
-)
+from dimos.sim2.description import ModelSourceSpec, World
+from dimos.sim2.messages.control import feedback, joint_targets
+from dimos.sim2.messages.observations import observations
+from dimos.sim2.physics.interface import PhysicsBackend, Wrench
+from dimos.sim2.physics.runtime import Runtime
+from dimos.sim2.state import Frame, Layout, WorldState
 from dimos.spec.utils import Spec
 
 

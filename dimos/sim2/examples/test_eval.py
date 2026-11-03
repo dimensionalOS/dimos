@@ -25,9 +25,10 @@ from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.runner import EvalRunner
 from dimos.evals.types import EvalCase, Outcome, RunningEnvironment, Trajectory
-from dimos.sim2.mujoco import MujocoBackend
-from dimos.sim2.runtime import Runtime
-from dimos.sim2.types import JointTargets, World
+from dimos.sim2.description import World
+from dimos.sim2.physics.interface import JointTargets
+from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.physics.runtime import Runtime
 
 
 class PushEvalConfig(EnvironmentConfig):

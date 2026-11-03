@@ -17,12 +17,13 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from dimos.sim2.mujoco import MujocoBackend
-from dimos.sim2.observations import observations, read_poses
-from dimos.sim2.runtime import Runtime
-from dimos.sim2.sensor_module import SimSensorModule
-from dimos.sim2.sensors import MujocoSensors
-from dimos.sim2.types import Camera, Lidar, Scan, SensorReader
+from dimos.sim2.description import Camera, Lidar
+from dimos.sim2.messages.observations import observations, read_poses
+from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.physics.runtime import Runtime
+from dimos.sim2.sensors.interface import Scan, SensorReader
+from dimos.sim2.sensors.module import SimSensorModule
+from dimos.sim2.sensors.mujoco import MujocoSensors
 
 
 @pytest.fixture

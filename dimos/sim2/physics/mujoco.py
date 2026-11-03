@@ -26,17 +26,9 @@ import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.types import (
-    Array,
-    Camera,
-    Frame,
-    JointEfforts,
-    JointTargets,
-    Layout,
-    World,
-    WorldState,
-    Wrench,
-)
+from dimos.sim2.description import Camera, World
+from dimos.sim2.physics.interface import JointEfforts, JointTargets, Wrench
+from dimos.sim2.state import Array, Frame, Layout, WorldState
 
 
 def compile_world(world: World, *, kinematic: bool = False) -> mujoco.MjModel:

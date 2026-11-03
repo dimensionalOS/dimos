@@ -5,6 +5,40 @@ poses** through generated `sim_msgs.Observations`; camera and lidar do not recei
 joint state or a native simulator checkpoint. Every publication is complete,
 including stationary bodies. There is no change detection or delta replay.
 
+## Where code belongs
+
+```text
+dimos/sim2/
+├── description.py       World, Instance, drives and sensor profiles; model resolution
+├── state.py             Layout, WorldState and the physics/IMU sample
+├── physics/
+│   ├── interface.py     PhysicsBackend; joint targets, efforts and body wrenches
+│   ├── runtime.py       Step ownership, command expiry and reset epochs
+│   ├── module.py        SimModule: lifecycle, RPCs and publication
+│   └── mujoco.py        MuJoCo compilation and dynamics
+├── sensors/
+│   ├── interface.py     SensorReader and scan result contract
+│   ├── module.py        SimSensorModule: acquisition scheduling and sensor outputs
+│   └── mujoco.py        Pose-driven query scene, RGB/depth and lidar
+├── messages/
+│   ├── observations.py  Body-pose wire conversion and validation
+│   └── control.py       Joint-action decoding and robot-feedback encoding
+└── examples/
+    └── basic.py         Runnable pusher/box blueprint
+```
+
+Tests live beside the code they exercise. Add a physics engine under `physics/`
+implementing `PhysicsBackend`; add a renderer/raycaster under `sensors/`
+implementing `SensorReader`. These are separate choices in a blueprint.
+`messages/` adapts generated dimos-lcm messages; their schemas belong in dimos-lcm.
+Robot model/asset resolution stays in `robot/assets` and `UrdfManager`; G1 policy
+and blueprint code stays in `robot/unitree/g1`. Neither belongs in the generic core.
+
+The current MuJoCo sensor implementation reuses `physics/mujoco.py`'s pure scene
+compiler to build its separate query model. It does not use the running physics
+backend or its native state. `description.py` and `state.py` import neither engine
+implementations nor module workers.
+
 ## The objects and their meanings
 
 | Object | Exact contents and purpose |
@@ -54,10 +88,12 @@ for the wire contract and shared Python/TypeScript fixtures.
 | `PhysicsBackend` | Resolved `World` | `layout`, `dt`, `targets`, `efforts`, `hold`, `validate_wrench`, `step`, `snapshot`, `reset`, `place`. MuJoCo is the implemented backend. |
 | `SensorReader` | Resolved `World`, `Layout`; generated observations | `observe` → `SceneSample`, `camera(frame, sample)`, `lidar(frame, duration)`, `close`, `gaps`. MuJoCo is the implemented reader. |
 
-Source: [types](/dimos/sim2/types.py), [module](/dimos/sim2/module.py),
-[runtime](/dimos/sim2/runtime.py), [observations](/dimos/sim2/observations.py),
-[control](/dimos/sim2/control.py), [sensor module](/dimos/sim2/sensor_module.py),
-[MuJoCo physics](/dimos/sim2/mujoco.py), [MuJoCo sensors](/dimos/sim2/sensors.py).
+Source: [description](/dimos/sim2/description.py), [state](/dimos/sim2/state.py),
+[physics interface](/dimos/sim2/physics/interface.py), [SimModule](/dimos/sim2/physics/module.py),
+[runtime](/dimos/sim2/physics/runtime.py), [observations](/dimos/sim2/messages/observations.py),
+[control messages](/dimos/sim2/messages/control.py), [sensor interface](/dimos/sim2/sensors/interface.py),
+[SimSensorModule](/dimos/sim2/sensors/module.py),
+[MuJoCo physics](/dimos/sim2/physics/mujoco.py), [MuJoCo sensors](/dimos/sim2/sensors/mujoco.py).
 
 The sensor query model flattens geometry-bearing bodies into independently posed
 bodies: **zero joints, zero generalized coordinates, zero actuators**. Applying
@@ -103,7 +139,7 @@ dimos shell
 ```python
 from dimos_lcm.sim_msgs import Action, Actions, JointCommand
 from dimos.core.transport_factory import make_transport
-from dimos.sim2.types import Wrench
+from dimos.sim2.physics.interface import Wrench
 
 sim = app.SimModule
 baseline = sim.sample()
@@ -130,7 +166,7 @@ The pusher demo has no mobile-base policy. Stop with `dimos stop`.
 
 ```bash
 pytest dimos/sim2 dimos/robot/assets/test_model.py
-pytest dimos/sim2/test_module.py -m native_e2e
+pytest dimos/sim2/physics/test_module.py -m native_e2e
 ```
 
 Tests cover forces/contact, joint drives/expiry, model resolution, full wire

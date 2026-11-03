@@ -25,9 +25,11 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.mujoco import compile_world
-from dimos.sim2.observations import SceneSample, read_poses
-from dimos.sim2.types import Array, Camera, Layout, Lidar, Scan, World
+from dimos.sim2.description import Camera, Lidar, World
+from dimos.sim2.messages.observations import SceneSample, read_poses
+from dimos.sim2.physics.mujoco import compile_world
+from dimos.sim2.sensors.interface import Scan
+from dimos.sim2.state import Array, Layout
 
 
 class MujocoSensors:
