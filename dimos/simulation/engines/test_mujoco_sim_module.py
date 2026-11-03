@@ -421,9 +421,9 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         module.stop()
 
 
-def _write_one_link_arm_xml(path: Path) -> None:
+def _write_one_link_arm_xml(path: Path, forcerange: float = 100.0) -> None:
     path.write_text(
-        """
+        f"""
 <mujoco>
   <worldbody>
     <body name="link" pos="0 0 1">
@@ -432,7 +432,7 @@ def _write_one_link_arm_xml(path: Path) -> None:
     </body>
   </worldbody>
   <actuator>
-    <position name="joint1" joint="joint1" kp="50"/>
+    <position name="joint1" joint="joint1" kp="50" forcerange="-{forcerange} {forcerange}"/>
   </actuator>
 </mujoco>
 """
@@ -452,3 +452,42 @@ def test_gravity_compensation_holds_the_commanded_pose(tmp_path: Path, compensat
         assert sag < 1e-3
     else:
         assert sag > 0.02
+
+
+def test_gravity_compensation_stays_within_the_actuator_force_limit(tmp_path: Path) -> None:
+    # The link needs about 4.9 Nm to hold level; 2 Nm cannot, even with compensation.
+    robot_xml = tmp_path / "weak_arm.xml"
+    _write_one_link_arm_xml(robot_xml, forcerange=2.0)
+    engine = MujocoEngine(config_path=robot_xml, headless=True, gravity_compensation=True)
+    assert engine.model.jnt_actfrclimited[0]
+    assert list(engine.model.jnt_actfrcrange[0]) == [-2.0, 2.0]
+    for _ in range(2000):
+        mujoco.mj_step(engine.model, engine.data)
+
+    assert abs(float(engine.data.qpos[0])) > 0.5
+
+
+@pytest.mark.self_hosted
+def test_gravity_compensation_on_the_xarm7_model() -> None:
+    from dimos.robot.manipulators.xarm.config import XARM7_SIM_PATH
+
+    engine = MujocoEngine(config_path=XARM7_SIM_PATH, headless=True, gravity_compensation=True)
+    model = engine.model
+    link1 = model.body("link1").id
+    for b in range(model.nbody):
+        below_link1 = b == link1 or any(p == link1 for p in _ancestors(model, b))
+        assert model.body_gravcomp[b] == (1.0 if below_link1 else 0.0), model.body(b).name
+    for mapping in engine._joint_mappings[:7]:
+        assert model.jnt_actgravcomp[mapping.joint_id]
+        assert model.jnt_actfrclimited[mapping.joint_id]
+        assert list(model.jnt_actfrcrange[mapping.joint_id]) == list(
+            model.actuator_forcerange[mapping.actuator_id]
+        )
+
+
+def _ancestors(model: Any, body: int) -> list[int]:
+    out = []
+    while body > 0:
+        body = int(model.body_parentid[body])
+        out.append(body)
+    return out

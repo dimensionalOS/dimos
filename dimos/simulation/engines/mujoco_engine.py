@@ -283,9 +283,10 @@ class MujocoEngine(SimulationEngine):
 
         Every body from the first controlled joint down (links, gripper, fingers) gets
         gravcomp=1, and each actuated joint carries its share through its actuator
-        (actuatorgravcomp), so force limits still apply. Without it, position actuators
-        settle below their targets under gravity. MuJoCo sizes gravcomp at compile time,
-        so this edits the spec rather than the compiled model.
+        (actuatorgravcomp). MuJoCo clamps that only at joint level, so the actuator's
+        force range is copied to the joint: the arm's weight and any load share one
+        torque budget. MuJoCo sizes gravcomp at compile time, so this edits the spec
+        rather than the compiled model.
         """
         joints = [m for m in self._joint_mappings if m.joint_id is not None]
         roots = {int(self._model.jnt_bodyid[m.joint_id]) for m in joints}
@@ -299,10 +300,18 @@ class MujocoEngine(SimulationEngine):
         else:
             spec = mujoco.MjSpec.from_file(str(model_path))
         for b in bodies:
-            spec.body(self._model.body(b).name).gravcomp = 1.0
+            # The spec addresses bodies by name; unnamed ones are skipped.
+            if name := self._model.body(b).name:
+                spec.body(name).gravcomp = 1.0
         for m in joints:
-            if m.actuator_id is not None:
-                spec.joint(self._model.joint(m.joint_id).name).actgravcomp = True
+            if m.actuator_id is None:
+                continue
+            joint = spec.joint(self._model.joint(m.joint_id).name)
+            joint.actgravcomp = True
+            if self._model.actuator_forcelimited[m.actuator_id]:
+                gear = abs(float(self._model.actuator_gear[m.actuator_id][0]))
+                joint.actfrclimited = mujoco.mjtLimited.mjLIMITED_TRUE
+                joint.actfrcrange = self._model.actuator_forcerange[m.actuator_id] * gear
         logger.info("MujocoEngine: gravity compensation", bodies=len(bodies), joints=len(joints))
         return spec.compile()
 

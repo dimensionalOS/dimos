@@ -128,6 +128,11 @@ class mjtObj:
     mjOBJ_SITE: int
     mjOBJ_TENDON: int
 
+class mjtLimited:
+    mjLIMITED_FALSE: int
+    mjLIMITED_TRUE: int
+    mjLIMITED_AUTO: int
+
 class mjtCamera:
     mjCAMERA_FREE: int
     mjCAMERA_TRACKING: int
