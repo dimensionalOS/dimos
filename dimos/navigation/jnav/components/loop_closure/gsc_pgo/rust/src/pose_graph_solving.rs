@@ -179,6 +179,8 @@ impl GscPgo {
         if self.solving.is_none() && self.unsolved() {
             self.dispatch_solve();
         }
+        // after the GNC side, so a GNC solve adopted on this step makes a fast path result from before it stale
+        moved |= self.step_fast_path();
         moved
     }
     /// Whether a closure or a world position arrived after the newest solve started.
@@ -309,6 +311,8 @@ impl GscPgo {
     pub fn finish(&mut self) -> bool {
         // a closure search still running lands now; from here on the debounce and merge run inline
         self.land_remaining_closure_search();
+        // the final graph is GNC's: a fast path job still out is dropped
+        self.fast_path_job = None;
         let mut moved = false;
         while self.adoption_busy() {
             moved |= self.step_adoption(true);
@@ -523,7 +527,7 @@ impl GscPgo {
         if !self.config.graph_change_heat_enabled {
             return self.adopt_solution(finished, None, None);
         }
-        let cost = graph_change_cost_on(&self.key_poses, &self.config, &finished.solution, finished.keyframes);
+        let cost = graph_change_cost_on(&self.key_poses, &self.config, finished.poses(), finished.keyframes);
         self.debounced(finished, cost, true)
     }
     /// Adopt a finished solve; `heat` = graph change heat before, its cost, after (for the solve log). Returns true.
@@ -648,6 +652,7 @@ impl GscPgo {
         }
         // the solve's closure weights swapped in (its thread built them): a closure committed while it ran stays unjudged
         let evidence = solution.odometry_error_estimate_evidence;
+        self.fast_path_superseded(&solution.closure_weights);
         self.committed_closures
             .adopt(std::sync::Arc::new(std::mem::take(&mut solution.closure_weights)));
         self.update_learned_odometry_error_estimate(evidence);
@@ -800,6 +805,13 @@ pub(crate) struct FinishedSolve {
     dispatched: Option<SolveDispatch>,
     /// The keyframe count when it finished.
     arrived_keyframes: usize,
+}
+
+impl FinishedSolve {
+    /// The solved poses (rotations, positions), for `graph_change_cost_on`.
+    pub(crate) fn poses(&self) -> (&[Mat3], &[Vec3]) {
+        (&self.solution.rotations, &self.solution.positions)
+    }
 }
 
 /// The solve log's graph change heat fields: when it finished, heat before, its cost, heat after (none with the heat off).
@@ -974,11 +986,11 @@ impl ChangeScan {
     }
 }
 
-/// Heat cost of adopting `solution` over `keys`: largest move in accumulated-odometry sds, `curbed_yank`, minus the floor.
+/// Heat cost of adopting solved poses over `keys`: largest move in accumulated-odometry sds, `curbed_yank`, minus the floor.
 pub(crate) fn graph_change_cost_on(
     keys: &crate::store::KeyFrames,
     config: &crate::gsc_pgo::Config,
-    solution: &Solution,
+    (rotations, positions): (&[Mat3], &[Vec3]),
     solved: usize,
 ) -> f64 {
     let mut scan = ChangeScan::default();
@@ -987,16 +999,16 @@ pub(crate) fn graph_change_cost_on(
             config,
             (&key_pose.rotation_local, &key_pose.translation_local),
             (&key_pose.rotation_global, &key_pose.translation_global),
-            (solution.rotations[k], solution.positions[k]),
+            (rotations[k], positions[k]),
         );
     }
     let newest = keys.fixed(solved - 1);
     let ride_rotation = mat3::mat_mul(
-        &solution.rotations[solved - 1],
+        &rotations[solved - 1],
         &mat3::transpose(&newest.rotation_local),
     );
     let ride_translation = mat3::sub(
-        &solution.positions[solved - 1],
+        &positions[solved - 1],
         &mat3::mat_vec(&ride_rotation, &newest.translation_local),
     );
     for key_pose in keys.range(solved..keys.len()) {

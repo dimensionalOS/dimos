@@ -235,6 +235,10 @@ impl Closures {
     pub fn weight(&self, i: usize) -> f64 {
         self.weights.get(i).copied().unwrap_or(f64::NAN)
     }
+    /// How many closures the newest adopted solve judged (the first ones; the rest are unjudged).
+    pub fn judged(&self) -> usize {
+        self.weights.len()
+    }
     pub fn get(&self, i: usize) -> CommittedClosure {
         let fixed = self.fixed.get(i);
         CommittedClosure {

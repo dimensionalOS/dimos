@@ -130,6 +130,85 @@ pub fn solve(
     )
 }
 
+/// The solver fast path's local solve (`fast_path`): poses, whether LM reached a minimum, and the GNC cutoff check.
+pub(crate) struct FastSolve {
+    pub(crate) rotations: Vec<Mat3>,
+    pub(crate) positions: Vec<Vec3>,
+    pub(crate) converged: bool,
+    /// The largest whitened squared residual of a `new` closure at GNC's start (all in, variances x `gnc_variance_scale`),
+    /// over GNC's cutoff; under 1, GNC would not even run on this window and would keep every closure.
+    pub(crate) worst_over_cutoff: f64,
+    /// How much the new closures raise the window's whitened cost at GNC's start, over that cutoff.
+    pub(crate) cost_rise_over_cutoff: f64,
+}
+
+/// GNC's start without GNC: least squares with every closure in at GNC's scaled variances, the `new` closures' residuals
+/// read against GNC's cutoff, then (if under it) `solve_core`'s polish (own variances, Huber passes). No covariances. Each
+/// Levenberg-Marquardt pass stops after `steps` steps (unconverged), bounding the cost.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn solve_fast_path(
+    rotations: &[Mat3],
+    positions: &[Vec3],
+    free: &[bool],
+    odometry: &[Edge],
+    closures: &[Edge],
+    new: &[bool],
+    config: &SolveConfig,
+    steps: usize,
+) -> FastSolve {
+    let mut state = State {
+        rotation: rotations.to_vec(),
+        position: positions.to_vec(),
+        landmark: Vec::new(),
+        landmark_rotation: Vec::new(),
+    };
+    let pattern = Pattern::new(free, odometry.iter().chain(closures), &[], &[], &[]);
+    let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
+    let scaled: Vec<Edge> = closures
+        .iter()
+        .map(|e| Edge {
+            variances: e.variances.map(|v| v * config.gnc_variance_scale),
+            ..*e
+        })
+        .collect();
+    let old: Vec<f64> = new.iter().map(|&n| if n { 0.0 } else { 1.0 }).collect();
+    let before = cost(&state, odometry, &scaled, &old, &[], &[], &[], &[]);
+    let all = vec![1.0; closures.len()];
+    let mut converged = levenberg_marquardt_steps(
+        &mut state, &pattern, odometry, &scaled, &all, &[], &[], &[], &[], 1e-5, steps, false,
+    );
+    let after = cost(&state, odometry, &scaled, &all, &[], &[], &[], &[]);
+    let worst = scaled
+        .iter()
+        .zip(new)
+        .filter(|(_, &n)| n)
+        .map(|(e, _)| whitened_squared(e, &state))
+        .fold(0.0, f64::max);
+    // over the cutoff or stalled, the fast path declines: no polish
+    let polish = if converged && worst <= threshold { 3 } else { 0 };
+    let mut huber = all;
+    for _ in 0..polish {
+        converged = levenberg_marquardt_steps(
+            &mut state, &pattern, odometry, closures, &huber, &[], &[], &[], &[], 1e-5, steps, false,
+        );
+        for (h, e) in huber.iter_mut().zip(closures) {
+            let r = whitened_squared(e, &state).sqrt();
+            *h = if config.huber_k > 0.0 && r > config.huber_k {
+                config.huber_k / r
+            } else {
+                1.0
+            };
+        }
+    }
+    FastSolve {
+        rotations: state.rotation,
+        positions: state.position,
+        converged,
+        worst_over_cutoff: worst / threshold,
+        cost_rise_over_cutoff: (after - before) / threshold,
+    }
+}
+
 /// A position prior in the solve frame: `keyframe`'s sensor at `lever` (body frame) should be at `position`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Unary {
@@ -1606,8 +1685,17 @@ pub(crate) fn odometry_edges(
     config: &Config,
     noise: [f64; 4],
 ) -> Vec<Edge> {
-    (1..key_poses.len())
-        .map(|k| (k - 1, [key_poses.fixed(k - 1), key_poses.fixed(k)]))
+    odometry_edges_ending(key_poses, config, noise, 1..key_poses.len())
+}
+
+/// `odometry_edges`' steps into keyframes `ends` only (edge k - 1 -> k for each k).
+pub(crate) fn odometry_edges_ending(
+    key_poses: &KeyFrames,
+    config: &Config,
+    noise: [f64; 4],
+    ends: std::ops::Range<usize>,
+) -> Vec<Edge> {
+    ends.map(|k| (k - 1, [key_poses.fixed(k - 1), key_poses.fixed(k)]))
         .map(|(i, pair)| {
             let back = mat3::transpose(&pair[0].rotation_local);
             let step = step_variances(config, pair[0], pair[1]);

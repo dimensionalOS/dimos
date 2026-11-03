@@ -144,6 +144,10 @@ struct EvalOutput {
     graph_error: f64,
     /// Every committed closure's refined relative pose (target->source), in commit order.
     committed_closure_edges: Vec<CommittedClosureEdge>,
+    /// Per committed closure: (scan, data time) committed, first adopted by the solver fast path, judged by an adopted GNC solve.
+    closure_latency: Vec<dimos_gsc_pgo::fast_path::ClosureLatency>,
+    /// Solver fast path jobs per outcome (each job's window poses are in fast_path.jsonl next to the output).
+    fast_path_outcomes: BTreeMap<String, usize>,
     /// With an ICP cache replay: the cloud computations answered from it, and those it lacked (computed live).
     icp_cache_hits: usize,
     icp_cache_misses: usize,
@@ -816,6 +820,17 @@ fn run() -> Result<(), String> {
         .map(|closure| CommittedClosureEdge::from(&closure))
         .collect();
 
+    let mut fast_path_outcomes: BTreeMap<String, usize> = BTreeMap::new();
+    if !pgo.fast_path_records().is_empty() {
+        let mut lines = String::new();
+        for record in pgo.fast_path_records() {
+            *fast_path_outcomes.entry(record.outcome.to_string()).or_insert(0) += 1;
+            lines += &serde_json::to_string(record).map_err(|e| e.to_string())?;
+            lines.push('\n');
+        }
+        let path = args.output.with_file_name("fast_path.jsonl");
+        std::fs::write(&path, lines).map_err(|e| format!("write {path:?}: {e}"))?;
+    }
     let (icp_cache_hits, icp_cache_misses) = match &icp_cache {
         Some(cache) => {
             if cache.mode == dimos_gsc_pgo::icp_cache::Mode::Record {
@@ -907,6 +922,8 @@ fn run() -> Result<(), String> {
         closure_diagnostics,
         graph_error,
         committed_closure_edges,
+        closure_latency: pgo.closure_latency().to_vec(),
+        fast_path_outcomes,
     };
 
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;

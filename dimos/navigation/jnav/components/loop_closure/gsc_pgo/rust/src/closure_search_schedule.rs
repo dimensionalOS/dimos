@@ -508,6 +508,9 @@ impl GscPgo {
                     "pressure_scans_fixed_overhead" => &mut suggested.pressure_scans_fixed_overhead,
                     "pressure_scans_per_keyframe" => &mut suggested.pressure_scans_per_keyframe,
                     "pressure_scans_per_closure" => &mut suggested.pressure_scans_per_closure,
+                    "fast_path_scans_fixed_overhead" => &mut suggested.fast_path_scans_fixed_overhead,
+                    "fast_path_scans_per_window_keyframe" => &mut suggested.fast_path_scans_per_window_keyframe,
+                    "fast_path_scans_per_keyframe" => &mut suggested.fast_path_scans_per_keyframe,
                     _ => continue,
                 };
                 *slot = value;
@@ -525,7 +528,7 @@ impl GscPgo {
             values[((values.len() - 1) as f64 * 0.99).round() as usize]
         };
         let c = &self.config;
-        let groups: [ProfileGroup; 6] = [
+        let groups: [ProfileGroup; 7] = [
             ("fast_match", vec![
                 ("fast_match_scans_fixed_overhead", c.deterministic_config.fast_match_scans_fixed_overhead),
                 ("fast_match_scans_per_keyframe", c.deterministic_config.fast_match_scans_per_keyframe),
@@ -544,6 +547,11 @@ impl GscPgo {
                 ("pressure_scans_fixed_overhead", c.deterministic_config.pressure_scans_fixed_overhead),
                 ("pressure_scans_per_keyframe", c.deterministic_config.pressure_scans_per_keyframe),
                 ("pressure_scans_per_closure", c.deterministic_config.pressure_scans_per_closure),
+            ]),
+            ("fast_path", vec![
+                ("fast_path_scans_fixed_overhead", c.deterministic_config.fast_path_scans_fixed_overhead),
+                ("fast_path_scans_per_window_keyframe", c.deterministic_config.fast_path_scans_per_window_keyframe),
+                ("fast_path_scans_per_keyframe", c.deterministic_config.fast_path_scans_per_keyframe),
             ]),
         ];
         groups

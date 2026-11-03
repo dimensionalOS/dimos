@@ -69,6 +69,9 @@ class PGOConfig(NativeModuleConfig):
             "pressure_scans_fixed_overhead": 0.0007777038336858567,
             "pressure_scans_per_keyframe": 8.708997476399469e-06,
             "pressure_scans_per_closure": 1.2578234731596874e-05,
+            "fast_path_scans_fixed_overhead": 0.42,
+            "fast_path_scans_per_window_keyframe": 1.7e-3,
+            "fast_path_scans_per_keyframe": 8.4e-5,
         }
     )
     source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"
@@ -152,6 +155,12 @@ class PGOConfig(NativeModuleConfig):
     # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
     solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
+    # solver fast path: a new closure whose older end is within max_keyframes of the newest is applied at once by a local
+    # least squares (no GNC) over those keyframes, until the GNC solve covering it lands and supersedes it
+    solver_fast_path_enabled: bool = False
+    solver_fast_path_max_keyframes: int = 1000
+    # each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate
+    solver_fast_path_max_lm_steps: int = 10
     # closure search pipeline: SC buffer (most similar first) -> fast-match workers -> verification buffer -> workers
     fast_match_workers: int = 2
     sc_buffer_size: int = 4
