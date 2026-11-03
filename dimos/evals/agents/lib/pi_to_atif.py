@@ -109,7 +109,7 @@ def _response_id(body: JsonValue) -> str | None:
             if data == "[DONE]":
                 continue
             event = _json_object.validate_json(data)
-            if isinstance(event.get("responseId"), str):  # Gemini: on every chunk
+            if isinstance(event.get("responseId"), str) and event["responseId"]:  # Gemini
                 return str(event["responseId"])
             response = event.get("response") or event.get("message")
             if isinstance(response, dict) and isinstance(response.get("id"), str):
