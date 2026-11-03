@@ -147,7 +147,7 @@ def last_request_unanswered(trace_dir: Path) -> bool:
     requests = {
         int(seq): r
         for r in trace_dir.glob(f"*{REQUEST_SUFFIX}")
-        if (seq := request.name.removesuffix(REQUEST_SUFFIX)).isdigit()
+        if (seq := r.name.removesuffix(REQUEST_SUFFIX)).isdigit()
     }
     if not requests:
         return False
