@@ -58,6 +58,9 @@ pub struct SolveConfig {
     /// Compute that evidence at all (a polishing solve and Hutchinson traces each solve); it only feeds the learned
     /// odometry error estimate, which is only logged.
     pub learned_evidence: bool,
+    /// Per closure, the newest adopted solve's verdict (1 kept, 0 rejected, NaN not yet judged) to start GNC from, or
+    /// empty to start every closure in (`solve_seed_gnc_verdicts`).
+    pub seed_closure_weights: Vec<f64>,
 }
 
 pub struct Solution {
@@ -225,10 +228,18 @@ pub(crate) fn solve_core(
     let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
     let residual =
         |state: &State| -> Vec<f64> { scaled.iter().map(|e| whitened_squared(e, state)).collect() };
+    // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
+    let seeded_out: Vec<bool> = (0..closures.len())
+        .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
+        .collect();
     // GNC's starting mu comes from the residuals at the starting estimate, before any solve (as GTSAM's
-    // GncOptimizer does): the worse the start, the more gently it tightens
-    let worst = residual(&state).into_iter().fold(0.0, f64::max);
-    let mut weights = vec![1.0; closures.len()];
+    // GncOptimizer does): the worse the start, the more gently it tightens; a closure that starts out sets none
+    let worst = residual(&state)
+        .into_iter()
+        .zip(&seeded_out)
+        .filter(|&(_, &out)| !out)
+        .fold(0.0, |worst: f64, (r, _)| worst.max(r));
+    let mut weights: Vec<f64> = seeded_out.iter().map(|&out| if out { 0.0 } else { 1.0 }).collect();
     // position priors: GNC-weighted the same way, against the 3-DoF cutoff
     let unary_threshold = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
     let unary_residuals =
@@ -359,6 +370,29 @@ pub(crate) fn solve_core(
             }
             previous_cost = weighted_cost;
             mu *= 1.4;
+        }
+    } else if seeded_out.iter().any(|&out| out) {
+        // no GNC: a closure that started out comes back in once the solve puts it under the cutoff
+        let mut readmitted = false;
+        for ((w, &r), &out) in weights.iter_mut().zip(&r2).zip(&seeded_out) {
+            if out && r <= threshold {
+                *w = 1.0;
+                readmitted = true;
+            }
+        }
+        if readmitted {
+            converged = levenberg_marquardt(
+                &mut state,
+                &pattern,
+                odometry,
+                &scaled,
+                &weights,
+                unary,
+                &unary_weights,
+                sightings,
+                &sighting_weights,
+                1e-5,
+            );
         }
     }
     let kept: Vec<f64> = weights

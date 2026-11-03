@@ -157,6 +157,10 @@ class PGOConfig(NativeModuleConfig):
     graph_change_heat_threshold: float = 30.0
     graph_change_heat_floor: float = 20.0
     graph_change_heat_decay: float = 0.995
+    # Seeded solve: each solve starts from the accepted graph instead of the odometry alone; with gnc verdicts, GNC
+    # starts from the newest adopted solve's verdicts (a rejected closure starts out, mu from the rest's residuals)
+    solve_seed_from_accepted: bool = False
+    solve_seed_gnc_verdicts: bool = False
     # Deterministic solve schedule: a finished solve is held ceil(solve_scans_scale * keyframes^solve_keyframe_power *
     # (1 + closures)^solve_closure_power * (1 + rejected)^solve_rejected_power + debounce_scans_per_keyframe *
     # keyframes) scans after its dispatch (an upper bound on its cost in scans; rejected = closures the newest adopted

@@ -121,6 +121,7 @@ fn helmert(with_closures: bool) -> (f64, f64, f64, f64) {
         huber_k: 0.0,
         evidence_core: false,
         learned_evidence: true,
+        seed_closure_weights: Vec::new(),
     };
     let mut scale = [1.0_f64; 4];
     for iteration in 0..15 {

@@ -105,6 +105,8 @@ config! {
     graph_change_heat_threshold: f64,
     graph_change_heat_floor: f64,
     graph_change_heat_decay: f64,
+    solve_seed_from_accepted: bool,
+    solve_seed_gnc_verdicts: bool,
     fast_match_workers: usize,
     sc_buffer_size: usize,
     verification_workers: usize,
