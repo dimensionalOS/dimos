@@ -24,7 +24,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.seeed_b601_dm.config import (
-    B601_DM_VELOCITY_SCALE,
     b601_dm_gripper_task,
     b601_dm_model_config,
 )
@@ -37,7 +36,6 @@ seeed_b601_dm_planner_coordinator = autoconnect(
         visualization={"backend": "viser"},
         trajectory_parametrization={
             "backend": "simple_trapezoid",
-            "velocity_scale": B601_DM_VELOCITY_SCALE,
         },
     ),
     SeeedB601DMCoordinator.blueprint(

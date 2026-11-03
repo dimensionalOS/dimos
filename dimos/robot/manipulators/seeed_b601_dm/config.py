@@ -42,6 +42,8 @@ B601_DM_SOURCE = RobotDescriptionSource(
 # the planner's start state out of bounds.
 B601_DM_JOINT2_LIMITS = (-3.14, 0.02)
 B601_DM_ACCELERATION_LIMIT = 0.5
+# Replace the vendor's 50-200 rad/s limits for both joint and Cartesian planning.
+B601_DM_VELOCITY_LIMITS = dict(zip(B601_DM_ARM_JOINTS, (0.2, 0.2, 0.2, 0.8, 0.8, 0.8), strict=True))
 # Lazy: the description repository is fetched on first load, not on import.
 B601_DM_MODEL = (
     RobotModel.from_file(B601_DM_SOURCE / "Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf")
@@ -49,12 +51,9 @@ B601_DM_MODEL = (
     .with_joint_position_limits(
         "joint2", lower=B601_DM_JOINT2_LIMITS[0], upper=B601_DM_JOINT2_LIMITS[1]
     )
+    .with_joint_velocity_limits(B601_DM_VELOCITY_LIMITS)
     .with_default_joint_acceleration_limit(B601_DM_ACCELERATION_LIMIT)
 )
-# The vendor URDF lists 50-200 rad/s joint velocities; the motors top out at
-# 10-30 rad/s. Scale planned trajectories to 0.2 rad/s (joints 1-3) and
-# 0.8 rad/s (joints 4-6).
-B601_DM_VELOCITY_SCALE = 0.004
 
 
 def b601_dm_hardware(
