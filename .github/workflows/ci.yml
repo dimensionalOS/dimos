@@ -671,7 +671,8 @@ jobs:
           - os: "ubuntu-24.04-arm"
             pyver: "3.12"
             experimental: false
-      fail-fast: true
+      # Let every platform finish so failed jobs can be rerun independently.
+      fail-fast: false
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
     env:
@@ -1244,21 +1245,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: uv run --project .github/benchmark-analysis python bin/benchmark-analysis data.js --create-issues
-
-  # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
-  # not across sibling jobs. This watcher fires the moment `tests` fails
-  # and cancels the whole workflow run.
-  fail-fast:
-    if: failure()
-    needs: [tests]
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write  # For `gh run cancel`
-    steps:
-      - name: Cancel workflow run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   ci-complete:  # This is used for branch protection.
     if: always()
