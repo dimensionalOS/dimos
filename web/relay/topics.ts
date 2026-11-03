@@ -13,15 +13,21 @@ import {
   MAX_TOPIC_PUBLISH_PENDING,
   MAX_TOPIC_ROUTES,
   MAX_TOPIC_SOURCES,
+  MAX_TOPIC_VARIANTS,
   type Msg,
+  normalizeTopicSettings,
+  type OptionRanges,
   TOPIC_GUARD_CHANNEL,
   TOPIC_PUBLISH_CHANNEL,
+  TOPIC_SETTING_NAMES,
   type TopicCapabilities,
   type TopicErrorMsg,
   type TopicMsg,
   topicPublishMeta,
   type TopicPubResultMsg,
   topicSampleMeta,
+  type TopicSettings,
+  type TopicSettingsUpdate,
   type TopicSourcesMsg,
   type TopicSubMsg,
 } from "@dimos/shared";
@@ -31,6 +37,9 @@ import { TopicPublishers } from "./topic_publishers.ts";
 
 const MAX_DESIRED = 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
+/** A variant nobody uses stays open this long, so a preset toggle does not
+ * churn encoders on the provider. */
+export const VARIANT_GRACE_MS = 2_000;
 
 export interface TopicProvider {
   sendControl(msg: Msg): void;
@@ -55,6 +64,18 @@ interface Source {
   closing: boolean;
   capabilities: TopicCapabilities;
 }
+/** One encoder configuration of a media route. Its identity within the
+ * group is the canonical encode settings; the rate is the highest among the
+ * viewers it serves. */
+interface Variant {
+  id: string;
+  key: string;
+  settings: TopicSettings;
+  ready: boolean;
+  /** Set once no subscription uses or targets it; the grace close follows. */
+  idleSince: number;
+  keys: Map<string, number>;
+}
 interface Group {
   source: Source;
   route: string;
@@ -67,6 +88,19 @@ interface Group {
   seq: number;
   stream: symbol | null;
   maxHz: number;
+  /** The settings this profile accepts, or null when the route is raw or the
+   * provider is older: only the rate can change, and only this relay gates it. */
+  ranges: OptionRanges | null;
+  variants: Map<string, Variant> | null;
+  /** The variant opened with the route itself; topic_opened acknowledges it. */
+  opening: Variant | null;
+}
+interface Move {
+  variant: Variant;
+  revision: number;
+  requested: Record<string, unknown>;
+  settings: TopicSettings;
+  deadline: number;
 }
 interface Subscription {
   viewer: TopicViewer;
@@ -76,6 +110,13 @@ interface Subscription {
   route: string | null;
   egress: TopicEgress | null;
   deadline: number;
+  /** The viewer's merged request; normalized against the provider's ranges. */
+  requested: Record<string, unknown>;
+  settings: TopicSettings;
+  /** The variant whose frames this viewer receives; null until ready. */
+  variant: Variant | null;
+  /** A move in progress: the viewer keeps its variant until the target is ready. */
+  target: Move | null;
 }
 interface PendingList {
   viewer: TopicViewer;
@@ -90,6 +131,14 @@ interface PendingPublication {
   id: string;
   bytes: number;
   deadline: number;
+}
+
+/** The canonical encode settings: what distinguishes variants of one route. */
+function variantKey(settings: TopicSettings): string {
+  const encode = settings as unknown as Record<string, unknown>;
+  return JSON.stringify(
+    TOPIC_SETTING_NAMES.filter((name) => name !== "maxHz").map((name) => encode[name] ?? null),
+  );
 }
 
 export class TopicRegistry {
@@ -219,8 +268,16 @@ export class TopicRegistry {
     id: string,
     code: string,
     outcome: TopicErrorMsg["outcome"] = "rejected",
+    revision?: number,
   ): void {
-    reply({ t: "topic_error", id, code, message: code.replaceAll("_", " "), outcome });
+    reply({
+      t: "topic_error",
+      id,
+      ...(revision === undefined ? {} : { revision }),
+      code,
+      message: code.replaceAll("_", " "),
+      outcome,
+    });
   }
 
   /** A forged server/provider message has no effect. */
@@ -246,6 +303,7 @@ export class TopicRegistry {
           this.#error(reply, msg.id, "topic_limit");
           return;
         }
+        const requested = { maxHz: msg.maxHz, ...msg.settings };
         const sub: Subscription = {
           viewer,
           state,
@@ -254,12 +312,25 @@ export class TopicRegistry {
           route: null,
           egress: null,
           deadline: 0,
+          requested,
+          settings: { maxHz: msg.maxHz },
+          variant: null,
+          target: null,
         };
         state.subs.set(msg.id, sub);
         this.#desired++;
         const source = this.#sources.get(msg.source);
         if (source === undefined) this.#error(reply, msg.id, "source_offline", "interrupted");
         else this.#attach(sub, source);
+        break;
+      }
+      case "topic_update": {
+        const sub = state.subs.get(msg.id);
+        if (sub === undefined) {
+          this.#error(reply, msg.id, "unknown_topic_handle", "rejected", msg.revision);
+          return;
+        }
+        this.#update(sub, msg.revision, msg.options);
         break;
       }
       case "topic_activate":
@@ -279,7 +350,8 @@ export class TopicRegistry {
               t: "topic_activate",
               route: sub.group.route,
               gen: sub.group.source.gen,
-              maxHz: sub.group.maxHz,
+              // Variants carry their own rates; a rate-only route takes the group's.
+              ...(sub.group.variants === null ? { maxHz: sub.group.maxHz } : {}),
             });
           }
         }
@@ -336,6 +408,18 @@ export class TopicRegistry {
       this.#drop(sub);
       return;
     }
+    // Raw routes have no encoder, and an older provider advertises no ranges:
+    // both keep the rate as their only setting, gated here per viewer.
+    const ranges = spec.profile === "raw"
+      ? null
+      : source.capabilities.profileOptions?.[spec.profile] ?? null;
+    const result = normalizeTopicSettings(ranges ?? {}, sub.requested);
+    if (result.error !== undefined) {
+      this.#error(sub.state.reply, spec.id, result.error);
+      this.#drop(sub);
+      return;
+    }
+    const settings = result.settings;
     const signature = JSON.stringify([
       spec.keyExpr,
       spec.delivery,
@@ -360,7 +444,10 @@ export class TopicRegistry {
         keys: new Map(),
         seq: 0,
         stream: null,
-        maxHz: spec.maxHz,
+        maxHz: settings.maxHz,
+        ranges,
+        variants: ranges === null ? null : new Map(),
+        opening: null,
       };
       source.groups.set(signature, group);
       this.#groups.set(group.route, group);
@@ -368,9 +455,9 @@ export class TopicRegistry {
     sub.group = group;
     sub.route = this.#id("@t:v");
     sub.deadline = this.now() + REQUEST_TIMEOUT_MS;
+    sub.settings = settings;
     this.#routes.set(sub.route, sub);
     group.subs.add(sub);
-    this.#updateRate(group);
     sub.egress = new TopicEgress(
       spec.delivery,
       sub.viewer.sink,
@@ -380,8 +467,21 @@ export class TopicRegistry {
         this.#drop(sub);
       },
       this.now,
-      spec.maxHz,
+      settings.maxHz,
     );
+    let variant: Variant | null = null;
+    if (group.variants !== null) {
+      const found = this.#variantFor(group, settings);
+      if (found === null) {
+        this.#error(sub.state.reply, spec.id, "variant_limit");
+        this.#drop(sub);
+        return;
+      }
+      variant = found.variant;
+      sub.target = { variant, revision: 0, requested: sub.requested, settings, deadline: 0 };
+      if (fresh) group.opening = variant;
+      else if (found.created) this.#announceVariant(group, variant);
+    }
     if (fresh) {
       source.peer.sendControl({
         t: "topic_open",
@@ -390,9 +490,146 @@ export class TopicRegistry {
         keyExpr: spec.keyExpr,
         delivery: spec.delivery,
         profile: spec.profile,
-        maxHz: spec.maxHz,
+        maxHz: settings.maxHz,
+        ...(variant === null ? {} : { settings: variant.settings }),
       });
-    } else if (group.opened) this.#ready(sub);
+    }
+    this.#updateRate(group);
+    if (!fresh && group.opened) {
+      if (variant === null) this.#ready(sub);
+      else if (variant.ready) this.#move(sub);
+    }
+  }
+
+  /** The variant of `group` encoding `settings`, reusing an identical one.
+   * A full group first retires a variant in its grace period. */
+  #variantFor(
+    group: Group,
+    settings: TopicSettings,
+  ): { variant: Variant; created: boolean } | null {
+    const variants = group.variants!;
+    const key = variantKey(settings);
+    for (const variant of variants.values()) {
+      if (variant.key === key) return { variant, created: false };
+    }
+    if (variants.size >= MAX_TOPIC_VARIANTS) {
+      const idle = [...variants.values()].find((variant) => variant.idleSince > 0);
+      if (idle === undefined) return null;
+      this.#closeVariant(group, idle);
+    }
+    let id = "";
+    for (let n = 1; n <= MAX_TOPIC_VARIANTS && id === ""; n++) {
+      if (!variants.has(`v${n}`)) id = `v${n}`;
+    }
+    const variant: Variant = {
+      id,
+      key,
+      settings: { ...settings },
+      ready: false,
+      idleSince: 0,
+      keys: new Map(),
+    };
+    variants.set(id, variant);
+    return { variant, created: true };
+  }
+
+  #announceVariant(group: Group, variant: Variant): void {
+    if (this.#sources.get(group.source.id) !== group.source) return;
+    group.source.peer.sendControl({
+      t: "topic_variant",
+      route: group.route,
+      gen: group.source.gen,
+      variant: variant.id,
+      settings: variant.settings,
+    });
+  }
+
+  #closeVariant(group: Group, variant: Variant): void {
+    group.variants!.delete(variant.id);
+    if (group.opening === variant) group.opening = null;
+    if (this.#sources.get(group.source.id) === group.source) {
+      group.source.peer.sendControl({
+        t: "topic_variant_close",
+        route: group.route,
+        gen: group.source.gen,
+        variant: variant.id,
+      });
+    }
+  }
+
+  /** Mark a variant idle once nothing uses or targets it. */
+  #idle(group: Group, variant: Variant | null | undefined): void {
+    if (variant === null || variant === undefined || variant.idleSince > 0) return;
+    for (const sub of group.subs) {
+      if (sub.variant === variant || sub.target?.variant === variant) return;
+    }
+    variant.idleSince = this.now();
+  }
+
+  #update(sub: Subscription, revision: number, options: TopicSettingsUpdate): void {
+    const group = sub.group;
+    const reject = (code: string) =>
+      this.#error(sub.state.reply, sub.spec.id, code, "rejected", revision);
+    if (group === null) {
+      reject("source_offline");
+      return;
+    }
+    const requested = { ...sub.requested };
+    for (const [name, value] of Object.entries(options)) {
+      if (value === null) delete requested[name];
+      else requested[name] = value;
+    }
+    const result = normalizeTopicSettings(group.ranges ?? {}, requested);
+    if (result.error !== undefined) {
+      reject(result.error);
+      return;
+    }
+    const settings = result.settings;
+    if (group.variants === null) {
+      // Rate-only: this relay owns the gate, so the change is in force now.
+      sub.requested = requested;
+      sub.settings = settings;
+      sub.egress?.setRate(settings.maxHz);
+      this.#updateRate(group);
+      sub.state.reply({ t: "topic_applied", id: sub.spec.id, revision, settings });
+      return;
+    }
+    const found = this.#variantFor(group, settings);
+    if (found === null) {
+      reject("variant_limit");
+      return;
+    }
+    const previous = sub.target?.variant;
+    sub.target = {
+      variant: found.variant,
+      revision,
+      requested,
+      settings,
+      deadline: this.now() + REQUEST_TIMEOUT_MS,
+    };
+    found.variant.idleSince = 0;
+    if (previous !== found.variant) this.#idle(group, previous);
+    if (found.created) this.#announceVariant(group, found.variant);
+    this.#updateRate(group);
+    // The viewer keeps its old variant until the new one encodes: no gap.
+    if (found.variant.ready) this.#move(sub);
+  }
+
+  /** Switch a subscription to its target variant, now that it encodes. */
+  #move(sub: Subscription): void {
+    const group = sub.group!;
+    const { variant, revision, requested, settings } = sub.target!;
+    const previous = sub.variant;
+    sub.target = null;
+    sub.variant = variant;
+    sub.requested = requested;
+    sub.settings = settings;
+    sub.egress?.setRate(settings.maxHz);
+    if (previous === null) this.#ready(sub);
+    else this.#idle(group, previous);
+    if (previous !== null || revision > 0) {
+      sub.state.reply({ t: "topic_applied", id: sub.spec.id, revision, settings });
+    }
   }
 
   #ready(sub: Subscription): void {
@@ -402,20 +639,40 @@ export class TopicRegistry {
       source: sub.spec.source,
       route: sub.route!,
       gen: sub.group!.source.gen,
+      settings: sub.settings,
     });
   }
 
+  /** Each variant samples at the highest rate among the viewers it serves or
+   * will serve; a rate-only route does the same for its one mailbox. */
   #updateRate(group: Group): void {
-    const maxHz = Math.max(...[...group.subs].map((sub) => sub.spec.maxHz));
-    if (maxHz === group.maxHz) return;
-    group.maxHz = maxHz;
-    if (group.active && this.#sources.get(group.source.id) === group.source) {
-      group.source.peer.sendControl({
-        t: "topic_activate",
-        route: group.route,
-        gen: group.source.gen,
-        maxHz,
-      });
+    const rateOf = (sub: Subscription, variant: Variant | null) =>
+      sub.target !== null && sub.target.variant === variant
+        ? sub.target.settings.maxHz
+        : sub.settings.maxHz;
+    if (group.variants === null) {
+      const maxHz = Math.max(...[...group.subs].map((sub) => rateOf(sub, null)));
+      if (maxHz === group.maxHz) return;
+      group.maxHz = maxHz;
+      if (group.active && this.#sources.get(group.source.id) === group.source) {
+        group.source.peer.sendControl({
+          t: "topic_activate",
+          route: group.route,
+          gen: group.source.gen,
+          maxHz,
+        });
+      }
+      return;
+    }
+    for (const variant of group.variants.values()) {
+      const rates = [...group.subs]
+        .filter((sub) => sub.variant === variant || sub.target?.variant === variant)
+        .map((sub) => rateOf(sub, variant));
+      if (rates.length === 0) continue;
+      const maxHz = Math.max(...rates);
+      if (maxHz === variant.settings.maxHz) continue;
+      variant.settings = { ...variant.settings, maxHz };
+      this.#announceVariant(group, variant);
     }
   }
 
@@ -426,7 +683,11 @@ export class TopicRegistry {
     sub.route = null;
     sub.deadline = 0;
     const group = sub.group;
+    const variant = sub.variant;
+    const target = sub.target?.variant;
     sub.group = null;
+    sub.variant = null;
+    sub.target = null;
     if (group === null) return;
     group.subs.delete(sub);
     if (group.subs.size === 0) {
@@ -439,7 +700,11 @@ export class TopicRegistry {
           gen: group.source.gen,
         });
       }
-    } else this.#updateRate(group);
+    } else {
+      this.#idle(group, variant);
+      this.#idle(group, target);
+      this.#updateRate(group);
+    }
   }
 
   #drop(sub: Subscription): void {
@@ -464,7 +729,23 @@ export class TopicRegistry {
       const group = this.#groups.get(msg.route);
       if (group?.source.peer !== peer || group.source.gen !== msg.gen || group.opened) return;
       group.opened = true;
-      for (const sub of group.subs) this.#ready(sub);
+      const variant = group.opening;
+      group.opening = null;
+      if (variant !== null) variant.ready = true;
+      for (const sub of [...group.subs]) {
+        if (group.variants === null) this.#ready(sub);
+        else if (sub.target?.variant === variant) this.#move(sub);
+      }
+    } else if (msg.t === "topic_variant_ready") {
+      const group = this.#groups.get(msg.route);
+      if (group?.source.peer !== peer || group.source.gen !== msg.gen || !group.opened) return;
+      const variant = group.variants?.get(msg.variant);
+      // A late acknowledgement of a retired variant names different settings.
+      if (variant === undefined || variantKey(msg.settings) !== variant.key) return;
+      variant.ready = true;
+      for (const sub of [...group.subs]) {
+        if (sub.target?.variant === variant) this.#move(sub);
+      }
     } else if (msg.t === "topic_error") {
       const group = this.#groups.get(msg.id);
       if (group?.source.peer === peer) {
@@ -614,15 +895,31 @@ export class TopicRegistry {
       group.stream = stream;
       group.seq = header.seq;
     }
-    const previous = group.keys.get(meta.key);
+    // A media route's frames belong to one variant each; one from a retired
+    // variant is dropped. Sequence numbers are shared across variants, so the
+    // per-key order check is kept per variant.
+    const variant = group.variants === null
+      ? null
+      : meta.variant === undefined
+      ? undefined
+      : group.variants.get(meta.variant);
+    if (variant === undefined) return;
+    const keys = variant === null ? group.keys : variant.keys;
+    const previous = keys.get(meta.key);
     if (previous !== undefined && header.seq <= previous) return;
-    if (previous === undefined && group.keys.size >= MAX_TOPIC_KEYS) {
+    if (previous === undefined && keys.size >= MAX_TOPIC_KEYS) {
       this.#failGroup(group, "topic_key_limit");
       return;
     }
-    group.keys.set(meta.key, header.seq);
+    keys.set(meta.key, header.seq);
+    let forwarded = header;
+    if (meta.variant !== undefined) {
+      const { variant: _, ...rest } = meta;
+      forwarded = { ...header, meta: rest };
+    }
     for (const sub of [...group.subs]) {
-      const bytes = encodeDataFrame({ ...header, ch: sub.route! }, payload);
+      if (variant !== null && sub.variant !== variant) continue;
+      const bytes = encodeDataFrame({ ...forwarded, ch: sub.route! }, payload);
       sub.egress?.offer(meta.key, bytes);
     }
   }
@@ -650,6 +947,21 @@ export class TopicRegistry {
         if (sub.deadline > 0 && nowMs >= sub.deadline) {
           this.#error(state.reply, sub.spec.id, "topic_ready_timeout");
           this.#drop(sub);
+        } else if (sub.target !== null && sub.target.deadline > 0 && nowMs >= sub.target.deadline) {
+          // A move the provider never acknowledged: the viewer keeps what it has.
+          const { variant, revision } = sub.target;
+          sub.target = null;
+          this.#error(state.reply, sub.spec.id, "topic_ready_timeout", "rejected", revision);
+          this.#idle(sub.group!, variant);
+          this.#updateRate(sub.group!);
+        }
+      }
+    }
+    for (const group of this.#groups.values()) {
+      if (group.variants === null) continue;
+      for (const variant of [...group.variants.values()]) {
+        if (variant.idleSince > 0 && nowMs - variant.idleSince >= VARIANT_GRACE_MS) {
+          this.#closeVariant(group, variant);
         }
       }
     }

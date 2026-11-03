@@ -50,8 +50,18 @@ export class TopicEgress {
     readonly budgets: readonly TopicBudget[],
     readonly fail: (code: string) => void,
     readonly now: () => number = Date.now,
-    readonly maxHz = Infinity,
+    public maxHz = Infinity,
   ) {}
+
+  /** Change this viewer's sampling rate in place, keeping each key's last
+   * selection time: no burst and no gap at the switch. */
+  setRate(maxHz: number): void {
+    const previous = Number.isFinite(this.maxHz) ? 1000 / this.maxHz : 0;
+    const period = Number.isFinite(maxHz) ? 1000 / maxHz : 0;
+    this.maxHz = maxHz;
+    for (const [key, due] of this.#nextDue) this.#nextDue.set(key, due + period - previous);
+    if (this.delivery === "latest") this.#drain();
+  }
 
   #release(size: number): void {
     this.#bytes -= size;
