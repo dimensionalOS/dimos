@@ -528,8 +528,6 @@ pub struct Config {
     pub closure_yank_drift_range: f64,
     /// Skip extending a candidate whose bar a full stack could not reach at its single scan's evidence per keyframe.
     pub closure_extension_skip_unreachable: bool,
-    /// Reject before ICP a candidate whose least reachable yank needs more evidence than any stack of scans could give.
-    pub closure_yank_pre_check: bool,
     /// Uncertainty range as evidence/bar ratios: >= pass (> 1) accepts, <= fail (< 1) rejects, between extends (`UncertaintyRange`).
     pub barely_fail_uncertainty_range: f64,
     pub barely_pass_uncertainty_range: f64,
@@ -696,7 +694,6 @@ impl Default for Config {
             closure_yank_gate_width: 1.0,
             closure_yank_drift_range: 100.0,
             closure_extension_skip_unreachable: true,
-            closure_yank_pre_check: false,
             barely_fail_uncertainty_range: 0.05,
             barely_pass_uncertainty_range: 3.0,
             decisive_pressure_rate: 1.0,
@@ -1368,32 +1365,6 @@ impl ClosureSearch {
                     known.min(via(l.from, l.to)).min(via(l.to, l.from))
                 })
         };
-        // pre-check: reject unaligned if even the least yank ICP could leave (it moves <= reach) needs more evidence than a full stack gives
-        if self.config.closure_likelihood_confidence && self.config.closure_yank_pre_check {
-            let reach = self.config.closure_icp_max_correspondence_m;
-            let source_position = self.key_poses.position(cur_idx);
-            let seeded = self.key_poses.position(target_idx);
-            let jump = mat3::norm(&mat3::sub(&seeded, &source_position));
-            let spread = mat3::jacobi_eigen(diag.innovation_covariance)
-                .0
-                .into_iter()
-                .fold(0.0, f64::max)
-                + self.config.closure_icp_max_fitness_m.powi(2);
-            if spread.is_finite() && spread > 0.0 && jump > reach {
-                let least_yank = (jump - reach) / spread.sqrt();
-                let width = self.config.submap_resolution / 4.0;
-                let most_evidence = (2.0 * reach / (width * (2.0 * std::f64::consts::PI).sqrt()))
-                    .ln()
-                    * self.config.closure_extended_icp_max_keyframes.max(1) as f64;
-                let least_required = crate::proportional_confidence::yank_evidence(
-                    least_yank / self.config.closure_yank_gate_width.max(f64::EPSILON),
-                    self.config.closure_yank_drift_range,
-                );
-                if least_required > most_evidence {
-                    return SearchStage::Done(rejected(diag, "yank_confidence_reject", timing));
-                }
-            }
-        }
         let (t0, built_before) = (std::time::Instant::now(), built_s.get());
         let icp = crate::icp_cache::decode_icp(&memo_alignment("icpr", 0, &mut || {
             let (source_cloud, target_cloud, target_tree) = clouds();
