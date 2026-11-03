@@ -24,7 +24,8 @@
         "stream": "fastlio_odometry_corrected",
         "against": "go2_odometry"
       },
-      "status": "ready"
+      "status": "ready",
+      "cloud": "53f5ff163e5d41c396999acf9edb7c51"
     },
     {
       "name": "small_fastlio",
@@ -36,7 +37,8 @@
       "gt": {
         "stream": "fastlio_odometry_corrected"
       },
-      "status": "ready"
+      "status": "ready",
+      "cloud": "53f5ff163e5d41c396999acf9edb7c51"
     },
     {
       "name": "huge_fastlio",
@@ -186,7 +188,8 @@
           "odom"
         ]
       },
-      "status": "ready"
+      "status": "ready",
+      "cloud": "24e8505e8e3e4825bc57c879109284c3"
     },
     {
       "name": "athens_pointlio",
@@ -201,7 +204,8 @@
           "odom"
         ]
       },
-      "status": "ready"
+      "status": "ready",
+      "cloud": "6578647bb2954528b7fae418588857da"
     },
     {
       "name": "hotel_jog",
@@ -214,7 +218,8 @@
         "stream": "pointlio_odometry_corrected",
         "validated": false
       },
-      "status": "no_gt"
+      "status": "no_gt",
+      "cloud": "b3a3cfa8c3cd4ae080509eeea709c2f2"
     },
     {
       "name": "grassy_field",
@@ -244,8 +249,14 @@
     {
       "name": "sf_office1_pointlio",
       "tier": "extra",
-      "db": "~/datasets/d455/sf_office1 (main.db TODO)",
-      "status": "todo"
+      "db": "~/datasets/d455/sf_office1/main.db",
+      "status": "no_gt",
+      "odometry": "pointlio_odometry",
+      "lidar": "pointlio_lidar",
+      "gt": {
+        "stream": "pointlio_odometry_corrected",
+        "validated": false
+      }
     },
     {
       "name": "sf_office1_2_pointlio",
@@ -269,13 +280,40 @@
       "gt": {
         "stream": "go2_odometry_corrected"
       },
-      "status": "ready"
+      "status": "ready",
+      "parts": [
+        {
+          "name": "hk_village1",
+          "db": "~/.dimos/recordings/hk_village_tf/hk_village1.db"
+        },
+        {
+          "name": "hk_village2",
+          "db": "~/.dimos/recordings/hk_village_tf/hk_village2.db"
+        },
+        {
+          "name": "hk_village3",
+          "db": "~/.dimos/recordings/hk_village_tf/hk_village3.db"
+        },
+        {
+          "name": "hk_village4",
+          "db": "~/.dimos/recordings/hk_village_tf/hk_village4.db"
+        },
+        {
+          "name": "hk_village5",
+          "db": "~/.dimos/recordings/hk_village_tf/hk_village5.db"
+        },
+        {
+          "name": "hk_village6",
+          "db": "~/.dimos/recordings/hk_village_tf/hk_village6.db"
+        }
+      ]
     },
     {
       "name": "roscon",
       "tier": "extra",
       "db": "~/datasets/roscon (roscon_jpeg.db / roscon_setup.mcap)",
-      "status": "todo"
+      "status": "todo",
+      "cloud_mcap": "5ff37b67b3584f37b5b5089059601eab"
     },
     {
       "name": "airbnb",
