@@ -219,7 +219,6 @@ all_modules = {
     "arm-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmTwistCoordinator",
     "b-box-navigation-module": "dimos.agents.skills.visual_servoing.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
-    "basic-path-follower": "dimos.navigation.trajectory_follower.basic.module.BasicPathFollower",
     "benchmarker": "dimos.control.benchmarking.benchmark.Benchmarker",
     "camera-mux-module": "dimos.teleop.hosted.camera_mux.CameraMuxModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
