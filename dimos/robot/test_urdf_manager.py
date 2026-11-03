@@ -435,3 +435,23 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
             ),
             atol=1e-9,
         )
+
+
+def test_the_model_can_come_from_the_one_module_that_shares_it(tmp_path):
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(_URDF)
+    model = RobotModel.from_file(urdf)
+    module = UrdfManagerPointClearing(padding_m=0.01)
+    try:
+        module.config_receive((("robot", {"model": model}),))
+        assert module._base_link == "base"
+        with pytest.raises(ValueError, match="takes one model"):
+            module.config_receive((("robot", {"model": model}), ("other", {"model": model})))
+    finally:
+        module.dispose()
+    given = UrdfManager(model=model)
+    try:
+        with pytest.raises(ValueError, match="takes one model"):
+            given.config_receive((("robot", {"model": model}),))
+    finally:
+        given.dispose()
