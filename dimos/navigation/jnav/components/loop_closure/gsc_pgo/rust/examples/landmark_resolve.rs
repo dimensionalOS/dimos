@@ -146,6 +146,7 @@ fn main() {
             seed_closure_weights: Vec::new(),
             seed_start: Vec::new(),
             landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
+            landmark_warm_start_xy_variance_ladder: config.landmark_warm_start_xy_variance_ladder,
         },
     );
     let kept = solution.sighting_weights.iter().filter(|&&w| w > 0.5).count();

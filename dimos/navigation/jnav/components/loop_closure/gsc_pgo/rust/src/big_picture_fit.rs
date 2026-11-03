@@ -59,8 +59,10 @@ pub struct SolveConfig {
     pub seed_closure_weights: Vec<f64>,
     /// Per keyframe, the accepted graph as an alternate start used where it fits (`solve_seed_from_accepted`); empty = none.
     pub seed_start: Vec<(Mat3, Vec3)>,
-    /// With landmark sightings, the solve starts from one with the odometry's xy variances times this; <= 1 = off.
+    /// With landmark sightings, the solve starts from solves with the odometry's xy variances times this, then divided by
+    /// `landmark_warm_start_xy_variance_ladder` stage by stage down to the stated ones; either <= 1 = off.
     pub landmark_warm_start_xy_variance_scale: f64,
+    pub landmark_warm_start_xy_variance_ladder: f64,
 }
 
 pub struct Solution {
@@ -249,51 +251,49 @@ pub(crate) fn solve_core(
 ) -> Solution {
     // a re-sighting across a drifted loop needs big heading changes, which a solve from the odometry cannot reach through
     // its stiff xy edges (each turned segment would stretch them); with xy loosened and every sighting in (a tag's id makes
-    // a wrong match rare) they pull the loop shut almost linearly in position, and the real solve, GNC verdicts on the
-    // sightings included, starts from that shape (`landmark_warm_start_xy_variance_scale`)
-    if sightings.is_empty() || config.landmark_warm_start_xy_variance_scale <= 1.0 {
+    // a wrong match rare) they pull the loop shut almost linearly in position, then xy stiffens stage by stage (each from
+    // the last, so LM converges in each) and the real solve, GNC verdicts on the sightings included, starts from that shape
+    let (mut scale, ladder) = (
+        config.landmark_warm_start_xy_variance_scale,
+        config.landmark_warm_start_xy_variance_ladder,
+    );
+    if sightings.is_empty() || scale <= 1.0 || ladder <= 1.0 {
         return solve_from(
             rotations, positions, free, odometry, closures, unary, sightings, config, true,
         );
     }
-    let loosened: Vec<Edge> = odometry
-        .iter()
-        .map(|e| {
-            let mut variances = e.variances;
-            for axis in [3, 4] {
-                variances[axis] *= config.landmark_warm_start_xy_variance_scale;
-            }
-            Edge { variances, ..*e }
-        })
-        .collect();
-    let config = SolveConfig {
-        landmark_warm_start_xy_variance_scale: 0.0,
+    let warm_config = SolveConfig {
+        learned_evidence: false,
         ..config.clone()
     };
-    let warm = solve_from(
-        rotations,
-        positions,
-        free,
-        &loosened,
-        closures,
-        unary,
-        sightings,
-        &SolveConfig {
-            learned_evidence: false,
-            ..config.clone()
-        },
-        false,
-    );
+    let (mut rotations, mut positions) = (rotations.to_vec(), positions.to_vec());
+    while scale > 1.0 {
+        let loosened: Vec<Edge> = odometry
+            .iter()
+            .map(|e| {
+                let mut variances = e.variances;
+                for axis in [3, 4] {
+                    variances[axis] *= scale;
+                }
+                Edge { variances, ..*e }
+            })
+            .collect();
+        let warm = solve_from(
+            &rotations,
+            &positions,
+            free,
+            &loosened,
+            closures,
+            unary,
+            sightings,
+            &warm_config,
+            false,
+        );
+        (rotations, positions) = (warm.rotations, warm.positions);
+        scale /= ladder;
+    }
     solve_from(
-        &warm.rotations,
-        &warm.positions,
-        free,
-        odometry,
-        closures,
-        unary,
-        sightings,
-        &config,
-        true,
+        &rotations, &positions, free, odometry, closures, unary, sightings, config, true,
     )
 }
 

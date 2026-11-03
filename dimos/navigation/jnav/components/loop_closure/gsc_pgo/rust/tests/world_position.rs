@@ -62,6 +62,7 @@ fn config() -> SolveConfig {
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
         landmark_warm_start_xy_variance_scale: 0.0,
+        landmark_warm_start_xy_variance_ladder: 0.0,
     }
 }
 

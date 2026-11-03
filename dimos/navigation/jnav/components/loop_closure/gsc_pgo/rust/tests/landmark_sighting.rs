@@ -88,6 +88,8 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         seed_start: Vec::new(),
         landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default()
             .landmark_warm_start_xy_variance_scale,
+        landmark_warm_start_xy_variance_ladder: dimos_gsc_pgo::gsc_pgo::Config::default()
+            .landmark_warm_start_xy_variance_ladder,
     };
     let solution = solve_with_priors(
         &rotations,
@@ -186,6 +188,8 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         seed_start: Vec::new(),
         landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default()
             .landmark_warm_start_xy_variance_scale,
+        landmark_warm_start_xy_variance_ladder: dimos_gsc_pgo::gsc_pgo::Config::default()
+            .landmark_warm_start_xy_variance_ladder,
     };
     let solution = solve_with_priors(
         &rotations,
@@ -268,7 +272,7 @@ fn factors_before_the_first_keyframe_wait_for_it() {
     assert!(!pgo.finish());
 }
 
-/// A 200 m square walked 1 m a step whose heading drifts steadily, 30x faster than the odometry states, and a point tag by
+/// A 200 m square walked 1 m a step whose heading drifts steadily, far past what the odometry states, and a point tag by
 /// the start seen on the first steps and again on the last, with every sighting's world spread: (with, without) warm start.
 fn drifted_loop_tag_spread() -> (f64, f64) {
     let steps = 800;
@@ -283,7 +287,9 @@ fn drifted_loop_tag_spread() -> (f64, f64) {
             )
         })
         .collect();
-    let (heading_sigma, step_sigma, heading_bias): (f64, f64, f64) = (1e-4, 0.005, 3e-4);
+    let (heading_sigma, step_sigma): (f64, f64) = (1e-3, 0.005);
+    // the heading's steady drift over the loop: 16x the sd the odometry states for it
+    let heading_bias = 16.0 * heading_sigma / (steps as f64).sqrt();
     let edges: Vec<Edge> = (1..steps)
         .map(|k| {
             let ((yaw_a, a), (yaw_b, b)) = (truth[k - 1], truth[k]);
@@ -340,6 +346,8 @@ fn drifted_loop_tag_spread() -> (f64, f64) {
             seed_closure_weights: Vec::new(),
             seed_start: Vec::new(),
             landmark_warm_start_xy_variance_scale: scale,
+            landmark_warm_start_xy_variance_ladder: dimos_gsc_pgo::gsc_pgo::Config::default()
+                .landmark_warm_start_xy_variance_ladder,
         };
         let free: Vec<bool> = (0..steps).map(|k| k > 0).collect();
         let solution = solve_with_priors(

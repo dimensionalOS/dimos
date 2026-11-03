@@ -209,6 +209,8 @@ class PGOConfig(NativeModuleConfig):
     # a solve with landmark sightings first solves with the odometry's xy variances times this (<= 1 = off), so a re-sighting
     # across a long drifted loop can pull it shut; the real solve (and its outlier verdicts) starts from that shape
     landmark_warm_start_xy_variance_scale: float = 1000.0
+    # ...then xy stiffens stage by stage (scale divided by this each time) so every stage's LM converges
+    landmark_warm_start_xy_variance_ladder: float = 10.0
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0

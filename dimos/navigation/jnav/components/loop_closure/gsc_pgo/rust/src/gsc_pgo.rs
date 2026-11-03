@@ -658,6 +658,8 @@ pub struct Config {
     /// A solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off): a long
     /// loop's re-sighting is otherwise out of reach of a solve from the drifted odometry, and GNC drops it as an outlier.
     pub landmark_warm_start_xy_variance_scale: f64,
+    /// ...then a solve per stage, each from the last with that scale divided by this, down to the stated variances.
+    pub landmark_warm_start_xy_variance_ladder: f64,
 }
 
 impl Config {
@@ -816,6 +818,7 @@ impl Default for Config {
             closure_sources: ClosureSources::ScanContext,
             landmark_closure_icp: true,
             landmark_warm_start_xy_variance_scale: 1000.0,
+            landmark_warm_start_xy_variance_ladder: 10.0,
         }
     }
 }
