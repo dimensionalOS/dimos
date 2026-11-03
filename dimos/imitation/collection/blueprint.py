@@ -38,6 +38,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
+    teleop_webxr_xarm6,
     teleop_webxr_xarm7,
 )
 
@@ -113,6 +114,9 @@ def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple
 
 learning_collect_webxr_xarm7 = autoconnect(
     *_collection_components("xarm7", teleop_webxr_xarm7, task="Teleoperate the xArm")
+)
+learning_collect_webxr_xarm6 = autoconnect(
+    *_collection_components("xarm6", teleop_webxr_xarm6, task="Teleoperate the xArm")
 )
 learning_collect_webxr_piper = autoconnect(
     *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")
