@@ -29,6 +29,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import MULTI_DOF_JOINT_TYPES, UrdfManager, UrdfManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -58,13 +59,16 @@ class UrdfManagerPointClearing(UrdfManager):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
+        self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
+        self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
+
+    def _load(self, model: RobotModel) -> None:
+        super()._load(model)
         self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
             self._description, self.config.padding_m
         )
         self._base_link = self._description.root_link
-        self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
-        self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
-        self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
         """Filter the latest capture without starving TF transport callbacks."""
