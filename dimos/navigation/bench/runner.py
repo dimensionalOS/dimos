@@ -404,7 +404,7 @@ def _episode(config: RunConfig, manifest: Manifest, episode: Episode, slot: int)
 
 def _policy(overrides: tuple[str, ...]) -> str | None:
     """The body policy an override hands the sim world, if one does."""
-    for flag in overrides:
+    for flag in reversed(overrides):
         key, _, value = flag.partition("=")
         if key.endswith(".policy"):
             return value

@@ -62,6 +62,7 @@ class Sensor:
     lidar: Callable[[Raycaster, int], SimLidar]
     housing_half_extents: Vec3
     lio_blind_range: float = 0.0
+    lio_keep_every: int = 1
     sees_base: bool = True
 
 

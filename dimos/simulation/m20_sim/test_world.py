@@ -14,23 +14,27 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 
+import mujoco
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
 from dimos.msgs.sim_msgs.Contacts import Contact
-from dimos.robot.deeprobotics.m20.blueprints._nav import VOXEL_SIZE_M
 from dimos.robot.deeprobotics.m20.constants import FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M
 from dimos.simulation.m20_sim.body import LeggedM20
 from dimos.simulation.m20_sim.policy import M20Policy
-from dimos.simulation.m20_sim.world import M20_RIG
+from dimos.simulation.m20_sim.world import LIO_BLIND_RANGE, M20_RIG
 from dimos.simulation.scenes.procedural import Scene, office
+from dimos.simulation.sensors.airy.lidar import LENS_HEIGHT
+from dimos.simulation.sensors.airy.pattern import FRAME_RATE, POINT_RATE, AiryPattern
 from dimos.simulation.sim_world.world import FRAME_DT, LidarFrame, Sim
 
 STILL = np.zeros(3)
 FORWARD = np.array([0.5, 0.0, 0.0])
+WHEEL_TOP = 0.22
 
 
 @pytest.fixture(scope="module")
@@ -72,8 +76,8 @@ def test_frames_come_out_at_10hz_in_base_link_from_both_lidars(sim: Sim) -> None
     for got, want in zip(sim.odom_pose(), sim.base_pose(), strict=True):
         assert np.array_equal(got, want)
     x = frames[-1].points[:, 0]
-    assert (x > FRONT_LIDAR_XYZ_M[0]).sum() > 20_000
-    assert (x < REAR_LIDAR_XYZ_M[0]).sum() > 20_000
+    assert (x > FRONT_LIDAR_XYZ_M[0]).sum() > 5_000
+    assert (x < REAR_LIDAR_XYZ_M[0]).sum() > 5_000
     _floor_is_flat(frames[-1], sim)
 
 
@@ -83,16 +87,42 @@ def test_deskew_keeps_the_floor_flat_while_walking(sim: Sim) -> None:
     _floor_is_flat(_next_frame(sim, FORWARD), sim)
 
 
-def test_no_return_off_the_robot_rises_out_of_the_floor_voxel(sim: Sim) -> None:
+def test_returns_off_the_robot_stay_at_wheel_height(sim: Sim) -> None:
     for command in (STILL, FORWARD):
         for _ in range(25):
             sim.tick(command)
         p = _next_frame(sim, command).points
         floor = sim.scene.params["z0"] - sim.base_pose()[0][2]
-        inside = (
-            (np.abs(p[:, 0]) < 0.5) & (np.abs(p[:, 1]) < 0.32) & (p[:, 2] > floor + VOXEL_SIZE_M)
-        )
+        inside = (np.abs(p[:, 0]) < 0.5) & (np.abs(p[:, 1]) < 0.32) & (p[:, 2] > floor + WHEEL_TOP)
         assert inside.sum() == 0
+
+
+def test_the_guards_block_the_lidars_without_touching_the_physics(sim: Sim) -> None:
+    model = sim.model
+    per_frame = round(POINT_RATE / FRAME_RATE)
+    directions = AiryPattern().directions(0, per_frame)
+    for sensor, lidar in zip(M20_RIG.sensors, sim.lidars, strict=True):
+        guard = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{sensor.name}_guard")
+        geoms = model.geom_bodyid == guard
+        assert geoms.any()
+        assert model.body_mass[guard] == 0.0
+        assert not model.geom_contype[geoms].any() and not model.geom_conaffinity[geoms].any()
+        position, rotation = sim.sensor_pose(sensor)
+        lens = position + rotation @ np.array([0.0, 0.0, LENS_HEIGHT])
+        dist, _ = lidar.raycaster.cast(lens, directions @ rotation.T, 10.0)
+        assert 0.2 < ((dist >= 0.0) & (dist < LIO_BLIND_RANGE)).mean() < 0.35
+
+
+def test_the_cloud_keeps_one_return_in_five(scene: Scene, policy: M20Policy) -> None:
+    every_return = replace(
+        M20_RIG, sensors=tuple(replace(s, lio_keep_every=1) for s in M20_RIG.sensors)
+    )
+    counts = []
+    for rig in (M20_RIG, every_return):
+        sim = Sim(scene, 1, rig, partial(LeggedM20, policy=policy))
+        sim.reset(*scene.start, 0.0)
+        counts.append(len(_next_frame(sim, STILL).points))
+    assert counts[0] == pytest.approx(counts[1] / 5, rel=0.01)
 
 
 def test_standing_robot_touches_the_floor_only_with_its_wheels(sim: Sim) -> None:

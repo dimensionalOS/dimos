@@ -44,17 +44,33 @@ STAND_HEIGHT = 0.566
 CLEARANCE_HEIGHT = 0.66
 TRUNK_HALF_EXTENTS = (0.41, 0.121, 0.087)
 VENDOR_COLLISION_GROUP = 1
-# past the farthest wheel return, 0.57 m, as the vendor LIO's blind of 0.5 would not be
-LIO_BLIND_RANGE = 0.6
+# the driver's minimum distance
+LIO_BLIND_RANGE = 0.2
+# the vendor LIO's skip_num
+LIO_KEEP_EVERY = 5
 COLLISION_RGBA = (0.3, 0.3, 0.3, 1.0)
+# in the lidar's frame, fitted to where the real lidars get no returns
+GUARD_CENTERLINE = (
+    (0.041, 0.0, 0.126),
+    (0.038, 0.018, 0.125),
+    (0.036, 0.043, 0.116),
+    (0.023, 0.064, 0.104),
+    (0.0, 0.083, 0.081),
+    (-0.038, 0.082, 0.043),
+)
+GUARD_RADII = (0.015, 0.02, 0.02, 0.022, 0.028)
+SHELL_CENTERLINE = ((0.09, 0.0, 0.041), (0.078, 0.045, 0.041))
+SHELL_RADIUS = 0.03
+
 
 FRONT = Sensor(
     "front_lidar",
     np.array(FRONT_LIDAR_XYZ_M),
-    Rotation.from_euler("y", 90, degrees=True).as_matrix(),
+    Rotation.from_euler("ZY", (180, -90), degrees=True).as_matrix(),
     sim_airy,
     HOUSING_HALF_EXTENTS,
     lio_blind_range=LIO_BLIND_RANGE,
+    lio_keep_every=LIO_KEEP_EVERY,
     sees_base=False,
 )
 REAR = Sensor(
@@ -64,6 +80,7 @@ REAR = Sensor(
     sim_airy,
     HOUSING_HALF_EXTENTS,
     lio_blind_range=LIO_BLIND_RANGE,
+    lio_keep_every=LIO_KEEP_EVERY,
     sees_base=False,
 )
 
@@ -79,6 +96,28 @@ SHAPE = BodyShape(
 )
 
 
+def _add_guard(spec: mujoco.MjSpec, sensor: Sensor) -> None:
+    """The guard and shell around a lidar, seen by the lidars but with no mass or contacts."""
+    body = spec.body("base_link").add_body()
+    body.name = f"{sensor.name}_guard"
+    body.pos = sensor.mount_xyz
+    body.quat = Rotation.from_matrix(sensor.mount_r).as_quat(scalar_first=True)
+    capsules = [
+        *zip(GUARD_CENTERLINE, GUARD_CENTERLINE[1:], GUARD_RADII, strict=False),
+        (*SHELL_CENTERLINE, SHELL_RADIUS),
+    ]
+    for start, end, radius in capsules:
+        for side in (1.0, -1.0):
+            geom = body.add_geom()
+            geom.type = mujoco.mjtGeom.mjGEOM_CAPSULE
+            geom.fromto = [start[0], side * start[1], start[2], end[0], side * end[1], end[2]]
+            geom.size = [radius, 0.0, 0.0]
+            geom.group = COLLISION_GROUP
+            geom.contype = 0
+            geom.conaffinity = 0
+            geom.mass = 0.0
+
+
 def _spec() -> mujoco.MjSpec:
     """The vendor M20 with its collision shapes opaque, in the sim's hidden collision group."""
     spec = m20_spec()
@@ -86,6 +125,8 @@ def _spec() -> mujoco.MjSpec:
     for geom in spec.geoms:
         if geom.group == VENDOR_COLLISION_GROUP:
             geom.group = COLLISION_GROUP
+    _add_guard(spec, FRONT)
+    _add_guard(spec, REAR)
     return spec
 
 

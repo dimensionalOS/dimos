@@ -86,6 +86,7 @@ class SimLidar:
     seed: int
     returns: ReturnModel
     occlusion: OcclusionMap | None = None
+    lens_height: float = 0.0
 
     def __post_init__(self) -> None:
         self._rng = np.random.default_rng(self.seed)
@@ -104,7 +105,10 @@ class SimLidar:
         dirs = self.pattern.directions(self._k, n)
         self._k += n
         world_dirs = dirs @ world_from_sensor.T
-        dist, normals = self.raycaster.cast(origin, world_dirs, rm.max_range)
+        lens = np.array([0.0, 0.0, self.lens_height])
+        dist, normals = self.raycaster.cast(
+            origin + world_from_sensor @ lens, world_dirs, rm.max_range
+        )
         keep = dist > rm.blind_range
         if self.occlusion is not None:
             keep &= self._rng.random(n) >= self.occlusion.lookup(dirs)
@@ -116,5 +120,5 @@ class SimLidar:
             / np.maximum(cos_inc, 0.05) ** rm.incidence_exponent
         )
         ranges = dist[keep] + self._rng.standard_normal(int(keep.sum())) * sigma[keep]
-        points: NDArray[np.float32] = (dirs[keep] * ranges[:, None]).astype(np.float32)
+        points: NDArray[np.float32] = (dirs[keep] * ranges[:, None] + lens).astype(np.float32)
         return points
