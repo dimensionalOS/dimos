@@ -49,11 +49,23 @@ class GripperControlTaskConfig:
         joint_names: Ordinary joints this task owns, in command order.
         priority: Priority for arbitration.
         hold_duration: Seconds to keep emitting a target; 0.0 holds forever.
+        require_feedback: When True, a tick whose measured snapshot does not
+            cover every joint drops the latched target once it was driven:
+            driving on stale or missing feedback replays an intent the
+            gripper may no longer be able to reach, so a recovered gripper
+            waits for a new command. A target latched during the outage was
+            never sent — it *is* that new command — so it is held, and goes
+            out on the first tick whose feedback covers every joint again.
+        accept_broadcast: When False, the unscoped ``gripper_command`` stream
+            is refused — a robot with two grippers must be addressed per
+            task, so one message can never move both sides together.
     """
 
     joint_names: list[str]
     priority: int = 10
     hold_duration: float = 0.0
+    require_feedback: bool = False
+    accept_broadcast: bool = True
 
 
 class GripperControlTask(BaseControlTask):
@@ -86,6 +98,9 @@ class GripperControlTask(BaseControlTask):
 
         self._lock = threading.Lock()
         self._target: list[float] | None = None
+        # Whether the latched target ever rode a tick. Only an emitted target
+        # can replay, so only an emitted one is dropped on lost feedback.
+        self._target_emitted = False
         self._target_set_at: float = 0.0
         # Commands without the coordinator clock are stamped on the next tick.
         self._stamp_pending = False
@@ -113,8 +128,19 @@ class GripperControlTask(BaseControlTask):
         }
 
         with self._lock:
-            if measured:
-                self._measured = measured
+            # Replace, never merge: a joint that fell out of the snapshot is
+            # gone from the readback too, not kept at its last value.
+            self._measured = measured
+            if self._config.require_feedback and len(measured) != len(self._joint_names):
+                if self._target is not None and self._target_emitted:
+                    logger.warning(
+                        "Dropping the gripper target: feedback missing",
+                        task=self._name,
+                        joints=[n for n in self._joint_names if n not in measured],
+                    )
+                    self._target = None
+                    self._stamp_pending = False
+                return None
             if self._estopped or self._target is None:
                 return None
             if self._stamp_pending:
@@ -124,8 +150,10 @@ class GripperControlTask(BaseControlTask):
             if hold > 0.0 and (state.t_now - self._target_set_at) > hold:
                 # Hold expired; ConnectedHardware keeps re-sending the last value.
                 self._target = None
+                self._target_emitted = False
                 return None
             target = list(self._target)
+            self._target_emitted = True
 
         return JointCommandOutput(
             joint_names=list(self._joint_names),
@@ -194,6 +222,12 @@ class GripperControlTask(BaseControlTask):
 
     def on_gripper_command(self, msg: Float32, t_now: float) -> bool:
         """Apply one normalized opening to every joint owned by the task."""
+        if not self._config.accept_broadcast:
+            logger.warning(
+                "Unscoped gripper broadcast refused; address this task directly",
+                task=self._name,
+            )
+            return False
         return self.set_normalized([float(msg.data)] * len(self._joint_names), t_now)
 
     def _validate_values(
@@ -228,6 +262,7 @@ class GripperControlTask(BaseControlTask):
             if self._estopped:
                 return False
             self._target = target
+            self._target_emitted = False
             if t_now is None:
                 self._stamp_pending = True
             else:
@@ -240,9 +275,49 @@ class GripperControlTaskParams(BaseConfig):
     """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
+    require_feedback: bool = False
+    accept_broadcast: bool = True
 
 
-def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
+def _resolve_limits(
+    cfg: Any,
+    hardware: Any,
+    joint_limits: Any = None,
+) -> list[tuple[float, float]]:
+    """Resolve configured joints against adapter limits, or the model's.
+
+    Adapter-driven coordinators pass their hardware; connection-driven ones
+    have no adapters, so the coordinator passes the joints' position limits
+    from its model as ``joint_limits``.
+    """
+    if hardware:
+        return _resolve_adapter_limits(cfg, hardware)
+    where = f"gripper task {cfg.name!r}"
+    joint_names = list(cfg.joint_names)
+    if not joint_names:
+        raise ValueError(f"{where}: requires at least one joint")
+    if len(set(joint_names)) != len(joint_names):
+        raise ValueError(f"{where}: joint_names must not contain duplicates")
+    resolved: list[tuple[float, float]] = []
+    for joint_name in joint_names:
+        limit = (joint_limits or {}).get(joint_name)
+        if limit is None:
+            raise ValueError(
+                f"{where}: joint {joint_name!r} has no adapter and no model position limit; "
+                "on a connection-driven robot its joint must be movable in the "
+                "coordinator's model"
+            )
+        lower, upper = limit
+        if lower is None or upper is None:
+            raise ValueError(
+                f"{where}: joint {joint_name!r} has no bounded position range; a gripper "
+                "needs finite limits to normalize openings against"
+            )
+        resolved.append((float(lower), float(upper)))
+    return resolved
+
+
+def _resolve_adapter_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
     """Resolve configured joints against ordinary adapter limit arrays."""
     where = f"gripper task {cfg.name!r}"
     joint_names = list(cfg.joint_names)
@@ -285,7 +360,7 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
     return resolved
 
 
-def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
+def create_task(cfg: Any, hardware: Any, joint_limits: Any = None) -> GripperControlTask:
     params = GripperControlTaskParams.model_validate(cfg.params)
     return GripperControlTask(
         cfg.name,
@@ -293,6 +368,8 @@ def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
             joint_names=list(cfg.joint_names),
             priority=cfg.priority,
             hold_duration=params.hold_duration,
+            require_feedback=params.require_feedback,
+            accept_broadcast=params.accept_broadcast,
         ),
-        limits=_resolve_limits(cfg, hardware),
+        limits=_resolve_limits(cfg, hardware, joint_limits),
     )

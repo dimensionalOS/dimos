@@ -30,8 +30,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import importlib
+import inspect
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.control.routing import (
     Routing,
@@ -143,6 +144,7 @@ class ControlTaskRegistry:
         cfg: TaskConfig,
         *,
         hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody] | None = None,
+        joint_limits: Mapping[str, tuple[float | None, float | None]] | None = None,
     ) -> ControlTask:
         """Instantiate a task by registered name.
 
@@ -153,10 +155,17 @@ class ControlTaskRegistry:
             hardware: Coordinator's hardware map. Tasks that need an
                 adapter resolve it from their typed params; pass ``None``
                 only if no task in this registry needs hardware.
+            joint_limits: The coordinator's model-derived position limits,
+                for robots driven through connection modules (no adapters).
+                Passed only to factories that declare a ``joint_limits``
+                parameter.
         """
         key = name.lower()
         factory = self._resolve_factory(key)
-        task = factory(cfg=cfg, hardware=hardware or {})
+        kwargs: dict[str, Any] = {"cfg": cfg, "hardware": hardware or {}}
+        if joint_limits is not None and "joint_limits" in inspect.signature(factory).parameters:
+            kwargs["joint_limits"] = joint_limits
+        task = factory(**kwargs)
         self._validate_bound_handlers(key, task)
         return task
 

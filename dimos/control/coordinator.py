@@ -120,6 +120,12 @@ class ControlCoordinatorConfig(ModuleConfig):
     # and position limits from; its joints are named "<robot>/<joint>". See
     # ControlCoordinator for how those robots are named.
     model: RobotModel | None = None
+    # Joints of connection-driven robots that tasks drive explicitly but the
+    # coordinator never holds or zero-fills, e.g. grippers: an idle stack
+    # sends them nothing, their feedback never gates readiness, and a joint
+    # whose feedback stops while the robot keeps reporting drops out of the
+    # tick snapshot instead of holding a stale value.
+    command_only_joints: list[str] = field(default_factory=lambda: [])
     # How old a robot's newest reading may be, in seconds, before it is no
     # longer commanded.
     reading_timeout_s: float = 0.2
@@ -384,10 +390,24 @@ class ControlCoordinator(Module):
         )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
-        """Create a control task from config via the task registry."""
+        """Create a control task from config via the task registry.
+
+        Tasks on a connection-driven robot have no adapter to read limits
+        from; factories that declare ``joint_limits`` get the connections'
+        model-derived position limits instead.
+        """
         from dimos.control.tasks.registry import control_task_registry
 
-        return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+        joint_limits: dict[str, tuple[float | None, float | None]] | None = None
+        if self._connections:
+            joint_limits = {
+                joint: limits
+                for source in self._connections.values()
+                for joint, limits in source.position_limits().items()
+            }
+        return control_task_registry.create(
+            cfg.type, cfg, hardware=self._hardware, joint_limits=joint_limits
+        )
 
     def _frame_pose_port(self) -> Out[TFMessage]:
         port = getattr(self, "tf", None)
@@ -442,6 +462,11 @@ class ControlCoordinator(Module):
                     readings.get(robot, []),
                     self.config.model,
                     self.config.reading_timeout_s,
+                    command_only=[
+                        name
+                        for name in self.config.command_only_joints
+                        if name.startswith(f"{robot}/")
+                    ],
                 )
                 self._connections[robot] = source
                 self._command_ports[robot] = {
@@ -454,6 +479,13 @@ class ControlCoordinator(Module):
                 # drive them like an adapter base's virtual joints.
                 for axis in source.base_joint_names:
                     self._joint_to_hardware[axis] = robot
+            known = {joint for source in self._connections.values() for joint in source.joint_names}
+            misplaced = sorted(set(self.config.command_only_joints) - known)
+            if misplaced:
+                raise ValueError(
+                    f"command_only_joints {misplaced} are not joints of any robot this "
+                    "coordinator drives"
+                )
         for robot, source in self._connections.items():
             for kind in source.reading_ports:
                 handler = functools.partial(source.on_message, kind)

@@ -21,6 +21,7 @@ import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import RobotModel
@@ -90,3 +91,71 @@ def test_attached_model_survives_blueprint_config_round_trip(tmp_path: Path) -> 
     restored = RobotModelConfig(**parsed.module_kwargs(ManipulationModule.name)["model"])
     assert restored.model.source_path == source
     assert restored.model._fixed_frames == model._fixed_frames
+
+
+# Gripper task bindings: one gripper task per pose-capable planning group,
+# with the legacy scalar hardware-id binding kept working.
+
+
+def _groups() -> list[PlanningGroupDefinition]:
+    return [
+        PlanningGroupDefinition("left_arm", ("j1",), base_link="base", tip_link="left_tip"),
+        PlanningGroupDefinition("right_arm", ("j2",), base_link="base", tip_link="right_tip"),
+        PlanningGroupDefinition("torso", ("j3",), base_link="base"),
+    ]
+
+
+def _binding_config(**overrides: Any) -> RobotModelConfig:
+    kwargs = {"model": RobotModel.from_root_link("base"), "joint_names": []}
+    return RobotModelConfig(**{**kwargs, **overrides})
+
+
+def test_each_group_resolves_to_its_own_gripper_task() -> None:
+    config = _binding_config(
+        gripper_tasks={"left_arm": "left_gripper", "right_arm": "right_gripper"}
+    )
+    assert config.resolve_gripper_tasks(_groups()) == {
+        "left_arm": "left_gripper",
+        "right_arm": "right_gripper",
+    }
+    # A group without a binding has no gripper at all.
+    assert "torso" not in config.resolve_gripper_tasks(_groups())
+
+
+def test_a_binding_to_an_unknown_group_is_rejected() -> None:
+    config = _binding_config(gripper_tasks={"nobody": "gripper"})
+    with pytest.raises(ValueError, match="unknown planning groups"):
+        config.resolve_gripper_tasks(_groups())
+
+
+def test_a_binding_to_a_group_without_a_pose_target_is_rejected() -> None:
+    config = _binding_config(gripper_tasks={"torso": "gripper"})
+    with pytest.raises(ValueError, match="pose-capable"):
+        config.resolve_gripper_tasks(_groups())
+
+
+def test_two_groups_cannot_share_one_gripper_task() -> None:
+    with pytest.raises(ValueError, match="distinct gripper task"):
+        _binding_config(gripper_tasks={"left_arm": "gripper", "right_arm": "gripper"})
+
+
+def test_the_two_binding_styles_are_mutually_exclusive() -> None:
+    with pytest.raises(ValueError, match="not both"):
+        _binding_config(gripper_hardware_id="r1pro", gripper_tasks={"left_arm": "gripper"})
+
+
+def test_the_legacy_scalar_binding_resolves_against_the_single_pose_group() -> None:
+    config = _binding_config(gripper_hardware_id="r1pro")
+    single = [PlanningGroupDefinition("arm", ("j1",), base_link="base", tip_link="tip")]
+    assert config.resolve_gripper_tasks(single) == {"arm": "r1pro_gripper"}
+    # Two pose-capable groups make the scalar binding ambiguous.
+    with pytest.raises(ValueError, match="ambiguous|exactly one pose-capable"):
+        config.resolve_gripper_tasks(_groups())
+
+
+def test_declared_planning_groups_are_validated_at_construction() -> None:
+    with pytest.raises(ValueError, match="unknown planning groups"):
+        _binding_config(
+            planning_groups=_groups(),
+            gripper_tasks={"left_arm": "left_gripper", "nobody": "gripper"},
+        )

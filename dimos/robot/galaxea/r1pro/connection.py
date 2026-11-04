@@ -27,6 +27,20 @@ clamped), then forwarded by ``write``. Once a command was accepted, going
 ``deadman_timeout_s`` without another halts the robot: zero chassis speed
 and the arms held where they were last measured.
 
+The two grippers ride the same contract as ``r1pro/left_gripper`` and
+``r1pro/right_gripper``: a jaw takes its opening in metres (the vendor
+topics speak millimetres, 0-100 mm) on the same ``position_command``
+messages, and reports its measured opening on ``joint_state`` in a second,
+position-only message. A jaw is told only what a task explicitly asks for —
+never a hold, never a lifecycle nudge — and only while its feedback is
+fresh, parseable and fault-free. Feedback that goes stale, malformed or
+faulted interrupts the intent it was carrying: that value is not sent
+again, even if a task still holds it, until the intent is withdrawn (a
+command without the jaw) or replaced by a different value. There is no
+verified vendor cancel: a target the vendor accepted keeps driving the jaw,
+so stop and halt leave the grippers alone rather than pretending to recall
+it.
+
 Sensors run on a second RawROS node. Conversion happens on per-stream workers
 behind latest-wins queues.
 
@@ -38,7 +52,7 @@ the environment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 from pathlib import Path
 import queue
@@ -80,7 +94,11 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_CONNECTION_MODEL, R1PRO_PLANAR_BASE
-from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
+from dimos.robot.galaxea.r1pro.joints import (
+    GRIPPER_JOINTS,
+    UPPER_BODY_JOINTS,
+    coordinator_name,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -100,6 +118,29 @@ assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 R1PRO_BASE = f"r1pro{SEPARATOR}base"
 #: The chassis' axes as control tasks claim them, e.g. "r1pro/base/vx".
 R1PRO_BASE_JOINTS: list[str] = [f"{R1PRO_BASE}{SEPARATOR}{axis}" for axis in TWIST_INTERFACES]
+#: The jaws as the control contract names them: "r1pro/left_gripper" and
+#: "r1pro/right_gripper"; each value is the jaw's opening in metres.
+R1PRO_GRIPPER_JOINTS: list[str] = [coordinator_name(joint) for joint in GRIPPER_JOINTS]
+#: Contract joint name -> gripper side, e.g. "r1pro/left_gripper" -> "left".
+R1PRO_GRIPPER_SIDES: dict[str, str] = {
+    coordinator_name(joint): joint.split("_", 1)[0] for joint in GRIPPER_JOINTS
+}
+
+# The vendor gripper interface (mm, 0-100 fully closed to fully open): one
+# target topic and one feedback topic per side, plus per-segment fault
+# reports the jaw depends on. The jaw controller owns interpolation and
+# speed, so a repeated target is not re-sent.
+_GRIPPER_MM_PER_M = 1000.0
+_GRIPPER_COMMAND_TOPIC = "/motion_target/target_position_gripper_{}"
+_GRIPPER_FEEDBACK_TOPIC = "/hdas/feedback_gripper_{}"
+# Segments whose fault report interrupts a jaw's intent: its own, its arm's
+# (a faulted arm may drop what the jaw holds), and the torso both arms hang
+# from.
+_GRIPPER_FAULT_SEGMENTS: dict[str, tuple[str, ...]] = {
+    "left": ("torso", "arm_left", "gripper_left"),
+    "right": ("torso", "arm_right", "gripper_right"),
+}
+_GRIPPER_STATUS_TOPIC = "/hdas/feedback_status_{}"
 
 # JPEG color streams gated by config.enable_wrist_color: stream name → ROS topic.
 _COLOR_CAMERAS: dict[str, str] = {
@@ -145,6 +186,56 @@ def _stamp_secs(msg: Any) -> float:
     return ts if ts > 0 else time.time()
 
 
+@dataclass
+class _GripperChannel:
+    """One jaw's runtime state; every field is guarded by the module lock.
+
+    ``blocked_intent_m`` is the value a fault, a malformed or a stale
+    feedback interrupted. It is not sent again — even while a task still
+    holds it — until a full position frame arrives without the jaw (the
+    intent was withdrawn) or a command arrives with a different value (a
+    new explicit command).
+    """
+
+    measured_m: float | None = None
+    feedback_at: float = 0.0  # time.monotonic() of the last parseable feedback
+    feedback_wall: float = 0.0  # time.time() of the same, for message stamps
+    feedback_ok: bool = False
+    # Segment -> (its reported errors, time.monotonic() of the report). A
+    # clean report clears its segment; a stale one is ignored, not trusted.
+    faults: dict[str, tuple[tuple[str, ...], float]] = field(default_factory=dict)
+    last_sent_m: float | None = None
+    last_intent_m: float | None = None
+    blocked_intent_m: float | None = None
+
+
+def _gripper_fault(ch: _GripperChannel, timeout_s: float, now: float) -> str | None:
+    """The faults a jaw's fresh status reports carry, or ``None``."""
+    active = [
+        f"{segment}: {error}"
+        for segment, (errors, at) in ch.faults.items()
+        if errors and now - at <= timeout_s
+        for error in errors
+    ]
+    return "; ".join(active) if active else None
+
+
+def _gripper_valid(ch: _GripperChannel, timeout_s: float, now: float) -> bool:
+    """Whether the jaw's feedback may carry commands and readbacks."""
+    return (
+        ch.measured_m is not None
+        and ch.feedback_ok
+        and now - ch.feedback_at <= timeout_s
+        and _gripper_fault(ch, timeout_s, now) is None
+    )
+
+
+def _gripper_reportable(ch: _GripperChannel, timeout_s: float, now: float) -> bool:
+    """Whether the measured opening is publishable: valid, and not gated by
+    an interrupted intent a task has yet to withdraw."""
+    return _gripper_valid(ch, timeout_s, now) and ch.blocked_intent_m is None
+
+
 def _ros_stamp_now() -> Any:
     from builtin_interfaces.msg import Time as RosTime
 
@@ -183,6 +274,8 @@ class R1ProConnectionConfig(ConnectionConfig):
             when unread; turn off if nothing reads them.
         color_publish_hz: Max Hz per color camera (0 = no cap); the cameras
             arrive at ~28 Hz, so 30 passes every frame.
+        gripper_feedback_timeout_s: How old a jaw's feedback may be before
+            its commands are dropped and its readback withheld.
         boot_vendor_stack: Boot the vendor stack (HDAS, mobiman), which
             serves every ROS topic used here, if it is not running.
         vendor_profile: "" boots vendor_setup.sh's own set; a vendor profile,
@@ -202,6 +295,7 @@ class R1ProConnectionConfig(ConnectionConfig):
     enable_wrist_depth: bool = Field(default=False)
     enable_wrist_color: bool = Field(default=True)
     color_publish_hz: float = Field(default=30.0)
+    gripper_feedback_timeout_s: float = Field(default=1.0)
     boot_vendor_stack: bool = Field(default=True)
     vendor_profile: str = Field(default="")
 
@@ -251,6 +345,7 @@ class R1ProConnection(ConnectionModule):
         self._cmd_left_topic: RawROSTopic | None = None
         self._cmd_right_topic: RawROSTopic | None = None
         self._speed_topic: RawROSTopic | None = None
+        self._gripper_cmd_topics: dict[str, RawROSTopic] = {}
         self._control_unsubs: list[Any] = []
         self._sensor_unsubs: list[Any] = []
 
@@ -274,6 +369,11 @@ class R1ProConnection(ConnectionModule):
         self._right_seen = False
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
+
+        # The jaws, by side ("left"/"right"); see _GripperChannel.
+        self._grippers: dict[str, _GripperChannel] = {
+            side: _GripperChannel() for side in _GRIPPER_FAULT_SEGMENTS
+        }
 
         # Odom dead-reckoning, integrated from /motion_control/chassis_speed.
         self._odom_x = 0.0
@@ -427,6 +527,64 @@ class R1ProConnection(ConnectionModule):
             vx, vy, wz = (0.0 if speed is None else speed for speed in speeds)
             self._send_chassis_speed(vx, vy, wz, stamp)
 
+        self._write_grippers(values, stamp)
+
+    def _write_grippers(self, values: Values, stamp: Any) -> None:
+        """Forward each commanded jaw opening, or drop it with the reason.
+
+        A jaw gets a vendor target only for an explicit value while its
+        feedback is valid, and never twice in a row: the vendor controller
+        keeps following the target it has, so re-sending it would only
+        restart interpolation. An intent interrupted by bad feedback stays
+        blocked until withdrawn or replaced.
+
+        Withdrawal is read off a full position frame — the coordinator's
+        tick carries every held arm joint (``write`` refuses a partial one),
+        so a frame without the jaw means the task stopped driving it. A
+        chassis-speed write or a jaw-only command is not a withdrawal: it
+        never carried jaw intents in the first place.
+        """
+        now = time.monotonic()
+        frame = (
+            values.get(f"{R1PRO_UPPER_BODY_JOINTS[0]}{SEPARATOR}{Interface.POSITION}") is not None
+        )
+        sends: list[tuple[str, float]] = []
+        drops: list[str] = []
+        with self._lock:
+            for joint, side in R1PRO_GRIPPER_SIDES.items():
+                value = values.get(f"{joint}{SEPARATOR}{Interface.POSITION}")
+                ch = self._grippers[side]
+                if value is None:
+                    if frame:
+                        # The intent is gone — blocked or not, the next
+                        # explicit command is a new one, even at the same
+                        # opening: the vendor-side target can no longer be
+                        # taken for granted.
+                        ch.last_intent_m = None
+                        ch.blocked_intent_m = None
+                        ch.last_sent_m = None
+                    continue
+                ch.last_intent_m = value
+                if not _gripper_valid(ch, self.config.gripper_feedback_timeout_s, now):
+                    ch.blocked_intent_m = value
+                    fault = _gripper_fault(ch, self.config.gripper_feedback_timeout_s, now)
+                    drops.append(
+                        f"gripper_{side}: dropped {value:.4f} m — feedback missing, "
+                        f"stale or faulted ({fault or 'no live feedback'})"
+                    )
+                    continue
+                if ch.blocked_intent_m is not None and value == ch.blocked_intent_m:
+                    continue  # the interrupted intent replaying; not re-sent
+                ch.blocked_intent_m = None
+                if value == ch.last_sent_m:
+                    continue  # the vendor controller still holds this target
+                ch.last_sent_m = value
+                sends.append((side, value))
+        for message in drops:
+            self._report(message, rejection=True)
+        for side, value in sends:
+            self._send_gripper_target(side, value, stamp)
+
     def halt(self) -> None:
         """Zero the chassis, and hold the arms where they were last measured.
 
@@ -486,6 +644,20 @@ class R1ProConnection(ConnectionModule):
         cmd.twist.angular.z = wz
         ros.publish(self._speed_topic, cmd)
 
+    def _send_gripper_target(self, side: str, opening_m: float, stamp: Any) -> None:
+        """One jaw's opening target on its vendor topic, in millimetres."""
+        from sensor_msgs.msg import JointState as RosJointState
+
+        ros = self._ros
+        topic = self._gripper_cmd_topics.get(side)
+        if ros is None or topic is None:
+            return  # pre-connect / post-stop
+        cmd = RosJointState()
+        cmd.header.stamp = stamp
+        cmd.name = [f"{side}_gripper"]
+        cmd.position = [opening_m * _GRIPPER_MM_PER_M]
+        ros.publish(topic, cmd)
+
     # Control topics
 
     def _setup_control_topics(self) -> None:
@@ -509,6 +681,10 @@ class R1ProConnection(ConnectionModule):
         self._speed_topic = RawROSTopic(
             "/motion_target/target_speed_chassis", TwistStamped, qos=qos
         )
+        self._gripper_cmd_topics = {
+            side: RawROSTopic(_GRIPPER_COMMAND_TOPIC.format(side), RosJointState, qos=qos)
+            for side in self._grippers
+        }
 
         for topic, cb in (
             (RawROSTopic("/hdas/feedback_torso", RosJointState, qos=qos), self._on_feedback_torso),
@@ -522,6 +698,35 @@ class R1ProConnection(ConnectionModule):
             ),
         ):
             self._control_unsubs.append(self._ros.subscribe(topic, cb))
+
+        # The jaws: one position feedback per side, plus the fault reports
+        # that interrupt a jaw's intent. hdas_msg is a vendor package with no
+        # stub in this environment, so it is imported lazily here — without
+        # it the jaws gate on their position feedback alone.
+        for side in self._grippers:
+            self._control_unsubs.append(
+                self._ros.subscribe(
+                    RawROSTopic(_GRIPPER_FEEDBACK_TOPIC.format(side), RosJointState, qos=qos),
+                    self._make_gripper_feedback_cb(side),
+                )
+            )
+        try:
+            from hdas_msg.msg import (  # type: ignore[import-not-found, import-untyped]
+                FeedbackStatus,
+            )
+        except ImportError:
+            logger.warning(
+                "hdas_msg not available — gripper fault reports disabled; "
+                "the jaws gate on their position feedback alone."
+            )
+        else:
+            for segment in sorted({s for segs in _GRIPPER_FAULT_SEGMENTS.values() for s in segs}):
+                self._control_unsubs.append(
+                    self._ros.subscribe(
+                        RawROSTopic(_GRIPPER_STATUS_TOPIC.format(segment), FeedbackStatus, qos=qos),
+                        self._on_gripper_status,
+                    )
+                )
 
         # Executed chassis speed — integrated into wheel odometry.
         self._control_unsubs.append(
@@ -714,6 +919,55 @@ class R1ProConnection(ConnectionModule):
             ne = min(len(msg.effort), len(eff_dst))
             eff_dst[:ne] = msg.effort[:ne]
 
+    # Gripper feedback callbacks (one jaw per side)
+
+    def _make_gripper_feedback_cb(self, side: str) -> Any:
+        """One jaw's opening feedback: a single finite position, in mm.
+
+        A malformed frame marks the feedback not-ok: the last measured value
+        is kept (so a readback never shows a number the vendor did not send
+        this side of the failure) but nothing is commanded or reported from
+        it until a parseable frame arrives.
+        """
+
+        def cb(msg: Any, _topic: Any) -> None:
+            now_mono = time.monotonic()
+            now_wall = time.time()
+            with self._lock:
+                ch = self._grippers[side]
+                positions = getattr(msg, "position", None)
+                if positions is None or len(positions) != 1 or not math.isfinite(positions[0]):
+                    ch.feedback_ok = False
+                    return
+                stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+                age = max(0.0, now_wall - stamp) if stamp else 0.0
+                ch.measured_m = float(positions[0]) / _GRIPPER_MM_PER_M
+                ch.feedback_at = now_mono - age
+                ch.feedback_wall = now_wall - age
+                ch.feedback_ok = True
+
+        return cb
+
+    def _on_gripper_status(self, msg: Any, topic: Any) -> None:
+        """One segment's fault report, applied to every jaw that depends on it.
+
+        Mirrors the vendor semantics: an entry with a code or a description
+        is an error, and a report with no entries at all is itself an error
+        ("empty status report"). A clean report clears the segment.
+        """
+        segment = topic.topic.removeprefix("/hdas/feedback_status_")
+        errors = tuple(
+            f"{e.name}: {e.error_code} {e.error_description}"
+            for e in msg.errors
+            if e.error_code or e.error_description
+        )
+        if not msg.errors:
+            errors = ("empty status report",)
+        with self._lock:
+            for side, segments in _GRIPPER_FAULT_SEGMENTS.items():
+                if segment in segments:
+                    self._grippers[side].faults[segment] = (errors, time.monotonic())
+
     # Wheel odometry (integrated from executed chassis speed)
 
     def _on_chassis_speed(self, msg: Any, _topic: Any) -> None:
@@ -794,6 +1048,17 @@ class R1ProConnection(ConnectionModule):
                     # Oldest of the three segments: the fused snapshot is only
                     # as fresh as its stalest part.
                     ts = min(self._ts_torso, self._ts_left, self._ts_right)
+                # The jaws ride their own message: only a jaw whose feedback
+                # is valid, fresh and not interrupted by a blocked intent is
+                # reported; a jaw that drops out stays out until it earns it.
+                now_mono = time.monotonic()
+                gripper_readings = []
+                for joint, side in R1PRO_GRIPPER_SIDES.items():
+                    ch = self._grippers[side]
+                    if ch.measured_m is not None and _gripper_reportable(
+                        ch, self.config.gripper_feedback_timeout_s, now_mono
+                    ):
+                        gripper_readings.append((joint, ch.measured_m, ch.feedback_wall))
 
             if bootstrapped:
                 self.joint_state.publish(
@@ -810,6 +1075,16 @@ class R1ProConnection(ConnectionModule):
                     self.imu_chassis.publish(imu_chassis)
                 if imu_torso is not None:
                     self.imu_torso.publish(imu_torso)
+
+            if gripper_readings:
+                self.joint_state.publish(
+                    JointState(
+                        ts=min(stamp for _, _, stamp in gripper_readings),
+                        frame_id=frame_id,
+                        name=[joint for joint, _, _ in gripper_readings],
+                        position=[measured for _, measured, _ in gripper_readings],
+                    )
+                )
 
             next_tick += period
             sleep_for = next_tick - time.perf_counter()

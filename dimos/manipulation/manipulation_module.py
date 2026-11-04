@@ -299,6 +299,7 @@ class ManipulationModule(Module):
         )
 
         self._world_monitor.load_model(self.config.model)
+        self._gripper_tasks()  # Validate the gripper bindings against the live groups.
 
         operator = ManipulationOperator(self, self._world_monitor)
         self._world_monitor.finalize(visualization, operator=operator)
@@ -442,7 +443,7 @@ class ManipulationModule(Module):
                 groups[group.id] = PlanningGroupState(
                     joints=joints,
                     end_effector_pose=pose,
-                    gripper_position=self._get_group_gripper_position(),
+                    gripper_position=self._get_group_gripper_position(group.id),
                     joint_presets=self._group_joint_presets(group),
                 )
         with self._lock:
@@ -1036,14 +1037,14 @@ class ManipulationModule(Module):
         """Return public planning-group capabilities."""
         if self._world_monitor is None:
             return ()
-        has_gripper = self.config.model.gripper_hardware_id is not None
+        bindings = self._gripper_tasks()
         return tuple(
             PlanningGroupInfo(
                 id=group.id,
                 joint_names=group.joint_names,
                 base_frame=group.base_link,
                 tip_frame=group.tip_link,
-                has_gripper=has_gripper,
+                has_gripper=group.id in bindings,
             )
             for group in self._world_monitor.planning_groups.list()
         )
@@ -1067,13 +1068,18 @@ class ManipulationModule(Module):
             presets["init"] = selected(self._init_joints)
         return presets
 
-    def _get_group_gripper_position(self) -> float | None:
-        hardware_id = self.config.model.gripper_hardware_id
-        if hardware_id is None:
+    def _gripper_tasks(self) -> dict[str, str]:
+        """The gripper task behind each planning group, validated against the
+        live groups; empty when the model declares no gripper."""
+        if self._world_monitor is None:
+            return {}
+        return self.config.model.resolve_gripper_tasks(self._world_monitor.planning_groups.list())
+
+    def _get_group_gripper_position(self, group_id: PlanningGroupID) -> float | None:
+        task_name = self._gripper_tasks().get(group_id)
+        if task_name is None:
             return None
-        values = self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper", "get_normalized", {}
-        )
+        values = self._control_coordinator.task_invoke(task_name, "get_normalized", {})
         return float(values[0]) if values else None
 
     def get_current_joint_state(self) -> JointState | None:
@@ -1425,10 +1431,9 @@ class ManipulationModule(Module):
         group = self._resolve_gripper_group(planning_group)
         if isinstance(group, CommandResult):
             return group
-        hardware_id = self.config.model.gripper_hardware_id
-        assert hardware_id is not None
+        task_name = self._gripper_tasks()[group.id]
         if self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper",
+            task_name,
             "set_normalized",
             {"values": [float(position)]},
         ):
@@ -1457,7 +1462,7 @@ class ManipulationModule(Module):
         def is_capable(group: PlanningGroup) -> bool:
             if capability == "pose":
                 return group.has_pose_target
-            return self.config.model.gripper_hardware_id is not None
+            return group.id in self._gripper_tasks()
 
         if planning_group is not None:
             try:

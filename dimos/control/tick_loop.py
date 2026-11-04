@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
+from dimos.control.connection_source import interface_for_mode
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -472,7 +473,17 @@ class TickLoop:
                 else:
                     # Check for mode conflict across joints on same hardware
                     existing_mode = hw_commands[route][1]
-                    if mode != existing_mode:
+                    if mode != existing_mode and not (
+                        # A connection robot sees values per interface, not
+                        # per mode: POSITION and SERVO_POSITION both arrive as
+                        # positions, so a held-by-servo gripper and a
+                        # trajectory-driven arm share one command. Adapters
+                        # switch behavior per mode, so they keep the strict
+                        # check.
+                        route in self._connections
+                        and interface_for_mode(mode) is not None
+                        and interface_for_mode(mode) == interface_for_mode(existing_mode)
+                    ):
                         logger.error(
                             f"Mode conflict for hardware {route}: joint {joint_name} wants "
                             f"{mode.name} but hardware already has {existing_mode.name}. "
