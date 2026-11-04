@@ -20,7 +20,6 @@ premap relocalization, the viewer, and with ``--agentic`` the agent skills (modu
     dimos run unitree-go2 --replay.db <x.db>            # a recording (.db or dimos .mcap) in the robot's place
 
 Relocalization stays off until it has a premap: ``--localmaprelocalization.map-file <map>``.
-With ``--agentic``, an LLM drives the skills when the run adds ``mcp-client``.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ from dimos.robot.unitree.go2.config import (
     mls_planner_config,
     ray_tracing_config,
 )
-from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
+from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 from dimos.robot.unitree.go2.modules.agentic import agentic
 from dimos.robot.unitree.go2.rerun import rerun_config
 from dimos.robot.urdf_manager_native.native import UrdfManagerNative

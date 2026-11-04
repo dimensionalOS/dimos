@@ -27,7 +27,6 @@ def test_walk_forward(
         "--disable",
         "spatial-memory",
         "unitree-go2",
-        "mcp-client",
         simulator="dimsim",
     )
     wait_for_system_ready(timeout=300.0)

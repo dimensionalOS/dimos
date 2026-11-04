@@ -45,7 +45,7 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
-from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
+from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 from dimos.stream.audio.base import AudioEvent
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.hosted.camera_mux import CameraMuxModule

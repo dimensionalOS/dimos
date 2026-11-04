@@ -43,9 +43,9 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 ## Pipeline Steps
 
-### 1. LiDAR Frame ([`Go2WebRtc`](/dimos/robot/unitree/go2/connections/webrtc.py))
+### 1. LiDAR Frame ([`Go2WebRtc`](/dimos/robot/unitree/go2/connections/webrtc/module.py))
 
-We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC link (a Rust native module in [`webrtc_rust/src/module.rs`](/dimos/robot/unitree/go2/connections/webrtc_rust/src/module.rs)), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This lets us support stock, unjailbroken Go2 Air and Pro models out of the box.
+We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC link (a Rust native module in [`webrtc/rust/src/module.rs`](/dimos/robot/unitree/go2/connections/webrtc/rust/src/module.rs)), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This lets us support stock, unjailbroken Go2 Air and Pro models out of the box.
 
 ![LiDAR frame](assets/1-lidar.png)
 
@@ -173,7 +173,7 @@ from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.experimental.patrolling.module import PatrollingModule
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
+from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 
 unitree_go2 = autoconnect(
     Go2WebRtc.blueprint(),

@@ -34,7 +34,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
+from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 from dimos.teleop.utils.stream_stats import LiveStreamStats
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger

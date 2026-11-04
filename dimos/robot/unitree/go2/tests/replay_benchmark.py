@@ -14,6 +14,8 @@
 
 """Realtime-load benchmark of the unitree-go2 blueprint under replay."""
 
+from collections.abc import Callable
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -64,6 +66,10 @@ def _expected_counts(db_path: str) -> dict[str, int]:
         return {name: store.stream(name).count() for name in ("odom", "lidar", "color_image")}
     finally:
         store.stop()
+
+
+def _count(record: Callable[[str], None], name: str, _msg: object) -> None:
+    record(name)
 
 
 def _cgroup_path() -> Path:
@@ -215,7 +221,7 @@ def test_go2_replay_realtime_load() -> None:
     # soon as the Replay module starts, mid-build.
     transports = [make_transport(name, typ) for name, typ in WATCHED]
     for (name, _), transport in zip(WATCHED, transports, strict=True):
-        transport.subscribe(lambda _msg, _name=name: record(_name))
+        transport.subscribe(partial(_count, record, name))
 
     peak_anon = 0
     peak_tasks = 0
@@ -246,6 +252,8 @@ def test_go2_replay_realtime_load() -> None:
         # Children inherit the counters, so this covers the workers too. perf's
         # interval mode doesn't pass on the workload's exit status; a shell
         # around the CLI writes it to a file instead.
+        # PERF_EVENTS is only set alongside METRICS_PATH
+        assert METRICS_PATH is not None
         perf_csv = Path(METRICS_PATH).with_suffix(".perf.csv")
         rc_path = Path(METRICS_PATH).with_suffix(".rc")
         cmd = [

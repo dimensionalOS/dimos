@@ -187,7 +187,7 @@ class Go2DimSimConfig(ModuleConfig, DimSimConfig):
 
 class Go2DimSim(Module):
     """DimSim's Go2 in a blueprint: launches the simulator, which publishes the sensors itself, and puts its
-    odometry on tf. The RPCs match connections/webrtc.py's so skills drive either; the sim has no counterpart
+    odometry on tf. The RPCs match connections/webrtc/module.py's so skills drive either; the sim has no counterpart
     for most, which succeed as no-ops."""
 
     config: Go2DimSimConfig

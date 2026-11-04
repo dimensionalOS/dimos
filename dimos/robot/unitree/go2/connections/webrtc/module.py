@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The real Go2 over its WebRTC link: a Rust process (webrtc_rust/) holds the link and publishes the ports itself."""
+"""The real Go2 over its WebRTC link: a Rust process (rust/) holds the link and publishes the ports itself."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ class WebRtcTiming(BaseConfig):
 
 
 class Go2WebRtcConfig(NativeModuleConfig):
-    source_dir: str | None = "dimos/robot/unitree/go2/connections/webrtc_rust"
+    source_dir: str | None = "dimos/robot/unitree/go2/connections/webrtc/rust"
     executable: str = "result/bin/go2_webrtc"
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True

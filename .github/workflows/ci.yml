@@ -1246,7 +1246,7 @@ jobs:
           height_cost_occupancy(PointCloud2.from_numpy(points, timestamp=1.0))
           "
       - name: Run the replay under cgroup accounting
-        run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/blueprints/test_unitree_go2_replay_benchmark.py
+        run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/tests/replay_benchmark.py
         env:
           DIMOS_BENCH_METRICS: benchmark.json
           DIMOS_BENCH_PERF_EVENTS: instructions:u

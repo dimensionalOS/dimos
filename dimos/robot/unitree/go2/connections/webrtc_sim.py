@@ -14,7 +14,7 @@
 
 # will be deleted on the arrival of sim2
 
-"""A simulated Go2 (MuJoCo, from dim-go2-sim) behind connections/webrtc.py's ports and RPCs, so a blueprint swaps
+"""A simulated Go2 (MuJoCo, from dim-go2-sim) behind connections/webrtc/module.py's ports and RPCs, so a blueprint swaps
 one for the other. Its lidar is the sim's Mid-360 scan (mid360_link), not the L1 map."""
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class Go2WebRtcSimConfig(Go2SimConfig):  # type: ignore[misc]
 
 
 class Go2WebRtcSim(Go2Sim, Camera, Pointcloud):  # type: ignore[misc]
-    """dim-go2-sim's Go2 with webrtc.py's extra ports (command, battery, joint_state); verbs the sim has no
+    """dim-go2-sim's Go2 with webrtc/module.py's extra ports (command, battery, joint_state); verbs the sim has no
     counterpart for succeed as no-ops."""
 
     config: Go2WebRtcSimConfig

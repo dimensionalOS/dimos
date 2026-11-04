@@ -37,7 +37,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
+from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger

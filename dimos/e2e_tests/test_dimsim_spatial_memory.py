@@ -23,7 +23,6 @@ def test_go_to_the_bed(
         "--agentic",
         "run",
         "unitree-go2",
-        "mcp-client",
         simulator="dimsim",
     )
     wait_for_system_ready(timeout=300.0)

@@ -37,7 +37,7 @@ openh264 = { version = "=0.9.3", features = ["source"] }
 
 [package.metadata.dimos.module.go2_webrtc]
 path = "dimos_go2_webrtc::module::Go2WebRtc"
-python = "dimos.robot.unitree.go2.connections.webrtc:Go2WebRtc"
+python = "dimos.robot.unitree.go2.connections.webrtc.module:Go2WebRtc"
 
 [package.metadata.dimos.module.go2_webrtc.inputs]
 cmd_vel = "geometry_msgs.Twist"

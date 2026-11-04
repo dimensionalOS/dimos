@@ -28,7 +28,6 @@ def test_path_replanning(
         "--agentic",
         "run",
         "unitree-go2",
-        "mcp-client",
         "--go2dimsim.scene=empty",
         simulator="dimsim",
     )
