@@ -1,12 +1,16 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { FakeTime } from "jsr:@std/testing@1/time";
 import {
+  ControlFrameReader,
   DataFrameStreamReader,
   decodeDataFrame,
+  encodeControlFrame,
   type FrameHeader,
+  MAX_CONTROL_PAYLOAD_BYTES,
   MAX_TOPIC_SOURCES,
   type Msg,
   type OptionRanges,
+  topicCapabilitiesOk,
   type TopicMsg,
   topicMsgFromUnknown,
   type TopicOpenMsg,
@@ -403,6 +407,35 @@ Deno.test("the source count stops where a topic_sources announcement would becom
   assertNotEquals(topicMsgFromUnknown(announced), null);
   h.registry.sourceClosed(providers[0]);
   assertEquals(h.registry.registerSource(new Provider(), "one-more"), null);
+  h.registry.viewerClosed(h.viewer);
+});
+
+Deno.test("a source whose capabilities would push the announcement past one control frame is refused", () => {
+  const h = setup();
+  const profileOptions: Record<string, OptionRanges> = {};
+  for (let p = 0; p < 16; p++) {
+    profileOptions[`profile-${p}`] = {
+      choice: { kind: "enum", values: Array.from({ length: 16 }, (_, i) => `value-${i}`) },
+    };
+  }
+  const capabilities = {
+    read: true,
+    write: false,
+    profiles: Object.keys(profileOptions),
+    profileOptions,
+  };
+  assert(topicCapabilitiesOk(capabilities));
+  let admitted = 0;
+  while (h.registry.registerSource(new Provider(), `big-${admitted}`, capabilities) === null) {
+    admitted++;
+  }
+  assert(admitted > 0 && admitted < MAX_TOPIC_SOURCES - 1);
+  const announced = h.viewer.messages.at(-1)!;
+  assertEquals(announced.t, "topic_sources");
+  assert(
+    new TextEncoder().encode(JSON.stringify(announced)).byteLength <= MAX_CONTROL_PAYLOAD_BYTES,
+  );
+  assertEquals(new ControlFrameReader().push(encodeControlFrame(announced)).length, 1);
   h.registry.viewerClosed(h.viewer);
 });
 
@@ -979,6 +1012,46 @@ Deno.test("an update moves the viewer once the new variant encodes, and the idle
   });
   h.variantReady();
   assertEquals(h.last(a), { t: "topic_applied", id: "cam", revision: 2, settings: LOW });
+  h.close();
+});
+
+Deno.test("a variant in its grace period serves a new viewer and stays open", async () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.opened();
+  h.update(a, 1, { quality: 40 });
+  h.variantReady();
+  h.tick(VARIANT_GRACE_MS / 2);
+  // v1 still encodes the profile settings: b takes it instead of a fresh variant.
+  const b = h.subscribe("b");
+  assertEquals(b.ready()[0].settings, LOW);
+  assertEquals(h.variants().length, 1);
+  h.tick(VARIANT_GRACE_MS);
+  assertEquals(h.provider.messages.some((m) => m.t === "topic_variant_close"), false);
+  h.activate(b);
+  h.frame(1, "v1");
+  await flush();
+  assertEquals(h.received(b), [1]);
+  h.close();
+});
+
+Deno.test("a change sent before the previous one is acknowledged keeps that one's settings", () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.opened();
+  h.update(a, 1, { quality: 40 });
+  h.update(a, 2, { maxResolution: [320, 240] });
+  assertEquals(h.variants().map((m) => m.settings), [
+    { maxHz: 30, maxResolution: [640, 360], quality: 40 },
+    { maxHz: 30, maxResolution: [320, 240], quality: 40 },
+  ]);
+  h.variantReady();
+  assertEquals(h.last(a), {
+    t: "topic_applied",
+    id: "cam",
+    revision: 2,
+    settings: { maxHz: 30, maxResolution: [320, 240], quality: 40 },
+  });
   h.close();
 });
 

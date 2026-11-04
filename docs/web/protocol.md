@@ -126,7 +126,8 @@ value) go to the provider and back to the viewer. A media route serves up to
 four variants keyed by their encode settings; each samples at the highest
 rate among its viewers and stamps its frames with `variant`, which the relay
 dispatches on and strips. A viewer keeps its old variant until the new one
-acknowledges, then gets `topic_applied`; a fifth settings set rejects with
+acknowledges, then gets `topic_applied`; a `topic_update` sent before that
+merges into the request still waiting. A fifth settings set rejects with
 `variant_limit` unless a variant nobody uses can be retired, and such a
 variant closes after a two second grace. Raw routes have no variants: `maxHz`
 is their only setting, gated per viewer by the relay, which acknowledges the
