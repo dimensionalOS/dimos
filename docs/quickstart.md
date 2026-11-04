@@ -56,7 +56,7 @@ dimos --simulation run unitree-g1-sim    # humanoid
 
 ### Real robot
 
-With a Unitree Go2 on the same network, point dimOS at its IP address and drop `--replay.db`:
+With a Unitree Go2 on the same network (`uvx go2tool connect-wifi` puts it on wifi, `uvx go2tool discover` finds its IP; see [Go2 setup](/docs/platforms/quadruped/go2/setup.md)), point dimOS at its IP address and drop `--replay.db`:
 
 ```bash
 export ROBOT_IP=<YOUR_ROBOT_IP>

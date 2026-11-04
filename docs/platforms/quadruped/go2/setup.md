@@ -20,10 +20,34 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 ### First-time setup, connecting to wifi, finding robot IP
 
-Connect the Go2 to your wifi with the Unitree app, then find its IP in the app or in your router's list of connected devices. Export the IP:
+Use [go2tool](https://github.com/jeff-hykin/go2tool) to put the robot on wifi over Bluetooth and find its IP. Skip if the robot is already on your network and you know its IP.
+
+1. Power on the Go2. It advertises over BLE immediately.
+
+2. Optionally make sure the robot is detected:
 
 ```bash
-export ROBOT_IP=<robot_ip>
+uvx go2tool discover
+```
+
+3. Provision wifi (one-time per network):
+
+```bash
+uvx go2tool connect-wifi --ssid <wifi> --password <password>
+```
+
+Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several.
+
+4. Find the robot's IP:
+
+```bash
+uvx go2tool discover
+```
+
+Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN. Export the IP:
+
+```bash
+export ROBOT_IP=<discovered_ip>
 ```
 
 ### Pre-flight checks

@@ -33,14 +33,17 @@ Expected result: the webcam feed appears in Rerun.
 
 ## 9.4 Go2 connection with an AES key
 
-Needs the Unitree account the robot is bound to. Go2 firmware 1.1.15 and newer needs the AES-128 key. Find the robot's IP in the Unitree app or your router's list of connected devices.
+Needs a Bluetooth adapter and the Unitree account the robot is bound to. Go2 firmware 1.1.15 and newer needs the AES-128 key. Wifi provisioning and discovery use [go2tool](https://github.com/jeff-hykin/go2tool).
 
 ```bash
+uvx go2tool discover
+uvx go2tool connect-wifi --ssid <wifi> --password <password>
+uvx go2tool discover
 uv run unitree-fetch-aes-key --email <email> --device-type Go2 --sn <serial>
 GO2WEBRTC__AES_128_KEY=<key> uv run dimos --robot-ip <ip> run unitree-go2
 ```
 
-Expected result: the key tool prints a box with the `Key` line. `unitree-go2` connects with that key.
+Expected result: the first `discover` lists the robot as a BLE row with its serial. `connect-wifi` prints "Provisioned." with the serial. The second `discover` also lists a LAN row with the robot's IP. The key tool prints a box with the `Key` line. `unitree-go2` connects with that key.
 
 ## 9.5 Go2 rage mode
 
