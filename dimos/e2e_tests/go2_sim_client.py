@@ -94,6 +94,11 @@ class Go2SimClient:
             )
         )
 
+    def add_floor(self, x1: float, y1: float, x2: float, y2: float) -> int:
+        """A slab whose top is the floor (z = 0) from (x1, y1) to (x2, y2), for the lidar to see where
+        the scene has none (outside a scan's walls); its box index."""
+        return int(self.sim.add_box(min(x1, x2), min(y1, y2), -0.05, max(x1, x2), max(y1, y2), 0.0))
+
     def remove_wall(self, index: int) -> None:
         self.sim.remove_box(index)
 

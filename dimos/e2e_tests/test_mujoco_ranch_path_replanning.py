@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import pytest
 
 from dimos.e2e_tests.go2_sim_client import RANCH_ARG
+
+# The DimSim test's arena, 8 m east of the ranch house's walls on its open ground (the lidar sees no
+# floor out there, so the arena brings its own). The house's own loops all pass through gaps the
+# local planner won't take (the dining room's 0.7 m by the wall), so the walls are added as there.
+DX = 8.0
 
 
 @pytest.mark.self_hosted_large
@@ -37,20 +40,35 @@ def test_path_replanning(
     )
     wait_for_system_ready(timeout=300.0)
 
-    # From the living room the dining room is 4.7 m away through the kitchen's opening (x = 2.4,
-    # y 1.8..3.1), or 11.9 m round through the entry. Map both, ending back at the start.
-    go2_sim.teleport(4.2, 3.4, -math.pi / 2)
-    lcm_spy.wait_until_odom_position(4.2, 3.4, threshold=0.1, timeout=30)
+    go2_sim.add_floor(DX + 1.5, -3.0, DX + 12.5, 4.0)
+    # side wall
+    go2_sim.add_wall(DX + 2, -2.5, DX + 12, -2.5)
+    # other side wall
+    go2_sim.add_wall(DX + 2, 3.5, DX + 12, 3.5)
+    # back wall (behind robot)
+    go2_sim.add_wall(DX + 2, -2.5, DX + 2, 3.5)
+    # forward wall (far end)
+    go2_sim.add_wall(DX + 12, -2.5, DX + 12, 3.5)
+    # dividing wall at x=7 with doors at y=[-1.5,-0.5] and y=[1.5,2.5]
+    go2_sim.add_wall(DX + 7, -2.5, DX + 7, -1.5)
+    go2_sim.add_wall(DX + 7, -0.5, DX + 7, 1.5)
+    go2_sim.add_wall(DX + 7, 2.5, DX + 7, 3.5)
+
+    go2_sim.teleport(DX + 3, 2)
+    lcm_spy.wait_until_odom_position(DX + 3, 2, threshold=0.1, timeout=30)
+
     direct_cmd_vel_explorer.linear_speed = 0.8
-    direct_cmd_vel_explorer.follow_points(
-        [(4.03, -0.97), (5.03, -3.17), (2.58, -3.07), (2.08, -3.03), (1.22, -2.12),
-         (1.53, 0.33), (1.33, 2.08), (3.78, 3.18), (4.2, 3.4)]
-    )  # fmt: skip
+    direct_cmd_vel_explorer.follow_points([(DX + 10, 2), (DX + 2.5, 2), (DX + 3, 2)])
 
-    # When the robot comes within 1.5 m of the opening, wall it up so the planner has to bail out
-    # and go round through the entry.
-    spawn_wall_on_pose(point=(2.4, 2.45), threshold=1.5, wall=(2.4, 1.75, 2.4, 3.15))
+    # When the robot comes within 1.5 m of the left door's centre, drop a wall
+    # in the opening so the planner has to bail out and route through the
+    # right door at y=-1 instead.
+    spawn_wall_on_pose(
+        point=(DX + 7, 2),
+        threshold=1.5,
+        wall=(DX + 7, 1.5, DX + 7, 2.5),
+    )
 
-    go2_sim.publish_goal(1.5, 0.3)
+    go2_sim.publish_goal(DX + 10.913, 0.588)
 
-    lcm_spy.wait_until_odom_position(1.5, 0.3, threshold=1, timeout=180)
+    lcm_spy.wait_until_odom_position(DX + 10.913, 0.588, threshold=1, timeout=120)
