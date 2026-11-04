@@ -468,6 +468,17 @@ class TopicVideo:
                         del route.encoders[variant]
         if notify:
             self._send(TopicRtcClose(id=token, route=peer.route, gen=peer.gen, reason=reason))
+        logger.info(
+            "video peer closed",
+            route=peer.route,
+            reason=reason,
+            lived_s=round(time.monotonic() - peer.opened_at, 1),
+            sent=peer.track.sent,
+            peer_drops=peer.track.dropped,
+            encodes=encoder.frames,
+            keyframes=encoder.keyframes,
+            stale_drops=encoder.dropped,
+        )
         peer.track.stop()
         with suppress(asyncio.TimeoutError, Exception):
             await asyncio.wait_for(peer.pc.close(), PEER_CLOSE_S)
