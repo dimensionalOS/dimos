@@ -53,8 +53,8 @@ start all modules                           # physics/render/raycast resources o
 
 The provider does not depend on another shared-config delivery. This is fixed
 startup configuration; adding a provider later does not rebuild existing worlds.
-The core PR includes #4937 as a dependency and targets main to keep unrelated main
-changes out of review. Merge #4937 first; its framework diff then leaves this PR.
+The core PR targets #4937's `jeff/feat/shared_config` branch, refreshed with main.
+Its framework changes are reviewed in #4937; the G1 example is stacked on core.
 
 ```mermaid
 flowchart LR
