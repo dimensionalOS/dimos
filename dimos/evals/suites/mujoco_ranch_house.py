@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from dimos.e2e_tests.go2_sim_client import centres, distance_to_nearest, ranch_labels
+from dimos.e2e_tests.go2_sim_client import distance_to_nearest, footprints, ranch_labels
 from dimos.evals.environments.go2_sim import Go2SimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
@@ -56,7 +56,7 @@ def _explore_ranch(sim: Go2SimClient) -> None:
 
 
 def _ended_near(name: str) -> Callable[[Outcome], float]:
-    """Where the robot ended up, against the nearest object called *name*."""
+    """Where the robot ended up, against the nearest object called *name* (its floor footprint)."""
 
     def grade(o: Outcome) -> float:
         store = recording(o)
@@ -64,7 +64,7 @@ def _ended_near(name: str) -> Callable[[Outcome], float]:
             p = store.streams.odom.last().data.position
         finally:
             store.stop()
-        d = distance_to_nearest(p.x, p.y, centres(ranch_labels()["objects"], name))
+        d = distance_to_nearest(p.x, p.y, footprints(ranch_labels()["objects"], name))
         return ramp(max(0.0, d - 2.0), band=2.0)  # full credit inside the e2e 2 m threshold
 
     return grade

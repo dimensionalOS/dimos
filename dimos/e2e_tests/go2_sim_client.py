@@ -113,9 +113,9 @@ class Go2SimClient:
         """The scene's labelled objects (all, or those called *name*): name, room, detail, box."""
         return [o for o in self.sim.objects() if name is None or o["name"] == name]
 
-    def centres(self, name: str) -> list[tuple[float, float]]:
-        """Where each object called *name* is, on the floor."""
-        return centres(self.objects(), name)
+    def footprints(self, name: str) -> list[tuple[float, float, float, float]]:
+        """The floor rectangle (xmin, ymin, xmax, ymax) of each object called *name*."""
+        return footprints(self.objects(), name)
 
     def look_around_ranch(self, turn_rate: float = 1.0) -> None:
         """Show the robot every room: teleported to each of RANCH_VIEWPOINTS, it turns once on the
@@ -149,13 +149,17 @@ def ranch_labels() -> dict[str, Any]:
     return labels
 
 
-def centres(objects: list[dict[str, Any]], name: str) -> list[tuple[float, float]]:
+def footprints(objects: list[dict[str, Any]], name: str) -> list[tuple[float, float, float, float]]:
     return [
-        ((o["box"][0] + o["box"][3]) / 2, (o["box"][1] + o["box"][4]) / 2)
-        for o in objects
-        if o["name"] == name
+        (o["box"][0], o["box"][1], o["box"][3], o["box"][4]) for o in objects if o["name"] == name
     ]
 
 
-def distance_to_nearest(x: float, y: float, points: list[tuple[float, float]]) -> float:
-    return min(math.hypot(x - px, y - py) for px, py in points)
+def distance_to_nearest(
+    x: float, y: float, rectangles: list[tuple[float, float, float, float]]
+) -> float:
+    """How far (x, y) is from the nearest of *rectangles* (0 inside one)."""
+    return min(
+        math.hypot(max(x0 - x, 0.0, x - x1), max(y0 - y, 0.0, y - y1))
+        for x0, y0, x1, y1 in rectangles
+    )

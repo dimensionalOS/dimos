@@ -35,11 +35,11 @@ def test_go_to_the_bed(
 
     human_input("go to the bed")
 
-    beds = go2_sim.centres("bed")  # the ranch has three; any of them
+    beds = go2_sim.footprints("bed")  # the ranch has three; any of them
     lcm_spy.wait_for_message_result(
         "/odom#geometry_msgs.PoseStamped",
         PoseStamped,
         predicate=lambda pose: distance_to_nearest(pose.x, pose.y, beds) < 2,
-        fail_message=f"the robot never came within 2 m of a bed at {beds}",
+        fail_message=f"the robot never came within 2 m of a bed's footprint {beds}",
         timeout=180,
     )
