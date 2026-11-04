@@ -64,13 +64,11 @@ Needs a Go2 with 5 m of clear floor ahead of it.
 ```bash
 uv run dimos run unitree-go2-rpp-benchmark --out-dir /tmp/rpp-benchmark
 uv run python -m dimos.control.benchmarking.score /tmp/rpp-benchmark
-uv run dimos run unitree-go2-hol-path-controller
 ```
 
 * Benchmark: focus the Keyboard Teleop window, aim the robot at the clear floor with WASD and press ENTER. The robot walks a 5 m straight line and stops. Backspace ends the session.
-* Holonomic controller: click a point in the Rerun 3D view. The robot walks to it and stops.
 
-Expected result: each benchmark run logs `goal+stop (arrived=True, ...)`, the scorer writes `go2_benchmark_scores.json` and two plots into `/tmp/rpp-benchmark`, and the holonomic controller reaches the clicked point.
+Expected result: each benchmark run logs `goal+stop (arrived=True, ...)`, the scorer writes `go2_benchmark_scores.json` and two plots into `/tmp/rpp-benchmark`.
 
 ## 8.7 Habitat simulation
 
