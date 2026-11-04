@@ -27,7 +27,7 @@ around a fixed camera, registered with the planner as an obstacle for the run.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import threading
 import time
@@ -160,6 +160,9 @@ class _Run:
     last_move_end: float = 0.0
     waiting_for_approval: bool = False
     last_frame_ts: float | None = None
+    # One record per target the solver asked for: its joints, what became of it, and the planned
+    # path, so a dry run can be inspected before anything moves.
+    targets: list[dict[str, Any]] = field(default_factory=list)
 
 
 class HandEyeCalibrationModule(Module):
@@ -184,6 +187,7 @@ class HandEyeCalibrationModule(Module):
         self._abort = threading.Event()
         self._approve = threading.Event()
         self._result: HandEyeResult | None = None
+        self._targets: list[dict[str, Any]] = []
 
     @rpc
     def start(self) -> None:
@@ -232,6 +236,7 @@ class HandEyeCalibrationModule(Module):
                 for obstacle in obstacles:
                     self._obstacles.remove_obstacle(obstacle)
             self._result = result
+            self._targets = self._run.targets
             return self._report(result)
         finally:
             run, self._run = self._run, None
@@ -338,8 +343,11 @@ class HandEyeCalibrationModule(Module):
             return False
         now = self.read_joints()
         step = float(np.max(np.abs(np.asarray(q) - now)))
+        record: dict[str, Any] = {"joints": [round(v, 4) for v in q], "step_rad": round(step, 4)}
+        run.targets.append(record)
         if not all(math.isfinite(v) for v in q) or step > self.config.max_joint_step_rad:
             run.refused += 1
+            record["outcome"] = "refused_step"
             logger.warning("Hand-eye target refused", step_rad=round(step, 3), target=q)
             return False
         names = self._manipulation.list_planning_groups()
@@ -350,9 +358,14 @@ class HandEyeCalibrationModule(Module):
         )
         if not plan.succeeded or plan.plan is None:
             run.refused += 1
+            record["outcome"] = "refused_plan"
+            record["message"] = plan.message
             logger.warning("Planner refused the target", message=plan.message)
             return False
         run.planned += 1
+        record["outcome"] = "planned"
+        record["path"] = [[round(v, 4) for v in point.position] for point in plan.plan.path]
+        record["duration_s"] = round(plan.plan.trajectory.duration, 3)
         if self.config.dry_run:
             return False
         if run.moves < self.config.approve_first_moves:
@@ -366,18 +379,21 @@ class HandEyeCalibrationModule(Module):
             run.waiting_for_approval = False
             self._approve.clear()
             if not released or self._abort.is_set():
+                record["outcome"] = "not_approved"
                 return False
         run.moves += 1
         result = self._manipulation.execute(
             blocking=True, timeout=EXECUTE_TIMEOUT_S, plan_id=plan.plan.plan_id
         )
         if result.status is not ExecutionStatus.COMPLETED:
+            record["outcome"] = "execution_failed"
             logger.warning(
                 "Execution did not complete", status=result.status, message=result.message
             )
             return False
         self._settle(np.asarray(q, dtype=float))
         run.last_move_end = time.time()
+        record["outcome"] = "executed"
         return True
 
     def _settle(self, target: FloatArray) -> None:
@@ -438,6 +454,7 @@ class HandEyeCalibrationModule(Module):
             "optical": _transform_dict(optical),
             "mount": _transform_dict(mount),
             "file": str(path),
+            "targets": self._targets,
         }
 
     def _mount_transform(self, T_parent_optical: FloatArray, parent: str) -> Transform:

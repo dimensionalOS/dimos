@@ -77,7 +77,13 @@ class FakePlanner:
         self, targets: dict[str, JointState], speed_scale: float | None = None
     ) -> PlanResult:
         self.pending = list(targets["manipulator"].position)
-        return PlanResult(PlanStatus.SUCCEEDED, plan=SimpleNamespace(plan_id="plan-1"))
+        start = JointState(name=list(JOINTS), position=self.arm.get_joints())
+        plan = SimpleNamespace(
+            plan_id="plan-1",
+            path=[start, targets["manipulator"]],
+            trajectory=SimpleNamespace(duration=1.0),
+        )
+        return PlanResult(PlanStatus.SUCCEEDED, plan=plan)
 
     def execute(
         self, blocking: bool = True, timeout: float | None = None, *, plan_id: str | None = None
@@ -195,6 +201,7 @@ def test_a_target_beyond_the_joint_step_cap_never_reaches_the_planner(
     assert planner.executed == []
     assert report["passed"] is False
     assert report["reason"] == "too few detections"
+    assert {t["outcome"] for t in report["targets"]} == {"refused_step"}
 
 
 def test_dry_run_plans_but_executes_nothing(
@@ -207,6 +214,8 @@ def test_dry_run_plans_but_executes_nothing(
     assert planner.executed == []
     assert report["poses_moved"] == 0
     assert report["poses_tried"] == 12
+    assert [t["outcome"] for t in report["targets"]] == ["planned"] * 12
+    assert all(len(t["path"]) == 2 and t["duration_s"] == 1.0 for t in report["targets"])
 
 
 def test_first_moves_wait_for_approval_and_abort_cancels(
