@@ -184,23 +184,33 @@ async def test_variants_share_one_subscription_and_encode_once_each(
     assert encode.call_args_list[0].args[2] != encode.call_args_list[1].args[2]
 
 
-async def test_a_slow_variant_keeps_the_newest_sample_until_it_is_due(harness: Harness) -> None:
+async def test_a_slow_variant_keeps_the_newest_sample_until_its_rate_makes_it_due(
+    harness: Harness,
+) -> None:
     route = harness.make(normalize_settings(PROFILE, {"maxHz": 30}), max_hz=30)
     await route.start()
-    route.set_variant("v2", {"maxHz": 5, "quality": 40})
+    route.set_variant("v2", {"maxHz": 0.1, "quality": 40})
     assert route._mailbox._period == pytest.approx(1 / 30)
     route.activate()
     route._mailbox.offer(sample(1))
     first = [await harness.frame() for _ in range(2)]
     assert {frame.header.meta["variant"] for frame in first} == {"v1", "v2"}
-    # Two more samples inside v2's 200 ms period: v1 encodes both, v2 waits
-    # and then encodes the newest one rather than the one it first skipped.
+    # Two more samples inside v2's ten second period: v1 encodes each as it
+    # arrives, v2 holds the newest one.
     route._mailbox.offer(sample(2))
-    await asyncio.sleep(0.04)
+    second = await harness.frame()
     route._mailbox.offer(sample(3))
-    later = [await harness.frame() for _ in range(3)]
-    assert [f.header.meta["variant"] for f in later] == ["v1", "v1", "v2"]
-    assert [f.header.meta["headerSeq"] for f in later] == [2, 3, 3]
+    third = await harness.frame()
+    assert [(f.header.meta["variant"], f.header.meta["headerSeq"]) for f in (second, third)] == [
+        ("v1", 2),
+        ("v1", 3),
+    ]
+    assert harness.frames.empty()
+    # Raising v2's rate keeps its last encode time, so the held sample is due
+    # now rather than ten seconds after the first one.
+    route.set_variant("v2", {"maxHz": 30, "quality": 40})
+    held = await harness.frame()
+    assert (held.header.meta["variant"], held.header.meta["headerSeq"]) == ("v2", 3)
     assert harness.frames.empty()
 
 

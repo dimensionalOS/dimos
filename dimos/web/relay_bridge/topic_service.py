@@ -268,6 +268,11 @@ class _Route:
         settings = normalize_settings(self.spec.profile, requested)
         existing = self._variants.get(name)
         if existing is not None and _encode_key(existing.settings) == _encode_key(settings):
+            # A rate change keeps each key's last encode time, as the mailbox does.
+            period = 1 / float(settings["maxHz"])
+            existing.next_due = {
+                key: due + period - existing.period for key, due in existing.next_due.items()
+            }
             existing.settings = settings
             self._sync_rate()
         else:

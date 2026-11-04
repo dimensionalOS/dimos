@@ -586,6 +586,8 @@ export class TopicClient implements Topics {
         const previous = handle.group;
         handle.group = group;
         if (previous !== null) this.#leave(handle, previous);
+        // A handle whose old group never got ready is ready through this one.
+        if (handle.status().phase !== "ready") handle.transition(group.status);
         move.resolve(group.settings);
       } else if (group.status.phase === "rejected") {
         handle.move = null;
