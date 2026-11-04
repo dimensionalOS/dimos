@@ -43,6 +43,18 @@ dimos shell
 
 ```python
 cal = app.get_module("HandEyeCalibrationModule")
+```
+
+An operator-approved run can wait on `approve()` longer than an RPC client waits for `calibrate()`, so start it in the background and poll:
+
+```python
+cal.start_calibration()
+cal.status()            # running, moves, waiting_for_approval; last_result when the run is over
+cal.approve()           # from a second shell, once per gated move
+```
+
+The solver asks for views from different heights on its own: it servos the mean camera-to-board distance onto 0.4 m from either side and then alternates nearer and farther views, so one run from the default home holds the spread that separates a shift of the camera along its viewing axis from a tilt.
+```
 cal.calibrate()      # blocks until the verdict
 ```
 

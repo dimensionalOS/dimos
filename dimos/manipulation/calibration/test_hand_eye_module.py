@@ -242,7 +242,23 @@ def test_first_moves_wait_for_approval_and_abort_cancels(
     assert len(planner.executed) == 1
     assert planner.cancelled == 1
     assert results and results[0]["passed"] is False
+    assert results[0]["reason"] == "aborted"
     assert not runner.is_alive()
+
+
+def test_start_calibration_returns_at_once_and_status_carries_the_result(
+    module: HandEyeCalibrationModule, planner: FakePlanner, frames: threading.Event
+) -> None:
+    started = module.start_calibration()
+
+    assert started == {"started": True}
+    deadline = time.monotonic() + 30.0
+    while module.status()["running"] and time.monotonic() < deadline:
+        time.sleep(0.05)
+    status = module.status()
+    assert status["running"] is False
+    assert status["last_result"] is not None and status["last_result"]["passed"] is True
+    assert len(planner.executed) == 12
 
 
 def test_the_table_is_a_planner_obstacle_for_the_run_only(

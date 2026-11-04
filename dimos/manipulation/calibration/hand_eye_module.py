@@ -222,6 +222,22 @@ class HandEyeCalibrationModule(Module):
     # ---- operator RPCs -------------------------------------------------------------------------
 
     @rpc
+    def start_calibration(self) -> dict[str, Any]:
+        """Start a calibration run in the background and return at once.
+
+        ``status()`` reports progress and, when the run is over, carries the report under
+        ``last_result``. For an operator-approved run this is the call to use: the run waits
+        on ``approve()`` longer than an RPC client waits for ``calibrate()``.
+        """
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("a calibration run is already in progress")
+        worker = threading.Thread(
+            target=self._run_calibration, args=(True,), name="HandEyeCalibration", daemon=True
+        )
+        worker.start()
+        return {"started": True}
+
+    @rpc
     def calibrate(self) -> dict[str, Any]:
         """Run the calibration and write the result. Blocks until the verdict.
 
@@ -230,6 +246,11 @@ class HandEyeCalibrationModule(Module):
         """
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("a calibration run is already in progress")
+        return self._run_calibration(True)
+
+    def _run_calibration(self, lock_held: bool) -> dict[str, Any]:
+        """The run itself; the caller holds the run lock, released here."""
+        assert lock_held
         try:
             self._abort.clear()
             self._approve.clear()
@@ -259,6 +280,9 @@ class HandEyeCalibrationModule(Module):
             finally:
                 for obstacle in obstacles:
                     self._obstacles.remove_obstacle(obstacle)
+            if self._abort.is_set():
+                result.passed = False
+                result.reason = "aborted"
             self._result = result
             self._targets = self._run.targets
             self._seed = self._run.seed

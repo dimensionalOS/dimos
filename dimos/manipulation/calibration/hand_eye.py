@@ -56,7 +56,8 @@ PROBE_M = 0.4
 # Pose draw: how far each joint may move from the centre in one pose, radians, scaled by the
 # amplitude; the widest amplitude an arrangement affords; and how the amplitude reacts to a frame
 # without a board (shrink) and with one (recover).
-STEP_RANGE = np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.8])
+# The wrist's range keeps two consecutive draws inside a 1.2 rad move, the module's step cap.
+STEP_RANGE = np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.55])
 AMP_CEIL = {
     False: 1.0,
     True: 0.5,
@@ -68,6 +69,12 @@ AMP_MIN = 0.2
 # Standoff servo: the centre of the draw walks until the views average to PROBE_M.
 DEPTH_TOL_M = 0.03
 STANDOFF_MIN_M = 0.33  # the nearest an approach reaches; a setpoint below it only loses views
+STANDOFF_MAX_M = 0.60  # and the farthest a board of this size still fills enough of the frame
+# Once the mean sits on PROBE_M the next views are asked for alternately nearer and farther, so
+# the run holds views from different heights: that is what separates a shift of the camera along
+# its viewing axis from a tilt (a real arm, 2026-11-03: views all at 0.28 m put two runs 6 mm
+# apart along that axis; a run from 0.31 to 0.62 m did not).
+DEPTH_SWEEP_M = 0.08
 DEPTH_FIT_MIN = 7  # views needed before the fitted joint-to-view map can steer
 DEPTH_FIT_R2 = 0.8
 DEPTH_STEP_M = 0.20  # trust region in metres of standoff per step
@@ -264,15 +271,15 @@ def _observe(T_cam_board: FloatArray, R0: FloatArray) -> FloatArray:
 
 def _standoff_target(standoffs: FloatArray, remaining: int) -> float | None:
     """The distance to ask the next views for so that the mean standoff over the whole run lands
-    on PROBE_M: the views already banked far away are paid back by the ones still to come.
-    One-sided and floored, so an arrangement already inside PROBE_M is left alone."""
+    on PROBE_M: the views already banked too far away, or too close, are paid back by the ones
+    still to come. On the mean, the sweep asks for nearer and farther views in turn."""
     n = len(standoffs)
     if n == 0 or remaining < 1:
         return None
     deficit = float(np.mean(standoffs)) - PROBE_M
-    if deficit < DEPTH_TOL_M:
-        return None
-    return max(PROBE_M - n * deficit / remaining, STANDOFF_MIN_M)
+    if abs(deficit) < DEPTH_TOL_M:
+        return PROBE_M + (DEPTH_SWEEP_M if n % 2 else -DEPTH_SWEEP_M)
+    return float(np.clip(PROBE_M - n * deficit / remaining, STANDOFF_MIN_M, STANDOFF_MAX_M))
 
 
 def _view_jacobian(Q: FloatArray, U: FloatArray) -> tuple[FloatArray, FloatArray]:

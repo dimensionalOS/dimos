@@ -113,3 +113,23 @@ def test_a_refused_move_costs_a_pose_but_no_capture(rig: Any) -> None:
 
     assert result.poses_tried == 12
     assert result.poses_moved == captures["n"] == 9
+
+
+def test_the_standoff_target_pays_back_both_directions_and_sweeps_on_target() -> None:
+    from dimos.manipulation.calibration.hand_eye import (
+        DEPTH_SWEEP_M,
+        PROBE_M,
+        STANDOFF_MAX_M,
+        STANDOFF_MIN_M,
+        _standoff_target,
+    )
+
+    too_close = _standoff_target(np.array([0.28, 0.28, 0.28]), 10)
+    too_far = _standoff_target(np.array([0.55, 0.55, 0.55]), 10)
+    on_target_odd = _standoff_target(np.array([0.40, 0.40, 0.40]), 10)
+    on_target_even = _standoff_target(np.array([0.40, 0.40]), 10)
+
+    assert too_close is not None and PROBE_M < too_close <= STANDOFF_MAX_M
+    assert too_far is not None and STANDOFF_MIN_M <= too_far < PROBE_M
+    assert on_target_odd == PROBE_M + DEPTH_SWEEP_M
+    assert on_target_even == PROBE_M - DEPTH_SWEEP_M
