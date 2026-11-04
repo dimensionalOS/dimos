@@ -12,18 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Keyframe pose corrections from a pose-graph optimizer, turned into a warp
-//! of world points with fast-reform.
-//!
-//! Two PointCloud2 record topics carry them, little-endian with no padding:
-//! `pose_graph`, one record per keyframe (x, y, z, node_id, ts, qx..qw), and
-//! `loop_closure_event`, one per keyframe a closure moved (the pre-closure
-//! pose as in pose_graph, then dx, dy, dz, dqx..dqw with post = delta * pre).
-//!
-//! The map holds each keyframe at the pose it had when the map last moved for
-//! it, its applied pose. A closure warps by post * applied⁻¹ for the keyframes
-//! that moved at least `min_shift_m`. The others keep their applied pose, so
-//! the moves too small to warp for are carried into the next closure, not lost.
+//! GscPGO's keyframe corrections (`pose_graph`, `loop_closure_event` records) as a fast-reform warp of world points, moving each keyframe from its applied pose.
 
 pub mod rss;
 
