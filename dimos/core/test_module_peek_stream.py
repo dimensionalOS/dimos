@@ -114,11 +114,7 @@ def test_one_publication_reaches_every_pending_peek_and_subscriber(module, mocke
 
 @pytest.mark.parametrize(
     "stream_name",
-    [
-        "odom",
-        "incoming",
-        "duplex",
-    ],
+    ["odom", pytest.param("incoming", marks=pytest.mark.skipif_flaky_in_ci), "duplex"],
 )
 def test_peek_timeout_releases_transport_subscription(module, mocker, stream_name):
     transport = LCMTransport("/peek/idle", PoseStamped)

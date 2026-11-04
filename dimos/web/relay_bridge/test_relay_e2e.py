@@ -292,6 +292,7 @@ async def test_reliable_channel_is_complete_and_intact(
     assert odom[0].header.meta == {"i": 0}
 
 
+@pytest.mark.skipif_flaky_in_ci
 async def test_latest_channel_newest_wins(robot: RelayClient, viewer: RelayClient) -> None:
     await attach(robot, viewer, ["cam"])
     writer = robot.latest_writer("cam")

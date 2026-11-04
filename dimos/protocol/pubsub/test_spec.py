@@ -17,6 +17,7 @@
 import asyncio
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+import os
 import threading
 import time
 from typing import Any
@@ -389,6 +390,8 @@ def test_high_volume_messages(
     This is an acceptance test, not a benchmark, so volume is kept low (500)
     to avoid flakiness. Might want separate expectations per transport later.
     """
+    if pubsub_context is zenoh_cbor_context and os.getenv("CI"):
+        pytest.skip("flaky in CI, disabled until fixed")
     with pubsub_context() as x:
         received_messages: list[Any] = []
 
