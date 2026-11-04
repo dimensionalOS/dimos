@@ -14,7 +14,7 @@
 
 //! `solve_with_priors` landmark sightings correct a drifting closure-free square: rough-range bearings, or one tag pose.
 
-use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, LandmarkSighting, SolveConfig};
+use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, Edge, LandmarkSighting, SolveConfig};
 use dimos_gsc_pgo::landmarks::known_inverse;
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
@@ -86,6 +86,11 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
+        planar: false,
+        landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default()
+            .landmark_warm_start_xy_variance_scale,
+        landmark_warm_start_xy_variance_ladder: dimos_gsc_pgo::gsc_pgo::Config::default()
+            .landmark_warm_start_xy_variance_ladder,
     };
     let solution = solve_with_priors(
         &rotations,
@@ -182,6 +187,11 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
+        planar: false,
+        landmark_warm_start_xy_variance_scale: dimos_gsc_pgo::gsc_pgo::Config::default()
+            .landmark_warm_start_xy_variance_scale,
+        landmark_warm_start_xy_variance_ladder: dimos_gsc_pgo::gsc_pgo::Config::default()
+            .landmark_warm_start_xy_variance_ladder,
     };
     let solution = solve_with_priors(
         &rotations,
@@ -246,7 +256,12 @@ fn unknown_dimensions_carry_no_information() {
 fn factors_before_the_first_keyframe_wait_for_it() {
     // a fix or sighting can reach the module before its first scan; there is nothing to solve yet
     let mut pgo = dimos_gsc_pgo::gsc_pgo::GscPgo::new(dimos_gsc_pgo::gsc_pgo::Config::default());
-    let point = LandmarkSighting::point(0, 0, [1.0, 0.0, 0.0], [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]]);
+    let point = LandmarkSighting::point(
+        0,
+        0,
+        [1.0, 0.0, 0.0],
+        [[0.01, 0.0, 0.0], [0.0, 0.01, 0.0], [0.0, 0.0, 0.01]],
+    );
     pgo.add_landmark_factor(0.0, 7, point.rotation, point.position, point.information);
     pgo.add_coordinate_factor(
         0.0,
@@ -257,4 +272,126 @@ fn factors_before_the_first_keyframe_wait_for_it() {
     );
     assert!(!pgo.update());
     assert!(!pgo.finish());
+}
+
+/// A 200 m square walked 1 m a step whose heading drifts steadily, far past what the odometry states, and a point tag by
+/// the start seen on the first steps and again on the last, with every sighting's world spread: (with, without) warm start.
+fn drifted_loop_tag_spread() -> (f64, f64) {
+    let steps = 800;
+    let truth: Vec<(f64, Vec3)> = (0..steps)
+        .map(|k| {
+            let (side, along) = (k / 200, (k % 200) as f64);
+            let yaw = side as f64 * std::f64::consts::FRAC_PI_2;
+            let c = [[0.0, 0.0], [200.0, 0.0], [200.0, 200.0], [0.0, 200.0]][side];
+            (
+                yaw,
+                [c[0] + along * yaw.cos(), c[1] + along * yaw.sin(), 0.0],
+            )
+        })
+        .collect();
+    let (heading_sigma, step_sigma): (f64, f64) = (1e-3, 0.005);
+    // the heading's steady drift over the loop: 16x the sd the odometry states for it
+    let heading_bias = 16.0 * heading_sigma / (steps as f64).sqrt();
+    let edges: Vec<Edge> = (1..steps)
+        .map(|k| {
+            let ((yaw_a, a), (yaw_b, b)) = (truth[k - 1], truth[k]);
+            Edge {
+                from: k - 1,
+                to: k,
+                rotation: mat3::rot_z(yaw_b - yaw_a + heading_bias + noise(k, 1.0) * heading_sigma),
+                translation: mat3::mat_vec(
+                    &mat3::transpose(&mat3::rot_z(yaw_a)),
+                    &mat3::sub(&b, &a),
+                ),
+                variances: [
+                    1e-8,
+                    1e-8,
+                    heading_sigma.powi(2),
+                    step_sigma.powi(2),
+                    step_sigma.powi(2),
+                    1e-8,
+                ],
+            }
+        })
+        .collect();
+    let (mut rotations, mut positions) = (vec![mat3::identity()], vec![[0.0; 3]]);
+    for e in &edges {
+        let (r, p) = (rotations[e.from], positions[e.from]);
+        rotations.push(mat3::mat_mul(&r, &e.rotation));
+        positions.push(mat3::add(&p, &mat3::mat_vec(&r, &e.translation)));
+    }
+    let tag: Vec3 = [3.0, -2.0, 0.5];
+    let sigma: f64 = 0.05;
+    let seen: Vec<usize> = (0..3).chain(steps - 3..steps).collect();
+    let sightings: Vec<LandmarkSighting> = seen
+        .iter()
+        .map(|&k| {
+            let (yaw, at) = truth[k];
+            let body = mat3::mat_vec(&mat3::transpose(&mat3::rot_z(yaw)), &mat3::sub(&tag, &at));
+            LandmarkSighting::point(
+                k,
+                0,
+                body,
+                std::array::from_fn(|i| {
+                    std::array::from_fn(|j| (i == j) as u8 as f64 * sigma * sigma)
+                }),
+            )
+        })
+        .collect();
+    let spread = |scale: f64| {
+        let config = SolveConfig {
+            gnc_variance_scale: 10.0,
+            gnc_inlier_probability: 0.95,
+            huber_k: 1.345,
+            evidence_core: false,
+            learned_evidence: false,
+            seed_closure_weights: Vec::new(),
+            seed_start: Vec::new(),
+            planar: false,
+            landmark_warm_start_xy_variance_scale: scale,
+            landmark_warm_start_xy_variance_ladder: dimos_gsc_pgo::gsc_pgo::Config::default()
+                .landmark_warm_start_xy_variance_ladder,
+        };
+        let free: Vec<bool> = (0..steps).map(|k| k > 0).collect();
+        let solution = solve_with_priors(
+            &rotations,
+            &positions,
+            &free,
+            &edges,
+            &[],
+            &[],
+            &sightings,
+            &config,
+        );
+        let world: Vec<Vec3> = sightings
+            .iter()
+            .map(|s| {
+                mat3::add(
+                    &solution.positions[s.keyframe],
+                    &mat3::mat_vec(&solution.rotations[s.keyframe], &s.position),
+                )
+            })
+            .collect();
+        world
+            .iter()
+            .flat_map(|a| world.iter().map(move |b| mat3::norm(&mat3::sub(a, b))))
+            .fold(0.0, f64::max)
+    };
+    let default_scale =
+        dimos_gsc_pgo::gsc_pgo::Config::default().landmark_warm_start_xy_variance_scale;
+    (spread(default_scale), spread(0.0))
+}
+
+#[test]
+fn a_tag_re_seen_across_a_drifted_loop_closes_it() {
+    let (warm, cold) = drifted_loop_tag_spread();
+    assert!(
+        warm < 0.5,
+        "the tag's sightings meet once the loop closes ({warm} m apart)"
+    );
+    // without the warm start the re-sightings are out of the solve's reach and GNC drops them
+    assert!(
+        cold > 5.0,
+        "a solve from the drifted odometry leaves them {cold} m apart"
+    );
 }
