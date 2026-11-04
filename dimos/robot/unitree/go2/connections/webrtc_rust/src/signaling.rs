@@ -72,7 +72,7 @@ fn decrypt_data1(data1: &str, data2: i64, aes_key: &str) -> Result<String, Strin
     match data2 {
         2 => gcm_decrypt(data1, &LEGACY_GCM_KEY),
         3 if aes_key.is_empty() => Err(
-            "this Go2 speaks data2=3 (firmware >= 1.1.15): set its per-device aes_128_key (GO2CONNECTION__AES_128_KEY)".into(),
+            "this Go2 speaks data2=3 (firmware >= 1.1.15): set its per-device aes_128_key (GO2WEBRTC__AES_128_KEY)".into(),
         ),
         3 => gcm_decrypt(data1, &parse_aes_key(aes_key)?),
         _ => Ok(data1.to_string()),

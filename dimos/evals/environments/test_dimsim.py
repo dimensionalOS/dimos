@@ -30,7 +30,7 @@ def test_dimsim_launch_setup_and_pose(mocker):
     proc = DimosCliCall()
     env.configure_launch(proc)
     assert proc.simulator == "dimsim"
-    assert proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] == "empty"
+    assert proc.extra_env["GO2DIMSIM__SCENE"] == "empty"
     assert proc.dimsim_port == 18090
     try:
         env.setup_scene()

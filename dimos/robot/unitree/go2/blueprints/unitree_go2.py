@@ -154,6 +154,10 @@ class Go2RecordingTf(Module):
 
 def _connection() -> Blueprint:
     """dim-go2-sim's Go2 with --simulation, else the real robot (idle without a robot IP)."""
+    if global_config.simulation == "dimsim":
+        from dimos.robot.unitree.dimsim_connection import Go2DimSim
+
+        return Go2DimSim.blueprint()
     if global_config.simulation:
         try:
             from dimos.robot.unitree.go2.connections.webrtc_sim import Go2WebRtcSim

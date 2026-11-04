@@ -19,7 +19,9 @@ from typing import Any
 
 from reactivex import Observable, Subject
 
+from dimos.core.core import rpc
 from dimos.core.global_config import TransportBackend
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -177,3 +179,80 @@ def _odom_to_tf(odom: PoseStamped) -> list[Transform]:
         camera_optical,
         lidar_link,
     ]
+
+
+class Go2DimSimConfig(ModuleConfig, DimSimConfig):
+    pass
+
+
+class Go2DimSim(Module):
+    """DimSim's Go2 in a blueprint: launches the simulator, which publishes the sensors itself, and puts its
+    odometry on tf. The RPCs match connections/webrtc.py's so skills drive either; the sim has no counterpart
+    for most, which succeed as no-ops."""
+
+    config: Go2DimSimConfig
+    camera_info_static: CameraInfo = DimSimConnection.camera_info_static
+    _connection: DimSimConnection | None = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        dimsim = DimSimConfig(**self.config.model_dump(include=set(DimSimConfig.model_fields)))
+        self._connection = DimSimConnection(dimsim, transport=self.config.g.transport)
+        self._connection.start()
+
+    @rpc
+    def stop(self) -> None:
+        if self._connection is not None:
+            self._connection.stop()
+            self._connection = None
+        super().stop()
+
+    @rpc
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        """DimSim drives from cmd_vel directly."""
+        return True
+
+    @rpc
+    def stop_movement(self) -> None:
+        """DimSim stops when cmd_vel does."""
+
+    @rpc
+    def standup(self) -> bool:
+        return True
+
+    @rpc
+    def liedown(self) -> bool:
+        return True
+
+    @rpc
+    def balance_stand(self) -> bool:
+        return True
+
+    @rpc
+    def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
+    @rpc
+    def sport_command(self, api_id: int) -> bool:
+        return True
+
+    @rpc
+    def set_light(self, level: int) -> bool:
+        return True
+
+    @rpc
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        return True
+
+    @rpc
+    def switch_joystick(self, enable: bool = True) -> bool:
+        return True
+
+    @rpc
+    def battery_soc(self) -> int | None:
+        return None
+
+    @rpc
+    def publish_request(self, topic: str, data: dict[str, Any]) -> None:
+        """DimSim answers no RTC requests."""

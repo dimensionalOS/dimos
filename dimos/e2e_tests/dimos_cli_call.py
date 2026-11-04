@@ -68,7 +68,7 @@ class DimosCliCall:
         if self.mcp_port is not None:
             env["MCPSERVER__PORT"] = str(self.mcp_port)
         if self.dimsim_port is not None:
-            env["GO2CONNECTION__DIMSIM__PORT"] = str(self.dimsim_port)
+            env["GO2DIMSIM__PORT"] = str(self.dimsim_port)
         if self.simulator is not None:
             global_overrides += ["--simulation", self.simulator]
 
