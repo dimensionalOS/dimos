@@ -26,6 +26,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import socket
 import struct
 import subprocess
 import time
@@ -60,6 +61,7 @@ IMU_SAMPLE_SIZE = 24
 DATA_HEADER_SIZE = 36
 UDP_PROTOCOL = 17
 PCAP_GLOBAL_HEADER_SIZE = 24
+SYNTH_CAPTURE_SECONDS = 10
 
 
 def _data_packet(data_type: int, time_interval: int, ts_ns: int, payload: bytes) -> bytes:
@@ -89,12 +91,12 @@ def _udp_record(ts: float, src_port: int, payload: bytes) -> bytes:
 
 @pytest.fixture(scope="session")
 def synth_pcap(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """One second of a ring of points at 10 Hz frames plus 200 Hz gravity IMU."""
+    """A ring of points at 10 Hz frames plus 200 Hz gravity IMU."""
     base_ts = 1_000_000.0
     base_ns = int(base_ts * 1e9)
     records = []
-    # 200 point packets, one every 5 ms, 100 points each: ~2000 points/frame.
-    for i in range(200):
+    # One point packet every 5 ms, 100 points each: ~2000 points/frame.
+    for i in range(200 * SYNTH_CAPTURE_SECONDS):
         offset_ns = i * 5_000_000
         points = b"".join(
             struct.pack(
@@ -109,8 +111,8 @@ def synth_pcap(tmp_path_factory: pytest.TempPathFactory) -> Path:
         )
         packet = _data_packet(1, 1000, base_ns + offset_ns, points)
         records.append(_udp_record(base_ts + offset_ns / 1e9, SDK_POINT_DATA_PORT, packet))
-    # 200 IMU packets at 200 Hz: gravity on z, slow roll on x.
-    for i in range(200):
+    # IMU packets at 200 Hz: gravity on z, slow roll on x.
+    for i in range(200 * SYNTH_CAPTURE_SECONDS):
         offset_ns = i * 5_000_000
         sample = struct.pack("<6f", 0.01, 0.0, 0.0, 0.0, 0.0, 1.0)
         packet = _data_packet(0, 0, base_ns + offset_ns, sample)
@@ -121,6 +123,17 @@ def synth_pcap(tmp_path_factory: pytest.TempPathFactory) -> Path:
     path = tmp_path_factory.mktemp("livox_e2e") / "synth_mid360.pcap"
     path.write_bytes(pcap_header + b"".join(records))
     return path
+
+
+def _free_udp_ports(count: int) -> list[int]:
+    """Ports free right now. The default Livox ports are in the OS ephemeral range."""
+    sockets = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(count)]
+    for sock in sockets:
+        sock.bind(("", 0))
+    ports = [sock.getsockname()[1] for sock in sockets]
+    for sock in sockets:
+        sock.close()
+    return ports
 
 
 def _require_binary(name: str) -> Path:
@@ -280,6 +293,7 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
     driver_binary = _require_binary("mid360_native")
     virtual_binary = _require_binary("virtual_mid360")
 
+    cmd, push, point, imu, host_cmd, host_push, host_point, host_imu = _free_udp_ports(8)
     virtual_config = VirtualMid360Config(
         pcap=str(synth_pcap),
         rate=0.5,
@@ -287,6 +301,13 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
         lidar_ip="127.0.0.1",
         host_ip="127.0.0.1",
         mcast_data=SDK_MULTICAST_GROUP,
+        cmd_data_port=cmd,
+        push_msg_port=push,
+        point_data_port=point,
+        imu_data_port=imu,
+        host_push_msg_port=host_push,
+        host_point_data_port=host_point,
+        host_imu_data_port=host_imu,
     )
     virtual_blob = {
         "topics": {},
@@ -298,6 +319,14 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
         lidar_ip="127.0.0.1",
         multicast_ip=None,
         point_format="full",
+        cmd_data_port=cmd,
+        push_msg_port=push,
+        point_data_port=point,
+        imu_data_port=imu,
+        host_cmd_data_port=host_cmd,
+        host_push_msg_port=host_push,
+        host_point_data_port=host_point,
+        host_imu_data_port=host_imu,
     )
     driver_blob = {
         "topics": {
@@ -310,7 +339,8 @@ def test_live_loopback_handshake_and_stream(spawn: Spawner, synth_pcap: Path) ->
 
     spawn(driver_binary, driver_blob)
     spawn(virtual_binary, virtual_blob)
-    # Handshake arms the virtual within ~1 s, then 2 s of half-rate stream.
+    # Handshake arms the virtual within ~1 s. The half-rate stream then outlasts
+    # the collection window, so a test process that stalls here misses nothing.
     received = spawn.collect(
         {"/e2e_live_lidar": PointCloud2, "/e2e_live_imu": Imu},
         seconds=10.0,
