@@ -192,8 +192,9 @@ class _GripperChannel:
 
     ``blocked_intent_m`` is the value a fault, a malformed or a stale
     feedback interrupted. It is not sent again — even while a task still
-    holds it — until a command arrives without the jaw (the intent was
-    withdrawn) or with a different value (a new explicit command).
+    holds it — until a full position frame arrives without the jaw (the
+    intent was withdrawn) or a command arrives with a different value (a
+    new explicit command).
     """
 
     measured_m: float | None = None
@@ -536,8 +537,17 @@ class R1ProConnection(ConnectionModule):
         keeps following the target it has, so re-sending it would only
         restart interpolation. An intent interrupted by bad feedback stays
         blocked until withdrawn or replaced.
+
+        Withdrawal is read off a full position frame — the coordinator's
+        tick carries every held arm joint (``write`` refuses a partial one),
+        so a frame without the jaw means the task stopped driving it. A
+        chassis-speed write or a jaw-only command is not a withdrawal: it
+        never carried jaw intents in the first place.
         """
         now = time.monotonic()
+        frame = (
+            values.get(f"{R1PRO_UPPER_BODY_JOINTS[0]}{SEPARATOR}{Interface.POSITION}") is not None
+        )
         sends: list[tuple[str, float]] = []
         drops: list[str] = []
         with self._lock:
@@ -545,10 +555,12 @@ class R1ProConnection(ConnectionModule):
                 value = values.get(f"{joint}{SEPARATOR}{Interface.POSITION}")
                 ch = self._grippers[side]
                 if value is None:
-                    ch.last_intent_m = None
-                    if ch.blocked_intent_m is not None:
-                        # The interrupted intent was withdrawn; the next
-                        # explicit command starts clean.
+                    if frame:
+                        # The intent is gone — blocked or not, the next
+                        # explicit command is a new one, even at the same
+                        # opening: the vendor-side target can no longer be
+                        # taken for granted.
+                        ch.last_intent_m = None
                         ch.blocked_intent_m = None
                         ch.last_sent_m = None
                     continue
@@ -699,8 +711,8 @@ class R1ProConnection(ConnectionModule):
                 )
             )
         try:
-            from hdas_msg.msg import (
-                FeedbackStatus,  # type: ignore[import-not-found, import-untyped]
+            from hdas_msg.msg import (  # type: ignore[import-not-found, import-untyped]
+                FeedbackStatus,
             )
         except ImportError:
             logger.warning(

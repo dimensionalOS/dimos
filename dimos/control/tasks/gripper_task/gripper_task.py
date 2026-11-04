@@ -50,9 +50,12 @@ class GripperControlTaskConfig:
         priority: Priority for arbitration.
         hold_duration: Seconds to keep emitting a target; 0.0 holds forever.
         require_feedback: When True, a tick whose measured snapshot does not
-            cover every joint drops the latched target: driving on stale or
-            missing feedback replays an intent the gripper may no longer be
-            able to reach, so a recovered gripper waits for a new command.
+            cover every joint drops the latched target once it was driven:
+            driving on stale or missing feedback replays an intent the
+            gripper may no longer be able to reach, so a recovered gripper
+            waits for a new command. A target latched during the outage was
+            never sent — it *is* that new command — so it is held, and goes
+            out on the first tick whose feedback covers every joint again.
         accept_broadcast: When False, the unscoped ``gripper_command`` stream
             is refused — a robot with two grippers must be addressed per
             task, so one message can never move both sides together.
@@ -95,6 +98,9 @@ class GripperControlTask(BaseControlTask):
 
         self._lock = threading.Lock()
         self._target: list[float] | None = None
+        # Whether the latched target ever rode a tick. Only an emitted target
+        # can replay, so only an emitted one is dropped on lost feedback.
+        self._target_emitted = False
         self._target_set_at: float = 0.0
         # Commands without the coordinator clock are stamped on the next tick.
         self._stamp_pending = False
@@ -126,14 +132,14 @@ class GripperControlTask(BaseControlTask):
             # gone from the readback too, not kept at its last value.
             self._measured = measured
             if self._config.require_feedback and len(measured) != len(self._joint_names):
-                if self._target is not None:
+                if self._target is not None and self._target_emitted:
                     logger.warning(
                         "Dropping the gripper target: feedback missing",
                         task=self._name,
                         joints=[n for n in self._joint_names if n not in measured],
                     )
-                self._target = None
-                self._stamp_pending = False
+                    self._target = None
+                    self._stamp_pending = False
                 return None
             if self._estopped or self._target is None:
                 return None
@@ -144,8 +150,10 @@ class GripperControlTask(BaseControlTask):
             if hold > 0.0 and (state.t_now - self._target_set_at) > hold:
                 # Hold expired; ConnectedHardware keeps re-sending the last value.
                 self._target = None
+                self._target_emitted = False
                 return None
             target = list(self._target)
+            self._target_emitted = True
 
         return JointCommandOutput(
             joint_names=list(self._joint_names),
@@ -254,6 +262,7 @@ class GripperControlTask(BaseControlTask):
             if self._estopped:
                 return False
             self._target = target
+            self._target_emitted = False
             if t_now is None:
                 self._stamp_pending = True
             else:

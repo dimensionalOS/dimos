@@ -69,6 +69,21 @@ arms are held where they were last measured. Stale feedback
 return. This replaces the old adapter path, where an estopped robot simply
 kept its last position command with no deadman.
 
+**Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`, opening
+in metres over the vendor's 0–100 mm range) is a command-only contract joint
+driven by its own feedback-gated gripper task — never held, never zero-filled,
+never sent anything while idle. A target whose feedback goes stale, malformed
+or faulted is interrupted: it is not re-sent until the task withdraws it or an
+explicit new command replaces it, and the readback is withheld meanwhile.
+
+**Stop is not a cancel.** `stop()`/`halt()` and the deadman only stop *us*
+from sending new targets. They are not a vendor cancel and not a physical
+E-stop: a jaw target the vendor controller already accepted keeps executing
+on the vendor side, and we have no verified way to recall it. The safety
+guarantee ends at "we never re-send an interrupted intent" — not at "the
+jaw stops moving". For a real emergency stop use the robot's own E-stop
+hardware.
+
 ## Point-LIO
 
 Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on

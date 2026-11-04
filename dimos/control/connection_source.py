@@ -291,7 +291,12 @@ class ConnectionSource:
                     f"one of {', '.join(READING_PORTS)}"
                 )
             self._needed[port] = groups
-            own.update(key for group in groups for key in group)
+            if port == JOINT_STATE:
+                # Command-only joints sit out of the readiness groups above,
+                # but their readings still count when they arrive.
+                own.update(key for joint in self._joints for key in joint.state_keys.values())
+            else:
+                own.update(key for group in groups for key in group)
         self._own_keys = frozenset(own)
 
         # Guards the readings and flags below, which readings change and the

@@ -42,10 +42,14 @@ from dimos.robot.galaxea.r1pro._connection_test_fakes import (
     TORSO_Q,
     FakeRos,
     LocalTransport,
+    RosFeedbackStatus,
     RosHeader,
     RosImu,
+    RosJointState,
+    RosStatusError,
     chassis_speed,
     feed_all_segments,
+    gripper_feedback,
     install_fake_ros,
     joint_feedback,
 )
@@ -120,6 +124,31 @@ class Rig:
     def readings(self) -> list[JointState]:
         return list(self.ports["joint_state"].sent)
 
+    def feed_grippers(
+        self, left: float | None = None, right: float | None = None, ts: float | None = None
+    ) -> None:
+        """One feedback frame per named jaw, an opening in mm as the vendor sends it."""
+        if left is not None:
+            self.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(left, ts))
+        if right is not None:
+            self.fake.control.feed("/hdas/feedback_gripper_right", gripper_feedback(right, ts))
+
+    def feed_status(self, segment: str, errors: list[RosStatusError]) -> None:
+        """One segment's fault report, as the vendor's hdas_msg status topics carry it."""
+        self.fake.control.feed(f"/hdas/feedback_status_{segment}", RosFeedbackStatus(errors=errors))
+
+    def jaws(self, side: str) -> list[Any]:
+        """Every message sent to one jaw's vendor command topic, oldest first."""
+        return self.fake.control.sent_to(f"/motion_target/target_position_gripper_{side}")
+
+    def jaw_readings(self) -> list[JointState]:
+        """The joint_state messages that carry a jaw, separate from the arms' frame."""
+        return [msg for msg in self.readings() if any("gripper" in name for name in msg.name)]
+
+    def move_arm(self, position: float = 0.0) -> None:
+        """A full 18-joint command that carries no jaw — the intent-withdrawal tick."""
+        self.move(dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, position))
+
 
 @pytest.fixture
 def fake_ros(monkeypatch: pytest.MonkeyPatch) -> FakeRos:
@@ -157,12 +186,18 @@ def test_a_config_without_a_model_fails_start_before_any_ros_is_touched(
     assert not r.module.status().connected
 
 
-def test_the_limits_table_is_the_18_urdf_joints_and_the_clamped_base() -> None:
+def test_the_limits_table_is_the_18_urdf_joints_the_two_jaws_and_the_clamped_base() -> None:
     table = limits(R1ProConnectionConfig())
-    # 18 position keys in the flat command order, then the base's three axes.
+    # The URDF's joint order: torso, left arm, its jaw, right arm, its jaw;
+    # then the base's three axes.
     keys = list(table)
-    assert [key.rsplit("/", 1)[0] for key in keys[:18]] == R1PRO_UPPER_BODY_JOINTS
-    assert keys[18:] == ["r1pro/base/vx", "r1pro/base/vy", "r1pro/base/wz"]
+    assert [key.rsplit("/", 1)[0] for key in keys[:20]] == [
+        *R1PRO_UPPER_BODY_JOINTS[:11],
+        "r1pro/left_gripper",
+        *R1PRO_UPPER_BODY_JOINTS[11:],
+        "r1pro/right_gripper",
+    ]
+    assert keys[20:] == ["r1pro/base/vx", "r1pro/base/vy", "r1pro/base/wz"]
     # Positions only: the vendor tracker owns speeds, so no velocity keys.
     assert not any(key.endswith("/velocity") for key in keys)
 
@@ -171,6 +206,10 @@ def test_the_limits_table_is_the_18_urdf_joints_and_the_clamped_base() -> None:
     assert (torso.lo, torso.hi) == pytest.approx((-1.2735467075, 1.8125467075))
     arm = table["r1pro/left_arm_joint1/position"]
     assert (arm.lo, arm.hi) == pytest.approx((-4.415693415, 1.274093415))
+    # The jaws: the vendor's 0-100 mm opening, on the contract in metres.
+    for side in ("left", "right"):
+        jaw = table[f"r1pro/{side}_gripper/position"]
+        assert (jaw.lo, jaw.hi) == pytest.approx((0.0, 0.1))
     for axis, top in (("vx", 1.0), ("vy", 1.0), ("wz", 2.0)):
         limit = table[f"r1pro/base/{axis}"]
         assert (limit.lo, limit.hi, limit.clamp) == (-top, top, True)
@@ -404,3 +443,181 @@ def test_status_reports_the_session_commands_and_rejections(rig: Callable[..., R
 
     r.drive(0.1, 0.0, 0.0)
     assert r.module.status().last_command_time is not None
+
+
+# The jaws: vendor interface in millimetres, fault/staleness semantics, and the
+# no-replay rule, all against the fake vendor stack.
+
+
+def test_a_jaw_command_reaches_only_its_own_vendor_topic_in_millimetres(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig()
+    # Idle: a started connection never makes up a jaw target.
+    assert r.jaws("left") == []
+    assert r.jaws("right") == []
+
+    r.feed_grippers(left=20.0, right=40.0)
+    r.move({"r1pro/left_gripper": 0.05})
+    sent = r.jaws("left")
+    assert len(sent) == 1
+    assert list(sent[0].position) == [50.0]  # 0.05 m is 50 mm on the vendor topic
+    assert sent[0].name == ["left_gripper"]
+    # The other jaw is never touched by its sibling's command.
+    assert r.jaws("right") == []
+
+    r.move({"r1pro/right_gripper": 0.03})
+    assert [list(msg.position) for msg in r.jaws("right")] == [[30.0]]
+    assert len(r.jaws("left")) == 1
+
+    # The vendor controller holds its target, so a repeat is not re-sent.
+    r.move({"r1pro/right_gripper": 0.03})
+    assert len(r.jaws("right")) == 1
+
+
+def test_the_jaw_readback_is_a_separate_position_only_message_in_metres(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig()
+    r.feed_grippers(left=25.0, right=50.0)
+
+    wait_until(lambda: bool(r.jaw_readings()), timeout=5.0)
+    msg = r.jaw_readings()[-1]
+    assert list(msg.name) == ["r1pro/left_gripper", "r1pro/right_gripper"]
+    assert list(msg.position) == pytest.approx([0.025, 0.05])  # measured, in metres
+    assert len(msg.velocity) == 0
+    assert len(msg.effort) == 0
+
+
+def test_a_jaw_without_feedback_takes_no_command_and_reports_nothing(
+    rig: Callable[..., Rig],
+) -> None:
+    # The arms report as usual; the jaws never do.
+    r = rig()
+    wait_until(lambda: bool(r.readings()), timeout=5.0)
+
+    r.move({"r1pro/left_gripper": 0.05})
+
+    assert r.jaws("left") == []
+    rejection = r.module.status().last_rejection
+    assert rejection is not None
+    assert "gripper_left" in rejection and "dropped" in rejection
+    # No reading is made up for a jaw that never reported.
+    assert r.jaw_readings() == []
+
+
+def test_stale_jaw_feedback_drops_the_command_and_withholds_the_readback(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig(gripper_feedback_timeout_s=0.05)
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.05})
+    assert len(r.jaws("left")) == 1
+    wait_until(lambda: bool(r.jaw_readings()), timeout=5.0)
+
+    # The jaw's feedback goes quiet while the arms keep reporting.
+    time.sleep(0.1)
+    readings = len(r.jaw_readings())
+    r.move({"r1pro/left_gripper": 0.06})
+
+    # The command is dropped, not sent to a jaw whose state is unknown...
+    assert len(r.jaws("left")) == 1
+    rejection = r.module.status().last_rejection
+    assert rejection is not None and "stale" in rejection
+    # ...and the stale measurement stops being published.
+    time.sleep(0.1)
+    assert len(r.jaw_readings()) == readings
+
+
+def test_a_malformed_jaw_frame_interrupts_the_intent_until_it_is_replaced(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig()
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.05})
+    assert len(r.jaws("left")) == 1
+
+    # A frame that is not one finite position breaks the feedback: the intent
+    # it carried is interrupted, even between two ticks.
+    r.fake.control.feed("/hdas/feedback_gripper_left", RosJointState(position=[1.0, 2.0]))
+    r.move({"r1pro/left_gripper": 0.06})
+    assert len(r.jaws("left")) == 1
+    rejection = r.module.status().last_rejection
+    assert rejection is not None and "gripper_left" in rejection
+
+    # Feedback recovers, but the interrupted intent is not replayed — a
+    # repeated value is the old intent, not a new command.
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.06})
+    assert len(r.jaws("left")) == 1
+
+    # The task withdraws it (a tick's command without the jaw), then commands
+    # the same opening again: an explicit new command, so it is sent.
+    r.move_arm()
+    r.move({"r1pro/left_gripper": 0.06})
+    assert [list(msg.position) for msg in r.jaws("left")] == [[50.0], [60.0]]
+
+
+def test_a_fault_report_blocks_the_jaw_and_recovery_never_replays(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    r.feed_grippers(left=20.0, right=40.0)
+    r.move({"r1pro/left_gripper": 0.05})
+    assert len(r.jaws("left")) == 1
+
+    # The vendor reports a fault on the jaw's own segment.
+    r.feed_status(
+        "gripper_left", [RosStatusError(name="motor", error_code=7, error_description="stalled")]
+    )
+    r.move({"r1pro/left_gripper": 0.06})
+    assert len(r.jaws("left")) == 1
+    rejection = r.module.status().last_rejection
+    assert rejection is not None and "stalled" in rejection
+
+    # A torso fault blocks both jaws: both arms hang from it. (One command
+    # carries both jaws here — a jaw absent from a command is withdrawn.)
+    r.feed_status("torso", [RosStatusError(name="drive", error_code=1, error_description="fault")])
+    r.move({"r1pro/left_gripper": 0.07, "r1pro/right_gripper": 0.05})
+    assert len(r.jaws("left")) == 1
+    assert r.jaws("right") == []
+
+    # Clean reports clear their segments, but neither interrupted intent is
+    # replayed while the tasks still hold it.
+    r.feed_status("gripper_left", [RosStatusError(name="motor")])
+    r.feed_status("torso", [RosStatusError(name="drive")])
+    r.feed_grippers(left=20.0, right=40.0)
+    r.move({"r1pro/left_gripper": 0.07, "r1pro/right_gripper": 0.05})
+    assert len(r.jaws("left")) == 1
+    assert r.jaws("right") == []
+
+    # Withdrawn, then explicitly re-commanded at the same openings: sent.
+    r.move_arm()
+    r.move({"r1pro/left_gripper": 0.07, "r1pro/right_gripper": 0.05})
+    assert [list(msg.position) for msg in r.jaws("left")] == [[50.0], [70.0]]
+    assert [list(msg.position) for msg in r.jaws("right")] == [[50.0]]
+
+
+def test_a_jaw_command_outside_the_vendor_range_is_refused(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    r.feed_grippers(left=20.0)
+
+    r.move({"r1pro/left_gripper": 0.2})  # the vendor opens 0-100 mm
+    assert r.jaws("left") == []
+    rejection = r.module.status().last_rejection
+    assert rejection is not None and "r1pro/left_gripper/position" in rejection
+
+
+def test_stop_and_halt_send_the_jaws_nothing(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.05})
+    assert len(r.jaws("left")) == 1
+
+    # Halt holds the arms and zeroes the chassis, but there is no verified
+    # vendor cancel: an accepted jaw target is never recalled, and the jaws
+    # are sent nothing.
+    r.module.halt()
+    assert len(r.jaws("left")) == 1
+
+    r.module.stop()
+    assert len(r.jaws("left")) == 1
+    assert r.jaws("right") == []

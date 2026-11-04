@@ -20,6 +20,7 @@ from collections.abc import Collection
 import math
 from pathlib import Path
 import tempfile
+import time
 
 import pytest
 
@@ -346,3 +347,89 @@ def test_a_reading_in_another_robots_frame_is_dropped() -> None:
     source.on_message("odom", PoseStamped(frame_id="go2/odom"))
     source.on_message("base_velocity", TwistStamped(frame_id="base"))
     assert source.ready_for_control()
+
+
+# Command-only joints (e.g. grippers): driven only by an explicit task value,
+# never held, never zero-filled, never gating readiness, ageing out of a live
+# stream when their own feedback stops.
+
+
+def gripper_arm(timeout: float = TIMEOUT) -> ConnectionSource:
+    """An arm whose gripper is command-only, with no reading yet."""
+    return ConnectionSource(
+        "arm",
+        ("position_command",),
+        ("joint_state",),
+        GRIPPER_MODEL,
+        timeout,
+        command_only=[GRIPPER],
+    )
+
+
+def gripper_arm_at(position: float, opening: float, timeout: float = TIMEOUT) -> ConnectionSource:
+    source = gripper_arm(timeout=timeout)
+    source.on_message("joint_state", JointState(name=[J1, GRIPPER], position=[position, opening]))
+    return source
+
+
+def test_a_command_only_joint_is_never_held_nor_zero_filled() -> None:
+    source = gripper_arm_at(0.3, 0.05)
+
+    # Idle: the ordinary joint is held; the command-only one is sent nothing.
+    assert source.command({}, None) == {f"{J1}/position": 0.3}
+
+    # A task drives it: the value rides the same tick as the held joint.
+    assert source.command({GRIPPER: 0.04}, ControlMode.POSITION) == {
+        f"{J1}/position": 0.3,
+        f"{GRIPPER}/position": 0.04,
+    }
+
+    # The task gone, it is not held where it was told, nor zero-filled.
+    assert source.command({}, None) == {f"{J1}/position": 0.3}
+
+
+def test_command_only_feedback_never_gates_readiness() -> None:
+    source = gripper_arm()
+
+    # The ordinary joint alone makes the robot ready; the same robot without
+    # the command_only marking would wait for the gripper too (see
+    # test_every_joint_state_message_counts).
+    source.on_message("joint_state", JointState(name=[J1], position=[0.3]))
+    assert source.ready_for_control()
+    # Its feedback is still welcome when it comes.
+    source.on_message("joint_state", JointState(name=[GRIPPER], position=[0.05]))
+    assert source.read_joints().joint_positions == {J1: 0.3, GRIPPER: 0.05}
+
+
+def test_a_command_only_joint_ages_out_of_a_live_stream() -> None:
+    source = gripper_arm_at(0.3, 0.05, timeout=0.2)
+    assert source.read_joints().joint_positions == {J1: 0.3, GRIPPER: 0.05}
+
+    # The robot keeps reporting — just never the gripper. Once the gripper's
+    # own keys are older than the timeout, its last value is stale, not
+    # trusted: it drops out while the arm's reading stays.
+    for _ in range(3):
+        time.sleep(0.15)
+        source.on_message("joint_state", JointState(name=[J1], position=[0.3]))
+    assert source.ready_for_control()
+    assert source.read_joints().joint_positions == {J1: 0.3}
+
+    # A fresh gripper frame earns its place back.
+    source.on_message("joint_state", JointState(name=[GRIPPER], position=[0.02]))
+    assert source.read_joints().joint_positions == {J1: 0.3, GRIPPER: 0.02}
+
+
+def test_command_only_names_must_be_joints_of_the_robot() -> None:
+    with pytest.raises(ValueError, match="command_only"):
+        ConnectionSource(
+            "arm",
+            ("position_command",),
+            ("joint_state",),
+            GRIPPER_MODEL,
+            TIMEOUT,
+            command_only=["arm/nobody"],
+        )
+
+
+def test_position_limits_come_from_the_model() -> None:
+    assert gripper_arm().position_limits() == {J1: (-1.0, 1.0), GRIPPER: (0.0, 0.1)}
