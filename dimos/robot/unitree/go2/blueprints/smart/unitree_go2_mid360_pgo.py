@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live GSC PGO on a Go2-mounted Mid-360 through Point-LIO, with the pose graph in Rerun (no GO2Connection: its `lidar` would collide with Point-LIO's)."""
+"""Live GSC PGO on a Go2-mounted Mid-360 through Point-LIO (its odom -> mid360_link tf poses the sensor-frame scans), with the pose graph in Rerun (no GO2Connection: its `lidar` would collide with Point-LIO's)."""
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import GscPGO
 from dimos.visualization.vis_module import vis_module
@@ -25,6 +25,6 @@ from dimos.visualization.vis_module import vis_module
 unitree_go2_mid360_pgo = autoconnect(
     mid360_for_pointlio(),
     PointLio.blueprint().remappings([(PointLio, "lidar", "cloud")]),
-    GscPGO.blueprint(),
+    GscPGO.blueprint(body_frame=PointLioConfig.model_fields["sensor_frame_id"].default),
     vis_module("rerun"),
 ).global_config(n_workers=3, robot_model="unitree_go2")

@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live GSC PGO on the Go2's onboard lidar, de-posed into base_link by NormalizeGo2Lidar, with the pose graph in Rerun."""
+"""Live GSC PGO on the Go2's onboard lidar (world-frame scans, posed by GO2Connection's world -> base_link tf), with the pose graph in Rerun."""
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import GscPGO
-from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.go2.normalize_go2_lidar import NormalizeGo2Lidar
+from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.visualization.vis_module import vis_module
 
 unitree_go2_pgo = autoconnect(
     GO2Connection.blueprint(),
-    NormalizeGo2Lidar.blueprint(),
-    GscPGO.blueprint(),
+    GscPGO.blueprint(odom_frame=ConnectionConfig.model_fields["odom_frame_id"].default).remappings(
+        [(GscPGO, "cloud", "lidar")]
+    ),
     vis_module("rerun"),
 ).global_config(n_workers=4, robot_model="unitree_go2")

@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native PGO module (`dimos_module`): LCM handlers pair scans with the latest odometry; a worker thread feeds GscPgo
-//! oldest-first and publishes the corrected odometry, tf, graph records and debug_log.
+//! Native PGO module (`dimos_module`): scans wait until tf covers their stamp, are posed (odom -> body) and put in the
+//! body frame from tf, and a worker thread feeds them to GscPgo oldest-first and publishes the corrected odometry, tf,
+//! graph records and debug_log.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,10 +29,13 @@ use dimos_gsc_pgo::records::{
     build_pose_graph_records, extract_xyz, write_keyframes, HeardPoses,
 };
 use dimos_module::nalgebra::{Isometry3, Matrix3, Rotation3, Translation3, UnitQuaternion};
-use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf, Transform};
+use dimos_module::{
+    native_config, run_with_transport, warn_throttled, Input, Module, Output, Tf, Transform,
+};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
 use lcm_msgs::std_msgs;
+use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 /// The module's own fields, then every `gsc_pgo::Config` field (passed through by `pgo()`).
@@ -54,11 +58,12 @@ macro_rules! config {
 config! {
     // not `frame_id`: the Python coordinator strips base-config field names
     map_frame: String,
-    child_frame_id: String,
+    // the fixed frame tf poses the body in; the map -> odom_frame correction goes on tf
+    odom_frame: String,
     body_frame: String,
     // keyframe dump file for offline checks ("" = none)
     dump_path: String,
-    // scan FIFO depth; overflow keeps only the newest scan (<= 0 = unbounded)
+    // depth of each scan queue (waiting for tf: drop the oldest; waiting for the worker: keep only the newest; <= 0 = unbounded)
     max_scan_queue: i32,
     // rayon threads for closure search and solves (0 = every core)
     worker_threads: usize,
@@ -160,11 +165,11 @@ config! {
 
 // ---- shared state ---------------------------------------------------------------
 
-#[derive(Clone)]
-struct OdomSample {
+/// A scan waiting for tf to cover its stamp, its points still in its own frame.
+struct WaitingScan {
     ts: f64,
-    rotation: Mat3,
-    translation: Vec3,
+    frame_id: String,
+    points: dimos_gsc_pgo::pointcloud::PointCloud,
 }
 
 /// A landmark sighting in the body frame, waiting for the worker (`GscPgo::replace_landmark_factor` when it has a
@@ -198,24 +203,23 @@ struct SharedState {
     landmark_names: Vec<String>,
     /// Sighting ids (`constraint_instance_id`); index = id in the pose graph.
     sighting_names: Vec<String>,
-    latest_odom: Option<OdomSample>,
     /// Reject out-of-order scans.
-    last_message_time: f64,
-    /// Bounded scan FIFO.
+    last_scan_time: f64,
+    /// Scans waiting for tf, oldest first.
+    waiting_scans: VecDeque<WaitingScan>,
+    /// Posed body-frame scans waiting for the worker.
     cloud_buffer: VecDeque<CloudWithPose>,
     /// A background solve finished and waits to be adopted.
     solve_finished: bool,
-    /// Fixed-frame scan warning already shown.
-    fixed_frame_warned: bool,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
 
-/// `name`'s index in `names`, appended if new.
 fn last_keyframe_time(pgo: &GscPgo) -> f64 {
     pgo.key_poses().last().map_or(0.0, |keyframe| keyframe.time)
 }
 
+/// `name`'s index in `names`, appended if new.
 fn index_of(names: &mut Vec<String>, name: &str) -> usize {
     names.iter().position(|n| n == name).unwrap_or_else(|| {
         names.push(name.to_string());
@@ -223,9 +227,194 @@ fn index_of(names: &mut Vec<String>, name: &str) -> usize {
     })
 }
 
-/// A world-fixed frame name, which a lidar scan's frame should not be.
-fn is_fixed_frame(frame_id: &str) -> bool {
-    matches!(frame_id, "odom" | "map" | "world")
+// ---- tf matching -------------------------------------------------------------------
+
+/// A tolerance wider than any tf buffer, so `at(ts ± ANY_TIME_S)` only asks which side of `ts` an edge has samples on.
+const ANY_TIME_S: f64 = 1e9;
+/// How long a scan's wait for tf goes before tf warns that it is still missing (the wait then carries on).
+const TF_WAIT_WARN_S: u64 = 10;
+
+/// The tf queries a scan needs: `parent -> child` from the sample nearest `ts`, or from the nearest sample within
+/// `tolerance` of `ts`; and the stamp of the path's stalest newest sample (asked silently, as it misses while waiting).
+trait TfLookup {
+    fn newest(&self, parent: &str, child: &str) -> Option<f64>;
+    fn transform(
+        &self,
+        parent: &str,
+        child: &str,
+        ts: f64,
+        tolerance: Option<f64>,
+    ) -> Option<Isometry3<f64>>;
+}
+
+impl TfLookup for Tf {
+    fn newest(&self, parent: &str, child: &str) -> Option<f64> {
+        self.get_latest(parent, child).map(|t| t.ts)
+    }
+    fn transform(
+        &self,
+        parent: &str,
+        child: &str,
+        ts: f64,
+        tolerance: Option<f64>,
+    ) -> Option<Isometry3<f64>> {
+        let lookup = self.lookup(parent, child).at(ts);
+        let lookup = match tolerance {
+            Some(tolerance) => lookup.tolerance(tolerance),
+            None => lookup,
+        };
+        lookup
+            .get()
+            .map(|t| Isometry3::from_parts(Translation3::from(t.translation()), t.rotation()))
+    }
+}
+
+/// What tf says about a waiting scan.
+enum ScanMatch {
+    /// Some edge on a path has no sample at or after the scan yet.
+    Wait,
+    /// Every edge has later samples but none at or before the scan: the scan is older than the tf buffer.
+    TooOld,
+    /// Posed in `odom_frame` with its points in `body_frame`.
+    Ready(CloudWithPose),
+}
+
+/// Pose a scan from tf (`odom_frame -> body_frame`) and put its points in `body_frame` (`body_frame -> frame_id`),
+/// each from the samples nearest the scan's stamp once every edge has a sample on both sides of it.
+fn match_scan(
+    tf: &impl TfLookup,
+    scan: &WaitingScan,
+    odom_frame: &str,
+    body_frame: &str,
+) -> ScanMatch {
+    let paths = [
+        (odom_frame, body_frame),
+        (body_frame, scan.frame_id.as_str()),
+    ];
+    let moving = paths.iter().filter(|(parent, child)| parent != child);
+    if !moving.clone().all(|(parent, child)| {
+        tf.newest(parent, child)
+            .is_some_and(|newest| newest >= scan.ts)
+    }) {
+        return ScanMatch::Wait;
+    }
+    if !moving.into_iter().all(|(parent, child)| {
+        tf.transform(parent, child, scan.ts - ANY_TIME_S, Some(ANY_TIME_S))
+            .is_some()
+    }) {
+        return ScanMatch::TooOld;
+    }
+    let (Some(pose), Some(mount)) = (
+        tf.transform(odom_frame, body_frame, scan.ts, None),
+        tf.transform(body_frame, &scan.frame_id, scan.ts, None),
+    ) else {
+        return ScanMatch::Wait;
+    };
+    let mount = mount.cast::<f32>();
+    let points = scan
+        .points
+        .iter()
+        .map(|p| {
+            let q = mount * dimos_module::nalgebra::Point3::new(p[0], p[1], p[2]);
+            [q.x, q.y, q.z]
+        })
+        .collect();
+    let r = pose.rotation.to_rotation_matrix();
+    let t = pose.translation.vector;
+    let mut pose = PoseWithTime::new(
+        std::array::from_fn(|i| std::array::from_fn(|j| r[(i, j)])),
+        [t.x, t.y, t.z],
+    );
+    let sec = scan.ts.floor();
+    pose.set_time(sec as i32, ((scan.ts - sec) * 1e9) as u32);
+    ScanMatch::Ready(CloudWithPose {
+        cloud: Some(Arc::new(points)),
+        pose,
+    })
+}
+
+/// Hand waiting scans to the worker as tf covers them, oldest first; waits on a new scan or a tf change, never a timer.
+async fn match_scans_to_tf(
+    tf: Tf,
+    state: Shared<SharedState>,
+    scan_arrived: Arc<Notify>,
+    wake: Arc<Condvar>,
+    config: Config,
+) {
+    let (odom_frame, body_frame) = (config.odom_frame.as_str(), config.body_frame.as_str());
+    loop {
+        let head = state
+            .lock()
+            .expect("state")
+            .waiting_scans
+            .front()
+            .map(|scan| (scan.ts, scan.frame_id.clone()));
+        let Some((ts, frame_id)) = head else {
+            scan_arrived.notified().await;
+            continue;
+        };
+        let matched = {
+            let state = state.lock().expect("state");
+            match state.waiting_scans.front() {
+                Some(scan) if scan.ts == ts => match_scan(&tf, scan, odom_frame, body_frame),
+                _ => continue,
+            }
+        };
+        match matched {
+            ScanMatch::Wait => {
+                let covered = async {
+                    for (parent, child) in
+                        [(odom_frame, body_frame), (body_frame, frame_id.as_str())]
+                    {
+                        tf.lookup(parent, child)
+                            .at(ts + ANY_TIME_S)
+                            .tolerance(ANY_TIME_S)
+                            .within(Duration::from_secs(TF_WAIT_WARN_S))
+                            .await;
+                    }
+                };
+                tokio::select! {
+                    _ = covered => {}
+                    _ = scan_arrived.notified() => {}
+                }
+            }
+            ScanMatch::TooOld => {
+                warn_throttled!(
+                    Duration::from_secs(TF_WAIT_WARN_S),
+                    frame = %frame_id,
+                    ts,
+                    "scan is older than the tf buffer; dropped"
+                );
+                let mut state = state.lock().expect("state");
+                if state
+                    .waiting_scans
+                    .front()
+                    .is_some_and(|scan| scan.ts == ts)
+                {
+                    state.waiting_scans.pop_front();
+                }
+            }
+            ScanMatch::Ready(cloud_with_pose) => {
+                let mut state = state.lock().expect("state");
+                if state
+                    .waiting_scans
+                    .front()
+                    .is_some_and(|scan| scan.ts == ts)
+                {
+                    state.waiting_scans.pop_front();
+                }
+                state.cloud_buffer.push_back(cloud_with_pose);
+                let cap = config.max_scan_queue;
+                if cap > 0 && state.cloud_buffer.len() as i32 > cap {
+                    let newest = state.cloud_buffer.pop_back();
+                    state.cloud_buffer.clear();
+                    state.cloud_buffer.extend(newest);
+                }
+                drop(state);
+                wake.notify_one();
+            }
+        }
+    }
 }
 
 // ---- module ----------------------------------------------------------------------
@@ -235,9 +424,6 @@ fn is_fixed_frame(frame_id: &str) -> bool {
 struct GscPgoModule {
     #[input(decode = PointCloud2::decode, handler = on_cloud)]
     cloud: Input<PointCloud2>,
-
-    #[input(decode = Odometry::decode, handler = on_odometry)]
-    odometry: Input<Odometry>,
 
     // World-frame position fix (GPS, mocap): frame_id = world frame, child_frame_id = sensor mount, xyz cov in m².
     #[input(decode = Odometry::decode, handler = on_coordinate_factor)]
@@ -275,12 +461,15 @@ struct GscPgoModule {
     state: Shared<SharedState>,
     /// Signaled by callbacks when new work is enqueued.
     wake: Arc<Condvar>,
+    /// Signaled when a scan joins `waiting_scans`.
+    scan_arrived: Arc<Notify>,
     worker: Option<WorkerHandle>,
 }
 
 struct WorkerHandle {
     stop: Arc<AtomicBool>,
     thread: std::thread::JoinHandle<()>,
+    tf_matcher: tokio::task::JoinHandle<()>,
 }
 
 impl GscPgoModule {
@@ -303,29 +492,33 @@ impl GscPgoModule {
             .name("gsc-pgo-worker".into())
             .spawn(move || worker.run())
             .expect("spawn PGO worker thread");
-        self.worker = Some(WorkerHandle { stop, thread });
+        let tf_matcher = tokio::spawn(match_scans_to_tf(
+            self.tf.clone(),
+            Arc::clone(&self.state),
+            Arc::clone(&self.scan_arrived),
+            Arc::clone(&self.wake),
+            self.config.clone(),
+        ));
+        self.worker = Some(WorkerHandle {
+            stop,
+            thread,
+            tf_matcher,
+        });
         info!("PGO native module started");
     }
 
     async fn stop_worker(&mut self) {
-        if let Some(WorkerHandle { stop, thread }) = self.worker.take() {
+        if let Some(WorkerHandle {
+            stop,
+            thread,
+            tf_matcher,
+        }) = self.worker.take()
+        {
+            tf_matcher.abort();
             stop.store(true, Ordering::Relaxed);
             self.wake.notify_all();
             let _ = tokio::task::spawn_blocking(move || thread.join()).await;
         }
-    }
-
-    async fn on_odometry(&mut self, msg: Odometry) {
-        let q = &msg.pose.pose.orientation;
-        let rotation = mat3::mat_from_quat(&[q.w, q.x, q.y, q.z]);
-        let p = &msg.pose.pose.position;
-        let translation = [p.x, p.y, p.z];
-        let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
-        self.state.lock().expect("state").latest_odom = Some(OdomSample {
-            ts,
-            rotation,
-            translation,
-        });
     }
 
     async fn on_coordinate_factor(&mut self, msg: Odometry) {
@@ -449,47 +642,44 @@ impl GscPgoModule {
         self.wake.notify_one();
     }
 
-    /// Pair a scan with the latest odometry and enqueue it.
+    /// Queue a scan until tf covers its stamp (`match_scans_to_tf`).
     async fn on_cloud(&mut self, msg: PointCloud2) {
-        let mut state = self.state.lock().expect("state");
-        let Some(latest) = state.latest_odom.clone() else {
-            return;
-        };
-        if latest.ts < state.last_message_time {
-            return;
-        }
-        state.last_message_time = latest.ts;
-
-        // lidar range (odometry_error_estimate_from_lidar_range) is measured from the scan frame's origin
-        if !state.fixed_frame_warned && is_fixed_frame(&msg.header.frame_id) {
-            state.fixed_frame_warned = true;
-            warn!(frame = %msg.header.frame_id, "lidar scans should be in the sensor (or body) frame, not a fixed frame like odom, map or world");
-        }
-        let cloud = match extract_xyz(&msg) {
+        let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
+        let points = match extract_xyz(&msg) {
             Ok(points) => points,
             Err(e) => {
                 error!(error = %e, "lidar PointCloud2 parse failed; dropped");
                 return;
             }
         };
-        let mut pose = PoseWithTime::new(latest.rotation, latest.translation);
-        pose.set_time(
-            latest.ts as i32,
-            ((latest.ts - (latest.ts as i32) as f64) * 1e9) as u32,
-        );
-        state.cloud_buffer.push_back(CloudWithPose {
-            cloud: Some(Arc::new(cloud)),
-            pose,
-        });
-        let cap = self.config.max_scan_queue;
-        if cap > 0 && state.cloud_buffer.len() as i32 > cap {
-            let newest = state.cloud_buffer.pop_back();
-            state.cloud_buffer.clear();
-            state.cloud_buffer.extend(newest);
+        let mut state = self.state.lock().expect("state");
+        if !push_waiting_scan(
+            &mut state,
+            WaitingScan {
+                ts,
+                frame_id: msg.header.frame_id,
+                points,
+            },
+            self.config.max_scan_queue,
+        ) {
+            return;
         }
         drop(state);
-        self.wake.notify_one();
+        self.scan_arrived.notify_one();
     }
+}
+
+/// Queue a scan for tf, dropping the oldest past `cap`; false (and not queued) when it is older than the last scan.
+fn push_waiting_scan(state: &mut SharedState, scan: WaitingScan, cap: i32) -> bool {
+    if scan.ts < state.last_scan_time {
+        return false;
+    }
+    state.last_scan_time = scan.ts;
+    state.waiting_scans.push_back(scan);
+    if cap > 0 && state.waiting_scans.len() as i32 > cap {
+        state.waiting_scans.pop_front();
+    }
+    true
 }
 
 // ---- graph publisher ------------------------------------------------------------
@@ -649,19 +839,13 @@ impl Worker {
             wake.notify_one();
         });
         let frame_id = self.config.map_frame.clone();
-        let child_frame_id = self.config.child_frame_id.clone();
+        let odom_frame = self.config.odom_frame.clone();
         let body_frame = self.config.body_frame.clone();
-        // identity until the first correction, so map -> child resolves from the start
+        // identity until the first correction, so map -> odom resolves from the start
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |d| d.as_secs_f64());
-        self.publish_tf(
-            &mat3::identity(),
-            &[0.0; 3],
-            now,
-            &frame_id,
-            &child_frame_id,
-        );
+        self.publish_tf(&mat3::identity(), &[0.0; 3], now, &frame_id, &odom_frame);
 
         // backstop in case a notify is missed
         let wake_timeout = Duration::from_secs(1);
@@ -763,7 +947,7 @@ impl Worker {
                     cur_time,
                     &frame_id,
                     &body_frame,
-                    &child_frame_id,
+                    &odom_frame,
                 );
                 continue;
             }
@@ -781,7 +965,7 @@ impl Worker {
                 cur_time,
                 &frame_id,
                 &body_frame,
-                &child_frame_id,
+                &odom_frame,
             );
 
             let scan_queue = self.state.lock().expect("state").cloud_buffer.len();
@@ -902,7 +1086,7 @@ impl Worker {
         ts: f64,
         frame_id: &str,
         body_frame: &str,
-        child_frame_id: &str,
+        odom_frame: &str,
     ) {
         let corrected_rotation = mat3::mat_mul(&pgo.rotation_offset(), &pose.rotation);
         let corrected_translation = mat3::add(
@@ -923,7 +1107,7 @@ impl Worker {
             &pgo.translation_offset(),
             ts,
             frame_id,
-            child_frame_id,
+            odom_frame,
         );
     }
 
@@ -947,4 +1131,139 @@ impl Worker {
 #[tokio::main]
 async fn main() {
     run_with_transport::<GscPgoModule>().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dimos_module::nalgebra::Vector3;
+
+    /// One edge per (parent, child), nearest-sample lookups like dimos-module's tf buffer.
+    #[derive(Default)]
+    struct FakeTf {
+        edges: Vec<(&'static str, &'static str, f64, Isometry3<f64>)>,
+    }
+
+    impl FakeTf {
+        fn add(&mut self, parent: &'static str, child: &'static str, ts: f64, x: f64, yaw: f64) {
+            let iso = Isometry3::new(Vector3::new(x, 0.0, 0.0), Vector3::new(0.0, 0.0, yaw));
+            self.edges.push((parent, child, ts, iso));
+        }
+    }
+
+    impl TfLookup for FakeTf {
+        fn newest(&self, parent: &str, child: &str) -> Option<f64> {
+            self.edges
+                .iter()
+                .filter(|(p, c, _, _)| {
+                    (*p == parent && *c == child) || (*p == child && *c == parent)
+                })
+                .map(|(_, _, t, _)| *t)
+                .reduce(f64::max)
+        }
+        fn transform(
+            &self,
+            parent: &str,
+            child: &str,
+            ts: f64,
+            tolerance: Option<f64>,
+        ) -> Option<Isometry3<f64>> {
+            if parent == child {
+                return Some(Isometry3::identity());
+            }
+            self.edges
+                .iter()
+                .filter_map(|(p, c, t, iso)| {
+                    match (*p == parent, *c == child, *p == child, *c == parent) {
+                        (true, true, _, _) => Some((*t, *iso)),
+                        (_, _, true, true) => Some((*t, iso.inverse())),
+                        _ => None,
+                    }
+                })
+                .filter(|(t, _)| tolerance.is_none_or(|tol| (t - ts).abs() <= tol))
+                .min_by(|a, b| (a.0 - ts).abs().total_cmp(&(b.0 - ts).abs()))
+                .map(|(_, iso)| iso)
+        }
+    }
+
+    fn scan(ts: f64, frame_id: &str) -> WaitingScan {
+        WaitingScan {
+            ts,
+            frame_id: frame_id.into(),
+            points: vec![[1.0, 0.0, 0.0]],
+        }
+    }
+
+    fn ready(matched: ScanMatch) -> CloudWithPose {
+        match matched {
+            ScanMatch::Ready(cloud_with_pose) => cloud_with_pose,
+            ScanMatch::Wait => panic!("waiting"),
+            ScanMatch::TooOld => panic!("too old"),
+        }
+    }
+
+    #[test]
+    fn waits_until_tf_has_a_sample_at_or_after_the_scan() {
+        let mut tf = FakeTf::default();
+        tf.add("odom", "base_link", 1.0, 0.0, 0.0);
+        assert!(matches!(
+            match_scan(&tf, &scan(1.5, "base_link"), "odom", "base_link"),
+            ScanMatch::Wait
+        ));
+        tf.add("odom", "base_link", 2.0, 2.0, 0.0);
+        let posed = ready(match_scan(
+            &tf,
+            &scan(1.9, "base_link"),
+            "odom",
+            "base_link",
+        ));
+        assert_eq!(posed.pose.translation, [2.0, 0.0, 0.0]);
+        assert!((posed.pose.second - 1.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_scan_older_than_the_tf_buffer_is_too_old() {
+        let mut tf = FakeTf::default();
+        tf.add("odom", "base_link", 5.0, 0.0, 0.0);
+        assert!(matches!(
+            match_scan(&tf, &scan(1.0, "base_link"), "odom", "base_link"),
+            ScanMatch::TooOld
+        ));
+    }
+
+    #[test]
+    fn a_fixed_frame_scan_is_put_in_the_body_frame() {
+        // body 2 m along x and turned 90 degrees: the world point (1, 0, 0) sits 1 m behind it, at body (0, 1, 0)
+        let mut tf = FakeTf::default();
+        tf.add("world", "base_link", 1.0, 2.0, std::f64::consts::FRAC_PI_2);
+        let posed = ready(match_scan(&tf, &scan(1.0, "world"), "world", "base_link"));
+        let point = posed.cloud.expect("cloud")[0];
+        assert!(point[0].abs() < 1e-5 && (point[1] - 1.0).abs() < 1e-5 && point[2].abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_sensor_frame_scan_is_moved_by_its_mount() {
+        let mut tf = FakeTf::default();
+        tf.add("odom", "base_link", 1.0, 0.0, 0.0);
+        tf.add("base_link", "lidar", 1.0, 0.5, 0.0);
+        let posed = ready(match_scan(&tf, &scan(1.0, "lidar"), "odom", "base_link"));
+        assert_eq!(posed.cloud.expect("cloud")[0], [1.5, 0.0, 0.0]);
+        // a mount with no sample at or after the scan holds it, though the pose has one
+        tf.add("odom", "base_link", 2.0, 0.0, 0.0);
+        assert!(matches!(
+            match_scan(&tf, &scan(1.2, "lidar"), "odom", "base_link"),
+            ScanMatch::Wait
+        ));
+    }
+
+    #[test]
+    fn the_waiting_queue_drops_the_oldest_and_out_of_order_scans() {
+        let mut state = SharedState::default();
+        for ts in [1.0, 2.0, 3.0] {
+            assert!(push_waiting_scan(&mut state, scan(ts, "base_link"), 2));
+        }
+        assert!(!push_waiting_scan(&mut state, scan(2.5, "base_link"), 2));
+        let queued: Vec<f64> = state.waiting_scans.iter().map(|s| s.ts).collect();
+        assert_eq!(queued, [2.0, 3.0]);
+    }
 }

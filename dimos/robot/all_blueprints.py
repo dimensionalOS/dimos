@@ -323,7 +323,6 @@ all_modules = {
     "movement-manager": "dimos.navigation.movement_manager.movement_manager.MovementManager",
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
-    "normalize-go2-lidar": "dimos.robot.unitree.go2.normalize_go2_lidar.NormalizeGo2Lidar",
     "object-db-module": "dimos.perception.experimental.moduleDB.ObjectDBModule",
     "object-scene-registration-module": "dimos.perception.experimental.object_scene_registration.ObjectSceneRegistrationModule",
     "object-tracker2-d": "dimos.perception.experimental.object_tracker_2d.ObjectTracker2D",
