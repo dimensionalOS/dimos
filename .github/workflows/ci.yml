@@ -307,7 +307,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
@@ -376,7 +375,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependency for pyaudio
         run: |
@@ -425,7 +423,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install project system dependencies
         env:
@@ -475,7 +472,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependency for pyaudio (Ubuntu)
         if: runner.os == 'Linux'
@@ -522,7 +518,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v7
         with:
@@ -713,7 +708,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           python-version: ${{ matrix.pyver }}
       - name: Extract Deno version
@@ -1142,7 +1136,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
           save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependencies
         run: uv sync --group tests --frozen
