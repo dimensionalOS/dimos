@@ -75,7 +75,7 @@ fn graph(closure_reported_over_true: f64) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>, V
         .step_by(2)
         .map(|k| {
             let (turn, offset) = relative(k - 80, k);
-            let tilt = |salt: f64| (closure * 1e-2).sqrt() * normal(k, salt);
+            let tilt = |stream: f64| (closure * 1e-2).sqrt() * normal(k, stream);
             let tilt_rotation = mat3::mat_from_quat(&{
                 let (a, b) = (tilt(7.0) / 2.0, tilt(8.0) / 2.0);
                 let n = (1.0 + a * a + b * b).sqrt();
