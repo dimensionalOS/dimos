@@ -14,7 +14,9 @@
 
 """Dual OpenYAM collection using ordinary blueprint configuration."""
 
-from dimos.core.coordination.blueprints import autoconnect
+from copy import deepcopy
+
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -67,27 +69,46 @@ _profile = CollectionProfile(
     metadata={"name": "dual-openyam-quest", "robot_type": "dual_openyam"},
 )
 
-dual_openyam_quest_collection = autoconnect(
-    collect(profile=_profile),
-    EpisodeMonitorModule.blueprint(instance_name="episodes"),
-    build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0")),
-    WebcamModule.blueprint(
-        instance_name="left_wrist",
-        hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="left_wrist_image"),
-        frame_id="left_wrist_camera_link",
-    ),
-    WebcamModule.blueprint(
-        instance_name="right_wrist",
-        hardware=WebcamConfig(camera_index=1, fps=30, frame_id_prefix="right_wrist_image"),
-        frame_id="right_wrist_camera_link",
-    ),
-).remappings(
-    [
-        ("left_wrist", "color_image", "left_wrist_image"),
-        ("left_wrist", "camera_info", "left_wrist_camera_info"),
-        ("left_wrist", "tf", "left_wrist_tf"),
-        ("right_wrist", "color_image", "right_wrist_image"),
-        ("right_wrist", "camera_info", "right_wrist_camera_info"),
-        ("right_wrist", "tf", "right_wrist_tf"),
-    ]
-)
+
+def build_dual_openyam_collection(*, overhead: bool = False) -> Blueprint:
+    """Collect wrist views, optionally adding the Dreamlabs overhead view."""
+    profile = deepcopy(_profile)
+    cameras = [("left_wrist", 0), ("right_wrist", 1)]
+    if overhead:
+        cameras.append(("overhead", 2))
+        profile.observations["observation.images.overhead"] = FeatureSpec(
+            stream="overhead_image",
+            message_type=Image,
+            field="data",
+            dtype="video",
+            shape=(480, 640, 3),
+            names=["height", "width", "channels"],
+        )
+        profile.metadata["name"] = "dual-openyam-dreamlabs"
+    return autoconnect(
+        collect(profile=profile),
+        EpisodeMonitorModule.blueprint(instance_name="episodes"),
+        build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0")),
+        *[
+            WebcamModule.blueprint(
+                instance_name=name,
+                hardware=WebcamConfig(camera_index=index, fps=30, frame_id_prefix=f"{name}_image"),
+                frame_id=f"{name}_camera_link",
+            )
+            for name, index in cameras
+        ],
+    ).remappings(
+        [
+            (name, output, f"{name}_{suffix}")
+            for name, _ in cameras
+            for output, suffix in (
+                ("color_image", "image"),
+                ("camera_info", "camera_info"),
+                ("tf", "tf"),
+            )
+        ]
+    )
+
+
+dual_openyam_quest_collection = autoconnect(build_dual_openyam_collection())
+dual_openyam_dreamlabs_collection = autoconnect(build_dual_openyam_collection(overhead=True))

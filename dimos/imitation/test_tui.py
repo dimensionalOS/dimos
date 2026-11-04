@@ -39,6 +39,8 @@ def controls(mocker):
     )
     policy.rollout_status.return_value = {
         "active": False,
+        "busy": False,
+        "dispatch_actions": False,
         "task": "pick",
         "last_error": None,
         "policy_ready": True,
@@ -136,7 +138,7 @@ async def test_policy_start_preflights_and_stop_is_explicit(controls, mocker):
         assert "ACTIVE" in str(app.query_one("#policy-status", Static).render())
         await pilot.click("#stop-policy")
     policy.preflight_rollout.assert_called_once_with()
-    policy.start_rollout.assert_called_once_with()
+    policy.start_rollout.assert_called_once_with(dispatch_actions=False)
     policy.stop_rollout.assert_called_once_with()
     coordinator.call.assert_not_called()
 
@@ -269,3 +271,58 @@ def test_unified_control_without_speech_does_not_open_audio(controls, mocker):
     player = mocker.patch("dimos.imitation.tui.WavPlayer", autospec=True)
     ControlApp(session_for(controls))
     player.assert_not_called()
+
+
+async def test_execute_button_explicitly_dispatches_and_shows_actual_mode(controls, mocker):
+    _driver, _episode, policy, _coordinator = controls
+    policy.start_rollout.return_value = {
+        **policy.rollout_status.return_value,
+        "active": True,
+        "dispatch_actions": True,
+    }
+    app = ControlApp(session_for(controls, collection=False))
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(100, 40)) as pilot:
+        policy.start_rollout.assert_not_called()
+        await pilot.click("#execute-policy")
+        policy.start_rollout.assert_called_once_with(dispatch_actions=True)
+        assert "EXECUTE" in str(app.query_one("#policy-status", Static).render())
+        assert app.query_one("#start-policy", Button).disabled
+        assert app.query_one("#execute-policy", Button).disabled
+        await pilot.click("#stop-policy")
+        policy.stop_rollout.assert_called_once_with()
+
+
+async def test_draining_blocks_both_start_modes_until_idle(controls, mocker):
+    _driver, _episode, policy, _coordinator = controls
+    idle = policy.rollout_status.return_value
+    policy.rollout_status.return_value = {**idle, "busy": True, "dispatch_actions": True}
+    app = ControlApp(session_for(controls, collection=False))
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(100, 40)) as pilot:
+        assert "DRAINING" in str(app.query_one("#policy-status", Static).render())
+        assert app.query_one("#start-policy", Button).disabled
+        assert app.query_one("#execute-policy", Button).disabled
+        assert not app.query_one("#stop-policy", Button).disabled
+        await pilot.click("#execute-policy")
+        policy.start_rollout.assert_not_called()
+        policy.rollout_status.return_value = idle
+        app._poll()
+        assert not app.query_one("#start-policy", Button).disabled
+        assert not app.query_one("#execute-policy", Button).disabled
+
+
+@pytest.mark.parametrize("dispatch_actions", [False, True])
+def test_both_start_modes_require_successful_preflight(controls, dispatch_actions):
+    _driver, _episode, policy, _coordinator = controls
+    policy.preflight_rollout.return_value = {
+        **policy.rollout_status.return_value,
+        "observations_ready": False,
+    }
+    session = session_for(controls, collection=False)
+    try:
+        result = session.start_policy(dispatch_actions=dispatch_actions)
+        assert result["observations_ready"] is False
+        policy.start_rollout.assert_not_called()
+    finally:
+        session.close()

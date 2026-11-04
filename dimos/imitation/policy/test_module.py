@@ -116,3 +116,14 @@ def test_dynamic_camera_contract_and_runtime_are_importable_in_fresh_workers():
     implementation = getattr(import_module(module_name), name)
     assert issubclass(implementation, declaration)
     assert set(declaration.__annotations__) == {"left_image", "right_image"}
+
+
+def test_backend_robot_config_survives_isolated_runtime_handshake():
+    config = PolicyModuleConfig(
+        backend="dreamlabs",
+        policy_path="dreamlabs/dream-1-beta",
+        task="test",
+        joint_names=["joint"],
+    )
+    restored = PolicyModuleConfig.model_validate(pickle.loads(pickle.dumps(config.model_dump())))
+    assert restored.dreamlabs == config.dreamlabs

@@ -19,6 +19,8 @@ from typing import Any, Protocol
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.control.tasks.eef_trajectory_task.trajectory import EefTrajectory
+
 Images = dict[str, NDArray[np.uint8]]
 
 
@@ -34,6 +36,8 @@ def joint_permutations(hardware: list[str], policy: list[str]) -> tuple[list[int
 
 
 class PolicyBackend(Protocol):
+    observation_period: float | None
+    observations_required: int
     n_action_steps: int
     chunk_size: int | None
     fps: float
@@ -42,7 +46,10 @@ class PolicyBackend(Protocol):
 
     def predict(
         self, images: Images, state: NDArray[np.float32], *, task: str
-    ) -> NDArray[np.float32]: ...
+    ) -> NDArray[np.float32] | EefTrajectory: ...
+    def observe(
+        self, images: Images, state: NDArray[np.float32], *, task: str, timestamp: float
+    ) -> None: ...
     def get_last_action_response(self) -> dict[str, Any] | None: ...
     def reset(self) -> None: ...
     def close(self) -> None: ...
