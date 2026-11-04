@@ -6,10 +6,9 @@ engine operations. There is no separate Runtime/Simulation execution layer.
 ```text
 UrdfManager -- shared model configuration --> SimModule / geometry consumers
 
-JointCommand --┐
-               ├--> SimModule --> observations: WorldState --> sensor modules
-BodyWrench ----┘           |                                --> UrdfManager TF
-                          +--> clock: SimulationClock
+ActionCommand --> SimModule --> observations: WorldState --> sensor modules
+                      |                                 --> UrdfManager TF
+                      +--> clock: SimulationClock
 ```
 
 ## Directory and ownership
@@ -18,7 +17,7 @@ BodyWrench ----┘           |                                --> UrdfManager TF
 sim2/
   module.py                  execution, complete samples, commands and RPCs
   description.py             model instances, placement, gravity and drives
-  extensions.py              optional CBOR property validation
+  extensions.py              CBOR property/command envelope validation
   physics/interface.py       PhysicsBackend protocol
   physics/mujoco.py          native dynamics and physical queries
   geometry/mujoco.py          shared model compilation
@@ -58,7 +57,7 @@ is unique. Unknown optional extensions may be ignored. Required consumers must
 check their schema. Typed physics and control fields remain outside CBOR.
 
 See the companion dimos-lcm draft for exact array-count fields and generated
-bindings. Sensor/TF SampleHeader encoding is unchanged by Option E.
+bindings. Sensor/TF SampleHeader encoding is unchanged by Option F.
 
 ## Calls and ports
 
@@ -78,9 +77,8 @@ read_body_poses() -> list[BodyPose]
 read_motion(frame_id: str) -> BodyMotion
 read_joints(joint_ids: tuple[str, ...]) -> JointTruth
 read_extensions() -> list[CborExtension]
-set_joint_targets(targets: list[JointTarget]) -> None
-validate_wrench(wrench: BodyWrench) -> None
-step(wrenches: tuple[BodyWrench, ...]) -> None
+apply_action(joint_targets: list[JointTarget], cbor_commands: list[CborCommand]) -> None
+step() -> None
 hold(joint_ids: tuple[str, ...]) -> None
 reset() -> None
 place(body_id: str, pose: tuple[float, ...]) -> None
@@ -91,11 +89,32 @@ MuJoCo exports no optional extension properties by default. A backend can return
 current properties from `read_extensions()` without changing the module or sensors.
 The deployed extension test exercises this path over real DimOS transport.
 
-Inputs: `joint_command: JointCommand`, `body_wrench: BodyWrench`.
+Input: `actions: ActionCommand`.
 Outputs: `observations: WorldState`, `clock: SimulationClock` (execution status).
 RPCs: `inspect()`, `reset()` and `place(body_id, pose)` each return WorldState;
 `submit(command)` and `status()` handle commands/diagnostics. RPC requests execute
 on the owner thread between steps. No manual-step API or standalone executor.
+
+## Actions
+
+`ActionCommand` contains one `SampleHeader`, `based_on_time_ns`, `apply_at_ns`,
+`valid_until_ns`, `joint_targets: JointTarget[]` and `cbor_commands: CborCommand[]`
+(with matching array counts). One or both arrays must be nonempty. Each joint
+target carries `joint_id`, `position`, `velocity`, `kp`, `kd` and `feedforward`.
+
+The module checks identity, timing, counts, CBOR envelopes and controller ownership,
+then calls `backend.apply_action(...)` once. The backend validates all entries
+before mutation; unsupported operations reject the entire action. Accepted source/
+sequence pairs are not executed twice. Joint targets persist until expiry, then
+hold the current position. A CBOR-only operation never releases a motor boundary.
+
+`CborCommand` contains `entity_id`, `key`, `schema`, `value_length`, `value`.
+IDs and byte rules match CborExtension, but commands request operations: unknown
+keys/schemas **reject**, rather than being ignored. The schema specifies effects
+and lifetime; execution is once at acceptance. Expiry does not undo CBOR effects.
+MuJoCo implements joint targets and rejects all CBOR commands. A test backend
+extends real MuJoCo with a small counter operation to verify transport, atomic
+rejection and duplicate handling. No registry or wrench input is introduced.
 
 ## Timing and sensors
 
@@ -134,7 +153,30 @@ pytest dimos/sim2 -m 'not native_e2e' --import-mode=importlib -o addopts='' -q
 pytest dimos/sim2/test_module.py dimos/sim2/examples --import-mode=importlib -o addopts='' -q
 ```
 
-The final integration slice provides G1 GR00T beside a desk (next slice), with camera,
+The final integration slice provides [G1 GR00T beside a desk](https://github.com/dimensionalOS/dimos/blob/pim/feat/sim2-e-g1/docs/development/sim2/g1.md), with camera,
 lidar, IMU and encoders. MuJoCo is the validated backend. Native renderer/raycaster
 adapters are selectable; another physics backend and cross-renderer fidelity have
 not been validated. The core imports no robot-specific policy or coordinator code.
+
+## Review stack
+
+[The nine draft PRs](https://github.com/dimensionalOS/dimos/stack/5042) build on
+[shared configuration #4937](https://github.com/dimensionalOS/dimos/pull/4937).
+The companion [dimos-lcm #31](https://github.com/dimensionalOS/dimos-lcm/pull/31)
+owns the schemas and generated codecs.
+
+| PR | Review scope |
+| --- | --- |
+| [#5033](https://github.com/dimensionalOS/dimos/pull/5033) | Message integration |
+| [#5034](https://github.com/dimensionalOS/dimos/pull/5034) | Shared models and scenes |
+| [#5035](https://github.com/dimensionalOS/dimos/pull/5035) | SimModule and physics backend |
+| [#5036](https://github.com/dimensionalOS/dimos/pull/5036) | IMU |
+| [#5037](https://github.com/dimensionalOS/dimos/pull/5037) | Joint encoders |
+| [#5038](https://github.com/dimensionalOS/dimos/pull/5038) | Camera |
+| [#5039](https://github.com/dimensionalOS/dimos/pull/5039) | Lidar |
+| [#5040](https://github.com/dimensionalOS/dimos/pull/5040) | Blueprints and evaluation |
+| [#5041](https://github.com/dimensionalOS/dimos/pull/5041) | G1 GR00T integration |
+
+Each PR targets the preceding branch so its diff shows only its capability.
+The final tree implements Option F: complete observations and one action input. The previous broad drafts #4982/#4983 are
+closed with their review history preserved.

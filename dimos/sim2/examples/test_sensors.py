@@ -15,7 +15,6 @@
 from dataclasses import replace
 import uuid
 
-from dimos_lcm.control_msgs import BodyWrench
 import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -73,7 +72,7 @@ def deployed_world(world, tmp_path, monkeypatch):
         deployment.stop()
 
 
-def test_separate_sensor_modules_run_reset_and_recover(deployed_world):
+def test_separate_sensor_modules_run_reset_and_recover(deployed_world, command):
     sim = deployed_world.get_instance(SimModule)
     camera = deployed_world.get_instance(SimCameraModule)
     lidar = deployed_world.get_instance(SimLidarModule)
@@ -81,17 +80,7 @@ def test_separate_sensor_modules_run_reset_and_recover(deployed_world):
     wait_until(lambda: lidar.statistics()["acquisitions"] >= 2, timeout=20)
     before = sim.inspect()
     h = before.header
-    sim.submit(
-        BodyWrench(
-            header=h,
-            body_id="box",
-            apply_at_ns=h.time_ns,
-            valid_until_ns=h.time_ns + 300_000_000,
-            force_world=[5, 0, 0],
-            torque_world=[0, 0, 0],
-            point_world=[0, 0, 0.055],
-        )
-    )
+    sim.submit(command(h, positions=(0.65,)))
     wait_until(lambda: poses_by_id(sim.inspect())["box"].position.x > 0.1, timeout=5)
     reset = sim.reset()
     assert reset.header.epoch == h.epoch + 1
