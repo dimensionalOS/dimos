@@ -24,7 +24,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import unitree_g1_sim2
 from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
 from dimos.sim2.geometry.poses import poses_by_id
-from dimos.sim2.physics.module import SimModule
+from dimos.sim2.module import SimModule
 from dimos.sim2.sensors.camera.module import SimCameraModule
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.utils.testing.waiting import wait_until

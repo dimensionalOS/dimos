@@ -31,7 +31,7 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.sim2_policy import CONTROL, JOINTS, POLICY, G1PolicyModule
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Drive, Instance, SceneConfig
-from dimos.sim2.physics.module import SimModule
+from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.physics.simulation import SimulationConfig
 from dimos.sim2.sensors.camera.config import CameraConfig
