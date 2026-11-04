@@ -36,7 +36,7 @@ from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
-from dimos.simulation.sensors.mid360.lidar import Raycaster
+from dimos.simulation.sensors.lidar import Raycaster
 
 # Cell keys pack three offset 21-bit indices into one int64.
 _KEY_BITS = 21
