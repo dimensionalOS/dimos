@@ -50,6 +50,7 @@ class HabitatConnectionConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/simulation/habitat/nix"
     executable: str = "../../../../target/habitat/habitat-native"
     build_command: str | None = "nix develop path:. -c ./install.sh"
+    dev_build_command: str | None = "./install.sh"
     stdin_config: bool = True
     log_format: LogFormat = LogFormat.TEXT
 

@@ -31,6 +31,10 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/navigation/local_planner/rust"
     executable: str = "result/bin/local_planner"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin local_planner --target-dir ../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../target/native/release/local_planner"
     stdin_config: bool = True
     cli_exclude: frozenset[str] = frozenset({"embodiment"})
 

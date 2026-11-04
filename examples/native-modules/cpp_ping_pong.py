@@ -32,11 +32,15 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 _BUILD = "nix build -L path:.#dimos-native-module-examples-cpp"
+_DEV_BUILD = "cmake -S . -B ../../../target/native/examples-cpp -DCMAKE_BUILD_TYPE=Release && cmake --build ../../../target/native/examples-cpp -j"
+_DEV_OUT = "../../../target/native/examples-cpp"
 
 
 class PingConfig(NativeModuleConfig):
     executable: str = "result/bin/ping"
     build_command: str = _BUILD
+    dev_build_command: str | None = _DEV_BUILD
+    dev_executable: str | None = f"{_DEV_OUT}/ping"
     source_dir: str = "examples/native-modules/cpp"
     stdin_config: bool = True
 
@@ -44,6 +48,8 @@ class PingConfig(NativeModuleConfig):
 class PongConfig(NativeModuleConfig):
     executable: str = "result/bin/pong"
     build_command: str = _BUILD
+    dev_build_command: str | None = _DEV_BUILD
+    dev_executable: str | None = f"{_DEV_OUT}/pong"
     source_dir: str = "examples/native-modules/cpp"
     stdin_config: bool = True
     sample_config: int = 42

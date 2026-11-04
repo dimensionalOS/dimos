@@ -125,6 +125,10 @@ class DimSlamConfig(NativeModuleConfig):
     # A literal so bin/native-modules can read it: CI builds `default`, which needs
     # no GPU. The variant this machine needs is chosen in model_post_init.
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin dim_slam --target-dir ../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../target/native/release/dim_slam"
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=driver_env)
 

@@ -39,6 +39,10 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
     executable: str = "result/bin/depth2depth_cloud"
     # Builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes path:.#tensorrt (see below).
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin depth2depth_cloud --target-dir ../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../target/native/release/depth2depth_cloud"
     stdin_config: bool = True
     # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
     base_fields: frozenset[str] = frozenset({"frame_id"})

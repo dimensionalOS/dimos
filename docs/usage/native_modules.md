@@ -326,6 +326,12 @@ If the executable exists, preparation skips compilation unless `auto_build=True`
 or `--build-native` requests a rebuild. `auto_build=False` does not disable
 building a missing executable. Calling `build()` again checks these rules again.
 
+### Dev builds without nix
+
+Each built-in module also sets `dev_build_command` (plain `cargo` or `cmake`, into
+`<repo>/target/native`) and `dev_executable`. `DIMOS_NATIVE_DEV_BUILD=1` switches every
+module to it; `use_dev_build` switches one. Dev builds run on every start.
+
 ### Faster builds via the Cachix substituter
 
 Nix-built native modules can be substituted from the `dimensionalos` Cachix

@@ -59,6 +59,11 @@ class FastLio2Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/fastlio2/cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cmake -S . -B ../../../../../../target/native/fastlio2 -DCMAKE_BUILD_TYPE=Release"
+        " && cmake --build ../../../../../../target/native/fastlio2 -j"
+    )
+    dev_executable: str | None = "../../../../../../target/native/fastlio2/fastlio2_native"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived

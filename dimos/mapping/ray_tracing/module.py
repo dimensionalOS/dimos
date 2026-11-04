@@ -34,6 +34,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/mapping/ray_tracing/rust"
     executable: str = "result/bin/voxel_ray_tracing"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin voxel_ray_tracing --target-dir ../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../target/native/release/voxel_ray_tracing"
     stdin_config: bool = True
 
     voxel_size: float = 0.08

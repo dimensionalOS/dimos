@@ -308,6 +308,36 @@ def test_build_native_forces_build(tmp_path: Path, mocker) -> None:
     assert run_build(tmp_path, mocker, build_native=True).exists()
 
 
+@pytest.mark.parametrize(
+    ("native_dev_build", "use_dev_build", "ran"),
+    [
+        (False, None, "nix"),
+        (True, None, "dev"),
+        (False, True, "dev"),
+        (True, False, "nix"),
+    ],
+)
+def test_dev_build_follows_global_then_module(
+    tmp_path: Path, mocker, native_dev_build: bool, use_dev_build: bool | None, ran: str
+) -> None:
+    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    module = StubBuildModule(
+        source_dir=".",
+        executable="nix_exe",
+        build_command="touch nix_exe nix_ran",
+        dev_build_command="touch dev_exe dev_ran",
+        dev_executable="dev_exe",
+        use_dev_build=use_dev_build,
+        g=GlobalConfig(native_dev_build=native_dev_build),
+    )
+    try:
+        module.build()
+        assert Path(module._executable) == tmp_path / f"{ran}_exe"
+    finally:
+        module.stop()
+    assert sorted(p.name for p in tmp_path.glob("*_ran")) == [f"{ran}_ran"]
+
+
 def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> dict[str, Any]:
     """The launch line the native subprocess would get, without spawning it."""
 

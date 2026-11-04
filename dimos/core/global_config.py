@@ -95,6 +95,10 @@ class GlobalConfig(BaseSettings):
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
+    native_dev_build: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("DIMOS_NATIVE_DEV_BUILD", "native_dev_build"),
+    )
     dtop: bool = False
     listen_host: str = "127.0.0.1"
     local_relay: bool = False

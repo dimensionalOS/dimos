@@ -106,6 +106,10 @@ class RustRecorderConfig(NativeModuleConfig):
 
     executable: str = "result/bin/dimos-memory-recorder"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin dimos-memory-recorder --target-dir ../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../target/native/release/dimos-memory-recorder"
     source_dir: str | None = "dimos/experimental/memory/rust"
     stdin_config: bool = True
 

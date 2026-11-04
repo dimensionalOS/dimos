@@ -34,6 +34,8 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.service.zenohservice import ZenohConfig
 
 _BUILD = "nix build -L path:.#dimos-native-module-examples"
+_DEV_BUILD = "cargo build --release --target-dir ../../../target/native"
+_DEV_OUT = "../../../target/native/release"
 
 # Where pong listens when it runs as the router.
 _ROUTER_ENDPOINT = "tcp/127.0.0.1:17450"
@@ -42,6 +44,8 @@ _ROUTER_ENDPOINT = "tcp/127.0.0.1:17450"
 class PingConfig(NativeModuleConfig):
     executable: str = "result/bin/ping"
     build_command: str = _BUILD
+    dev_build_command: str | None = _DEV_BUILD
+    dev_executable: str | None = f"{_DEV_OUT}/ping"
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
 
@@ -49,6 +53,8 @@ class PingConfig(NativeModuleConfig):
 class PongConfig(NativeModuleConfig):
     executable: str = "result/bin/pong"
     build_command: str = _BUILD
+    dev_build_command: str | None = _DEV_BUILD
+    dev_executable: str | None = f"{_DEV_OUT}/pong"
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
     sample_config: int = 42

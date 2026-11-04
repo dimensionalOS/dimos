@@ -56,6 +56,10 @@ class Mid360Config(NativeModuleConfig):
     source_dir: str | None = "dimos/hardware/sensors/lidar/livox/rust"
     executable: str = "result/bin/mid360_native"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin mid360_native --target-dir ../../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../../target/native/release/mid360_native"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     # None derives host_ip from a NIC on the lidar's subnet; a box with two links

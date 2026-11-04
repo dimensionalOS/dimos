@@ -56,6 +56,10 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     source_dir: str | None = "dimos/robot/unitree/go2/dds/rust"
     executable: str = "result/bin/go2_dds"
     build_command: str | None = "nix build -L path:."
+    dev_build_command: str | None = (
+        "cargo build --release --bin go2_dds --target-dir ../../../../../../target/native"
+    )
+    dev_executable: str | None = "../../../../../../target/native/release/go2_dds"
     stdin_config: bool = True
 
     # Every field below crosses to the rust `Config` verbatim (test_module.py).
