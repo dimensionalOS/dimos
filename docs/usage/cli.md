@@ -26,7 +26,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--robot-model` | TEXT | `None` | Robot model identifier |
-| `--robot-width` | FLOAT | `0.3` | Robot width in meters, shared by the navigation and patrol modules |
+| `--robot-width` | FLOAT | `0.3` | Robot width in meters, shared by the navigation modules |
 | `--robot-rotation-diameter` | FLOAT | `0.6` | Robot rotation diameter in meters |
 
 ### Configuration Precedence

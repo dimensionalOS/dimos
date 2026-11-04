@@ -83,7 +83,7 @@ class GlobalConfig(BaseSettings):
     n_workers: int = 2
     scene_package: str | None = None
     robot_model: str | None = None
-    # Robot geometry shared by every navigation and patrol module in a stack;
+    # Robot geometry shared by every navigation module in a stack;
     # a module config may still override it for itself.
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
