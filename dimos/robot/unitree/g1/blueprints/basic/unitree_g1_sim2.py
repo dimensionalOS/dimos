@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1/GR00T and a desk: pose-only camera/lidar, separate robot feedback.
+"""G1/GR00T and a desk, using independently acquired sensor measurements.
 
 Model ledger: vendor G1 URDF, metres/radians, X forward/Y left/Z up.
 Pelvis IMU mount matches the existing GR00T model. Camera/lidar mounts are
@@ -20,6 +20,7 @@ explicit prototype placements on torso_link; optical camera X right/Y down/Z
 forward. Fixed mount links are massless and share the robot's one model.
 """
 
+from functools import partial
 import math
 from pathlib import Path
 
@@ -27,13 +28,21 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.unitree.g1.demo_sim2_control import JOINTS, POLICY, G1PolicyDemo
+from dimos.robot.unitree.g1.sim2_policy import CONTROL, JOINTS, POLICY, G1PolicyModule
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.description import Camera, Drive, Imu, Instance, Lidar, World
+from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.physics.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.sensors.module import SimSensorModule
-from dimos.sim2.sensors.mujoco import MujocoSensors
+from dimos.sim2.physics.simulation import SimulationConfig
+from dimos.sim2.sensors.camera.config import CameraConfig
+from dimos.sim2.sensors.camera.module import SimCameraModule
+from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
+from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
+from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
+from dimos.sim2.sensors.lidar.config import LidarConfig
+from dimos.sim2.sensors.lidar.mid360 import Mid360Scan
+from dimos.sim2.sensors.lidar.module import SimLidarModule
+from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 from dimos.utils.data import LfsPath
 
 G1_MODEL = (
@@ -56,7 +65,7 @@ MODELS = {
     ),
     "box": RobotModel.from_file(DIMOS_PROJECT_ROOT / "assets/g1_desk/box.urdf").with_prefix("box/"),
 }
-WORLD = World(
+SCENE = SceneConfig(
     instances=(
         Instance(
             "g1",
@@ -72,14 +81,30 @@ WORLD = World(
         Instance("desk", xyz=(2, 0, 0), rpy=(0, 0, math.pi / 2)),
         Instance("box", xyz=(1, 1, 0.05), floating=True),
     ),
-    sensors=(Camera("g1/camera", hz=15), Lidar("g1/lidar", rays=720, packets=10), Imu("g1/imu")),
+)
+
+IMU = ImuConfig("g1/imu", source_id="g1/imu", orientation="ideal")
+ENCODERS = EncoderConfig(JOINTS, source_id="g1/encoders")
+CAMERA = CameraConfig("g1/camera", source_id="g1/camera")
+LIDAR = LidarConfig(
+    "g1/lidar",
+    source_id="g1/lidar",
+    pattern=partial(Mid360Scan, LfsPath("mid360_pattern/fourier.npz"), downsample=10),
+    range_std=0.005,
 )
 
 unitree_g1_sim2 = autoconnect(
-    UrdfManager.blueprint(models=MODELS).remappings(
-        [("urdfmanager", "coordinator_joint_state", "joint_state")]
+    UrdfManager.blueprint(models=MODELS),
+    SimModule.blueprint(
+        scene=SCENE,
+        backend=MujocoBackend,
+        timing=SimulationConfig(
+            controllers=(CONTROL,), motion_frames=(IMU.frame_id,), joint_ids=JOINTS
+        ),
     ),
-    SimModule.blueprint(world=WORLD, backend=MujocoBackend, control_joints=JOINTS),
-    G1PolicyDemo.blueprint(),
-    SimSensorModule.blueprint(reader=MujocoSensors, camera="g1/camera", lidar="g1/lidar"),
-).global_config(viewer="none", transport="zenoh", n_workers=4)
+    SimImuModule.blueprint(sensor=IMU),
+    SimJointEncoderModule.blueprint(sensor=ENCODERS),
+    SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=MujocoRenderer),
+    SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster),
+    G1PolicyModule.blueprint(),
+).global_config(viewer="none", transport="zenoh", n_workers=5)

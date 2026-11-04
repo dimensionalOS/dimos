@@ -142,8 +142,8 @@ uv sync --extra sim --extra control
 source .venv/bin/activate
 dimos run unitree-g1-sim2 --daemon
 dimos shell
-# policy = dimos.get_instance("G1PolicyModule")  # use shell's module discovery
-# sim = dimos.get_instance("SimModule")
+app.SimModule.status()
+app.SimCameraModule.statistics()
 dimos stop
 ```
 

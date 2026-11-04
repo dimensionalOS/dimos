@@ -14,21 +14,19 @@
 
 """Real G1 geometry and GR00T weights through ordinary worker/transport lifecycle."""
 
-from contextlib import closing
 import uuid
 
-from dimos_lcm.sim_msgs import Observations
-import numpy as np
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import unitree_g1_sim2
-from dimos.robot.unitree.g1.demo_sim2_control import G1PolicyDemo
+from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
+from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.physics.module import SimModule
-from dimos.sim2.sensors.module import SimSensorModule
-from dimos.sim2.sensors.mujoco import MujocoSensors
+from dimos.sim2.sensors.camera.module import SimCameraModule
+from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = pytest.mark.native_e2e
@@ -46,43 +44,41 @@ def deployed_g1(tmp_path, monkeypatch):
         deployment.stop()
 
 
-def test_g1_walks_moves_an_arm_and_resets_with_pose_only_sensors(deployed_g1):
+def test_g1_walks_moves_an_arm_and_resets_with_independent_sensors(deployed_g1):
     sim = deployed_g1.get_instance(SimModule)
-    policy = deployed_g1.get_instance(G1PolicyDemo)
-    sensors = deployed_g1.get_instance(SimSensorModule)
-    wait_until(lambda: sim.state().sim_time > 2, timeout=30)
-    wait_until(
-        lambda: sensors.statistics()["images"] >= 3 and sensors.statistics()["scans"] >= 3,
-        timeout=20,
-    )
-    layout = sim.describe()
-    root = layout.bodies.index("g1/pelvis")
-    joint = layout.joints.index("g1/left_elbow_joint")
-    before = sim.state()
-    policy.arm_joint("g1/left_elbow_joint", 1.4)
-    policy.move(Twist(linear=Vector3(0.2, 0, 0)), duration=10)
-    wait_until(lambda: sim.state().sim_time > before.sim_time + 3, timeout=30)
-    after = sim.state()
-    policy.move(Twist(), duration=1)
-    assert after.poses[root, 2] > 0.68
-    assert after.poses[root, 0] - before.poses[root, 0] > 0.2
-    assert after.position[joint] == pytest.approx(1.4, abs=0.12)
+    policy = deployed_g1.get_instance(G1PolicyModule)
+    camera = deployed_g1.get_instance(SimCameraModule)
+    lidar = deployed_g1.get_instance(SimLidarModule)
+    wait_until(lambda: sim.status()["time_ns"] > 2_000_000_000, timeout=40)
+    wait_until(lambda: camera.statistics()["acquisitions"] >= 3, timeout=20)
 
-    # A new consumer has never seen the robot's spawn, qpos, joint stream or old poses.
-    with closing(MujocoSensors(sim.describe_world(), layout)) as reader:
-        message = Observations.lcm_decode(sim.sample().lcm_encode())
-        sample = reader.observe(message)
-        assert reader.model.nq == reader.model.nu == 0
-        rgb, depth = reader.camera("g1/camera", sample)
-        assert rgb.std() > 10 and np.isfinite(depth).all()
-        old_epoch = message.epoch
-        reset = sim.reset()
-        wait_until(
-            lambda: sim.state().epoch == reset.epoch and sim.state().sim_time > 1, timeout=20
-        )
-        reader.observe(sim.sample())
-        assert reader.history[-1].epoch > old_epoch
-        assert reader.observe(message) is None
-    assert sim.state().poses[root, 2] > 0.68
-    assert sim.timing()["error"] == sensors.statistics()["error"] == ""
-    assert sim.timing()["rejected_commands"] == 0
+    def scans_ready():
+        stats = lidar.statistics()
+        assert not stats["error"], stats
+        return stats["acquisitions"] >= 3
+
+    wait_until(scans_ready, timeout=20, message=str(lidar.statistics()))
+    before = sim.inspect()[0]
+    assert poses_by_id(before)["g1/pelvis"].position.z > 0.68
+    policy.arm_joint("g1/left_elbow_joint", 1.4)
+    policy.move(Twist(linear=Vector3(0.2, 0, 0)), duration=20)
+    wait_until(lambda: sim.status()["time_ns"] > before.header.time_ns + 3_000_000_000, timeout=40)
+    after, joints = sim.inspect(("g1/left_elbow_joint",))
+    policy.move(Twist(), duration=1)
+    assert poses_by_id(after)["g1/pelvis"].position.z > 0.68
+    assert (
+        poses_by_id(after)["g1/pelvis"].position.x - poses_by_id(before)["g1/pelvis"].position.x
+        > 0.2
+    )
+    assert joints.position[0] == pytest.approx(1.4, abs=0.12)
+    reset = sim.reset()[0]
+    wait_until(
+        lambda: sim.status()["epoch"] == reset.header.epoch
+        and sim.status()["time_ns"] > 1_000_000_000,
+        timeout=30,
+    )
+    assert poses_by_id(sim.inspect()[0])["g1/pelvis"].position.z > 0.68
+    assert (
+        sim.status()["error"] == camera.statistics()["error"] == lidar.statistics()["error"] == ""
+    )
+    assert policy.status()["inferences"] > 250
