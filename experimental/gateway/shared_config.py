@@ -59,15 +59,30 @@ def config_file() -> Path:
     return dimos_home() / "config.yaml"
 
 
+# config.yaml parsed once per change (a parse is ~50 ms on the M20, and GET /info reads it each call)
+_parsed: tuple[tuple[int, int], Any] | None = None
+
+
+def _loaded(path: Path) -> Any:
+    global _parsed
+    try:
+        stat = path.stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+        if _parsed is None or _parsed[0] != key:
+            _parsed = (key, yaml.safe_load(path.read_text()) or {})
+    except (OSError, yaml.YAMLError):
+        return None
+    return _parsed[1]
+
+
 def setting(section: str, key: str) -> Any:
     """`DIMOS_APP`'s field for it, else config.yaml's; None when neither has it (empty counts as unset)."""
     field = APP_FIELDS.get((section, key))
     value = app_env().get(field) if field else None
     if value not in (None, ""):
         return value
-    try:
-        loaded = yaml.safe_load(config_file().read_text()) or {}
-    except (OSError, yaml.YAMLError):
+    loaded = _loaded(config_file())
+    if loaded is None:
         return None
     value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None
     return None if value == "" else value
