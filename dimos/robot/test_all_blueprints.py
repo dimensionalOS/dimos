@@ -51,7 +51,6 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-hosted-xarm6",
         "teleop-hosted-xarm7",
         "teleop-webxr-dual",
-        "teleop-webxr-go2",
         "teleop-webxr-hand-xarm7",
         "teleop-webxr-piper",
         "teleop-webxr-rerun",

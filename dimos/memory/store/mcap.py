@@ -17,8 +17,7 @@
 Generic and robot-independent. With ``decode_metadata=True``, trusted native
 DimOS metadata selects the codec and imports its payload type. JPEG channels
 decode automatically because their payload type is fixed. Other formats use a caller-supplied ``codecs`` map (wire
-topic -> codec), while ``streams`` may map friendly stream names to topics. See
-``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
+topic -> codec), while ``streams`` may map friendly stream names to topics.
 
 Channels published by dimos itself need neither: a dimos topic carries its
 message type in its own name, so it is decoded and named from the wire with no

@@ -67,8 +67,8 @@ class DimosCliCall:
         env.update(self.extra_env)
         if self.mcp_port is not None:
             env["MCPSERVER__PORT"] = str(self.mcp_port)
-        if self.dimsim_port is not None:
-            env["GO2CONNECTION__DIMSIM__PORT"] = str(self.dimsim_port)
+        if self.dimsim_port is not None and self.simulator == "dimsim":  # dim-go2-sim's has no port
+            env["GO2WEBRTCSIM__PORT"] = str(self.dimsim_port)
         if self.simulator is not None:
             global_overrides += ["--simulation", self.simulator]
 

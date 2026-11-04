@@ -25,14 +25,14 @@ Compose with a marker detector via matching ``detections`` streams::
         MarkerDetectionStreamModule,
     )
     from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
-    from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
-    from dimos.robot.unitree.go2.connection import GO2Connection
+    from dimos.robot.unitree.go2.blueprints.unitree_go2 import unitree_go2
+    from dimos.robot.unitree.go2.config import front_camera_info
 
     unitree_go2_with_markers = autoconnect(
-        unitree_go2_basic,
+        unitree_go2,
         MarkerDetectionStreamModule.blueprint(
             marker_length_m=0.18,
-            camera_info=GO2Connection.camera_info_static,
+            camera_info=front_camera_info(),
         ),
         MarkerTfModule.blueprint(),
     )

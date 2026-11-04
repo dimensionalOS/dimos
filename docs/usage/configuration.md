@@ -51,13 +51,13 @@ For `dimos run`, values resolve in this order: schema defaults → blueprint val
 Module flags go **after the blueprint names**. Use the module's instance name, lowercase, with hyphens in field names. Environment variables use double underscores between path components. A unique short flag is also accepted; qualified names avoid ambiguity.
 
 ```bash skip
-dimos --simulation mujoco run unitree-go2 \
-  --go2connection.mujoco.start-pos '[2.0, -1.0]' \
-  --go2connection.mujoco.shadows off
+dimos --simulation mujoco run unitree-g1-sim \
+  --g1simconnection.mujoco.start-pos '[2.0, -1.0]' \
+  --g1simconnection.mujoco.shadows off
 
-GO2CONNECTION__MUJOCO__STEPS_PER_FRAME=5 dimos --simulation mujoco run unitree-go2
+G1SIMCONNECTION__MUJOCO__STEPS_PER_FRAME=5 dimos --simulation mujoco run unitree-g1-sim
 
-dimos run unitree-go2-temporal-memory --temporalmemory.new-memory true
+dimos run unitree-go2 --go2webrtc.obstacle-avoidance true
 dimos run unitree-go2 --help
 ```
 
@@ -66,7 +66,7 @@ Use `--config robot.json` for structured settings:
 ```json
 {
   "g": {"simulation": "mujoco", "viewer": "rerun"},
-  "go2connection": {"mujoco": {"start_pos": [2.0, -1.0], "shadows": "off"}},
+  "g1simconnection": {"mujoco": {"start_pos": [2.0, -1.0], "shadows": "off"}},
   "rerunbridgemodule": {"rerun_open": "none", "rerun_save": true}
 }
 ```
@@ -87,10 +87,9 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 
 | Former global setting | Owner / replacement |
 |---|---|
-| `unitree_aes_128_key` | `aes_128_key` on `GO2Connection`, `Go2FleetConnection`, `G1Connection`, or `G1HighLevelWebRtc`, as applicable |
-| `obstacle_avoidance`, `replay_exit` | Go2 connection config (including fleet) |
-| `mujoco_camera_position`, `mujoco_room`, `mujoco_room_from_occupancy`, `mujoco_start_pos`, `mujoco_steps_per_frame`, `mujoco_shadows` | Nested `mujoco` config on `GO2Connection` or `G1SimConnection`; drop the `mujoco_` prefix. Positions are JSON arrays of six and two numbers respectively. |
-| `dimsim_scene`, `dimsim_port`, `dimsim_headless`, `dimsim_ready_timeout` | `go2connection.dimsim.scene`, `.port`, `.headless`, `.ready_timeout` |
+| `unitree_aes_128_key` | `aes_128_key` on `Go2WebRtc`, `G1Connection`, or `G1HighLevelWebRtc`, as applicable |
+| `obstacle_avoidance` | `go2webrtc.obstacle_avoidance` |
+| `mujoco_camera_position`, `mujoco_room`, `mujoco_room_from_occupancy`, `mujoco_start_pos`, `mujoco_steps_per_frame`, `mujoco_shadows` | Nested `mujoco` config on `G1SimConnection`; drop the `mujoco_` prefix. Positions are JSON arrays of six and two numbers respectively. |
 | `mujoco_global_costmap_from_occupancy`, `mujoco_global_map_from_pointcloud` | `map.global_costmap_from_occupancy`, `map.global_map_from_pointcloud` |
 | `nerf_speed` | `replanningastarplanner.nerf_speed` |
 | `new_memory` | `temporalmemory.new_memory` |
@@ -107,12 +106,12 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 | `mujoco_scene` | `mujocosimmodule.address`; the coordinator's simulated arm attaches to that scene |
 | `dimos_cloud_url`, `dimos_api_key`, `dimos_http_timeout`, `dimos_upload_*`, `dimos_staging_dir` | [`CloudConfig`](/dimos/cloud/config.py): `url`, `api_key`, `http_timeout`, `upload_*`, `staging_dir`; environment prefix `DIMOS_CLOUD_` |
 
-For example, `UNITREE_AES_128_KEY` becomes `GO2CONNECTION__AES_128_KEY`, and `RERUN_OPEN` becomes `RERUNBRIDGEMODULE__RERUN_OPEN`. Configure each connection separately when a stack has multiple robot connections. The legacy websocket dashboard follows the Rerun bridge's `web` or `both` mode by default; `websocketvismodule.open_browser` and `show_rerun_dashboard` override that behavior independently.
+For example, `UNITREE_AES_128_KEY` becomes `GO2WEBRTC__AES_128_KEY`, and `RERUN_OPEN` becomes `RERUNBRIDGEMODULE__RERUN_OPEN`. Configure each connection separately when a stack has multiple robot connections. The legacy websocket dashboard follows the Rerun bridge's `web` or `both` mode by default; `websocketvismodule.open_browser` and `show_rerun_dashboard` override that behavior independently.
 
 MCP's bound endpoint is stored in run metadata, so `dimos mcp` finds the newest running server on any host or port, and an `McpClient` asks the `McpServer` in its blueprint for the endpoint:
 
 ```bash skip
-dimos run unitree-go2-agentic --mcpserver.port 9992
+dimos --simulation run unitree-g1-agentic-sim --mcpserver.port 9992
 ```
 
 ## Hardware configuration

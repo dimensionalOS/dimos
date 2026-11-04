@@ -1,49 +1,49 @@
 [
   {
-    "id": "go2_short_disp_0_60",
+    "id": "go2_short_disp_0_62",
     "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
-    "a": 1.7,
-    "band": 1.0,
+    "a": 6.7,
+    "band": 2.6827865815197645,
     "stream": "odom",
     "window": [
       0,
-      60
+      62
     ],
     "dataset": "go2_short"
   },
   {
-    "id": "go2_short_disp_0_30",
+    "id": "go2_short_disp_0_31",
     "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
-    "a": 11.4,
-    "band": 4.543036677935427,
+    "a": 3.4,
+    "band": 1.366283233127517,
     "stream": "odom",
     "window": [
       0,
-      30
+      31
     ],
     "dataset": "go2_short"
   },
   {
-    "id": "go2_short_disp_30_60",
+    "id": "go2_short_disp_31_62",
     "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
-    "a": 11.8,
-    "band": 4.738980277235515,
+    "a": 5.1,
+    "band": 2.052124092983981,
     "stream": "odom",
     "window": [
-      30,
-      60
+      31,
+      62
     ],
     "dataset": "go2_short"
   },
   {
-    "id": "go2_short_path_0_60",
+    "id": "go2_short_path_0_62",
     "q": "Roughly how many meters did you travel in total over these observations (path length, not displacement)?",
-    "a": 37.9,
-    "band": 18.963056711366217,
+    "a": 22.7,
+    "band": 11.368741273695637,
     "stream": "odom",
     "window": [
       0,
-      60
+      62
     ],
     "dataset": "go2_short"
   },

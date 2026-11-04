@@ -40,21 +40,21 @@ single_lidar_frame = EvalCase(
     id="example_single_lidar_frame",
     inputs="How many points does the shown pointcloud contain? Answer with just the number.",
     environment=Dataset("go2_short", select=(lambda s: s.streams.lidar.limit(1),)),
-    grade=lambda o: within(5000.0)(20834.0, first_number(o.trajectory.final_answer)),
+    grade=lambda o: within(5000.0)(13524.0, first_number(o.trajectory.final_answer)),
     tags=frozenset({"example", "encoding", "pointcloud"}),
 )
 
-# A range of 10 image frames from the same replay: seconds 58..61 of the
-# recording, capped to 10 observations. Image.agent_encode() turns each into an
-# image content block; a person sits at a table in this stretch.
+# A range of 10 image frames from the same replay: seconds 49..52 of the
+# images, capped to 10 observations. Image.agent_encode() turns each into an
+# image content block; the ranch's front door stands open in this stretch.
 # Note: `.limit(n)` keeps the *first* n observations of the window — for a
 # spread across a long window, select the whole range and let the agent
 # downsample evenly instead.
 ten_image_range = EvalCase(
     id="example_ten_image_range",
-    inputs="Is a person visible in any of these images? Answer yes or no.",
+    inputs="Is an open door visible in any of these images? Answer yes or no.",
     environment=Dataset(
-        "go2_short", select=(lambda s: s.streams.color_image.range_time(58, 61).limit(10),)
+        "go2_short", select=(lambda s: s.streams.color_image.range_time(49, 52).limit(10),)
     ),
     grade=lambda o: exact("yes", yes_no(o.trajectory.final_answer)),
     tags=frozenset({"example", "encoding", "image"}),

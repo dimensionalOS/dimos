@@ -7,7 +7,7 @@ The cockpit is the built-in web app for dimOS robots. It shows camera, map, keyb
 Locally, add `--local-relay` to any `dimos run`. dimos starts a relay on your machine, connects the robot to it, and opens `http://127.0.0.1:7780/` in your browser:
 
 ```bash
-uv run dimos --simulation run --local-relay unitree-go2-cockpit
+uv run dimos --simulation run --local-relay unitree-go2
 ```
 
 This needs the `web` extra. A blueprint without a `cockpit(...)` call still gets a default cockpit: video, map with the robot's position, keyboard teleop. A blueprint that contains `cockpit(...)` always runs the bridge, and starts a local relay by itself when you give it no `--relay-url`. Details on the [Bridge](/docs/web/bridge.md) page.
@@ -18,7 +18,7 @@ The browser needs WebTransport. Chromium and Firefox are the tested ones.
 
 ## What you see
 
-![The panel grid of unitree-go2-cockpit on a recorded session](assets/cockpit_grid.png)
+![The panel grid of a Go2 cockpit on a recorded session](assets/cockpit_grid.png)
 
 ![The right side of the header: the panels / channels switch, the connection state, and the watched robot's name and model](assets/cockpit_header.png)
 
@@ -38,11 +38,11 @@ Two notices can replace the grid. "Waiting for a robot to register" means no rob
 
 ## Describe the layout in Python
 
-`cockpit()` returns a blueprint. Compose it onto a robot with `autoconnect`, the same way you add any module. This is [`unitree_go2_cockpit.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2_cockpit.py#L20):
+`cockpit()` returns a blueprint. Compose it onto a robot with `autoconnect`, the same way you add any module. For the Go2:
 
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from dimos.robot.unitree.go2.blueprints.unitree_go2 import unitree_go2
 from dimos.web.cockpit import Col, Map2D, Map3D, Row, Teleop, Video, cockpit
 
 unitree_go2_cockpit = autoconnect(
@@ -293,10 +293,3 @@ The page subscribes to every cheap channel as soon as it loads, whatever tab or 
 Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Expensive means video frames, costmaps, voxel maps and LCM messages with variable-length arrays (point clouds, scans, paths). A [web SDK](/docs/web/web_sdk.md) page subscribes to whatever it asks for. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
 
 The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are expensive, so only those are excluded.
-
-## Ready-made blueprints
-
-- `unitree-go2-cockpit`: the Go2 navigation stack with video, the 3D voxel map, an interactive map (goal clicks, path, cancel) and teleop.
-- `unitree-go2-agentic-cockpit`: the same plus the agent chat with push-to-talk, a full-page camera tab and the stats tab. It replaces the older `WebInput` page of the agentic blueprint.
-
-They are [`unitree_go2_cockpit.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2_cockpit.py) and [`unitree_go2_agentic_cockpit.py`](/dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic_cockpit.py).

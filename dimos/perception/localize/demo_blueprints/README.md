@@ -5,7 +5,6 @@ development without a robot.
 
 | blueprint | rig | shape |
 |---|---|---|
-| `go2-localize` | Go2 camera, lidar, tf | `unitree-go2` navigation stack with `PerceptionLocalize` on the lidar and MCP |
 | `xarm-feed` + `xarm-localize-live` | depth camera, tf | `PerceptionLocalize` with in-memory memory, the feed in a second process |
 
 `PerceptionLocalize` in `../module.py` is the module a robot blueprint
@@ -13,39 +12,7 @@ takes. It consumes `color_image`, `camera_info`, `tf`, and the geometry its
 `geometry` config names: `depth_image` aligned to the colour camera, or
 `lidar`. It keeps bounded sensor history in RAM, embeds the colour feed as it
 arrives, and answers `localize` from what it has embedded. It opens no file
-and does not know whether its ports carry a robot or a replay. `go2-localize`
-lives in `dimos/robot/unitree/go2/blueprints/smart/go2_localize.py`.
-
-## go2-localize: real robot
-
-Terminal 1, start the robot stack (replace the IP with your robot's address):
-
-    uv run dimos --no-replay run go2-localize --robot-ip <robot-ip>
-
-This extends `unitree-go2`, including its mapping, navigation, teleop through
-`MovementManager` and viewer controls. Drive around using the Go2 controls while localization collects the
-camera and lidar streams. `PerceptionLocalize` takes Go2's `lidar` and lifts
-each call through that window's scans merged; Go2 supplies `camera_info` and
-the camera TF chain in `world`. The blueprint passes `params=GO2_PARAMS` and
-`mobile=True`.
-`uv run dimos --replay run go2-localize` runs the same stack on a recording.
-
-Terminal 2, attach to that same stack:
-
-    uv run dimos shell
-    app.PerceptionLocalize.state()
-    app.PerceptionLocalize.localize("chair", -30.0, 30.0)
-    app.PerceptionLocalize.localize("table,green plant", -60.0, 60.0)
-
-Wait for `state()` to report ready after calibration and the first posed
-embedded image arrive. Collect camera and lidar history while driving, then
-query the window you want.
-
-Terminal 3, use MCP while the same stack continues running:
-
-    uv run dimos mcp list-tools
-    uv run dimos mcp call state
-    uv run dimos mcp call localize -j '{"objects": "chair", "start": -30, "duration": 30}' --timeout 300
+and does not know whether its ports carry a robot or a replay.
 
 ## xarm-localize-live
 
@@ -87,7 +54,7 @@ Configuration of `PerceptionLocalize`, set on the blueprint:
 - `geometry`: `"depth"` (default) or `"lidar"`. Only the selected input is
   subscribed; the other sensor is not required.
 - `mobile`: `True` when the camera rides a walking base. The index then runs
-  at 3 Hz instead of 1 Hz. `go2-localize` sets it.
+  at 3 Hz instead of 1 Hz.
 - `horizon_s`: how far back `localize` can look. Sets the tf buffer and the
   memory windows.
 - `feed_frames`: raw frames kept for the embed tail and the pairing.
@@ -108,20 +75,18 @@ The module uses the incoming calibration and TF frame names. Select one
 colour camera, its calibration and its aligned depth. For a G1 depth rig using
 the topic names in `unitree-g1-record`, compose:
 
-    from dataclasses import replace
-
     from dimos.perception.localize.module import PerceptionLocalize
-    from dimos.robot.unitree.go2.blueprints.smart.go2_localize import GO2_PARAMS
+    from dimos.perception.localize.tools.tool_localize import G1_PARAMS
 
     localize = PerceptionLocalize.blueprint(
-        mobile=True, params=replace(GO2_PARAMS, min_points=30)
+        mobile=True, params=G1_PARAMS
     ).remappings([
         (PerceptionLocalize, "depth_image", "realsense_depth_image"),
         (PerceptionLocalize, "camera_info", "realsense_camera_info"),
     ])
 
-A G1 walks, so `mobile=True`, and sees a room. `replace(GO2_PARAMS,
-min_points=30)` are the params `tools/tool_localize` runs `g1_sf_office.db`
+A G1 walks, so `mobile=True`, and sees a room. `G1_PARAMS` (`GO2_PARAMS` with
+`min_points=30`) are the params `tools/tool_localize` runs `g1_sf_office.db`
 with (`--params g1`): room scale, with a cloud floor for depth denser than a
 5 cm lidar map. This is a composition example; the folder adds a runnable
 blueprint only for the xArm.
@@ -177,8 +142,8 @@ From any terminal, while a blueprint runs:
 
 ## MCP
 
-`go2-localize` and `xarm-localize-live` include `McpServer`, so an agent can
-reach the two skills over MCP while either runs:
+`xarm-localize-live` includes `McpServer`, so an agent can reach the two
+skills over MCP while it runs:
 
     uv run dimos mcp list-tools
     uv run dimos mcp call state

@@ -25,9 +25,10 @@ def test_path_replanning(
     spawn_wall_on_pose,
 ) -> None:
     start_blueprint(
+        "--agentic",
         "run",
-        "unitree-go2-agentic",
-        "--go2connection.dimsim.scene=empty",
+        "unitree-go2",
+        "--go2webrtcsim.scene=empty",
         simulator="dimsim",
     )
     wait_for_system_ready(timeout=300.0)

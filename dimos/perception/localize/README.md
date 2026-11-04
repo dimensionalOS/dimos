@@ -52,7 +52,7 @@ To register it by name, add an `Option` to `EMBEDDERS`, `DETECTORS` or `SEGMENTE
 `LocalizeParams` (`types.py`) names every threshold and what it gates. Its defaults are
 desk scale, fit with SigLIP + OWLv2 + EdgeTAM on the xArm recordings; each robot
 blueprint sets its own `LocalizeParams` on `PerceptionLocalize.blueprint(params=...)`
-(such as `GO2_PARAMS` in `dimos/robot/unitree/go2/blueprints/smart/go2_localize.py`).
+(such as the presets in `tools/tool_localize.py` below).
 
 For offline benchmarking on recordings, `tools/tool_localize.py` defines `PRESETS`:
 

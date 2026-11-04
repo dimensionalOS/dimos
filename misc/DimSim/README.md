@@ -13,11 +13,9 @@ docs/       — guides
 
 ## Run
 
-dimsim is launched by dimos directly when you pick `--simulation dimsim`:
-
 ```bash
-cd <dimos-repo>
-uv run dimos --simulation dimsim run unitree-go2-agentic --go2connection.dimsim.scene=apartment
+cd misc/DimSim/cli
+deno run -A --unstable-net cli.ts dev --scene apartment
 ```
 
 On first run, `cli/cli.ts` will build `dist/` via Vite (dimsim ships its frontend as source — Deno+Vite materializes it in ~20s).

@@ -54,10 +54,10 @@ Common terms:
 No robot needed. This simulates a Go2 robot on your machine and opens the cockpit in your browser:
 
 ```bash
-uv run dimos --simulation run --local-relay unitree-go2-agentic-cockpit
+uv run dimos --simulation run --local-relay unitree-go2
 ```
 
-The page at `http://127.0.0.1:7780/` shows the camera, the map with the robot's position, and a teleop panel (you can drive with the keyboard), and a chat panel for the robot's agent (it needs an `OPENAI_API_KEY`, like the other agentic blueprints).
+The page at `http://127.0.0.1:7780/` shows the camera, the map with the robot's position, and a teleop panel (you can drive with the keyboard).
 
 ## Pages
 

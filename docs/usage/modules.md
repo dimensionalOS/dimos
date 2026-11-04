@@ -18,7 +18,7 @@ Below is an example of a structure for controlling a robot. Black blocks represe
 
 ```python skip output=assets/go2_nav.svg
 from dimos.core.introspection.svg import to_svg
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from dimos.robot.unitree.go2.blueprints.unitree_go2 import unitree_go2
 
 to_svg(unitree_go2, "assets/go2_nav.svg")
 ```

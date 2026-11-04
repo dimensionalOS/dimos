@@ -20,8 +20,9 @@ def test_go_to_the_bed(
     lcm_spy, start_blueprint, wait_for_system_ready, human_input, dim_sim, explore_house
 ) -> None:
     start_blueprint(
+        "--agentic",
         "run",
-        "unitree-go2-agentic",
+        "unitree-go2",
         simulator="dimsim",
     )
     wait_for_system_ready(timeout=300.0)

@@ -28,10 +28,10 @@ See [installation](/docs/installation/index.md) for library/developer modes, pla
 
 ## Run your first replay
 
-dimOS applications are launched from **blueprints**. A blueprint is a ready to run bundle of modules that you start by name with `dimos run`. The `--replay` flag feeds it recorded sensor data instead of connecting to a robot:
+dimOS applications are launched from **blueprints**. A blueprint is a ready to run bundle of modules that you start by name with `dimos run`. The `--replay.db` option feeds it recorded sensor data instead of connecting to a robot:
 
 ```bash
-dimos --replay run unitree-go2
+dimos run unitree-go2 --replay.db go2_short
 ```
 
 **What you should see:** a [Rerun](https://rerun.io) visualization window opens, and after a short wait it fills with the robot's camera feed, a LiDAR point cloud, and a map of an office being built up as the robot navigates through it, with its planned path drawn on top.
@@ -56,7 +56,7 @@ dimos --simulation run unitree-g1-sim    # humanoid
 
 ### Real robot
 
-With a Unitree Go2 on the same network, point dimOS at its IP address and drop the `--replay` flag:
+With a Unitree Go2 on the same network (`uvx go2tool connect-wifi` puts it on wifi, `uvx go2tool discover` finds its IP; see [Go2 setup](/docs/platforms/quadruped/go2/setup.md)), point dimOS at its IP address and drop `--replay.db`:
 
 ```bash
 export ROBOT_IP=<YOUR_ROBOT_IP>
@@ -74,7 +74,7 @@ The agentic blueprints add an LLM agent that controls the robot through natural 
 
 ```bash
 export OPENAI_API_KEY=<YOUR_KEY>
-dimos --simulation run unitree-go2-agentic --daemon   # run in the background
+dimos --simulation run unitree-g1-agentic-sim --daemon   # run in the background
 dimos agent-send "explore the room"                   # talk to the agent
 ```
 
@@ -82,7 +82,7 @@ Every robot skill is also exposed over MCP, which means external tools and codin
 
 ```bash
 dimos mcp list-tools
-dimos mcp call move_to --arg x=0.5 --arg relative=true
+dimos mcp call move --arg x=0.5 --arg duration=1.0
 ```
 
 Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`. The full command reference is in the [CLI guide](/docs/usage/cli.md).
@@ -93,7 +93,7 @@ Add `--local-relay` to see the camera and the map in your browser and drive the 
 
 ```bash
 uv pip install 'dimos[base,unitree,web]'
-dimos --replay run unitree-go2 --local-relay
+dimos run unitree-go2 --replay.db go2_short --local-relay
 ```
 
 The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) covers the cockpit, the web SDK for pages of your own, and hosting a relay so a robot can be reached from anywhere.
@@ -102,15 +102,13 @@ The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) 
 
 | Command | What it does |
 | --- | --- |
-| `dimos --replay run unitree-go2` | Quadruped navigation replay with SLAM, costmap, and A-star planning |
-| `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped spatial memory replay |
-| `dimos --simulation run unitree-go2-agentic` | Quadruped LLM agent plus MCP server in simulation (needs `OPENAI_API_KEY`) |
+| `dimos run unitree-go2 --replay.db go2_short` | Quadruped navigation replay with a ray-traced voxel map and MLS planning |
+| `dimos --simulation run unitree-g1-agentic-sim` | Humanoid LLM agent plus MCP server in simulation (needs `OPENAI_API_KEY`) |
 | `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |
 | `dimos --replay run drone-agentic` | Drone with an LLM agent and flight skills, replayed |
 | `dimos run demo-camera` | Webcam demo, no robot needed |
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with a mock xArm7 (needs the `manipulation` extra) |
-| `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agent using a local LLM (needs Ollama running via `ollama serve`) |
 
 To learn how blueprints are composed, or to write your own, see the [blueprints guide](/docs/usage/blueprints.md).
 

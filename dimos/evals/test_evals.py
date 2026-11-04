@@ -63,7 +63,17 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
-from dimos.evals.suites import dimsim_house, dimsim_pointcloud_mapping, examples, go2_smoke, go2_vqa
+from dimos.evals.suites import (
+    dimsim_house,
+    dimsim_pointcloud_mapping,
+    examples,
+    go2_smoke,
+    go2_vqa,
+    mujoco_ranch_belief_qa,
+    mujoco_ranch_house,
+    mujoco_ranch_pointcloud_mapping,
+    mujoco_ranch_qa,
+)
 from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
 from dimos.evals.types import (
     EvalCase,
@@ -324,7 +334,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "patrolling-module",
         ]
         assert proc.global_args == ["--record"]
-        assert proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] == "empty"
+        assert proc.extra_env["GO2WEBRTCSIM__SCENE"] == "empty"
         adapter.return_value.wait_for_ready.assert_called_once()
         ready_call = adapter.return_value.wait_for_ready.call_args
         assert 0 < ready_call.kwargs["timeout"] <= 1.0
@@ -762,7 +772,17 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
+    for module in (
+        examples,
+        go2_smoke,
+        go2_vqa,
+        dimsim_house,
+        dimsim_pointcloud_mapping,
+        mujoco_ranch_house,
+        mujoco_ranch_qa,
+        mujoco_ranch_belief_qa,
+        mujoco_ranch_pointcloud_mapping,
+    ):
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {

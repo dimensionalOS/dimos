@@ -12,10 +12,10 @@ per-process `BrokerProvider`
 (`dimos/protocol/pubsub/impl/webrtc/providers/`); blueprints bind
 `Cloudflare*` transports to the streams of several small, per-concern modules
 that all run in one worker so everything shares that single session (the
-`GO2Connection` driver runs in a second worker — `n_workers=2`):
+`Go2WebRtc` driver runs in a second worker — `n_workers=2`):
 
 - **`go2_command.py`** — `Go2CommandModule`: operator command / E-STOP dispatch
-  and the manual-drive guard. Reaches the driver over `@rpc` (`GO2Connection`).
+  and the manual-drive guard. Reaches the driver over `@rpc` (`Go2WebRtc`).
 - **`arm_command.py`** — `ArmCommandModule`: WebXR controller poses and browser
   EE-twist → ControlCoordinator tasks (stale/reorder/future-stamp guarded).
 - **`camera_mux.py`** — `CameraMuxModule`: N cameras → one composited, capped

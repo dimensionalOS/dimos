@@ -7,18 +7,18 @@ See [Setup](/docs/platforms/quadruped/go2/setup.md) for installing dimOS first.
 ## Try It: No Hardware Needed
 
 ```bash
-# Replay a recorded Go2 navigation session
-# First run downloads ~2.4 GB of LiDAR/video data from LFS
-dimos --replay run unitree-go2
+# Replay a recorded Go2 session (a .db, a dimos .mcap, or a dataset name)
+# First run downloads the dataset from LFS
+dimos run unitree-go2 --replay.db go2_short
 ```
 
-Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3D visualization. Watch the Go2 map and navigate an office in real time.
+Opens the Rerun 3D visualization. Watch the Go2 map an office in real time.
 
 ## MuJoCo Simulation
 
 ```bash
-# The installer's default extras include sim.
-dimos --simulation run unitree-go2
+# The installer's default extras include sim (dim-go2-sim).
+dimos run unitree-go2 --simulation mujoco
 ```
 
 Full navigation stack in MuJoCo: same code, simulated robot.

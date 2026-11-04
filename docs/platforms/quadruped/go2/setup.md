@@ -1,6 +1,6 @@
 # Unitree Go2 Setup
 
-Full autonomous navigation, mapping, and agentic control on a real Go2. No ROS required.
+Full autonomous navigation and mapping on a real Go2. No ROS required.
 
 ## Requirements
 
@@ -20,30 +20,28 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 ### First-time setup, connecting to wifi, finding robot IP
 
-Use `dimos go2tool` to provision wifi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
+Use [go2tool](https://github.com/jeff-hykin/go2tool) to put the robot on wifi over Bluetooth and find its IP. Skip if the robot is already on your network and you know its IP.
 
 1. Power on the Go2. It advertises over BLE immediately.
 
-2. Provision wifi (one-time per network):
-
-optionally use discover to make sure robot is detected
+2. Optionally make sure the robot is detected:
 
 ```bash
-dimos go2tool discover
+uvx go2tool discover
 ```
 
-configure wifi
+3. Provision wifi (one-time per network):
 
 ```bash
-dimos go2tool connect-wifi --ssid <wifi> --password <password>
+uvx go2tool connect-wifi --ssid <wifi> --password <password>
 ```
 
 Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several.
 
-3. Find the robot's IP:
+4. Find the robot's IP:
 
 ```bash
-dimos go2tool discover
+uvx go2tool discover
 ```
 
 Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN. Export the IP:
@@ -59,7 +57,7 @@ export ROBOT_IP=<discovered_ip>
 ping $ROBOT_IP
 ```
 
-2. Built-in obstacle avoidance is on. (dimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
+2. Built-in obstacle avoidance is on. (dimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots). `unitree-go2` turns it off; add `--go2webrtc.obstacle-avoidance true` to keep it on.
 
 ### Ready to run dimOS
 
@@ -68,42 +66,21 @@ export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2
 ```
 
-That's it. dimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
+That's it. dimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the Rerun viewer.
 
 ### What's Running
 
 | Module | What It Does |
 |--------|-------------|
-| **GO2Connection** | WebRTC connection to the robot. Streams LiDAR, video, odometry |
-| **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
-| **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
-| **ReplanningAStarPlanner** | Continuous A* path planning with dynamic replanning |
-| **WavefrontFrontierExplorer** | Autonomous exploration of unmapped areas |
-| **RerunBridge** | 3D visualization in browser |
-| **WebsocketVis** | Command center at localhost:7779 |
+| **Go2WebRtc** | WebRTC connection to the robot (Rust native module). Streams LiDAR, video, odometry, joint state |
+| **UrdfManagerNative** | Poses the Go2 URDF from the joint state onto tf |
+| **RayTracingVoxelMap** | 3D voxel map with raycast clearing of dynamic objects |
+| **MLSPlannerNative** | Multi-level surface global path planning |
+| **LocalPlannerNative** / **TrajectoryFollowerNative** | Local planning over the live local map, and tracking the planned path |
+| **MovementManager** | Merges clicked goals, navigation and teleop velocity into `cmd_vel` |
+| **LocalMapRelocalization** | Relocalizes against a premap (off until `--localmaprelocalization.map-file <map>`) |
+| **RerunBridge** | 3D visualization |
 
 ### Send Goals
 
-From the command center ([localhost:7779](http://localhost:7779)):
-- Click on the map to set navigation goals
-- Toggle autonomous exploration
-- Monitor robot pose, costmap, and planned path
-
-## Agentic Control
-
-Natural language control with an LLM agent that understands physical space:
-
-```bash
-export OPENAI_API_KEY=<YOUR_KEY>
-export ROBOT_IP=<YOUR_GO2_IP>
-dimos run unitree-go2-agentic
-```
-
-Then use the human CLI to talk to the agent:
-
-```bash
-humancli
-> explore the space
-```
-
-The agent subscribes to camera, LiDAR, and spatial memory streams. It sees what the robot sees.
+Click on the map in the Rerun viewer to set a navigation goal.

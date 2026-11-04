@@ -47,5 +47,3 @@ keep it on one machine.
 
 Globals set with `.global_config(...)` reach every Host. Leave per-machine ones such as
 `n_workers` to each Host's `.env`.
-
-[`go2-nav-hosted`](/dimos/mapping/experimental/blueprints.py) is a complete example.

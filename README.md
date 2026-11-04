@@ -164,15 +164,20 @@ If you need to install without the script, follow the system-package and Python 
 Activate the environment using the command printed by the installer, then run:
 
 ```bash
-# Replay a recorded quadruped session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
-dimos --replay run unitree-go2
+# Replay a recorded quadruped session (no hardware needed): the recording stands in for the robot's
+# connection and the navigation stack runs on it. The first run downloads the recording from LFS.
+dimos run unitree-go2 --replay.db go2_short
+
+# Any Go2 recording (.db or dimos .mcap) with lidar, odom, color_image and camera_info streams
+dimos run unitree-go2 --replay.db path/to/recording.db
 ```
 
 ```bash
 # The installer's default extras include simulation support.
 # Run quadruped in MuJoCo simulation
-dimos --simulation run unitree-go2
+dimos run unitree-go2 --simulation mujoco
+# ...in another scene: a SuperSplat scan, an InteriorGS home (interiorgs/<id>), or --go2webrtcsim.scene.scan <.ply>
+dimos run unitree-go2 --simulation mujoco --go2webrtcsim.scene.package supersplat/3f89bbd3
 
 # Run humanoid in simulation
 dimos --simulation run unitree-g1-sim
@@ -188,15 +193,13 @@ dimos run unitree-go2
 
 | Run command | What it does |
 |-------------|-------------|
-| `dimos --replay run unitree-go2` | Quadruped navigation replay — SLAM, costmap, A* planning |
-| `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped temporal memory replay |
-| `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
+| `dimos run unitree-go2 --replay.db go2_short` | Quadruped navigation replay — voxel map, MLS planning, local planner |
+| `dimos run unitree-go2 --simulation mujoco` | Quadruped navigation in MuJoCo simulation |
 | `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
 | `dimos run demo-camera` | Webcam demo — no hardware needed |
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
-| `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
 
 > Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
 
@@ -205,7 +208,7 @@ dimos run unitree-go2
 The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
 
 ```bash
-dimos run unitree-go2-agentic --daemon   # Start in background
+dimos --simulation run unitree-g1-agentic-sim --daemon   # Start in background
 dimos status                              # Check what's running
 dimos log -f                              # Follow logs
 dimos agent-send "explore the room"       # Send agent a command
@@ -297,12 +300,12 @@ A blueprint example that connects the image stream from a robot to an MCP-backed
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
-from dimos.robot.unitree.go2.connection import go2_connection
+from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 
 blueprint = autoconnect(
-    go2_connection(),
+    Go2WebRtc.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(),
 ).transports({("color_image", Image): LCMTransport("/color_image", Image)})

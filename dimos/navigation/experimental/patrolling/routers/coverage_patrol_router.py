@@ -22,7 +22,7 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.experimental.patrolling.routers.base_patrol_router import BasePatrolRouter
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
-from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 
 
 class CoveragePatrolRouter(BasePatrolRouter):

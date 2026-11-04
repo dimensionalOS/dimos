@@ -100,14 +100,14 @@ This happens on lower-end hardware (NUC, older laptops) with large maps.
 
 ### Increase Voxel Size
 
-Edit [`dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py):
+Edit [`dimos/robot/unitree/go2/config.py`](/dimos/robot/unitree/go2/config.py), which sets the voxel size for both the mapper and the planner:
 
 ```python skip
 # Before (high detail, slower on large maps)
-voxel_mapper(voxel_size=0.05),  # 5cm voxels
+voxel_size = 0.08  # 8cm voxels
 
-# After (lower detail, 8x faster)
-voxel_mapper(voxel_size=0.1),   # 10cm voxels
+# After (lower detail, ~2x faster)
+voxel_size = 0.16  # 16cm voxels
 ```
 
 **Trade-off:**

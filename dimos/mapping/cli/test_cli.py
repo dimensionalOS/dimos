@@ -14,7 +14,7 @@
 
 """End-to-end tests for the `dimos map` verbs, run in-process.
 
-Each test invokes the real CLI against the `go2_short` recording (60s, auto-
+Each test invokes the real CLI against the `go2_short` recording (62s, auto-
 pulled via LFS) and asserts on the artifact it produces. A short `--duration`
 snippet keeps every invocation to a few seconds, and `--no-gui` stops the rrd
 verbs from spawning a rerun viewer.
@@ -41,8 +41,8 @@ pytestmark = pytest.mark.self_hosted
 SEEK = 4.0
 DURATION = 3.0
 
-# go2_short has 461 lidar frames over ~60s; a 3s snippet must be far fewer.
-FULL_LIDAR_COUNT = 461
+# go2_short has 623 lidar frames over ~62s; a 3s snippet must be far fewer.
+FULL_LIDAR_COUNT = 623
 
 _runner = CliRunner()
 
@@ -168,14 +168,6 @@ def test_pose_fill_snippet(dataset: str, tmp_path: Path) -> None:
 def test_replay_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "replay.rrd"
     res = _run("replay", dataset, "--out", str(out), "--no-gui", "--duration", str(DURATION))
-    assert res.returncode == 0, res.stderr
-    assert out.exists() and out.stat().st_size > 0
-
-
-@requires_turbojpeg
-def test_replay_marker_snippet(dataset: str, tmp_path: Path) -> None:
-    out = tmp_path / "markers.rrd"
-    res = _run("replay-marker", dataset, "--out", str(out), "--no-gui", "--duration", str(DURATION))
     assert res.returncode == 0, res.stderr
     assert out.exists() and out.stat().st_size > 0
 

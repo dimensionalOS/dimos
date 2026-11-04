@@ -150,10 +150,10 @@ mkcert -cert-file docker/relay/config/fullchain.pem -key-file docker/relay/confi
 
 `libnss3-tools` is what lets `mkcert -install` add the CA to Firefox. Write `auth.json` as in [Auth file](#auth-file), give all three files to uid 1993 the same way, and start the relay as in [Run](#run).
 
-The robot needs the CA bundle: its QUIC client trusts certifi's roots, not the system store. This blueprint has a `cockpit(...)` layout, so its key goes on the command line (see [Robot](#robot)).
+The robot needs the CA bundle: its QUIC client trusts certifi's roots, not the system store. Here the key goes on the command line, which a blueprint with a `cockpit(...)` layout needs (see [Robot](#robot)).
 
 ```bash
-uv run dimos --simulation run unitree-go2-agentic-cockpit --relay-url https://192.168.1.20 \
+uv run dimos --simulation run unitree-go2 --relay-url https://192.168.1.20 \
   --relay-ca "$(mkcert -CAROOT)/rootCA.pem" --relay-key <key> --robot-id go2-lab
 ```
 
@@ -176,7 +176,7 @@ Without Docker, the command from [Without Docker](#without-docker) works with th
 What a hosted relay is verified with. Repeat it after changes to the relay, the image, or this guide.
 
 - [ ] Fresh Ubuntu VM with a domain, DNS through Run top to bottom, then `curl https://.../api/info` from a laptop.
-- [ ] Replay robot on another, NATed network (`dimos --replay run unitree-go2 --relay-url ...`).
+- [ ] Replay robot on another, NATed network (`dimos run unitree-go2 --replay.db go2_short --relay-url ...`).
 - [ ] Laptop on a third network, in Chromium and in Firefox: wrong token rejected, right token connects, robot picker with two robots, live map and video, teleop drives the replay robot.
 - [ ] `docker compose restart relay` with the page open: the page reconnects, the robot re-registers.
 - [ ] The deploy hook by hand: the relay restarts with the installed files, and `sudo certbot renew --dry-run` passes.

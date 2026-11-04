@@ -94,7 +94,7 @@ def test_config_path_that_is_a_directory_reads_as_absent(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     ("name", "replacement"),
     [
-        ("UNITREE_AES_128_KEY", "GO2CONNECTION__AES_128_KEY"),
+        ("UNITREE_AES_128_KEY", "GO2WEBRTC__AES_128_KEY"),
         ("XARM7_IP", "CONTROLCOORDINATOR__ADDRESSES"),
         ("XARM6_IP", "CONTROLCOORDINATOR__ADDRESSES"),
         ("LITE6_IP", "CONTROLCOORDINATOR__ADDRESSES"),
@@ -121,7 +121,7 @@ def test_removed_credentials_and_device_addresses_require_migration(
     [
         ("NERF_SPEED", "REPLANNINGASTARPLANNER__NERF_SPEED"),
         ("ROBOT_ID", "RELAYBRIDGEMODULE__ROBOT_ID"),
-        ("DIMSIM_PORT", "GO2CONNECTION__DIMSIM__PORT"),
+        ("DIMSIM_PORT", "GO2WEBRTCSIM__PORT"),
         ("rerun_open", "RERUNBRIDGEMODULE__RERUN_OPEN"),
     ],
 )

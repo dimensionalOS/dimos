@@ -18,15 +18,20 @@
 from __future__ import annotations
 
 from functools import partial
+import math
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
-from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT, ROBOT_WIDTH
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.protocol.tf.static_tf_publisher import (
+    FrameSpec,
+    StaticTfPublisher,
+    frames_to_edge_transforms,
+)
+from dimos.robot.unitree.go2.config import CMD_VEL_TIMEOUT, ROBOT_WIDTH
 from dimos.simulation.go2_legged.policy import load_policy
 from dimos.simulation.go2_legged.robot import LeggedGo2, apply_fitted_physics, go2_spec
 from dimos.simulation.scenes.procedural import Scene
@@ -42,6 +47,23 @@ STEP_LIMIT = 0.2
 STAND_HEIGHT = 0.3
 # the Mid-360 on its mount is the highest point of the standing sim Go2
 CLEARANCE_HEIGHT = 0.6
+
+
+# The Go2 + Mid-360 rig, measured: base_link -> front_camera (the URDF camera mount), then the lidar 3.2 cm back,
+# 12 cm up and pitched 60 deg down.
+FRAMES: list[FrameSpec] = [
+    ("base_link", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("front_camera", "base_link", (0.32715, -0.00003, 0.04297), (0.0, 0.0, 0.0)),
+    ("mid360_link", "front_camera", (-0.032, 0.0, 0.12), (0.0, math.radians(60.0), 0.0)),
+]
+
+
+class SimGo2MountTf(StaticTfPublisher):
+    """mid360_link -> front_camera -> base_link, so base_link hangs off the odometry's mid360_link."""
+
+    def transforms(self) -> list[Transform]:
+        edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
+        return [-edges["mid360_link"], -edges["front_camera"]]
 
 
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:

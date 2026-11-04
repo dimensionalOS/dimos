@@ -40,7 +40,7 @@ class DimSimEnvironment(Sim):
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = "dimsim"
         proc.dimsim_port = self.config.port
-        proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] = self.config.scene
+        proc.extra_env["GO2WEBRTCSIM__SCENE"] = self.config.scene
 
     def setup_scene(self) -> None:
         if self.config.setup is not None:

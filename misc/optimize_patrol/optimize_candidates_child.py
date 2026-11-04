@@ -35,7 +35,7 @@ from dimos.navigation.experimental.patrolling.routers.coverage_patrol_router imp
     CoveragePatrolRouter,
 )
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
-from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 SCORING_STAMP_RADIUS_M = 0.2

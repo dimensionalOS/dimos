@@ -1,6 +1,6 @@
 ---
 name: perception-localize
-description: Locate objects with a running PerceptionLocalize stack over MCP (`state`, `localize`) - probe the machine, build the time window, watch labels on a schedule, narrow an object's position, change params per call, and tell where a failure comes from. Use whenever a blueprint with PerceptionLocalize and McpServer runs, such as go2-localize or xarm-localize-live.
+description: Locate objects with a running PerceptionLocalize stack over MCP (`state`, `localize`) - probe the machine, build the time window, watch labels on a schedule, narrow an object's position, change params per call, and tell where a failure comes from. Use whenever a blueprint with PerceptionLocalize and McpServer runs, such as xarm-localize-live.
 ---
 
 # Localize over MCP
@@ -125,7 +125,7 @@ built; a label first asked at the table is built at desk scale.
 
 Each blueprint sets its rig's `LocalizeParams` (`types.py`) at construction
 (desk-scale defaults in `LocalizeParams()`, room-scale `GO2_PARAMS` in
-`go2_localize.py`).
+`tools/tool_localize.py`).
 
 `params` is a JSON object of `LocalizeParams` field overrides for that call
 only. The next call without it is back on the module's params, the ones its

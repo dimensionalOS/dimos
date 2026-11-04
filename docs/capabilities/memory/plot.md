@@ -357,8 +357,8 @@ m.data.save("assets/plants_peak_detections.png")
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import (
     ImageDetections3DPC,
 )
-from dimos.robot.unitree.go2.connection import (
-    _camera_info_static as go2_camerainfo,
+from dimos.robot.unitree.go2.config import (
+    front_camera_info as go2_camerainfo,
     BASE_TO_OPTICAL,
 )
 from dimos.memory.vis.space.elements import Box3D

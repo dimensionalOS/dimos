@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.navigation.go2.loop_closure.pgo import PoseGraph
+    from dimos.navigation.loop_closure.pgo import PoseGraph
 
 PATH_THICKNESS = 0.01
 # Pin pattern (from dimos/memory/vis/space/rerun.py): thin vertical line
@@ -445,10 +445,10 @@ def main(
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.navigation.go2.loop_closure.pgo import PGO, PGOKwargs
-    from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO
+    from dimos.navigation.loop_closure.pgo import PGO, PGOKwargs
+    from dimos.navigation.loop_closure.pgo_map import LIVE_PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
-    from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
+    from dimos.robot.unitree.go2.config import BASE_TO_OPTICAL, front_camera_info
     from dimos.visualization.rerun.init import rerun_init
 
     db_path = resolve_dataset(dataset)
@@ -640,7 +640,7 @@ def main(
             )
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
-        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
+        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else front_camera_info()
         xf = DetectMarkers(
             camera_info=cam_info,
             marker_length_m=marker_size,
@@ -649,7 +649,7 @@ def main(
         )
         # Keep the sharpest frame per --marker-quality-window window, then
         # drop frames where the robot was moving (linear + rotational) faster
-        # than the limits. Defaults match replay_marker.py so positions agree.
+        # than the limits.
         with progress(n_images, "detecting markers") as bar:
             pipeline: Stream[Image] = color_image.tap(bar).transform(
                 QualityWindow(lambda img: img.sharpness, window=marker_quality_window)
@@ -708,8 +708,8 @@ def main(
         print(f'    pcd = PointCloud2.lcm_decode(open("{out_path.name}", "rb").read())')
 
     if export:
-        from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
-        from dimos.navigation.go2.loop_closure.premap import MAP_SUFFIX
+        from dimos.navigation.loop_closure.pgo_map import PGOMap
+        from dimos.navigation.loop_closure.premap import MAP_SUFFIX
 
         map_path = Path.cwd() / f"{db_path.stem}{MAP_SUFFIX}"
         print(f"exporting PGO graph to {map_path}...")

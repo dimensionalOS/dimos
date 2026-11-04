@@ -4,7 +4,7 @@ The Go2 navigation stack runs entirely without ROS. It uses a **column-carving v
 
 ![Live Go2 navigation in Rerun](assets/noros_nav.gif)
 
-For return visits to a known space, use a [permanent map](/docs/capabilities/navigation/go2/index.md) instead of relying on live mapping alone.
+For return visits to a known space, use a [permanent map](/docs/capabilities/navigation/index.md) instead of relying on live mapping alone.
 
 ## Data Flow
 
@@ -43,9 +43,9 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 ## Pipeline Steps
 
-### 1. LiDAR Frame ([`GO2Connection`](/dimos/robot/unitree/go2/connection.py))
+### 1. LiDAR Frame ([`Go2WebRtc`](/dimos/robot/unitree/go2/connections/webrtc/module.py))
 
-We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC client via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This lets us support stock, unjailbroken Go2 Air and Pro models out of the box.
+We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC link (a Rust native module in [`webrtc/rust/src/module.rs`](/dimos/robot/unitree/go2/connections/webrtc/rust/src/module.rs)), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This lets us support stock, unjailbroken Go2 Air and Pro models out of the box.
 
 ![LiDAR frame](assets/1-lidar.png)
 
@@ -61,7 +61,7 @@ Each incoming LiDAR frame is spliced into the global map via column carving: any
 - Dynamic objects (people, doors) get cleared automatically
 - The latest observation always wins
 
-Live loop closure corrects odometry drift when the robot revisits a place. For return visits across runs, use a [permanent map](/docs/capabilities/navigation/go2/index.md).
+Live loop closure corrects odometry drift when the robot revisits a place. For return visits across runs, use a [permanent map](/docs/capabilities/navigation/index.md).
 
 
 #### Configuration
@@ -104,7 +104,7 @@ class HeightCostConfig(OccupancyConfig):
 
 ![Global costmap](assets/3-globalcostmap.png)
 
-### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/go2/replanning_a_star/module.py))
+### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py))
 
 The planner processes the terrain gradient and computes its own planning costmap, preferring safe free paths but willing to path aggressively through tight spaces when it has to.
 
@@ -160,7 +160,7 @@ Goal candidates are filtered through a safe mask, which is the free-space region
 
 ## Blueprint Composition
 
-The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py) blueprint:
+The navigation stack described here composes like this (the shipped [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/unitree_go2.py) blueprint uses ray tracing and MLS planning instead):
 
 ```python skip fold output=assets/go2_blueprint.svg
 from dimos.core.coordination.blueprints import autoconnect
@@ -172,11 +172,11 @@ from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_
 )
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.experimental.patrolling.module import PatrollingModule
-from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 
 unitree_go2 = autoconnect(
-    unitree_go2_basic,
+    Go2WebRtc.blueprint(),
     VoxelGridMapper.blueprint(emit_every=5),
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),

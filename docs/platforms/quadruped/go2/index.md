@@ -1,6 +1,6 @@
 # Unitree Go2
 
-- [Setup your Dog](/docs/platforms/quadruped/go2/setup.md): requirements, install, connecting to your Go2, and agentic control
+- [Setup your Dog](/docs/platforms/quadruped/go2/setup.md): requirements, install, and connecting to your Go2
 - [Simulation](/docs/platforms/quadruped/go2/simulation.md): try it with no hardware via replay or MuJoCo
 - [Mapping & Navigation](/docs/capabilities/navigation/index.md): live nav, premap recording, and relocalization
 
@@ -8,23 +8,17 @@
 
 | Blueprint | Description |
 |-----------|-------------|
-| `dimos run unitree-go2-basic` | Connection + visualization (no navigation) |
-| `dimos run unitree-go2` | Full navigation stack |
-| `dimos run unitree-go2-agentic` | Navigation + LLM agent + MCP tool access |
-| `dimos run unitree-go2-agentic-ollama` | Agent with local Ollama models |
-| `dimos run unitree-go2-spatial` | Navigation + spatial memory |
-| `dimos run unitree-go2-detection` | Navigation + object detection |
+| `dimos run unitree-go2` | Full navigation stack on the real robot (`ROBOT_IP`) |
+| `dimos run unitree-go2 --simulation mujoco` | Same stack on dim-go2-sim's MuJoCo Go2 |
+| `dimos run unitree-go2 --replay.db <x.db\|x.mcap>` | Same stack on a recording |
 | `dimos --record run unitree-go2` | Navigation + record every stream to `recordings/<run-id>/memory.db` ([Recording](/docs/usage/recording.md)) |
-| `dimos run unitree-go2-memory` | Navigation + record `lidar`/`odom`/`color_image` to `.db` |
-| `dimos --record run unitree-go2-joystick-record` | Teleop from the local keyboard window + record `joystick`, `cmd_vel` and every sensor; no mapper, viewer capped at 2 GB |
-| `dimos run unitree-go2 --map-file=<map>` | Navigation on a saved map (`<map>.map.db`) |
-| `dimos run unitree-go2-map` | Navigation on a map that every run extends and saves back (`map_go2`) |
+| `dimos run unitree-go2 --localmaprelocalization.map-file=<map>` | Navigation relocalized on a saved map (`<map>.pc2.lcm`) |
 
 ## Deep Dive
 
 - [Navigation overview](/docs/capabilities/navigation/index.md): live mapping vs premap relocalization
 - [Navigation stack](/docs/capabilities/navigation/deep_dive.md): column-carving voxel mapping, costmap generation, A* planning
-- [Mapping and relocalization](/docs/capabilities/navigation/go2/index.md): permanent map, relocalizing on a saved map
+- [Mapping and relocalization](/docs/capabilities/navigation/index.md): relocalizing on a saved map
 - [Visualization](/docs/usage/visualization.md): Rerun, performance tuning
 - [Data Streams](/docs/usage/data_streams/index.md): RxPY streams, backpressure, quality filtering
 - [Transports](/docs/usage/transports/index.md): Zenoh, LCM, DDS

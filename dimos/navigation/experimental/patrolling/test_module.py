@@ -19,7 +19,7 @@ import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.experimental.patrolling.module import PatrollingModule
-from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
+from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 
 
 @pytest.fixture

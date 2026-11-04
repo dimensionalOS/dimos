@@ -14,8 +14,7 @@
 # limitations under the License.
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_fleet import unitree_go2_fleet
+from dimos.robot.unitree.go2.blueprints.unitree_go2 import unitree_go2
 from dimos.teleop.phone.phone_extensions import SimplePhoneTeleop
 
 # Simple phone teleop (mobile base axis filtering + cmd_vel output)
@@ -26,11 +25,5 @@ teleop_phone = autoconnect(
 # Phone teleop wired to Unitree Go2
 teleop_phone_go2 = autoconnect(
     SimplePhoneTeleop.blueprint(),
-    unitree_go2_basic,
-)
-
-# Phone teleop wired to Go2 fleet — twist commands sent to all robots
-teleop_phone_go2_fleet = autoconnect(
-    SimplePhoneTeleop.blueprint(),
-    unitree_go2_fleet,
+    unitree_go2,
 )

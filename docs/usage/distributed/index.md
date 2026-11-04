@@ -27,7 +27,7 @@ machine, [write a distributed blueprint](/docs/usage/distributed/blueprints.md) 
 
 ```sh skip
 dimos host ls                  # the Hosts this one can see
-dimos run go2-nav-hosted       # Ctrl-C stops every fragment
+dimos run <your-blueprint>     # Ctrl-C stops every fragment
 ```
 
 Linking, autodiscovery and gossip are in [How Hosts find each other](#how-hosts-find-each-other);
@@ -107,7 +107,7 @@ dimos host install --start --config listen=tcp/0.0.0.0
 # laptop: dial both, listen nowhere else
 dimos host install --start --config connect=tcp/10.0.0.20:7447,tcp/10.0.0.30:7447
 dimos host ls                    # laptop, GPU box, Jetson
-dimos run go2-nav-hosted
+dimos run <your-blueprint>
 ```
 
 On a Host already running, `dimos host config connect=...` then `dimos host restart`. One side

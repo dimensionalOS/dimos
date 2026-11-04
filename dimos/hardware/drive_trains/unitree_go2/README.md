@@ -1,6 +1,6 @@
 # Unitree Go2 drive-train adapter
 
-[`adapter.py`](adapter.py) — `UnitreeGo2TwistAdapter` (high-level): Twist `(vx, vy, wz)` via SportClient, with optional Rage Mode (`rage_mode=True`, ~2.5 m/s forward envelope). Auto-registered as `"unitree_go2"` and used by blueprints like `unitree-go2-keyboard-teleop`. This is the one you want for teleop, navigation, or anything velocity-commanded.
+[`adapter.py`](adapter.py) — `UnitreeGo2TwistAdapter` (high-level): Twist `(vx, vy, wz)` via SportClient, with optional Rage Mode (`rage_mode=True`, ~2.5 m/s forward envelope). Auto-registered as `"unitree_go2"`, so a `ControlCoordinator` `HardwareComponent` with `adapter_type="unitree_go2"` drives it (see `dimos/control/blueprints/mobile.py` for the pattern). This is the one you want for teleop, navigation, or anything velocity-commanded.
 
 ---
 
@@ -39,24 +39,7 @@ both vars in `~/.bashrc`, or use `nix develop` (the flake's shell sets
 them automatically), or `direnv` with `.envrc.nix`. See
 [`docs/usage/transports/dds.md`](../../../../docs/usage/transports/dds.md).
 
-Set the robot IP and launch a blueprint:
-
-```bash
-export ROBOT_IP=192.168.123.161
-dimos run unitree-go2-keyboard-teleop         # direct DDS, FreeWalk default
-```
-
-Keyboard controls (pygame window must be focused):
-
-| Key     | Action                        |
-|---------|-------------------------------|
-| `W / S` | Forward / Backward            |
-| `Q / E` | Strafe Left / Right           |
-| `A / D` | Turn Left / Right             |
-| `Shift` | 2× speed boost                |
-| `Ctrl`  | 0.5× slow mode                |
-| `Space` | Emergency stop                |
-| `ESC`   | Quit                          |
+Set the robot IP (`export ROBOT_IP=192.168.123.161`) before starting a blueprint that uses the adapter.
 
 Troubleshooting:
 
