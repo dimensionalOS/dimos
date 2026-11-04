@@ -16,7 +16,7 @@ import cbor2
 from dimos_lcm.sim_msgs import CborExtension
 import pytest
 
-from dimos.sim2.extensions import validate_extensions
+from dimos.sim2.extensions import validate_cbor_entries
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def prop():
 
 
 def test_optional_payload_keeps_its_schema_and_value(prop):
-    validate_extensions([prop], {"box"})
+    validate_cbor_entries([prop], {"box"})
     decoded = CborExtension.lcm_decode(prop.lcm_encode())
     assert decoded.schema == "example.thermal.v1"
     assert cbor2.loads(bytes(decoded.value)) == {"temperature_c": 21.5}
@@ -44,7 +44,7 @@ def test_optional_payload_keeps_its_schema_and_value(prop):
         ("entity_id", "missing", "known entity"),
         ("schema", "", "schema"),
         ("value_length", 999, "byte count"),
-        ("value", b"\xff", "invalid extension"),
+        ("value", b"\xff", "invalid CBOR"),
         ("value", b"\x01\x02", "exactly one"),
     ],
 )
@@ -53,9 +53,9 @@ def test_invalid_extension_is_rejected(prop, field, value, error):
     if field == "value":
         prop.value_length = len(value)
     with pytest.raises(ValueError, match=error):
-        validate_extensions([prop], {"box"})
+        validate_cbor_entries([prop], {"box"})
 
 
 def test_duplicate_property_is_ambiguous(prop):
     with pytest.raises(ValueError, match="duplicate"):
-        validate_extensions([prop, prop], {"box"})
+        validate_cbor_entries([prop, prop], {"box"})

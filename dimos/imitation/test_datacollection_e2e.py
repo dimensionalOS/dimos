@@ -268,9 +268,10 @@ def recorded_session(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> tuple[Path, dict[float, np.ndarray[Any, Any]]]:
     if "DIMOS_MEMORY_RECORDER_TEST_EXECUTABLE" not in os.environ:
+        # .cargo/config.toml puts every non-nix build under the root target dir.
         subprocess.run(
             ["cargo", "build", "--locked", "-p", "dimos-memory-recorder"],
-            cwd=DIMOS_PROJECT_ROOT,
+            cwd=DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust",
             check=True,
         )
     executable = Path(

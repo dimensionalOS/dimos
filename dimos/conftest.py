@@ -216,6 +216,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "skipif_aarch64: skip tests not intended to run on aarch64 (Linux ARM)"
     )
+    config.addinivalue_line(
+        "markers",
+        "skipif_flaky_in_ci: skip in CI (CI env var set) until the flake is fixed; runs locally",
+    )
 
     if config.pluginmanager.hasplugin("_cov"):
         os.environ["COVERAGE_PROCESS_START"] = str(config.rootpath / "pyproject.toml")
@@ -304,6 +308,7 @@ def pytest_collection_modifyitems(config, items):
             platform.machine() == "aarch64",
             "Not intended to run on aarch64 (Linux ARM)",
         ),
+        "skipif_flaky_in_ci": (bool(os.getenv("CI")), "flaky in CI, disabled until fixed"),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:

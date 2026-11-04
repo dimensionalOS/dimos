@@ -292,10 +292,14 @@ async def test_reliable_channel_is_complete_and_intact(
     assert odom[0].header.meta == {"i": 0}
 
 
-@pytest.mark.skip(reason="flaky in CI, disabled until fixed")
+@pytest.mark.skipif_flaky_in_ci
 async def test_latest_channel_newest_wins(robot: RelayClient, viewer: RelayClient) -> None:
     await attach(robot, viewer, ["cam"])
-    writer = robot.latest_writer("cam")
+    # No stale resets: the relay forwards a frame as soon as it has read the
+    # stream, before the ACK reaches the writer, so a reset in that window
+    # would count a delivered frame. Loopback never stalls this long, and
+    # collect_until gives up first.
+    writer = robot.latest_writer("cam", stale_after=60.0)
     offered = 200
     for i in range(offered):
         writer.offer(i.to_bytes(4, "little") + b"\xab" * 2000)
@@ -310,7 +314,13 @@ async def test_latest_channel_newest_wins(robot: RelayClient, viewer: RelayClien
             for f in frames
         )
 
-    frames = await collect_until(viewer, newest_arrived)
+    def all_sent_arrived(frames: list[DataFrame]) -> bool:
+        # One stream per frame may reorder: an older frame can still be in
+        # flight when the newest lands.
+        cam_count = sum(f.header.ch == "cam" for f in frames)
+        return newest_arrived(frames) and cam_count >= writer.sent
+
+    frames = await collect_until(viewer, all_sent_arrived)
     cam = [f for f in frames if f.header.ch == "cam"]
     markers = [int.from_bytes(bytes(f.payload[:4]), "little") for f in cam]
     # The newest offered frame always lands; the mailbox shed the rest.
@@ -321,6 +331,7 @@ async def test_latest_channel_newest_wins(robot: RelayClient, viewer: RelayClien
     # single-turn version guaranteed sent==1).
     assert writer.sent >= 2, f"pump never interleaved; sent={writer.sent}"
     # Everything the writer actually sent arrived (loopback: no transport loss).
+    assert writer.resets == 0
     assert len(cam) == writer.sent
 
 
