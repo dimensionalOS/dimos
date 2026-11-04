@@ -294,3 +294,25 @@ def test_record_keeps_every_frame_with_its_pose(
     first = json.loads((runs[0] / "frame_01.json").read_text())
     assert len(first["joints"]) == 6 and len(first["flange_T"]) == 4 and first["move"] == 1
     assert json.loads((runs[0] / "report.json").read_text())["passed"] is True
+
+
+def test_a_planner_exception_is_a_refused_target_and_no_frames_is_a_failed_verdict(
+    module: HandEyeCalibrationModule, planner: FakePlanner
+) -> None:
+    def refuse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("Start configuration is in collision, cannot plan!")
+
+    planner.plan_to_joints = refuse  # type: ignore[method-assign]
+
+    report = module.calibrate()
+
+    assert planner.executed == []
+    assert {t["outcome"] for t in report["targets"]} == {"refused_plan"}
+    assert report["passed"] is False and report["reason"] == "too few detections"
+
+    planner.plan_to_joints = FakePlanner.plan_to_joints.__get__(planner)  # type: ignore[method-assign]
+    module.config.settle_timeout_s = 0.2
+    report = module.calibrate()  # no frames arrive: the first capture times out
+
+    assert report["passed"] is False
+    assert report["reason"] == "no fresh colour frame after the move"

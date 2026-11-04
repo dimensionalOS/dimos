@@ -267,16 +267,28 @@ class HandEyeCalibrationModule(Module):
                 logger.info("Hand-eye recording", path=str(self._run.record_dir))
             obstacles = self._add_obstacles()
             try:
-                result = solve_hand_eye(
-                    _Robot(self),
-                    _Camera(self),
-                    BoardSpec(**self.config.board.model_dump()),
-                    self._nominal(),
-                    list(self.config.home_joints),
-                    self.config.max_poses,
-                    self.config.max_seconds,
-                    seed=self._run.seed,
-                )
+                try:
+                    result = solve_hand_eye(
+                        _Robot(self),
+                        _Camera(self),
+                        BoardSpec(**self.config.board.model_dump()),
+                        self._nominal(),
+                        list(self.config.home_joints),
+                        self.config.max_poses,
+                        self.config.max_seconds,
+                        seed=self._run.seed,
+                    )
+                except RuntimeError as error:  # no frames, no tf: the run ends with the reason
+                    logger.error("Hand-eye run failed", reason=str(error))
+                    result = HandEyeResult(
+                        self.config.camera_frame,
+                        self._nominal().T.copy(),
+                        False,
+                        0,
+                        self._run.moves,
+                        {},
+                        reason=str(error),
+                    )
             finally:
                 for obstacle in obstacles:
                     self._obstacles.remove_obstacle(obstacle)
@@ -406,9 +418,16 @@ class HandEyeCalibrationModule(Module):
         names = self._manipulation.list_planning_groups()
         group = next(g for g in names if g.id == self.config.planning_group)
         target = JointState(name=list(group.joint_names), position=list(q))
-        plan = self._manipulation.plan_to_joints(
-            {self.config.planning_group: target}, speed_scale=self.config.speed_scale
-        )
+        try:
+            plan = self._manipulation.plan_to_joints(
+                {self.config.planning_group: target}, speed_scale=self.config.speed_scale
+            )
+        except Exception as error:  # the planner raises on a start state in collision
+            run.refused += 1
+            record["outcome"] = "refused_plan"
+            record["message"] = str(error)
+            logger.warning("Planner refused the target", message=str(error))
+            return False
         if not plan.succeeded or plan.plan is None:
             run.refused += 1
             record["outcome"] = "refused_plan"
