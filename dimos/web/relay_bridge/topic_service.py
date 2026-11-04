@@ -25,12 +25,14 @@ import argparse
 import asyncio
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
+import importlib
+import importlib.util
 import os
 from pathlib import Path
 import signal
 import sys
 import time
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 import zenoh
@@ -46,6 +48,7 @@ from dimos.web.relay_bridge.topic_profiles import (
     MEDIA_PROFILES,
     PROFILE_OPTIONS,
     SETTING_NAMES,
+    VIDEO_PROFILES,
     normalize_settings,
 )
 from dimos.web.relay_bridge.topic_protocol import (
@@ -66,6 +69,9 @@ from dimos.web.relay_bridge.topic_protocol import (
     TopicPage,
     TopicPublishMeta,
     TopicPubResult,
+    TopicRtcCandidate,
+    TopicRtcClose,
+    TopicRtcOffer,
     TopicSettings,
     TopicSource,
     TopicSources,
@@ -77,6 +83,15 @@ from dimos.web.relay_bridge.topic_put import TopicPuts
 from dimos.web.relay_bridge.topic_transform import TopicTransforms
 from dimos.web.relay_bridge.topic_transport import LatestTopicWriter, TopicByteBudget
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
+
+if TYPE_CHECKING:
+    from dimos.web.relay_bridge.topic_video import TopicVideo, VideoRoute
+
+# aiortc and PyAV are optional and slow to import: detected without importing,
+# loaded only for a provider with video enabled.
+VIDEO_AVAILABLE = all(
+    importlib.util.find_spec(name) is not None for name in ("aiortc", "aioice", "av")
+)
 
 # Desktop's pinned runtime includes libuv's event loop for batched UDP I/O.
 # Keep the standalone service usable with the full project's asyncio setup,
@@ -102,6 +117,19 @@ def _local_zenoh() -> dict[str, Any]:
     }
 
 
+class VideoSettings(BaseModel):
+    """Direct WebRTC video (``video.h264.v1``), off unless enabled."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool = False
+    # ``software`` (``auto`` means the same until hardware encoders land)
+    # picks libopenh264 or libx264; an explicit PyAV encoder name is checked
+    # at startup.
+    encoder: str = "auto"
+    max_peers: int = Field(default=16, ge=1, le=256)
+    max_encoders: int = Field(default=4, ge=1, le=64)
+
+
 class TopicServiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     source: TopicSource
@@ -112,6 +140,7 @@ class TopicServiceConfig(BaseModel):
     write: bool = False
     media: bool = True
     guarded_publishers: bool = False
+    video: VideoSettings = Field(default_factory=VideoSettings)
     zenoh: dict[str, Any] = Field(default_factory=_local_zenoh)
 
 
@@ -128,9 +157,12 @@ class _Variant:
     not replace another's, and its own due times.
     """
 
-    def __init__(self, name: str, settings: dict[str, Any], writer: LatestTopicWriter) -> None:
+    def __init__(
+        self, name: str, settings: dict[str, Any], writer: LatestTopicWriter | None
+    ) -> None:
         self.name = name
         self.settings = settings
+        # None on a video route: its peers replace the relay-bound writer.
         self.writer = writer
         self.next_due: dict[str, float] = {}
         # Keys whose newest held sample this variant has not encoded yet.
@@ -153,6 +185,7 @@ class _Route:
         catalog: TopicCatalog,
         transforms: TopicTransforms,
         on_closed: Callable[[str], None],
+        video: "TopicVideo | None" = None,
     ) -> None:
         self._session = session
         self._client = client
@@ -160,6 +193,12 @@ class _Route:
         self._catalog = catalog
         self._transforms = transforms
         self._media = MEDIA_PROFILES.get(spec.profile)
+        # A video route encodes for its direct peers and sends no data frames.
+        self._video: VideoRoute | None = (
+            video.route(spec.route)
+            if video is not None and spec.profile in VIDEO_PROFILES
+            else None
+        )
         self._send_budget = send_budget
         self._on_closed = on_closed
         self._loop = asyncio.get_running_loop()
@@ -193,6 +232,10 @@ class _Route:
     @property
     def variants(self) -> dict[str, dict[str, Any]]:
         return {name: dict(variant.settings) for name, variant in self._variants.items()}
+
+    @property
+    def video(self) -> "VideoRoute | None":
+        return self._video
 
     def _wake(self) -> None:
         self._loop.call_soon_threadsafe(self._changed.set)
@@ -247,11 +290,14 @@ class _Route:
         self._changed.set()
 
     def _add_variant(self, name: str, settings: dict[str, Any]) -> None:
-        writer = self._client.topic_writer(
-            self.spec.route, "latest", self._send_budget, self._failed
-        )
-        assert isinstance(writer, LatestTopicWriter)
-        writer.start()
+        writer: LatestTopicWriter | None = None
+        if self._video is None:
+            opened = self._client.topic_writer(
+                self.spec.route, "latest", self._send_budget, self._failed
+            )
+            assert isinstance(opened, LatestTopicWriter)
+            opened.start()
+            writer = opened
         variant = _Variant(name, settings, writer)
         variant.pending = set(self._latest)
         self._variants[name] = variant
@@ -274,10 +320,16 @@ class _Route:
                 key: due + period - existing.period for key, due in existing.next_due.items()
             }
             existing.settings = settings
+            if self._video is not None:
+                self._video.set_rate(name, float(settings["maxHz"]))
             self._sync_rate()
         else:
             if existing is not None:
-                existing.writer.stop()
+                if existing.writer is not None:
+                    existing.writer.stop()
+                if self._video is not None:
+                    # New encode settings: the peers offer again for the new encoder.
+                    self._loop.create_task(self._video.close_variant(name, "settings_changed"))
                 del self._variants[name]
             self._add_variant(name, settings)
         return settings
@@ -288,7 +340,10 @@ class _Route:
             return
         self._prune_latest()
         self._sync_rate()
-        await variant.writer.aclose()
+        if variant.writer is not None:
+            await variant.writer.aclose()
+        if self._video is not None:
+            await self._video.close_variant(name, "variant_closed")
 
     def _absorb(self, batch: list[TopicSample]) -> None:
         for sample in batch:
@@ -413,6 +468,12 @@ class _Route:
 
     async def _encode_one(self, variant: _Variant, sample: TopicSample) -> None:
         self._catalog.observe(sample.key, sample.encoding)
+        if self._video is not None:
+            # Encoded once into every connected peer of the variant; a decode
+            # failure counts like a dropped media sample.
+            if sample.kind == "put":
+                await self._video.encode(variant.name, bytes(sample.payload))
+            return
         metadata = self._metadata(sample)
         metadata["variant"] = variant.name
         payload = bytes(sample.payload)
@@ -437,7 +498,7 @@ class _Route:
             metadata.update(output.metadata)
             metadata["encoding"] = output.encoding
             metadata["decodeFailures"] = self.decode_failures
-        if self._variants.get(variant.name) is not variant:
+        if self._variants.get(variant.name) is not variant or variant.writer is None:
             return  # retired while encoding; its writer is closing
         self._sequence += 1
         try:
@@ -464,9 +525,12 @@ class _Route:
         if subscriber is not None:
             await asyncio.to_thread(subscriber.undeclare)
         for variant in self._variants.values():
-            await variant.writer.aclose()
+            if variant.writer is not None:
+                await variant.writer.aclose()
         if self._writer is not None:
             await self._writer.aclose()
+        if self._video is not None:
+            await self._video.close()
 
     async def close(self) -> None:
         if self._task is not None:
@@ -492,6 +556,7 @@ class TopicProvider:
         client: RelayClient,
         puts: TopicPuts,
         catalog: TopicCatalog | None = None,
+        video_codec: str | None = None,
     ) -> None:
         self.config = config
         self._session = session
@@ -503,6 +568,17 @@ class TopicProvider:
         self._ingress_budget = TopicIngressBudget()
         self._send_budget = TopicByteBudget()
         self._transforms = TopicTransforms()
+        self._video: TopicVideo | None = None
+        if video_codec is not None:
+            # Fixed module, loaded only with video enabled (see video_encoder()).
+            topic_video = importlib.import_module("dimos.web.relay_bridge.topic_video")
+            self._video = topic_video.TopicVideo(
+                video_codec,
+                config.video.max_peers,
+                config.video.max_encoders,
+                client.send_control_frame,
+                self._transforms,
+            )
         self._guards: GuardedPublishers | None = None
         if config.write and config.guarded_publishers:
             loop = asyncio.get_running_loop()
@@ -559,6 +635,8 @@ class TopicProvider:
             for route in list(self._routes.values()):
                 await route.close()
             self._routes.clear()
+            if self._video is not None:
+                await self._video.close()
 
     async def _guard_frames(self) -> None:
         async for frame in self._client.topic_publications(guarded=True):
@@ -659,7 +737,9 @@ class TopicProvider:
                 self._error(message.route, "stale_generation")
                 return
             if message.profile != "raw" and (
-                not self.config.media or message.profile not in MEDIA_PROFILES
+                not self.config.media
+                or message.profile not in MEDIA_PROFILES
+                or (message.profile in VIDEO_PROFILES and self._video is None)
             ):
                 self._error(message.route, "unsupported_profile")
                 return
@@ -688,6 +768,7 @@ class TopicProvider:
                 self._catalog,
                 self._transforms,
                 self._route_closed,
+                self._video,
             )
             self._routes[message.route] = route
             try:
@@ -727,6 +808,33 @@ class TopicProvider:
                 )
             else:
                 await existing_route.close_variant(message.variant)
+        elif isinstance(message, (TopicRtcOffer, TopicRtcCandidate, TopicRtcClose)):
+            if message.gen != self._generation:
+                return
+            if self._video is None:
+                if isinstance(message, TopicRtcOffer):
+                    self._client.send_control_frame(
+                        TopicRtcClose(
+                            id=message.id,
+                            route=message.route,
+                            gen=message.gen,
+                            reason="rtc_unavailable",
+                        )
+                    )
+                return
+            if isinstance(message, TopicRtcOffer):
+                existing_route = self._routes.get(message.route)
+                video_route = None if existing_route is None else existing_route.video
+                settings = (
+                    None
+                    if existing_route is None
+                    else existing_route.variants.get(message.variant or "v1")
+                )
+                await self._video.offer(video_route, settings, message)
+            elif isinstance(message, TopicRtcCandidate):
+                await self._video.candidate(message)
+            else:
+                await self._video.close_peer(message.id, message.reason, notify=False)
         elif isinstance(message, TopicList):
             if message.source != self.config.source or not self.config.read:
                 self._error(message.id, "topic_read_denied")
@@ -752,9 +860,26 @@ class TopicProvider:
             )
 
 
-def capabilities(config: TopicServiceConfig) -> TopicCapabilities:
+def video_encoder(config: TopicServiceConfig) -> str | None:
+    """The resolved H.264 encoder, or None when video is off or unavailable.
+
+    Raises ValueError for an explicit encoder name this PyAV build lacks.
+    """
+    if not config.media or not config.video.enabled:
+        return None
+    if not VIDEO_AVAILABLE:
+        logger.warning("topic video enabled but aiortc or PyAV is not installed")
+        return None
+    topic_video = importlib.import_module("dimos.web.relay_bridge.topic_video")
+    codec: str = topic_video.resolve_encoder(config.video.encoder)
+    return codec
+
+
+def capabilities(config: TopicServiceConfig, *, video: bool = False) -> TopicCapabilities:
     """What this provider advertises at hello, ranges per profile included."""
-    profiles = ["raw", *MEDIA_PROFILES] if config.media else ["raw"]
+    profiles = ["raw"]
+    if config.media:
+        profiles += [name for name in MEDIA_PROFILES if video or name not in VIDEO_PROFILES]
     return TopicCapabilities(
         read=config.read,
         write=config.write,
@@ -767,6 +892,7 @@ def capabilities(config: TopicServiceConfig) -> TopicCapabilities:
 async def serve(config: TopicServiceConfig, stop: asyncio.Event) -> None:
     """Own the direct Zenoh session, relay retries and all subscription cleanup."""
     zconfig = make_zenoh_config(config.zenoh)
+    codec = video_encoder(config)  # rejected before anything connects
     session = await asyncio.to_thread(zenoh.open, zconfig)
     puts = TopicPuts(session)
     stop_task = asyncio.create_task(stop.wait())
@@ -781,10 +907,10 @@ async def serve(config: TopicServiceConfig, stop: asyncio.Event) -> None:
                     await client.hello(
                         topic_source=config.source,
                         token=None if config.token is None else config.token.get_secret_value(),
-                        topic_capabilities=capabilities(config),
+                        topic_capabilities=capabilities(config, video=codec is not None),
                     )
                     client.start_keepalive()
-                    provider = TopicProvider(config, session, client, puts, catalog)
+                    provider = TopicProvider(config, session, client, puts, catalog, codec)
                     task = asyncio.create_task(provider.run())
                     logger.info("topic source connected", source=config.source)
                     try:
@@ -853,7 +979,10 @@ def main() -> None:
         config = TopicServiceConfig.model_validate_json(args.config.read_bytes())
     except (OSError, ValidationError):
         raise SystemExit("invalid or unreadable topic service configuration") from None
-    _run(_main(config, exit_on_stdin_eof=args.exit_on_stdin_eof))
+    try:
+        _run(_main(config, exit_on_stdin_eof=args.exit_on_stdin_eof))
+    except ValueError as error:  # an explicit video encoder this build lacks
+        raise SystemExit(f"invalid topic service configuration: {error}") from None
 
 
 if __name__ == "__main__":
