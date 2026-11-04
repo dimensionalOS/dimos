@@ -30,6 +30,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     CMD_VEL_TIMEOUT_S,
     FRONT_LIDAR_XYZ_M,
     REAR_LIDAR_XYZ_M,
+    WORLD_FRAME,
 )
 from dimos.simulation.m20_sim.body import LeggedM20, m20_spec
 from dimos.simulation.m20_sim.policy import M20Policy
@@ -131,18 +132,13 @@ def _spec() -> mujoco.MjSpec:
     return spec
 
 
-def _untuned(model: mujoco.MjModel) -> None:
-    pass
-
-
 M20_RIG = Rig(
     spec=_spec,
     base_body="base_link",
     sensors=(FRONT, REAR),
     shape=SHAPE,
     command_timeout=CMD_VEL_TIMEOUT_S,
-    tune=_untuned,
-    world_frame="map",
+    world_frame=WORLD_FRAME,
     odom_child_frame="base_link",
     cloud_frame="base",
     lidar_group=COLLISION_GROUP,

@@ -214,7 +214,8 @@ def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
         housing.quat = (q[3], q[0], q[1], q[2])
         housing.group = COLLISION_GROUP
     model = spec.compile()
-    rig.tune(model)
+    if rig.tune is not None:
+        rig.tune(model)
     return model
 
 

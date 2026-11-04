@@ -78,11 +78,11 @@ class Rig:
     sensors: tuple[Sensor, ...]
     shape: BodyShape
     command_timeout: float
-    tune: Callable[[mujoco.MjModel], None]
     world_frame: str
     odom_child_frame: str
     cloud_frame: CloudFrame
     lidar_group: int = ROBOT_VISUAL_GROUP
+    tune: Callable[[mujoco.MjModel], None] | None = None
 
     def __post_init__(self) -> None:
         if self.cloud_frame == "sensor" and len(self.sensors) != 1:

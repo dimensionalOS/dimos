@@ -71,4 +71,4 @@ m20_sim_nav = autoconnect(
     _m20_nav,
     # gossip off until zenoh fixes its pending-connection bug: with it on, native modules
     # spawned together never link
-).global_config(transport="zenoh", zenoh_gossip=False, n_workers=8)
+).global_config(zenoh_gossip=False, n_workers=8)
