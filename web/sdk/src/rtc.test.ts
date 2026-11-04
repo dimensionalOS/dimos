@@ -10,6 +10,7 @@ export class FakePeerConnection implements PeerConnectionLike {
   readonly remote: RTCSessionDescriptionInit[] = [];
   readonly transceivers: { mid: string | null; receiver: { track: MediaStreamTrack } }[] = [];
   readonly added: { kind: string; init?: { direction?: string } }[] = [];
+  readonly remoteCandidates: ({ candidate: string; sdpMid: string | null } | null)[] = [];
   closed = 0;
   offerSdp = "v=0\r\noffer\r\n";
   answerSdp = "v=0\r\nanswer\r\n";
@@ -56,6 +57,11 @@ export class FakePeerConnection implements PeerConnectionLike {
     return Promise.resolve();
   }
 
+  addIceCandidate(candidate: { candidate: string; sdpMid: string | null } | null): Promise<void> {
+    this.remoteCandidates.push(candidate);
+    return Promise.resolve();
+  }
+
   getTransceivers(): { mid: string | null; receiver: { track: MediaStreamTrack } }[] {
     return this.transceivers;
   }
@@ -70,9 +76,23 @@ export class FakePeerConnection implements PeerConnectionLike {
     this.closed++;
   }
 
-  candidate(type: string | null): void {
-    const event = { candidate: type === null ? null : { type } } as unknown as Event;
+  candidate(type: string | null, line = `candidate:1 1 udp 1 10.0.0.2 5000 typ ${type}`): void {
+    const candidate = type === null ? null : { type, candidate: line, sdpMid: "0" };
+    const event = { candidate } as unknown as Event;
     for (const listener of this.#listeners.get("icecandidate") ?? []) listener(event);
+  }
+
+  /** The provider's track arrived on the first transceiver. */
+  track(): MediaStreamTrack {
+    if (this.transceivers.length === 0) this.addTransceiver("video");
+    const transceiver = this.transceivers[0];
+    transceiver.mid ??= "0";
+    const event = {
+      track: transceiver.receiver.track,
+      receiver: transceiver.receiver,
+    } as unknown as Event;
+    for (const listener of this.#listeners.get("track") ?? []) listener(event);
+    return transceiver.receiver.track;
   }
 
   complete(): void {

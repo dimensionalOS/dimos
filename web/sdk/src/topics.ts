@@ -24,11 +24,19 @@ import {
   type TopicSourceInfo,
   type TopicSubMsg,
 } from "@dimos/shared";
+import { createPeerConnection, type PeerConnectionFactory } from "./rtc.ts";
 import {
   type TopicPublisher,
   type TopicPublisherOptions,
   TopicPublishers,
 } from "./topicPublishers.ts";
+import {
+  type TopicRtcSignal,
+  type TopicVideo,
+  TopicVideoHandle,
+  type TopicVideoOptions,
+  type VideoHost,
+} from "./topicVideo.ts";
 
 export type { TopicSettings } from "@dimos/shared";
 
@@ -131,6 +139,14 @@ export interface Topics {
   onSources(callback: (sources: readonly TopicSourceInfo[]) => void): () => void;
   /** Fires after available subscriptions recover, for HTTP resync. Offline sources do not block it. */
   onReconnect(callback: () => void): () => void;
+  /** A camera as a MediaStreamTrack over a direct WebRTC connection to the
+   * provider (profile video.h264.v1). `onTrack` fires with the track on
+   * arrival and after a reconnect, and with null when it ends. */
+  video(
+    keyExpr: string,
+    options: TopicVideoOptions,
+    onTrack: (track: MediaStreamTrack | null) => void,
+  ): TopicVideo;
 }
 
 function deferred() {
@@ -178,6 +194,8 @@ interface InFlight {
 interface Group {
   id: string;
   signature: string;
+  /** Never shared or re-indexed: a video handle owns its relay route. */
+  exclusive: boolean;
   keyExpr: string;
   identity: Identity;
   /** The acknowledged settings request, rate included; what topic_sub carries. */
@@ -233,7 +251,11 @@ class Handle implements TopicSubscription {
   #settings: TopicSettings = { maxHz: 30 };
   #wait = deferred();
   #listeners = new Set<(status: TopicStatus) => void>();
-  constructor(readonly owner: TopicClient, readonly callback: (sample: TopicSample) => void) {}
+  constructor(
+    readonly owner: TopicClient,
+    readonly callback: (sample: TopicSample) => void,
+    readonly exclusive = false,
+  ) {}
   ready(): Promise<void> {
     return this.#wait.promise;
   }
@@ -318,6 +340,9 @@ export class TopicClient implements Topics {
   #recovering = false;
   #credits = new Set<Group>();
   #creditTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Direct video handles by the id of their inner subscription. */
+  #videoSinks = new Map<string, (msg: TopicRtcSignal) => void>();
+  readonly #createPeerConnection: PeerConnectionFactory;
   #lists = new Map<string, {
     resolve: (page: TopicPage) => void;
     reject: (error: TopicError) => void;
@@ -350,10 +375,44 @@ export class TopicClient implements Topics {
     binary: (bytes) => this.#sendGuard?.(bytes) ?? Promise.reject(new Error("not connected")),
   });
 
-  constructor(readonly defaultSource?: string) {}
+  constructor(
+    readonly defaultSource?: string,
+    createPc: PeerConnectionFactory = createPeerConnection,
+  ) {
+    this.#createPeerConnection = createPc;
+  }
   publisher(key: string, safeStop: Uint8Array, options: TopicPublisherOptions): TopicPublisher {
     return this.#publishers.publisher(key, safeStop, options);
   }
+  video(
+    keyExpr: string,
+    options: TopicVideoOptions,
+    onTrack: (track: MediaStreamTrack | null) => void,
+  ): TopicVideo {
+    return new TopicVideoHandle(this.#videoHost, keyExpr, options, onTrack);
+  }
+  readonly #videoHost: VideoHost = {
+    subscribe: (keyExpr, options, onSample, exclusive) => {
+      const handle = new Handle(this, onSample, exclusive);
+      this.acquire(handle, keyExpr, options);
+      return handle;
+    },
+    routeOf: (handle) => {
+      const group = (handle as Handle).group;
+      return group === null || group.route === null || group.status.phase !== "ready"
+        ? null
+        : { id: group.id, route: group.route, gen: group.gen };
+    },
+    bind: (id, sink) => this.#videoSinks.set(id, sink),
+    unbind: (id) => this.#videoSinks.delete(id),
+    send: (msg) => {
+      if (this.#send === null) return false;
+      this.#send(msg);
+      return true;
+    },
+    // Host candidates only: direct video needs the provider's UDP ports reachable.
+    createPeerConnection: () => this.#createPeerConnection({ iceServers: [] }),
+  };
   #id(): string {
     return `${this.#prefix}-${++this.#counter}`;
   }
@@ -379,7 +438,7 @@ export class TopicClient implements Topics {
     return handle;
   }
   /** The group for keyExpr and options, created and requested when new. */
-  #obtain(keyExpr: string, options: TopicOptions): Group | TopicError {
+  #obtain(keyExpr: string, options: TopicOptions, exclusive = false): Group | TopicError {
     if (this.#closed) return new TopicError("closed", "rejected");
     const identity: Identity = {
       source: options.source ?? this.defaultSource,
@@ -407,12 +466,15 @@ export class TopicClient implements Topics {
     ) {
       return new TopicError("invalid_topic_options", "rejected");
     }
-    const signature = signatureOf(keyExpr, identity, requested);
-    let group = this.#groups.get(signature);
+    let signature = signatureOf(keyExpr, identity, requested);
+    let group = exclusive ? undefined : this.#groups.get(signature);
     if (group === undefined) {
+      const id = this.#id();
+      if (exclusive) signature = `${signature}#${id}`;
       group = {
-        id: this.#id(),
+        id,
         signature,
+        exclusive,
         keyExpr,
         identity,
         requested,
@@ -444,7 +506,7 @@ export class TopicClient implements Topics {
   acquire(handle: Handle, keyExpr: string, options: TopicOptions): void {
     const group = this.#handles >= MAX_TOPIC_HANDLES
       ? new TopicError("topic_limit", "rejected")
-      : this.#obtain(keyExpr, options);
+      : this.#obtain(keyExpr, options, handle.exclusive);
     if (group instanceof TopicError) {
       handle.transition({ phase: "rejected", error: group });
       return;
@@ -532,7 +594,12 @@ export class TopicClient implements Topics {
     }
     const existing = this.#groups.get(signatureOf(group.keyExpr, group.identity, requested));
     const inPlace = group.handles.size === 1 && group.status.phase === "ready" && group.sent &&
-      this.#send !== null && (existing === undefined || existing === group);
+      this.#send !== null && (group.exclusive || existing === undefined || existing === group);
+    if (!inPlace && group.exclusive) {
+      // An exclusive route never moves to a shared one; it changes once ready.
+      update.reject(new TopicError("topic_not_ready", "rejected"));
+      return;
+    }
     if (inPlace) {
       if (this.#groups.get(group.signature) === group) this.#groups.delete(group.signature);
       const revision = ++group.revision;
@@ -572,7 +639,7 @@ export class TopicClient implements Topics {
   /** Offer a live group to new consumers under its acknowledged settings,
    * unless a change is in flight or another group already serves them. */
   #index(group: Group): void {
-    if (group.pending !== null || this.#ids.get(group.id) !== group) return;
+    if (group.pending !== null || group.exclusive || this.#ids.get(group.id) !== group) return;
     if (!this.#groups.has(group.signature)) this.#groups.set(group.signature, group);
   }
   /** Handles waiting for `group` switch to it once ready; a rejection keeps
@@ -858,7 +925,9 @@ export class TopicClient implements Topics {
     if (group === undefined || pending === null || pending.revision !== msg.revision) return;
     group.pending = null;
     group.requested = pending.requested;
-    group.signature = signatureOf(group.keyExpr, group.identity, pending.requested);
+    if (!group.exclusive) {
+      group.signature = signatureOf(group.keyExpr, group.identity, pending.requested);
+    }
     group.settings = msg.settings;
     pending.resolve(msg.settings);
     this.#next(group);
@@ -866,6 +935,13 @@ export class TopicClient implements Topics {
   onMessage(msg: TopicMsg): void {
     if (this.#closed) return;
     if (this.#publishers.message(msg)) return;
+    if (
+      msg.t === "topic_rtc_answer" || msg.t === "topic_rtc_candidate" || msg.t === "topic_rtc_close"
+    ) {
+      const group = this.#ids.get(msg.id);
+      if (group?.route === msg.route && group.gen === msg.gen) this.#videoSinks.get(msg.id)?.(msg);
+      return;
+    }
     if (msg.t === "topic_sources") {
       this.#negotiated = true;
       this.#sources = new Map(msg.sources.map((s) => [s.source, s]));

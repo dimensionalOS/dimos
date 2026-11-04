@@ -349,13 +349,13 @@ class SessionImpl implements Session {
   };
 
   constructor(options: ConnectOptions, deps: TransportDeps) {
-    this.topics = new TopicClient(options.topicSource);
+    this.#createPeerConnection = deps.createPeerConnection ?? createPeerConnection;
+    this.topics = new TopicClient(options.topicSource, this.#createPeerConnection);
     registerTeleopHooks(this, this.#teleop);
     this.#registry = options.decoders ?? createDecoderRegistry();
     this.#token = options.token;
     this.#pingIntervalMs = options.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
     this.#pinned = options.robot ?? null;
-    this.#createPeerConnection = deps.createPeerConnection ?? createPeerConnection;
     const infoUrl = resolveInfoUrl(options.url);
     this.transport = new ReconnectingTransport(
       {
