@@ -138,7 +138,7 @@ and raycaster are selectable adapters, not a claim of cross-engine fidelity.
 ### G1 acceptance blueprint (second PR)
 
 ```sh
-uv sync --extra sim --extra control
+uv sync --extra sim --extra control --extra cpu
 source .venv/bin/activate
 dimos run unitree-g1-sim2 --daemon
 dimos shell
