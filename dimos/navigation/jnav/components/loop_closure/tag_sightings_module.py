@@ -39,7 +39,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
-from dimos.navigation.jnav.utils.apriltags import (
+from dimos.navigation.jnav.utils.tag_sighting_clusterer import (
     STABLE_POSE_KEY,
     Detection,
     SightingClusterer,
@@ -72,6 +72,7 @@ class TagSightingsConfig(ModuleConfig):
     body_frame: str = "base_link"
     # camera optical frame for the distance / view-angle gates ("" turns them off)
     camera_frame: str = "camera_optical"
+    # how far from a detection's time a tf lookup may land (the camera and tf streams are not in lockstep)
     tf_tolerance_s: float = 0.5
     # landmark name = prefix + marker id; markers not fixed in the world are left out
     landmark_prefix: str = "apriltag/"

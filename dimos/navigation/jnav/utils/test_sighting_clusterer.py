@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.navigation.jnav.utils.apriltags import (
+from dimos.navigation.jnav.utils.tag_sighting_clusterer import (
     STABLE_POSE_KEY,
     SightingClusterer,
     SightingClustering,

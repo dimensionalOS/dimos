@@ -30,7 +30,7 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.jnav.components.loop_closure.tag_sightings_module import TagSightings
 from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
-from dimos.navigation.jnav.utils.apriltags import SightingClustering
+from dimos.navigation.jnav.utils.tag_sighting_clusterer import SightingClustering
 from dimos.protocol.tf.tf import MultiTBuffer
 
 

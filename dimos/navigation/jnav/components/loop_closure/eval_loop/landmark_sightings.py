@@ -35,13 +35,14 @@ from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.navigation.jnav.utils.apriltags import (
+from dimos.navigation.jnav.components.loop_closure.tag_sightings_module import TagSightingsConfig
+from dimos.navigation.jnav.utils.recording_tf import RecordingTF
+from dimos.navigation.jnav.utils.tag_sighting_clusterer import (
     STABLE_POSE_KEY,
     Detection,
     SightingClusterer,
     SightingClustering,
 )
-from dimos.navigation.jnav.utils.recording_tf import RecordingTF
 
 
 def to_matrix(pose: list[float]) -> np.ndarray:
@@ -73,7 +74,10 @@ def main() -> None:
         "--exclude", type=int, nargs="*", default=[17], help="marker ids not fixed in the world"
     )
     parser.add_argument(
-        "--position-sd-m", type=float, default=0.05, help="per-axis sd of a sighting's position"
+        "--position-sd-m",
+        type=float,
+        default=TagSightingsConfig().position_sd_m,
+        help="per-axis sd of a sighting's position (the live TagSightings default)",
     )
     for name, value in vars(defaults).items():
         parser.add_argument(f"--{name.replace('_', '-')}", type=type(value), default=value)
