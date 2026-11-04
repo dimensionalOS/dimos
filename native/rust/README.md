@@ -1,9 +1,10 @@
 # dimOS Rust module SDK
 
-Two crates:
+Three crates:
 
 - **`dimos-module`**: runtime. `Module` trait, `Builder`, `Input`/`Output`, `Transport` (`LcmTransport`/`ZenohTransport`), `run_with_transport()`.
 - **`dimos-module-macros`**: `#[derive(Module)]` and `#[native_config]` proc-macros.
+- **`dimos-reform`**: pose-graph keyframe corrections (GscPGO's `pose_graph` / `loop_closure_event`) as a fast-reform warp, for the ray tracer and the MLS planner.
 
 ## Writing a module
 

@@ -29,7 +29,7 @@
                 (cratePkgs.buildRustCrate.override {
                   defaultCrateOverrides = cratePkgs.defaultCrateOverrides // { stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; }; };
                 }) (crate // pkgs.lib.optionalAttrs
-                  (mode != null && pkgs.lib.hasPrefix "dimos-module" crate.crateName)
+                  (mode != null && builtins.elem crate.crateName [ "dimos-module" "dimos-module-macros" "dimos-reform" ])
                   ({
                     release = false;
                     extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-C" "debuginfo=0" ];
@@ -53,9 +53,10 @@
 
         module = crateOf "dimos-module";
         macros = crateOf "dimos-module-macros";
+        reform = crateOf "dimos-reform";
       in {
-        packages.lint = pkgs.linkFarmFromDrvs "dimos-module-lint" [ module.lint macros.lint ];
-        packages.tests = pkgs.linkFarmFromDrvs "dimos-module-tests" [ module.tests macros.tests ];
+        packages.lint = pkgs.linkFarmFromDrvs "dimos-module-lint" [ module.lint macros.lint reform.lint ];
+        packages.tests = pkgs.linkFarmFromDrvs "dimos-module-tests" [ module.tests macros.tests reform.tests ];
         checks.lint = self.packages.${system}.lint;
         checks.tests = self.packages.${system}.tests;
 
