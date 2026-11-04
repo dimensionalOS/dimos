@@ -1,4 +1,4 @@
-import type { TerminalId } from "../shared/protocol/auth.ts";
+import type { TerminalId } from "#dimos/agents/shared/protocol/auth.ts";
 import type { WebSocketLike } from "@earendil-works/chord";
 import { WebSocket } from "ws";
 import { createConnection } from "node:net";

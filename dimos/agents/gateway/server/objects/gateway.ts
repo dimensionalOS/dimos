@@ -1,17 +1,17 @@
-import type { Handlers } from "./lib/bind.ts";
-import type { LoginState } from "../../../shared/protocol/auth.ts";
-import type { ServeObject } from "./base.ts";
-import type { Standing } from "../../../shared/protocol/actions/standing.ts";
-import { GATEWAY_ACTIONS } from "../../../shared/protocol/actions/gateway.ts";
-import { GatewayContract, GatewayState } from "../../../shared/protocol/gateway/contract.ts";
-import { GatewayStore } from "./store.ts";
-import { bind } from "./lib/bind.ts";
-import { carried } from "../../../shared/protocol/schema.ts";
-import { done, refused } from "../../../shared/protocol/outcome.ts";
-import { feed } from "./lib/feed.ts";
-import { forward } from "./lib/forward.ts";
-import { fromJobChange, fromModuleOutcome } from "./lib/outcomes.ts";
-import { grantOf } from "../../auth/principal.ts";
+import type { Handlers } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import type { LoginState } from "#dimos/agents/shared/protocol/auth.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
+import { GatewayContract, GatewayState } from "#dimos/agents/shared/protocol/gateway/contract.ts";
+import { GatewayStore } from "#dimos/agents/gateway/server/objects/store.ts";
+import { bind } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
+import { feed } from "#dimos/agents/gateway/server/objects/lib/feed.ts";
+import { forward } from "#dimos/agents/gateway/server/objects/lib/forward.ts";
+import { fromJobChange, fromModuleOutcome } from "#dimos/agents/gateway/server/objects/lib/outcomes.ts";
+import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
 
 const SHARED = Object.keys(GatewayState) as (keyof typeof GatewayState)[];
 

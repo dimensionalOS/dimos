@@ -97,7 +97,7 @@ from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until 
 tqdm.tqdm.monitor_interval = 0
 
 _dotenv = dotenv_values()
-for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY"):
+for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "ALIBABA_API_KEY"):
     if _dotenv.get(_key):
         os.environ.setdefault(_key, _dotenv[_key])
 
@@ -183,12 +183,14 @@ def pytest_configure(config):
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
     )
     config.addinivalue_line(
-        "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
+        "markers",
+        "self_hosted_large: end-to-end and high-memory tests for the large self-hosted "
+        "runner; runs in the daily e2e workflow, not per PR",
     )
     config.addinivalue_line(
         "markers",
         "web_browser: cockpit browser e2e (playwright chromium + firefox); "
-        "runs in the CI web job and the macOS self-hosted-tests job",
+        "runs in the daily e2e workflow (Linux + macOS), not per PR",
     )
     config.addinivalue_line(
         "markers",

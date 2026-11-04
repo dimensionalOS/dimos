@@ -131,6 +131,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "pydantic-core", # blueprint_config, sensor_msgs/CameraInfo
+    "cbor2>=6.1.5,<7", # RPC and worker-pipe serialization (protocol/encode/cbor.py)
     "python-dotenv",
     "packaging>=24.0",
     "requests>=2.32",
@@ -301,7 +302,7 @@ unitree-dds = [
 control = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
-    "can-motor-control>=0.0.8",
+    "can-motor-control==0.0.12",
     "python-can>=4",
     "pygame>=2.6.1",
     "xacro",
@@ -435,7 +436,7 @@ project-deps = [
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
     # The generic Damiao whole-body adapter imports upstream types directly.
-    "can-motor-control>=0.0.8",
+    "can-motor-control==0.0.12",
 ]
 
 tests = [
@@ -490,8 +491,8 @@ tests = [
 ]
 
 # Drives the cockpit browser e2e (-m web_browser). Kept out of `tests`: only
-# the CI jobs that run it (`web`, macOS `self-hosted-tests`) need the
-# platform-specific Playwright package.
+# the browser jobs of the daily `e2e` workflow need the platform-specific
+# Playwright package.
 browser-tests = [
     "playwright>=1.55",
 ]

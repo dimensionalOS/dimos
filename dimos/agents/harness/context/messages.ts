@@ -1,5 +1,5 @@
-import type { FactKey, Facts, RuntimeChange } from "../../shared/protocol/runtime/context.ts";
-import { STATUS_KEY, factEntries, isNoticeFact } from "./facts.ts";
+import type { FactKey, Facts, RuntimeChange } from "#dimos/agents/shared/protocol/runtime/context.ts";
+import { STATUS_KEY, factEntries, isNoticeFact } from "#dimos/agents/harness/context/facts.ts";
 
 /** A removal of more facts than this, emptying a section, is stated as one line. */
 const COLLAPSE_REMOVALS = 5;

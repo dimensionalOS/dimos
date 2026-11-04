@@ -1,4 +1,4 @@
-import type { TerminalId } from "../../shared/protocol/auth.ts";
+import type { TerminalId } from "#dimos/agents/shared/protocol/auth.ts";
 import type { IncomingMessage } from "node:http";
 
 /** A page's access token; each token carries its grant. */

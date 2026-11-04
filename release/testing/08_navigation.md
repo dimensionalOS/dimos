@@ -36,27 +36,11 @@ The first run pulls the `go2_mid360_sf_office_outdoors_2026-05-29` recording and
 
 ```bash
 uv run dimos run relocalize-mid360 --map-file go2_mid360_sf_office_outdoors_2026-05-29
-uv run dimos run unitree-go2-nav-3d-relocalization-replay --map-file go2_mid360_sf_office_outdoors_2026-05-29
 ```
 
 * In `relocalize-mid360`, `world/loaded_map` appears in Rerun once a fix lands and lies on top of the live map.
-* In the nav replay, Rerun has no `world/loaded_map`. The premap seeds the voxel map in `world/map_regions` instead.
 
-Expected result: both blueprints log `relocalize fix` followed by `placed, no further attempts`, without tracebacks.
-
-## 8.4 Go2 3D navigation with a Mid-360
-
-Needs a Go2 with a Livox Mid-360 mounted and reachable on the LAN.
-
-```bash
-uv run dimos run unitree-go2-nav-3d --lidar-ip=<mid360-ip>
-```
-
-* Drive a few meters with WASD in Rerun. The voxel map grows around the robot.
-* Click a point on the floor. A path appears and the robot walks there.
-* Click a point at the top of a short flight of stairs. The robot climbs them.
-
-Expected result: the robot reaches each clicked goal, including the one up the stairs.
+Expected result: the blueprint logs `relocalize fix` followed by `placed, no further attempts`, without tracebacks.
 
 ## 8.5 Mid-360 driver and Point-LIO
 

@@ -1,15 +1,15 @@
-import type { CardGroup } from "../../../shared/view-models/streams/cards.ts";
-import type { Channel, StreamRef } from "../../../shared/protocol/streams.ts";
+import type { CardGroup } from "#dimos/agents/shared/view-models/streams/cards.ts";
+import type { Channel, StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
 import type { Component } from "@earendil-works/pi-tui";
-import type { EpochMs } from "../../../shared/protocol/time.ts";
-import type { FrameRecord, FrameSource } from "../../../sdk/streams/base.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { FrameRecord, FrameSource } from "#dimos/agents/sdk/streams/base.ts";
 import type { InboxState } from "@earendil-works/pi-durable";
-import type { JobMark } from "../../../shared/view-models/jobs/timeline.ts";
-import type { JobRow } from "../../../shared/protocol/jobs/state.ts";
-import type { ModuleRow } from "../../../shared/protocol/runtime/module.ts";
-import type { OwnedStream, Transcript } from "../../../shared/protocol/conversation/state.ts";
-import type { RateTable } from "../../../shared/view-models/streams/rates.ts";
-import { FramePainter } from "./painter.ts";
+import type { JobMark } from "#dimos/agents/shared/view-models/jobs/timeline.ts";
+import type { JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { OwnedStream, Transcript } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { RateTable } from "#dimos/agents/shared/view-models/streams/rates.ts";
+import { FramePainter } from "#dimos/agents/frontends/tui/sidebar/painter.ts";
 import {
   HStack,
   ScrollView,
@@ -19,14 +19,14 @@ import {
   matchesKey,
   truncateToWidth,
 } from "@earendil-works/pi-tui";
-import { StreamCardView } from "./card.ts";
-import { accent, amber, levelColor, muted } from "../style.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { clock, duration } from "../../../shared/view-models/time.ts";
-import { ratesOf } from "../../../shared/view-models/streams/rates.ts";
-import { jobLanes } from "../../../shared/view-models/jobs/timeline.ts";
-import { noticesOf } from "../../../shared/view-models/conversation/notices.ts";
-import { sidebarGroups, systemGroups } from "../../../shared/view-models/streams/cards.ts";
+import { StreamCardView } from "#dimos/agents/frontends/tui/sidebar/card.ts";
+import { accent, amber, levelColor, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { clock, duration } from "#dimos/agents/shared/view-models/time.ts";
+import { ratesOf } from "#dimos/agents/shared/view-models/streams/rates.ts";
+import { jobLanes } from "#dimos/agents/shared/view-models/jobs/timeline.ts";
+import { noticesOf } from "#dimos/agents/shared/view-models/conversation/notices.ts";
+import { sidebarGroups, systemGroups } from "#dimos/agents/shared/view-models/streams/cards.ts";
 
 /** What the sidebar draws: the shown conversation's own rows, read when it renders. */
 export type SidebarSource = {

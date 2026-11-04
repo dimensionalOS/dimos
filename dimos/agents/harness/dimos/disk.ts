@@ -1,4 +1,4 @@
-import type { AgentModuleName } from "../../shared/protocol/runtime/event.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { Value } from "typebox/value";

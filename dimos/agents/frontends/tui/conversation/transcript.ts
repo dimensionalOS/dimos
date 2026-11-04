@@ -1,17 +1,17 @@
 import type { AssistantMessage, ToolCall, UserMessage } from "@earendil-works/pi-ai";
 import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import type { DimosInput } from "../../../shared/protocol/conversation/input.ts";
-import type { InputOutcome, ToolResult, TranscriptItem } from "../../../shared/protocol/conversation/state.ts";
-import type { QueuedRow } from "../../../shared/view-models/conversation/queue.ts";
-import type { RenderDetails } from "../../../shared/protocol/media.ts";
-import type { TimelineRow } from "../../../shared/view-models/conversation/timeline.ts";
-import type { ToolCard } from "../cards/base.ts";
+import type { DimosInput } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import type { InputOutcome, ToolResult, TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { QueuedRow } from "#dimos/agents/shared/view-models/conversation/queue.ts";
+import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
+import type { TimelineRow } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
+import type { ToolCard } from "#dimos/agents/frontends/tui/cards/base.ts";
 import { AssistantMessageComponent, UserMessageComponent, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { Gallery } from "../views/gallery.ts";
-import { accent, amber, muted } from "../style.ts";
-import { cardFor } from "../cards/choose.ts";
-import { clean, cleanMultiline } from "../../../shared/view-models/text.ts";
+import { Gallery } from "#dimos/agents/frontends/tui/views/gallery.ts";
+import { accent, amber, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { cardFor } from "#dimos/agents/frontends/tui/cards/choose.ts";
+import { clean, cleanMultiline } from "#dimos/agents/shared/view-models/text.ts";
 
 /** What the chat shows now: the conversation's timeline and how many older items the transfer budget left out. */
 export type TranscriptSource = { readonly rows: readonly TimelineRow[]; readonly omitted: number };
@@ -39,6 +39,7 @@ function renderOf(result: ToolResult): RenderDetails | null {
     case "edit":
     case "write":
     case "job":
+    case "background":
     case null:
       return null;
   }
@@ -111,7 +112,7 @@ const SELECTED_GUTTER = "┃ ";
 
 const BACKGROUND_ENDS: {
   readonly [E in Extract<DimosInput["source"], { readonly kind: "background" }>["end"]]: string;
-} = { finished: "finished", failed: "failed", interrupted: "was interrupted" };
+} = { finished: "finished", failed: "failed", stopped: "was stopped", interrupted: "was interrupted" };
 
 function queuedLine(row: QueuedRow): string {
   const label = row.from === "you" ? (row.mode === "steer" ? "steer" : "follow") : FROM_LABELS[row.from];

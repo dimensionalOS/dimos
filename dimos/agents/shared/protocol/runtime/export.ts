@@ -1,4 +1,4 @@
-import { Sha256Schema } from "../media.ts";
+import { Sha256Schema } from "#dimos/agents/shared/protocol/media.ts";
 import { Type } from "typebox";
 
 /** An Image or PointCloud2 saved by an agent module's notify call. */
