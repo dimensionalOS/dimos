@@ -40,7 +40,6 @@ from dimos.simulation.sim_world.premap import premap_cloud, without_objects
 from dimos.simulation.sim_world.world import (
     CONTACTS_HEARTBEAT_DT,
     FRAME_DT,
-    LIDAR_GROUPS,
     LidarFrame,
     Sim,
     display_xml,
@@ -159,7 +158,7 @@ def test_sensor_velocity_matches_the_motion(sim: Sim) -> None:
 
 def test_the_lidar_sees_nothing_overhead(sim: Sim) -> None:
     position, _ = sim.sensor_pose(MID360)
-    raycaster = MujocoRaycaster(sim.model, sim.data, LIDAR_GROUPS)
+    raycaster = MujocoRaycaster(sim.model, sim.data, sim.lidar_groups)
     dist, _ = raycaster.cast(position, np.array([[0.0, 0.0, 1.0]]), 10.0)
     assert dist[0] < 0
 

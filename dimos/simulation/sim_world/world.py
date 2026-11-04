@@ -56,8 +56,14 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
-from dimos.simulation.sim_world.body import Body, BodyShape, Rig, Sensor
+from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
+from dimos.simulation.sim_world.body import (
+    COLLISION_GROUP,
+    Body,
+    BodyShape,
+    Rig,
+    Sensor,
+)
 from dimos.simulation.sim_world.premap import premap_cloud, without_objects
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.logging_config import setup_logger
@@ -65,10 +71,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 FRAME_DT = 0.1
-ROBOT_VISUAL_GROUP = 2
-COLLISION_GROUP = 3
-# Collision primitives are left out.
-LIDAR_GROUPS = np.isin(np.arange(6), (SCENE_GROUP, ROBOT_VISUAL_GROUP)).astype(np.uint8)
 # Looks only. The lidar and the contacts never read color or light.
 BOX_RGBA = {
     "wall": (0.86, 0.84, 0.78, 1.0),
@@ -212,7 +214,8 @@ def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
         housing.quat = (q[3], q[0], q[1], q[2])
         housing.group = COLLISION_GROUP
     model = spec.compile()
-    rig.tune(model)
+    if rig.tune is not None:
+        rig.tune(model)
     return model
 
 
@@ -254,12 +257,21 @@ class Sim:
         self.model = build_model(scene, rig)
         self.data = mujoco.MjData(self.model)
         self.robot = body(self.model, self.data)
+        base = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, rig.base_body)
+        self.lidar_groups = np.isin(np.arange(6), (SCENE_GROUP, rig.lidar_group)).astype(np.uint8)
         self.lidars = [
-            sensor.lidar(MujocoRaycaster(self.model, self.data, LIDAR_GROUPS), seed + i)
+            sensor.lidar(
+                MujocoRaycaster(
+                    self.model,
+                    self.data,
+                    self.lidar_groups,
+                    NO_BODY_EXCLUDED if sensor.sees_base else base,
+                ),
+                seed + i,
+            )
             for i, sensor in enumerate(rig.sensors)
         ]
         self.lio = GroundTruthLio()
-        self._lio_counts = [0] * len(rig.sensors)
         self.ticks_per_frame = round(FRAME_DT / self.robot.dt)
         self.t = 0.0
         self._tick = 0
@@ -322,15 +334,13 @@ class Sim:
         """Advance one control tick. Returns the lidar frame that completed on this tick, if any."""
 
         def cast() -> None:
-            for i, (sensor, lidar, n) in enumerate(
-                zip(self.rig.sensors, self.lidars, self._points_per_step, strict=True)
+            for sensor, lidar, n in zip(
+                self.rig.sensors, self.lidars, self._points_per_step, strict=True
             ):
                 position, rotation = self.sensor_pose(sensor)
-                points = lidar.cast(position, rotation, n)
+                points = lidar.cast(position, rotation, n, sensor.lio_keep_every)
                 kept = points[np.linalg.norm(points, axis=1) >= sensor.lio_blind_range]
-                first = -self._lio_counts[i] % sensor.lio_keep_every
-                self._lio_counts[i] += len(kept)
-                self.lio.add(kept[first :: sensor.lio_keep_every], position, rotation)
+                self.lio.add(kept, position, rotation)
 
         self.robot.tick(command, cast)
         self._tick += 1

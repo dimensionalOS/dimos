@@ -58,7 +58,8 @@ def vis_module(
             from dimos.visualization.rerun.bridge import RerunBridgeModule
 
             rerun_config = {**rerun_config}  # copy (avoid mutation)
-            rerun_config.setdefault("pubsubs", [LCM()])
+            if "pubsubs" not in rerun_config:
+                rerun_config["pubsubs"] = [LCM()]
             bundle = autoconnect(
                 RerunBridgeModule.blueprint(
                     **rerun_config,
