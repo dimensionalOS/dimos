@@ -384,6 +384,13 @@ robots:
             field: basic_server_host
             label: M20 control host
             placeholder: 10.21.31.103
+        m20-sim-nav:
+          title: 'M20 in simulation (navigation)'
+          description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+        m20-sim-nav-episode:
+          title: 'M20 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated M20 navigation stack. Run by dimos nav-bench.'
+          hidden: true
     alfred:
       name: Alfred
       description: A DIY mobile base with a Mid-360 and a RealSense mast.
