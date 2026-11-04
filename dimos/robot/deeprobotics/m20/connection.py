@@ -16,10 +16,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import json
 import socket
-import struct
 from threading import Condition, RLock
 from typing import Any, Literal
 
@@ -35,6 +33,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.robot.deeprobotics.m20 import basic_server
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -55,9 +54,6 @@ _NAVIGATION_GAITS: dict[NavigationTerrain, int] = {
 
 USAGE_MODE_NAVIGATION = 1
 
-_BASIC_SERVER_MAGIC = bytes.fromhex("eb91eb90")
-_BASIC_SERVER_JSON = 1
-_BASIC_SERVER_HEADER = struct.Struct("<4sHHB7s")
 _BASIC_SERVER_MODE_TYPE = 1101
 _BASIC_SERVER_MODE_COMMAND = 5
 
@@ -266,28 +262,8 @@ class M20Connection(Module):
         command: int,
         items: dict[str, Any],
     ) -> dict[str, Any]:
-        payload = json.dumps(
-            {
-                "PatrolDevice": {
-                    "Type": message_type,
-                    "Command": command,
-                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Items": items,
-                }
-            },
-            separators=(",", ":"),
-        ).encode()
-        if len(payload) > 0xFFFF:
-            raise ValueError("M20 basic_server payload exceeds the APDU limit")
-
         message_id = self._basic_server_message_ids.next() & 0xFFFF
-        header = _BASIC_SERVER_HEADER.pack(
-            _BASIC_SERVER_MAGIC,
-            len(payload),
-            message_id,
-            _BASIC_SERVER_JSON,
-            b"\0" * 7,
-        )
+        frame = basic_server.encode_frame(message_type, command, items, message_id)
 
         try:
             with socket.create_connection(
@@ -295,16 +271,16 @@ class M20Connection(Module):
                 timeout=self.config.basic_server_timeout_s,
             ) as connection:
                 connection.settimeout(self.config.basic_server_timeout_s)
-                connection.sendall(header + payload)
-                response_header = _recv_exact(connection, _BASIC_SERVER_HEADER.size)
-                magic, length, response_id, encoding, _reserved = _BASIC_SERVER_HEADER.unpack(
+                connection.sendall(frame)
+                response_header = _recv_exact(connection, basic_server.HEADER.size)
+                magic, length, response_id, encoding, _reserved = basic_server.HEADER.unpack(
                     response_header
                 )
-                if magic != _BASIC_SERVER_MAGIC:
+                if magic != basic_server.MAGIC:
                     raise ValueError("invalid APDU magic")
                 if response_id != message_id:
                     raise ValueError("response APDU message ID does not match request")
-                if encoding != _BASIC_SERVER_JSON:
+                if encoding != basic_server.JSON_ENCODING:
                     raise ValueError("basic_server response is not JSON")
                 response_payload = _recv_exact(connection, length)
         except (OSError, ValueError) as exc:
