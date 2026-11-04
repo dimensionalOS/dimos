@@ -27,7 +27,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 from dimos_lcm.common_msgs import SampleHeader
-from dimos_lcm.control_msgs import JointCommand, JointTarget
+from dimos_lcm.control_msgs import ActionCommand, JointTarget
 from dimos_lcm.sim_msgs import WorldState
 import pytest
 
@@ -183,7 +183,9 @@ def make_sim(world, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     with ExitStack() as cleanup:
 
-        def deploy(*, on_observations=None, backend_type=MujocoBackend, **settings):
+        def deploy(
+            *, on_observations=None, backend_type=MujocoBackend, with_actions=False, **settings
+        ):
             blueprint = SimModule.blueprint(
                 scene=world, backend=backend_type, **settings
             ).global_config(
@@ -198,7 +200,12 @@ def make_sim(world, tmp_path, monkeypatch):
                 transport = coordinator.transports[("observations", WorldState)]
                 cleanup.callback(transport.stop)
                 cleanup.callback(transport.subscribe(on_observations))
-            return coordinator.get_instance(SimModule)
+            sim = coordinator.get_instance(SimModule)
+            if with_actions:
+                actions = coordinator.transports[("actions", ActionCommand)]
+                cleanup.callback(actions.stop)
+                return sim, actions
+            return sim
 
         yield deploy
 
@@ -208,7 +215,7 @@ def command():
     def make(
         header, names=("left/slide_x",), positions=(0.2,), ttl=2.0, kp=200.0, kd=20.0, effort=0.0
     ):
-        return JointCommand(
+        return ActionCommand(
             header=SampleHeader(
                 clock_id=header.clock_id,
                 epoch=header.epoch,
@@ -219,8 +226,8 @@ def command():
             based_on_time_ns=header.time_ns,
             apply_at_ns=header.time_ns,
             valid_until_ns=header.time_ns + round(ttl * 1e9),
-            targets_length=len(names),
-            targets=[
+            joint_targets_length=len(names),
+            joint_targets=[
                 JointTarget(joint_id=n, position=q, velocity=0, kp=kp, kd=kd, feedforward=effort)
                 for n, q in zip(names, positions, strict=True)
             ],
