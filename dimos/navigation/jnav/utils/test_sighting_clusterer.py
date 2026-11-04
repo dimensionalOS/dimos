@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SightingClusterer: glances never publish, the cooldown groups a visit, the Huber test drops outliers, and a moved
-medoid republishes under the same sighting id."""
+"""SightingClusterer: glances never publish, the cooldown groups a visit, outliers drop, a moved medoid republishes."""
 
 from __future__ import annotations
 
@@ -98,7 +97,19 @@ def test_a_moved_medoid_supersedes_the_published_sighting():
     assert updates[-1].publish_ts >= updates[-1].medoid["ts"]
 
 
-def test_noisy_glimpses_are_gated():
-    clusterer = SightingClusterer(SightingClustering(min_inliers=1, min_sharpness=30.0))
-    assert feed(clusterer, [{**detection(0.0, 1.0), "sharpness": 5.0}]) == []
-    assert clusterer.rejected == {"blur": 1}
+def test_far_glimpses_are_gated():
+    clusterer = SightingClusterer(SightingClustering(min_inliers=1, max_distance_m=2.0))
+    far = {**detection(0.0, 1.0), "t_cam_marker": [0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 1.0]}
+    assert feed(clusterer, [far]) == []
+    assert clusterer.rejected == {"far": 1}
+
+
+def test_parked_at_a_tag_the_window_stays_one_cooldown_long():
+    clustering = SightingClustering(cooldown_s=5.0, min_inliers=3)
+    clusterer = SightingClusterer(clustering)
+    camera_hz = 30
+    # a minute parked in front of one tag: one sighting, its medoid over only the last cooldown_s of detections
+    updates = feed(clusterer, [detection(i / camera_hz, 1.0) for i in range(60 * camera_hz)])
+    assert [update.sighting_id for update in updates] == [0]
+    (sighting,) = clusterer._open.values()
+    assert len(sighting.detections) == clustering.cooldown_s * camera_hz + 1
