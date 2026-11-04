@@ -21,6 +21,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config as PgoConfig, GscPgo, PoseWithTime};
+use dimos_gsc_pgo::location_constraint::LocationConstraint;
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 use dimos_gsc_pgo::records::{
     append_pose_changes, build_closure_edge_records, build_loop_closure_records, build_odometry,
@@ -146,6 +147,15 @@ config! {
     graph_simplify_offset_sd_rad: f64,
     graph_simplify_chain_odometry: bool,
     graph_simplify_chain_fold_max_m: f64,
+    // "scan_context" (default) or "inputs_only": no place recognition, landmarks/world positions only, landmark-seeded ICP closures
+    closure_sources: dimos_gsc_pgo::gsc_pgo::ClosureSources,
+    landmark_closure_icp: bool,
+    // 2D: odometry as x, y, yaw and the solve holding z, roll, pitch at 0
+    planar_pose_graph: bool,
+    // a solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off)
+    landmark_warm_start_xy_variance_scale: f64,
+    // ...and each later stage's scale is the last one's divided by this, down to the stated variances
+    landmark_warm_start_xy_variance_ladder: f64,
 }
 
 // ---- shared state ---------------------------------------------------------------
@@ -157,8 +167,10 @@ struct OdomSample {
     translation: Vec3,
 }
 
-/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::add_landmark_factor`).
+/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::replace_landmark_factor` when it has a
+/// sighting id, else `add_landmark_factor`).
 struct LandmarkFix {
+    sighting: Option<u64>,
     ts: f64,
     landmark: u64,
     rotation: Mat3,
@@ -184,6 +196,8 @@ struct SharedState {
     /// Landmark sightings not yet handed to the pose graph, and landmark names (index = id).
     landmark_factors: Vec<LandmarkFix>,
     landmark_names: Vec<String>,
+    /// Sighting ids (`constraint_instance_id`); index = id in the pose graph.
+    sighting_names: Vec<String>,
     latest_odom: Option<OdomSample>,
     /// Reject out-of-order scans.
     last_message_time: f64,
@@ -225,9 +239,10 @@ struct GscPgoModule {
     #[input(decode = Odometry::decode, handler = on_coordinate_factor)]
     coordinate_factor: Input<Odometry>,
 
-    // Landmark sighting: frame_id = sensor, child_frame_id = name; non-positive variance or zero quaternion = unknown.
-    #[input(decode = Odometry::decode, handler = on_landmark_factor)]
-    landmark_factor: Input<Odometry>,
+    // Landmark sighting: frame_id = sensor, to_id = name, a repeated constraint_instance_id replaces its sighting;
+    // non-positive variance or zero quaternion = unknown.
+    #[input(decode = LocationConstraint::decode, handler = on_landmark_factor)]
+    landmark_factor: Input<LocationConstraint>,
 
     #[output(encode = Odometry::encode)]
     corrected_odometry: Output<Odometry>,
@@ -352,22 +367,21 @@ impl GscPgoModule {
         self.wake.notify_one();
     }
 
-    async fn on_landmark_factor(&mut self, msg: Odometry) {
-        let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
-        let sensor = &msg.header.frame_id;
+    async fn on_landmark_factor(&mut self, msg: LocationConstraint) {
+        let ts = msg.ts;
+        let sensor = &msg.frame_id;
         let body = &self.config.body_frame;
-        let p = &msg.pose.pose.position;
-        let q = &msg.pose.pose.orientation;
-        let c = &msg.pose.covariance;
-        // ROS covariance is (xyz, rpy); the pose graph wants (rotation, position) information, zero where unknown
-        let ros = [3, 4, 5, 0, 1, 2];
+        let p = msg.position;
+        let [qx, qy, qz, qw] = msg.orientation_xyzw;
+        let c = &msg.covariance;
+        // the covariance is already (rotation, position), as the pose graph wants its information, zero where unknown
         let mut information: [[f64; 6]; 6] =
             dimos_gsc_pgo::landmarks::known_inverse(&std::array::from_fn(|i| {
-                std::array::from_fn(|j| c[6 * ros[i] + ros[j]])
+                std::array::from_fn(|j| c[6 * i + j])
             }));
-        let norm = (q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z).sqrt();
+        let norm = (qw * qw + qx * qx + qy * qy + qz * qz).sqrt();
         let seen: Mat3 = if norm > 0.0 {
-            mat3::mat_from_quat(&[q.w / norm, q.x / norm, q.y / norm, q.z / norm])
+            mat3::mat_from_quat(&[qw / norm, qx / norm, qy / norm, qz / norm])
         } else {
             for (i, row) in information.iter_mut().enumerate() {
                 for (j, v) in row.iter_mut().enumerate() {
@@ -379,7 +393,7 @@ impl GscPgoModule {
             mat3::identity()
         };
         let mut mount = mat3::identity();
-        let (mut rotation, mut position) = (seen, [p.x, p.y, p.z]);
+        let (mut rotation, mut position) = (seen, p);
         if !sensor.is_empty() && sensor != body {
             // no mount tf: drop rather than bias the map
             let Some(t) = self.tf.lookup(body, sensor).at(ts).get() else {
@@ -412,12 +426,15 @@ impl GscPgoModule {
             .chain(information.iter().flatten())
             .all(|v| v.is_finite())
         {
-            warn!(landmark = %msg.child_frame_id, "landmark sighting not finite; dropped");
+            warn!(landmark = %msg.to_id, "landmark sighting not finite; dropped");
             return;
         }
         let mut state = self.state.lock().expect("state");
-        let landmark = index_of(&mut state.landmark_names, &msg.child_frame_id) as u64;
+        let landmark = index_of(&mut state.landmark_names, &msg.to_id) as u64;
+        let sighting = (!msg.constraint_instance_id.is_empty())
+            .then(|| index_of(&mut state.sighting_names, &msg.constraint_instance_id) as u64);
         state.landmark_factors.push(LandmarkFix {
+            sighting,
             ts,
             landmark,
             rotation,
@@ -660,13 +677,23 @@ impl Worker {
                     pgo.add_coordinate_factor(f.ts, f.frame, f.lever, f.position, f.covariance);
                 }
                 for s in sightings {
-                    pgo.add_landmark_factor(
-                        s.ts,
-                        s.landmark,
-                        s.rotation,
-                        s.position,
-                        s.information,
-                    );
+                    match s.sighting {
+                        Some(sighting) => pgo.replace_landmark_factor(
+                            sighting,
+                            s.ts,
+                            s.landmark,
+                            s.rotation,
+                            s.position,
+                            s.information,
+                        ),
+                        None => pgo.add_landmark_factor(
+                            s.ts,
+                            s.landmark,
+                            s.rotation,
+                            s.position,
+                            s.information,
+                        ),
+                    }
                 }
                 if pgo.update() {
                     let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);

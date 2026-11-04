@@ -483,6 +483,7 @@ impl GscPgo {
                     "verification_scans_per_round" => &mut suggested.verification_scans_per_round,
                     "verification_scans_per_round_point" => &mut suggested.verification_scans_per_round_point,
                     "solve_scans_scale" => &mut suggested.solve_scans_scale,
+                    "solve_closure_free_scans_scale" => &mut suggested.solve_closure_free_scans_scale,
                     "debounce_scans_per_keyframe" => &mut suggested.debounce_scans_per_keyframe,
                     "merge_scans_per_keyframe" => &mut suggested.merge_scans_per_keyframe,
                     "pressure_scans_fixed_overhead" => &mut suggested.pressure_scans_fixed_overhead,
@@ -520,7 +521,10 @@ impl GscPgo {
                 ("verification_scans_per_round", c.deterministic_config.verification_scans_per_round),
                 ("verification_scans_per_round_point", c.deterministic_config.verification_scans_per_round_point),
             ]),
-            ("solve", vec![("solve_scans_scale", c.deterministic_config.solve_scans_scale)]),
+            ("solve", vec![
+                ("solve_scans_scale", c.deterministic_config.solve_scans_scale),
+                ("solve_closure_free_scans_scale", c.deterministic_config.solve_closure_free_scans_scale),
+            ]),
             ("debounce", vec![("debounce_scans_per_keyframe", c.deterministic_config.debounce_scans_per_keyframe)]),
             ("merge", vec![("merge_scans_per_keyframe", c.deterministic_config.merge_scans_per_keyframe)]),
             ("pressure", vec![
