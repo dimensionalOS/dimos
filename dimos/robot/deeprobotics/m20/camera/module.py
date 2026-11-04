@@ -61,6 +61,8 @@ class M20CameraRelayConfig(NativeModuleConfig):
     stall_timeout_s: float = Field(default=2.0, ge=0.1, le=60.0)
     # Period of the static transforms and CameraInfo.
     metadata_period_s: float = Field(default=1.0, ge=0.01, le=60.0)
+    # Period of the per-camera fps / keyframe / bitrate log line.
+    stats_period_s: float = Field(default=10.0, ge=0.1, le=3600.0)
 
 
 class M20CameraRelay(NativeModule):

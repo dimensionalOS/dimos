@@ -49,6 +49,9 @@ pub struct Config {
     /// Seconds between publishes of the transforms and CameraInfo.
     #[validate(range(min = 0.01, max = 60.0))]
     metadata_period_s: f64,
+    /// Seconds between the per-camera fps / keyframe / bitrate log lines.
+    #[validate(range(min = 0.1, max = 3600.0))]
+    stats_period_s: f64,
 }
 
 #[derive(Module)]
@@ -94,8 +97,9 @@ impl M20Camera {
         });
         let retry = Duration::from_secs_f64(config.retry_s);
         let stall = Duration::from_secs_f64(config.stall_timeout_s);
-        tokio::spawn(relay(front.clone(), retry, stall));
-        tokio::spawn(relay(rear.clone(), retry, stall));
+        let stats = Duration::from_secs_f64(config.stats_period_s);
+        tokio::spawn(relay(front.clone(), retry, stall, stats));
+        tokio::spawn(relay(rear.clone(), retry, stall, stats));
         tokio::spawn(publish_metadata(config, [front, rear], self.tf.clone()));
     }
 }

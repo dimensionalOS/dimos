@@ -32,8 +32,6 @@ use retina::client::{
 use retina::codec::{CodecItem, FrameFormat, ParametersRef};
 use tracing::{info, warn};
 
-const STATS_EVERY: Duration = Duration::from_secs(10);
-
 /// One camera: where it streams from, where it sits, and where its messages go.
 pub struct Camera {
     pub name: String,
@@ -48,10 +46,10 @@ pub struct Camera {
     pub size: Mutex<Option<(u32, u32)>>,
 }
 
-/// Relay forever: connect, publish until the stream fails or stalls, wait `retry`, repeat.
-pub async fn relay(camera: Arc<Camera>, retry: Duration, stall: Duration) {
+/// Relay forever: connect, publish until the stream fails or stalls, wait `retry`, repeat; log rates every `stats`.
+pub async fn relay(camera: Arc<Camera>, retry: Duration, stall: Duration, stats: Duration) {
     loop {
-        match stream(&camera, stall).await {
+        match stream(&camera, stall, stats).await {
             Ok(()) => warn!(camera = %camera.name, "M20 camera stream ended"),
             Err(error) => {
                 warn!(camera = %camera.name, error = format!("{error:#}"), "M20 camera stream unavailable")
@@ -61,7 +59,7 @@ pub async fn relay(camera: Arc<Camera>, retry: Duration, stall: Duration) {
     }
 }
 
-async fn stream(camera: &Camera, stall: Duration) -> Result<()> {
+async fn stream(camera: &Camera, stall: Duration, stats: Duration) -> Result<()> {
     let url = url::Url::parse(&camera.url).context("bad RTSP url")?;
     let mut session = within(stall, Session::describe(url, SessionOptions::default())).await?;
     let index = session
@@ -108,7 +106,7 @@ async fn stream(camera: &Camera, stall: Duration) -> Result<()> {
             format: "h265".into(),
         };
         camera.video.publish(&message).await?;
-        if window.elapsed() >= STATS_EVERY {
+        if window.elapsed() >= stats {
             let seconds = window.elapsed().as_secs_f64();
             info!(
                 camera = %camera.name,
