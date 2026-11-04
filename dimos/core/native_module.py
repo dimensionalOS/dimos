@@ -456,7 +456,7 @@ class NativeModule(Module):
         stdout_t.join(timeout=self.config.shutdown_timeout)
         stderr_t.join(timeout=self.config.shutdown_timeout)
 
-        if self._stopping:
+        if self._stopping or self._exit_is_expected(rc):
             logger.info(
                 "Native process exited (expected)",
                 module=self._module_label,
@@ -472,6 +472,10 @@ class NativeModule(Module):
             returncode=rc,
         )
         self.stop()
+
+    def _exit_is_expected(self, returncode: int) -> bool:
+        """Whether the process ending on its own with *returncode* is normal for this module."""
+        return False
 
     def _start_reader(
         self,

@@ -171,13 +171,13 @@ def _republish(port: Out[Any], msg: Any, _tick: int) -> None:
     port.publish(msg)
 
 
-def _port_names(topics: str, types: dict[str, type]) -> list[str]:
+def _port_names(topics: str, types: dict[str, type], owner: type = ReplayModule) -> list[str]:
     check_topics(topics, types)
     names = []
     for n in sorted(matching(topics, types)):
-        if hasattr(ReplayModule, n):
+        if hasattr(owner, n):
             logger.warning(
-                "Skipping recorded stream %r: it clashes with a ReplayModule attribute", n
+                "Skipping recorded stream %r: it clashes with a %s attribute", n, owner.__name__
             )
             continue
         names.append(n)
