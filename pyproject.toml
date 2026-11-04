@@ -32,9 +32,6 @@ exclude = [
     "dimos.agents.dist*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
-    "dimos.web.dimos_interface.src*",
-    "dimos.web.dimos_interface.public*",
-    "dimos.web.dimos_interface.node_modules*",
 ]
 
 [tool.setuptools.package-data]
@@ -73,12 +70,6 @@ exclude = [
     "mapping/google_maps/fixtures/**",
     "web/command-center-extension/**",
     "web/websocket_vis/node_modules/**",
-    "web/dimos_interface/index.html",
-    "web/dimos_interface/*.json",
-    "web/dimos_interface/*.js",
-    "web/dimos_interface/src/**",
-    "web/dimos_interface/public/**",
-    "web/dimos_interface/node_modules/**",
     "hardware/sensors/lidar/fastlio2/cpp/**",
 ]
 
@@ -590,7 +581,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "0f123d27782d4fe676e9b703c9cffadd2f9390c1" }
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "be68cdc6cf8eda0f9df45df186d05d28e59e577b" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
@@ -885,7 +876,6 @@ ignore = [
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
-    "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/test_roboplan.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",

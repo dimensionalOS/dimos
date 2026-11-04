@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -241,11 +242,22 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
 
 
 def _decompress_archive(filename: str | Path) -> Path:
+    """Extract ``<name>.tar.gz``, whose single top-level entry is ``<name>``.
+
+    Extracts into a staging directory and renames the entry into place, so a
+    concurrent reader sees either nothing or the complete tree.
+    """
     target_dir = get_data_dir()
     filename_path = Path(filename)
-    with tarfile.open(filename_path, "r:gz") as tar:
-        tar.extractall(target_dir)
-    return target_dir / filename_path.name.replace(".tar.gz", "")
+    name = filename_path.name.replace(".tar.gz", "")
+    staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=f".{name}."))
+    try:
+        with tarfile.open(filename_path, "r:gz") as tar:
+            tar.extractall(staging)
+        (staging / name).rename(target_dir / name)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return target_dir / name
 
 
 def _pull_lfs_archive(filename: str | Path) -> Path:
@@ -320,8 +332,12 @@ def get_data(name: str | Path) -> Path:
     archive_name = path_parts[0]
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
-    # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+    # Parallel callers (threads, pytest-xdist workers) must not extract the
+    # same archive at once: a reader would see half-written files.
+    with FileLock(data_dir / f".{archive_name}.lock"):
+        if not (data_dir / archive_name).exists():
+            _decompress_archive(_pull_lfs_archive(archive_name))
+    archive_path = data_dir / archive_name
 
     # return full path including nested components
     if nested_path:
