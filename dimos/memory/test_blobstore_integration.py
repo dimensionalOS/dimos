@@ -78,6 +78,23 @@ class TestBlobStoreIntegration:
         result = s.first()
         assert result.data == "payload"
 
+    def test_load_decodes_without_caching(self, store: MemoryStore) -> None:
+        s = store.stream("data", str)
+        s.append("payload", ts=1.0)
+
+        stored = s.first()
+        assert stored.load() == "payload"
+        assert isinstance(s.first()._data, type(_UNLOADED))
+
+    def test_vector_search_does_not_decode_the_stored_payload(self, store: MemoryStore) -> None:
+        s = store.stream("vecs", str)
+        s.append("payload", ts=1.0, embedding=_emb([1.0, 0.0]))
+
+        (hit,) = list(s.search(_emb([1.0, 0.0])))
+        assert hit.data == "payload"
+        assert hit.similarity == pytest.approx(1.0)
+        assert isinstance(s.first()._data, type(_UNLOADED))
+
     def test_eager_preloads_data(self, bs: FileBlobStore) -> None:
         with MemoryStore(blob_store=bs, eager_blobs=True) as store:
             s = store.stream("data", str)
