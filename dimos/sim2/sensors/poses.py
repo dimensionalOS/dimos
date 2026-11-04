@@ -22,19 +22,19 @@ from typing import Any, ClassVar
 from dimos_lcm.sim_msgs import BodyPoses
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
+from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In
-from dimos.sim2.description import ModelSourceSpec, SceneConfig
+from dimos.sim2.description import SceneConfig
 
 
 class PoseSensorConfig(ModuleConfig):
     scene: SceneConfig
 
 
-class _PoseSensorModule(Module, ABC):
+class _PoseSensorModule(SharedConfigModule, ABC):
     config: PoseSensorConfig
     dedicated_worker: ClassVar[bool] = True
-    _models: ModelSourceSpec
     body_poses: In[BodyPoses]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -50,11 +50,13 @@ class _PoseSensorModule(Module, ABC):
             "error": "",
         }
 
+    def config_receive(self, config_senders: ConfigSenders) -> None:
+        self.config.scene = self.config.scene.resolve(config_senders)
+
     @rpc
     def start(self) -> None:
         super().start()
-        scene = self.config.scene.resolve(self._models.resolved_models())
-        self._thread = threading.Thread(target=self._run, args=(scene,), daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(self.config.scene,), daemon=True)
         self._thread.start()
 
     async def handle_body_poses(self, sample: BodyPoses) -> None:

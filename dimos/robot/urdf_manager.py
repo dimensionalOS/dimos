@@ -20,6 +20,7 @@ import asyncio
 from pathlib import Path
 from threading import RLock
 import time
+from typing import Any
 import xml.etree.ElementTree as ET
 
 from dimos_lcm.sim_msgs import BodyPoses
@@ -29,13 +30,14 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.shared_config import SharedConfigModule, shared_config
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import JointDescription, LoadedRobotModel, RobotModel
+from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -117,15 +119,10 @@ class UrdfManager(Module):
         data = await asyncio.to_thread(Path(name).read_bytes)
         self.file_info.publish(File(name, data))
 
-    @rpc
-    def resolved_models(self) -> dict[str, LoadedRobotModel]:
-        """Configured model texts and assets, resolved before consumers start.
-
-        No start-order dependency: constructor resolution is complete before
-        the blueprint starts modules. Consumers receive this result, not paths
-        they independently reconfigure or convert.
-        """
-        return self._descriptions
+    @shared_config(SharedConfigModule)
+    def robot_models(self) -> dict[str, Any]:
+        """Deliver materialized models before build; receivers select robot_models."""
+        return {"robot_models": self._descriptions}
 
     async def handle_body_poses(self, sample: BodyPoses) -> None:
         """Publish the same model tree from a complete physical pose sample."""

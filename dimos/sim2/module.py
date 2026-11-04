@@ -24,9 +24,10 @@ from dimos_lcm.sensor_msgs import JointState
 from dimos_lcm.sim_msgs import BodyMotion, BodyPoses, SimulationClock
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
+from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
-from dimos.sim2.description import ModelSourceSpec, SceneConfig
+from dimos.sim2.description import SceneConfig
 from dimos.sim2.physics.interface import PhysicsBackend
 from dimos.sim2.physics.simulation import Simulation, SimulationConfig
 
@@ -37,10 +38,9 @@ class SimConfig(ModuleConfig):
     timing: SimulationConfig = SimulationConfig()
 
 
-class SimModule(Module):
+class SimModule(SharedConfigModule):
     config: SimConfig
     dedicated_worker: ClassVar[bool] = True
-    _models: ModelSourceSpec
     joint_command: In[JointCommand]
     body_wrench: In[BodyWrench]
     body_poses: Out[BodyPoses]
@@ -56,11 +56,13 @@ class SimModule(Module):
         self._error = ""
         self._lock = threading.Lock()
 
+    def config_receive(self, config_senders: ConfigSenders) -> None:
+        self.config.scene = self.config.scene.resolve(config_senders)
+
     @rpc
     def start(self) -> None:
         super().start()
-        scene = self.config.scene.resolve(self._models.resolved_models())
-        sim = Simulation(self.config.backend(), scene, self.config.timing)
+        sim = Simulation(self.config.backend(), self.config.scene, self.config.timing)
         self._simulation = sim
         self._threads = [threading.Thread(target=sim.run, name="sim2-physics", daemon=True)]
         self._threads[0].start()

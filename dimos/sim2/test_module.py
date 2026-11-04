@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 import uuid
 
 from dimos_lcm.control_msgs import BodyWrench
@@ -41,20 +42,22 @@ pytestmark = pytest.mark.native_e2e
 def deployed_world(world, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    # Consumers know instance IDs, placements and drives; only the manager has models.
+    scene = replace(world, instances=tuple(replace(i, model=None) for i in world.instances))
     blueprint = autoconnect(
         UrdfManager.blueprint(models={i.id: i.model for i in world.instances}),
         SimModule.blueprint(
-            scene=world,
+            scene=scene,
             backend=MujocoBackend,
             timing=SimulationConfig(motion_frames=("left/imu",), joint_ids=("left/slide_x",)),
         ),
         SimImuModule.blueprint(sensor=ImuConfig("left/imu")),
         SimJointEncoderModule.blueprint(sensor=EncoderConfig(("left/slide_x",))),
         SimCameraModule.blueprint(
-            scene=world, sensor=CameraConfig("left/camera"), renderer=MujocoRenderer
+            scene=scene, sensor=CameraConfig("left/camera"), renderer=MujocoRenderer
         ),
         SimLidarModule.blueprint(
-            scene=world, sensor=LidarConfig("left/lidar"), raycaster=MujocoRaycaster
+            scene=scene, sensor=LidarConfig("left/lidar"), raycaster=MujocoRaycaster
         ),
     ).global_config(
         viewer="none",
@@ -64,8 +67,10 @@ def deployed_world(world, tmp_path, monkeypatch):
         zenoh_scout_addr="224.0.0.227:7446",
     )
     deployment = ModuleCoordinator.build(blueprint)
-    yield deployment
-    deployment.stop()
+    try:
+        yield deployment
+    finally:
+        deployment.stop()
 
 
 def test_separate_sensor_modules_run_reset_and_recover(deployed_world):

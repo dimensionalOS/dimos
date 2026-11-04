@@ -44,13 +44,13 @@ _pusher = (
 )
 SCENE = SceneConfig(
     instances=(
-        Instance("pusher", _pusher, drives=(Drive("tool_joint"),)),
-        Instance("box", _source.with_subtree_rooted_at("box"), xyz=(0.1, 0, 0.075), floating=True),
+        Instance("pusher", drives=(Drive("tool_joint"),)),
+        Instance("box", xyz=(0.1, 0, 0.075), floating=True),
     ),
 )
 
 sim2_basic = autoconnect(
-    UrdfManager.blueprint(models={i.id: i.model for i in SCENE.instances}),
+    UrdfManager.blueprint(models={"pusher": _pusher, "box": _source.with_subtree_rooted_at("box")}),
     SimModule.blueprint(
         scene=SCENE,
         backend=MujocoBackend,
