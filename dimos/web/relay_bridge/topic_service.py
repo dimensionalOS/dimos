@@ -23,7 +23,7 @@ typed message or blueprint is imported.
 
 import argparse
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextlib import suppress
 import os
 from pathlib import Path
@@ -78,13 +78,16 @@ from dimos.web.relay_bridge.topic_transform import TopicTransforms
 from dimos.web.relay_bridge.topic_transport import LatestTopicWriter, TopicByteBudget
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
 
-_loop_factory: Callable[[], asyncio.AbstractEventLoop] = asyncio.new_event_loop
+# Desktop's pinned runtime includes libuv's event loop for batched UDP I/O.
+# Keep the standalone service usable with the full project's asyncio setup,
+# on Python 3.10 too: neither runner needs asyncio.Runner.
+_run: Callable[[Coroutine[Any, Any, None]], None] = asyncio.run
 try:
     import uvloop
 except ImportError:
     pass
 else:
-    _loop_factory = uvloop.new_event_loop
+    _run = uvloop.run
 
 logger = setup_logger()
 
@@ -429,6 +432,8 @@ class _Route:
             metadata.update(output.metadata)
             metadata["encoding"] = output.encoding
             metadata["decodeFailures"] = self.decode_failures
+        if self._variants.get(variant.name) is not variant:
+            return  # retired while encoding; its writer is closing
         self._sequence += 1
         try:
             variant.writer.offer(
@@ -843,10 +848,7 @@ def main() -> None:
         config = TopicServiceConfig.model_validate_json(args.config.read_bytes())
     except (OSError, ValidationError):
         raise SystemExit("invalid or unreadable topic service configuration") from None
-    # Desktop's pinned runtime includes libuv's event loop for batched UDP I/O.
-    # Keep the standalone service usable with the full project's asyncio setup.
-    with asyncio.Runner(loop_factory=_loop_factory) as runner:
-        runner.run(_main(config, exit_on_stdin_eof=args.exit_on_stdin_eof))
+    _run(_main(config, exit_on_stdin_eof=args.exit_on_stdin_eof))
 
 
 if __name__ == "__main__":
