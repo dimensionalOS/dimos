@@ -1,5 +1,5 @@
-import type { Refusal } from "../outcome.ts";
-import type { Rule, Standing } from "./standing.ts";
+import type { Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { Rule, Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
 import type { Static, TSchema, TUnsafe } from "typebox";
 
 /** Who carries an action out, so a reader knows where a refusal or a delay comes from. */

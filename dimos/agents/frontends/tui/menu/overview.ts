@@ -1,9 +1,9 @@
-import type { MenuRow, MenuTab } from "./base.ts";
-import { actionLine } from "../../../shared/view-models/actions.ts";
-import { connectionSegment } from "../../../shared/view-models/connection.ts";
-import { linkSegments, runSegment } from "../../../shared/view-models/gateway/link.ts";
-import { plain } from "./lib/rows.ts";
-import { worst } from "../../../shared/view-models/levels.ts";
+import type { MenuRow, MenuTab } from "#dimos/agents/frontends/tui/menu/base.ts";
+import { actionLine } from "#dimos/agents/shared/view-models/actions.ts";
+import { connectionSegment } from "#dimos/agents/shared/view-models/connection.ts";
+import { linkSegments, runSegment } from "#dimos/agents/shared/view-models/gateway/link.ts";
+import { plain } from "#dimos/agents/frontends/tui/menu/lib/rows.ts";
+import { worst } from "#dimos/agents/shared/view-models/levels.ts";
 
 /** The newest refused or unknown actions the overview keeps in view. */
 const REFUSED_SHOWN = 5;

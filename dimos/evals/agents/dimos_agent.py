@@ -102,7 +102,7 @@ class DimosAgentAdapter(PiAdapter):
 
     # The harness's tools without DimOS; inventory and agent_module join once the gateway links.
     default_tools: ClassVar[tuple[str, ...]] = (
-        "read", "bash", "edit", "write", "stream_get", "job",
+        "read", "bash", "edit", "write", "stream_get", "job", "background",
     )  # fmt: skip
     tool_names: ClassVar[tuple[str, ...] | None] = None
     robot_via_bash: ClassVar[bool] = False

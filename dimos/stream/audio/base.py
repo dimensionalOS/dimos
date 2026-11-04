@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 import numpy as np
 from reactivex import Observable
@@ -81,6 +82,18 @@ class AudioEvent:
         self.channels = channels
         self.dtype = data.dtype
         self.shape = data.shape
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return {
+            "data": self.data,
+            "sample_rate": self.sample_rate,
+            "timestamp": self.timestamp,
+            "channels": self.channels,
+        }
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> "AudioEvent":
+        return cls(**data)
 
     def to_float32(self) -> "AudioEvent":
         """Convert audio data to float32 format normalized to [-1.0, 1.0]."""

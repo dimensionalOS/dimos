@@ -67,6 +67,23 @@ def test_allowed_tools_execute_and_excluded_tools_do_not(
     assert result.final_metrics.total_cost_usd is not None
 
 
+@pytest.mark.parametrize("harness", ["pi"], indirect=True)
+@pytest.mark.parametrize("provider", ["google"], indirect=True)
+def test_gemini_runs_with_its_output_cap(
+    harness: NativeHarness, provider: ScriptedProvider
+) -> None:
+    provider.call("bash", command=f"printf selected-observation > {harness.path('facts.txt')}")
+    result = harness.run(harness.agent(provider, ("bash",)))
+    assert result.extra.ended_by == "answer", result.extra
+    assert result.final_answer == "OK"
+    assert (harness.workspace / "facts.txt").read_text() == "selected-observation"
+    assert len(provider.requests) == 2
+    for request in provider.requests:
+        config = request["generationConfig"]
+        assert isinstance(config, dict)
+        assert config["maxOutputTokens"] == 1024
+
+
 def test_no_tools_blocks_even_a_provider_requested_call(
     harness: NativeHarness, provider: ScriptedProvider
 ) -> None:

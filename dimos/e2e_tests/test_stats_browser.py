@@ -17,9 +17,9 @@
 Starts a cockpit(pages=[Stats()]) bridge - a generated RelayBridgeModule
 subclass with a resource_stats In[dict] port and the registry-resolved
 stats.json.v1 encoder - serving the real cockpit dist from its own local
-relay, and plays the resource monitor: pickled dicts on the port's topic at
+relay, and plays the resource monitor: dicts on the port's topic at
 the monitor's 1 Hz (no coordinator runs in-process, so no StatsMonitor). The
-Stats tab must show a row per process from those dicts, dtop's way: pickled
+Stats tab must show a row per process from those dicts, dtop's way:
 dict -> bridge encoder -> relay -> page.
 
 Marked web_browser: excluded from the default suite (needs the

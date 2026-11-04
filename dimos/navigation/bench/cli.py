@@ -144,7 +144,9 @@ def run_command(
     ),
     procs: int = typer.Option(4, min=1, help="Episodes running at once."),
     out: Path | None = typer.Option(None, "--out", help="Run directory, new."),
-    policy: Path | None = typer.Option(None, help="Body policy file for the sim world."),
+    policy: Path | None = typer.Option(
+        None, help="Body policy file for the sim Go2, short for --set SimGo2World.policy=PATH."
+    ),
     viewer: bool = typer.Option(
         False,
         "--viewer/--no-viewer",
@@ -200,8 +202,8 @@ def run_command(
         cases=tuple(case),
         procs=procs,
         out_dir=out,
-        overrides=tuple(override_flag(s) for s in setting),
-        policy=policy,
+        overrides=tuple(override_flag(s) for s in setting)
+        + (() if policy is None else (override_flag(f"SimGo2World.policy={policy}"),)),
         viewer=viewer,
         keep=cast("Keep", keep),
     )
@@ -232,9 +234,13 @@ def score_command(
     run_dir: Path = typer.Argument(..., exists=True, help="A run directory."),
 ) -> None:
     """Score every episode of a run again from its recording."""
-    from dimos.navigation.bench.runner import rescore
+    from dimos.navigation.bench.runner import UnscorableRunError, rescore
 
-    _summary(rescore(run_dir))
+    try:
+        _summary(rescore(run_dir))
+    except UnscorableRunError as refused:
+        typer.echo(str(refused))
+        raise typer.Exit(1) from refused
 
 
 @app.command("report")
