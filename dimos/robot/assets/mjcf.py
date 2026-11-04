@@ -17,26 +17,66 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 import warnings
 import xml.etree.ElementTree as ET
 
+from filelock import FileLock
+import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-if TYPE_CHECKING:
-    import mujoco
+from dimos.constants import CACHE_DIR
+from dimos.robot.assets.model import RobotModel
 
-    from dimos.robot.assets.model import RobotModel
+_URDF_CACHE = CACHE_DIR / "mjcf_urdf"
 
 
 def mjcf_to_urdf(mjcf: Path | str | os.PathLike[str]) -> RobotModel:
-    """The robot in an MJCF file as a lazy RobotModel; the file is read and converted when the model is loaded."""
-    from dimos.robot.assets.model import RobotModel
+    """The robot in an MJCF file as a lazy RobotModel; the MJCF is read and converted when the model is loaded."""
+    return RobotModel.from_file(UrdfFromMjcf(mjcf))
 
-    return RobotModel.from_mjcf(mjcf)
+
+class UrdfFromMjcf(os.PathLike[str]):
+    """A path to the URDF converted from an MJCF, written to the cache the first time the path is used."""
+
+    def __init__(self, mjcf: Path | str | os.PathLike[str]) -> None:
+        self.mjcf = mjcf
+
+    def __fspath__(self) -> str:
+        mjcf = Path(os.fspath(self.mjcf)).resolve()
+        xml = mjcf_spec_to_urdf_xml(mujoco.MjSpec.from_file(str(mjcf)))
+        urdf = _URDF_CACHE / f"{sha256(xml.encode()).hexdigest()[:16]}" / f"{mjcf.stem}.urdf"
+        urdf.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(urdf) + ".lock"):
+            if not urdf.exists():
+                urdf.write_text(xml)
+        return str(urdf)
+
+    def __str__(self) -> str:
+        return self.__fspath__()
+
+    def __repr__(self) -> str:
+        return f"UrdfFromMjcf({self.mjcf!r})"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, UrdfFromMjcf) and self.mjcf == other.mjcf
+
+    def __hash__(self) -> int:
+        return hash(("UrdfFromMjcf", self.mjcf))
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"mjcf": self.mjcf}
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> UrdfFromMjcf:
+        return cls(data["mjcf"])
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (UrdfFromMjcf, (self.mjcf,))
 
 
 def _xyz(values: object) -> str:
@@ -56,8 +96,6 @@ def _origin(parent: ET.Element, pos: object, quat: object) -> None:
 
 
 def _geometry(parent: ET.Element, geom: Any, mesh_files: dict[str, str]) -> bool:
-    import mujoco
-
     size = np.asarray(geom.size, dtype=float)
     shape = ET.SubElement(parent, "geometry")
     if geom.type == mujoco.mjtGeom.mjGEOM_MESH:
@@ -75,8 +113,6 @@ def _geometry(parent: ET.Element, geom: Any, mesh_files: dict[str, str]) -> bool
 
 def mjcf_spec_to_urdf_xml(spec: mujoco.MjSpec) -> str:
     """The spec's bodies as URDF links, its hinge joints as revolute (continuous when unlimited), meshes by absolute path."""
-    import mujoco
-
     mesh_dir = Path(spec.modelfiledir) / spec.meshdir
     mesh_files = {mesh.name: str((mesh_dir / mesh.file).resolve()) for mesh in spec.meshes}
     robot = ET.Element("robot", name=spec.modelname or "robot")
@@ -117,6 +153,7 @@ def mjcf_spec_to_urdf_xml(spec: mujoco.MjSpec) -> str:
             )
         else:
             hinge = None
+            limited = False
             joint = ET.SubElement(robot, "joint", name=f"{body.name}_joint", type="fixed")
         _origin(joint, body.pos, body.quat)
         ET.SubElement(joint, "parent", link=parent.name)
