@@ -22,9 +22,7 @@ tracking, mapping skills, and an LLM agent.
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.observe_skill import ObserveSkill
-from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import WebInput
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic
@@ -44,9 +42,7 @@ Here are some GPS locations to remember
 drone_agentic = autoconnect(
     drone_basic,
     DroneTrackingModule.blueprint(outdoor=False),
-    GoogleMapsSkillContainer.blueprint(),
     ObserveSkill.blueprint(),
-    OsmSkill.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
     WebInput.blueprint(),

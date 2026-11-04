@@ -40,12 +40,7 @@ Some skills hold a shared capability (e.g. `movement`). A call that needs a busy
 
 ## GPS Navigation Flow
 For outdoor/GPS-based navigation:
-1. Use `get_gps_position_for_queries` to look up coordinates for landmarks
-2. Then use `set_gps_travel_points` with those coordinates
-
-## Location Awareness
-- `where_am_i` gives your current street/area and nearby landmarks
-- `map_query` finds places on the OSM map by description and returns coordinates
+Use `set_gps_travel_points` with GPS coordinates
 
 # BEHAVIOR
 

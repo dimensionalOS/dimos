@@ -46,8 +46,6 @@ Composes on top of `drone-basic`, adding autonomous capabilities:
 | Module | Purpose |
 |--------|---------|
 | `DroneTrackingModule` | Visual servoing & object tracking |
-| `GoogleMapsSkillContainer` | GPS-based navigation skills |
-| `OsmSkill` | OpenStreetMap queries |
 | `McpServer` + `McpClient` | LLM agent (default: GPT-4o) via MCP |
 | `WebInput` | Web/CLI interface for human commands |
 
@@ -73,9 +71,6 @@ sudo apt-get install liblcm-dev
 ```bash
 # Required for agentic blueprint
 export OPENAI_API_KEY=sk-...
-
-# Optional
-export GOOGLE_MAPS_API_KEY=...  # For GoogleMapsSkillContainer
 ```
 
 ## RosettaDrone Setup (Critical)

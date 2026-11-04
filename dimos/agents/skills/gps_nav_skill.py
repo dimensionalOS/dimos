@@ -56,7 +56,7 @@ class GpsNavSkillContainer(Module):
 
     @skill
     def set_gps_travel_points(self, points: list[dict[str, float]]) -> str:
-        """Define the movement path determined by GPS coordinates. Requires at least one. You can get the coordinates by using the `get_gps_position_for_queries` skill.
+        """Define the movement path determined by GPS coordinates. Requires at least one.
 
         Example:
 
