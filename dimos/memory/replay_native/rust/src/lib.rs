@@ -36,8 +36,10 @@ pub struct ReplayConfig {
     #[validate(range(exclusive_min = 0.0))]
     pub speed: f64,
     pub r#loop: bool,
-    /// Exit once the whole recording has played (ignored with `loop`).
+    /// Shut the run down once the whole recording has played (ignored with `loop`).
     pub exit_on_complete: bool,
+    /// The run's coordinator, sent SIGTERM (as `dimos stop` does) when exit_on_complete fires; 0 for none.
+    pub shutdown_pid: u32,
     /// Seconds after the recording's first message to start from.
     #[validate(range(min = 0.0))]
     pub seek: f64,
@@ -52,6 +54,22 @@ pub struct ReplayConfig {
     pub static_period: f64,
     /// Output ports, each named after the recorded stream it replays.
     pub ports: Vec<String>,
+}
+
+/// SIGTERM the run's coordinator; it stops every module, this one included.
+fn shut_the_run_down(pid: u32) {
+    if pid == 0 {
+        warn!("exit_on_complete: no coordinator to stop");
+        return;
+    }
+    info!(pid, "replay complete; stopping the run");
+    match std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        result => warn!(pid, "couldn't signal the coordinator: {result:?}"),
+    }
 }
 
 // Output<T> encodes from &T, so the payload type is Vec<u8> and this takes &Vec<u8>.
@@ -229,7 +247,7 @@ impl Module for MemoryReplay {
             }
             self.player = None;
             if self.config.exit_on_complete && !self.config.r#loop {
-                return;
+                shut_the_run_down(self.config.shutdown_pid);
             }
         }
         // Like the Python module, stay up (static streams keep publishing) until stopped.

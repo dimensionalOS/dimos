@@ -100,6 +100,7 @@ fn config(db: &Path, ports: &[&str]) -> ReplayConfig {
         speed: 1.0,
         r#loop: false,
         exit_on_complete: false,
+        shutdown_pid: 0,
         seek: 0.0,
         duration: 0.0,
         loop_gap: 0.05,

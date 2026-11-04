@@ -68,6 +68,7 @@ def test_stdin_config_names_the_ports_and_fills_unset_window(recording: str) -> 
         "speed": 2.0,
         "loop": False,
         "exit_on_complete": False,
+        "shutdown_pid": 0,
         "seek": 0.0,
         "duration": 0.0,
         "loop_gap": pytest.approx(0.05),
@@ -101,30 +102,8 @@ def test_static_ports_sit_beside_the_recordings_streams(recording: str) -> None:
         module.stop()
 
 
-def test_exit_on_complete_turns_a_clean_exit_into_shutdown(
-    recording: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import threading
-
-    from dimos.memory.replay_native import native
-
-    requested = threading.Event()
-    monkeypatch.setattr(native, "_request_shutdown", requested.set)
-    module = replay_native(recording)(db=recording, exit_on_complete=True)
-    try:
-        assert not module._exit_is_expected(1)
-        assert not requested.is_set()
-        assert module._exit_is_expected(0)
-        assert requested.wait(5)
-        module.config.loop = True
-        assert not module._exit_is_expected(0)
-    finally:
-        module.stop()
-
-
-def test_shutdown_signals_only_this_runs_coordinator(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shutdown_targets_only_this_runs_coordinator(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two runs can share a bus; the shutdown must reach this run's coordinator, by run id."""
-    import signal
     from types import SimpleNamespace
 
     from dimos.core import run_registry
@@ -132,13 +111,8 @@ def test_shutdown_signals_only_this_runs_coordinator(monkeypatch: pytest.MonkeyP
 
     runs = [SimpleNamespace(run_id="other", pid=111), SimpleNamespace(run_id="mine", pid=222)]
     monkeypatch.setattr(run_registry, "list_runs", lambda: runs)
-    killed: list[tuple[int, int]] = []
-    monkeypatch.setattr(native.os, "kill", lambda pid, sig: killed.append((pid, sig)))
-
     monkeypatch.setenv("DIMOS_RUN_ID", "mine")
-    native._request_shutdown()
-    assert killed == [(222, signal.SIGTERM)]
+    assert native._run_coordinator_pid() == 222
 
     monkeypatch.delenv("DIMOS_RUN_ID")
-    native._request_shutdown()
-    assert killed == [(222, signal.SIGTERM)], "no run id: nothing is signalled"
+    assert native._run_coordinator_pid() is None

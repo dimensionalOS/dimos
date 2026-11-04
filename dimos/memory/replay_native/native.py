@@ -25,9 +25,7 @@ from __future__ import annotations
 
 from functools import partial
 import os
-import signal
 import sys
-import threading
 from typing import Any
 
 from pydantic import Field
@@ -57,8 +55,10 @@ class ReplayNativeConfig(NativeModuleConfig):
     topics: str = Field(default="*", exclude=True)
     speed: float = Field(default=1.0, gt=0.0)
     loop: bool = False
-    # Once the whole recording has played (loop off), the binary exits and the run shuts down.
+    # Once the whole recording has played (loop off), the run shuts down.
     exit_on_complete: bool = False
+    # Filled at start with exit_on_complete: the pid of this run's coordinator, which the binary signals when done.
+    shutdown_pid: int = 0
     seek: float | None = Field(default=None, ge=0.0)
     duration: float | None = Field(default=None, gt=0.0)
     # Recorded-time gap between the end of one loop pass and the start of the next.
@@ -114,34 +114,27 @@ class ReplayNative(NativeModule):
             Module.start(self)
             return
         self.config.ports = sorted(self.outputs)
+        if self.config.exit_on_complete and not self.config.loop:
+            self.config.shutdown_pid = _run_coordinator_pid() or 0
         super().start()
-
-    def _exit_is_expected(self, returncode: int) -> bool:
-        if returncode != 0 or not self.config.exit_on_complete or self.config.loop:
-            return False
-        logger.info("Replay finished; requesting coordinator shutdown")
-        # Off the watchdog thread: the run's shutdown stops this module, which joins the watchdog.
-        threading.Thread(target=_request_shutdown, daemon=True).start()
-        return True
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """The binary reads its topics and config from the stdin line only."""
         return [self._executable]
 
 
-def _request_shutdown() -> None:
-    """Stop this run the way ``dimos stop`` does: SIGTERM to the coordinator registered under
-    this process's run id. The bus-wide ``Coordinator`` RPC name is not used: with two runs on
-    one bus it reaches whichever coordinator answers, not necessarily this one."""
+def _run_coordinator_pid() -> int | None:
+    """The coordinator registered under this process's run id, which the binary SIGTERMs as ``dimos stop`` does.
+    The bus-wide ``Coordinator`` RPC name is not used: with two runs on one bus it reaches whichever answers."""
     from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
     from dimos.core.run_registry import list_runs
 
     run_id = os.environ.get(DIMOS_RUN_ID_ENV)
     entry = next((e for e in list_runs() if e.run_id == run_id), None) if run_id else None
     if entry is None:
-        logger.warning("exit_on_complete: not under a registered `dimos run`; leaving it running")
-        return
-    os.kill(entry.pid, signal.SIGTERM)
+        logger.warning("exit_on_complete: not under a registered `dimos run`; it will keep running")
+        return None
+    return entry.pid
 
 
 def replay_native(db: str, topics: str = "*", name: str = "ReplayNative") -> type[ReplayNative]:
