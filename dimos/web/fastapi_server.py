@@ -16,7 +16,6 @@
 
 # Working FastAPI/Uvicorn Impl.
 
-# Notes: Do not use simultaneously with Flask, this includes imports.
 # Workers are not yet setup, as this requires a much more intricate
 # reorganization. There appears to be possible signalling issues when
 # opening up streams on multiple windows/reloading which will need to
@@ -207,16 +206,6 @@ class FastAPIServer(EdgeIO):
     def setup_routes(self) -> None:
         """Set up FastAPI routes."""
 
-        @self.app.get("/streams")
-        async def get_streams():  # type: ignore[no-untyped-def]
-            """Get list of available video streams"""
-            return {"streams": list(self.streams.keys())}
-
-        @self.app.get("/text_streams")
-        async def get_text_streams():  # type: ignore[no-untyped-def]
-            """Get list of available text streams"""
-            return {"streams": list(self.text_streams.keys())}
-
         @self.app.get("/", response_class=HTMLResponse)
         async def index(request: Request):  # type: ignore[no-untyped-def]
             stream_keys = list(self.streams.keys())
@@ -273,36 +262,6 @@ class FastAPIServer(EdgeIO):
             except Exception as e:
                 print(f"Failed to process uploaded audio: {e}")
                 return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
-
-        # Unitree API endpoints
-        @self.app.get("/unitree/status")
-        async def unitree_status():  # type: ignore[no-untyped-def]
-            """Check the status of the Unitree API server"""
-            return JSONResponse({"status": "online", "service": "unitree"})
-
-        @self.app.post("/unitree/command")
-        async def unitree_command(request: Request):  # type: ignore[no-untyped-def]
-            """Process commands sent from the terminal frontend"""
-            try:
-                data = await request.json()
-                command_text = data.get("command", "")
-
-                # Emit the command through the query_subject
-                self.query_subject.on_next(command_text)
-
-                response = {
-                    "success": True,
-                    "command": command_text,
-                    "result": f"Processed command: {command_text}",
-                }
-
-                return JSONResponse(response)
-            except Exception as e:
-                print(f"Error processing command: {e!s}")
-                return JSONResponse(
-                    status_code=500,
-                    content={"success": False, "message": f"Error processing command: {e!s}"},
-                )
 
         @self.app.get("/text_stream/{key}")
         async def text_stream(key: str):  # type: ignore[no-untyped-def]
