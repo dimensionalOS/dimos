@@ -142,6 +142,35 @@ impl Sighting {
     }
 }
 
+/// `planar_pose_graph`: a body-frame sighting in the level frame `tilt` turns the body into; its translation (and the
+/// translation rows of its information) turn, its rotation turns on the body side (the rotation error is the landmark's).
+pub fn leveled(
+    tilt: &Mat3,
+    rotation: &Mat3,
+    position: &Vec3,
+    information: &[[f64; 6]; 6],
+) -> (Mat3, Vec3, [[f64; 6]; 6]) {
+    // information' = B information B^T, B = diag(I, tilt)
+    let b = |i: usize, k: usize| match (i < 3, k < 3) {
+        (true, true) => (i == k) as u8 as f64,
+        (false, false) => tilt[i - 3][k - 3],
+        _ => 0.0,
+    };
+    let turned = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            (0..6)
+                .flat_map(|k| (0..6).map(move |l| (k, l)))
+                .map(|(k, l)| b(i, k) * information[k][l] * b(j, l))
+                .sum()
+        })
+    });
+    (
+        mat3::mat_mul(tilt, rotation),
+        mat3::mat_vec(tilt, position),
+        turned,
+    )
+}
+
 /// Inverse of `m` over its positive finite diagonal dims, zero elsewhere (ROS -1, inf, 0 = unknown); all zero if singular.
 pub fn known_inverse(m: &[[f64; 6]; 6]) -> [[f64; 6]; 6] {
     let known: Vec<usize> = (0..6)

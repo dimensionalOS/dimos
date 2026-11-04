@@ -108,6 +108,13 @@ pub fn rot_z(yaw: f64) -> Mat3 {
     [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
 }
 
+/// `rotation` split as rot_z(yaw) * tilt: the turn about z and the roll and pitch left after it.
+pub fn yaw_and_tilt(rotation: &Mat3) -> (Mat3, Mat3) {
+    let turn = rot_z(rotation[1][0].atan2(rotation[0][0]));
+    let tilt = mat_mul(&transpose(&turn), rotation);
+    (turn, tilt)
+}
+
 /// Rotation matrix -> quaternion `[w, x, y, z]` (Shepperd's method, Eigen's branch structure).
 pub fn quat_from_mat(m: &Mat3) -> [f64; 4] {
     let trace = m[0][0] + m[1][1] + m[2][2];

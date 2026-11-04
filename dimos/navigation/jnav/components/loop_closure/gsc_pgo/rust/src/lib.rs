@@ -25,6 +25,7 @@ pub mod gsc_pgo;
 pub mod icp_cache;
 pub mod landmarks;
 pub mod lidar_range;
+pub mod location_constraint;
 pub mod loop_overlap;
 pub mod mat3;
 pub mod odometry_error_estimate;

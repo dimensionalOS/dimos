@@ -59,6 +59,30 @@ pub struct SolveConfig {
     pub seed_closure_weights: Vec<f64>,
     /// Per keyframe, the accepted graph as an alternate start used where it fits (`solve_seed_from_accepted`); empty = none.
     pub seed_start: Vec<(Mat3, Vec3)>,
+    /// `planar_pose_graph`: every keyframe's roll, pitch and z are held, and edges and priors weigh only x, y and yaw; GNC's
+    /// cutoffs stay the 3D ones (a 3-DoF cutoff on the stated odometry error estimate drops the true loop on huge_fastlio).
+    pub planar: bool,
+    /// With landmark sightings, the solve starts from solves with the odometry's xy variances times this, then divided by
+    /// `landmark_warm_start_xy_variance_ladder` stage by stage down to the stated ones; either <= 1 = off.
+    pub landmark_warm_start_xy_variance_scale: f64,
+    pub landmark_warm_start_xy_variance_ladder: f64,
+}
+
+/// An edge's roll, pitch and z components (`Edge` order), which a planar solve holds.
+const OUT_OF_PLANE: [usize; 3] = [0, 1, 5];
+
+/// `SolveConfig::planar`: the edges with their roll, pitch and z components weightless (zero by construction, held anyway).
+fn in_plane(edges: &[Edge]) -> Vec<Edge> {
+    edges
+        .iter()
+        .map(|e| {
+            let mut e = *e;
+            for k in OUT_OF_PLANE {
+                e.variances[k] = f64::INFINITY;
+            }
+            e
+        })
+        .collect()
 }
 
 pub struct Solution {
@@ -158,13 +182,20 @@ pub(crate) fn solve_fast_path(
     config: &SolveConfig,
     steps: usize,
 ) -> FastSolve {
+    let planar_edges;
+    let (odometry, closures) = if config.planar {
+        planar_edges = (in_plane(odometry), in_plane(closures));
+        (&planar_edges.0[..], &planar_edges.1[..])
+    } else {
+        (odometry, closures)
+    };
     let mut state = State {
         rotation: rotations.to_vec(),
         position: positions.to_vec(),
         landmark: Vec::new(),
         landmark_rotation: Vec::new(),
     };
-    let pattern = Pattern::new(free, odometry.iter().chain(closures), &[], &[], &[]);
+    let pattern = Pattern::new(free, odometry.iter().chain(closures), &[], &[], &[], config.planar);
     let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
     let scaled: Vec<Edge> = closures
         .iter()
@@ -245,6 +276,74 @@ pub(crate) fn solve_core(
     sightings: &[LandmarkSighting],
     config: &SolveConfig,
 ) -> Solution {
+    // a re-sighting across a drifted loop needs big heading changes, which a solve from the odometry cannot reach through
+    // its stiff xy edges (each turned segment would stretch them); with xy loosened and every sighting in (a tag's id makes
+    // a wrong match rare) they pull the loop shut almost linearly in position, then xy stiffens stage by stage (each from
+    // the last, so LM converges in each) and the real solve, GNC verdicts on the sightings included, starts from that shape
+    let (mut scale, ladder) = (
+        config.landmark_warm_start_xy_variance_scale,
+        config.landmark_warm_start_xy_variance_ladder,
+    );
+    if sightings.is_empty() || scale <= 1.0 || ladder <= 1.0 {
+        return solve_from(
+            rotations, positions, free, odometry, closures, unary, sightings, config, true,
+        );
+    }
+    let warm_config = SolveConfig {
+        learned_evidence: false,
+        ..config.clone()
+    };
+    let (mut rotations, mut positions) = (rotations.to_vec(), positions.to_vec());
+    while scale > 1.0 {
+        let loosened: Vec<Edge> = odometry
+            .iter()
+            .map(|e| {
+                let mut variances = e.variances;
+                for axis in [3, 4] {
+                    variances[axis] *= scale;
+                }
+                Edge { variances, ..*e }
+            })
+            .collect();
+        let warm = solve_from(
+            &rotations,
+            &positions,
+            free,
+            &loosened,
+            closures,
+            unary,
+            sightings,
+            &warm_config,
+            false,
+        );
+        (rotations, positions) = (warm.rotations, warm.positions);
+        scale /= ladder;
+    }
+    solve_from(
+        &rotations, &positions, free, odometry, closures, unary, sightings, config, true,
+    )
+}
+
+/// `solve_core` from the given start; `judge_sightings` false keeps every sighting in (no GNC on them).
+#[allow(clippy::too_many_arguments)]
+fn solve_from(
+    rotations: &[Mat3],
+    positions: &[Vec3],
+    free: &[bool],
+    odometry: &[Edge],
+    closures: &[Edge],
+    unary: &[Unary],
+    sightings: &[LandmarkSighting],
+    config: &SolveConfig,
+    judge_sightings: bool,
+) -> Solution {
+    let planar_edges;
+    let (odometry, closures) = if config.planar {
+        planar_edges = (in_plane(odometry), in_plane(closures));
+        (&planar_edges.0[..], &planar_edges.1[..])
+    } else {
+        (odometry, closures)
+    };
     // a closure the newest adopted solve rejected starts out (`seed_closure_weights`)
     let seeded_out: Vec<bool> = (0..closures.len())
         .map(|i| config.seed_closure_weights.get(i) == Some(&0.0))
@@ -323,6 +422,7 @@ pub(crate) fn solve_core(
         unary,
         sightings,
         &landmark_dims,
+        config.planar,
     );
     // GNC with truncated least squares (Yang et al. 2020): start convex, tighten until each closure is in or out
     let residual =
@@ -352,7 +452,11 @@ pub(crate) fn solve_core(
             .map(|(s, t)| s.whitened(state) / t)
             .collect()
     };
-    let sighting_worst = sighting_residuals(&state).into_iter().fold(0.0, f64::max);
+    let sighting_worst = if judge_sightings {
+        sighting_residuals(&state).into_iter().fold(0.0, f64::max)
+    } else {
+        0.0
+    };
     let mut sighting_weights = vec![1.0; sightings.len()];
     let tracing = solve_log_path().is_some();
     let initial_cost = if tracing {
@@ -421,8 +525,10 @@ pub(crate) fn solve_core(
             for (w, &r) in unary_weights.iter_mut().zip(&u2) {
                 *w = tls(r, unary_threshold, mu);
             }
-            for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
-                *w = tls(r, 1.0, mu);
+            if judge_sightings {
+                for (w, &r) in sighting_weights.iter_mut().zip(&s2) {
+                    *w = tls(r, 1.0, mu);
+                }
             }
             converged = levenberg_marquardt(
                 &mut state,
@@ -549,8 +655,10 @@ pub(crate) fn solve_core(
         positions.len() - 1,
     )
     .unwrap_or_default();
+    // a planar solve measures no evidence: its z and tilt sources are held, not estimated
+    let learned_evidence = config.learned_evidence && !config.planar;
     // only the kept closures' PCM core speaks for the noise: a contradicted kept closure would read as odometry error
-    let evidence_weights: Vec<f64> = if !config.learned_evidence {
+    let evidence_weights: Vec<f64> = if !learned_evidence {
         Vec::new()
     } else if config.evidence_core {
         let kept_closures: Vec<(usize, Edge)> = closures
@@ -573,7 +681,7 @@ pub(crate) fn solve_core(
         huber.clone()
     };
     // evidence is read only at the minimum of a solve of what it weighs: residuals a solve left are no one's noise
-    let odometry_error_estimate_evidence = if config.learned_evidence {
+    let odometry_error_estimate_evidence = if learned_evidence {
         let mut evidence_state = state.clone();
         let converged = levenberg_marquardt_steps(
             &mut evidence_state,
@@ -1000,6 +1108,13 @@ fn relative_position_covariances(
             )),
         );
     }
+    // planar: a held dof is known exactly (its pivot is only the damping)
+    let held = |i: usize| pattern.held.get(i).copied().unwrap_or(false);
+    for i in (0..size).filter(|&i| held(i)) {
+        for c in 0..3 {
+            tip_columns[(i, c)] = 0.0;
+        }
+    }
     let SymbolicCholeskyRaw::Simplicial(simplicial) = symbolic.raw() else {
         return None;
     };
@@ -1028,6 +1143,9 @@ fn relative_position_covariances(
         sigma[first] = (1.0 / pivot - sum) / pivot;
     }
     let entry = |slot: usize, u: usize, v: usize| {
+        if held(6 * slot + u) || held(6 * slot + v) {
+            return 0.0;
+        }
         at(
             &sigma,
             inverse_order[6 * slot + u],
@@ -1242,6 +1360,9 @@ struct Pattern {
     landmark_at: Vec<usize>,
     landmark_dims: Vec<usize>,
     size: usize,
+    /// Planar: per matrix index, whether it is a keyframe's held roll, pitch or z; per fill entry, whether it touches one.
+    held: Vec<bool>,
+    held_entries: Vec<bool>,
     symbolic: SymbolicSparseColMat<usize>,
     order: Argsort<usize>,
     llt: SymbolicLlt<usize>,
@@ -1254,6 +1375,7 @@ impl Pattern {
         unary: &[Unary],
         sightings: &[Sighting],
         landmark_dims: &[usize],
+        planar: bool,
     ) -> Pattern {
         let mut count = 0;
         let slot: Vec<Option<usize>> = free
@@ -1281,6 +1403,18 @@ impl Pattern {
                     .map(|(_, _, r, c)| Pair::new(r, c)),
             );
         }
+        let held: Vec<bool> = if planar {
+            (0..size)
+                .map(|i| i < 6 * count && OUT_OF_PLANE.contains(&(i % 6)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let held_entries = if planar {
+            indices.iter().map(|p| held[p.row] || held[p.col]).collect()
+        } else {
+            Vec::new()
+        };
         // the damping diagonal last, so the matrix is never structurally singular
         indices.extend((0..size).map(|i| Pair::new(i, i)));
         let (symbolic, order) = SymbolicSparseColMat::try_new_from_indices(size, size, &indices)
@@ -1292,6 +1426,8 @@ impl Pattern {
             landmark_at,
             landmark_dims: landmark_dims.to_vec(),
             size,
+            held,
+            held_entries,
             symbolic,
             order,
             llt,
@@ -1584,6 +1720,16 @@ fn normal_equations(
             gradient[at + i] -= pull(6 + i);
         }
     }
+    // planar: a held dof's rows and columns are cleared, so the step leaves it where it is
+    if !pattern.held.is_empty() {
+        for (v, _) in values.iter_mut().zip(&pattern.held_entries).filter(|(_, &h)| h) {
+            *v = 0.0;
+        }
+        for (i, _) in pattern.held.iter().enumerate().filter(|(_, &h)| h) {
+            gradient[i] = 0.0;
+            diagonal[i] = 0.0;
+        }
+    }
     (values, gradient, diagonal)
 }
 
@@ -1641,7 +1787,7 @@ pub(crate) fn step_variances(
 /// The reported odometry variance (xy, z, yaw, roll/pitch) of `distance` m travelled while turning `turn` rad.
 pub fn motion_variances(config: &Config, distance: f64, turn: f64) -> [f64; 4] {
     let c = config;
-    [
+    let variances = [
         (
             c.odometry_error_estimate_xy_per_sqrt_m,
             c.odometry_error_estimate_xy_per_sqrt_rad,
@@ -1659,7 +1805,13 @@ pub fn motion_variances(config: &Config, distance: f64, turn: f64) -> [f64; 4] {
             c.odometry_error_estimate_tilt_per_sqrt_rad,
         ),
     ]
-    .map(|(per_m, per_rad)| per_m * per_m * distance + per_rad * per_rad * turn)
+    .map(|(per_m, per_rad)| per_m * per_m * distance + per_rad * per_rad * turn);
+    // planar_pose_graph: the odometry has no z or tilt to drift
+    if c.planar_pose_graph {
+        [variances[0], 0.0, variances[2], 0.0]
+    } else {
+        variances
+    }
 }
 
 /// The mean of `step_variances` over the odometry so far (before two keyframes, a step of the keyframe thresholds).

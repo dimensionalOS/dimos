@@ -85,6 +85,9 @@ fn a_true_closure_closes_the_drift_and_a_false_one_is_rejected() {
             learned_evidence: true,
             seed_closure_weights: Vec::new(),
             seed_start: Vec::new(),
+            planar: false,
+            landmark_warm_start_xy_variance_scale: 0.0,
+            landmark_warm_start_xy_variance_ladder: 0.0,
         },
     );
     assert_eq!(solution.closure_weights, vec![1.0, 0.0]);
@@ -143,6 +146,9 @@ fn relative_covariance_of_a_chain_is_its_odometry_error_estimate() {
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
+        planar: false,
+        landmark_warm_start_xy_variance_scale: 0.0,
+        landmark_warm_start_xy_variance_ladder: 0.0,
     };
     let solution = solve(&rotations, &positions, &free, &odometry, &[], &config);
     assert_eq!(solution.relative_position_covariance.len(), n);
@@ -247,6 +253,9 @@ fn look_alike_square() -> (Vec<f64>, f64, f64) {
             learned_evidence: true,
             seed_closure_weights: Vec::new(),
             seed_start: Vec::new(),
+            planar: false,
+            landmark_warm_start_xy_variance_scale: 0.0,
+            landmark_warm_start_xy_variance_ladder: 0.0,
         },
     );
     let gap = |positions: &[Vec3]| mat3::norm(&mat3::sub(&positions[4 * SIDE], &positions[0]));
@@ -334,6 +343,9 @@ fn closures_agree_around_a_drifting_cycle() {
         learned_evidence: true,
         seed_closure_weights: Vec::new(),
         seed_start: Vec::new(),
+        planar: false,
+        landmark_warm_start_xy_variance_scale: 0.0,
+        landmark_warm_start_xy_variance_ladder: 0.0,
     };
     assert_eq!(
         consistent_closures(&closures, &odometry, &config),
