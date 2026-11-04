@@ -6,6 +6,7 @@
 import {
   encodeDataFrame,
   type FrameHeader,
+  MAX_CONTROL_PAYLOAD_BYTES,
   MAX_TOPIC_HANDLES,
   MAX_TOPIC_KEYS,
   MAX_TOPIC_PAYLOAD_BYTES,
@@ -165,12 +166,14 @@ export class TopicRegistry {
   /** The connected sources with their providers' capabilities; a source that
    * disconnects leaves the list. Empty while the relay keeps topics closed. */
   sources(): TopicSourcesMsg {
+    return this.#announcement(this.open ? [...this.#sources.values()] : []);
+  }
+
+  #announcement(sources: Source[]): TopicSourcesMsg {
     return {
       t: "topic_sources",
       v: 1,
-      sources: this.open
-        ? [...this.#sources.values()].map((s) => ({ source: s.id, gen: s.gen, ...s.capabilities }))
-        : [],
+      sources: sources.map((s) => ({ source: s.id, gen: s.gen, ...s.capabilities })),
     };
   }
 
@@ -192,8 +195,9 @@ export class TopicRegistry {
 
   /** Called only after the session verified the provider (its source key,
    * when the relay has an auth file). Returns the rejection code, or null
-   * once the source is registered. The count is capped at what one
-   * topic_sources message can carry, so every announcement stays valid. */
+   * once the source is registered. Sources are capped at what one
+   * topic_sources message can carry, in count and in control frame bytes,
+   * so every announcement stays valid. */
   registerSource(
     peer: TopicProvider,
     id: string,
@@ -205,17 +209,18 @@ export class TopicRegistry {
     const source: Source = {
       id,
       peer,
-      gen: ++this.#generation,
+      gen: this.#generation + 1,
       groups: new Map(),
       closing: false,
       capabilities,
     };
+    const announced = this.#announcement([...this.#sources.values(), source]);
+    if (
+      new TextEncoder().encode(JSON.stringify(announced)).byteLength > MAX_CONTROL_PAYLOAD_BYTES
+    ) return "topic_source_limit";
+    this.#generation = source.gen;
     this.#sources.set(id, source);
-    peer.sendControl({
-      t: "topic_sources",
-      v: 1,
-      sources: [{ source: id, gen: source.gen, ...capabilities }],
-    });
+    peer.sendControl(this.#announcement([source]));
     this.#announce();
     for (const state of this.#viewers.values()) {
       for (const sub of [...state.subs.values()]) {
@@ -501,8 +506,9 @@ export class TopicRegistry {
     }
   }
 
-  /** The variant of `group` encoding `settings`, reusing an identical one.
-   * A full group first retires a variant in its grace period. */
+  /** The variant of `group` encoding `settings`, reusing an identical one,
+   * which then is in use again. A full group first retires a variant in its
+   * grace period. */
   #variantFor(
     group: Group,
     settings: TopicSettings,
@@ -510,7 +516,10 @@ export class TopicRegistry {
     const variants = group.variants!;
     const key = variantKey(settings);
     for (const variant of variants.values()) {
-      if (variant.key === key) return { variant, created: false };
+      if (variant.key === key) {
+        variant.idleSince = 0;
+        return { variant, created: false };
+      }
     }
     if (variants.size >= MAX_TOPIC_VARIANTS) {
       const idle = [...variants.values()].find((variant) => variant.idleSince > 0);
@@ -574,7 +583,9 @@ export class TopicRegistry {
       reject("source_offline");
       return;
     }
-    const requested = { ...sub.requested };
+    // A change still waiting for its variant is the base: two changes to
+    // different settings both apply.
+    const requested = { ...(sub.target?.requested ?? sub.requested) };
     for (const [name, value] of Object.entries(options)) {
       if (value === null) delete requested[name];
       else requested[name] = value;
@@ -607,7 +618,6 @@ export class TopicRegistry {
       settings,
       deadline: this.now() + REQUEST_TIMEOUT_MS,
     };
-    found.variant.idleSince = 0;
     if (previous !== found.variant) this.#idle(group, previous);
     if (found.created) this.#announceVariant(group, found.variant);
     this.#updateRate(group);
