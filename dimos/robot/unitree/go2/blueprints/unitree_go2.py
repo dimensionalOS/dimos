@@ -113,7 +113,7 @@ class Replay(ReplayNative):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     # only these: the recording's other streams would be ports nothing in the blueprint wired
-    topics = "lidar,odom,color_image,camera_info"
+    topics = ("lidar", "odom", "color_image", "camera_info")
 
 
 class Go2RecordingTf(Module):
