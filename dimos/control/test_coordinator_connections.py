@@ -636,29 +636,36 @@ def test_a_base_is_zeroed_when_its_velocity_task_times_out(
     """A velocity task's stream going quiet zeroes every base axis — the
     connection base gets the same zero_on_timeout safety as an adapter base.
 
-    Deterministic, no sleeps: the task's clock (perf_counter, which the tick
-    loop stamps ``state.t_now`` from) is advanced past the task timeout by
-    hand, while the base's feedback is re-reported right before each tick so
-    it is fresh no matter how long the runner pauses — only the task command
-    expires.
+    Deterministic, with both clocks controlled: the task's clock
+    (perf_counter, which the tick loop stamps ``state.t_now`` from) is
+    advanced past the task timeout by hand, while the feedback clock
+    (monotonic, which the connection source stamps receipts with and checks
+    their freshness against) never moves — so the task command expires but
+    the feedback cannot go stale, no matter how long the runner pauses. The
+    real sleep below, longer than the reading timeout, proves that: with an
+    uncontrolled feedback clock it would stale the feedback and the strict
+    assertions at the end would fail.
     """
+    task_clock = [1000.0]
+    feedback_clock = [2000.0]
+    mocker.patch.object(time, "perf_counter", side_effect=lambda: task_clock[0])
+    mocker.patch.object(time, "monotonic", side_effect=lambda: feedback_clock[0])
+
     r = rig()
     task = base_task("vel_base", priority=10, timeout=0.05)
     r.coordinator.add_task(task)
 
-    clock = [1000.0]
-    mocker.patch.object(time, "perf_counter", side_effect=lambda: clock[0])
-
     r.report_base()
-    task.set_velocities([0.4, 0.0, 0.0], t_now=clock[0])
+    task.set_velocities([0.4, 0.0, 0.0], t_now=task_clock[0])
     r.tick()
     assert r.twists_sent()[-1].linear.x == 0.4
 
     # The command stream goes quiet past the task's timeout; the feedback
     # stays fresh, so the robot is still commanded, with zeros, this tick.
-    clock[0] += 2 * 0.05
+    task_clock[0] += 2 * 0.05
     r.report_base()
     twists_before = len(r.twists_sent())
+    time.sleep(0.25)  # a real scheduling pause, past reading_timeout_s
     r.tick()
 
     assert len(r.twists_sent()) == twists_before + 1  # fresh feedback: still commanded
