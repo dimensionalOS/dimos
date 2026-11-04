@@ -176,44 +176,19 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         req: RPCReq = {"v": RPC_WIRE_VERSION, "name": name, "args": body, "id": msg_id}
 
-        # Get or create shared subscription for this RPC's response topic
+        # One shared response subscription per RPC name, created on first use.
         topic_res_key = str(topic_res)
         with self._response_subs_lock:
-            if topic_res_key not in self._response_subs:
-                # Create shared handler that routes to callbacks by msg_id
-                callbacks_dict: dict[float, Callable[..., Any]] = {}
-
-                def shared_response_handler(msg: MsgT, topic: TopicT) -> None:
-                    if not self._wire_version_ok(msg, topic):
-                        return
-                    res = cast("RPCRes", msg)
-                    res_id = res.get("id")
-                    if res_id is None:
-                        return
-
-                    # Look up callback for this msg_id
-                    with self._response_subs_lock:
-                        callback = callbacks_dict.pop(res_id, None)
-
-                    if callback is None:
-                        return  # No callback registered (already handled or timed out)
-
-                    callback(_decode_reply(res))
-
-                # Create single shared subscription
-                unsub = self.subscribe(topic_res, shared_response_handler)
-                self._response_subs[topic_res_key] = (unsub, callbacks_dict)
-
-            # Register this call's callback
-            _, callbacks_dict = self._response_subs[topic_res_key]
+            entry = self._response_subs.get(topic_res_key)
+        if entry is None:
+            entry = self._subscribe_responses(topic_res, topic_res_key)
+        _, callbacks_dict = entry
+        with self._response_subs_lock:
             callbacks_dict[msg_id] = cb
 
-        # Unsubscribe function that removes this callback from the dict
         def unsubscribe_callback() -> None:
             with self._response_subs_lock:
-                if topic_res_key in self._response_subs:
-                    _, callbacks_dict = self._response_subs[topic_res_key]
-                    callbacks_dict.pop(msg_id, None)
+                callbacks_dict.pop(msg_id, None)
 
         try:
             self.publish(topic_req, cast("MsgT", req))
@@ -222,6 +197,38 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             raise
 
         return unsubscribe_callback
+
+    def _subscribe_responses(
+        self, topic_res: TopicT, key: str
+    ) -> tuple[Callable[[], None], dict[float, Callable[..., Any]]]:
+        """Create the shared response subscription for one RPC name.
+
+        subscribe() waits for the pubsub's current dispatch to finish, and a
+        dispatching response handler takes _response_subs_lock, so the lock
+        is never held across subscribe(). Two first calls may race: the loser
+        drops its subscription and shares the winner's.
+        """
+        callbacks: dict[float, Callable[..., Any]] = {}
+
+        def shared_response_handler(msg: MsgT, topic: TopicT) -> None:
+            if not self._wire_version_ok(msg, topic):
+                return
+            res = cast("RPCRes", msg)
+            res_id = res.get("id")
+            if res_id is None:
+                return
+            with self._response_subs_lock:
+                callback = callbacks.pop(res_id, None)
+            if callback is None:
+                return  # already handled or timed out
+            callback(_decode_reply(res))
+
+        unsub = self.subscribe(topic_res, shared_response_handler)
+        with self._response_subs_lock:
+            entry = self._response_subs.setdefault(key, (unsub, callbacks))
+        if entry[0] is not unsub:
+            unsub()
+        return entry
 
     def call_nowait(self, name: str, arguments: Args) -> None:
         topic_req = self.topicgen(name, False)
