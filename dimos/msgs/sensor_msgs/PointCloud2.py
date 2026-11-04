@@ -19,12 +19,11 @@ import struct
 from typing import TYPE_CHECKING, Any, TypedDict
 
 # Import LCM types
+from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.sensor_msgs.PointCloud2 import (
     PointCloud2 as LCMPointCloud2,
 )
 from dimos_lcm.sensor_msgs.PointField import PointField
-from dimos_lcm.std_msgs.Header import Header
-from dimos_lcm.std_msgs.Time import Time
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -550,15 +549,9 @@ class PointCloud2(Timestamped):
         msg = LCMPointCloud2()
 
         # Header
-        msg.header = Header()
-        msg.header.seq = self.seq
-        msg.header.frame_id = frame_id or self.frame_id
-
-        # A fresh stamp: the generated Header shares one default Time across every
-        # message, so writing into it leaks into other encodes. An unstamped cloud
-        # encodes as zero, which lcm_decode maps back to None.
-        ts = self.ts or 0.0
-        msg.header.stamp = Time(sec=int(ts), nsec=int((ts - int(ts)) * 1e9))
+        msg.header = self.acquisition_header(frame_id or self.frame_id)
+        if self.sample_header is None:
+            msg.header.sequence = self.seq
 
         points, _ = self.as_numpy()
 
@@ -665,6 +658,12 @@ class PointCloud2(Timestamped):
 
         return msg.lcm_encode()  # type: ignore[no-any-return]
 
+    def with_sample_header(self, header: SampleHeader) -> PointCloud2:
+        super().with_sample_header(header)
+        if not header.clock_id:
+            self.ts = None
+        return self
+
     @classmethod
     def lcm_warmup(cls) -> None:
         """Preload the heavy imports lcm_decode needs.
@@ -686,11 +685,9 @@ class PointCloud2(Timestamped):
             return cls(
                 pointcloud=pc,
                 frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
-                ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                if hasattr(msg, "header") and msg.header.stamp.sec > 0
-                else None,
-                seq=msg.header.seq if hasattr(msg, "header") else 0,
-            )
+                ts=msg.header.time_ns / 1e9,
+                seq=msg.header.sequence,
+            ).with_sample_header(msg.header)
 
         # Parse field offsets. The message is self-describing; a known field is
         # honored only when its advertised datatype matches what we read it as,
@@ -848,11 +845,9 @@ class PointCloud2(Timestamped):
         return cls(
             pointcloud=pcd_t,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
-            ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-            if hasattr(msg, "header") and msg.header.stamp.sec > 0
-            else None,
-            seq=msg.header.seq if hasattr(msg, "header") else 0,
-        )
+            ts=msg.header.time_ns / 1e9,
+            seq=msg.header.sequence,
+        ).with_sample_header(msg.header)
 
     def _create_xyz_fields(self) -> list:  # type: ignore[type-arg]
         """Create X, Y, Z, intensity field definitions."""

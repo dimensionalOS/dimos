@@ -135,9 +135,7 @@ class TFMessage:
 
         transforms = []
         for lcm_transform_stamped in lcm_msg.transforms:
-            ts = lcm_transform_stamped.header.stamp.sec + (
-                lcm_transform_stamped.header.stamp.nsec / 1_000_000_000
-            )
+            ts = lcm_transform_stamped.header.time_ns / 1e9
 
             lcm_trans = lcm_transform_stamped.transform.translation
             lcm_rot = lcm_transform_stamped.transform.rotation
@@ -148,7 +146,7 @@ class TFMessage:
                 frame_id=lcm_transform_stamped.header.frame_id,
                 child_frame_id=lcm_transform_stamped.child_frame_id,
                 ts=ts,
-            )
+            ).with_sample_header(lcm_transform_stamped.header)
             transforms.append(transform)
 
         return cls(*transforms)

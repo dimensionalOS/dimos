@@ -16,11 +16,13 @@ from datetime import datetime, timezone
 from typing import Generic, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
+from dimos_lcm.common_msgs import SampleHeader
 from reactivex import create
 from reactivex.disposable import CompositeDisposable
 
 # from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
+from typing_extensions import Self
 
 from dimos.types.weaklist import WeakList
 from dimos.utils.logging_config import setup_logger
@@ -99,6 +101,30 @@ def to_datetime(ts: TimeLike, tz=None) -> datetime:  # type: ignore[no-untyped-d
 
 class Timestamped:
     ts: float
+    sample_header: SampleHeader | None = None
+
+    def with_sample_header(self, header: SampleHeader) -> Self:
+        """Preserve acquisition identity through the generated sensor codec."""
+        self.sample_header = header
+        self.ts = header.time_ns / 1e9
+        return self
+
+    def acquisition_header(self, frame_id: str) -> SampleHeader:
+        if self.sample_header is not None:
+            h = self.sample_header
+            return SampleHeader(
+                clock_id=h.clock_id,
+                epoch=h.epoch,
+                time_ns=h.time_ns,
+                source_id=h.source_id,
+                sequence=h.sequence,
+                frame_id=frame_id,
+            )
+        return SampleHeader(
+            clock_id="unix" if self.ts is not None else "",
+            time_ns=round(self.ts * 1e9) if self.ts is not None else 0,
+            frame_id=frame_id,
+        )
 
     def __init__(self, ts: float) -> None:
         self.ts = ts

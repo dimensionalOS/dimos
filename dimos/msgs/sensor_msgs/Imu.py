@@ -54,8 +54,7 @@ class Imu(Timestamped):
 
     def lcm_encode(self) -> bytes:
         msg = LCMImu()
-        [msg.header.stamp.sec, msg.header.stamp.nsec] = self.ros_timestamp()
-        msg.header.frame_id = self.frame_id
+        msg.header = self.acquisition_header(self.frame_id)
 
         msg.orientation.x = self.orientation.x
         msg.orientation.y = self.orientation.y
@@ -78,7 +77,7 @@ class Imu(Timestamped):
     @classmethod
     def lcm_decode(cls, data: bytes) -> Imu:
         msg = LCMImu.lcm_decode(data)
-        ts = msg.header.stamp.sec + (msg.header.stamp.nsec / 1_000_000_000)
+        ts = msg.header.time_ns / 1e9
         return cls(
             angular_velocity=Vector3(
                 msg.angular_velocity.x,
@@ -101,7 +100,7 @@ class Imu(Timestamped):
             linear_acceleration_covariance=list(msg.linear_acceleration_covariance),
             frame_id=msg.header.frame_id,
             ts=ts,
-        )
+        ).with_sample_header(msg.header)
 
     def __str__(self) -> str:
         return (
