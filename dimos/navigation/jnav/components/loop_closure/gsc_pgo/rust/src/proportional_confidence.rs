@@ -23,6 +23,9 @@ use crate::pointcloud::{
 };
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// Runs a cloud's computation through the ICP cache; the encoded alignment starts at the given index.
+pub(crate) type IcpMemo<'a> = dyn Fn(&str, usize, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64> + 'a;
+
 /// One keyframe's body-frame scan, lazily voxelized and range-binned; pose-independent, so solves never stale it.
 pub struct KeyframeCloud {
     body: Arc<PointCloud>,
@@ -239,17 +242,14 @@ impl ClosureSearch {
         voxel_downsample(&cloud, resolution)
     }
     /// Fit one more source cloud per round on a growing target; median ratio x agreement vs `UncertaintyRange` decides.
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(crate) fn extended_icp(
         &self,
-        cur_idx: usize,
-        target_idx: usize,
+        (cur_idx, target_idx): (usize, usize),
         first: &IcpResult,
         first_ratio: f64,
         diag: &mut ClosureCandidateDiag,
         required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
-        // runs a cloud's computation through the ICP cache; the encoded alignment starts at the given index
-        memo: &dyn Fn(&str, usize, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64>,
+        memo: &IcpMemo,
     ) -> Option<IcpResult> {
         let max_clouds = diag
             .extension_budget

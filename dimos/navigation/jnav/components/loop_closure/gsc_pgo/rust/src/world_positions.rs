@@ -15,7 +15,9 @@
 //! Absolute position priors for the pose graph: positions of a sensor in one or more fixed world frames (GPS, motion
 //! capture, a total station), each its own map -> frame alignment, folded into `big_picture_fit`'s solve.
 
-use crate::big_picture_fit::{solve_core, Edge, LandmarkSighting, Solution, SolveConfig, Unary};
+use crate::big_picture_fit::{
+    solve_core, Edge, LandmarkSighting, Solution, SolveConfig, Start, Unary,
+};
 use crate::mat3::{self, Mat3, Vec3};
 
 /// A sensor's position (m) in world frame `frame` (one id per coordinate system), mounted at `lever` on `keyframe`; cov m².
@@ -29,27 +31,20 @@ pub struct PositionPrior {
 }
 
 /// `solve` plus GNC-weighted position priors; other frames align to the most-observed one's solve (two-stage).
-#[allow(clippy::too_many_arguments)]
 pub fn solve_with_priors(
-    rotations: &[Mat3],
-    positions: &[Vec3],
-    free: &[bool],
+    start: Start,
     odometry: &[Edge],
     closures: &[Edge],
     priors: &[PositionPrior],
     sightings: &[LandmarkSighting],
     config: &SolveConfig,
 ) -> Solution {
-    let mut solution = solve_core(
+    let Start {
         rotations,
         positions,
         free,
-        odometry,
-        closures,
-        &[],
-        sightings,
-        config,
-    );
+    } = start;
+    let mut solution = solve_core(start, odometry, closures, &[], sightings, config);
     let mut frames: Vec<u32> = priors.iter().map(|p| p.frame).collect();
     frames.sort_unstable();
     frames.dedup();
@@ -151,9 +146,11 @@ pub fn solve_with_priors(
     // stage 1: primary alone, then refit the other alignments to it so their tighter priors can't hold a wrong first guess
     let (used, unary) = unary_of(&|f| f == primary, &relative);
     let primary_only = solve_core(
-        &world_rotations,
-        &world_positions,
-        &all_free,
+        Start {
+            rotations: &world_rotations,
+            positions: &world_positions,
+            free: &all_free,
+        },
         odometry,
         closures,
         &unary,
@@ -172,9 +169,11 @@ pub fn solve_with_priors(
     // stage 2: every frame together
     let (used, unary) = unary_of(&|_| true, &relative);
     let world = solve_core(
-        &primary_only.rotations,
-        &primary_only.positions,
-        &all_free,
+        Start {
+            rotations: &primary_only.rotations,
+            positions: &primary_only.positions,
+            free: &all_free,
+        },
         odometry,
         closures,
         &unary,

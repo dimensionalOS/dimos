@@ -524,9 +524,11 @@ impl GscPgo {
                     )
                 } else {
                     solve_with_priors(
-                        &rotations,
-                        &positions,
-                        &free,
+                        crate::big_picture_fit::Start {
+                            rotations: &rotations,
+                            positions: &positions,
+                            free: &free,
+                        },
                         &odometry,
                         &closures,
                         &priors,

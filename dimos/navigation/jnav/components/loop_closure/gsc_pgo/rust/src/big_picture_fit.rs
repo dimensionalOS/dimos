@@ -43,6 +43,14 @@ pub struct Edge {
     pub variances: [f64; 6],
 }
 
+/// A solve's starting poses, and which keyframes it may move (the rest are held, at least one, to pin the map).
+#[derive(Clone, Copy)]
+pub struct Start<'a> {
+    pub rotations: &'a [Mat3],
+    pub positions: &'a [Vec3],
+    pub free: &'a [bool],
+}
+
 #[derive(Clone)]
 pub struct SolveConfig {
     /// Closure variances are multiplied by this while GNC decides inliers (looser, so drift alone is not an outlier).
@@ -143,9 +151,11 @@ pub fn solve(
     config: &SolveConfig,
 ) -> Solution {
     solve_core(
-        rotations,
-        positions,
-        free,
+        Start {
+            rotations,
+            positions,
+            free,
+        },
         odometry,
         closures,
         &[],
@@ -171,17 +181,19 @@ pub(crate) struct FastSolve {
 /// read against GNC's cutoff, then (if under it) `solve_core`'s polish (own variances, Huber passes). No covariances. Each
 /// Levenberg-Marquardt pass stops after `steps` steps, bounding the cost (every step lowers the cost, so a pass cut short
 /// is still nearer the minimum than its start).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_fast_path(
-    rotations: &[Mat3],
-    positions: &[Vec3],
-    free: &[bool],
+    start: Start,
     odometry: &[Edge],
     closures: &[Edge],
     new: &[bool],
     config: &SolveConfig,
     steps: usize,
 ) -> FastSolve {
+    let Start {
+        rotations,
+        positions,
+        free,
+    } = start;
     let planar_edges;
     let (odometry, closures) = if config.planar {
         planar_edges = (in_plane(odometry), in_plane(closures));
@@ -212,23 +224,18 @@ pub(crate) fn solve_fast_path(
         })
         .collect();
     let old: Vec<f64> = new.iter().map(|&n| if n { 0.0 } else { 1.0 }).collect();
-    let before = cost(&state, odometry, &scaled, &old, &[], &[], &[], &[]);
+    let gnc = Factors::unweighted(odometry, &scaled, &[], &[]);
+    let before = cost(&state, gnc.weighted(&old, &[], &[]));
     let all = vec![1.0; closures.len()];
     let mut converged = levenberg_marquardt_steps(
         &mut state,
         &pattern,
-        odometry,
-        &scaled,
-        &all,
-        &[],
-        &[],
-        &[],
-        &[],
+        gnc.weighted(&all, &[], &[]),
         1e-5,
         steps,
         false,
     );
-    let after = cost(&state, odometry, &scaled, &all, &[], &[], &[], &[]);
+    let after = cost(&state, gnc.weighted(&all, &[], &[]));
     let worst = scaled
         .iter()
         .zip(new)
@@ -242,13 +249,7 @@ pub(crate) fn solve_fast_path(
         converged &= levenberg_marquardt_steps(
             &mut state,
             &pattern,
-            odometry,
-            closures,
-            &huber,
-            &[],
-            &[],
-            &[],
-            &[],
+            Factors::unweighted(odometry, closures, &[], &[]).weighted(&huber, &[], &[]),
             1e-5,
             steps,
             false,
@@ -294,11 +295,60 @@ fn unary_whitened(u: &Unary, state: &State) -> f64 {
     r[0] * ir[0] + r[1] * ir[1] + r[2] * ir[2]
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What a least-squares pass weighs: the odometry at weight 1, then closures, position priors and sightings by weight.
+#[derive(Clone, Copy)]
+struct Factors<'a> {
+    odometry: &'a [Edge],
+    closures: &'a [Edge],
+    closure_weights: &'a [f64],
+    unary: &'a [Unary],
+    unary_weights: &'a [f64],
+    sightings: &'a [Sighting],
+    sighting_weights: &'a [f64],
+}
+
+impl<'a> Factors<'a> {
+    /// These factors with no weights yet (`weighted` gives them).
+    fn unweighted(
+        odometry: &'a [Edge],
+        closures: &'a [Edge],
+        unary: &'a [Unary],
+        sightings: &'a [Sighting],
+    ) -> Factors<'a> {
+        Factors {
+            odometry,
+            closures,
+            closure_weights: &[],
+            unary,
+            unary_weights: &[],
+            sightings,
+            sighting_weights: &[],
+        }
+    }
+    /// The same factors with these closure, prior and sighting weights.
+    fn weighted<'b>(
+        self,
+        closure_weights: &'b [f64],
+        unary_weights: &'b [f64],
+        sighting_weights: &'b [f64],
+    ) -> Factors<'b>
+    where
+        'a: 'b,
+    {
+        Factors {
+            odometry: self.odometry,
+            closures: self.closures,
+            closure_weights,
+            unary: self.unary,
+            unary_weights,
+            sightings: self.sightings,
+            sighting_weights,
+        }
+    }
+}
+
 pub(crate) fn solve_core(
-    rotations: &[Mat3],
-    positions: &[Vec3],
-    free: &[bool],
+    start: Start,
     odometry: &[Edge],
     closures: &[Edge],
     unary: &[Unary],
@@ -314,15 +364,13 @@ pub(crate) fn solve_core(
         config.landmark_warm_start_xy_variance_ladder,
     );
     if sightings.is_empty() || scale <= 1.0 || ladder <= 1.0 {
-        return solve_from(
-            rotations, positions, free, odometry, closures, unary, sightings, config, true,
-        );
+        return solve_from(start, odometry, closures, unary, sightings, config, true);
     }
     let warm_config = SolveConfig {
         learned_evidence: false,
         ..config.clone()
     };
-    let (mut rotations, mut positions) = (rotations.to_vec(), positions.to_vec());
+    let (mut rotations, mut positions) = (start.rotations.to_vec(), start.positions.to_vec());
     while scale > 1.0 {
         let loosened: Vec<Edge> = odometry
             .iter()
@@ -335,9 +383,11 @@ pub(crate) fn solve_core(
             })
             .collect();
         let warm = solve_from(
-            &rotations,
-            &positions,
-            free,
+            Start {
+                rotations: &rotations,
+                positions: &positions,
+                free: start.free,
+            },
             &loosened,
             closures,
             unary,
@@ -349,16 +399,23 @@ pub(crate) fn solve_core(
         scale /= ladder;
     }
     solve_from(
-        &rotations, &positions, free, odometry, closures, unary, sightings, config, true,
+        Start {
+            rotations: &rotations,
+            positions: &positions,
+            free: start.free,
+        },
+        odometry,
+        closures,
+        unary,
+        sightings,
+        config,
+        true,
     )
 }
 
 /// `solve_core` from the given start; `judge_sightings` false keeps every sighting in (no GNC on them).
-#[allow(clippy::too_many_arguments)]
 fn solve_from(
-    rotations: &[Mat3],
-    positions: &[Vec3],
-    free: &[bool],
+    start: Start,
     odometry: &[Edge],
     closures: &[Edge],
     unary: &[Unary],
@@ -366,6 +423,11 @@ fn solve_from(
     config: &SolveConfig,
     judge_sightings: bool,
 ) -> Solution {
+    let Start {
+        rotations,
+        positions,
+        free,
+    } = start;
     let planar_edges;
     let (odometry, closures) = if config.planar {
         planar_edges = (in_plane(odometry), in_plane(closures));
@@ -454,6 +516,11 @@ fn solve_from(
         &landmark_dims,
         config.planar,
     );
+    let own = Factors::unweighted(odometry, closures, unary, sightings);
+    let gnc = Factors {
+        closures: &scaled,
+        ..own
+    };
     // GNC with truncated least squares (Yang et al. 2020): start convex, tighten until each closure is in or out
     let residual =
         |state: &State| -> Vec<f64> { scaled.iter().map(|e| whitened_squared(e, state)).collect() };
@@ -495,13 +562,11 @@ fn solve_from(
     let initial_cost = if tracing {
         cost_parts(
             &state,
-            odometry,
-            closures,
-            &vec![1.0; closures.len()],
-            unary,
-            &unary_weights,
-            sightings,
-            &sighting_weights,
+            own.weighted(
+                &vec![1.0; closures.len()],
+                &unary_weights,
+                &sighting_weights,
+            ),
         )
     } else {
         [f64::NAN; 3]
@@ -511,13 +576,7 @@ fn solve_from(
     let mut converged = levenberg_marquardt(
         &mut state,
         &pattern,
-        odometry,
-        &scaled,
-        &weights,
-        unary,
-        &unary_weights,
-        sightings,
-        &sighting_weights,
+        gnc.weighted(&weights, &unary_weights, &sighting_weights),
         1e-5,
     );
     let mut r2 = residual(&state);
@@ -566,13 +625,7 @@ fn solve_from(
             converged = levenberg_marquardt(
                 &mut state,
                 &pattern,
-                odometry,
-                &scaled,
-                &weights,
-                unary,
-                &unary_weights,
-                sightings,
-                &sighting_weights,
+                gnc.weighted(&weights, &unary_weights, &sighting_weights),
                 1e-5,
             );
             r2 = residual(&state);
@@ -581,13 +634,7 @@ fn solve_from(
             // stop like GTSAM's GncOptimizer: weights settled, or the weighted cost stopped changing
             let weighted_cost = cost(
                 &state,
-                odometry,
-                &scaled,
-                &weights,
-                unary,
-                &unary_weights,
-                sightings,
-                &sighting_weights,
+                gnc.weighted(&weights, &unary_weights, &sighting_weights),
             );
             let settled = weights
                 .iter()
@@ -617,13 +664,7 @@ fn solve_from(
             converged = levenberg_marquardt(
                 &mut state,
                 &pattern,
-                odometry,
-                &scaled,
-                &weights,
-                unary,
-                &unary_weights,
-                sightings,
-                &sighting_weights,
+                gnc.weighted(&weights, &unary_weights, &sighting_weights),
                 1e-5,
             );
         }
@@ -648,13 +689,7 @@ fn solve_from(
         levenberg_marquardt(
             &mut state,
             &pattern,
-            odometry,
-            closures,
-            &huber,
-            unary,
-            &unary_kept,
-            sightings,
-            &sighting_kept,
+            own.weighted(&huber, &unary_kept, &sighting_kept),
             1e-5,
         );
         for (h, (e, &k)) in huber.iter_mut().zip(closures.iter().zip(&kept)) {
@@ -666,27 +701,11 @@ fn solve_from(
             };
         }
     }
-    let error = 0.5
-        * cost(
-            &state,
-            odometry,
-            closures,
-            &huber,
-            unary,
-            &unary_kept,
-            sightings,
-            &sighting_kept,
-        );
+    let error = 0.5 * cost(&state, own.weighted(&huber, &unary_kept, &sighting_kept));
     let relative_position_covariance = relative_position_covariances(
         &state,
         &pattern,
-        odometry,
-        closures,
-        &huber,
-        unary,
-        &unary_kept,
-        sightings,
-        &sighting_kept,
+        own.weighted(&huber, &unary_kept, &sighting_kept),
         positions.len() - 1,
     )
     .unwrap_or_default();
@@ -721,13 +740,7 @@ fn solve_from(
         let converged = levenberg_marquardt_steps(
             &mut evidence_state,
             &pattern,
-            odometry,
-            closures,
-            &evidence_weights,
-            unary,
-            &unary_kept,
-            sightings,
-            &sighting_kept,
+            own.weighted(&evidence_weights, &unary_kept, &sighting_kept),
             1e-5,
             // a bound on time only: from the solve's state this is near its minimum, but a flat direction can creep
             1000,
@@ -738,13 +751,7 @@ fn solve_from(
                 odometry_error_estimate_evidence(
                     &evidence_state,
                     &pattern,
-                    odometry,
-                    closures,
-                    &evidence_weights,
-                    unary,
-                    &unary_kept,
-                    sightings,
-                    &sighting_kept,
+                    own.weighted(&evidence_weights, &unary_kept, &sighting_kept),
                 )
             })
             .flatten()
@@ -757,16 +764,7 @@ fn solve_from(
         gnc_stop,
         gnc_weights,
         initial_cost,
-        final_cost: cost_parts(
-            &state,
-            odometry,
-            closures,
-            &huber,
-            unary,
-            &unary_kept,
-            sightings,
-            &sighting_kept,
-        ),
+        final_cost: cost_parts(&state, own.weighted(&huber, &unary_kept, &sighting_kept)),
     });
     Solution {
         trace,
@@ -790,23 +788,24 @@ fn solve_from(
 const RESIDUAL_SOURCE: [usize; 6] = [3, 3, 2, 0, 0, 1];
 
 /// Förstner variance components per source: (whitened residual sum of squares, Hutchinson-estimated redundancy).
-#[allow(clippy::too_many_arguments)]
 fn odometry_error_estimate_evidence(
     state: &State,
     pattern: &Pattern,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
+    factors: Factors,
 ) -> Option<[(f64, f64); 6]> {
+    let Factors {
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    } = factors;
     let size = pattern.size;
     let factor = |cw: &[f64], uw: &[f64], sw: &[f64]| {
-        let (mut values, _, diagonal) = normal_equations(
-            state, pattern, odometry, closures, cw, unary, uw, sightings, sw,
-        );
+        let (mut values, _, diagonal) =
+            normal_equations(state, pattern, factors.weighted(cw, uw, sw));
         values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
         let hessian =
             SparseColMat::new_from_argsort(pattern.symbolic.clone(), &pattern.order, &values)
@@ -1073,31 +1072,14 @@ pub fn consistent_closures(
 }
 
 /// Keyframe `tip`'s position covariance seen from each keyframe (m², world axes), via Takahashi on the Cholesky factor.
-#[allow(clippy::too_many_arguments)]
 fn relative_position_covariances(
     state: &State,
     pattern: &Pattern,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
+    factors: Factors,
     tip: usize,
 ) -> Option<Vec<Mat3>> {
     let size = pattern.size;
-    let (mut values, _, diagonal) = normal_equations(
-        state,
-        pattern,
-        odometry,
-        closures,
-        closure_weights,
-        unary,
-        unary_weights,
-        sightings,
-        sighting_weights,
-    );
+    let (mut values, _, diagonal) = normal_equations(state, pattern, factors);
     // the pattern's damping diagonal, at Levenberg-Marquardt's smallest damping
     values.extend(diagonal.iter().map(|d| 1e-9 * (d + 1e-9)));
     let hessian =
@@ -1328,44 +1310,46 @@ pub(crate) fn linearize_between(
 }
 
 /// `cost`, split as [odometry, closures, priors and sightings].
-#[allow(clippy::too_many_arguments)]
-fn cost_parts(
-    state: &State,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
-) -> [f64; 3] {
+fn cost_parts(state: &State, factors: Factors) -> [f64; 3] {
+    let none = Factors::unweighted(&[], &[], &[], &[]);
     [
-        cost(state, odometry, &[], &[], &[], &[], &[], &[]),
-        cost(state, &[], closures, closure_weights, &[], &[], &[], &[]),
         cost(
             state,
-            &[],
-            &[],
-            &[],
-            unary,
-            unary_weights,
-            sightings,
-            sighting_weights,
+            Factors {
+                odometry: factors.odometry,
+                ..none
+            },
+        ),
+        cost(
+            state,
+            Factors {
+                closures: factors.closures,
+                closure_weights: factors.closure_weights,
+                ..none
+            },
+        ),
+        cost(
+            state,
+            Factors {
+                odometry: &[],
+                closures: &[],
+                closure_weights: &[],
+                ..factors
+            },
         ),
     ]
 }
 
-#[allow(clippy::too_many_arguments)]
-fn cost(
-    state: &State,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
-) -> f64 {
+fn cost(state: &State, factors: Factors) -> f64 {
+    let Factors {
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    } = factors;
     sightings
         .iter()
         .zip(sighting_weights)
@@ -1492,75 +1476,29 @@ fn block_entries(a: usize, b: usize) -> impl Iterator<Item = (usize, usize, usiz
 }
 
 /// `levenberg_marquardt_steps` with at most 100 steps, stopping at the first small drop.
-#[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt(
     state: &mut State,
     pattern: &Pattern,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
+    factors: Factors,
     tolerance: f64,
 ) -> bool {
-    levenberg_marquardt_steps(
-        state,
-        pattern,
-        odometry,
-        closures,
-        closure_weights,
-        unary,
-        unary_weights,
-        sightings,
-        sighting_weights,
-        tolerance,
-        100,
-        false,
-    )
+    levenberg_marquardt_steps(state, pattern, factors, tolerance, 100, false)
 }
 
 /// LM steps until a drop < `tolerance` x (cost + 1); `to_minimum` counts only near-undamped drops. False if stalled.
-#[allow(clippy::too_many_arguments)]
 fn levenberg_marquardt_steps(
     state: &mut State,
     pattern: &Pattern,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
+    factors: Factors,
     tolerance: f64,
     steps: usize,
     to_minimum: bool,
 ) -> bool {
     let size = pattern.size;
     let mut damping = 1e-6;
-    let mut current = cost(
-        state,
-        odometry,
-        closures,
-        closure_weights,
-        unary,
-        unary_weights,
-        sightings,
-        sighting_weights,
-    );
+    let mut current = cost(state, factors);
     for _ in 0..steps {
-        let (mut values, gradient, diagonal) = normal_equations(
-            state,
-            pattern,
-            odometry,
-            closures,
-            closure_weights,
-            unary,
-            unary_weights,
-            sightings,
-            sighting_weights,
-        );
+        let (mut values, gradient, diagonal) = normal_equations(state, pattern, factors);
         let filled = values.len();
         values.resize(filled + size, 0.0);
         let (mut stepped, mut accepted, mut predicted) = (false, false, None);
@@ -1607,16 +1545,7 @@ fn levenberg_marquardt_steps(
                     (trial.rotation[k], trial.position[k]) = state.retract(k, &delta);
                 }
             }
-            let trial_cost = cost(
-                &trial,
-                odometry,
-                closures,
-                closure_weights,
-                unary,
-                unary_weights,
-                sightings,
-                sighting_weights,
-            );
+            let trial_cost = cost(&trial, factors);
             if trial_cost.is_finite() && trial_cost <= current {
                 stepped = current - trial_cost > tolerance * (current + 1.0)
                     || (to_minimum && damping > 1e-6);
@@ -1637,18 +1566,20 @@ fn levenberg_marquardt_steps(
 }
 
 /// Gauss-Newton normal equations at `state`: J^T W J in `Pattern` fill order (no damping), -J^T W r, and its diagonal.
-#[allow(clippy::too_many_arguments)]
 fn normal_equations(
     state: &State,
     pattern: &Pattern,
-    odometry: &[Edge],
-    closures: &[Edge],
-    closure_weights: &[f64],
-    unary: &[Unary],
-    unary_weights: &[f64],
-    sightings: &[Sighting],
-    sighting_weights: &[f64],
+    factors: Factors,
 ) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let Factors {
+        odometry,
+        closures,
+        closure_weights,
+        unary,
+        unary_weights,
+        sightings,
+        sighting_weights,
+    } = factors;
     let mut values: Vec<f64> = Vec::new();
     let mut gradient = vec![0.0; pattern.size];
     let mut diagonal = vec![0.0; pattern.size];

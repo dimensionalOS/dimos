@@ -1241,8 +1241,7 @@ impl PendingExtension {
         };
         let t0 = std::time::Instant::now();
         let extended = search.extended_icp(
-            cur_idx,
-            target_idx,
+            (cur_idx, target_idx),
             &icp,
             ratio,
             &mut diag,
@@ -1578,8 +1577,7 @@ impl ClosureSearch {
                 source_cloud,
                 target_cloud,
                 target_tree,
-                &init_rotation,
-                &init_translation,
+                (&init_rotation, &init_translation),
                 &IcpParams {
                     max_iterations: self.config.closure_icp_max_iterations as usize,
                     max_correspondence_distance: self.config.closure_icp_max_correspondence_m,
