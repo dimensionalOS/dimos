@@ -16,18 +16,16 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import itertools
 import json
 from pathlib import Path
 import sys
 import threading
-import time
 from typing import Any
 
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from dimos_lcm.sensor_msgs import Image
-import numpy as np
 import pytest
 import zenoh
 
@@ -75,6 +73,7 @@ from dimos.web.relay_bridge.topic_service import TopicServiceConfig
 from dimos.web.relay_bridge.topic_test_support import (
     next_message,
     provider_connection,
+    publish_camera,
     route_variants,
 )
 from dimos.web.relay_bridge.topic_transport import OrderedTopicWriter, TopicByteBudget
@@ -1372,21 +1371,6 @@ async def test_a_raw_rate_update_is_acknowledged_by_the_relay_and_reliable_event
 # Direct video (PLAN_2b): an aiortc viewer stands in for the browser.
 
 
-def camera_frame(seq: int, width: int = 320, height: int = 240) -> bytes:
-    """An rgb8 Image whose picture moves with ``seq``, so the encoder has work."""
-    message = Image.lcm_decode(bytes.fromhex(boxed_vector()["lcm"]))
-    message.header.seq = seq
-    shape = (height, width)
-    rows = np.broadcast_to((np.arange(height)[:, None] * 2 + seq * 7) % 256, shape)
-    cols = np.broadcast_to((np.arange(width)[None, :] * 3 + seq * 5) % 256, shape)
-    picture = np.stack([(rows + cols) % 256, rows, cols], axis=2).astype(np.uint8)
-    message.height, message.width, message.encoding = height, width, "rgb8"
-    message.is_bigendian, message.step = False, width * 3
-    message.data = picture.tobytes()
-    message.data_length = len(message.data)
-    return message.lcm_encode()
-
-
 class VideoViewer:
     """One relay viewer with one direct peer: the browser's half in Python."""
 
@@ -1447,35 +1431,6 @@ async def video_viewer(
             yield viewer
         finally:
             await viewer.close()
-
-
-@contextmanager
-def publish_camera(
-    source: zenoh.Session, key: str, count: int, hz: float = 30
-) -> Iterator[threading.Thread]:
-    """Publish up to ``count`` synthetic frames at ``hz`` from a thread that
-    stops with the block, so a failing test never leaves it putting into a
-    closing session."""
-    stop = threading.Event()
-
-    def run() -> None:
-        # Absolute schedule: building a frame never lowers the rate.
-        period = 1 / hz
-        next_at = time.monotonic()
-        for seq in range(count):
-            if stop.is_set():
-                return
-            source.put(key, camera_frame(seq))
-            next_at += period
-            stop.wait(max(0.0, next_at - time.monotonic()))
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    try:
-        yield thread
-    finally:
-        stop.set()
-        thread.join(5)
 
 
 async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
