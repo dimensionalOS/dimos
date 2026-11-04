@@ -17,13 +17,13 @@
 
 use std::sync::Arc;
 
-use crate::store::KeyFrames;
 use crate::big_picture_fit::{closure_edges, Edge};
 use crate::connection_fit::{dump_icp, IcpParams};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::{transform_cloud, voxel_downsample, KdTree, PointCloud};
 use crate::pose_graph_solving::Solving;
 use crate::similarity_discovery;
+use crate::store::KeyFrames;
 use crate::uniqueness;
 
 /// A pose paired with a timestamp.
@@ -63,7 +63,10 @@ pub struct CloudWithPose {
 
 /// `planar_pose_graph`: a pose on the floor plane (x, y, yaw; z, roll and pitch dropped).
 pub fn planar(rotation: &Mat3, translation: &Vec3) -> (Mat3, Vec3) {
-    (mat3::yaw_and_tilt(rotation).0, [translation[0], translation[1], 0.0])
+    (
+        mat3::yaw_and_tilt(rotation).0,
+        [translation[0], translation[1], 0.0],
+    )
 }
 /// A keyframe: its local and global poses, time, and body-frame cloud.
 #[derive(Debug, Clone)]
@@ -390,7 +393,10 @@ impl GscPgo {
             .iter_mut()
             .filter(|(_, tally)| tally.jobs_since_warning > 0)
             .map(|(kind, tally)| {
-                let line = format!("{kind} {} of {}", tally.overshoots_since_warning, tally.jobs_since_warning);
+                let line = format!(
+                    "{kind} {} of {}",
+                    tally.overshoots_since_warning, tally.jobs_since_warning
+                );
                 tally.jobs_since_warning = 0;
                 tally.overshoots_since_warning = 0;
                 line
@@ -704,22 +710,71 @@ impl Config {
             ));
         }
         let estimates = [
-            ("fast_match_scans_fixed_overhead", self.deterministic_config.fast_match_scans_fixed_overhead),
-            ("fast_match_scans_per_keyframe", self.deterministic_config.fast_match_scans_per_keyframe),
-            ("fast_match_scans_per_point", self.deterministic_config.fast_match_scans_per_point),
-            ("fast_match_scans_per_source_point", self.deterministic_config.fast_match_scans_per_source_point),
-            ("verification_scans_fixed_overhead", self.deterministic_config.verification_scans_fixed_overhead),
-            ("verification_scans_per_round", self.deterministic_config.verification_scans_per_round),
-            ("verification_scans_per_round_point", self.deterministic_config.verification_scans_per_round_point),
-            ("pressure_scans_fixed_overhead", self.deterministic_config.pressure_scans_fixed_overhead),
-            ("pressure_scans_per_keyframe", self.deterministic_config.pressure_scans_per_keyframe),
-            ("pressure_scans_per_closure", self.deterministic_config.pressure_scans_per_closure),
-            ("solve_scans_scale", self.deterministic_config.solve_scans_scale),
-            ("solve_closure_free_scans_scale", self.deterministic_config.solve_closure_free_scans_scale),
-            ("debounce_scans_per_keyframe", self.deterministic_config.debounce_scans_per_keyframe),
-            ("fast_path_scans_fixed_overhead", self.deterministic_config.fast_path_scans_fixed_overhead),
-            ("fast_path_scans_per_window_keyframe", self.deterministic_config.fast_path_scans_per_window_keyframe),
-            ("fast_path_scans_per_keyframe", self.deterministic_config.fast_path_scans_per_keyframe),
+            (
+                "fast_match_scans_fixed_overhead",
+                self.deterministic_config.fast_match_scans_fixed_overhead,
+            ),
+            (
+                "fast_match_scans_per_keyframe",
+                self.deterministic_config.fast_match_scans_per_keyframe,
+            ),
+            (
+                "fast_match_scans_per_point",
+                self.deterministic_config.fast_match_scans_per_point,
+            ),
+            (
+                "fast_match_scans_per_source_point",
+                self.deterministic_config.fast_match_scans_per_source_point,
+            ),
+            (
+                "verification_scans_fixed_overhead",
+                self.deterministic_config.verification_scans_fixed_overhead,
+            ),
+            (
+                "verification_scans_per_round",
+                self.deterministic_config.verification_scans_per_round,
+            ),
+            (
+                "verification_scans_per_round_point",
+                self.deterministic_config.verification_scans_per_round_point,
+            ),
+            (
+                "pressure_scans_fixed_overhead",
+                self.deterministic_config.pressure_scans_fixed_overhead,
+            ),
+            (
+                "pressure_scans_per_keyframe",
+                self.deterministic_config.pressure_scans_per_keyframe,
+            ),
+            (
+                "pressure_scans_per_closure",
+                self.deterministic_config.pressure_scans_per_closure,
+            ),
+            (
+                "solve_scans_scale",
+                self.deterministic_config.solve_scans_scale,
+            ),
+            (
+                "solve_closure_free_scans_scale",
+                self.deterministic_config.solve_closure_free_scans_scale,
+            ),
+            (
+                "debounce_scans_per_keyframe",
+                self.deterministic_config.debounce_scans_per_keyframe,
+            ),
+            (
+                "fast_path_scans_fixed_overhead",
+                self.deterministic_config.fast_path_scans_fixed_overhead,
+            ),
+            (
+                "fast_path_scans_per_window_keyframe",
+                self.deterministic_config
+                    .fast_path_scans_per_window_keyframe,
+            ),
+            (
+                "fast_path_scans_per_keyframe",
+                self.deterministic_config.fast_path_scans_per_keyframe,
+            ),
         ];
         for (name, count) in [
             ("fast_match_workers", self.fast_match_workers),
@@ -887,9 +942,11 @@ pub struct GscPgo {
     pub(crate) heat_keyframes: usize,
     pub(crate) pending_solve: Option<(crate::pose_graph_solving::FinishedSolve, f64)>,
     /// Debounce and merge (`adoption_schedule`): jobs out, solves waiting, workers, and whether they run inline (end of data).
-    pub(crate) debounce_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Debounced>>,
+    pub(crate) debounce_job:
+        Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Debounced>>,
     pub(crate) debounce_waiting: Option<crate::pose_graph_solving::FinishedSolve>,
-    pub(crate) merge_job: Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Merged>>,
+    pub(crate) merge_job:
+        Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Merged>>,
     pub(crate) merge_waiting: Option<MergeWaiting>,
     pub(crate) adoption_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) merge_pool: Option<crate::closure_search_schedule::SearchPool>,
@@ -911,7 +968,8 @@ pub struct GscPgo {
     pub(crate) overshoot_tally: std::collections::BTreeMap<&'static str, OvershootTally>,
     pub(crate) last_overshoot_warning: Option<f64>,
     /// Dispatched, unlanded closure searches in order, the next order number, advancing-scan times since the oldest's dispatch, the pool.
-    pub(crate) closure_searches: std::collections::VecDeque<crate::closure_search_schedule::SearchJob>,
+    pub(crate) closure_searches:
+        std::collections::VecDeque<crate::closure_search_schedule::SearchJob>,
     pub(crate) search_order: u64,
     pub(crate) search_scan_times: std::collections::VecDeque<f64>,
     pub(crate) search_scan_base: usize,
@@ -1106,7 +1164,10 @@ impl ClosureSearchResult {
 /// A landmark sighting (`add_landmark_factor`): time, landmark id, rotation, position and 6x6 information in the body frame.
 pub(crate) type LandmarkSightingRecord = (f64, u64, Mat3, Vec3, [[f64; 6]; 6]);
 /// A finished solve waiting for the merge, with what its debounce measured.
-pub(crate) type MergeWaiting = (crate::pose_graph_solving::FinishedSolve, Option<(f64, f64, f64)>);
+pub(crate) type MergeWaiting = (
+    crate::pose_graph_solving::FinishedSolve,
+    Option<(f64, f64, f64)>,
+);
 /// A search's place-recognition inputs for a retry: ring-key distances, the top-k matches under the threshold, and the next alternative.
 type RetryInputs = (Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize);
 
@@ -1165,7 +1226,13 @@ impl PendingExtension {
                 search.memo_alignment(&key_suffix, tag, at, compute)
             };
         let mut required = |evidence: f64, diag: &mut ClosureCandidateDiag| -> f64 {
-            search.bar_with_places(evidence, diag, &mut look_alikes, &mut error_estimate_sums, base)
+            search.bar_with_places(
+                evidence,
+                diag,
+                &mut look_alikes,
+                &mut error_estimate_sums,
+                base,
+            )
         };
         let t0 = std::time::Instant::now();
         let extended = search.extended_icp(
@@ -1355,34 +1422,34 @@ impl ClosureSearch {
         let cur_idx = diag.source_id;
         let same_place_cutoff =
             crate::loop_overlap::chi2_inverse_3dof(self.config.closure_gnc_inlier_probability);
-            if !diag.from_scan_context {
-                return base;
-            }
-            let sums = error_estimate_sums.get_or_insert_with(|| {
-                crate::loop_overlap::odometry_error_estimate_sums(
+        if !diag.from_scan_context {
+            return base;
+        }
+        let sums = error_estimate_sums.get_or_insert_with(|| {
+            crate::loop_overlap::odometry_error_estimate_sums(
+                &self.key_poses,
+                &self.config,
+                diag.learned_odometry_error_estimate,
+            )
+        });
+        let places = look_alikes.count_past(
+            (evidence - base).exp(),
+            &self.key_poses.descriptor(cur_idx),
+            |k| self.key_poses.descriptor(k),
+            self.scan_context_config.match_threshold,
+            |a, b| {
+                crate::loop_overlap::could_be_same_place(
                     &self.key_poses,
-                    &self.config,
-                    diag.learned_odometry_error_estimate,
+                    sums,
+                    a,
+                    b,
+                    self.config.closure_search_radius,
+                    same_place_cutoff,
                 )
-            });
-            let places = look_alikes.count_past(
-                (evidence - base).exp(),
-                &self.key_poses.descriptor(cur_idx),
-                |k| self.key_poses.descriptor(k),
-                self.scan_context_config.match_threshold,
-                |a, b| {
-                    crate::loop_overlap::could_be_same_place(
-                        &self.key_poses,
-                        sums,
-                        a,
-                        b,
-                        self.config.closure_search_radius,
-                        same_place_cutoff,
-                    )
-                },
-            );
-            diag.look_alike_places = places;
-            base + (places as f64).ln()
+            },
+        );
+        diag.look_alike_places = places;
+        base + (places as f64).ln()
     }
     /// The ICP cache key suffix: what besides the pair changes a cloud computation's result.
     pub(crate) fn icp_key_suffix(&self) -> String {
@@ -1454,9 +1521,10 @@ impl ClosureSearch {
             }
         };
         // an alignment through the cache (`memo_alignment`)
-        let memo_alignment = |tag: &str, at: usize, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
-            self.memo_alignment(&key_suffix, tag, at, compute)
-        };
+        let memo_alignment =
+            |tag: &str, at: usize, compute: &mut dyn FnMut() -> Vec<f64>| -> Vec<f64> {
+                self.memo_alignment(&key_suffix, tag, at, compute)
+            };
 
         // Observability gate: a degenerate source scan leaves in-plane alignment unconstrained; source-only, so it runs before ICP
         let degenerate = |degeneracy_min: f32| {
@@ -1589,8 +1657,7 @@ impl ClosureSearch {
         let score = icp.inlier_mean_square();
         // the closure measurement an alignment gives: the source keyframe moved by it, in the target's frame
         let measured = |rotation: &Mat3, translation: &Vec3| self.measured(rotation, translation);
-        let (rotation_offset, translation_offset) =
-            measured(&icp.rotation, &icp.translation);
+        let (rotation_offset, translation_offset) = measured(&icp.rotation, &icp.translation);
 
         // graph yank: how far this constraint pulls the source from the current graph's relative pose (large = likely false closure);
         // a landmark-seeded search measures it from the pose the landmark implies, at that seed's covariance
@@ -1633,7 +1700,13 @@ impl ClosureSearch {
         // two matching keyframes are one place if the odometry between them could have drifted that far apart
         let mut error_estimate_sums: Option<Vec<crate::loop_overlap::Sums>> = None;
         let mut required = |evidence: f64, diag: &mut ClosureCandidateDiag| -> f64 {
-            self.bar_with_places(evidence, diag, &mut look_alikes, &mut error_estimate_sums, base)
+            self.bar_with_places(
+                evidence,
+                diag,
+                &mut look_alikes,
+                &mut error_estimate_sums,
+                base,
+            )
         };
         let evidence = -(1.0 - diag.confidence).ln();
         let single_required = required(evidence, &mut diag);
@@ -1722,20 +1795,44 @@ impl GscPgo {
         };
         let [xy, z, yaw, tilt] = self.config.lidar_range.odometry_error_estimate_at(range_m);
         let c = &mut self.config;
-        [c.odometry_error_estimate_xy_per_sqrt_m, c.odometry_error_estimate_xy_per_sqrt_rad] = xy;
-        [c.odometry_error_estimate_z_per_sqrt_m, c.odometry_error_estimate_z_per_sqrt_rad] = z;
-        [c.odometry_error_estimate_yaw_per_sqrt_m, c.odometry_error_estimate_yaw_per_sqrt_rad] = yaw;
-        [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad] = tilt;
+        [
+            c.odometry_error_estimate_xy_per_sqrt_m,
+            c.odometry_error_estimate_xy_per_sqrt_rad,
+        ] = xy;
+        [
+            c.odometry_error_estimate_z_per_sqrt_m,
+            c.odometry_error_estimate_z_per_sqrt_rad,
+        ] = z;
+        [
+            c.odometry_error_estimate_yaw_per_sqrt_m,
+            c.odometry_error_estimate_yaw_per_sqrt_rad,
+        ] = yaw;
+        [
+            c.odometry_error_estimate_tilt_per_sqrt_m,
+            c.odometry_error_estimate_tilt_per_sqrt_rad,
+        ] = tilt;
     }
 
     /// The stated odometry error estimate in use (per source xy, z, yaw, tilt: [per sqrt m, per sqrt rad]).
     pub fn config_odometry_error_estimate(&self) -> crate::lidar_range::OdometryErrorEstimate {
         let c = &self.config;
         [
-            [c.odometry_error_estimate_xy_per_sqrt_m, c.odometry_error_estimate_xy_per_sqrt_rad],
-            [c.odometry_error_estimate_z_per_sqrt_m, c.odometry_error_estimate_z_per_sqrt_rad],
-            [c.odometry_error_estimate_yaw_per_sqrt_m, c.odometry_error_estimate_yaw_per_sqrt_rad],
-            [c.odometry_error_estimate_tilt_per_sqrt_m, c.odometry_error_estimate_tilt_per_sqrt_rad],
+            [
+                c.odometry_error_estimate_xy_per_sqrt_m,
+                c.odometry_error_estimate_xy_per_sqrt_rad,
+            ],
+            [
+                c.odometry_error_estimate_z_per_sqrt_m,
+                c.odometry_error_estimate_z_per_sqrt_rad,
+            ],
+            [
+                c.odometry_error_estimate_yaw_per_sqrt_m,
+                c.odometry_error_estimate_yaw_per_sqrt_rad,
+            ],
+            [
+                c.odometry_error_estimate_tilt_per_sqrt_m,
+                c.odometry_error_estimate_tilt_per_sqrt_rad,
+            ],
         ]
     }
 
@@ -1787,7 +1884,8 @@ impl GscPgo {
                 let (sum, r) = evidence[c];
                 if r > 0.5 && sum.is_finite() {
                     // the solve whitens at the stated estimate, so the residuals' ln scale is 0
-                    let (dispatched, prior_sd) = (0.0, self.learned_odometry_error_estimate_prior()[c]);
+                    let (dispatched, prior_sd) =
+                        (0.0, self.learned_odometry_error_estimate_prior()[c]);
                     ln_odometry[c] = crate::odometry_error_estimate::residual_ln_ratio(
                         sum, r, dispatched, c, prior_sd,
                     );
@@ -2495,7 +2593,8 @@ impl GscPgo {
         score: f64,
     ) {
         // a closure committed directly (no search) has no search confidence or yank recorded
-        let (fit_confidence, yank_stdevs) = self.committed_stats.take().unwrap_or((f64::NAN, f64::NAN));
+        let (fit_confidence, yank_stdevs) =
+            self.committed_stats.take().unwrap_or((f64::NAN, f64::NAN));
         let (rotation_offset, translation_offset) = if self.config.planar_pose_graph {
             planar(&rotation_offset, &translation_offset)
         } else {
@@ -2511,10 +2610,11 @@ impl GscPgo {
             yank_stdevs,
         });
         self.new_closure = true;
-        self.closure_latency.push(crate::fast_path::ClosureLatency::committed(
-            self.scans_seen,
-            self.newest_scan_time(),
-        ));
+        self.closure_latency
+            .push(crate::fast_path::ClosureLatency::committed(
+                self.scans_seen,
+                self.newest_scan_time(),
+            ));
     }
 }
 
@@ -2555,7 +2655,13 @@ mod config_tests {
     /// The learned odometry error estimate is only logged: the solve and the gates use the stated one.
     #[test]
     fn the_solve_and_gates_use_the_stated_odometry_error_estimate() {
-        let config = Config { learned_odometry_error_estimate_from_closures: true, ..Config::default() };
-        assert_eq!(super::GscPgo::new(config).odometry_error_estimate(), [1.0; 4]);
+        let config = Config {
+            learned_odometry_error_estimate_from_closures: true,
+            ..Config::default()
+        };
+        assert_eq!(
+            super::GscPgo::new(config).odometry_error_estimate(),
+            [1.0; 4]
+        );
     }
 }

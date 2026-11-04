@@ -116,7 +116,14 @@ impl BucketTree {
     /// Build the node over indices[..], which start at `offset` in the final order; returns its index.
     fn build_node(&mut self, points: &[[f32; 3]], indices: &mut [u32], offset: usize) -> u32 {
         let node = self.nodes.len() as u32;
-        self.nodes.push(BucketNode { axis: 0, split: 0.0, left: 0, right: 0, start: offset as u32, end: (offset + indices.len()) as u32 });
+        self.nodes.push(BucketNode {
+            axis: 0,
+            split: 0.0,
+            left: 0,
+            right: 0,
+            start: offset as u32,
+            end: (offset + indices.len()) as u32,
+        });
         if indices.len() <= BUCKET {
             return node;
         }
@@ -129,9 +136,13 @@ impl BucketTree {
                 high[k] = high[k].max(points[i as usize][k]);
             }
         }
-        let axis = (0..3).max_by(|&a, &b| (high[a] - low[a]).total_cmp(&(high[b] - low[b]))).unwrap_or(0);
+        let axis = (0..3)
+            .max_by(|&a, &b| (high[a] - low[a]).total_cmp(&(high[b] - low[b])))
+            .unwrap_or(0);
         let mid = indices.len() / 2;
-        indices.select_nth_unstable_by(mid, |&a, &b| points[a as usize][axis].total_cmp(&points[b as usize][axis]));
+        indices.select_nth_unstable_by(mid, |&a, &b| {
+            points[a as usize][axis].total_cmp(&points[b as usize][axis])
+        });
         let split = points[indices[mid] as usize][axis];
         let (left_half, right_half) = indices.split_at_mut(mid);
         let left = self.build_node(points, left_half, offset);
@@ -166,7 +177,11 @@ impl BucketTree {
                 continue;
             }
             let delta = query[node.axis as usize] - node.split;
-            let (near, far) = if delta < 0.0 { (node.left, node.right) } else { (node.right, node.left) };
+            let (near, far) = if delta < 0.0 {
+                (node.left, node.right)
+            } else {
+                (node.right, node.left)
+            };
             // the far side first, so the near side is searched next and tightens the bound
             stack[depth] = (far, delta * delta);
             stack[depth + 1] = (near, bound);
@@ -367,17 +382,32 @@ mod bucket_tree_tests {
     fn nearest_matches_brute_force() {
         let mut seed = 12345u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as f32 / (1u64 << 31) as f32
         };
         let cloud: Vec<[f32; 3]> = (0..5000)
-            .map(|_| [(next() * 40.0).round() * 0.1, (next() * 40.0).round() * 0.1, (next() * 10.0).round() * 0.1])
+            .map(|_| {
+                [
+                    (next() * 40.0).round() * 0.1,
+                    (next() * 40.0).round() * 0.1,
+                    (next() * 10.0).round() * 0.1,
+                ]
+            })
             .collect();
         let tree = KdTree::build(&cloud);
         for _ in 0..2000 {
-            let q = [next() * 30.0 - 13.0, next() * 30.0 - 13.0, next() * 6.0 - 1.0];
+            let q = [
+                next() * 30.0 - 13.0,
+                next() * 30.0 - 13.0,
+                next() * 6.0 - 1.0,
+            ];
             let (i, d) = tree.nearest(&q).unwrap();
-            let brute = cloud.iter().map(|p| super::sq_dist(p, &q)).fold(f32::MAX, f32::min);
+            let brute = cloud
+                .iter()
+                .map(|p| super::sq_dist(p, &q))
+                .fold(f32::MAX, f32::min);
             assert_eq!(d, brute);
             assert_eq!(super::sq_dist(&cloud[i], &q), d);
         }

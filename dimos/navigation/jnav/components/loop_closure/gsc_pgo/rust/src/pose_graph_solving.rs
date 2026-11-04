@@ -135,14 +135,18 @@ impl GscPgo {
             .count() as f64;
         let d = &config.deterministic_config;
         let estimate_raw_scans = if closure_index.is_empty() {
-            d.solve_closure_free_scans_scale * (keyframes as f64).powf(d.solve_closure_free_keyframe_power)
+            d.solve_closure_free_scans_scale
+                * (keyframes as f64).powf(d.solve_closure_free_keyframe_power)
         } else {
             d.solve_scans_scale
                 * (keyframes as f64).powf(d.solve_keyframe_power)
                 * (1.0 + closures).powf(d.solve_closure_power)
                 * (1.0 + rejected).powf(d.solve_rejected_power)
         };
-        (estimate_raw_scans, crate::closure_search_schedule::hold_scans(estimate_raw_scans))
+        (
+            estimate_raw_scans,
+            crate::closure_search_schedule::hold_scans(estimate_raw_scans),
+        )
     }
     /// The running solve's keyframe count and free keyframe count when it started, if one is running.
     pub fn solve_started(&self) -> Option<(usize, usize)> {
@@ -297,7 +301,9 @@ impl GscPgo {
                 let (keyframe, moved) = self.nearest_keyframe(time)?;
                 // planar_pose_graph: seen from the keyframe's level frame
                 let (rotation, position, information) = match self.keyframe_tilts.get(keyframe) {
-                    Some(tilt) => crate::landmarks::leveled(tilt, &rotation, &position, &information),
+                    Some(tilt) => {
+                        crate::landmarks::leveled(tilt, &rotation, &position, &information)
+                    }
                     None => (rotation, position, information),
                 };
                 let landmark = ids.iter().position(|&i| i == id).unwrap_or_else(|| {
@@ -387,7 +393,10 @@ impl GscPgo {
                 .into_iter()
                 .unzip()
         } else {
-            ((0..closure_count).collect(), closure_edges(self.committed_closures.iter()))
+            (
+                (0..closure_count).collect(),
+                closure_edges(self.committed_closures.iter()),
+            )
         };
         // keyframe 0 pins the map; the rest start from the odometry, riding its correction
         let free: Vec<bool> = (0..m).map(|k| k > 0).collect();
@@ -439,8 +448,12 @@ impl GscPgo {
                 .into_iter()
                 .filter_map(|sighting| {
                     let (node, offset) = self.simplify.place(sighting.keyframe);
-                    (offset.1 == [0.0; 3] && offset.0 == mat3::identity())
-                        .then_some(LandmarkSighting { keyframe: node, ..sighting })
+                    (offset.1 == [0.0; 3] && offset.0 == mat3::identity()).then_some(
+                        LandmarkSighting {
+                            keyframe: node,
+                            ..sighting
+                        },
+                    )
                 })
                 .collect();
             (odometry, priors, sightings, landmark_ids)
@@ -463,12 +476,18 @@ impl GscPgo {
                 && self.learned_evidence_requested,
             // or from the accepted graph (newer keyframes riding its correction), where it already fits
             seed_start: if config.solve_seed_from_accepted {
-                node_keyframes.iter().map(|&k| self.key_poses.global(k)).collect()
+                node_keyframes
+                    .iter()
+                    .map(|&k| self.key_poses.global(k))
+                    .collect()
             } else {
                 Vec::new()
             },
             seed_closure_weights: if config.solve_seed_gnc_verdicts {
-                closure_index.iter().map(|&i| self.committed_closures.weight(i)).collect()
+                closure_index
+                    .iter()
+                    .map(|&i| self.committed_closures.weight(i))
+                    .collect()
             } else {
                 Vec::new()
             },
@@ -615,7 +634,12 @@ impl GscPgo {
         if !self.config.graph_change_heat_enabled {
             return self.adopt_solution(finished, None, None);
         }
-        let cost = graph_change_cost_on(&self.key_poses, &self.config, finished.poses(), finished.keyframes);
+        let cost = graph_change_cost_on(
+            &self.key_poses,
+            &self.config,
+            finished.poses(),
+            finished.keyframes,
+        );
         self.debounced(finished, cost, true)
     }
     /// Adopt a finished solve; `heat` = graph change heat before, its cost, after (for the solve log). Returns true.
@@ -668,16 +692,17 @@ impl GscPgo {
             Vec::new()
         };
         // moved, not copied: the solve's covariances are not read after this
-        self.solved_relative_covariance =
-            Some((n - 1, std::sync::Arc::new(std::mem::take(&mut solution.relative_position_covariance))))
-                .filter(|(_, covariance)| covariance.len() == n);
+        self.solved_relative_covariance = Some((
+            n - 1,
+            std::sync::Arc::new(std::mem::take(&mut solution.relative_position_covariance)),
+        ))
+        .filter(|(_, covariance)| covariance.len() == n);
         // the solve's poses swapped in; newer keyframes ride its newest keyframe's correction (`KeyFrames::global`)
         let newest = self.key_poses.fixed(n - 1);
-        let (newest_rotation, newest_translation) = (solution.rotations[n - 1], solution.positions[n - 1]);
-        self.rotation_offset = mat3::mat_mul(
-            &newest_rotation,
-            &mat3::transpose(&newest.rotation_local),
-        );
+        let (newest_rotation, newest_translation) =
+            (solution.rotations[n - 1], solution.positions[n - 1]);
+        self.rotation_offset =
+            mat3::mat_mul(&newest_rotation, &mat3::transpose(&newest.rotation_local));
         self.translation_offset = mat3::sub(
             &newest_translation,
             &mat3::mat_vec(&self.rotation_offset, &newest.translation_local),
@@ -686,7 +711,8 @@ impl GscPgo {
             rotations: std::mem::take(&mut solution.rotations),
             positions: std::mem::take(&mut solution.positions),
         });
-        self.key_poses.adopt(solved, self.rotation_offset, self.translation_offset);
+        self.key_poses
+            .adopt(solved, self.rotation_offset, self.translation_offset);
         // the solve judged every closure dispatched to it; one committed while it ran was not in it, so it stays unjudged
         let changed: Vec<(usize, f64)> = match &prepared {
             Some(prepared) => prepared.changed.clone(),
@@ -742,7 +768,9 @@ impl GscPgo {
         let evidence = solution.odometry_error_estimate_evidence;
         self.fast_path_superseded(&solution.closure_weights);
         self.committed_closures
-            .adopt(std::sync::Arc::new(std::mem::take(&mut solution.closure_weights)));
+            .adopt(std::sync::Arc::new(std::mem::take(
+                &mut solution.closure_weights,
+            )));
         self.simplify_note_adoption();
         self.update_learned_odometry_error_estimate(evidence);
         self.learned_evidence_measured = solution.odometry_error_estimate_evidence.is_some();
@@ -1045,7 +1073,8 @@ impl ChangeScan {
         self.previous_local = Some((*rotation_local, *translation_local));
         let (travelled, turned) = (self.travelled, self.turned);
         let spread = |per_sqrt_m: f64, per_sqrt_rad: f64| {
-            (per_sqrt_m * per_sqrt_m * (travelled + 1.0) + per_sqrt_rad * per_sqrt_rad * turned).sqrt()
+            (per_sqrt_m * per_sqrt_m * (travelled + 1.0) + per_sqrt_rad * per_sqrt_rad * turned)
+                .sqrt()
         };
         let yaw = |r: &Mat3| r[1][0].atan2(r[0][0]);
         let moved = mat3::sub(&position, translation_global);
@@ -1114,7 +1143,8 @@ pub(crate) fn graph_change_cost_on(
             ),
         );
     }
-    (curbed_yank(scan.largest, config.closure_yank_drift_range) - config.graph_change_heat_floor).max(0.0)
+    (curbed_yank(scan.largest, config.closure_yank_drift_range) - config.graph_change_heat_floor)
+        .max(0.0)
 }
 
 #[cfg(test)]
@@ -1139,7 +1169,10 @@ mod tests {
         for k in 0..20 {
             let mut pose = PoseWithTime::new(mat3::identity(), [k as f64, 0.0, 0.0]);
             pose.set_time(k, 0);
-            pgo.add_key_pose(&CloudWithPose { cloud: None::<Arc<Vec<[f32; 3]>>>, pose });
+            pgo.add_key_pose(&CloudWithPose {
+                cloud: None::<Arc<Vec<[f32; 3]>>>,
+                pose,
+            });
             pgo.update();
         }
         let covariance = [[0.0025, 0.0, 0.0], [0.0, 0.0025, 0.0], [0.0, 0.0, 0.0025]];
@@ -1147,10 +1180,24 @@ mod tests {
             LandmarkSighting::point(0, 0, [1.0, 0.0, 0.0], covariance),
             LandmarkSighting::point(0, 0, [1.0, 2.0, 0.0], covariance),
         );
-        pgo.replace_landmark_factor(3, 10.0, 7, older.rotation, older.position, older.information);
+        pgo.replace_landmark_factor(
+            3,
+            10.0,
+            7,
+            older.rotation,
+            older.position,
+            older.information,
+        );
         pgo.finish();
         assert!(!pgo.unsolved());
-        pgo.replace_landmark_factor(3, 10.0, 7, newer.rotation, newer.position, newer.information);
+        pgo.replace_landmark_factor(
+            3,
+            10.0,
+            7,
+            newer.rotation,
+            newer.position,
+            newer.information,
+        );
         assert!(pgo.unsolved(), "a replacement needs a solve");
         pgo.finish();
         let (sightings, ids) = pgo.sightings();
@@ -1158,7 +1205,13 @@ mod tests {
         assert_eq!(sightings[0].position, newer.position);
         let &(landmark, _, at) = pgo.landmarks().first().expect("landmark solved");
         assert_eq!(landmark, 7);
-        let world = mat3::add(&pgo.key_poses().position(sightings[0].keyframe), &newer.position);
-        assert!(mat3::norm(&mat3::sub(&at, &world)) < 1e-6, "landmark at {at:?}, newer sighting puts it at {world:?}");
+        let world = mat3::add(
+            &pgo.key_poses().position(sightings[0].keyframe),
+            &newer.position,
+        );
+        assert!(
+            mat3::norm(&mat3::sub(&at, &world)) < 1e-6,
+            "landmark at {at:?}, newer sighting puts it at {world:?}"
+        );
     }
 }

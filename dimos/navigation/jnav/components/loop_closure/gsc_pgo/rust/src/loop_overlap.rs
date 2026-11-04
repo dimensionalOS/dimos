@@ -15,10 +15,10 @@
 //! Chance the newest scan overlaps an earlier, unclosed stretch: PPK of each keyframe's relative position uncertainty
 //! (solved covariance, then odometry chain) with a sensor-range blob, weighted by P(off by > `closure_search_radius`).
 
-use crate::store::KeyFrames;
 use crate::big_picture_fit::odometry_edges;
 use crate::gsc_pgo::{Config, GscPgo};
 use crate::mat3::{self, add_mat, det, skew, sub_mat, Mat3, Vec3};
+use crate::store::KeyFrames;
 
 #[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(feature = "native", derive(serde::Serialize))]
@@ -154,10 +154,7 @@ pub(crate) fn could_be_same_place(
     cutoff: f64,
 ) -> bool {
     let (from, to) = (a.min(b), a.max(b));
-    let (p_from, p_to) = (
-        key_poses.position(from),
-        key_poses.position(to),
-    );
+    let (p_from, p_to) = (key_poses.position(from), key_poses.position(to));
     let covariance = add_mat(
         &odometry_covariance(sums, from, to, &p_to),
         &[
@@ -242,10 +239,7 @@ impl<'a> OverlapInputs<'a> {
         };
         // solved keyframes: solved covariance + odometry tip->reference + tip heading swing (odometry upper bound)
         let since_solve = odometry_covariance(&sums, solved_tip, reference, &newest);
-        let tip_lever = skew(&mat3::sub(
-            &newest,
-            &self.key_poses.position(solved_tip),
-        ));
+        let tip_lever = skew(&mat3::sub(&newest, &self.key_poses.position(solved_tip)));
         Some(OverlapModel {
             key_poses: self.key_poses,
             sums,

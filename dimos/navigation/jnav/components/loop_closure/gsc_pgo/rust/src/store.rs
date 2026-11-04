@@ -86,7 +86,11 @@ impl<T> Appended<T> {
         self.len == 0
     }
     pub fn get(&self, index: usize) -> &T {
-        assert!(index < self.len, "index {index} past the {} appended", self.len);
+        assert!(
+            index < self.len,
+            "index {index} past the {} appended",
+            self.len
+        );
         self.arena.get(index)
     }
     pub fn last(&self) -> Option<&T> {
@@ -134,7 +138,10 @@ impl KeyFixed {
             rotation_local,
             translation_local,
             time,
-            heavy: Mutex::new(Heavy { body_cloud, descriptor }),
+            heavy: Mutex::new(Heavy {
+                body_cloud,
+                descriptor,
+            }),
             removed_at: AtomicU64::new(u64::MAX),
         }
     }
@@ -241,7 +248,10 @@ impl KeyFrames {
     /// `release` the keyframe once no one else holds it.
     pub(crate) fn remove(&mut self, k: usize) -> Arc<()> {
         self.removals += 1;
-        self.fixed.get(k).removed_at.store(self.removals, Ordering::Release);
+        self.fixed
+            .get(k)
+            .removed_at
+            .store(self.removals, Ordering::Release);
         std::mem::replace(&mut self.guard, Arc::new(()))
     }
     /// Free a removed keyframe's cloud and descriptor (no snapshot that could read them is left).
@@ -256,14 +266,22 @@ impl KeyFrames {
     pub fn iter(&self) -> impl Iterator<Item = KeyPoseWithCloud> + '_ {
         (0..self.len()).map(|k| self.get(k))
     }
-    pub fn range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = KeyPoseWithCloud> + '_ {
+    pub fn range(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> impl Iterator<Item = KeyPoseWithCloud> + '_ {
         range.map(|k| self.get(k))
     }
     pub(crate) fn push(&mut self, fixed: KeyFixed) {
         self.fixed.push(fixed);
     }
     /// Adopt a solve's poses (its first keyframes) and the correction the rest ride on: an `Arc` swap.
-    pub(crate) fn adopt(&mut self, solved: Arc<SolvedPoses>, ride_rotation: Mat3, ride_translation: Vec3) {
+    pub(crate) fn adopt(
+        &mut self,
+        solved: Arc<SolvedPoses>,
+        ride_rotation: Mat3,
+        ride_translation: Vec3,
+    ) {
         self.solved = solved;
         self.ride_rotation = ride_rotation;
         self.ride_translation = ride_translation;

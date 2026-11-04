@@ -17,10 +17,10 @@
 use std::io::Write;
 use std::path::Path;
 
-use crate::store::KeyFrames;
 use crate::gsc_pgo::{ClosureEdgeEvent, CLOSURE_EDGE_RECORD_BYTES};
 use crate::mat3::{self, Mat3, Vec3};
 use crate::pointcloud::PointCloud;
+use crate::store::KeyFrames;
 use lcm_msgs::geometry_msgs::{Point, Quaternion};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -146,11 +146,7 @@ const DELTA_FIELDS: [(&str, u8); 7] = [
 ];
 
 /// pose_graph as packed records, one per keyframe at its current pose.
-pub fn build_pose_graph_records(
-    key_poses: &KeyFrames,
-    ts: f64,
-    frame_id: &str,
-) -> PointCloud2 {
+pub fn build_pose_graph_records(key_poses: &KeyFrames, ts: f64, frame_id: &str) -> PointCloud2 {
     let mut data = Vec::with_capacity(key_poses.len() * 40);
     for (i, kp) in key_poses.iter().enumerate() {
         put_keyframe_record(
@@ -186,11 +182,7 @@ impl HeardPoses {
     }
 
     /// On a closure or a move past POSE_CHANGE_*: per keyframe, pre-pose record + delta (post = delta * pre).
-    pub fn take_changes(
-        &mut self,
-        key_poses: &KeyFrames,
-        closure_closed: bool,
-    ) -> Option<Vec<u8>> {
+    pub fn take_changes(&mut self, key_poses: &KeyFrames, closure_closed: bool) -> Option<Vec<u8>> {
         let moved = key_poses
             .iter()
             .zip(&self.0)
@@ -264,10 +256,7 @@ pub fn write_keyframes(path: &Path, key_poses: &KeyFrames) -> std::io::Result<()
 }
 
 /// Closure-edge events as packed records (see `ClosureEdgeEvent::put_record`).
-pub fn closure_edge_records(
-    events: &[ClosureEdgeEvent],
-    key_poses: &KeyFrames,
-) -> Vec<u8> {
+pub fn closure_edge_records(events: &[ClosureEdgeEvent], key_poses: &KeyFrames) -> Vec<u8> {
     let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
     for event in events {
         event.put_record(&mut data, key_poses);

@@ -25,10 +25,10 @@ use faer::sparse::linalg::SupernodalThreshold;
 use faer::sparse::{Argsort, Pair, SparseColMat, SymbolicSparseColMat};
 use faer::{Conj, Mat, Par, Side};
 
-use crate::store::KeyFrames;
 use crate::gsc_pgo::{CommittedClosure, Config};
 use crate::landmarks::{self, Sighting};
 use crate::mat3::{self, Mat3, Vec3};
+use crate::store::KeyFrames;
 
 pub use crate::landmarks::LandmarkSighting;
 pub use crate::world_positions::{solve_with_priors, PositionPrior};
@@ -195,7 +195,14 @@ pub(crate) fn solve_fast_path(
         landmark: Vec::new(),
         landmark_rotation: Vec::new(),
     };
-    let pattern = Pattern::new(free, odometry.iter().chain(closures), &[], &[], &[], config.planar);
+    let pattern = Pattern::new(
+        free,
+        odometry.iter().chain(closures),
+        &[],
+        &[],
+        &[],
+        config.planar,
+    );
     let threshold = chi2_inverse_6dof(config.gnc_inlier_probability);
     let scaled: Vec<Edge> = closures
         .iter()
@@ -208,7 +215,18 @@ pub(crate) fn solve_fast_path(
     let before = cost(&state, odometry, &scaled, &old, &[], &[], &[], &[]);
     let all = vec![1.0; closures.len()];
     let mut converged = levenberg_marquardt_steps(
-        &mut state, &pattern, odometry, &scaled, &all, &[], &[], &[], &[], 1e-5, steps, false,
+        &mut state,
+        &pattern,
+        odometry,
+        &scaled,
+        &all,
+        &[],
+        &[],
+        &[],
+        &[],
+        1e-5,
+        steps,
+        false,
     );
     let after = cost(&state, odometry, &scaled, &all, &[], &[], &[], &[]);
     let worst = scaled
@@ -222,7 +240,18 @@ pub(crate) fn solve_fast_path(
     let mut huber = all;
     for _ in 0..polish {
         converged &= levenberg_marquardt_steps(
-            &mut state, &pattern, odometry, closures, &huber, &[], &[], &[], &[], 1e-5, steps, false,
+            &mut state,
+            &pattern,
+            odometry,
+            closures,
+            &huber,
+            &[],
+            &[],
+            &[],
+            &[],
+            1e-5,
+            steps,
+            false,
         );
         for (h, e) in huber.iter_mut().zip(closures) {
             let r = whitened_squared(e, &state).sqrt();
@@ -357,19 +386,20 @@ fn solve_from(
         })
         .collect();
     // use the seed only where it already fits what GNC would weigh; otherwise start from the odometry
-    let seeded = config.seed_start.len() == rotations.len() && unary.is_empty() && sightings.is_empty() && {
-        let (rotation, position) = config.seed_start.iter().copied().unzip();
-        let probe = State {
-            rotation,
-            position,
-            landmark: Vec::new(),
-            landmark_rotation: Vec::new(),
+    let seeded =
+        config.seed_start.len() == rotations.len() && unary.is_empty() && sightings.is_empty() && {
+            let (rotation, position) = config.seed_start.iter().copied().unzip();
+            let probe = State {
+                rotation,
+                position,
+                landmark: Vec::new(),
+                landmark_rotation: Vec::new(),
+            };
+            scaled
+                .iter()
+                .zip(&seeded_out)
+                .all(|(e, &out)| out || whitened_squared(e, &probe) <= threshold)
         };
-        scaled
-            .iter()
-            .zip(&seeded_out)
-            .all(|(e, &out)| out || whitened_squared(e, &probe) <= threshold)
-    };
     let seed: (Vec<Mat3>, Vec<Vec3>) = if seeded {
         config.seed_start.iter().copied().unzip()
     } else {
@@ -433,7 +463,10 @@ fn solve_from(
         .zip(&seeded_out)
         .filter(|&(_, &out)| !out)
         .fold(0.0, |worst: f64, (r, _)| worst.max(r));
-    let mut weights: Vec<f64> = seeded_out.iter().map(|&out| if out { 0.0 } else { 1.0 }).collect();
+    let mut weights: Vec<f64> = seeded_out
+        .iter()
+        .map(|&out| if out { 0.0 } else { 1.0 })
+        .collect();
     // position priors: GNC-weighted the same way, against the 3-DoF cutoff
     let unary_threshold = crate::loop_overlap::chi2_inverse_3dof(config.gnc_inlier_probability);
     let unary_residuals =
@@ -562,7 +595,9 @@ fn solve_from(
                 .chain(&sighting_weights)
                 .all(|&w| !(1e-4..=1.0 - 1e-4).contains(&w));
             // below mu 1 the surrogate is still convex, so neither stop applies until a weight can reach 1
-            if mu >= 1.0 && (settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost) {
+            if mu >= 1.0
+                && (settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost)
+            {
                 gnc_stop = if settled { "converged" } else { "cost_change" };
                 break;
             }
@@ -785,8 +820,7 @@ fn odometry_error_estimate_evidence(
         &vec![0.0; unary.len()],
         &vec![0.0; sightings.len()],
     )?;
-    let linear: Vec<Linearized> =
-        odometry.iter().map(|e| linearize(e, state)).collect();
+    let linear: Vec<Linearized> = odometry.iter().map(|e| linearize(e, state)).collect();
     let mut evidence = [(0.0, 0.0); 6];
     for (e, (r, _, _)) in odometry.iter().zip(&linear) {
         for k in 0..6 {
@@ -1722,7 +1756,11 @@ fn normal_equations(
     }
     // planar: a held dof's rows and columns are cleared, so the step leaves it where it is
     if !pattern.held.is_empty() {
-        for (v, _) in values.iter_mut().zip(&pattern.held_entries).filter(|(_, &h)| h) {
+        for (v, _) in values
+            .iter_mut()
+            .zip(&pattern.held_entries)
+            .filter(|(_, &h)| h)
+        {
             *v = 0.0;
         }
         for (i, _) in pattern.held.iter().enumerate().filter(|(_, &h)| h) {
@@ -1834,11 +1872,7 @@ pub(crate) fn mean_step_variances(key_poses: &KeyFrames, config: &Config) -> [f6
 }
 
 /// The odometry as pose-graph edges: each step's `step_variances` times `noise` (xy, z, yaw, roll/pitch ratios).
-pub(crate) fn odometry_edges(
-    key_poses: &KeyFrames,
-    config: &Config,
-    noise: [f64; 4],
-) -> Vec<Edge> {
+pub(crate) fn odometry_edges(key_poses: &KeyFrames, config: &Config, noise: [f64; 4]) -> Vec<Edge> {
     odometry_edges_ending(key_poses, config, noise, 1..key_poses.len())
 }
 

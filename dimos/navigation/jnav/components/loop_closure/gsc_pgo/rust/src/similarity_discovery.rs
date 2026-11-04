@@ -328,8 +328,7 @@ impl LookAlikes {
 impl crate::gsc_pgo::GscPgo {
     /// The newest keyframe a closure may close onto: its submap must leave out the source's own scan.
     pub(crate) fn newest_closure_target(&self) -> usize {
-        (self.key_poses.len() - 1)
-            .saturating_sub(self.config.target_half_range(1) + 1)
+        (self.key_poses.len() - 1).saturating_sub(self.config.target_half_range(1) + 1)
     }
     /// The nearest earlier closure target within `closure_search_radius`.
     pub(crate) fn search_by_position(&self) -> Option<usize> {
@@ -337,7 +336,9 @@ impl crate::gsc_pgo::GscPgo {
         (0..self.newest_closure_target())
             .map(|k| mat3::norm(&mat3::sub(&self.key_poses.position(k), &here)))
             .enumerate()
-            .filter(|&(k, d)| d <= self.config.closure_search_radius && !self.key_poses.is_removed(k))
+            .filter(|&(k, d)| {
+                d <= self.config.closure_search_radius && !self.key_poses.is_removed(k)
+            })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(i, _)| i)
     }
@@ -387,4 +388,11 @@ impl crate::gsc_pgo::GscPgo {
 }
 
 /// (accepted target, shift, best/2nd cosine distance (2 = none), ring-key ranking, other matches (dist, idx, shift)).
-pub(crate) type ScanContextMatch = (Option<usize>, i32, f32, f32, Vec<(f32, usize)>, Vec<(f32, usize, i32)>);
+pub(crate) type ScanContextMatch = (
+    Option<usize>,
+    i32,
+    f32,
+    f32,
+    Vec<(f32, usize)>,
+    Vec<(f32, usize, i32)>,
+);

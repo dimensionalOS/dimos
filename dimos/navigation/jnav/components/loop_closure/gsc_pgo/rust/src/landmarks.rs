@@ -98,7 +98,7 @@ impl Sighting {
         (0..6).map(|i| r[i] * ir[i]).sum()
     }
 
-/// The residual and its 6 x (6 + dims) Jacobian over [keyframe rotation, position, the landmark's last `dims` entries].
+    /// The residual and its 6 x (6 + dims) Jacobian over [keyframe rotation, position, the landmark's last `dims` entries].
     pub(crate) fn linearize(&self, state: &State, dims: usize) -> ([f64; 6], Vec<[f64; 12]>) {
         let k = self.keyframe;
         let (residual, jf, jt) = linearize_between(
@@ -122,7 +122,7 @@ impl Sighting {
         (residual, jacobian)
     }
 
-/// Fill entries (J column, J column, matrix row, matrix column): keyframe block (if free), landmark block (at `at`), cross.
+    /// Fill entries (J column, J column, matrix row, matrix column): keyframe block (if free), landmark block (at `at`), cross.
     pub(crate) fn entries(
         &self,
         slot: &[Option<usize>],

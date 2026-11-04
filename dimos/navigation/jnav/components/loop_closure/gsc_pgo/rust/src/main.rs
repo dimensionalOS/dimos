@@ -509,7 +509,8 @@ impl GraphPublisher {
     fn spawn(worker: &Worker, frame_id: String) -> GraphPublisher {
         let pending: PendingPublish = Arc::default();
         let (shared, stop) = (Arc::clone(&pending), Arc::clone(&worker.stop));
-        let (pose_graph, loop_closure_event) = (worker.pose_graph.clone(), worker.loop_closure_event.clone());
+        let (pose_graph, loop_closure_event) =
+            (worker.pose_graph.clone(), worker.loop_closure_event.clone());
         let (rt, dump_path) = (worker.rt.clone(), worker.config.dump_path.clone());
         std::thread::Builder::new()
             .name("gsc-publish".into())
@@ -538,12 +539,19 @@ impl GraphPublisher {
                             None => return,
                         }
                     };
-                    let Publish { keys, closure_closed, ts } = next;
+                    let Publish {
+                        keys,
+                        closure_closed,
+                        ts,
+                    } = next;
                     heard.add_new(&keys);
                     if let Some(changes) = heard.take_changes(&keys, closure_closed) {
                         let records = build_loop_closure_records(changes, ts, &frame_id);
                         publish(
-                            &|| rt.block_on(loop_closure_event.publish(&records)).map_err(|e| e.to_string()),
+                            &|| {
+                                rt.block_on(loop_closure_event.publish(&records))
+                                    .map_err(|e| e.to_string())
+                            },
                             "loop_closure_event",
                         );
                         if !dump_path.is_empty() {
@@ -551,7 +559,9 @@ impl GraphPublisher {
                                 .create(true)
                                 .append(true)
                                 .open(format!("{dump_path}.closures"))
-                                .and_then(|mut file| append_pose_changes(&mut file, ts, &records.data));
+                                .and_then(|mut file| {
+                                    append_pose_changes(&mut file, ts, &records.data)
+                                });
                             if let Err(e) = appended {
                                 warn!(error = %e, "Failed to dump the loop closure.");
                             }
@@ -559,7 +569,10 @@ impl GraphPublisher {
                     }
                     let records = build_pose_graph_records(&keys, ts, &frame_id);
                     publish(
-                        &|| rt.block_on(pose_graph.publish(&records)).map_err(|e| e.to_string()),
+                        &|| {
+                            rt.block_on(pose_graph.publish(&records))
+                                .map_err(|e| e.to_string())
+                        },
                         "pose_graph",
                     );
                     if !dump_path.is_empty() {
@@ -851,7 +864,10 @@ impl Worker {
             }
             let mut ratios = serde_json::Map::new();
             for (name, ratio, jobs, _) in pgo.runtime_profile() {
-                ratios.insert(name.into(), serde_json::json!({ "measured_over_estimated_p99": ratio, "jobs": jobs }));
+                ratios.insert(
+                    name.into(),
+                    serde_json::json!({ "measured_over_estimated_p99": ratio, "jobs": jobs }),
+                );
             }
             fields.insert("let_measured".into(), serde_json::Value::Object(ratios));
             self.log("odometry_drift", ts, serde_json::Value::Object(fields));

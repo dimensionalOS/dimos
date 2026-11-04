@@ -158,7 +158,9 @@ impl GscPgo {
     }
     fn dispatch_fast_path(&mut self) {
         let total = self.committed_closures.len();
-        let unreflected = self.fast_path_reflected.max(self.committed_closures.judged());
+        let unreflected = self
+            .fast_path_reflected
+            .max(self.committed_closures.judged());
         if total <= unreflected {
             return;
         }
@@ -172,7 +174,11 @@ impl GscPgo {
             let c = self.committed_closures.fixed(i);
             c.source_id.min(c.target_id)
         };
-        let first = applied.iter().map(|&i| older(i)).min().expect("one applied");
+        let first = applied
+            .iter()
+            .map(|&i| older(i))
+            .min()
+            .expect("one applied");
         // the window first..n (first held), then each held keyframe a kept closure ties it to
         let mut node: Vec<usize> = (first..n).collect();
         let mut slot = std::collections::HashMap::new();
@@ -191,15 +197,21 @@ impl GscPgo {
             .iter()
             .enumerate()
             .map(|(i, c)| (c, applied.contains(&i)))
-            .filter(|&(c, new)| new || (c.gnc_weight > 0.5 && c.source_id.max(c.target_id) >= first))
+            .filter(|&(c, new)| {
+                new || (c.gnc_weight > 0.5 && c.source_id.max(c.target_id) >= first)
+            })
             .unzip();
         let mut closures = closure_edges(selected.into_iter());
         for e in &mut closures {
             e.from = index_of(e.from, &mut node);
             e.to = index_of(e.to, &mut node);
         }
-        let mut odometry =
-            odometry_edges_ending(&self.key_poses, &self.config, self.odometry_error_estimate(), first + 1..n);
+        let mut odometry = odometry_edges_ending(
+            &self.key_poses,
+            &self.config,
+            self.odometry_error_estimate(),
+            first + 1..n,
+        );
         for e in &mut odometry {
             e.from -= first;
             e.to -= first;
@@ -228,11 +240,22 @@ impl GscPgo {
                     seed_closure_weights: Vec::new(),
                     seed_start: Vec::new(),
                     planar: config.planar_pose_graph,
-                    landmark_warm_start_xy_variance_scale: config.landmark_warm_start_xy_variance_scale,
-                    landmark_warm_start_xy_variance_ladder: config.landmark_warm_start_xy_variance_ladder,
+                    landmark_warm_start_xy_variance_scale: config
+                        .landmark_warm_start_xy_variance_scale,
+                    landmark_warm_start_xy_variance_ladder: config
+                        .landmark_warm_start_xy_variance_ladder,
                 };
                 let steps = config.solver_fast_path_max_lm_steps;
-                let fast = solve_fast_path(&rotations, &positions, &free, &odometry, &closures, &new, &solve_config, steps);
+                let fast = solve_fast_path(
+                    &rotations,
+                    &positions,
+                    &free,
+                    &odometry,
+                    &closures,
+                    &new,
+                    &solve_config,
+                    steps,
+                );
                 let (window_rotations, window_positions) = (fast.rotations, fast.positions);
                 let (mut rotations, mut positions): (Vec<Mat3>, Vec<Vec3>) =
                     (0..first).map(|k| keys.global(k)).unzip();
@@ -277,7 +300,10 @@ impl GscPgo {
             return false;
         };
         let deterministic = self.config.deterministic();
-        if deterministic && !now && self.advancing_scans < job.dispatch_scan + hold_scans(job.estimate_raw_scans) {
+        if deterministic
+            && !now
+            && self.advancing_scans < job.dispatch_scan + hold_scans(job.estimate_raw_scans)
+        {
             return false;
         }
         let spanned = self.newest_scan_time() - job.dispatch_time;
@@ -336,7 +362,9 @@ impl GscPgo {
                 record.outcome = "over_cutoff";
                 false
             }
-            _ if self.config.graph_change_heat_enabled && heat > self.config.graph_change_heat_threshold => {
+            _ if self.config.graph_change_heat_enabled
+                && heat > self.config.graph_change_heat_threshold =>
+            {
                 record.outcome = "heat_held";
                 false
             }
@@ -345,8 +373,12 @@ impl GscPgo {
                     self.heat = heat + result.cost;
                     self.heat_keyframes = self.key_poses.len();
                 }
-                record.times = (job.first..job.keyframes).map(|k| self.key_poses.fixed(k).time).collect();
-                record.before = (job.first..job.keyframes).map(|k| self.key_poses.position(k)).collect();
+                record.times = (job.first..job.keyframes)
+                    .map(|k| self.key_poses.fixed(k).time)
+                    .collect();
+                record.before = (job.first..job.keyframes)
+                    .map(|k| self.key_poses.position(k))
+                    .collect();
                 record.after = solved.positions[job.first..].to_vec();
                 self.adopt_fast_path(solved, job.keyframes);
                 let stamp = (self.scans_seen, self.newest_scan_time());
@@ -366,13 +398,19 @@ impl GscPgo {
     /// Swap in the fast path's first `n` poses; newer keyframes ride its newest one's correction (as `adopt_solution`).
     fn adopt_fast_path(&mut self, solved: SolvedPoses, n: usize) {
         let newest = self.key_poses.fixed(n - 1);
-        self.rotation_offset = mat3::mat_mul(&solved.rotations[n - 1], &mat3::transpose(&newest.rotation_local));
+        self.rotation_offset = mat3::mat_mul(
+            &solved.rotations[n - 1],
+            &mat3::transpose(&newest.rotation_local),
+        );
         self.translation_offset = mat3::sub(
             &solved.positions[n - 1],
             &mat3::mat_vec(&self.rotation_offset, &newest.translation_local),
         );
-        self.key_poses
-            .adopt(Arc::new(solved), self.rotation_offset, self.translation_offset);
+        self.key_poses.adopt(
+            Arc::new(solved),
+            self.rotation_offset,
+            self.translation_offset,
+        );
         self.graph_version += 1;
     }
 }

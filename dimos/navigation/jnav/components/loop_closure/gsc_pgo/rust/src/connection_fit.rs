@@ -253,12 +253,27 @@ pub fn icp_thinned(
     resolution: f64,
 ) -> IcpResult {
     if resolution <= 0.0 {
-        return icp_with_early_stop(source, target, tree, rotation, translation, params, fail_fitness);
+        return icp_with_early_stop(
+            source,
+            target,
+            tree,
+            rotation,
+            translation,
+            params,
+            fail_fitness,
+        );
     }
     let thin = crate::pointcloud::voxel_downsample(target, resolution);
     let thin_tree = crate::pointcloud::KdTree::build(&thin);
-    let mut result =
-        icp_with_early_stop(source, &thin, &thin_tree, rotation, translation, params, fail_fitness);
+    let mut result = icp_with_early_stop(
+        source,
+        &thin,
+        &thin_tree,
+        rotation,
+        translation,
+        params,
+        fail_fitness,
+    );
     (result.fitness, result.overlap) = fit_quality(
         &transform_cloud(source, &result.rotation, &result.translation),
         tree,
@@ -460,7 +475,9 @@ pub fn likelihood_ratio(
             let squared = target_tree.nearest(p)?.1 as f64;
             let d = match visible {
                 Some((inlier_squared_distance, views)) => {
-                    if squared > inlier_squared_distance && !views.iter().any(|v| v.sees_through(p, width)) {
+                    if squared > inlier_squared_distance
+                        && !views.iter().any(|v| v.sees_through(p, width))
+                    {
                         return None;
                     }
                     squared.sqrt().min(reach)
@@ -473,7 +490,11 @@ pub fn likelihood_ratio(
     if ratios.is_empty() {
         return (f64::NEG_INFINITY, 0, width);
     }
-    (ratios.iter().sum::<f64>() / ratios.len() as f64, ratios.len(), width)
+    (
+        ratios.iter().sum::<f64>() / ratios.len() as f64,
+        ratios.len(),
+        width,
+    )
 }
 
 /// Linearised point-to-plane step; unconstrained directions stay unmoved; None with < 6 pairs on a surface.
