@@ -31,7 +31,6 @@ exclude = [
     "dimos.agents.node_modules*",
     "dimos.agents.dist*",
     "dimos.web.websocket_vis.node_modules*",
-    "dimos.web.command-center-extension*",
 ]
 
 [tool.setuptools.package-data]
@@ -68,7 +67,6 @@ exclude = [
     "agents/fixtures/**",
     "agents/mcp/fixtures/**",
     "mapping/google_maps/fixtures/**",
-    "web/command-center-extension/**",
     "web/websocket_vis/node_modules/**",
     "hardware/sensors/lidar/fastlio2/cpp/**",
 ]
