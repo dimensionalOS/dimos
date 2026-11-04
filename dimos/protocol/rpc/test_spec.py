@@ -353,7 +353,6 @@ def test_multiple_services(rpc_context, impl_name: str) -> None:
             unsub3()
 
 
-@pytest.mark.skip(reason="flaky in CI, disabled until fixed")
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
 def test_concurrent_calls(rpc_context, impl_name: str) -> None:
     """Test making multiple concurrent RPC calls."""
@@ -367,23 +366,25 @@ def test_concurrent_calls(rpc_context, impl_name: str) -> None:
             threads = []
 
             def make_call(a, b) -> None:
-                result, _ = client.call_sync("concurrent_add", ([a, b], {}), rpc_timeout=2.0)
+                result, _ = client.call_sync("concurrent_add", ([a, b], {}), rpc_timeout=10.0)
                 results.append(result)
 
-            # Start 1000 concurrent calls
-            for i in range(1000):
+            # A burst of 1000 threads timed out a call or two on slow CI
+            # runners. 100 still exercises concurrent routing of the replies.
+            n_calls = 100
+            for i in range(n_calls):
                 t = threading.Thread(target=make_call, args=(i, i + 1))
                 threads.append(t)
                 t.start()
 
             # Wait for all threads to complete
             for t in threads:
-                t.join(timeout=10.0)
+                t.join(timeout=20.0)
 
             # Verify all calls succeeded
-            assert len(results) == 1000
-            # Results should be [1, 3, 5, 7, 9, 11, 13, 15, 17, 19] but may be in any order
-            expected = [i + (i + 1) for i in range(1000)]
+            assert len(results) == n_calls
+            # Results are the odd numbers 1, 3, 5, ... but may be in any order
+            expected = [i + (i + 1) for i in range(n_calls)]
             assert sorted(results) == sorted(expected)
 
         finally:
