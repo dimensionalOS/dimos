@@ -1,7 +1,12 @@
-import type { AgentToolName, Background, RuntimeToolName, ToolDetails } from "../../shared/protocol/tools/details.ts";
-import type { RenderDetails } from "../../shared/protocol/media.ts";
-import { DETAILS, MovedSchema } from "../../shared/protocol/tools/details.ts";
-import { RenderDetailsSchema } from "../../shared/protocol/media.ts";
+import type {
+  AgentToolName,
+  Background,
+  RuntimeToolName,
+  ToolDetails,
+} from "#dimos/agents/shared/protocol/tools/details.ts";
+import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
+import { DETAILS, MovedSchema } from "#dimos/agents/shared/protocol/tools/details.ts";
+import { RenderDetailsSchema } from "#dimos/agents/shared/protocol/media.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 

@@ -116,7 +116,7 @@ def nav_static(
 ) -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     """Bridge static entities: the body box and clearance cylinder riding on base_link.
 
-    Module-level partials, since blueprint config is pickled out to the workers.
+    Module-level partials, since blueprint config is sent by reference to the workers.
     """
     return {
         "world/robot_body": partial(body_on_base_link, length=length, width=width, height=height),

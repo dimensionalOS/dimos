@@ -1,16 +1,16 @@
-import type { ActionGroup, AnyAction } from "../../../../shared/protocol/actions/base.ts";
-import type { ActionObject } from "../../../../shared/protocol/actions/catalog.ts";
+import type { ActionGroup, AnyAction } from "#dimos/agents/shared/protocol/actions/base.ts";
+import type { ActionObject } from "#dimos/agents/shared/protocol/actions/catalog.ts";
 import type { Context } from "@earendil-works/chord/context";
 import type { Ctx } from "@earendil-works/chord";
-import type { Outcome } from "../../../../shared/protocol/outcome.ts";
-import type { Principal } from "../../../auth/principal.ts";
-import type { Replies } from "../../replies.ts";
-import type { Standing } from "../../../../shared/protocol/actions/standing.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
+import type { Replies } from "#dimos/agents/gateway/server/replies.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
 import type { Static } from "typebox";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
-import { DimosUnavailable } from "../../../../harness/dimos/connection.ts";
-import { describeLink } from "../../../../shared/protocol/gateway/link.ts";
-import { refused } from "../../../../shared/protocol/outcome.ts";
+import { DimosUnavailable } from "#dimos/agents/harness/dimos/connection.ts";
+import { describeLink } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import { refused } from "#dimos/agents/shared/protocol/outcome.ts";
 
 /**
  * What an executor knows of its call: the pi-durable context, from Chord's or, for a `by_request_id` action, the

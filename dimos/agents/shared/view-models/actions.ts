@@ -1,8 +1,8 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { UserRequestId } from "../protocol/conversation/input.ts";
-import type { EpochMs } from "../protocol/time.ts";
-import type { Refusal } from "../protocol/outcome.ts";
-import { refusalText } from "./outcome.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
+import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
 export type ActionStatus = "pending" | "done" | "refused" | "unknown";
 
 /**

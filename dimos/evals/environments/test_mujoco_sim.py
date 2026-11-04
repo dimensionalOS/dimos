@@ -222,12 +222,12 @@ def test_settle_waits_for_joints_to_stop():
 
 
 def test_launch_and_cleanup(tmp_path, mocker):
-    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
-    mocker.patch("dimos.evals.environments.sim.launched_mcp_url", return_value="http://x/mcp")
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
     proc.extra_env = {}
     proc.global_args = []
     mocker.patch(
-        "dimos.evals.environments.sim.McpAdapter"
+        "dimos.evals.environments.live.McpAdapter"
     ).return_value.wait_for_ready.return_value = True
     store = mocker.patch("dimos.memory.store.sqlite.SqliteStore").return_value
     env = environment(tracked_bodies=("apple",), disable=("rerun-bridge-module",))

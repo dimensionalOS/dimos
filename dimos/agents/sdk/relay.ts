@@ -1,7 +1,7 @@
 import type { ChannelSpec, Session } from "@dimos/sdk";
-import type { Inventory } from "../shared/protocol/runtime/inventory.ts";
-import type { StreamRef } from "../shared/protocol/streams.ts";
-import { StreamRefSchema } from "../shared/protocol/streams.ts";
+import type { Inventory } from "#dimos/agents/shared/protocol/runtime/inventory.ts";
+import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import { StreamRefSchema } from "#dimos/agents/shared/protocol/streams.ts";
 import { connect, TRACK_ENCODING } from "@dimos/sdk";
 import { WebTransport, quicheLoaded } from "@fails-components/webtransport";
 import { Value } from "typebox/value";

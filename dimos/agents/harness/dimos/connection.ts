@@ -1,9 +1,9 @@
 import type { CallToolResult, McpFetch } from "@earendil-works/pi-mcp";
 import type { ConversationId, JsonObject } from "@earendil-works/pi-durable";
-import type { HarnessEvent } from "../../shared/protocol/runtime/event.ts";
+import type { HarnessEvent } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import type { LinkStatus } from "../../shared/protocol/gateway/link.ts";
-import type { Live } from "../../shared/protocol/status.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
 import {
   McpClient,
   McpConnectionClosedError,
@@ -12,11 +12,11 @@ import {
   StreamableHttpTransport,
   toLlmContent,
 } from "@earendil-works/pi-mcp";
-import { Status } from "../../shared/protocol/status.ts";
-import { WireError } from "./wire/base.ts";
-import { describeLink } from "../../shared/protocol/gateway/link.ts";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { harnessEventDecoder } from "./wire/event.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { WireError } from "#dimos/agents/harness/dimos/wire/base.ts";
+import { describeLink } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { harnessEventDecoder } from "#dimos/agents/harness/dimos/wire/event.ts";
 
 /** A tool McpServer advertises, as `tools/list` describes it. */
 export type RemoteTool = {

@@ -1,31 +1,31 @@
 import assert from "node:assert/strict";
-import type { CallId, Detachable } from "../../shared/protocol/conversation/calls.ts";
+import type { CallId, Detachable } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { ConversationId, EntryRecord } from "@earendil-works/pi-durable";
-import type { DimosInstall } from "../dimos/install.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
 import type { FauxResponseStep, Message } from "@earendil-works/pi-ai";
-import type { UserRequestId } from "../../shared/protocol/conversation/input.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { ContextBudget } from "../limit/budget.ts";
-import { Detacher } from "./detacher.ts";
-import { DimosConnection } from "../dimos/connection.ts";
-import { DimosInputEntry } from "../inputs/source.ts";
-import { FileRenderer } from "../../shared/render/render.ts";
+import { ContextBudget } from "#dimos/agents/harness/limit/budget.ts";
+import { Detacher } from "#dimos/agents/harness/background/detacher.ts";
+import { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import { DimosInputEntry } from "#dimos/agents/harness/inputs/source.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { Harness, ToolResultEntry, createRegistry } from "@earendil-works/pi-durable";
-import { InputGate } from "../inputs/gate.ts";
-import { OutputLimiter } from "../limit/limit.ts";
-import { RuntimeClient } from "../dimos/client.ts";
-import { RuntimeObserver } from "../context/observer.ts";
+import { InputGate } from "#dimos/agents/harness/inputs/gate.ts";
+import { OutputLimiter } from "#dimos/agents/harness/limit/limit.ts";
+import { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
+import { RuntimeObserver } from "#dimos/agents/harness/context/observer.ts";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { after, before, test } from "node:test";
-import { bashTool } from "../tools/bash.ts";
-import { executionEnv } from "../env.ts";
+import { bashTool } from "#dimos/agents/harness/tools/bash.ts";
+import { executionEnv } from "#dimos/agents/harness/env.ts";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { openNodeSqliteDatabase } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { scriptedModel } from "../../test/scripted-model.ts";
+import { scriptedModel } from "#dimos/agents/test/scripted-model.ts";
 import { tmpdir } from "node:os";
-import { toolsExtension } from "../tools/extension.ts";
+import { toolsExtension } from "#dimos/agents/harness/tools/extension.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -139,6 +139,7 @@ async function open(name: string, model: ReturnType<typeof scriptedModel>, repor
         stream_get: null,
         agent_module: null,
         job: null,
+        background: null,
       },
       limiter,
       detacher,
@@ -196,7 +197,7 @@ test("a bash call sent to the background returns at once, and its output comes b
   assert.ok(idleAfterMs < 1_500, `the run ended after ${idleAfterMs} ms, before the 1.5 s command did`);
   assert.deepEqual(requests.at(-1)?.slice(-2), [
     'assistant: bash({"command":"echo scanning; sleep 1.5; echo survey done"})',
-    "toolResult: Moved to the background. Its result arrives later as a message.",
+    "toolResult: Moved to the background as call call_bg. Its result arrives later as a message; the background tool lists it, reads its output so far, or stops it.",
   ]);
   assert.deepEqual(detachable.value, []);
   assert.equal(

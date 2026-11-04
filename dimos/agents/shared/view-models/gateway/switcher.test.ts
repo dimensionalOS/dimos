@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
-import type { ConversationRow } from "../../protocol/conversation/summary.ts";
-import { epochMs } from "../../protocol/time.ts";
-import { switcherRows } from "./switcher.ts";
+import type { ConversationRow } from "#dimos/agents/shared/protocol/conversation/summary.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { switcherRows } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
 import { test } from "node:test";
 
 const NOW = epochMs(1_760_700_000_000);

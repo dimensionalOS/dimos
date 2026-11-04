@@ -1,20 +1,25 @@
-import { refusalOfFailure } from "../../../sdk/failures.ts";
+import { refusalOfFailure } from "#dimos/agents/sdk/failures.ts";
 import type { Component } from "@earendil-works/pi-tui";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { EpochMs } from "../../../shared/protocol/time.ts";
-import type { MenuDetail, MenuRow, MenuTab, TabContext } from "./base.ts";
-import type { Ui } from "../session.ts";
-import { accent, levelColor, muted } from "../style.ts";
-import { actionLine } from "../../../shared/view-models/actions.ts";
-import { clean } from "../../../shared/view-models/text.ts";
-import { conversationsTab } from "./conversations.ts";
-import { environmentTab, inventoryModulesTab, inventoryStreamsTab, rpcsTab } from "./inventory.ts";
-import { jobsTab } from "./jobs.ts";
-import { listen } from "../../../sdk/state.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { MenuDetail, MenuRow, MenuTab, TabContext } from "#dimos/agents/frontends/tui/menu/base.ts";
+import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
+import { accent, levelColor, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { actionLine } from "#dimos/agents/shared/view-models/actions.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { conversationsTab } from "#dimos/agents/frontends/tui/menu/conversations.ts";
+import {
+  environmentTab,
+  inventoryModulesTab,
+  inventoryStreamsTab,
+  rpcsTab,
+} from "#dimos/agents/frontends/tui/menu/inventory.ts";
+import { jobsTab } from "#dimos/agents/frontends/tui/menu/jobs.ts";
+import { listen } from "#dimos/agents/sdk/state.ts";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { modulesTab } from "./modules.ts";
-import { overviewTab } from "./overview.ts";
-import { streamsTab } from "./streams.ts";
+import { modulesTab } from "#dimos/agents/frontends/tui/menu/modules.ts";
+import { overviewTab } from "#dimos/agents/frontends/tui/menu/overview.ts";
+import { streamsTab } from "#dimos/agents/frontends/tui/menu/streams.ts";
 
 /** The family's one list, in key order 1 to 9. */
 const TABS: readonly MenuTab[] = [

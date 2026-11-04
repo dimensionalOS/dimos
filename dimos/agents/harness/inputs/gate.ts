@@ -8,16 +8,16 @@ import type {
   SubmissionId,
   TaskId,
 } from "@earendil-works/pi-durable";
-import type { DimosInput, InputSource } from "../../shared/protocol/conversation/input.ts";
+import type { DimosInput, InputSource } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import type { ImageContent, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { JsonValue } from "@earendil-works/chord";
-import type { OutputLimiter } from "../limit/limit.ts";
-import type { QueuedText } from "../../shared/protocol/conversation/queue.ts";
-import type { RenderDetails } from "../../shared/protocol/media.ts";
-import type { RuntimeObserver } from "../context/observer.ts";
+import type { OutputLimiter } from "#dimos/agents/harness/limit/limit.ts";
+import type { QueuedText } from "#dimos/agents/shared/protocol/conversation/queue.ts";
+import type { RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
+import type { RuntimeObserver } from "#dimos/agents/harness/context/observer.ts";
 import { ConversationBusy, InboxDoc, LiveDoc, defineDoc } from "@earendil-works/pi-durable";
-import { DimosInputEntry, requestIdFor } from "./source.ts";
-import { changeMessage } from "../context/messages.ts";
+import { DimosInputEntry, requestIdFor } from "#dimos/agents/harness/inputs/source.ts";
+import { changeMessage } from "#dimos/agents/harness/context/messages.ts";
 import { readFile } from "node:fs/promises";
 
 export type InputDraft = {

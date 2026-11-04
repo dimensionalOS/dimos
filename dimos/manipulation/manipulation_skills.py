@@ -128,17 +128,6 @@ class ManipulationSkills(Module):
         return SkillResult(result.message or "Cancelled")
 
     @skill
-    def reset(self) -> SkillResult:
-        """Stop any motion and return to IDLE. Use after a motion fails.
-
-        Raises RuntimeError when the module refuses to reset.
-        """
-        result = self.manipulation.reset()
-        if not result.succeeded:
-            raise RuntimeError(f"Reset was refused by the module: {_status(result)}")
-        return SkillResult(result.message)
-
-    @skill
     def get_robot_state(self, planning_group: PlanningGroupID | None = None) -> SkillResult:
         """Get manipulation state, optionally for one planning group.
 
