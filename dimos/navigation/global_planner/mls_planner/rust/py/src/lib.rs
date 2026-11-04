@@ -27,9 +27,7 @@ pub struct MLSPlanner {
     planner: Planner,
 }
 
-/// Extract a float32 numpy array of xyz rows, or of the ray tracer's (N, 7)
-/// xyz plus plane rows, dropping any row with a non-finite coordinate. Plain
-/// xyz rows get no plane.
+/// Rows of xyz, or the tracer's (N, 7) xyz plus plane, as float32, dropping non-finite coordinates; xyz rows get no plane.
 fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<MapPoint>> {
     let points: PyReadonlyArray2<'_, f32> = points.extract().map_err(|_| {
         PyValueError::new_err("points must be a (N, 3) or (N, 7) float32 numpy array")

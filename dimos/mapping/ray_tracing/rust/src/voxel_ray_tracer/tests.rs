@@ -2096,8 +2096,7 @@ fn regions_group_chunks_by_center_and_never_split_a_chunk() {
     assert_eq!(region_of((5, -1, 0), 0.5, 1.0), (5, -1));
 }
 
-/// A healthy map of the points, each voxel created as its first point lands,
-/// with its surface planes fit.
+/// A healthy map of the points, voxels created as their first point lands, with planes fit.
 pub(super) fn map_of_points(points: &[(f32, f32, f32)], voxel_size: f32) -> VoxelMap {
     let mut map = VoxelMap::with_support_min(0);
     for &p in points {
@@ -2123,8 +2122,7 @@ fn tilted_floor(z0: f32, slope: f32) -> Vec<(f32, f32, f32)> {
         .collect()
 }
 
-/// A tilted floor voxel's own plane faces up, tilts with the floor, and puts
-/// the floor's height at the voxel's column center.
+/// A tilted floor voxel's plane faces up, tilts with the floor, and reads its height at the column center.
 #[test]
 fn surface_plane_carries_the_floor_height_and_slope() {
     let voxel_size = 0.1;
@@ -2173,8 +2171,7 @@ fn surface_plane_reads_a_tread_beside_its_riser() {
     assert!((height - tread_z).abs() < 1e-3, "{height}");
 }
 
-/// A floor on a voxel boundary splits its points across two voxels; the upper
-/// one pools the lower one's and publishes the floor, level, at its height.
+/// A floor on a voxel boundary: the upper voxel pools the lower's points and publishes it level at its height.
 #[test]
 fn a_floor_split_across_a_voxel_boundary_pools_into_one_plane() {
     let voxel_size = 0.1;
@@ -2196,8 +2193,7 @@ fn a_floor_split_across_a_voxel_boundary_pools_into_one_plane() {
     }
 }
 
-/// Every emitted voxel carries its plane after its center. A voxel with one
-/// emitted right above it is covered: it can be no surface, so it gets NaN.
+/// Every emitted voxel carries its plane after its center, NaN when covered by an emitted voxel right above.
 #[test]
 fn emitted_surfaces_carry_planes_except_under_cover() {
     let voxel_size = 0.1;

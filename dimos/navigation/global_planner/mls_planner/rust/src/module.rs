@@ -994,8 +994,7 @@ fn cloud_points(msg: &PointCloud2, topic: &'static str) -> Option<Vec<MapPoint>>
 /// The ray tracer's per-voxel plane fields, in `MapPoint` order.
 const PLANE_FIELDS: [&str; 4] = ["normal_x", "normal_y", "normal_z", "plane_offset"];
 
-/// A cloud's finite points, each with its plane fields when the cloud carries
-/// all of them, else NaN for the whole-voxel model.
+/// A cloud's finite points with their planes when it carries every plane field, else NaN (whole voxels).
 pub fn extract_points(msg: &PointCloud2) -> Result<Vec<MapPoint>, ExtractError> {
     let offset_of = |name: &str| {
         msg.fields

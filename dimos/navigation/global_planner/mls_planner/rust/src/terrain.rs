@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Surface heights from the plane the ray tracer fits each voxel. A voxel
-//! without a usable plane stands at its top face, the whole-voxel model.
+//! Surface heights from the ray tracer's per-voxel planes; a voxel without one stands at its top face.
 
 use ahash::AHashMap;
 
 use crate::columns::ColumnIz;
 use crate::voxel::VoxelKey;
 
-/// A voxel's surface as a height field about its center, in meters:
-/// z = z0 + gx * dx + gy * dy.
+/// A voxel's surface as a height field about its center, in meters: z = z0 + gx * dx + gy * dy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfacePlane {
     z0: f32,
@@ -30,8 +28,7 @@ pub struct SurfacePlane {
 }
 
 impl SurfacePlane {
-    /// The tracer's fit `normal · (p - center) = offset`, None when NaN or
-    /// tilted past `min_normal_z`.
+    /// The tracer's fit `normal · (p - center) = offset`, None when NaN or tilted past `min_normal_z`.
     pub fn from_fit(fit @ [nx, ny, nz, offset]: [f32; 4], min_normal_z: f32) -> Option<Self> {
         (nz >= min_normal_z && fit.iter().all(|c| c.is_finite())).then(|| Self {
             z0: offset / nz,
@@ -50,8 +47,7 @@ impl SurfacePlane {
         }
     }
 
-    /// The plane through the voxel center offset by `z0` with slopes `gx`
-    /// and `gy`, for tests.
+    /// The plane through the voxel center offset by `z0` with slopes `gx` and `gy`, for tests.
     #[cfg(test)]
     pub fn sloped(z0: f32, gx: f32, gy: f32) -> Self {
         Self { z0, gx, gy }
@@ -120,8 +116,7 @@ impl Terrain<'_> {
         self.surface(key).0
     }
 
-    /// The cell has the robot's height clear between its surface and the next
-    /// voxel up its column.
+    /// The cell has the robot's height clear between its surface and the next voxel up its column.
     pub fn standable(&self, key @ (ix, iy, iz): VoxelKey) -> bool {
         self.by_col
             .get((ix, iy))
@@ -137,8 +132,7 @@ impl Terrain<'_> {
     pub fn clear_below(&self, key: VoxelKey, next_iz: i32) -> bool {
         let (cells, v) = (next_iz - key.2, self.voxel_size);
         let gap = cells as f32 * v;
-        // The surface sits within a voxel of the bottom face, so only a gap
-        // within a voxel of the robot's height needs the plane.
+        // The surface is within a voxel of the bottom face, so only gaps near the robot's height need the plane.
         if gap - v > self.robot_height {
             return true;
         }
@@ -163,9 +157,7 @@ impl Terrain<'_> {
         within_step(gap, self.voxel_size, self.step_m, self.noise_m)
     }
 
-    /// The most cells apart in z a step between adjacent columns can join: a
-    /// plane's center sits within a voxel of its bottom face and its edge half
-    /// a column's slope further. Scans k columns apart keep this as their limit.
+    /// The most z cells a step between adjacent columns can span: plane center within a voxel, edge half a slope further.
     pub fn step_reach_cells(&self) -> i32 {
         ((self.step_m + self.noise_m) / self.voxel_size + 2.0 + self.max_slope).floor() as i32
     }

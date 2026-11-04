@@ -292,9 +292,7 @@ fn key_point(plg: &PlannerGraph, k: VoxelKey, voxel_size: f32) -> (f32, f32, f32
     )
 }
 
-/// Hand `visit` each surface cell under the chord a -> b with its rise, until
-/// a cell strays a step from the chord or the robot cannot step onto it, or
-/// `visit` returns false. True when the walk reached b.
+/// Hand `visit` each cell under chord a -> b with its rise until one strays, can't be stepped onto, or `visit` says stop; true if b was reached.
 fn walk_chord(
     plg: &PlannerGraph,
     a: VoxelKey,

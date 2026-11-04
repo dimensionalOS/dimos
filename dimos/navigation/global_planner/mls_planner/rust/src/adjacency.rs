@@ -82,9 +82,7 @@ impl SurfaceCells {
         self.coord[id as usize] != TOMBSTONE
     }
 
-    /// Get or insert a cell with its surface height `z` and plane slope,
-    /// reusing a freed slot before growing. An existing cell keeps its id and
-    /// takes the new surface.
+    /// Get or insert a cell with surface height `z` and slope, reusing a freed slot; an existing cell keeps its id.
     pub fn insert(&mut self, k: VoxelKey, (z, slope): Surface) -> CellId {
         debug_assert_ne!(k, TOMBSTONE, "voxel coord collides with tombstone sentinel");
         if let Some(&id) = self.by_coord.get(&k) {
@@ -155,8 +153,7 @@ impl SurfaceCells {
         (self.z[id as usize], self.slope[id as usize])
     }
 
-    /// The height change from cell `a`'s center to cell `b`'s: between their
-    /// planes when both have one, else between whole-voxel levels.
+    /// The height change between cells' centers: by their planes when both have one, else by whole-voxel levels.
     pub fn rise(&self, a: CellId, b: CellId, voxel_size: f32) -> f32 {
         self.view().rise(a, b, voxel_size)
     }
@@ -275,8 +272,7 @@ impl CellView<'_> {
     }
 }
 
-/// Fill `out` with the edges from `src` to every 4-neighbor cell its surface
-/// steps onto, each costed by the 3D distance between their surface points.
+/// Fill `out` with `src`'s edges to each 4-neighbor its surface steps onto, costed by 3D surface distance.
 fn edges_of(
     view: &CellView,
     surface_lookup: &SurfaceLookup,
@@ -347,8 +343,7 @@ pub fn build_surface_cells(
         .for_each(|(src, out)| edges_of(&view, surface_lookup, terrain, src as CellId, out));
 }
 
-/// `build_surface_cells` over whole voxels with no map around them, for a
-/// robot that steps `step_cells` voxels.
+/// `build_surface_cells` over whole voxels alone, for a robot that steps `step_cells` voxels.
 #[cfg(test)]
 pub(crate) fn build_whole_voxel_cells(
     cells: &mut SurfaceCells,

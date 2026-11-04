@@ -491,8 +491,7 @@ impl Voxel {
         }
     }
 
-    /// The most level plane through this voxel's points and those of the voxel
-    /// below, which a surface on their shared face splits its points across.
+    /// The most level plane through this voxel's points and the one below's, which a surface on their shared face splits.
     fn surface_plane(&self, below: Option<&Voxel>, voxel_size: f32) -> Option<Plane> {
         let (mut n, mut sum, mut m2) = (self.num_pts as f32, self.sum, self.m2);
         if let Some(b) = below {
@@ -1104,8 +1103,7 @@ pub fn update_map(
     }
 }
 
-/// Refit the surface plane of each voxel whose own or lower neighbor's moments
-/// reached a refit milestone, `changed`, or right above a removal.
+/// Refit the plane of each voxel whose moments, or its lower neighbor's, hit a refit milestone, `changed`, or sit above a removal.
 fn refit_surfaces(
     map: &mut VoxelMap,
     changed: &AHashSet<VoxelKey>,

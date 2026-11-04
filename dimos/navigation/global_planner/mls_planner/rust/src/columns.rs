@@ -292,8 +292,7 @@ impl ColumnMask {
     }
 }
 
-/// The heights a repair's edits added, removed, or retuned per column, sorted,
-/// and the columns that gained their first voxel or lost their last.
+/// Per column, the sorted heights a repair added, removed, or retuned, and the columns that gained or lost their only voxel.
 #[derive(Default)]
 pub struct VoxelEdits {
     pub changed: Vec<((i32, i32), Vec<i32>)>,

@@ -332,8 +332,7 @@ impl ChunkMap {
         chunk.index(slot_of(*key)).map(|i| chunk.support[i])
     }
 
-    /// The support of the healthy voxel right above `hv` of chunk `near`, read
-    /// without a probe unless it lies in the next chunk up.
+    /// The support of the healthy voxel right above `hv` of chunk `near`, probing only into the next chunk up.
     #[inline]
     pub fn healthy_above(&self, near: ChunkRef, hv: &HealthyVoxel) -> Option<u8> {
         if hv.slot as i32 & LOCAL_MASK != LOCAL_MASK {

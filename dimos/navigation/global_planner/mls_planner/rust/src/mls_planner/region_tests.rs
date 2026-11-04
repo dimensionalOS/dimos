@@ -655,8 +655,7 @@ fn region_reobserve_leaves_graph_bit_identical() {
     );
 }
 
-/// A region whose floor planes moved past fit noise retunes into the surface
-/// and edges a full build from the moved planes makes.
+/// A region whose floor planes moved retunes into the surface and edges a full build from them makes.
 #[test]
 fn region_retune_matches_a_full_build() {
     let cfg = test_config();

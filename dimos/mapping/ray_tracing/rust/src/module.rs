@@ -711,8 +711,7 @@ fn tf_to_pose(t: &Transform) -> Pose {
     }
 }
 
-/// local_map's float32 fields: the voxel center, then its plane (see
-/// `Plane`), NaN where the voxel has none.
+/// local_map's float32 fields: the voxel center, then its `Plane`, NaN where it has none.
 const SURFACE_FIELDS: [&str; SURFACE_STRIDE] = [
     "x",
     "y",

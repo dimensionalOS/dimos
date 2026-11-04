@@ -350,9 +350,7 @@ impl VoxelRayMapper {
         flat_to_array(py, points)
     }
 
-    /// local_map with each voxel's plane: (M, 7) float32 rows of the voxel
-    /// center, the plane's unit normal, and its offset from the center along
-    /// it, NaN where the voxel has no plane or one sits right above it.
+    /// local_map with each voxel's plane: (M, 7) float32 rows of center, unit normal, offset; NaN without one.
     fn local_surfaces<'py>(
         &self,
         py: Python<'py>,

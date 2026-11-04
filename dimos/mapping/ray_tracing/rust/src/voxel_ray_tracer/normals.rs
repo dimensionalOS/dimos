@@ -37,9 +37,7 @@ const EIGEN_NULL_TOL: f64 = 1e-18;
 /// Largest eigenvalue below this is a degenerate fit with no plane.
 const EIGEN_DEGENERATE: f32 = 1e-12;
 
-/// A fitted surface: its up-facing unit normal and its signed distance from
-/// the voxel center along that normal, so points p on it satisfy
-/// `normal · (p - center) = offset`.
+/// A fitted surface, its points p satisfying `normal · (p - center) = offset` with an up-facing unit normal.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Plane {
     pub normal: Vector3<f32>,
@@ -57,8 +55,7 @@ pub(super) enum NormalFit {
     Fitted(Option<Vector3<f32>>),
 }
 
-/// Eigenvalues of a symmetric 3x3, ascending, the eigenvector of the
-/// smallest, and the rows whose null space is the largest's.
+/// A symmetric 3x3's ascending eigenvalues, the smallest's eigenvector, and the rows whose null space is the largest's.
 struct Sym3Eigen {
     values: [f32; 3],
     smallest: Vector3<f32>,
@@ -182,17 +179,12 @@ fn shape(eig: &Sym3Eigen) -> Shape {
     }
 }
 
-/// The surface normal of a decomposition, or None unless it is clearly
-/// planar. Pairs the normal with the smallest eigenvalue, the fit's
-/// out-of-plane variance.
+/// A decomposition's surface normal and its out-of-plane variance (smallest eigenvalue), None unless clearly planar.
 fn classify(eig: &Sym3Eigen) -> Option<(Vector3<f32>, f32)> {
     (shape(eig) == Shape::Planar).then(|| (eig.smallest, eig.values[0].max(0.0)))
 }
 
-/// The normal of the most level plane through points with this covariance:
-/// a plane's own, the most level one through a line, else level, since
-/// lidar noise reads a small patch of floor as scattered. Paired with whether
-/// the points chose it, rather than a line or a single spot leaving it open.
+/// The most level plane through points of this covariance (its own, through its line, else level), and whether the points pinned it.
 pub(super) fn surface_normal(cov: &Matrix3<f32>) -> (Vector3<f32>, bool) {
     let eig = sym3_eigen(cov);
     match shape(&eig) {

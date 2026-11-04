@@ -41,8 +41,7 @@ use crate::surfaces::{extract_surfaces, extract_surfaces_region};
 use crate::terrain::{PlaneMap, SurfacePlane, Terrain};
 use crate::voxel::{voxelize, VoxelKey};
 
-/// One voxel center of an incoming cloud, and the plane the ray tracer fit
-/// it: normal xyz then offset from the center, NaN when it has none.
+/// An incoming voxel center and its tracer plane: normal xyz, then offset from the center, NaN without one.
 pub type MapPoint = ((f32, f32, f32), [f32; 4]);
 
 #[native_config]
@@ -125,8 +124,7 @@ impl Config {
         (self.surface_closing_radius / self.voxel_size).ceil() as u32
     }
 
-    /// Robot-height headroom in cells: the farthest a voxel above a cell can
-    /// sit and still block it.
+    /// Robot-height headroom in cells: the farthest above a cell a voxel can still block it.
     pub fn headroom_cells(&self) -> i32 {
         (self.robot_height / self.voxel_size).ceil() as i32
     }
@@ -460,8 +458,7 @@ impl Planner {
         );
     }
 
-    /// Apply the surface cell changes to the cell store, and the new surface
-    /// of the kept cells whose plane moved.
+    /// Apply the surface cell changes, and the new surface of kept cells whose plane moved.
     fn patch_cells(
         &mut self,
         added: &[VoxelKey],
@@ -814,8 +811,7 @@ impl Planner {
         })
     }
 
-    /// Surface cells with their surface height and wall clearance, the
-    /// distance to the nearest untraversable edge. Unreached cells report +inf.
+    /// Surface cells with their surface height and wall clearance (nearest untraversable edge, +inf unreached).
     pub fn surface_clearance(&self) -> Vec<SurfaceEntry> {
         self.surface_clearance_iter().collect()
     }
