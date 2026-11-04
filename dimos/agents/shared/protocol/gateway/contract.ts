@@ -1,17 +1,17 @@
-import type { Accounts, LoginState } from "../auth.ts";
-import type { StreamRef } from "../streams.ts";
-import type { ConversationRow } from "../conversation/summary.ts";
-import type { DimosRun } from "../runtime/runs.ts";
-import type { JobRow } from "../jobs/state.ts";
-import type { LinkStatus } from "./link.ts";
-import type { LoadStatus } from "../runtime/load.ts";
-import type { ModuleRow } from "../runtime/module.ts";
-import type { Settings } from "../settings.ts";
-import { GATEWAY_ACTIONS } from "../actions/gateway.ts";
+import type { Accounts, LoginState } from "#dimos/agents/shared/protocol/auth.ts";
+import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import type { ConversationRow } from "#dimos/agents/shared/protocol/conversation/summary.ts";
+import type { DimosRun } from "#dimos/agents/shared/protocol/runtime/runs.ts";
+import type { JobRow } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import type { LoadStatus } from "#dimos/agents/shared/protocol/runtime/load.ts";
+import type { ModuleRow } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import type { Settings } from "#dimos/agents/shared/protocol/settings.ts";
+import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
 import { Type } from "typebox";
-import { carried } from "../schema.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
 import { hostNamed, remote } from "@earendil-works/chord";
-import { methodsOf } from "../actions/methods.ts";
+import { methodsOf } from "#dimos/agents/shared/protocol/actions/methods.ts";
 
 /**
  * Everything shared across conversations, one record of schemas used by the gateway's host-lifetime store and by both

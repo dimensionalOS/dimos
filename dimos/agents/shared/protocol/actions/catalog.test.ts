@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
-import type { ActionRequestId } from "./request.ts";
-import type { AgentModuleName } from "../runtime/event.ts";
-import type { CallId } from "../conversation/calls.ts";
+import type { ActionRequestId } from "#dimos/agents/shared/protocol/actions/request.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
+import type { CallId } from "#dimos/agents/shared/protocol/conversation/calls.ts";
 import type { ConversationId, EntryId } from "@earendil-works/pi-durable";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { Standing } from "./standing.ts";
-import type { UserRequestId } from "../conversation/input.ts";
-import { CONVERSATION_ACTIONS } from "./conversation.ts";
-import { GATEWAY_ACTIONS } from "./gateway.ts";
-import { epochMs } from "../time.ts";
-import { methodsOf } from "./methods.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import type { UserRequestId } from "#dimos/agents/shared/protocol/conversation/input.ts";
+import { CONVERSATION_ACTIONS } from "#dimos/agents/shared/protocol/actions/conversation.ts";
+import { GATEWAY_ACTIONS } from "#dimos/agents/shared/protocol/actions/gateway.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { methodsOf } from "#dimos/agents/shared/protocol/actions/methods.ts";
 import { test } from "node:test";
 
 const conversation = 7 as ConversationId;
@@ -25,6 +25,7 @@ const BUSY: Standing = {
     busy: true,
     userQueued: 0,
     detachable: ["call_1" as CallId],
+    moved: ["call_2" as CallId],
     messageKind: (entry) => (entry === 12 ? "user" : entry === 13 ? "other" : null),
   },
 };
@@ -72,7 +73,15 @@ test("background of a call that is not detachable is refused not_running", () =>
   assert.equal(CONVERSATION_ACTIONS.background.rule({ call: "call_1" as CallId }, BUSY), null);
 });
 
-test("the viewer variant carries only the actions open to any client; the owner carries all nine", () => {
+test("stopBackground of a call that is not moved is refused not_running", () => {
+  assert.deepEqual(CONVERSATION_ACTIONS.stopBackground.rule({ call: "call_1" as CallId }, BUSY), {
+    code: "not_running",
+    call: "call_1",
+  });
+  assert.equal(CONVERSATION_ACTIONS.stopBackground.rule({ call: "call_2" as CallId }, BUSY), null);
+});
+
+test("the viewer variant carries only the actions open to any client; the owner carries all ten", () => {
   assert.deepEqual(Object.keys(methodsOf(CONVERSATION_ACTIONS, "viewer")), ["image"]);
   assert.deepEqual(Object.keys(methodsOf(CONVERSATION_ACTIONS, "owner")), [
     "send",
@@ -83,6 +92,7 @@ test("the viewer variant carries only the actions open to any client; the owner 
     "summarizeUpTo",
     "summarizeFrom",
     "background",
+    "stopBackground",
     "image",
   ]);
 });

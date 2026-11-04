@@ -1,4 +1,4 @@
-import type { EpochMs } from "../time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 
 /** One `~/.local/state/dimos/runs/<run_id>.json` (`dimos/core/run_registry.py`), with a liveness check of its pid. */
 export type DimosRun = {

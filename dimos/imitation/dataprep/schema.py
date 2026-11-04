@@ -50,7 +50,7 @@ DEFAULT_FPS = 30.0  # resample rate == written video/timestamp rate
 class EpisodeExtractor(BaseConfig):
     extractor: Literal["episode_status", "ranges"] = "episode_status"
     # Recorded stream name for EpisodeStatus events. Must match the recorder's
-    # `status` In port (CollectionRecorder records it as "status").
+    # `status` In port (CollectionModule records it as "status").
     status_stream: str = "status"
     ranges: list[tuple[float, float]] | None = None
 

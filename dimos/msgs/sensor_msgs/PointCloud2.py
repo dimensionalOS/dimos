@@ -24,6 +24,7 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 )
 from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
+from dimos_lcm.std_msgs.Time import Time
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -205,7 +206,7 @@ class PointCloud2(Timestamped):
         Args:
             points: Nx3 numpy array of 3D points
             frame_id: Frame ID for the point cloud
-            timestamp: Timestamp for the point cloud (defaults to current time)
+            timestamp: Timestamp for the point cloud, or None for an unstamped cloud
             intensities: Optional Nx1 or (N,) float array of per-point intensity values
             offset_times: Optional (N,) uint32 array of per-point capture-time
                 offsets in nanoseconds relative to the header stamp
@@ -553,8 +554,11 @@ class PointCloud2(Timestamped):
         msg.header.seq = self.seq
         msg.header.frame_id = frame_id or self.frame_id
 
-        msg.header.stamp.sec = int(self.ts)
-        msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
+        # A fresh stamp: the generated Header shares one default Time across every
+        # message, so writing into it leaks into other encodes. An unstamped cloud
+        # encodes as zero, which lcm_decode maps back to None.
+        ts = self.ts or 0.0
+        msg.header.stamp = Time(sec=int(ts), nsec=int((ts - int(ts)) * 1e9))
 
         points, _ = self.as_numpy()
 

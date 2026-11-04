@@ -1,7 +1,7 @@
 import type { Static } from "typebox";
 import type { TaskId } from "@earendil-works/pi-durable";
-import { LimitRecordSchema } from "./limit.ts";
-import { RenderDetailsSchema } from "../media.ts";
+import { LimitRecordSchema } from "#dimos/agents/shared/protocol/tools/limit.ts";
+import { RenderDetailsSchema } from "#dimos/agents/shared/protocol/media.ts";
 import { Type } from "typebox";
 
 /** pi-durable's `TruncationResult` without its content: the record Pi's read and bash cards read. */
@@ -60,6 +60,7 @@ export const DETAILS = {
   stream_get: Type.Object({ render, background, limit }),
   agent_module: Type.Object({ render, background, limit }),
   job: Type.Object({ limit }),
+  background: Type.Object({ limit }),
 };
 
 export type DetailsByTool = { readonly [N in keyof typeof DETAILS]: Static<(typeof DETAILS)[N]> };
