@@ -25,10 +25,13 @@ from __future__ import annotations
 
 from functools import partial
 import os
+import signal
 import sys
+import threading
 from typing import Any
 
 from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -37,8 +40,11 @@ from dimos.core.stream import Out
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.replay import _LOOP_GAP
 from dimos.memory.replay_module import _port_names, stream_types_of
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
+
+COMPLETE_PORT = "replay_complete"
 
 logger = setup_logger()
 
@@ -57,8 +63,6 @@ class ReplayNativeConfig(NativeModuleConfig):
     loop: bool = False
     # Once the whole recording has played (loop off), the run shuts down.
     exit_on_complete: bool = False
-    # Filled at start with exit_on_complete: the pid of this run's coordinator, which the binary signals when done.
-    shutdown_pid: int = 0
     seek: float | None = Field(default=None, ge=0.0)
     duration: float | None = Field(default=None, gt=0.0)
     # Recorded-time gap between the end of one loop pass and the start of the next.
@@ -81,6 +85,8 @@ class ReplayNative(NativeModule):
     """Publishes every ``Out`` port from the recording at recorded timing, from Rust."""
 
     config: ReplayNativeConfig
+    # The binary announces the recording's end here (exit_on_complete); not a recorded stream.
+    replay_complete: Out[Bool]
     stream_types: dict[str, type] = {}  # set by replay_native()
     topics: str = "*"  # set by replay_native(); carried to workers via the blueprint kwargs
 
@@ -113,26 +119,41 @@ class ReplayNative(NativeModule):
             logger.info("ReplayNative has no db; not replaying")
             Module.start(self)
             return
-        self.config.ports = sorted(self.outputs)
+        self.config.ports = sorted(n for n in self.outputs if n != COMPLETE_PORT)
         if self.config.exit_on_complete and not self.config.loop:
-            self.config.shutdown_pid = _run_coordinator_pid() or 0
+            # the binary publishes here, straight to the transport, when the recording ends
+            unsubscribe = self.replay_complete.transport.subscribe(
+                self._on_complete, self.replay_complete
+            )
+            self.register_disposable(Disposable(unsubscribe))
         super().start()
+
+    def _on_complete(self, _msg: Bool) -> None:
+        logger.info("Replay finished; stopping the run")
+        # off the transport's thread: the run's shutdown stops this module
+        threading.Thread(target=_request_shutdown, daemon=True).start()
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """The binary reads its topics and config from the stdin line only."""
         return [self._executable]
 
 
-def _run_coordinator_pid() -> int | None:
-    """The coordinator registered under this process's run id, which the binary SIGTERMs as ``dimos stop`` does.
+def _request_shutdown() -> None:
+    """Stop this run as ``dimos stop`` does: SIGTERM to the coordinator registered under this process's run id.
     The bus-wide ``Coordinator`` RPC name is not used: with two runs on one bus it reaches whichever answers."""
+    pid = _run_coordinator_pid()
+    if pid is not None:
+        os.kill(pid, signal.SIGTERM)
+
+
+def _run_coordinator_pid() -> int | None:
     from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
     from dimos.core.run_registry import list_runs
 
     run_id = os.environ.get(DIMOS_RUN_ID_ENV)
     entry = next((e for e in list_runs() if e.run_id == run_id), None) if run_id else None
     if entry is None:
-        logger.warning("exit_on_complete: not under a registered `dimos run`; it will keep running")
+        logger.warning("exit_on_complete: not under a registered `dimos run`; leaving it running")
         return None
     return entry.pid
 

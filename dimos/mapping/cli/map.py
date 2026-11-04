@@ -649,7 +649,7 @@ def main(
         )
         # Keep the sharpest frame per --marker-quality-window window, then
         # drop frames where the robot was moving (linear + rotational) faster
-        # than the limits. Defaults match replay_marker.py so positions agree.
+        # than the limits.
         with progress(n_images, "detecting markers") as bar:
             pipeline: Stream[Image] = color_image.tap(bar).transform(
                 QualityWindow(lambda img: img.sharpness, window=marker_quality_window)

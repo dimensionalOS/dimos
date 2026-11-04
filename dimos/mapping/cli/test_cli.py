@@ -173,14 +173,6 @@ def test_replay_snippet(dataset: str, tmp_path: Path) -> None:
 
 
 @requires_turbojpeg
-def test_replay_marker_snippet(dataset: str, tmp_path: Path) -> None:
-    out = tmp_path / "markers.rrd"
-    res = _run("replay-marker", dataset, "--out", str(out), "--no-gui", "--duration", str(DURATION))
-    assert res.returncode == 0, res.stderr
-    assert out.exists() and out.stat().st_size > 0
-
-
-@requires_turbojpeg
 def test_replay_map_final_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "replay_map.rrd"
     # CPU device keeps the voxel accumulation runnable without a GPU.

@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 lz4_flex = "0.14.0"
 mcap = { version = "0.25.0", default-features = false, features = ["zstd", "lz4"] }
 memmap2 = "0.9"
@@ -21,9 +22,6 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
-
-[dev-dependencies]
-tempfile = "3"
 
 [workspace]
 

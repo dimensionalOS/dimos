@@ -54,12 +54,6 @@ from dimos.navigation.global_planner.viz import (
     robot_body_box,
     robot_clearance,
 )
-from dimos.robot.unitree.go2.config import (
-    BASE_LINK_HEIGHT,
-    ROBOT_HEIGHT,
-    ROBOT_LENGTH,
-    ROBOT_WIDTH,
-)
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
@@ -491,7 +485,7 @@ def main(
         "base_link", "--base-frame", help="Frame whose tf pose is the planning start"
     ),
     start_z_offset: float = typer.Option(
-        BASE_LINK_HEIGHT,
+        ...,
         "--start-z-offset",
         help="Height of the base frame above the ground; subtracted from the start pose z",
     ),
@@ -523,8 +517,10 @@ def main(
         "0 emits all, higher drops isolated returns",
     ),
     robot_height: float = typer.Option(
-        ROBOT_HEIGHT, "--robot-height", help="Robot height, ground to tallest point / lidar (m)"
+        ..., "--robot-height", help="Robot height, ground to tallest point / lidar (m)"
     ),
+    robot_length: float = typer.Option(..., "--robot-length", help="Robot body length (m)"),
+    robot_width: float = typer.Option(..., "--robot-width", help="Robot body width (m)"),
     max_overhead: float = typer.Option(
         2.0, "--max-overhead", help="Ignore surface more than this far above the sensor (m)"
     ),
@@ -676,7 +672,7 @@ def main(
 
         rr.log("world/goal", goal_point(goal), static=True)
         rr.log(
-            "world/robot_body", robot_body_box(ROBOT_LENGTH, ROBOT_WIDTH, robot_height), static=True
+            "world/robot_body", robot_body_box(robot_length, robot_width, robot_height), static=True
         )
         rr.log(
             "world/robot_body/clearance", robot_clearance(robot_height, wall_clearance), static=True

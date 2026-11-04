@@ -36,10 +36,8 @@ pub struct ReplayConfig {
     #[validate(range(exclusive_min = 0.0))]
     pub speed: f64,
     pub r#loop: bool,
-    /// Shut the run down once the whole recording has played (ignored with `loop`).
+    /// Publish on `replay_complete` once the whole recording has played (ignored with `loop`); Python stops the run.
     pub exit_on_complete: bool,
-    /// The run's coordinator, sent SIGTERM (as `dimos stop` does) when exit_on_complete fires; 0 for none.
-    pub shutdown_pid: u32,
     /// Seconds after the recording's first message to start from.
     #[validate(range(min = 0.0))]
     pub seek: f64,
@@ -54,22 +52,6 @@ pub struct ReplayConfig {
     pub static_period: f64,
     /// Output ports, each named after the recorded stream it replays.
     pub ports: Vec<String>,
-}
-
-/// SIGTERM the run's coordinator; it stops every module, this one included.
-fn shut_the_run_down(pid: u32) {
-    if pid == 0 {
-        warn!("exit_on_complete: no coordinator to stop");
-        return;
-    }
-    info!(pid, "replay complete; stopping the run");
-    match std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status()
-    {
-        Ok(status) if status.success() => {}
-        result => warn!(pid, "couldn't signal the coordinator: {result:?}"),
-    }
 }
 
 // Output<T> encodes from &T, so the payload type is Vec<u8> and this takes &Vec<u8>.
@@ -157,9 +139,13 @@ pub fn due(ts: f64, pass: u32, span: (f64, f64), speed: f64, loop_gap: f64) -> D
     Duration::from_secs_f64(offset.max(0.0))
 }
 
+/// The port that announces the end of the recording (exit_on_complete).
+pub const COMPLETE_PORT: &str = "replay_complete";
+
 pub struct MemoryReplay {
     config: ReplayConfig,
     outputs: Vec<(String, Output<Vec<u8>>)>,
+    replay_complete: Output<lcm_msgs::std_msgs::Bool>,
     /// Dropped to stop the player: the first ends its waits, the second a publish stuck on a full queue.
     stop: Option<(Sender<()>, tokio::sync::watch::Sender<()>)>,
     player: Option<JoinHandle<Result<()>>>,
@@ -175,9 +161,11 @@ impl Module for MemoryReplay {
             .iter()
             .map(|port| (port.clone(), builder.output(port, raw_bytes)))
             .collect();
+        let replay_complete = builder.output(COMPLETE_PORT, lcm_msgs::std_msgs::Bool::encode);
         Self {
             config,
             outputs,
+            replay_complete,
             stop: None,
             player: None,
             statics: JoinSet::new(),
@@ -247,7 +235,10 @@ impl Module for MemoryReplay {
             }
             self.player = None;
             if self.config.exit_on_complete && !self.config.r#loop {
-                shut_the_run_down(self.config.shutdown_pid);
+                let done = lcm_msgs::std_msgs::Bool { data: true };
+                if let Err(e) = self.replay_complete.publish(&done).await {
+                    warn!("couldn't announce the replay's end: {e}");
+                }
             }
         }
         // Like the Python module, stay up (static streams keep publishing) until stopped.
