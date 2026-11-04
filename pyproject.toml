@@ -333,7 +333,7 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     # the Go2 sim behind go2/connections/webrtc_sim.py, until sim2
-    "dim-go2-sim>=0.5.1",
+    "dim-go2-sim>=0.5.2",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
@@ -474,7 +474,7 @@ tests = [
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
     "mujoco>=3.3.4",
-    "dim-go2-sim>=0.5.1",
+    "dim-go2-sim>=0.5.2",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
@@ -551,7 +551,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, dim-go2-sim = false, eclipse-zenoh = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10

@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-28T00:56:04.834099Z"
+exclude-newer = "2026-10-28T01:19:00.708313Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -41,6 +41,7 @@ dimos-viewer = false
 dimos-lcm = false
 lcm = false
 edgetam-dimos = false
+dim-go2-sim = false
 eclipse-zenoh = false
 can-motor-control = false
 md-babel-py = false
@@ -1819,7 +1820,7 @@ wheels = [
 
 [[package]]
 name = "dim-go2-sim"
-version = "0.5.1"
+version = "0.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dimos" },
@@ -1840,9 +1841,9 @@ dependencies = [
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/ba/729c4d1f7d8399b0454820bbe4b767bc3cc3d39fe6994930c984d9419b8d/dim_go2_sim-0.5.1.tar.gz", hash = "sha256:66eac8a2438ddb6b2a61aaff6a056b7531ee38117c17e952f3d9e0809ba8d0d9", size = 5366483, upload-time = "2026-10-23T18:54:36.846Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/05/3ac0c6f7ab74c8f336c9868261362719b02117ba268819558b9cd5cd8a08/dim_go2_sim-0.5.2.tar.gz", hash = "sha256:fdc0cd159366c9ae4ce2160b2d9b8c4785e2c50b0f9f92a66d00c6d4a566755f", size = 5367069, upload-time = "2026-11-04T01:17:49.428Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/7b/a6984693a0e454bb0f60952439dd580f0590e47b9cb47de5aa43a583383a/dim_go2_sim-0.5.1-py3-none-any.whl", hash = "sha256:809fd8e96fe0a9efb2a76b81f53769e4c954340da3a39ce949142e1055f0f713", size = 5453908, upload-time = "2026-10-23T18:54:34.998Z" },
+    { url = "https://files.pythonhosted.org/packages/54/c4/e865e3ea7a3dca1e23da19c1baa9c5c0e0ad93a1514a44a27a3ccc2dab86/dim_go2_sim-0.5.2-py3-none-any.whl", hash = "sha256:ad5e8fd1d2e5313e809f4e7e10266a4d5fd1a1e84143b14d7f7a9880d35baa62", size = 5454151, upload-time = "2026-11-04T01:17:51.384Z" },
 ]
 
 [[package]]
@@ -2575,7 +2576,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.5.1" },
+    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.5.2" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
@@ -2804,7 +2805,7 @@ tests = [
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "dim-go2-sim", specifier = ">=0.5.1" },
+    { name = "dim-go2-sim", specifier = ">=0.5.2" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
@@ -2864,7 +2865,7 @@ tests-self-hosted = [
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "dim-go2-sim", specifier = ">=0.5.1" },
+    { name = "dim-go2-sim", specifier = ">=0.5.2" },
     { name = "dim-odom", specifier = ">=0.4.1" },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },

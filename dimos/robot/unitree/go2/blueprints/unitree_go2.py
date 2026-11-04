@@ -158,13 +158,7 @@ def _connection() -> Blueprint:
         except ImportError as error:
             reason = f"--simulation needs dim-go2-sim ({error}): uv sync --extra sim"
             return autoconnect().requirements(lambda: reason)
-        # its own URDF sharing is off (UrdfManagerNative serves the Go2's); its ports for it are moved aside
-        sim: Blueprint = Go2WebRtcSim.blueprint().remappings(
-            [
-                (Go2WebRtcSim, name, f"sim_{name}")
-                for name in ("file_info", "file_request", "robot_description")
-            ]
-        )
+        sim: Blueprint = Go2WebRtcSim.blueprint()
         return sim
     # the L1 map cast from base_link, not world's origin, so the ray tracer carves from the robot
     return Go2WebRtc.blueprint(
