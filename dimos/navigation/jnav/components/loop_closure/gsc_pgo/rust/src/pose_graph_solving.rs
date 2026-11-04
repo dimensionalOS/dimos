@@ -347,7 +347,7 @@ impl GscPgo {
         // (a planar solve measures none)
         if self.config.learned_odometry_error_estimate_from_closures
             && !self.config.planar_pose_graph
-            && self.committed_closures.iter().any(|c| c.gnc_weight > 0.5)
+            && self.committed_closures.iter().any(|c| c.is_kept())
         {
             self.learned_evidence_requested = true;
             self.evidence_solve_due = true;
@@ -686,7 +686,7 @@ impl GscPgo {
         let previous_kept: Vec<bool> = if dispatched.is_some() {
             self.committed_closures
                 .iter()
-                .map(|c| c.gnc_weight > 0.5)
+                .map(|c| c.is_kept())
                 .collect()
         } else {
             Vec::new()
@@ -783,7 +783,7 @@ impl GscPgo {
             None => self
                 .committed_closures
                 .iter()
-                .filter(|c| c.gnc_weight > 0.5)
+                .filter(|c| c.is_kept())
                 .map(|c| c.source_id.abs_diff(c.target_id))
                 .max()
                 .unwrap_or(0),

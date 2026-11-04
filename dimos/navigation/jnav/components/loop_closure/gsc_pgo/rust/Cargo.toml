@@ -9,9 +9,7 @@ license = "Apache-2.0"
 name = "dimos_gsc_pgo"
 path = "src/lib.rs"
 
-# The module executable (port of gsc_pgo's main.cpp on dimos_module). Kept
-# behind the `native` feature so `--no-default-features` still builds/tests
-# the dependency-free PGO core alone.
+# The module executable; behind `native` so `--no-default-features` builds the dependency-free core alone.
 [[bin]]
 name = "gsc-pgo"
 path = "src/main.rs"

@@ -12,11 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Solver fast path (`solver_fast_path_enabled`): a small new closure's correction, adopted before the GNC solve that judges
-//! it lands. A logical-execution-time job (one worker, one job out): plain least squares, no GNC, over the keyframes from
-//! the small unjudged closures' oldest end to the newest, everything before held at the accepted graph; it lands at
-//! dispatch + estimate and is adopted through the graph change heat like a solve. Any adopted GNC solve replaces its poses
-//! wholesale (GNC may reject the closure); a GNC solve that did not cover the closure leaves it to be redone on its graph.
+//! Solver fast path (`solver_fast_path_enabled`): a recent closure's local least-squares correction, adopted until a GNC solve replaces it.
 
 use std::sync::Arc;
 
@@ -197,9 +193,7 @@ impl GscPgo {
             .iter()
             .enumerate()
             .map(|(i, c)| (c, applied.contains(&i)))
-            .filter(|&(c, new)| {
-                new || (c.gnc_weight > 0.5 && c.source_id.max(c.target_id) >= first)
-            })
+            .filter(|&(c, new)| new || (c.is_kept() && c.source_id.max(c.target_id) >= first))
             .unzip();
         let mut closures = closure_edges(selected.into_iter());
         for e in &mut closures {

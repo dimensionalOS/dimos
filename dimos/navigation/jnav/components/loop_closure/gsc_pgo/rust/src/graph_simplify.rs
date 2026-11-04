@@ -12,33 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Graph simplification (`Config::graph_simplify`) for very long runs: a reduced pose graph whose size follows the mapped
-//! area, not the run's length.
-//!
-//! Each keyframe gets a fixed placement once it leaves the frontier (the newest `graph_simplify_frontier_keyframes`) and an
-//! adopted solve has placed it:
-//! - kept: its own node in every later solve (it keeps its cloud and descriptor, so loops can still close onto it);
-//! - removed: it lies within `graph_simplify_place_radius_m` of a keyframe kept on an older pass (at least
-//!   `graph_simplify_pass_gap_keyframes` before it), and a closure the newest
-//!   solve kept is within `graph_simplify_localized_keyframes` of it (the map has localized this stretch). It rides that
-//!   kept keyframe rigidly at the offset the adopted graph gave it, its cloud and descriptor are freed, and it is no closure
-//!   target any more.
-//!
-//! The odometry folds between consecutive kept keyframes: the steps over the removed ones between compose into one edge
-//! with their variances summed (each is linear in distance and turn), so a long revisit becomes one loose edge and the map
-//! is held by its closures. A closure's ends ride their nodes at the frozen offsets (one riding a single node drops out),
-//! its variance grown by `graph_simplify_offset_sd_*` per riding end (the offset is the adopted graph's guess); a folded
-//! closure goes to the solve only while its pair of places (the kept keyframes its ends revisit) has fewer than
-//! `graph_simplify_closures_per_pair` (the rest keep their last verdict; closures between kept keyframes always go in),
-//! which bounds the solve's closures by the mapped area too. The solve's nodes expand back to every keyframe.
-//!
-//! Past `graph_simplify_chain_fold_max_m` of folded odometry the fold is dropped and the walk rides the node the current
-//! removed keyframe rides (its frozen offset adding variance to the next edge): odometry folded over hours of revisits
-//! would claim far more than the drift model allows and outvote the closures.
-//!
-//! `graph_simplify_chain_odometry = false` instead walks the nodes removed keyframes ride: steps riding one node compose
-//! into an edge from the node the walk entered on to the one it leaves for (first edge per node pair only), each frozen
-//! offset end adding its variance; it keeps revisit odometry but echoes the adopted graph into the node graph.
+//! Graph simplification (`Config::graph_simplify`): past the frontier a keyframe near an older pass's kept keyframe rides it
+//! (cloud freed, odometry folded into one edge between kept keyframes), so the solve grows with the mapped area, not the run.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -235,7 +210,6 @@ impl GraphSimplify {
             (self.kept.len() + k - self.decided(), identity())
         }
     }
-    /// Advance the chain walk over decided keyframe `k` placed at `placement`, folding the step into it.
     /// Place decided keyframe `k` and advance the chain walk over it: `kept` its new node, else `place` the node and frozen
     /// offset of the kept keyframe it may ride. `chain` (`graph_simplify_chain_odometry`, its fold limit in m): a removed
     /// keyframe rides the walk's node by odometry and the steps fold between consecutive kept keyframes; else it rides
@@ -676,7 +650,7 @@ impl GscPgo {
         let mut ends: Vec<usize> = self
             .committed_closures
             .iter()
-            .filter(|c| c.gnc_weight > 0.5)
+            .filter(|c| c.is_kept())
             .flat_map(|c| [c.source_id, c.target_id])
             .collect();
         ends.sort_unstable();

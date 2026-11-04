@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LocationConstraint: THE constraint message — factor injection AND map bridging.
+"""LocationConstraint: THE constraint message: factor injection AND map bridging.
 
 The consolidation of the old ``MapConstraint`` (multi-map bridging) into the
 GTSAM-shaped constraint (Jeff): one message serves both consumers.
@@ -25,14 +25,14 @@ GTSAM-shaped constraint (Jeff): one message serves both consumers.
   which map's frame system each observation lives in.
 
 Field meanings:
-- ``to_id``: the location variable's identity — URL-like or a random UUID
+- ``to_id``: the location variable's identity, URL-like or a random UUID
   (e.g. ``apriltag://36h11/40cm/5``, ``reloc://map0/dim_city``, ``gps://fix``).
   The URL form encodes the exact source so identical tag numbers from different
   families/sizes can't false-bridge. Constraints sharing a ``to_id`` observe the
-  same variable — which is what closes loops and bridges maps.
+  same variable, which is what closes loops and bridges maps.
 - ``map_id``: which map's frame system this observation is in (multi-map
   bridging). Single-graph consumers (the PGO) ignore it; ``""`` is fine there.
-- ``frame_id``: the "from" — the OBSERVATION frame the ``pose`` is relative to
+- ``frame_id``: the "from": the OBSERVATION frame the ``pose`` is relative to
   (camera frame for a tag, odom frame for a reloc fix), NOT the map root, so the
   uncertainty stays honest. MultiMap resolves it to the map root via the map's
   recorded tf at ``ts``; the PGO currently enforces ``frame_id == body_frame``.
@@ -44,7 +44,7 @@ Field meanings:
   with only a scalar use :meth:`from_confidence`.
 - ``constraint_instance_id``: identifies this specific external instance. A
   later constraint reusing the same instance id REPLACES the earlier one
-  (rolling revision — e.g. a perceiver refining a tag lock); a fresh id per
+  (rolling revision, e.g. a perceiver refining a tag lock); a fresh id per
   event means additive observations (e.g. successive reloc fixes, which
   averaging consumers want to keep). This subsumes the old ``replacement``
   time-window mechanism.
@@ -53,8 +53,8 @@ Field meanings:
   ``"reloc"``), so URL-style producers get it for free.
 
 Confidence <-> covariance convention (shared by every producer/consumer that
-thinks in ``[0, 1]`` scalars): per-axis variance ``= (1 - c) / c`` — c=1 is a
-perfect measurement (variance 0), c→0 is worthless (variance → inf) — and the
+thinks in ``[0, 1]`` scalars): per-axis variance ``= (1 - c) / c``; c=1 is a
+perfect measurement (variance 0), c→0 is worthless (variance → inf); and the
 derived scalar is ``1 / (1 + mean(diagonal))``, which round-trips a uniform c.
 """
 
@@ -99,7 +99,7 @@ class LocationConstraint(Timestamped):
     msg_name = "jnav.LocationConstraint"
 
     ts: float
-    to_id: str  # location variable id — URL-like or UUID; the bridge/loop key
+    to_id: str  # location variable id, URL-like or UUID; the bridge/loop key
     map_id: str  # whose frame system (multi-map); "" for single-graph consumers
     frame_id: str  # the "from": the observation frame the pose is relative to
     kind: str  # optional category; defaults to the to_id URL scheme
@@ -232,7 +232,7 @@ class LocationConstraint(Timestamped):
         covariance = list(struct.unpack_from(">36d", buf, offset))
         offset += _COVARIANCE_LENGTH * 8
         tail: list[str] = []
-        for _ in range(2):  # map_id, kind — absent on pre-merge payloads
+        for _ in range(2):  # map_id, kind: absent on pre-merge payloads
             if offset + 4 > len(buf):
                 tail.append("")
                 continue

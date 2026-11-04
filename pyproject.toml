@@ -777,8 +777,6 @@ module = [
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
-    "gtsam",
-    "gtsam.*",
     "h5py",
     "h5py.*",
     "mcap",

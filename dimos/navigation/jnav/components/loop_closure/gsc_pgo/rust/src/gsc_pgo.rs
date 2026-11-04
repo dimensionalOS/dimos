@@ -91,6 +91,13 @@ pub struct CommittedClosure {
     pub gnc_weight: f64,
 }
 
+impl CommittedClosure {
+    /// Whether the newest applied solve kept it.
+    pub fn is_kept(&self) -> bool {
+        self.gnc_weight > 0.5
+    }
+}
+
 /// Per-search loop-closure diagnostics: each gate's metric and the outcome, so an offline eval sees where/why closures pass.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "native", derive(serde::Serialize))]
@@ -497,9 +504,7 @@ impl Default for DeterministicConfig {
             solve_keyframe_power: 2.017,
             solve_closure_power: -0.215,
             solve_rejected_power: 0.558,
-            // the battery's Mac solve-cost fit at zero closures (17 maps: 3.585e-5 n^1.651 scans), times the margin the
-            // closure model above keeps over those measured solves (its 1st percentile, 18.4x); the closure model, fit where
-            // every solve has closures, overstates a closure-free one (huge_fastlio tags-only: 105 s modeled, 1.4 s on the Mac)
+            // closure-free solves: the Mac fit at zero closures (3.585e-5 n^1.651) times the closure model's 18.4x margin
             solve_closure_free_scans_scale: 6.606e-4,
             solve_closure_free_keyframe_power: 1.651,
             debounce_scans_per_keyframe: 6.093487031356368e-06,
@@ -1311,7 +1316,7 @@ impl ClosureSearch {
         self.kept_closures = closure_edges(
             self.closures
                 .iter()
-                .filter(|l| l.gnc_weight.is_nan() || l.gnc_weight > 0.5),
+                .filter(|closure| closure.gnc_weight.is_nan() || closure.is_kept()),
         );
         self.judged_yanks = (0..self.closures.len())
             .map(|i| (self.closures.fixed(i).yank_stdevs, self.closures.weight(i)))

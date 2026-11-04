@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Clustering AprilTag detections into landmark sightings, shared by the live TagSightings publisher and the
-offline sightings CSV: per-glimpse quality gates, then a tag's detections within a cooldown become one sighting,
-published at its medoid once enough agree with it (Huber outlier test) and republished under its id when it moves.
-"""
+"""TagSightings' clustering of AprilTag detections into landmark sightings: per-glimpse gates, then a cooldown window per tag, published at its medoid."""
 
 from __future__ import annotations
 
@@ -26,25 +23,6 @@ from typing import Any
 
 import numpy as np
 from scipy.spatial.transform import Rotation
-
-DEFAULT_MAX_DISTANCE_M = 1.0  # camera-to-tag range; PnP depth error grows with range
-DEFAULT_MAX_VIEW_ANGLE_DEG = 45.0  # off-axis view; PnP pose flips grow toward grazing views
-DEFAULT_CLUSTER_GAP_SEC = (
-    5.0  # a tag unseen this long has been left; the next glimpse is a new visit
-)
-DEFAULT_ROTATION_WEIGHT_M_PER_RAD = (
-    0.5  # metres a radian of tag-pose rotation counts as when comparing detections
-)
-# A blurry tag still solves a pose; these reject the bad glimpses up front.
-DEFAULT_MIN_SHARPNESS = 60.0  # Laplacian variance over the tag ROI
-DEFAULT_MAX_REPROJ_PX = 2.0  # RMS solvePnP corner reprojection error
-DEFAULT_MIN_TAG_PX = 24.0  # tag side length in pixels (sqrt of quad area)
-DEFAULT_MAX_LINEAR_SPEED_MPS = (
-    0.5  # robot speed past which a glimpse is motion-blurred / time-skewed
-)
-DEFAULT_MAX_ANGULAR_SPEED_DPS = 50.0  # robot turn rate, same reason
-DEFAULT_MIN_OBSERVATIONS = 3  # clusters thinner than this are unreliable
-DEFAULT_HUBER_DELTA_M = 0.05  # residual past which a sample is down-weighted
 
 # One tag observation: ts, marker_id, t_cam_marker (xyz + xyzw quat), and the
 # per-glimpse quality fields (sharpness, reproj_px, tag_px, speed).
@@ -90,13 +68,13 @@ def _huber_weights(residuals: np.ndarray, delta: float) -> np.ndarray:
 def glimpse_passes(
     detection: Detection,
     *,
-    max_distance_m: float = DEFAULT_MAX_DISTANCE_M,
-    max_view_angle_deg: float = DEFAULT_MAX_VIEW_ANGLE_DEG,
-    min_sharpness: float = DEFAULT_MIN_SHARPNESS,
-    max_reproj_px: float = DEFAULT_MAX_REPROJ_PX,
-    min_tag_px: float = DEFAULT_MIN_TAG_PX,
-    max_linear_speed_mps: float = DEFAULT_MAX_LINEAR_SPEED_MPS,
-    max_angular_speed_dps: float = DEFAULT_MAX_ANGULAR_SPEED_DPS,
+    max_distance_m: float,
+    max_view_angle_deg: float,
+    min_sharpness: float,
+    max_reproj_px: float,
+    min_tag_px: float,
+    max_linear_speed_mps: float,
+    max_angular_speed_dps: float,
 ) -> str | None:
     """None when a glimpse passes every per-glimpse quality gate, else the rejection reason
     (a gate whose field the detection lacks passes)."""
@@ -127,24 +105,24 @@ class SightingClustering:
     """How `SightingClusterer` turns a tag's detections into sightings. The glimpse gates are loose on purpose: the
     medoid and its Huber outlier test reject the noisy glimpses, and a glance never reaches `min_inliers`."""
 
-    # per-glimpse gates (`glimpse_passes`), each looser than its DEFAULT_* single-glimpse value
+    # per-glimpse gates (`glimpse_passes`)
     max_distance_m: float = 2.0  # camera-to-tag range; PnP depth error grows with range
     max_view_angle_deg: float = 60.0  # off-axis view; PnP pose flips grow toward grazing views
     min_sharpness: float = 30.0  # Laplacian variance over the tag ROI (blur)
     max_reproj_px: float = 3.0  # RMS solvePnP corner reprojection error
     min_tag_px: float = 16.0  # tag side in pixels; corners get unreliable below this
-    max_linear_speed_mps: float = (
-        1.0  # robot speed; motion blur and camera/odom time skew grow with it
-    )
+    # robot speed; motion blur and camera/odom time skew grow with it
+    max_linear_speed_mps: float = 1.0
     max_angular_speed_dps: float = 90.0  # robot turn rate; same reason as the linear gate
     # the same tag seen again within this long joins the open sighting, whose medoid is recomputed
-    cooldown_s: float = DEFAULT_CLUSTER_GAP_SEC
+    cooldown_s: float = 5.0
     # a sighting is first published once this many detections agree with its medoid
-    min_inliers: int = DEFAULT_MIN_OBSERVATIONS
+    min_inliers: int = 3
     # residual from the medoid past which a detection is down-weighted, and the Huber weight below which it is an outlier
-    huber_delta_m: float = DEFAULT_HUBER_DELTA_M
+    huber_delta_m: float = 0.05
     min_huber_weight: float = 0.25
-    rotation_weight_m_per_rad: float = DEFAULT_ROTATION_WEIGHT_M_PER_RAD
+    # metres a radian of tag-pose rotation counts as when comparing detections
+    rotation_weight_m_per_rad: float = 0.5
     # a published sighting is republished under its id (superseding it) once its medoid moves further than this
     republish_shift_m: float = 0.02
 
@@ -212,7 +190,7 @@ class _OpenSighting:
 class SightingClusterer:
     """Streams tag detections (time order, each with `STABLE_POSE_KEY`) into sightings: a tag's detections within
     `cooldown_s` of each other are one sighting, published once `min_inliers` agree with their medoid and republished
-    under the same id whenever that medoid moves. The live publisher and the offline sightings CSV both run this."""
+    under the same id whenever that medoid moves."""
 
     def __init__(self, clustering: SightingClustering | None = None) -> None:
         self.clustering = clustering or SightingClustering()

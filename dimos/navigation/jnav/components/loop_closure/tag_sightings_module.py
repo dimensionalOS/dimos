@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TagSightings: AprilTag detections in, clustered landmark sightings out (GSC's `landmark_factor`).
-
-Clustering lives here, not in GSC: `SightingClusterer` (apriltags.py, also behind the offline sightings CSV) groups a
-tag's detections within the cooldown into one sighting, compares them in the odom frame, and publishes the sighting's
-medoid once enough detections agree with it (Huber outlier test). Each publish carries a constraint_instance_id per
-sighting; when the medoid moves the sighting is republished under the same id and GSC replaces its factor.
-"""
+"""TagSightings: AprilTag detections in, clustered landmark sightings out (GSC's `landmark_factor`), each republished under its sighting id when its medoid moves."""
 
 from __future__ import annotations
 
@@ -141,7 +135,7 @@ class TagSightings(Module):
 
     def _on_detections(self, detections: Detection3DArray) -> None:
         for marker in detections.detections[: detections.detections_length]:
-            marker_id = MarkerTfModule._marker_id_from_detection(marker)
+            marker_id = MarkerTfModule.marker_id_from_detection(marker)
             if marker_id is None or not marker_id.lstrip("-").isdigit():
                 continue
             if int(marker_id) in self.config.exclude_markers:
@@ -170,9 +164,4 @@ class TagSightings(Module):
     def start(self) -> None:
         super().start()
         logger.info("TagSightings: %s", asdict(self.config.clustering))
-        unsubscribe = self.detections.subscribe(self._on_detections)
-        self.register_disposable(Disposable(unsubscribe) if callable(unsubscribe) else unsubscribe)
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
+        self.register_disposable(Disposable(self.detections.subscribe(self._on_detections)))

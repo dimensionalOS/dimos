@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Normalize the Go2's onboard lidar into a raw sensor-frame cloud.
-
-The onboard Go2 accumulates its lidar in the odom/world frame and reports its
-pose as a PoseStamped. The jnav PGO instead wants a raw sensor-frame scan plus a
-nav_msgs Odometry. This bridge subtracts the latest odom pose from every point
-(world -> base_link), re-emits the scan with its frame_id set to base_link, and
-publishes the pose as an Odometry.
-"""
+"""Re-express the Go2's world-frame onboard lidar in base_link (de-posed by the latest odom) and republish its PoseStamped as Odometry, as GscPGO wants."""
 
 from __future__ import annotations
 
@@ -35,7 +28,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class NormalizeGo2LidarConfig(ModuleConfig):
-    # Sensor frame the scan is re-expressed in (child of the odom frame).
+    # Frame the scan is re-expressed in (child of the odom frame).
     base_frame_id: str = "base_link"
     # Fixed parent frame the odom pose lives in.
     odom_frame_id: str = "world"

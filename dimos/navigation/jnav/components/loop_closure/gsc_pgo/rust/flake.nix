@@ -1,10 +1,5 @@
 {
-  # Build/test workflow (this crate lives inside a larger git repo, so use
-  # the path: ref to keep nix from copying the whole repo to the store):
-  #
-  #   cd dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust
-  #   nix develop path:. --command cargo test
-  #   nix build path:.#checks.<system>.lint    # clippy, warnings as errors
+  # From this dir: `nix develop path:. --command cargo test`, `nix build path:.#checks.<system>.lint` (path: skips copying the repo).
   description = "dimos-gsc-pgo: lidar loop closure (Scan Context + ICP) and pose graph optimization, all Rust";
 
   inputs = {
@@ -26,17 +21,13 @@
           filter = path: _type: !(builtins.elem (baseNameOf path) [ "target" "result" ]);
         };
 
-        # crate2nix turns Cargo.lock into one derivation per crate, so there is
-        # no vendor-tarball `cargoHash` to regenerate whenever a dependency
-        # moves. `crate-hashes.json` pins the git dependencies (lcm-msgs, dimos-module);
-        # refresh it with `crate2nix generate` when that ref changes.
+        # crate2nix: one derivation per Cargo.lock crate; crate-hashes.json pins the git deps (refresh with `crate2nix generate`).
         generated = crate2nix.tools.${system}.generatedCargoNix {
           name = "dimos-gsc-pgo";
           inherit src;
         };
         crateOverrides = pkgs.defaultCrateOverrides;
-        # mode null: the release module; "lint": clippy with warnings as errors; "test": a debug build
-        # that runs the tests. Only our own crates change; dependencies build as for the module.
+        # mode null = release module, "lint" = clippy -D warnings, "test" = debug build running the tests (our crates only).
         ours = [ "dimos-gsc-pgo" "dimos-module" "dimos-module-macros" ];
         cargoNixWith = mode: pkgs.callPackage generated {
           buildRustCrateForPkgs = cratePkgs: crate:
