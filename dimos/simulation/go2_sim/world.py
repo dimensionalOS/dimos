@@ -25,7 +25,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.protocol.tf.static_tf_publisher import FrameSpec, frames_to_edge_transforms
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.protocol.tf.static_tf_publisher import (
+    FrameSpec,
+    StaticTfPublisher,
+    frames_to_edge_transforms,
+)
 from dimos.robot.unitree.go2.config import CMD_VEL_TIMEOUT, ROBOT_WIDTH
 from dimos.simulation.go2_legged.policy import load_policy
 from dimos.simulation.go2_legged.robot import LeggedGo2, apply_fitted_physics, go2_spec
@@ -51,6 +56,14 @@ FRAMES: list[FrameSpec] = [
     ("front_camera", "base_link", (0.32715, -0.00003, 0.04297), (0.0, 0.0, 0.0)),
     ("mid360_link", "front_camera", (-0.032, 0.0, 0.12), (0.0, math.radians(60.0), 0.0)),
 ]
+
+
+class SimGo2MountTf(StaticTfPublisher):
+    """mid360_link -> front_camera -> base_link, so base_link hangs off the odometry's mid360_link."""
+
+    def transforms(self) -> list[Transform]:
+        edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
+        return [-edges["mid360_link"], -edges["front_camera"]]
 
 
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:

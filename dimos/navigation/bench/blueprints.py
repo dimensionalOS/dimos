@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.bench.driver import EpisodeDriver
 from dimos.navigation.embodiment.go2 import GO2
@@ -25,7 +26,9 @@ from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.robot.unitree.go2.config import voxel_size
-from dimos.simulation.go2_sim.world import ODOM_FRAME_ID, SimGo2World
+from dimos.robot.unitree.go2.rerun import rerun_config
+from dimos.simulation.go2_sim.world import ODOM_FRAME_ID, SimGo2MountTf, SimGo2World
+from dimos.visualization.vis_module import vis_module
 
 # The tuning the benchmark's baselines were scored with.
 BODY_DILATE_M = -0.03
@@ -63,5 +66,8 @@ go2_sim_nav_episode = autoconnect(
     TrajectoryFollowerNative.blueprint(embodiment=GO2),
     MovementManager.blueprint(),
     SimGo2World.blueprint(wait_for_scene=True),
+    SimGo2MountTf.blueprint(),
     EpisodeDriver.blueprint(),
+    # the runner records each episode through the Rerun bridge
+    vis_module(global_config.viewer, rerun_config=rerun_config()),
 ).global_config(n_workers=10)
