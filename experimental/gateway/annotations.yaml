@@ -378,7 +378,7 @@ robots:
       blueprints:
         deeprobotics-m20-kronknav-control:
           title: M20 3D navigation
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning and holonomic control.'
+          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
           recommended_config:
           - module: m20connection
             field: basic_server_host
@@ -651,6 +651,15 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
+        openyam-teach-collection:
+          title: OpenYAM hand-guided recording
+          description: Guide an OpenYAM arm by hand and record demonstrations.
+        openyam-lerobot-rollout:
+          title: OpenYAM policy rollout
+          description: Run a trained LeRobot policy on an OpenYAM arm.
+        openyam-lerobot-quest-rollout:
+          title: OpenYAM VR policy rollout
+          description: Run a trained policy with VR control for an OpenYAM arm.
         keyboard-teleop-openyam:
           title: OpenYAM keyboard driving
           description: Move an OpenYAM arm with this computer's keyboard.

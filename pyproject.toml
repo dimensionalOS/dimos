@@ -32,9 +32,6 @@ exclude = [
     "dimos.agents.dist*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
-    "dimos.web.dimos_interface.src*",
-    "dimos.web.dimos_interface.public*",
-    "dimos.web.dimos_interface.node_modules*",
 ]
 
 [tool.setuptools.package-data]
@@ -73,12 +70,6 @@ exclude = [
     "mapping/google_maps/fixtures/**",
     "web/command-center-extension/**",
     "web/websocket_vis/node_modules/**",
-    "web/dimos_interface/index.html",
-    "web/dimos_interface/*.json",
-    "web/dimos_interface/*.js",
-    "web/dimos_interface/src/**",
-    "web/dimos_interface/public/**",
-    "web/dimos_interface/node_modules/**",
 ]
 
 [project]
@@ -883,7 +874,6 @@ ignore = [
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
-    "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/test_roboplan.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
