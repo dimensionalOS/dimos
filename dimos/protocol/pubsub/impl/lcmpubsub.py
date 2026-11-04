@@ -130,6 +130,8 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
         # lcm_subscribe grows the channel's handler array, which the loop
         # thread iterates without a lock while dispatching: a use-after-free
         # that segfaulted CI workers. Exclude the loop for the native call.
+        # This waits for the current dispatch to return, so never call
+        # subscribe() while holding a lock that a callback may take.
         with self._l_lock:
             if self.l is None:
                 return noop
