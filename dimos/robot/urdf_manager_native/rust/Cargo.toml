@@ -1,0 +1,42 @@
+[package]
+name = "dimos-urdf-manager"
+version = "0.1.0"
+edition = "2021"
+description = "One URDF and the live joint state as a dimos native module: every joint on tf, and the URDF and its files for renderers"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_urdf_manager"
+path = "src/lib.rs"
+
+[[bin]]
+name = "urdf_manager"
+path = "src/main.rs"
+
+# Bake registry entry, cross-checked at compile time by the module macro.
+[package.metadata.dimos.module.urdf_manager]
+path = "dimos_urdf_manager::module::UrdfManager"
+python = "dimos.robot.urdf_manager_native.native:UrdfManagerNative"
+
+[package.metadata.dimos.module.urdf_manager.inputs]
+tf = "tf2_msgs.TFMessage"
+coordinator_joint_state = "sensor_msgs.JointState"
+render_file_request = "std_msgs.String"
+
+[package.metadata.dimos.module.urdf_manager.outputs]
+file_info = "files.File"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+roxmltree = "0.20"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[workspace]
