@@ -56,7 +56,6 @@ from dimos.robot.galaxea.r1pro._connection_test_fakes import (
     RosImu,
     feed_all_segments,
     install_fake_ros,
-    joint_feedback,
 )
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     R1ProCoordinator,
@@ -98,6 +97,8 @@ class Rig:
         assert coordinator._tick_loop is not None
         self.tick = coordinator._tick_loop._tick
         self.connections: list[R1ProConnection] = []
+        self._feed_stops: list[threading.Event] = []
+        self._streamed: list[list[list[float] | None]] = []
 
     def attach(self, feedback: list[float] | None = None, **config: Any) -> R1ProConnection:
         """Start an ``R1ProConnection`` on the shared ports, on the fake vendor stack.
@@ -116,31 +117,55 @@ class Rig:
         conn.set_transport("imu_chassis", self.imus)  # type: ignore[arg-type]
         for name in set(conn.outputs) - {"joint_state", "imu_chassis"}:
             conn.set_transport(name, LocalTransport())  # type: ignore[arg-type]
-        threading.Thread(target=self._feed_once_subscribed, args=(feedback,), daemon=True).start()
+        feed_stop = threading.Event()
+        self._feed_stops.append(feed_stop)
+        streamed = [feedback]
+        self._streamed.append(streamed)
+        threading.Thread(
+            target=self._feed_while_alive, args=(feed_stop, streamed), daemon=True
+        ).start()
         conn.start()
         self.connections.append(conn)
         return conn
 
-    def _feed_once_subscribed(self, q: list[float] | None) -> None:
+    def detach(self, conn: R1ProConnection) -> None:
+        """Take a connection down: halt it and stop its fake vendor topics."""
+        conn.stop()
+        self._feed_stops[self.connections.index(conn)].set()
+
+    def _feed_while_alive(self, stop: threading.Event, streamed: list[list[float] | None]) -> None:
+        """Stream feedback like the real ~100 Hz vendor topics while the
+        connection is up; the topics die with it, as on the real robot.
+
+        A single frame can go stale (reading timeout) before a loaded CI
+        runner steps the next tick, so the fake keeps publishing. The latest
+        value passed to ``feed`` is what keeps streaming.
+        """
+
         def subscribed() -> bool:
             return bool(self.fake.nodes) and self.fake.control.listener_count() >= 4
 
-        try:
-            wait_until(subscribed, timeout=5.0, interval=0.01)
-        except TimeoutError:
-            return
-        self.feed(q=q)
-        # The coordinator's source is ready only once the IMU reports too.
-        self.fake.sensors.feed(
-            "/hdas/imu_chassis", RosImu(header=RosHeader(frame_id="imu_chassis"))
-        )
-        self.fake.sensors.feed("/hdas/imu_torso", RosImu(header=RosHeader(frame_id="imu_torso")))
+        while not stop.is_set() and not subscribed():
+            stop.wait(0.01)
+        while not stop.is_set():
+            feed_all_segments(self.fake, q=streamed[0])
+            # The coordinator's source is ready only once the IMU reports too.
+            self.fake.sensors.feed(
+                "/hdas/imu_chassis", RosImu(header=RosHeader(frame_id="imu_chassis"))
+            )
+            self.fake.sensors.feed(
+                "/hdas/imu_torso", RosImu(header=RosHeader(frame_id="imu_torso"))
+            )
+            stop.wait(0.01)
 
     def feed(self, ts: float | None = None, q: list[float] | None = None) -> None:
-        """One feedback frame per segment on the newest connection's control node."""
+        """One feedback frame per segment on the newest connection's control
+        node; the streaming thread keeps publishing this value afterwards."""
+        for streamed in self._streamed:
+            streamed[0] = q
         feed_all_segments(self.fake, ts, q)
 
-    def tick_until(self, condition: Callable[[], bool], timeout_s: float = 5.0) -> None:
+    def tick_until(self, condition: Callable[[], bool], timeout_s: float = 15.0) -> None:
         """Tick every 10 ms, as the tick loop does, until ``condition`` holds."""
         deadline = time.monotonic() + timeout_s
         while not condition():
@@ -185,6 +210,8 @@ def rig(mocker: Any, fake_ros: FakeRos) -> Iterator[Callable[..., Rig]]:
 
     yield build
     for r in made:
+        for stop in r._feed_stops:
+            stop.set()
         for conn in r.connections:
             conn.stop()
         r.coordinator.stop()
@@ -258,10 +285,7 @@ def test_a_trajectory_drives_the_upper_body_through_the_whole_chain(
     assert conn.status().last_error is None
 
     # The robot reporting the goal back closes the loop: the coordinator sees it.
-    torso = r.fake.control
-    torso.feed("/hdas/feedback_torso", joint_feedback(goal[0:4]))
-    torso.feed("/hdas/feedback_arm_left", joint_feedback(goal[4:11]))
-    torso.feed("/hdas/feedback_arm_right", joint_feedback(goal[11:18]))
+    r.feed(q=goal)
     r.tick_until(lambda: r.joint_positions() == pytest.approx(goal, abs=1e-6))
 
 
@@ -374,7 +398,7 @@ def test_a_connection_that_goes_quiet_stops_being_commanded_until_it_returns(
     r.tick_until(lambda: bool(r.positions_sent()))
 
     # The connection module goes down: it halts the robot and closes its nodes.
-    first.stop()
+    r.detach(first)
     assert first.status().connected is False
     assert all(node.stopped for node in r.fake.nodes)
 
