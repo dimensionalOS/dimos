@@ -96,8 +96,10 @@ pub struct Config {
     pub camera_info: CameraInfo,
     /// base_link -> camera_link translation (m)
     pub camera_offset: [f64; 3],
-    /// Re-express each lidar map in base_link at the latest pose, so a ray tracer casts from the robot, not from world's origin.
-    pub lidar_in_base_link: bool,
+    /// The head L1's frame: each map is published relative to it (at the latest pose), under base_link on tf.
+    pub lidar_frame: String,
+    /// base_link -> lidar_frame: x, y, z (m) then the rotation as a quaternion x, y, z, w
+    pub lidar_mount: [f64; 7],
     /// The lowstate's motors as URDF joint names, in motor order; empty publishes no joint_state.
     pub joint_names: Vec<String>,
     pub timing: Timing,
@@ -951,10 +953,25 @@ impl DataLoop {
     fn run(self, rx: Receiver<Event>) {
         let config = &self.shared.config;
         let prefix = config.frame_id_prefix.as_str();
-        let (base_link, camera_link, camera_optical) = (
+        let (base_link, camera_link, camera_optical, lidar_link) = (
             prefixed(prefix, "base_link"),
             prefixed(prefix, "camera_link"),
             prefixed(prefix, "camera_optical"),
+            prefixed(prefix, &config.lidar_frame),
+        );
+        let m = config.lidar_mount;
+        let (mount_position, mount_rotation) = (
+            Point {
+                x: m[0],
+                y: m[1],
+                z: m[2],
+            },
+            Quaternion {
+                x: m[3],
+                y: m[4],
+                z: m[5],
+                w: m[6],
+            },
         );
         let mut pose_clock = HostClock::new(config.timing.clock_window, config.timing.clock_reset);
         let mut stats = Stats::new(config.timing.stats_period);
@@ -1045,6 +1062,16 @@ impl DataLoop {
                                     w: 0.5,
                                 },
                             ),
+                            edge(
+                                &base_link,
+                                &lidar_link,
+                                Vector3 {
+                                    x: m[0],
+                                    y: m[1],
+                                    z: m[2],
+                                },
+                                mount_rotation.clone(),
+                            ),
                         ];
                         let _ = self
                             .shared
@@ -1065,13 +1092,16 @@ impl DataLoop {
                     };
                     // a scan's `stamp` comes as a float32 (128 s steps at today's epoch): arrival is the better time
                     let ns = arrived_ns;
-                    let msg = match (&last_pose, config.lidar_in_base_link) {
-                        (Some((position, orientation)), true) => {
-                            cloud(ns, &base_link, in_body_frame(points, position, orientation))
-                        }
-                        (None, true) => continue,
-                        (_, false) => cloud(ns, "world", points),
+                    // the map comes in world coordinates: through the latest pose into base_link, then into the sensor's frame
+                    let Some((position, orientation)) = &last_pose else {
+                        continue;
                     };
+                    let body = in_frame(points, position, orientation);
+                    let msg = cloud(
+                        ns,
+                        &lidar_link,
+                        in_frame(body, &mount_position, &mount_rotation),
+                    );
                     let _ = self.shared.handle.block_on(self.lidar.publish(&msg));
                 }
                 LOWSTATE_TOPIC => {
@@ -1147,12 +1177,8 @@ fn joint_state(data: &Value, ns: u64, names: &[String]) -> Option<JointState> {
     })
 }
 
-/// World points as seen from base_link at `position`/`orientation` (the inverse of the pose).
-fn in_body_frame(
-    points: Vec<[f32; 3]>,
-    position: &Point,
-    orientation: &Quaternion,
-) -> Vec<[f32; 3]> {
+/// Points re-expressed in the frame placed at `position`/`orientation` in theirs (the inverse of that pose).
+fn in_frame(points: Vec<[f32; 3]>, position: &Point, orientation: &Quaternion) -> Vec<[f32; 3]> {
     let (w, x, y, z) = (
         orientation.w,
         -orientation.x,
@@ -1549,7 +1575,7 @@ mod tests {
             z: half,
             w: half,
         };
-        let body = in_body_frame(vec![[1.0, 3.0, 0.5]], &position, &orientation);
+        let body = in_frame(vec![[1.0, 3.0, 0.5]], &position, &orientation);
         for (got, want) in body[0].iter().zip([1.0f32, 0.0, 0.5]) {
             assert!((got - want).abs() < 1e-5, "{body:?}");
         }

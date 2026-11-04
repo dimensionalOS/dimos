@@ -66,7 +66,16 @@
     0.0,
     0.0
   ],
-  "lidar_in_base_link": false,
+  "lidar_frame": "l1_link",
+  "lidar_mount": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
   "joint_names": [],
   "timing": {
     "answer_timeout": 5.0,

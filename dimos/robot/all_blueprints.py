@@ -222,7 +222,6 @@ all_modules = {
     "go2-command-module": "dimos.teleop.hosted.go2_command.Go2CommandModule",
     "go2-dim-sim": "dimos.robot.unitree.dimsim_connection.Go2DimSim",
     "go2-navigation": "dimos.robot.unitree.go2.modules.agentic.Go2Navigation",
-    "go2-recording-tf": "dimos.robot.unitree.go2.blueprints.unitree_go2.Go2RecordingTf",
     "go2-teleop-module": "dimos.teleop.webxr.extensions.Go2TeleopModule",
     "go2-web-rtc": "dimos.robot.unitree.go2.connections.webrtc.module.Go2WebRtc",
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",

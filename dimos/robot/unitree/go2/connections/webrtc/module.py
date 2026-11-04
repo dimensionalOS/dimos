@@ -44,8 +44,10 @@ from dimos.robot.unitree.go2.config import (
     CAMERA_OFFSET,
     CMD_VEL_TIMEOUT,
     JOINT_NAMES,
+    L1_FRAME,
     WORLD_FRAME,
     front_camera_info,
+    l1_mount,
 )
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.spec.utils import Spec
@@ -117,8 +119,6 @@ class Go2WebRtcConfig(NativeModuleConfig):
     odom_frame_id: str = WORLD_FRAME
     # Turn off where another module owns the base_link edge. The odom port keeps publishing either way.
     publish_tf: bool = True
-    # The L1 map re-expressed in base_link at the latest pose, so a ray tracer casts from the robot.
-    lidar_in_base_link: bool = False
     # Reconnect when the Go2 drops the WebRTC link (a Wi-Fi drop mustn't end a recording); off, the module exits.
     auto_reconnect: bool = True
     timing: WebRtcTiming = Field(default_factory=WebRtcTiming)
@@ -153,7 +153,8 @@ class Go2WebRtcConfig(NativeModuleConfig):
             "auto_reconnect": self.auto_reconnect,
             "camera_info": camera_info.to_dict(),
             "camera_offset": list(CAMERA_OFFSET),
-            "lidar_in_base_link": self.lidar_in_base_link,
+            "lidar_frame": L1_FRAME,
+            "lidar_mount": list(l1_mount()),
             "joint_names": list(JOINT_NAMES),
             "timing": self.timing.model_dump(),
         }

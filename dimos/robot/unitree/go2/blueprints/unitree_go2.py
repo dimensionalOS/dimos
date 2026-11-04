@@ -24,21 +24,14 @@ Relocalization stays off until it has a premap: ``--localmaprelocalization.map-f
 
 from __future__ import annotations
 
-import numpy as np
-
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.core import rpc
 from dimos.core.global_config import global_config
-from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.memory.replay_native.native import ReplayNative
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -49,7 +42,6 @@ from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.robot.unitree.go2.config import (
-    CAMERA_OFFSET,
     WORLD_FRAME,
     go2_model,
     mls_planner_config,
@@ -80,68 +72,17 @@ _navigation = autoconnect(
 )
 
 
-def odom_transforms(pose: PoseStamped) -> TFMessage:
-    """The odometry's base_link edge and the camera chain under it, as webrtc.py's Rust module publishes them."""
-    camera_link = Transform(
-        translation=Vector3(*CAMERA_OFFSET),
-        frame_id="base_link",
-        child_frame_id="camera_link",
-        ts=pose.ts,
-    )
-    camera_optical = Transform(
-        rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-        frame_id="camera_link",
-        child_frame_id="camera_optical",
-        ts=pose.ts,
-    )
-    return TFMessage(Transform.from_pose("base_link", pose), camera_link, camera_optical)
-
-
-def cloud_in_base_link(cloud: PointCloud2, pose: PoseStamped) -> PointCloud2:
-    """A world-frame cloud as seen from base_link at *pose*."""
-    world_from_base = Transform.from_pose("base_link", pose).to_matrix()
-    rotation, translation = world_from_base[:3, :3], world_from_base[:3, 3]
-    body = (cloud.points_f32() - translation) @ rotation
-    return PointCloud2.from_numpy(body.astype(np.float32), frame_id="base_link", timestamp=cloud.ts)
-
-
 class Replay(ReplayNative):
-    """A Go2 recording in the connection's place: idle until ``--replay.db <x.db|x.mcap>``."""
+    """A Go2 recording in the connection's place: idle until ``--replay.db <x.db|x.mcap>``. The recording carries its
+    own tf, and its lidar relative to the sensor, as both connections publish them."""
 
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
+    tf: Out[TFMessage]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     # only these: the recording's other streams would be ports nothing in the blueprint wired
-    topics = ("lidar", "odom", "color_image", "camera_info")
-
-
-class Go2RecordingTf(Module):
-    """What a Go2 recording lacks to stand in for the connection: the odometry's tf, and the L1 map in base_link."""
-
-    recorded_odom: In[PoseStamped]
-    recorded_lidar: In[PointCloud2]
-    odom: Out[PoseStamped]
-    lidar: Out[PointCloud2]
-    tf: Out[TFMessage]
-
-    _pose: PoseStamped | None = None
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.register_disposable(self.recorded_odom.observable().subscribe(self._on_odom))  # type: ignore[no-untyped-call]
-        self.register_disposable(self.recorded_lidar.observable().subscribe(self._on_lidar))  # type: ignore[no-untyped-call]
-
-    def _on_odom(self, pose: PoseStamped) -> None:
-        pose.frame_id = WORLD_FRAME
-        self._pose = pose
-        self.tf.publish(odom_transforms(pose))
-        self.odom.publish(pose)
-
-    def _on_lidar(self, cloud: PointCloud2) -> None:
-        if self._pose is not None:
-            self.lidar.publish(cloud_in_base_link(cloud, self._pose))
+    topics = ("lidar", "odom", "tf", "color_image", "camera_info")
 
 
 def _connection() -> Blueprint:
@@ -158,16 +99,12 @@ def _connection() -> Blueprint:
             return autoconnect().requirements(lambda: reason)
         sim: Blueprint = Go2WebRtcSim.blueprint()
         return sim
-    # the L1 map cast from base_link, not world's origin, so the ray tracer carves from the robot
-    return Go2WebRtc.blueprint(lidar_in_base_link=True, obstacle_avoidance=False)
+    return Go2WebRtc.blueprint(obstacle_avoidance=False)
 
 
 unitree_go2 = autoconnect(
     _navigation,
     _connection(),
-    Replay.blueprint().remappings(
-        [(Replay, "lidar", "recorded_lidar"), (Replay, "odom", "recorded_odom")]
-    ),
-    Go2RecordingTf.blueprint(),
+    Replay.blueprint(),
     *([agentic()] if global_config.agentic else []),
 ).global_config(n_workers=16, robot_model="unitree_go2")

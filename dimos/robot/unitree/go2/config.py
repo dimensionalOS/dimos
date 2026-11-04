@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from scipy.spatial.transform import Rotation
+
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -35,6 +37,19 @@ CMD_VEL_TIMEOUT = 0.2
 
 # base_link -> camera_link (m)
 CAMERA_OFFSET = (0.3, 0.0, 0.0)
+
+# The head L1, which the WebRTC connection's lidar is relative to: base_link -> l1_link, fitted on recordings
+# (gyro Kabsch + map fit; the URDF's radar_joint is ~120 deg off), fixed-axis roll/pitch/yaw in degrees.
+L1_FRAME = "l1_link"
+L1_XYZ = (0.226, 0.025, 0.089)
+L1_RPY_DEG = (-167.877, -7.907, -59.588)
+
+
+def l1_mount() -> tuple[float, ...]:
+    """base_link -> l1_link as x, y, z then a quaternion x, y, z, w."""
+    quaternion = Rotation.from_euler("xyz", L1_RPY_DEG, degrees=True).as_quat()
+    return (*L1_XYZ, *(float(q) for q in quaternion))
+
 
 ASSETS = Path(__file__).parent / "assets"
 
