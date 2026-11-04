@@ -34,7 +34,6 @@ RANCH_ARG = f"--go2webrtcsim.scene.package={RANCH}"
 # The most open spot in each labelled room (the ranch's labels), where the Go2 can turn on the spot;
 # from the cooked collision boxes, each at least 0.5 m from anything.
 RANCH_VIEWPOINTS = [
-    (4.12, 3.43),  # living room
     (5.23, -3.38),  # entry
     (5.73, -6.52),  # office
     (2.73, -4.17),  # hallway
@@ -42,11 +41,12 @@ RANCH_VIEWPOINTS = [
     (-0.72, -8.38),  # south-west bedroom
     (0.03, -4.22),  # hall bathroom
     (-1.62, -2.42),  # dining room
-    (-0.02, 3.28),  # kitchen
     (-5.18, 1.03),  # family room
     (-5.18, 4.43),  # main bathroom
     (-2.72, 4.23),  # north hall
     (-3.22, 8.98),  # north bedroom
+    (-0.02, 3.28),  # kitchen
+    (4.12, 3.43),  # living room, last: no bed in sight of where the tour leaves the robot
 ]
 
 
