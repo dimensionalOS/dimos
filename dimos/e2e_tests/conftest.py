@@ -28,7 +28,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.e2e_tests.go2_sim_client import RANCH_TOUR, Go2SimClient
+from dimos.e2e_tests.go2_sim_client import Go2SimClient
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.dimsim.config import DIMSIM_PORT
@@ -309,10 +309,5 @@ def explore_house(
 
 
 @pytest.fixture
-def explore_ranch(direct_cmd_vel_explorer: DirectCmdVelExplorer) -> Callable[[], None]:
-    direct_cmd_vel_explorer.linear_speed = 0.5
-
-    def explore() -> None:
-        direct_cmd_vel_explorer.follow_points(RANCH_TOUR)
-
-    return explore
+def explore_ranch(go2_sim: Go2SimClient) -> Callable[[], None]:
+    return go2_sim.look_around_ranch

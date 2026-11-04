@@ -18,29 +18,36 @@ its RPCs, and the NJ ranch scan its e2e tests and evals run in."""
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 from dimos.core.rpc_client import RPCClient
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 RANCH = "supersplat/3f89bbd3"
 # The run arg that puts the sim's Go2 in the ranch.
 RANCH_ARG = f"--go2webrtcsim.scene.package={RANCH}"
-# A blind drive (DirectCmdVelExplorer) through every room the robot fits into without the planner,
-# from the spawn in the living room; the bottom bedrooms' doors are too tight, so it looks in from
-# the cross hall. Planned offline on the cooked collision boxes, 0.33 m from anything.
-RANCH_TOUR = [
-    (4.03, -0.97), (5.03, -3.17), (3.18, -3.17), (2.83, -5.47), (2.93, -7.12), (3.03, -7.27),
-    (4.33, -7.27), (5.53, -5.97), (4.43, -7.22), (3.78, -7.47), (3.58, -7.57), (2.43, -7.38),
-    (2.73, -6.97), (2.83, -5.47), (2.73, -4.47), (1.58, -4.07), (2.43, -4.12), (2.68, -3.38),
-    (2.28, -3.03), (1.22, -2.12), (1.18, -1.97), (0.78, -2.38), (-1.47, -2.57), (-3.42, -2.62),
-    (-4.22, -2.62), (-4.72, -0.92), (-4.97, 1.03), (-3.52, 2.12), (-2.82, 2.12), (-2.57, 4.53),
-    (-2.67, 7.88), (-3.97, 9.03), (-2.77, 8.03), (-2.57, 4.53), (-2.57, 2.33), (-3.38, 2.12),
-    (-3.88, 1.83), (-4.28, 1.23), (-4.72, 0.18), (-4.72, -1.02), (-4.47, -2.38), (-2.47, -2.62),
-    (-1.42, -0.17), (-0.97, 0.48), (0.93, 0.48), (1.33, 1.08), (1.33, 2.08), (0.33, 3.03),
-]  # fmt: skip
+# The most open spot in each labelled room (the ranch's labels), where the Go2 can turn on the spot;
+# from the cooked collision boxes, each at least 0.5 m from anything.
+RANCH_VIEWPOINTS = [
+    (4.12, 3.43),  # living room
+    (5.23, -3.38),  # entry
+    (5.73, -6.52),  # office
+    (2.73, -4.17),  # hallway
+    (4.03, -8.68),  # south-east bedroom
+    (-0.72, -8.38),  # south-west bedroom
+    (0.03, -4.22),  # hall bathroom
+    (-1.62, -2.42),  # dining room
+    (-0.02, 3.28),  # kitchen
+    (-5.18, 1.03),  # family room
+    (-5.18, 4.43),  # main bathroom
+    (-2.72, 4.23),  # north hall
+    (-3.22, 8.98),  # north bedroom
+]
 
 
 class Go2SimClient:
@@ -109,6 +116,22 @@ class Go2SimClient:
     def centres(self, name: str) -> list[tuple[float, float]]:
         """Where each object called *name* is, on the floor."""
         return centres(self.objects(), name)
+
+    def look_around_ranch(self, turn_rate: float = 1.0) -> None:
+        """Show the robot every room: teleported to each of RANCH_VIEWPOINTS, it turns once on the
+        spot, so the camera and lidar sweep the room (a blind drive between them catches on doorways)."""
+        cmd_vel: PubSubTransport[Twist] = make_transport("/cmd_vel", Twist)
+        cmd_vel.start()
+        try:
+            for x, y in RANCH_VIEWPOINTS:
+                self.teleport(x, y, 0.0)
+                end = time.monotonic() + 1.0 + 2 * math.pi / turn_rate  # a second to settle
+                while time.monotonic() < end:
+                    cmd_vel.publish(Twist(linear=Vector3(), angular=Vector3(0.0, 0.0, turn_rate)))
+                    time.sleep(0.1)
+            cmd_vel.publish(Twist())
+        finally:
+            cmd_vel.stop()
 
     def publish_goal(self, x: float, y: float) -> None:
         self._goal.publish(PointStamped(x, y, 0.0, frame_id="world"))

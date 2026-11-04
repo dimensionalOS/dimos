@@ -14,7 +14,7 @@
 
 """Interactive suite: the MuJoCo Go2 in the NJ ranch scan, parity with test_mujoco_ranch_spatial_memory.
 
-The robot drives the ranch tour first (the environment's setup), then is told "go to the bed"; it
+The robot is shown every room first (the environment's setup: teleported to each, it turns on the spot), then is told "go to the bed"; it
 scores on how near the last odom pose is to any of the ranch's three beds (their boxes from
 dim-go2-sim's labels). The environment runs --agentic, so the agent is the one it brings::
 
@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from dimos.e2e_tests.go2_sim_client import RANCH_TOUR, centres, distance_to_nearest, ranch_labels
+from dimos.e2e_tests.go2_sim_client import centres, distance_to_nearest, ranch_labels
 from dimos.evals.environments.go2_sim import Go2SimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
@@ -40,7 +40,6 @@ def _explore_ranch(sim: Go2SimClient) -> None:
 
     from dimos.core.transport_factory import make_transport
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
     seen: list[PoseStamped] = []
     probe = make_transport("/odom", PoseStamped)
@@ -53,14 +52,7 @@ def _explore_ranch(sim: Go2SimClient) -> None:
     probe.stop()
     if not seen:
         raise TimeoutError("no /odom within 180s")
-
-    explorer = DirectCmdVelExplorer()
-    explorer.linear_speed = 0.5
-    explorer.start()
-    try:
-        explorer.follow_points(RANCH_TOUR)
-    finally:
-        explorer.stop()
+    sim.look_around_ranch()
 
 
 def _ended_near(name: str) -> Callable[[Outcome], float]:
