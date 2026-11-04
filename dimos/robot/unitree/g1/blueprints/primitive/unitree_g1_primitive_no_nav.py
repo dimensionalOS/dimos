@@ -37,9 +37,6 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
-    WavefrontFrontierExplorer,
-)
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap
 from dimos.visualization.vis_module import vis_module
 
@@ -124,7 +121,6 @@ unitree_g1_primitive_no_nav = (
         _camera,
         VoxelGridMapper.blueprint(),
         CostMapper.blueprint(),
-        WavefrontFrontierExplorer.blueprint(),
     )
     .global_config(n_workers=4, robot_model="unitree_g1")
     .transports(

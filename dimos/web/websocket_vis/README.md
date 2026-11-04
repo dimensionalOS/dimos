@@ -15,7 +15,6 @@ Control:
 - Set navigation goal
 - Set GPS location goal
 - Keyboard teleop (WASD)
-- Trigger exploration
 
 ## What it Provides
 
@@ -28,8 +27,6 @@ Control:
 ### Outputs (Published Topics)
 - `click_goal` (PoseStamped): Goal positions set by user clicks in the web interface
 - `gps_goal` (LatLon): GPS goal coordinates set through the interface
-- `explore_cmd` (Bool): Command to start autonomous exploration
-- `stop_explore_cmd` (Bool): Command to stop exploration
 - `movecmd` (Twist): Direct movement commands from the interface
 - `movecmd_stamped` (TwistStamped): Timestamped movement commands
 
@@ -46,8 +43,6 @@ websocket_vis = dimos.deploy(WebsocketVisModule, port=7779)
 
 # Receive control commands.
 websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
-websocket_vis.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
-websocket_vis.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
 websocket_vis.movecmd.transport = LCMTransport("/cmd_vel", Twist)
 websocket_vis.gps_goal.transport = pLCMTransport("/gps_goal")
 
