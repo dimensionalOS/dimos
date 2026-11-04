@@ -38,7 +38,8 @@ from dimos.robot.deeprobotics.m20.constants import (
     PLANNING_HEIGHT_M,
     ROTATION_DIAMETER_M,
 )
-from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
+from dimos.robot.deeprobotics.m20.joint_state import M20JointState
+from dimos.robot.deeprobotics.m20.model import M20_MODEL
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
 
@@ -141,7 +142,7 @@ deeprobotics_m20_kronknav_control = (
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
         M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
         UrdfManager.blueprint(model=M20_MODEL),
-        M20StandingJointState.blueprint(),
+        M20JointState.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_M,
             max_range=25.0,
