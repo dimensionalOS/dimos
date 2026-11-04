@@ -50,6 +50,9 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     wall_buffer_weight: float = 100.0
     step_threshold_m: float = 0.16
     step_penalty_weight: float = 4.0
+    # With no path to the goal and none cached, head for the frontier nearest
+    # the goal instead of stopping, so unseen floor comes into view.
+    approach_when_blocked: bool = True
     goal_tolerance: float = 0.3
     viz_publish_hz: float = 2.0
     # The surface and edge viz publish by square cells of this edge, only the
