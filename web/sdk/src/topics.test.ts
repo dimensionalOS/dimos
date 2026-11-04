@@ -852,28 +852,73 @@ describe("topic settings updates", () => {
     await expect(update).rejects.toMatchObject({ code: "variant_limit", outcome: "rejected" });
     expect(sub.settings()).toEqual(LOW);
     expect(sub.status().phase).toBe("ready");
+    // Quality 40 was never granted: a twin asking for it opens its own
+    // subscription, while the acknowledged settings stay shared.
+    const refused = h.camera({ quality: 40 });
+    expect(h.subs()).toHaveLength(2);
+    expect(refused.status().phase).toBe("connecting");
+    const twin = h.camera();
+    expect(h.subs()).toHaveLength(2);
+    expect(twin.status().phase).toBe("ready");
+    expect(twin.settings()).toEqual(LOW);
   });
 
-  it("an acknowledgement settles every earlier revision and a stale one settles nothing", async () => {
+  it("sends changes one at a time, each merged into the acknowledged request", async () => {
     const h = setup();
     const sub = h.camera();
     h.ready("@t:v1");
     await sub.ready();
     const first = sub.update({ quality: 40 });
-    const second = sub.update({ quality: 30 });
-    expect(h.updates().map((m) => m.revision)).toEqual([1, 2]);
-    h.applied(2, { ...LOW, quality: 30 });
-    await expect(first).resolves.toEqual({ ...LOW, quality: 30 });
-    await expect(second).resolves.toEqual({ ...LOW, quality: 30 });
+    const second = sub.update({ maxResolution: [320, 240] });
+    expect(h.updates().map((m) => m.revision)).toEqual([1]);
+    // Until the relay answers, a twin cannot tell which settings it would
+    // get: it opens its own subscription.
+    const twin = h.camera();
+    expect(h.subs()).toHaveLength(2);
+    expect(twin.status().phase).toBe("connecting");
+    h.applied(2, { ...LOW, quality: 40 }); // not the revision in flight
+    expect(h.updates()).toHaveLength(1);
     h.applied(1, { ...LOW, quality: 40 });
-    expect(sub.settings()).toEqual({ ...LOW, quality: 30 });
-    const third = sub.update({ quality: 20 });
-    h.applied(3, { ...LOW, quality: 20 });
-    await expect(third).resolves.toEqual({ ...LOW, quality: 20 });
-    // Connection loss settles a pending change as interrupted, never silently.
+    await expect(first).resolves.toEqual({ ...LOW, quality: 40 });
+    expect(h.updates().map((m) => [m.revision, m.options])).toEqual([
+      [1, { quality: 40 }],
+      [2, { maxResolution: [320, 240] }],
+    ]);
+    h.applied(2, { maxHz: 30, maxResolution: [320, 240], quality: 40 });
+    await expect(second).resolves.toEqual({ maxHz: 30, maxResolution: [320, 240], quality: 40 });
+    // The request carries both changes: a twin with them joins the group.
+    const both = h.camera({ quality: 40, maxResolution: [320, 240] });
+    expect(h.subs()).toHaveLength(2);
+    expect(both.status().phase).toBe("ready");
+    both.close();
+    // Connection loss settles pending changes as interrupted, never silently.
     const lost = sub.update({ quality: 10 });
+    const queued = sub.update({ quality: 20 });
     h.client.disconnected();
     await expect(lost).rejects.toMatchObject({ code: "connection_lost", outcome: "interrupted" });
+    await expect(queued).rejects.toMatchObject({ code: "connection_lost", outcome: "interrupted" });
+  });
+
+  it("an update onto settings another group serves joins that group instead of displacing it", async () => {
+    const h = setup();
+    const a = h.camera();
+    const b = h.camera({ quality: 40 });
+    expect(h.subs()).toHaveLength(2);
+    h.ready("@t:v1", h.subs()[0]);
+    h.ready("@t:v2", h.subs()[1], { ...LOW, quality: 40 });
+    await Promise.all([a.ready(), b.ready()]);
+    const update = a.update({ quality: 40 });
+    expect(h.updates()).toEqual([]);
+    await expect(update).resolves.toEqual({ ...LOW, quality: 40 });
+    expect(h.sent.filter((m) => m.t === "topic_unsub")).toEqual([
+      { t: "topic_unsub", id: h.subs()[0].id },
+    ]);
+    // b's group is still the client's to manage.
+    h.client.disconnected();
+    expect(a.status().phase).toBe("interrupted");
+    expect(b.status().phase).toBe("interrupted");
+    h.client.close();
+    expect(b.status().phase).toBe("closed");
   });
 
   it("moves a handle sharing its group to a new one only once that is ready, without a gap", async () => {

@@ -25,15 +25,14 @@ from ipaddress import ip_address
 import itertools
 import json
 import socket
-import ssl
 import time
 from types import TracebackType
 from typing import Any
 from urllib.parse import urljoin, urlparse
-import urllib.request
 
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.connection import QuicConnection
+import requests
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
@@ -113,11 +112,11 @@ def resolve_info_url(base_url: str) -> str:
 
 
 def _get_json(url: str, timeout: float, cafile: str | None) -> Any:
-    context = ssl.create_default_context(cafile=cafile) if cafile is not None else None
-    with urllib.request.urlopen(url, timeout=timeout, context=context) as response:
-        body = response.read()
+    # requests' own errors (connection, status, timeout) are OSError subclasses.
+    response = requests.get(url, timeout=timeout, verify=True if cafile is None else cafile)
+    response.raise_for_status()
     try:
-        return json.loads(body)
+        return json.loads(response.content)
     except ValueError:
         return None  # reported as a shape problem by the caller
 

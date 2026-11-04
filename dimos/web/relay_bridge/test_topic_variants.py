@@ -271,3 +271,32 @@ async def test_an_older_relay_drives_the_only_variant_through_activation(
     frame = await harness.frame()
     assert frame.header.meta["variant"] == "v1"
     assert frame.header.meta["quality"] == 75
+
+
+async def test_a_variant_retired_while_encoding_drops_its_frame_and_keeps_the_route(
+    harness: Harness, mocker: MockerFixture
+) -> None:
+    release = threading.Event()
+    started = threading.Event()
+    original = topic_transform._encode
+
+    def slow(profile: str, data: bytes, settings: Any) -> Any:
+        started.set()
+        release.wait(5)
+        return original(profile, data, settings)
+
+    mocker.patch.object(topic_transform, "_encode", side_effect=slow)
+    route = harness.make(normalize_settings(PROFILE, {"maxHz": 30}))
+    await route.start()
+    route.set_variant("v2", {"maxHz": 30, "quality": 40})
+    route.activate()
+    route._mailbox.offer(sample(1))
+    await asyncio.to_thread(started.wait, 5)
+    # v1 encodes first; its writer closes under it.
+    await route.close_variant("v1")
+    release.set()
+    frame = await harness.frame()
+    assert frame.header.meta["variant"] == "v2"
+    assert route._error is None
+    assert harness.client.sent == []
+    assert harness.frames.empty()
