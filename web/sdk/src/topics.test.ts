@@ -951,6 +951,21 @@ describe("topic settings updates", () => {
     expect(h.sent.filter((m) => m.t === "topic_unsub")).toHaveLength(1);
   });
 
+  it("a handle changing settings before its first subscription is ready becomes ready with the new one", async () => {
+    const h = setup();
+    const phases: string[] = [];
+    const sub = h.camera();
+    sub.onStatus((status) => phases.push(status.phase));
+    const update = sub.update({ quality: 40 });
+    expect(h.subs()).toHaveLength(2);
+    h.ready("@t:v2", h.subs()[1], { ...LOW, quality: 40 });
+    await expect(update).resolves.toEqual({ ...LOW, quality: 40 });
+    expect(sub.status().phase).toBe("ready");
+    await sub.ready();
+    expect(phases).toEqual(["connecting", "ready"]);
+    expect(h.sent.filter((m) => m.t === "topic_unsub")).toHaveLength(1);
+  });
+
   it("a move the relay rejects leaves the handle on its group with its settings", async () => {
     const h = setup();
     const a = h.camera();
