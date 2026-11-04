@@ -294,7 +294,7 @@ all_modules = {
     "lidar-window-relocalization": "dimos.mapping.relocalization.lidar.module.LidarWindowRelocalization",
     "local-map-relocalization": "dimos.mapping.relocalization.lidar.module.LocalMapRelocalization",
     "local-planner-native": "dimos.navigation.local_planner.native.LocalPlannerNative",
-    "m20-camera-relay": "dimos.robot.deeprobotics.m20.camera.M20CameraRelay",
+    "m20-camera-relay": "dimos.robot.deeprobotics.m20.camera.module.M20CameraRelay",
     "m20-connection": "dimos.robot.deeprobotics.m20.connection.M20Connection",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "manipulation-skills": "dimos.manipulation.manipulation_skills.ManipulationSkills",
