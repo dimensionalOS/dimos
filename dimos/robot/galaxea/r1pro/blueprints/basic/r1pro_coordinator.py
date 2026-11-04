@@ -49,10 +49,11 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as Zen
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
-    R1PRO_MODEL,
+    R1PRO_COORDINATOR_MODEL,
 )
 from dimos.robot.galaxea.r1pro.connection import (
     R1PRO_BASE_JOINTS,
+    R1PRO_GRIPPER_JOINTS,
     R1PRO_UPPER_BODY_JOINTS,
     R1ProConnection,
 )
@@ -70,9 +71,11 @@ class R1ProCoordinator(ControlCoordinator):
     """The R1 Pro driven through ``R1ProConnection``, robot name "r1pro".
 
     ``r1pro_position_command`` carries the 18 upper-body joints' targets and
-    ``r1pro_cmd_vel`` the chassis' speeds; ``r1pro_joint_state`` is the joint
-    feedback and ``r1pro_imu`` the chassis IMU (the torso IMU stays on the
-    bus, as before).
+    the two jaws' openings, ``r1pro_cmd_vel`` the chassis' speeds;
+    ``r1pro_joint_state`` is the joint feedback and ``r1pro_imu`` the chassis
+    IMU (the torso IMU stays on the bus, as before). The jaws are
+    command-only joints: never held, never zero-filled, and their feedback
+    never gates readiness.
     """
 
     r1pro_position_command: Out[JointState]
@@ -223,7 +226,8 @@ def r1pro_control(
             R1ProCoordinator.blueprint(
                 instance_name="ControlCoordinator",
                 tick_rate=100,
-                model=R1PRO_MODEL,
+                model=R1PRO_COORDINATOR_MODEL,
+                command_only_joints=list(R1PRO_GRIPPER_JOINTS),
                 tasks=resolved_tasks,
             ),
         )

@@ -102,6 +102,17 @@ _INTERFACE_BY_MODE: dict[ControlMode, str] = {
 }
 
 
+def interface_for_mode(mode: ControlMode) -> str | None:
+    """The interface a control mode drives on the wire, e.g. "position" for
+    both POSITION and SERVO_POSITION; ``None`` if the mode has none.
+
+    Two modes with the same interface produce the same command values, so a
+    connection robot can mix them in one tick; a hardware adapter, which
+    switches behavior per mode, still needs them kept apart.
+    """
+    return _INTERFACE_BY_MODE.get(mode)
+
+
 @dataclass(frozen=True, slots=True)
 class PortMessage:
     """One command message and the kind of port it goes out on.
@@ -159,11 +170,19 @@ class ConnectionSource:
         model: Its joints and position limits, named ``<robot>/...``; ``None``
             for a robot with no joint ports.
         reading_timeout_s: How old its newest reading may be, in seconds.
+        command_only: Joints a task may drive but the source never holds or
+            zero-fills, e.g. grippers: they appear in a command only while a
+            task drives them, so an idle stack sends them nothing, and their
+            feedback never gates readiness. While the robot is fresh, such a
+            joint whose reading is older than ``reading_timeout_s`` is left
+            out of ``read_joints``, so a task watching its feedback sees it
+            gone instead of trusting a stale number.
 
     Raises:
         ValueError: If the coordinator cannot drive it: no reading port, a
             motor port, joints that can neither take a velocity nor be held
-            at a position they report, or joint ports without a model.
+            at a position they report, joint ports without a model, or a
+            ``command_only`` name that is not one of its joints.
     """
 
     def __init__(
@@ -173,6 +192,7 @@ class ConnectionSource:
         readings: Collection[str],
         model: RobotModel | None,
         reading_timeout_s: float,
+        command_only: Collection[str] = (),
     ) -> None:
         if commands and not readings:
             raise ValueError(
@@ -226,6 +246,13 @@ class ConnectionSource:
             )
             for name, limit in joints.items()
         ]
+        known = {joint.name for joint in self._joints}
+        unknown = set(command_only) - known
+        if unknown:
+            raise ValueError(
+                f"{robot!r}: command_only joints {sorted(unknown)} are not among its joints"
+            )
+        self._command_only = frozenset(command_only)
         imu = f"{robot}{SEPARATOR}imu"
         self._sensors = (
             [_SensorReading(imu, i, f"{imu}{SEPARATOR}{i}") for i in IMU_INTERFACES]
@@ -242,7 +269,13 @@ class ConnectionSource:
         for port in readings:
             if port == JOINT_STATE:
                 self._readers[port] = _read_joint_state
-                groups = [tuple(joint.state_keys.values()) for joint in self._joints]
+                # Command-only joints never gate readiness: their feedback is
+                # welcome but not required, so the robot drives without them.
+                groups = [
+                    tuple(joint.state_keys.values())
+                    for joint in self._joints
+                    if joint.name not in self._command_only
+                ]
             elif port == ODOM:
                 self._readers[port] = _reader(pose_to_values, self._base, robot)
                 groups = [(f"{self._base}{SEPARATOR}{i}",) for i in POSE_INTERFACES]
@@ -265,6 +298,10 @@ class ConnectionSource:
         # tick loop reads.
         self._lock = threading.Lock()
         self._latest: Values = {}
+        # When each key last appeared in a message, by time.monotonic(): a
+        # command-only joint whose keys go quiet while the robot keeps
+        # reporting is stale, not held.
+        self._key_seen: dict[str, float] = {}
         # The ports whose readings are all in _latest.
         self._reported: frozenset[str] = frozenset()
         # The ports that have ever reported in full.
@@ -318,6 +355,13 @@ class ConnectionSource:
         """How old the newest reading may be, in seconds, before the robot is no longer commanded."""
         return self._timeout
 
+    def position_limits(self) -> dict[str, tuple[float | None, float | None]]:
+        """Each joint's position limit as ``(lower, upper)``, e.g. for tasks
+        that normalize openings against the model instead of an adapter."""
+        return {
+            joint.name: (joint.position_limit.lo, joint.position_limit.hi) for joint in self._joints
+        }
+
     def on_message(self, port: str, msg: Any) -> None:
         """Take one reading message from the robot's ``port``, e.g. "joint_state".
 
@@ -347,10 +391,12 @@ class ConnectionSource:
                 # Back after a silence, or holds dropped: wait for a whole new
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
+                self._key_seen = {}
                 self._resumed = True
                 self._restart = False
             # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
+            self._key_seen.update((key, now) for key in mine)
             if port not in reported and all(
                 any(key in latest for key in group) for group in self._needed[port]
             ):
@@ -392,19 +438,33 @@ class ConnectionSource:
         """The joints' latest positions, velocities and efforts.
 
         A joint that does not report something is left out of that lookup,
-        rather than given a zero that looks like a real reading.
+        rather than given a zero that looks like a real reading. A
+        command-only joint whose readings stopped while the robot kept
+        reporting is left out too — a stale gripper opening is no reading at
+        all. A robot that went quiet entirely keeps its last joints, as
+        documented for the tick loop.
         """
-        latest = self._latest
+        now = time.monotonic()
+        with self._lock:
+            latest = self._latest
+            key_seen = self._key_seen
+            fresh = not self._freshness.is_stale(now, self._timeout)
         snapshot = JointStateSnapshot(timestamp=self._received_at)
         for joint in self._joints:
+            # Command-only joints age out of a live stream; every other joint
+            # keeps its last value until the whole robot goes stale.
+            ageing = joint.name in self._command_only and fresh
             for interface, into in (
                 (Interface.POSITION, snapshot.joint_positions),
                 (Interface.VELOCITY, snapshot.joint_velocities),
                 (Interface.EFFORT, snapshot.joint_efforts),
             ):
                 key = joint.state_keys[interface]
-                if key in latest:
-                    into[joint.name] = latest[key]
+                if key not in latest:
+                    continue
+                if ageing and now - key_seen.get(key, 0.0) > self._timeout:
+                    continue
+                into[joint.name] = latest[key]
         return snapshot
 
     def read_sensors(self) -> dict[str, dict[str, float]]:
@@ -466,6 +526,10 @@ class ConnectionSource:
                     self._holds[joint.name] = value
                 else:
                     self._holds.pop(joint.name, None)
+                continue
+            if joint.name in self._command_only:
+                # Never held, never zero-filled: a command-only joint is sent
+                # only what a task explicitly asked for this tick.
                 continue
             velocity_key = joint.command_keys.get(Interface.VELOCITY)
             if mode is ControlMode.VELOCITY and velocity_key is not None:
