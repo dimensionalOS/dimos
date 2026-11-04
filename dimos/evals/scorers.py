@@ -360,7 +360,7 @@ def _answered_at(outcome: Outcome) -> float | None:
 
 
 def _tracks(outcome: Outcome, bodies: Sequence[str]) -> dict[str, _Track]:
-    """World tracks of ``bodies`` that the sim published on tf; missing bodies are left out.
+    """World tracks of ``bodies`` that the sim published; missing bodies are left out.
 
     A run that ends with an answer is graded as it stood at that answer: the sim keeps stepping
     for several seconds while the environment shuts down, and a held part can drop then.
@@ -370,9 +370,9 @@ def _tracks(outcome: Outcome, bodies: Sequence[str]) -> dict[str, _Track]:
     }
     until = _answered_at(outcome)
     with recording(outcome) as store:
-        if "tf" not in store.streams:
+        if "body_poses" not in store.streams:
             return {}
-        for record in store.streams.tf.order_by("ts"):
+        for record in store.streams.body_poses.order_by("ts"):
             if until is not None and record.ts > until:
                 break
             for transform in record.data.transforms:
@@ -615,11 +615,9 @@ def _final_positions(outcome: Outcome, bodies: Sequence[str]) -> dict[str, np.nd
     until = _answered_at(outcome)
     wanted = set(bodies)
     with recording(outcome) as store:
-        try:
-            stream = body_pose_stream(store)
-        except LookupError:
+        if "body_poses" not in store.streams:
             return {}
-        for record in stream.order_by("ts", desc=True):
+        for record in store.streams.body_poses.order_by("ts", desc=True):
             if until is not None and record.ts > until:
                 continue
             found = {

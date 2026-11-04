@@ -37,10 +37,12 @@ def test_sim_twist_task_steers_a_wrist_back_from_just_past_its_limit() -> None:
 
     task.compute(state(1.0))
     twist = TwistStamped(frame_id="link_tcp", linear=[0.0, 0.0, 0.02], angular=[0.0, 0.0, 0.3])
-    assert task.on_ee_twist_command(twist, t_now=1.0)
     commands = 0
     for tick in range(1, 51):
-        output = task.compute(state(1.0 + 0.01 * tick))
+        # Resent every tick, as a held command is; one twist goes idle after command_timeout.
+        t = 1.0 + 0.01 * tick
+        assert task.on_ee_twist_command(twist, t_now=t)
+        output = task.compute(state(t))
         if output is not None:
             commands += 1
             positions.update(zip(output.joint_names, output.positions, strict=True))

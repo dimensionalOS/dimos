@@ -1088,8 +1088,8 @@ class TestPlanningGroupApis:
             c.kwargs["check_collision"] is False
             for c in module._kinematics.solve_pose_targets.call_args_list
         )
-        assert module._state == ManipulationState.IDLE
-        assert module._last_plan is None
+        assert module._state == OperationStatus.IDLE
+        assert module._pending_plan is None
 
 
 class TestPlanningDiagnostics:
