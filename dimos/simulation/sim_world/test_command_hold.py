@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from dimos.simulation.go2_sim.world import STILL, CommandHold
+from dimos.simulation.sim_world.world import STILL, CommandHold
 
 
 def test_a_fresh_command_is_returned_and_a_stale_one_becomes_still() -> None:

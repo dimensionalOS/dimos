@@ -148,7 +148,7 @@ class LocalTransport:
 def xarm_like_model(tmp_path: Path, dof: int, gripper: bool) -> RobotModel:
     """A stand-in for the xArm's URDF: joint1 to joint``dof``, each within
     3.1 rad of 0 at up to 3.14 rad/s; with ``gripper``, a drive_joint from 0
-    (open) to 0.85 rad (closed) and a finger that copies it."""
+    (closed) to 0.85 rad (open) and a finger that copies it."""
     limit = '<limit lower="-3.1" upper="3.1" velocity="3.14" effort="50"/>'
     joints = [
         f'<joint name="joint{i}" type="revolute"><parent link="link{i - 1}"/>'
@@ -324,9 +324,9 @@ def test_the_gripper_goes_out_in_sdk_pulses_only_when_its_target_changes(
 ) -> None:
     r = rig(gripper="xarm")
     assert len(r.sdk.sent("set_gripper_enable")) == 1
-    r.move(drive_joint=0.0)
-    r.move(drive_joint=0.0)
     r.move(drive_joint=0.85)
+    r.move(drive_joint=0.85)
+    r.move(drive_joint=0.0)
     pulses = [args[0] for _, args, _ in r.sdk.sent("set_gripper_position")]
     assert pulses == pytest.approx([850.0, 0.0])
     # The gripper alone moves no arm joint.
@@ -444,7 +444,7 @@ def test_the_coordinator_takes_the_arm_and_gripper_messages_as_one_robot(
     for msg in r.readings():
         seen.on_message("joint_state", msg)
     assert seen.ready_for_control()
-    assert seen.read_joints().joint_positions["arm/drive_joint"] == pytest.approx(0.0)
+    assert seen.read_joints().joint_positions["arm/drive_joint"] == pytest.approx(0.85)
 
 
 def test_stopping_stops_the_arm_and_lets_go_of_it(rig: Callable[..., Rig]) -> None:

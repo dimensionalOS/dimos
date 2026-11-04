@@ -124,10 +124,13 @@ class DamiaoWholeBodyAdapter(ABC):
         Linux maps ordered logical buses to ``can0``, ``can1``, and so on.
         macOS maps them to matching gs_usb enumeration indices. A runtime
         ``bus_devices`` override is a SocketCAN interface on Linux and a USB
-        serial number on macOS.
+        serial number on macOS. On either platform, an override starting with
+        ``/dev/`` is the serial port of a Damiao USB-CAN bridge.
         """
         index = self._bus_index(name)
         device = self._runtime_config.bus_devices.get(name)
+        if device is not None and device.startswith("/dev/"):
+            return can_motor_control.DmSerialBus(device)
         if sys.platform == "linux":
             return can_motor_control.SocketCanBus(device or f"can{index}")
         if sys.platform == "darwin":

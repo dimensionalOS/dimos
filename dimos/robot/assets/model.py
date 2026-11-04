@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import cached_property
 import math
@@ -186,6 +186,8 @@ class RobotModel:
     _fixed_joints: tuple[str, ...] = ()
     _renamed_joints: tuple[tuple[str, str], ...] = ()
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
+    _joint_velocity_limits: tuple[tuple[str, float], ...] = ()
+    _reversed_joints: tuple[str, ...] = ()
     _subtree_root_link: str | None = None
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
@@ -353,6 +355,23 @@ class RobotModel:
             ),
         )
 
+    def with_joint_velocity_limits(self, limits: Mapping[str, float]) -> RobotModel:
+        """Replace named joint velocity limits in every planning backend."""
+        if not limits or any(not math.isfinite(value) or value <= 0 for value in limits.values()):
+            raise ValueError("Joint velocity limits must be positive and finite")
+        return replace(self, _joint_velocity_limits=(*self._joint_velocity_limits, *limits.items()))
+
+    def with_reversed_joints(self, *names: str) -> RobotModel:
+        """Return a model whose named joints count the other way along their range.
+
+        A joint with limits ``lower`` to ``upper`` reads ``lower + upper - p`` in
+        the pose it read ``p`` before, so its two ends swap. Joints that copy one
+        of them (URDF ``mimic``) keep following it.
+        """
+        if not names:
+            raise ValueError("At least one joint must be reversed")
+        return replace(self, _reversed_joints=(*self._reversed_joints, *names))
+
     def with_default_joint_acceleration_limit(self, value: float) -> RobotModel:
         """Fill missing movable-joint acceleration limits during materialization."""
         if not math.isfinite(value) or value <= 0.0:
@@ -364,7 +383,8 @@ class RobotModel:
 
         Source subtree filters and the planar base run first. Fixed frames and
         model attachments then run in declaration order on the current tree.
-        Joint fixes, limits, renames, and acceleration defaults run afterward.
+        Joint fixes, limits, reversals, renames, and acceleration defaults run
+        afterward.
         """
         return self._loaded
 
@@ -412,6 +432,10 @@ class RobotModel:
             xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
             xml = _set_joint_position_limits(xml, self._joint_position_limits)
+        if self._joint_velocity_limits:
+            xml = _set_joint_velocity_limits(xml, self._joint_velocity_limits)
+        if self._reversed_joints:
+            xml = _reverse_joints(xml, self._reversed_joints)
         if self._renamed_joints:
             xml = _rename_joints(xml, dict(self._renamed_joints))
         if self._default_joint_acceleration_limit is not None:
@@ -734,6 +758,76 @@ def _set_joint_position_limits(
     return ET.tostring(root, encoding="unicode")
 
 
+def _set_joint_velocity_limits(xml: str, replacements: tuple[tuple[str, float], ...]) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    seen: set[str] = set()
+    for name, value in replacements:
+        if name in seen:
+            raise ValueError(f"Joint velocity limits already replaced: {name}")
+        seen.add(name)
+        joint = joints.get(name)
+        if joint is None:
+            raise ValueError(f"Joint not found: {name}")
+        limit = joint.find("limit")
+        if limit is None or joint.get("type") == "fixed":
+            raise ValueError(f"Joint has no velocity limits: {name}")
+        limit.set("velocity", str(value))
+    return ET.tostring(root, encoding="unicode")
+
+
+def _reverse_joints(xml: str, names: tuple[str, ...]) -> str:
+    root = ET.fromstring(xml)
+    elements = {joint.get("name"): joint for joint in root.findall("joint")}
+    descriptions = {joint.name: joint for joint in _parse_topology(xml)[0]}
+    # Each reversed joint's lower + upper: it now reads span - p where it read p.
+    spans: dict[str, float] = {}
+    for name in names:
+        if name in spans:
+            raise ValueError(f"Joint already requested as reversed: {name}")
+        joint = descriptions.get(name)
+        if joint is None:
+            raise ValueError(f"Joint not found: {name}")
+        if (
+            joint.type not in ("revolute", "prismatic")
+            or joint.lower is None
+            or joint.upper is None
+        ):
+            raise ValueError(f"Joint has no position range to reverse: {name}")
+        spans[name] = joint.lower + joint.upper
+        # Its new zero is the pose it had at span, and it moves the other way from there.
+        zero = joint.parent_from_child(spans[name])
+        element = elements[name]
+        origin = element.find("origin")
+        if origin is None:
+            origin = ET.SubElement(element, "origin")
+        origin.set("xyz", _vector_text(zero[:3, 3]))
+        origin.set("rpy", _vector_text(Rotation.from_matrix(zero[:3, :3]).as_euler("xyz")))
+        axis = element.find("axis")
+        if axis is None:
+            axis = ET.SubElement(element, "axis")
+        axis.set("xyz", _vector_text(-np.asarray(joint.axis)))
+
+    for element in root.findall("joint"):
+        mimic = element.find("mimic")
+        if mimic is None:
+            continue
+        leader = mimic.get("joint", "")
+        follower = element.get("name", "")
+        if leader not in spans and follower not in spans:
+            continue
+        # follower = multiplier * leader + offset, rewritten in the new readings.
+        multiplier = float(mimic.get("multiplier", "1"))
+        offset = float(mimic.get("offset", "0"))
+        if leader in spans:
+            multiplier, offset = -multiplier, offset + multiplier * spans[leader]
+        if follower in spans:
+            multiplier, offset = -multiplier, spans[follower] - offset
+        mimic.set("multiplier", str(multiplier))
+        mimic.set("offset", str(offset))
+    return ET.tostring(root, encoding="unicode")
+
+
 def _set_missing_joint_acceleration_limits(xml: str, value: float) -> str:
     root = ET.fromstring(xml)
     for joint in root.findall("joint"):
@@ -813,7 +907,7 @@ def _triple(value: str | None) -> tuple[float, float, float]:
     return (parts[0], parts[1], parts[2])
 
 
-def _vector_text(vector: tuple[float, float, float]) -> str:
+def _vector_text(vector: Iterable[float]) -> str:
     return " ".join(str(value) for value in vector)
 
 

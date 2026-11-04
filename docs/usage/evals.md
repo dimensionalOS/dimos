@@ -160,11 +160,12 @@ configuration and event transport. Provider setup, budgets, tracing and
 cleanup remain shared. No second model loop or SDK wrapper is introduced.
 
 To compare another model, change both commands together: `model=gpt-5.6-sol`,
-or `provider=anthropic` and `model=claude-fable-5-1`. Fable requires
-`ANTHROPIC_API_KEY`, independently of OpenAI access.
+or `provider=anthropic` and `model=claude-fable-5-1`, or `provider=google` and
+`model=gemini-4-argon`. Each provider needs its own key: `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY` or `GEMINI_API_KEY`.
 
-`cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL` and
-`ANTHROPIC_BASE_URL` optionally override the upstream endpoints. API keys stay
+`cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL`,
+`ANTHROPIC_BASE_URL` and `GOOGLE_BASE_URL` optionally override the upstream endpoints. API keys stay
 in process environment variables; a shared Pi extension registers the trace
 proxy URL and key variable through Pi's provider API. It also applies output
 caps and tool selection. No installed registry files are read or rewritten.
