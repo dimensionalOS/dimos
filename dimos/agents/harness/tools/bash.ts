@@ -190,7 +190,7 @@ export function bashTool(options: BashToolOptions): AgentTool<"bash"> {
         ...result,
         output: [
           ...(result.output ?? []),
-          ...(rendering === null ? [] : [{ type: "text" as const, text: rendering.text }, ...rendering.images]),
+          ...(rendering === null ? [] : [{ type: "text" as const, text: rendering.text }]),
         ],
         details: {
           truncation:

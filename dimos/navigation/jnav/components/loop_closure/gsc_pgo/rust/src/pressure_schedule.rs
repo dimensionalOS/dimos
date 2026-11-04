@@ -104,7 +104,8 @@ impl GscPgo {
         drop(done);
         let job = self.pressure_job.take().expect("checked above");
         // overshoot: its work ran past the data time its hold spanned, or it landed late
-        let overshoot = deterministic && (seconds > spanned || std::mem::take(&mut self.pressure_late));
+        let overshoot =
+            deterministic && (seconds > spanned || std::mem::take(&mut self.pressure_late));
         self.note_overshoot("pressure", overshoot);
         if overshoot {
             self.pressure_overshoots += 1;

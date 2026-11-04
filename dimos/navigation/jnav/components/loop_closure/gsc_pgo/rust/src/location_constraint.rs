@@ -37,18 +37,24 @@ struct Reader<'a>(&'a [u8]);
 impl Reader<'_> {
     fn take(&mut self, n: usize) -> io::Result<&[u8]> {
         if self.0.len() < n {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "LocationConstraint too short"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "LocationConstraint too short",
+            ));
         }
         let (head, rest) = self.0.split_at(n);
         self.0 = rest;
         Ok(head)
     }
     fn f64(&mut self) -> io::Result<f64> {
-        Ok(f64::from_be_bytes(self.take(8)?.try_into().expect("8 bytes")))
+        Ok(f64::from_be_bytes(
+            self.take(8)?.try_into().expect("8 bytes"),
+        ))
     }
     fn text(&mut self) -> io::Result<String> {
         let length = u32::from_be_bytes(self.take(4)?.try_into().expect("4 bytes")) as usize;
-        String::from_utf8(self.take(length)?.to_vec()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        String::from_utf8(self.take(length)?.to_vec())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 }
 
@@ -57,7 +63,8 @@ impl LocationConstraint {
     pub fn decode(bytes: &[u8]) -> io::Result<Self> {
         let mut reader = Reader(bytes);
         let ts = reader.f64()?;
-        let (to_id, frame_id, constraint_instance_id) = (reader.text()?, reader.text()?, reader.text()?);
+        let (to_id, frame_id, constraint_instance_id) =
+            (reader.text()?, reader.text()?, reader.text()?);
         let mut pose = [0.0; 7];
         for value in pose.iter_mut() {
             *value = reader.f64()?;

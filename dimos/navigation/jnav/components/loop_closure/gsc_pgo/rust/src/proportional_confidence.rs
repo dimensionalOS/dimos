@@ -92,8 +92,16 @@ impl Stack {
                 continue;
             };
             let cloud = search.keyframe_clouds.get(k, body);
-            for p in transform_cloud(cloud.voxelized(resolution), &key_pose.rotation_global, &key_pose.translation_global) {
-                let key = ((p[0] * inverse).floor() as i64, (p[1] * inverse).floor() as i64, (p[2] * inverse).floor() as i64);
+            for p in transform_cloud(
+                cloud.voxelized(resolution),
+                &key_pose.rotation_global,
+                &key_pose.translation_global,
+            ) {
+                let key = (
+                    (p[0] * inverse).floor() as i64,
+                    (p[1] * inverse).floor() as i64,
+                    (p[2] * inverse).floor() as i64,
+                );
                 if p.iter().all(|v| v.is_finite()) && self.voxels.insert(key) {
                     fresh.push(p);
                 }
@@ -137,8 +145,14 @@ impl ClosureSearch {
                 1.0 - diag.candidate_distance / self.config.closure_search_radius.max(f64::EPSILON),
             )
         };
-        diag.icp_factor =
-            unit(1.0 - diag.icp_fitness / self.config.closure_icp_max_fitness_m.powi(2).max(f64::EPSILON));
+        diag.icp_factor = unit(
+            1.0 - diag.icp_fitness
+                / self
+                    .config
+                    .closure_icp_max_fitness_m
+                    .powi(2)
+                    .max(f64::EPSILON),
+        );
         diag.degeneracy_factor =
             if self.config.closure_min_degeneracy > 0.0 && diag.degeneracy_min >= 0.0 {
                 unit(diag.degeneracy_min as f64 / self.config.closure_min_degeneracy)
@@ -246,7 +260,11 @@ impl ClosureSearch {
         let accept = |ratio: f64| (ratio >= 1.0).then(|| first.clone());
         let half_range = self.config.target_half_range(1);
         let radius = self.config.closure_search_radius;
-        let positions: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_global).collect();
+        let positions: Vec<Vec3> = self
+            .key_poses
+            .iter()
+            .map(|k| k.translation_global)
+            .collect();
         let odometry: Vec<Vec3> = self.key_poses.iter().map(|k| k.translation_local).collect();
         let clouds = extension_clouds(
             &odometry,
@@ -300,12 +318,16 @@ impl ClosureSearch {
             let step = step + 1;
             // widen the target submap for this many clouds, then add keyframes near where this cloud lands
             let range_half = self.config.target_half_range(step + 1);
-            let widened: Vec<usize> = (target_idx.saturating_sub(range_half)..=target_idx + range_half)
+            let widened: Vec<usize> = (target_idx.saturating_sub(range_half)
+                ..=target_idx + range_half)
                 .filter(|&k| k < target_end && !target_ids.contains(&k))
                 .collect();
             target.add(self, &widened);
             target_ids.extend(widened);
-            let placed = mat3::add(&mat3::mat_vec(&first.rotation, &positions[j]), &first.translation);
+            let placed = mat3::add(
+                &mat3::mat_vec(&first.rotation, &positions[j]),
+                &first.translation,
+            );
             let mut near: Vec<(f64, usize)> = (0..target_end)
                 .filter(|k| !target_ids.contains(k))
                 .map(|k| (mat3::norm(&mat3::sub(&positions[k], &placed)), k))
@@ -380,7 +402,10 @@ impl ClosureSearch {
             let icp = crate::icp_cache::decode_icp(&round[1..16]);
             // a cloud that did not fit, or fit > closure_search_radius from the single fit's placement, adds no evidence
             let moved = mat3::norm(&mat3::sub(
-                &mat3::add(&mat3::mat_vec(&icp.rotation, &positions[j]), &icp.translation),
+                &mat3::add(
+                    &mat3::mat_vec(&icp.rotation, &positions[j]),
+                    &icp.translation,
+                ),
                 &placed,
             )) > radius;
             let evidence = if icp.converged && !moved && round[16].is_finite() {
@@ -389,7 +414,11 @@ impl ClosureSearch {
                 0.0
             };
             let bar = required(evidence, diag);
-            ratios.push(if bar > 0.0 { evidence / bar } else { f64::INFINITY });
+            ratios.push(if bar > 0.0 {
+                evidence / bar
+            } else {
+                f64::INFINITY
+            });
             let median = median_ratio(&ratios);
             let at = |(rotation, translation): (Mat3, Vec3)| {
                 mat3::add(&mat3::mat_vec(&rotation, &source_position), &translation)
@@ -423,7 +452,8 @@ impl ClosureSearch {
             diag.extended_source_points = round[0] as usize;
             diag.extended_target_points = target.index.points().len();
             diag.extension_rounds_source_points.push(round[0] as usize);
-            diag.extension_rounds_target_points.push(target.index.points().len());
+            diag.extension_rounds_target_points
+                .push(target.index.points().len());
             diag.extended_fitness = icp.fitness;
             diag.extended_likelihood_ratio = round[16];
             diag.extended_confidence = 1.0 - (-median * bar.max(0.0)).exp();
@@ -512,8 +542,7 @@ impl UncertaintyRange {
         UncertaintyRange {
             low: config.barely_fail_uncertainty_range,
             high: config.barely_pass_uncertainty_range,
-            steps: rounds
-                * (1.0 / (1.0 - pressure)).powf(config.decisive_pressure_rate.max(0.0)),
+            steps: rounds * (1.0 / (1.0 - pressure)).powf(config.decisive_pressure_rate.max(0.0)),
         }
     }
     /// (low, high) after `step` extension steps (0: the single scan).
@@ -568,15 +597,29 @@ mod extension_tests {
             let clouds = extension_clouds(&odometry, target_idx, cur_idx, half_range, 5, 3.0);
             let oldest_source = clouds.iter().copied().chain([cur_idx]).min().unwrap();
             let target_end = oldest_source.saturating_sub(half_range);
-            let submap: Vec<usize> = (target_idx.saturating_sub(half_range)..=target_idx + half_range)
+            let submap: Vec<usize> = (target_idx.saturating_sub(half_range)
+                ..=target_idx + half_range)
                 .filter(|&k| k < target_end)
                 .collect();
             for &s in clouds.iter().chain([&cur_idx]) {
-                assert!(!submap.contains(&s), "{target_idx}->{cur_idx}: {s} on both sides");
-                assert!(s >= target_end + half_range, "{target_idx}->{cur_idx}: {s} within the gap");
+                assert!(
+                    !submap.contains(&s),
+                    "{target_idx}->{cur_idx}: {s} on both sides"
+                );
+                assert!(
+                    s >= target_end + half_range,
+                    "{target_idx}->{cur_idx}: {s} within the gap"
+                );
             }
-            for pair in std::iter::once(cur_idx).chain(clouds.iter().copied()).collect::<Vec<_>>().windows(2) {
-                assert!(pair[0] - pair[1] >= 3, "{target_idx}->{cur_idx}: clouds {pair:?} closer than the spacing");
+            for pair in std::iter::once(cur_idx)
+                .chain(clouds.iter().copied())
+                .collect::<Vec<_>>()
+                .windows(2)
+            {
+                assert!(
+                    pair[0] - pair[1] >= 3,
+                    "{target_idx}->{cur_idx}: clouds {pair:?} closer than the spacing"
+                );
             }
             assert!(clouds.len() <= 4);
         }

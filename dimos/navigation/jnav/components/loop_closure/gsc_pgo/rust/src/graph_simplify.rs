@@ -12,33 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Graph simplification (`Config::graph_simplify`) for very long runs: a reduced pose graph whose size follows the mapped
-//! area, not the run's length.
-//!
-//! Each keyframe gets a fixed placement once it leaves the frontier (the newest `graph_simplify_frontier_keyframes`) and an
-//! adopted solve has placed it:
-//! - kept: its own node in every later solve (it keeps its cloud and descriptor, so loops can still close onto it);
-//! - removed: it lies within `graph_simplify_place_radius_m` of a keyframe kept on an older pass (at least
-//!   `graph_simplify_pass_gap_keyframes` before it), and a closure the newest
-//!   solve kept is within `graph_simplify_localized_keyframes` of it (the map has localized this stretch). It rides that
-//!   kept keyframe rigidly at the offset the adopted graph gave it, its cloud and descriptor are freed, and it is no closure
-//!   target any more.
-//!
-//! The odometry folds between consecutive kept keyframes: the steps over the removed ones between compose into one edge
-//! with their variances summed (each is linear in distance and turn), so a long revisit becomes one loose edge and the map
-//! is held by its closures. A closure's ends ride their nodes at the frozen offsets (one riding a single node drops out),
-//! its variance grown by `graph_simplify_offset_sd_*` per riding end (the offset is the adopted graph's guess); a folded
-//! closure goes to the solve only while its pair of places (the kept keyframes its ends revisit) has fewer than
-//! `graph_simplify_closures_per_pair` (the rest keep their last verdict; closures between kept keyframes always go in),
-//! which bounds the solve's closures by the mapped area too. The solve's nodes expand back to every keyframe.
-//!
-//! Past `graph_simplify_chain_fold_max_m` of folded odometry the fold is dropped and the walk rides the node the current
-//! removed keyframe rides (its frozen offset adding variance to the next edge): odometry folded over hours of revisits
-//! would claim far more than the drift model allows and outvote the closures.
-//!
-//! `graph_simplify_chain_odometry = false` instead walks the nodes removed keyframes ride: steps riding one node compose
-//! into an edge from the node the walk entered on to the one it leaves for (first edge per node pair only), each frozen
-//! offset end adding its variance; it keeps revisit odometry but echoes the adopted graph into the node graph.
+//! Graph simplification (`Config::graph_simplify`): past the frontier a keyframe near an older pass's kept keyframe rides it
+//! (cloud freed, odometry folded into one edge between kept keyframes), so the solve grows with the mapped area, not the run.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -52,7 +27,10 @@ use crate::store::{Appended, Closures, KeyFrames};
 pub type Pose = (Mat3, Vec3);
 
 pub fn compose(a: &Pose, b: &Pose) -> Pose {
-    (mat3::mat_mul(&a.0, &b.0), mat3::add(&mat3::mat_vec(&a.0, &b.1), &a.1))
+    (
+        mat3::mat_mul(&a.0, &b.0),
+        mat3::add(&mat3::mat_vec(&a.0, &b.1), &a.1),
+    )
 }
 
 pub fn invert(a: &Pose) -> Pose {
@@ -71,7 +49,12 @@ pub enum Placement {
     Node(usize),
     /// Rides node `node` at `offset` (its pose = node's pose * offset), known to within `spread`; `place` is the node of
     /// the kept keyframe it revisits (the per-pair closure cap counts by it).
-    Anchored { node: usize, offset: Pose, spread: Spread, place: usize },
+    Anchored {
+        node: usize,
+        offset: Pose,
+        spread: Spread,
+        place: usize,
+    },
 }
 
 /// How well a riding keyframe's offset is known: the odometry distance (m) and turn (rad) it was carried over from the
@@ -88,11 +71,21 @@ impl Spread {
     pub fn variances(&self, config: &Config) -> [f64; 6] {
         let [xy, z, yaw, tilt] = motion_variances(config, self.distance, self.turn);
         let (rotation, translation) = if self.frozen {
-            (config.graph_simplify_offset_sd_rad.powi(2), config.graph_simplify_offset_sd_m.powi(2))
+            (
+                config.graph_simplify_offset_sd_rad.powi(2),
+                config.graph_simplify_offset_sd_m.powi(2),
+            )
         } else {
             (0.0, 0.0)
         };
-        [tilt + rotation, tilt + rotation, yaw + rotation, xy + translation, xy + translation, z + translation]
+        [
+            tilt + rotation,
+            tilt + rotation,
+            yaw + rotation,
+            xy + translation,
+            xy + translation,
+            z + translation,
+        ]
     }
 }
 
@@ -138,8 +131,10 @@ impl FoldedEdge {
 
 /// Add `ends` frozen offsets' variances (rotation, then translation, in `Edge` order) to an edge's.
 fn add_offset_variances(variances: &mut [f64; 6], config: &Config, ends: u32) {
-    let (rotation, translation) =
-        (config.graph_simplify_offset_sd_rad.powi(2), config.graph_simplify_offset_sd_m.powi(2));
+    let (rotation, translation) = (
+        config.graph_simplify_offset_sd_rad.powi(2),
+        config.graph_simplify_offset_sd_m.powi(2),
+    );
     for (axis, variance) in variances.iter_mut().enumerate() {
         *variance += ends as f64 * if axis < 3 { rotation } else { translation };
     }
@@ -184,7 +179,10 @@ pub fn odometry_step(key_poses: &KeyFrames, from: usize, to: usize) -> (Pose, f6
     (
         (
             mat3::mat_mul(&back, &b.rotation_local),
-            mat3::mat_vec(&back, &mat3::sub(&b.translation_local, &a.translation_local)),
+            mat3::mat_vec(
+                &back,
+                &mat3::sub(&b.translation_local, &a.translation_local),
+            ),
         ),
         mat3::norm(&mat3::sub(&b.translation_local, &a.translation_local)),
         mat3::angular_distance(&a.rotation_local, &b.rotation_local),
@@ -212,7 +210,6 @@ impl GraphSimplify {
             (self.kept.len() + k - self.decided(), identity())
         }
     }
-    /// Advance the chain walk over decided keyframe `k` placed at `placement`, folding the step into it.
     /// Place decided keyframe `k` and advance the chain walk over it: `kept` its new node, else `place` the node and frozen
     /// offset of the kept keyframe it may ride. `chain` (`graph_simplify_chain_odometry`, its fold limit in m): a removed
     /// keyframe rides the walk's node by odometry and the steps fold between consecutive kept keyframes; else it rides
@@ -225,15 +222,29 @@ impl GraphSimplify {
         place: Option<(usize, Pose)>,
         chain: Option<f64>,
     ) -> Placement {
-        let frozen = Spread { frozen: true, ..Spread::default() };
+        let frozen = Spread {
+            frozen: true,
+            ..Spread::default()
+        };
         let placement = match (kept, place) {
             (Some(node), _) => Placement::Node(node),
-            (None, Some((node, offset))) => Placement::Anchored { node, offset, spread: frozen, place: node },
+            (None, Some((node, offset))) => Placement::Anchored {
+                node,
+                offset,
+                spread: frozen,
+                place: node,
+            },
             (None, None) => unreachable!("a keyframe is kept or rides a place"),
         };
         let Some(walk) = self.walk else {
             let (node, offset) = placement.node_and_offset();
-            self.walk = Some(Walk { node, offset, distance: 0.0, turn: 0.0, anchored: kept.is_none() });
+            self.walk = Some(Walk {
+                node,
+                offset,
+                distance: 0.0,
+                turn: 0.0,
+                anchored: kept.is_none(),
+            });
             return placement;
         };
         let (step, distance, turn) = odometry_step(key_poses, k - 1, k);
@@ -243,22 +254,42 @@ impl GraphSimplify {
             // past fold_max_m of folded odometry the walk drops it and rides this keyframe's place (no edge): odometry
             // folded over a long revisit would claim far more than the drift model allows and outvote the closures
             let walk = if distance > fold_max_m {
-                Walk { node, offset, distance: 0.0, turn: 0.0, anchored: true }
+                Walk {
+                    node,
+                    offset,
+                    distance: 0.0,
+                    turn: 0.0,
+                    anchored: true,
+                }
             } else {
-                Walk { offset: reached, distance, turn, ..walk }
+                Walk {
+                    offset: reached,
+                    distance,
+                    turn,
+                    ..walk
+                }
             };
             self.walk = Some(walk);
             return Placement::Anchored {
                 place: node,
                 node: walk.node,
                 offset: walk.offset,
-                spread: Spread { distance: walk.distance, turn: walk.turn, frozen: walk.anchored },
+                spread: Spread {
+                    distance: walk.distance,
+                    turn: walk.turn,
+                    frozen: walk.anchored,
+                },
             };
         }
         let (node, offset) = placement.node_and_offset();
         let anchored = kept.is_none();
         if node == walk.node {
-            self.walk = Some(Walk { offset: reached, distance, turn, ..walk });
+            self.walk = Some(Walk {
+                offset: reached,
+                distance,
+                turn,
+                ..walk
+            });
             return placement;
         }
         // leaving the node: one edge from the entry node to this one over every step since entering, unless both ends are
@@ -274,7 +305,13 @@ impl GraphSimplify {
                 anchored_ends: walk.anchored as u32 + anchored as u32,
             });
         }
-        self.walk = Some(Walk { node, offset, distance: 0.0, turn: 0.0, anchored });
+        self.walk = Some(Walk {
+            node,
+            offset,
+            distance: 0.0,
+            turn: 0.0,
+            anchored,
+        });
         placement
     }
     /// The folded odometry of a solve over `keyframes` keyframes: kept edges, the walk into the frontier, the frontier chain.
@@ -293,7 +330,14 @@ impl GraphSimplify {
                     turn: walk.turn + turn,
                     anchored_ends: walk.anchored as u32,
                 }),
-                _ => edges.push(FoldedEdge { from: to - 1, to, relative: step, distance, turn, anchored_ends: 0 }),
+                _ => edges.push(FoldedEdge {
+                    from: to - 1,
+                    to,
+                    relative: step,
+                    distance,
+                    turn,
+                    anchored_ends: 0,
+                }),
             }
         }
         edges
@@ -301,7 +345,12 @@ impl GraphSimplify {
     /// Closures as node edges (closure index, edge); one riding a single node drops out, and once a pair of places (the
     /// kept keyframes the ends are or revisit) has `graph_simplify_closures_per_pair` (0 = no cap) closures, further
     /// folded ones wait out of the solve.
-    pub fn closures(&self, closures: &Closures, count: usize, config: &Config) -> Vec<(usize, Edge)> {
+    pub fn closures(
+        &self,
+        closures: &Closures,
+        count: usize,
+        config: &Config,
+    ) -> Vec<(usize, Edge)> {
         let per_pair = config.graph_simplify_closures_per_pair;
         let mut per: HashMap<(usize, usize), usize> = HashMap::new();
         (0..count)
@@ -321,18 +370,26 @@ impl GraphSimplify {
                     })
                     .collect();
                 let ends = spreads.len();
-                let place = |k: usize, node: usize| match (k < self.decided()).then(|| self.placements[k]) {
+                let place = |k: usize, node: usize| match (k < self.decided())
+                    .then(|| self.placements[k])
+                {
                     Some(Placement::Anchored { place, .. }) => place,
                     _ => node,
                 };
-                let (a, b) = (place(fixed.target_id, target), place(fixed.source_id, source));
+                let (a, b) = (
+                    place(fixed.target_id, target),
+                    place(fixed.source_id, source),
+                );
                 let taken = per.entry((a.min(b), a.max(b))).or_default();
                 if ends > 0 && per_pair > 0 && *taken >= per_pair {
                     return None;
                 }
                 *taken += 1;
                 let relative = compose(
-                    &compose(&target_offset, &(fixed.rotation_offset, fixed.translation_offset)),
+                    &compose(
+                        &target_offset,
+                        &(fixed.rotation_offset, fixed.translation_offset),
+                    ),
                     &invert(&source_offset),
                 );
                 let mut variances = [fixed.score.max(1e-6); 6];
@@ -397,7 +454,9 @@ impl Expansion {
     fn spread_runs(&self, poses: &mut [Pose]) {
         let decided = self.placements.len();
         let chained = |k: usize| match self.placements[k] {
-            Placement::Anchored { node, spread, .. } if !spread.frozen => Some((node, spread.distance)),
+            Placement::Anchored { node, spread, .. } if !spread.frozen => {
+                Some((node, spread.distance))
+            }
             _ => None,
         };
         let mut start = 0;
@@ -425,9 +484,17 @@ impl Expansion {
                 for (k, pose) in poses.iter_mut().enumerate().take(end + 1).skip(start) {
                     let f = chained(k).map_or(0.0, |(_, d)| d) / total.max(f64::EPSILON);
                     // a partial correction: nlerp from identity, translation scaled
-                    let q = [1.0 - f + f * sign * w, f * sign * x, f * sign * y, f * sign * z];
+                    let q = [
+                        1.0 - f + f * sign * w,
+                        f * sign * x,
+                        f * sign * y,
+                        f * sign * z,
+                    ];
                     let norm = q.iter().map(|v| v * v).sum::<f64>().sqrt();
-                    let partial = (mat3::mat_from_quat(&q.map(|v| v / norm)), mat3::scale(&gap.1, f));
+                    let partial = (
+                        mat3::mat_from_quat(&q.map(|v| v / norm)),
+                        mat3::scale(&gap.1, f),
+                    );
                     *pose = compose(&partial, pose);
                 }
             }
@@ -439,21 +506,27 @@ impl Expansion {
         let mut poses: Vec<Pose> = (0..self.keyframes)
             .map(|k| {
                 let (node, offset) = self.node(k);
-                compose(&(solution.rotations[node], solution.positions[node]), &offset)
+                compose(
+                    &(solution.rotations[node], solution.positions[node]),
+                    &offset,
+                )
             })
             .collect();
         self.spread_runs(&mut poses);
         let (rotations, positions): (Vec<Mat3>, Vec<Vec3>) = poses.into_iter().unzip();
         let covariance = std::mem::take(&mut solution.relative_position_covariance);
         if covariance.len() == solution.rotations.len() {
-            solution.relative_position_covariance =
-                (0..self.keyframes).map(|k| covariance[self.node(k).0]).collect();
+            solution.relative_position_covariance = (0..self.keyframes)
+                .map(|k| covariance[self.node(k).0])
+                .collect();
         }
         solution.rotations = rotations;
         solution.positions = positions;
         // a closure out of this solve keeps its last verdict
         let spread = |weights: &[f64]| -> Vec<f64> {
-            let mut all: Vec<f64> = (0..self.closure_count).map(|i| self.closures.weight(i)).collect();
+            let mut all: Vec<f64> = (0..self.closure_count)
+                .map(|i| self.closures.weight(i))
+                .collect();
             for (&index, &weight) in self.closure_index.iter().zip(weights) {
                 all[index] = weight;
             }
@@ -495,7 +568,9 @@ impl GscPgo {
         let localized = {
             let localizing = &self.simplify.localizing;
             let first = localizing.partition_point(|&end| end + localized_within < k);
-            localizing.get(first).is_some_and(|&end| end <= k + localized_within)
+            localizing
+                .get(first)
+                .is_some_and(|&end| end <= k + localized_within)
         };
         // the nearest keyframe kept on an older pass within the place radius
         let anchor = if localized && k > 0 {
@@ -525,7 +600,9 @@ impl GscPgo {
             Some(kept) => {
                 let node = match self.simplify.placements[kept] {
                     Placement::Node(node) => node,
-                    Placement::Anchored { .. } => unreachable!("only kept keyframes are in the place cells"),
+                    Placement::Anchored { .. } => {
+                        unreachable!("only kept keyframes are in the place cells")
+                    }
                 };
                 let offset = compose(&invert(&self.key_poses.global(kept)), &here);
                 let guard = self.key_poses.remove(k);
@@ -537,12 +614,21 @@ impl GscPgo {
             None => {
                 let node = self.simplify.kept.len();
                 self.simplify.kept.push(k);
-                self.simplify.cells.entry(cell(&here.1, radius)).or_default().push(k);
+                self.simplify
+                    .cells
+                    .entry(cell(&here.1, radius))
+                    .or_default()
+                    .push(k);
                 (Some(node), None)
             }
         };
-        let chain = self.config.graph_simplify_chain_odometry.then_some(self.config.graph_simplify_chain_fold_max_m);
-        let placement = self.simplify.place_next(&self.key_poses, k, kept, place, chain);
+        let chain = self
+            .config
+            .graph_simplify_chain_odometry
+            .then_some(self.config.graph_simplify_chain_fold_max_m);
+        let placement = self
+            .simplify
+            .place_next(&self.key_poses, k, kept, place, chain);
         self.simplify.placements.push(placement);
     }
     /// Free removed keyframes' clouds in removal order once no snapshot from before their removal is left.
@@ -564,7 +650,7 @@ impl GscPgo {
         let mut ends: Vec<usize> = self
             .committed_closures
             .iter()
-            .filter(|c| c.gnc_weight > 0.5)
+            .filter(|c| c.is_kept())
             .flat_map(|c| [c.source_id, c.target_id])
             .collect();
         ends.sort_unstable();
@@ -607,7 +693,9 @@ mod tests {
     }
 
     fn close(a: &Pose, b: &Pose) -> bool {
-        (0..3).all(|i| (a.1[i] - b.1[i]).abs() < 1e-9 && (0..3).all(|j| (a.0[i][j] - b.0[i][j]).abs() < 1e-9))
+        (0..3).all(|i| {
+            (a.1[i] - b.1[i]).abs() < 1e-9 && (0..3).all(|j| (a.0[i][j] - b.0[i][j]).abs() < 1e-9)
+        })
     }
 
     /// Keyframes riding a node by their odometry fold into one edge equal to the chained steps, variances summed (both walks).
@@ -619,7 +707,13 @@ mod tests {
     }
 
     fn folded_edge_equals_the_chained_steps(chain_odometry: Option<f64>) {
-        let key_poses = chain(&[(0.0, 0.0, 0.0), (1.0, 0.2, 0.3), (1.8, 1.0, 0.9), (2.0, 2.2, 1.4), (2.5, 3.0, 1.0)]);
+        let key_poses = chain(&[
+            (0.0, 0.0, 0.0),
+            (1.0, 0.2, 0.3),
+            (1.8, 1.0, 0.9),
+            (2.0, 2.2, 1.4),
+            (2.5, 3.0, 1.0),
+        ]);
         let config = Config::default();
         let mut simplify = GraphSimplify::default();
         // 0 kept; 1 and 2 removed, riding node 0 at their odometry offsets; 3 kept
@@ -634,7 +728,16 @@ mod tests {
             };
             let placement = simplify.place_next(&key_poses, k, kept, place, chain_odometry);
             simplify.placements.push(placement);
-            if let (Placement::Anchored { node, offset: rode, spread, .. }, Some(_)) = (placement, chain_odometry) {
+            if let (
+                Placement::Anchored {
+                    node,
+                    offset: rode,
+                    spread,
+                    ..
+                },
+                Some(_),
+            ) = (placement, chain_odometry)
+            {
                 // a chain-placed keyframe rides the walk's node by its odometry, its spread that odometry's
                 assert_eq!(node, 0);
                 assert!(close(&rode, &offset));
@@ -643,21 +746,27 @@ mod tests {
         }
         assert_eq!(simplify.edges.len(), 1);
         let steps = odometry_edges(&key_poses, &config, [1.0; 4]);
-        let chained = steps[..3]
-            .iter()
-            .fold(identity(), |pose, e| compose(&pose, &(e.rotation, e.translation)));
+        let chained = steps[..3].iter().fold(identity(), |pose, e| {
+            compose(&pose, &(e.rotation, e.translation))
+        });
         let folded = simplify.edges[0].edge(&config, [1.0; 4]);
         assert_eq!((folded.from, folded.to), (0, 1));
         assert!(close(&(folded.rotation, folded.translation), &chained));
         for axis in 0..6 {
             let summed: f64 = steps[..3].iter().map(|e| e.variances[axis]).sum();
-            assert!((folded.variances[axis] - summed).abs() < 1e-15 * summed.max(1.0), "axis {axis}");
+            assert!(
+                (folded.variances[axis] - summed).abs() < 1e-15 * summed.max(1.0),
+                "axis {axis}"
+            );
         }
         // keyframe 4 is the frontier: its own node, joined to node 1 by its plain step
         let odometry = simplify.odometry(&key_poses, 5);
         assert_eq!(odometry.len(), 2);
         assert_eq!((odometry[1].from, odometry[1].to), (1, 2));
-        assert!(close(&odometry[1].relative, &(steps[3].rotation, steps[3].translation)));
+        assert!(close(
+            &odometry[1].relative,
+            &(steps[3].rotation, steps[3].translation)
+        ));
     }
 
     /// A closure onto a removed keyframe rides its node: the node-to-node edge reproduces the same keyframe poses.
@@ -672,7 +781,10 @@ mod tests {
         simplify.placements.push(Placement::Anchored {
             node: 0,
             offset,
-            spread: Spread { frozen: true, ..Spread::default() },
+            spread: Spread {
+                frozen: true,
+                ..Spread::default()
+            },
             place: 0,
         });
         // closure: source 2 seen from target 1
@@ -687,7 +799,10 @@ mod tests {
             fit_confidence: 1.0,
             yank_stdevs: 0.0,
         });
-        let config = Config { graph_simplify_closures_per_pair: 0, ..Config::default() };
+        let config = Config {
+            graph_simplify_closures_per_pair: 0,
+            ..Config::default()
+        };
         let edges = simplify.closures(&closures, 1, &config);
         assert_eq!(edges.len(), 1);
         let (index, edge) = edges[0];
@@ -698,7 +813,11 @@ mod tests {
         let keyframe2 = compose(&node0, &offset);
         assert!(close(&compose(&node1, &measured), &keyframe2));
         // a closure between two keyframes of one node drops out
-        closures.push(crate::store::ClosureFixed { source_id: 2, target_id: 0, ..*closures.fixed(0) });
+        closures.push(crate::store::ClosureFixed {
+            source_id: 2,
+            target_id: 0,
+            ..*closures.fixed(0)
+        });
         assert_eq!(simplify.closures(&closures, 2, &config).len(), 1);
     }
 
@@ -715,7 +834,10 @@ mod tests {
         simplify.placements.push(Placement::Anchored {
             node: 1,
             offset: (mat3::rot_z(0.1), [0.2, 0.0, 0.0]),
-            spread: Spread { frozen: true, ..Spread::default() },
+            spread: Spread {
+                frozen: true,
+                ..Spread::default()
+            },
             place: 1,
         });
         let mut closures = Closures::default();
@@ -731,12 +853,18 @@ mod tests {
             });
         }
         closures.adopt(Arc::new(vec![1.0, 1.0, 0.0, 1.0]));
-        let config = Config { graph_simplify_closures_per_pair: 2, ..Config::default() };
+        let config = Config {
+            graph_simplify_closures_per_pair: 2,
+            ..Config::default()
+        };
         let edges = simplify.closures(&closures, 4, &config);
         assert_eq!(edges.iter().map(|e| e.0).collect::<Vec<_>>(), vec![0, 1]);
         let mut unfolded = Closures::default();
         for _ in 0..4 {
-            unfolded.push(crate::store::ClosureFixed { source_id: 1, ..*closures.fixed(0) });
+            unfolded.push(crate::store::ClosureFixed {
+                source_id: 1,
+                ..*closures.fixed(0)
+            });
         }
         assert_eq!(simplify.closures(&unfolded, 4, &config).len(), 4);
         let expansion = Expansion {
@@ -767,6 +895,9 @@ mod tests {
         let expanded = expansion.expand(solution);
         assert_eq!(expanded.closure_weights, vec![0.0, 1.0, 0.0, 1.0]);
         // the removed keyframe rides node 1
-        assert!(close(&(expanded.rotations[2], expanded.positions[2]), &(mat3::rot_z(0.1), [1.2, 0.0, 0.0])));
+        assert!(close(
+            &(expanded.rotations[2], expanded.positions[2]),
+            &(mat3::rot_z(0.1), [1.2, 0.0, 0.0])
+        ));
     }
 }

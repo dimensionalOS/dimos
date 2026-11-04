@@ -16,17 +16,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -47,7 +47,7 @@ MID360_ODOMETRY_ERROR_ESTIMATE = {
 
 class PGOConfig(NativeModuleConfig):
     # "deterministic": jobs held to deterministic_config estimates (same graph on any machine); "fast": land on finish
-    mode: str = "deterministic"
+    mode: Literal["deterministic", "fast"] = "deterministic"
     # overshoot warnings are logged at most once per this many seconds of data
     overshoot_warning_interval_s: float = 10.0
     # per-job cost estimates in scans (a job holds ceil(estimate) scans, at least one; *_power are unitless exponents)
@@ -64,6 +64,8 @@ class PGOConfig(NativeModuleConfig):
             "solve_keyframe_power": 2.017,
             "solve_closure_power": -0.215,
             "solve_rejected_power": 0.558,
+            "solve_closure_free_scans_scale": 6.606e-4,
+            "solve_closure_free_keyframe_power": 1.651,
             "debounce_scans_per_keyframe": 6.093487031356368e-06,
             "merge_scans_per_keyframe": 3.0032671115943386e-07,
             "pressure_scans_fixed_overhead": 0.0007777038336858567,
@@ -76,7 +78,7 @@ class PGOConfig(NativeModuleConfig):
     )
     source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"
     executable: str = "result/bin/gsc-pgo"
-    build_command: str | None = "nix build .#default --no-write-lock-file"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     # outputs: map → odom
@@ -131,10 +133,7 @@ class PGOConfig(NativeModuleConfig):
     # display-only soft_pressure is 50% at this log10 loop hazard, log-compressed to 0% soft_pressure_decades below
     soft_pressure_half_log10_hazard: float = -0.5
     soft_pressure_decades: float = 100.0
-    # reduced pose graph for very long runs: once a keyframe is graph_simplify_frontier_keyframes behind the newest, it rides
-    # a keyframe kept on an older pass within graph_simplify_place_radius_m (cloud and descriptor freed) when a kept closure
-    # is within graph_simplify_localized_keyframes of it; a closure folded onto riding keyframes goes to the solve only while
-    # its pair of places has fewer than graph_simplify_closures_per_pair
+    # reduced pose graph for long runs: a keyframe past the frontier rides an older pass's keyframe within place_radius_m
     graph_simplify: bool = True
     graph_simplify_frontier_keyframes: int = 1000
     # a keyframe revisits a place only if the kept keyframe there is at least this many keyframes older
@@ -173,8 +172,7 @@ class PGOConfig(NativeModuleConfig):
     # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
     solve_seed_from_accepted: bool = True
     solve_seed_gnc_verdicts: bool = False
-    # solver fast path: a new closure whose older end is within max_keyframes of the newest is applied at once by a local
-    # least squares (no GNC) over those keyframes, until the GNC solve covering it lands and supersedes it
+    # solver fast path: a recent closure is applied at once by local least squares until the GNC solve supersedes it
     solver_fast_path_enabled: bool = False
     solver_fast_path_max_keyframes: int = 1000
     # each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate
@@ -200,6 +198,16 @@ class PGOConfig(NativeModuleConfig):
     learned_odometry_error_estimate_from_closures: bool = True
     # noise learner reads only pairwise-consistent (PCM core) kept closures
     odometry_error_estimate_evidence_core: bool = True
+    # "scan_context": place recognition proposes closures; "inputs_only": only landmarks / world positions (plus landmark-seeded ICP)
+    closure_sources: Literal["scan_context", "inputs_only"] = "scan_context"
+    # with inputs_only: run that landmark-seeded ICP closure (false = landmarks and world positions alone)
+    landmark_closure_icp: bool = True
+    # 2D: odometry and every factor count only as x, y, yaw; the solve holds z, roll and pitch at 0
+    planar_pose_graph: bool = False
+    # landmark warm start: first solve with odometry xy variances times this (<= 1 = off) so a re-sighting can pull a loop shut
+    landmark_warm_start_xy_variance_scale: float = 1000.0
+    # ...then xy stiffens stage by stage (scale divided by this each time) so every stage's LM converges
+    landmark_warm_start_xy_variance_ladder: float = 10.0
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0
@@ -237,7 +245,9 @@ class PGOConfig(NativeModuleConfig):
     def _odometry_error_estimate(self) -> PGOConfig:
         given = {name: getattr(self, name) for name in MID360_ODOMETRY_ERROR_ESTIMATE}
         if self.odometry_error_estimate_from_lidar_range is None:
-            self.odometry_error_estimate_from_lidar_range = all(v is None for v in given.values())
+            self.odometry_error_estimate_from_lidar_range = all(
+                value is None for value in given.values()
+            )
         for name, value in given.items():
             if value is None:
                 setattr(self, name, MID360_ODOMETRY_ERROR_ESTIMATE[name])
@@ -253,8 +263,8 @@ class GscPGO(NativeModule):
     odometry: In[Odometry]
     # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
     coordinate_factor: In[Odometry]
-    # landmark sighting: header.frame_id = sensor, child_frame_id = landmark name, 6x6 covariance (unknown dims: -1)
-    landmark_factor: In[Odometry]
+    # landmark sighting (TagSightings): frame_id = sensor, to_id = landmark; a repeated constraint_instance_id replaces it
+    landmark_factor: In[LocationConstraint]
     corrected_odometry: Out[Odometry]
     # the map -> odometry correction, identity until the first one
     tf: IO[TFMessage]
@@ -266,7 +276,3 @@ class GscPGO(NativeModule):
     closure_edges: Out[PointCloud2]
     # JSON lines tagged "kind" (pressure, closure, keyframe, solve, odometry_drift) and "ts"
     debug_log: Out[String]
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()

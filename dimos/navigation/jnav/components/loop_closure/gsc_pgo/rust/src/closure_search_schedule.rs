@@ -101,7 +101,9 @@ impl SearchPool {
         }
     }
     pub(crate) fn send(&self, work: Work) {
-        self.jobs.send(work).expect("closure search workers stopped");
+        self.jobs
+            .send(work)
+            .expect("closure search workers stopped");
     }
 }
 
@@ -169,7 +171,10 @@ impl GscPgo {
             || !self.verification_buffer.is_empty()
     }
     fn jobs_of(&self, kind: JobKind) -> usize {
-        self.closure_searches.iter().filter(|job| job.kind == kind).count()
+        self.closure_searches
+            .iter()
+            .filter(|job| job.kind == kind)
+            .count()
     }
     /// Move the waiting proposal (new match or a rejected search's next alternative) into the scan-context buffer.
     fn buffer_waiting_proposal(&mut self) {
@@ -180,7 +185,9 @@ impl GscPgo {
     }
     /// Free workers take the best buffered entries, then each buffer drops its worst past its size.
     fn fill_workers(&mut self) {
-        while self.jobs_of(JobKind::FastMatch) < self.config.fast_match_workers && !self.sc_buffer.is_empty() {
+        while self.jobs_of(JobKind::FastMatch) < self.config.fast_match_workers
+            && !self.sc_buffer.is_empty()
+        {
             // lowest scan-context distance, ties by arrival
             let best = (0..self.sc_buffer.len())
                 .min_by(|&a, &b| {
@@ -221,15 +228,24 @@ impl GscPgo {
     }
     /// Index of the best (or worst) verification entry by confidence ratio, earlier dispatch winning ties.
     fn verification_rank(&self, best: bool) -> usize {
-        let key = |i: usize| (self.verification_buffer[i].0.ratio, std::cmp::Reverse(self.verification_buffer[i].1));
+        let key = |i: usize| {
+            (
+                self.verification_buffer[i].0.ratio,
+                std::cmp::Reverse(self.verification_buffer[i].1),
+            )
+        };
         let cmp = |a: &usize, b: &usize| {
             let (ka, kb) = (key(*a), key(*b));
             ka.0.total_cmp(&kb.0).then(ka.1.cmp(&kb.1))
         };
         if best {
-            (0..self.verification_buffer.len()).max_by(cmp).expect("not empty")
+            (0..self.verification_buffer.len())
+                .max_by(cmp)
+                .expect("not empty")
         } else {
-            (0..self.verification_buffer.len()).min_by(cmp).expect("not empty")
+            (0..self.verification_buffer.len())
+                .min_by(cmp)
+                .expect("not empty")
         }
     }
     fn dispatch_closure_search(&mut self, kind: JobKind) {
@@ -238,7 +254,8 @@ impl GscPgo {
         };
         let progress = Arc::new(SearchProgress::default());
         search.progress = Some(progress.clone());
-        let (estimate_raw_scans, source_points, target_points) = self.fast_match_estimate_raw_scans(&search);
+        let (estimate_raw_scans, source_points, target_points) =
+            self.fast_match_estimate_raw_scans(&search);
         search.diag.dispatch_source_points = source_points;
         search.diag.dispatch_target_points = target_points;
         let finish = progress.clone();
@@ -251,7 +268,11 @@ impl GscPgo {
         self.push_job(kind, progress, order, estimate_raw_scans, 0.0);
     }
     /// `order`: its fast match's dispatch number.
-    fn dispatch_verification(&mut self, mut pending: Box<crate::gsc_pgo::PendingExtension>, order: u64) {
+    fn dispatch_verification(
+        &mut self,
+        mut pending: Box<crate::gsc_pgo::PendingExtension>,
+        order: u64,
+    ) {
         let progress = Arc::new(SearchProgress::default());
         pending.search.progress = Some(progress.clone());
         pending.diag.verification_scan_index_dispatched = self.scans_seen;
@@ -260,9 +281,20 @@ impl GscPgo {
         let workers = self.config.verification_workers;
         self.verification_pool
             .get_or_insert_with(|| SearchPool::new(workers, "gsc-verification"))
-            .send(Box::new(move || finish.finish(SearchStage::Done(pending.run()))));
-        let estimate_raw_scans = self.config.deterministic_config.verification_scans_fixed_overhead;
-        self.push_job(JobKind::Verification, progress, order, estimate_raw_scans, earlier_s);
+            .send(Box::new(move || {
+                finish.finish(SearchStage::Done(pending.run()))
+            }));
+        let estimate_raw_scans = self
+            .config
+            .deterministic_config
+            .verification_scans_fixed_overhead;
+        self.push_job(
+            JobKind::Verification,
+            progress,
+            order,
+            estimate_raw_scans,
+            earlier_s,
+        );
     }
     fn push_job(
         &mut self,
@@ -322,7 +354,10 @@ impl GscPgo {
                 .iter()
                 .position(|job| job.order == order && job.kind as u8 == kind)
                 .expect("a due job is out");
-            let job = self.closure_searches.remove(index).expect("index found above");
+            let job = self
+                .closure_searches
+                .remove(index)
+                .expect("index found above");
             self.land_closure_search(job);
             // a rejected search's next alternative joins the scan-context buffer as its result lands
             self.buffer_waiting_proposal();
@@ -335,7 +370,10 @@ impl GscPgo {
         let (rounds, _) = job.progress.snapshot();
         let estimate_scans = job.estimate_scans(rounds);
         let estimate_raw_scans = job.estimate_raw_scans(rounds);
-        let mut stage = job.progress.take_stage().expect("a landing job has finished");
+        let mut stage = job
+            .progress
+            .take_stage()
+            .expect("a landing job has finished");
         let handed_on_s = match &stage {
             SearchStage::Extend(pending) => Some(pending.fast_s),
             SearchStage::Done(_) => None,
@@ -411,7 +449,12 @@ impl GscPgo {
     }
     /// Drop the scan times older than every out job's dispatch.
     fn trim_search_scan_times(&mut self) {
-        let Some(oldest) = self.closure_searches.iter().map(|job| job.dispatch_scan).min() else {
+        let Some(oldest) = self
+            .closure_searches
+            .iter()
+            .map(|job| job.dispatch_scan)
+            .min()
+        else {
             self.search_scan_times.clear();
             return;
         };
@@ -425,10 +468,17 @@ impl GscPgo {
         let config = &self.config;
         let resolution = config.submap_resolution;
         let points = |k: usize| {
-            search.key_poses.get(k)
+            search
+                .key_poses
+                .get(k)
                 .body_cloud
                 .as_ref()
-                .map_or(0, |body| self.keyframe_clouds.get(k, body).voxelized(resolution).len())
+                .map_or(0, |body| {
+                    self.keyframe_clouds
+                        .get(k, body)
+                        .voxelized(resolution)
+                        .len()
+                })
         };
         let (source_idx, target_idx) = (search.diag.source_id, search.target_idx);
         let half_range = config.target_half_range(1);
@@ -440,14 +490,18 @@ impl GscPgo {
         let (source, target) = (source_points.max(1) as f64, target_points.max(2) as f64);
         // lookup grows with the map (none for a retry)
         let lookup = if search.diag.cost_lookup_s > 0.0 {
-            config.deterministic_config.fast_match_scans_per_keyframe * search.diag.map_keyframes as f64
+            config.deterministic_config.fast_match_scans_per_keyframe
+                * search.diag.map_keyframes as f64
         } else {
             0.0
         };
         let scans = config.deterministic_config.fast_match_scans_fixed_overhead
             + lookup
             + config.deterministic_config.fast_match_scans_per_point * (source + target)
-            + config.deterministic_config.fast_match_scans_per_source_point * source;
+            + config
+                .deterministic_config
+                .fast_match_scans_per_source_point
+                * source;
         (scans, source_points, target_points)
     }
     /// Newest advancing scan's data time (-inf before any).
@@ -455,7 +509,12 @@ impl GscPgo {
         self.newest_advancing_time.unwrap_or(f64::NEG_INFINITY)
     }
     /// Record measured scans (seconds x scan rate) / raw estimate for `runtime_profile`; diagnostics only.
-    pub(crate) fn record_job_ratio(&mut self, kind: &'static str, seconds: f64, estimate_raw_scans: f64) {
+    pub(crate) fn record_job_ratio(
+        &mut self,
+        kind: &'static str,
+        seconds: f64,
+        estimate_raw_scans: f64,
+    ) {
         let rate = match self.first_advancing_time {
             Some(first) if self.newest_scan_time() > first => {
                 (self.advancing_scans - 1) as f64 / (self.newest_scan_time() - first)
@@ -463,7 +522,8 @@ impl GscPgo {
             _ => f64::NAN,
         };
         if estimate_raw_scans > 0.0 && (seconds * rate).is_finite() {
-            self.job_ratios.push((kind, seconds * rate / estimate_raw_scans));
+            self.job_ratios
+                .push((kind, seconds * rate / estimate_raw_scans));
         }
     }
     /// `deterministic_config` with each LET's coefficients scaled by its p99 measured/estimated ratio (diagnostics).
@@ -475,22 +535,36 @@ impl GscPgo {
             }
             for (field, value) in coefficients {
                 let slot = match field {
-                    "fast_match_scans_fixed_overhead" => &mut suggested.fast_match_scans_fixed_overhead,
+                    "fast_match_scans_fixed_overhead" => {
+                        &mut suggested.fast_match_scans_fixed_overhead
+                    }
                     "fast_match_scans_per_keyframe" => &mut suggested.fast_match_scans_per_keyframe,
                     "fast_match_scans_per_point" => &mut suggested.fast_match_scans_per_point,
-                    "fast_match_scans_per_source_point" => &mut suggested.fast_match_scans_per_source_point,
-                    "verification_scans_fixed_overhead" => &mut suggested.verification_scans_fixed_overhead,
+                    "fast_match_scans_per_source_point" => {
+                        &mut suggested.fast_match_scans_per_source_point
+                    }
+                    "verification_scans_fixed_overhead" => {
+                        &mut suggested.verification_scans_fixed_overhead
+                    }
                     "verification_scans_per_round" => &mut suggested.verification_scans_per_round,
-                    "verification_scans_per_round_point" => &mut suggested.verification_scans_per_round_point,
+                    "verification_scans_per_round_point" => {
+                        &mut suggested.verification_scans_per_round_point
+                    }
                     "solve_scans_scale" => &mut suggested.solve_scans_scale,
-                    "solve_closure_free_scans_scale" => &mut suggested.solve_closure_free_scans_scale,
+                    "solve_closure_free_scans_scale" => {
+                        &mut suggested.solve_closure_free_scans_scale
+                    }
                     "debounce_scans_per_keyframe" => &mut suggested.debounce_scans_per_keyframe,
                     "merge_scans_per_keyframe" => &mut suggested.merge_scans_per_keyframe,
                     "pressure_scans_fixed_overhead" => &mut suggested.pressure_scans_fixed_overhead,
                     "pressure_scans_per_keyframe" => &mut suggested.pressure_scans_per_keyframe,
                     "pressure_scans_per_closure" => &mut suggested.pressure_scans_per_closure,
-                    "fast_path_scans_fixed_overhead" => &mut suggested.fast_path_scans_fixed_overhead,
-                    "fast_path_scans_per_window_keyframe" => &mut suggested.fast_path_scans_per_window_keyframe,
+                    "fast_path_scans_fixed_overhead" => {
+                        &mut suggested.fast_path_scans_fixed_overhead
+                    }
+                    "fast_path_scans_per_window_keyframe" => {
+                        &mut suggested.fast_path_scans_per_window_keyframe
+                    }
                     "fast_path_scans_per_keyframe" => &mut suggested.fast_path_scans_per_keyframe,
                     _ => continue,
                 };
@@ -510,33 +584,105 @@ impl GscPgo {
         };
         let c = &self.config;
         let groups: [ProfileGroup; 7] = [
-            ("fast_match", vec![
-                ("fast_match_scans_fixed_overhead", c.deterministic_config.fast_match_scans_fixed_overhead),
-                ("fast_match_scans_per_keyframe", c.deterministic_config.fast_match_scans_per_keyframe),
-                ("fast_match_scans_per_point", c.deterministic_config.fast_match_scans_per_point),
-                ("fast_match_scans_per_source_point", c.deterministic_config.fast_match_scans_per_source_point),
-            ]),
-            ("verification", vec![
-                ("verification_scans_fixed_overhead", c.deterministic_config.verification_scans_fixed_overhead),
-                ("verification_scans_per_round", c.deterministic_config.verification_scans_per_round),
-                ("verification_scans_per_round_point", c.deterministic_config.verification_scans_per_round_point),
-            ]),
-            ("solve", vec![
-                ("solve_scans_scale", c.deterministic_config.solve_scans_scale),
-                ("solve_closure_free_scans_scale", c.deterministic_config.solve_closure_free_scans_scale),
-            ]),
-            ("debounce", vec![("debounce_scans_per_keyframe", c.deterministic_config.debounce_scans_per_keyframe)]),
-            ("merge", vec![("merge_scans_per_keyframe", c.deterministic_config.merge_scans_per_keyframe)]),
-            ("pressure", vec![
-                ("pressure_scans_fixed_overhead", c.deterministic_config.pressure_scans_fixed_overhead),
-                ("pressure_scans_per_keyframe", c.deterministic_config.pressure_scans_per_keyframe),
-                ("pressure_scans_per_closure", c.deterministic_config.pressure_scans_per_closure),
-            ]),
-            ("fast_path", vec![
-                ("fast_path_scans_fixed_overhead", c.deterministic_config.fast_path_scans_fixed_overhead),
-                ("fast_path_scans_per_window_keyframe", c.deterministic_config.fast_path_scans_per_window_keyframe),
-                ("fast_path_scans_per_keyframe", c.deterministic_config.fast_path_scans_per_keyframe),
-            ]),
+            (
+                "fast_match",
+                vec![
+                    (
+                        "fast_match_scans_fixed_overhead",
+                        c.deterministic_config.fast_match_scans_fixed_overhead,
+                    ),
+                    (
+                        "fast_match_scans_per_keyframe",
+                        c.deterministic_config.fast_match_scans_per_keyframe,
+                    ),
+                    (
+                        "fast_match_scans_per_point",
+                        c.deterministic_config.fast_match_scans_per_point,
+                    ),
+                    (
+                        "fast_match_scans_per_source_point",
+                        c.deterministic_config.fast_match_scans_per_source_point,
+                    ),
+                ],
+            ),
+            (
+                "verification",
+                vec![
+                    (
+                        "verification_scans_fixed_overhead",
+                        c.deterministic_config.verification_scans_fixed_overhead,
+                    ),
+                    (
+                        "verification_scans_per_round",
+                        c.deterministic_config.verification_scans_per_round,
+                    ),
+                    (
+                        "verification_scans_per_round_point",
+                        c.deterministic_config.verification_scans_per_round_point,
+                    ),
+                ],
+            ),
+            (
+                "solve",
+                vec![
+                    (
+                        "solve_scans_scale",
+                        c.deterministic_config.solve_scans_scale,
+                    ),
+                    (
+                        "solve_closure_free_scans_scale",
+                        c.deterministic_config.solve_closure_free_scans_scale,
+                    ),
+                ],
+            ),
+            (
+                "debounce",
+                vec![(
+                    "debounce_scans_per_keyframe",
+                    c.deterministic_config.debounce_scans_per_keyframe,
+                )],
+            ),
+            (
+                "merge",
+                vec![(
+                    "merge_scans_per_keyframe",
+                    c.deterministic_config.merge_scans_per_keyframe,
+                )],
+            ),
+            (
+                "pressure",
+                vec![
+                    (
+                        "pressure_scans_fixed_overhead",
+                        c.deterministic_config.pressure_scans_fixed_overhead,
+                    ),
+                    (
+                        "pressure_scans_per_keyframe",
+                        c.deterministic_config.pressure_scans_per_keyframe,
+                    ),
+                    (
+                        "pressure_scans_per_closure",
+                        c.deterministic_config.pressure_scans_per_closure,
+                    ),
+                ],
+            ),
+            (
+                "fast_path",
+                vec![
+                    (
+                        "fast_path_scans_fixed_overhead",
+                        c.deterministic_config.fast_path_scans_fixed_overhead,
+                    ),
+                    (
+                        "fast_path_scans_per_window_keyframe",
+                        c.deterministic_config.fast_path_scans_per_window_keyframe,
+                    ),
+                    (
+                        "fast_path_scans_per_keyframe",
+                        c.deterministic_config.fast_path_scans_per_keyframe,
+                    ),
+                ],
+            ),
         ];
         groups
             .into_iter()
@@ -549,7 +695,10 @@ impl GscPgo {
                     .collect();
                 let count = ratios.len();
                 let ratio = percentile(ratios);
-                let suggested = coefficients.into_iter().map(|(field, value)| (field, value * ratio)).collect();
+                let suggested = coefficients
+                    .into_iter()
+                    .map(|(field, value)| (field, value * ratio))
+                    .collect();
                 (name, ratio, count, suggested)
             })
             .collect()

@@ -36,15 +36,15 @@ pub fn truth() -> Vec<(f64, Vec3)> {
 }
 
 /// Deterministic noise uniform on [-1, 1).
-pub fn noise(k: usize, salt: f64) -> f64 {
-    ((k as f64 * 12.9898 + salt * 78.233).sin() * 43758.5453).rem_euclid(1.0) * 2.0 - 1.0
+pub fn noise(k: usize, stream: f64) -> f64 {
+    ((k as f64 * 12.9898 + stream * 78.233).sin() * 43758.5453).rem_euclid(1.0) * 2.0 - 1.0
 }
 
 /// Odometry along `truth` with errors matching its stated variances, and its dead-reckoned poses.
 pub fn odometry(truth: &[(f64, Vec3)]) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>) {
     let (heading_sigma, step_sigma) = (0.02, 0.03);
     // uniform on [-sqrt3 sigma, sqrt3 sigma] has standard deviation sigma
-    let u = |k: usize, salt: f64, sigma: f64| noise(k, salt) * 3f64.sqrt() * sigma;
+    let u = |k: usize, stream: f64, sigma: f64| noise(k, stream) * 3f64.sqrt() * sigma;
     let edges: Vec<Edge> = (1..N)
         .map(|k| {
             let ((yaw_a, a), (yaw_b, b)) = (truth[k - 1], truth[k]);
@@ -79,13 +79,14 @@ pub fn odometry(truth: &[(f64, Vec3)]) -> (Vec<Edge>, Vec<Mat3>, Vec<Vec3>) {
 }
 
 /// Deterministic uniform on (0, 1).
-pub fn uniform(k: usize, salt: f64) -> f64 {
-    ((k as f64 * 12.9898 + salt * 78.233).sin() * 43758.5453)
+pub fn uniform(k: usize, stream: f64) -> f64 {
+    ((k as f64 * 12.9898 + stream * 78.233).sin() * 43758.5453)
         .rem_euclid(1.0)
         .max(1e-12)
 }
 
 /// Deterministic standard normal (Box-Muller).
-pub fn normal(k: usize, salt: f64) -> f64 {
-    (-2.0 * uniform(k, salt).ln()).sqrt() * (std::f64::consts::TAU * uniform(k, salt + 0.5)).cos()
+pub fn normal(k: usize, stream: f64) -> f64 {
+    (-2.0 * uniform(k, stream).ln()).sqrt()
+        * (std::f64::consts::TAU * uniform(k, stream + 0.5)).cos()
 }

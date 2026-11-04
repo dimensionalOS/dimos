@@ -31,6 +31,7 @@ from dimos.evals.agents.dimcode import DimcodeAdapter
 from dimos.evals.agents.lib import pi_config
 from dimos.evals.agents.lib.pi_config import Provider
 from dimos.evals.agents.pi import PiAdapter
+from dimos.evals.constants import PROVIDERS
 from dimos.evals.types import RunningEnvironment, ToolCall, Trajectory
 from dimos.memory.store.sqlite import SqliteStore
 
@@ -46,7 +47,11 @@ class ScriptedProvider:
 
     @property
     def model(self) -> str:
-        return "gpt-6-astra" if self.name == "openai" else "claude-fable-5-1"
+        return {
+            "openai": "gpt-6-astra",
+            "anthropic": "claude-fable-5-1",
+            "google": "gemini-2.5-flash",
+        }[self.name]
 
     def call(self, name: str, **arguments: JsonValue) -> None:
         self.calls.append(
@@ -59,6 +64,22 @@ class ScriptedProvider:
         index = len(self.requests) - 1
         call = self.calls[index] if index < len(self.calls) else None
         events: list[dict[str, JsonValue]]
+        if self.name == "google":
+            part: dict[str, JsonValue] = (
+                dict(functionCall=dict(name=call.function_name, args=call.arguments))
+                if call
+                else dict(text="OK")
+            )
+            events = [
+                dict(
+                    candidates=[
+                        dict(content=dict(role="model", parts=[part]), finishReason="STOP")
+                    ],
+                    usageMetadata=dict(promptTokenCount=10, candidatesTokenCount=5),
+                    responseId=f"r_{index}",
+                )
+            ]
+            return "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
         if self.name == "openai":
             item: dict[str, JsonValue] = (
                 dict(
@@ -144,7 +165,7 @@ def isolated_agent_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 def provider(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[ScriptedProvider]:
-    backend: Provider = "openai" if request.param == "openai" else "anthropic"
+    backend: Provider = request.param
     scripted = ScriptedProvider(backend)
 
     class Server(BaseHTTPRequestHandler):
@@ -166,7 +187,7 @@ def provider(
     with ThreadingHTTPServer(("127.0.0.1", 0), Server) as server:
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01))
         thread.start()
-        monkeypatch.setenv(f"{backend.upper()}_API_KEY", "offline-test-key")
+        monkeypatch.setenv(PROVIDERS[backend][0], "offline-test-key")
         monkeypatch.setenv(f"{backend.upper()}_BASE_URL", f"http://127.0.0.1:{server.server_port}")
         try:
             yield scripted

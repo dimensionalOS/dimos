@@ -212,6 +212,10 @@ struct SharedState {
 type Shared<T> = Arc<Mutex<T>>;
 
 /// `name`'s index in `names`, appended if new.
+fn last_keyframe_time(pgo: &GscPgo) -> f64 {
+    pgo.key_poses().last().map_or(0.0, |keyframe| keyframe.time)
+}
+
 fn index_of(names: &mut Vec<String>, name: &str) -> usize {
     names.iter().position(|n| n == name).unwrap_or_else(|| {
         names.push(name.to_string());
@@ -509,7 +513,8 @@ impl GraphPublisher {
     fn spawn(worker: &Worker, frame_id: String) -> GraphPublisher {
         let pending: PendingPublish = Arc::default();
         let (shared, stop) = (Arc::clone(&pending), Arc::clone(&worker.stop));
-        let (pose_graph, loop_closure_event) = (worker.pose_graph.clone(), worker.loop_closure_event.clone());
+        let (pose_graph, loop_closure_event) =
+            (worker.pose_graph.clone(), worker.loop_closure_event.clone());
         let (rt, dump_path) = (worker.rt.clone(), worker.config.dump_path.clone());
         std::thread::Builder::new()
             .name("gsc-publish".into())
@@ -538,12 +543,19 @@ impl GraphPublisher {
                             None => return,
                         }
                     };
-                    let Publish { keys, closure_closed, ts } = next;
+                    let Publish {
+                        keys,
+                        closure_closed,
+                        ts,
+                    } = next;
                     heard.add_new(&keys);
                     if let Some(changes) = heard.take_changes(&keys, closure_closed) {
                         let records = build_loop_closure_records(changes, ts, &frame_id);
                         publish(
-                            &|| rt.block_on(loop_closure_event.publish(&records)).map_err(|e| e.to_string()),
+                            &|| {
+                                rt.block_on(loop_closure_event.publish(&records))
+                                    .map_err(|e| e.to_string())
+                            },
                             "loop_closure_event",
                         );
                         if !dump_path.is_empty() {
@@ -551,7 +563,9 @@ impl GraphPublisher {
                                 .create(true)
                                 .append(true)
                                 .open(format!("{dump_path}.closures"))
-                                .and_then(|mut file| append_pose_changes(&mut file, ts, &records.data));
+                                .and_then(|mut file| {
+                                    append_pose_changes(&mut file, ts, &records.data)
+                                });
                             if let Err(e) = appended {
                                 warn!(error = %e, "Failed to dump the loop closure.");
                             }
@@ -559,7 +573,10 @@ impl GraphPublisher {
                     }
                     let records = build_pose_graph_records(&keys, ts, &frame_id);
                     publish(
-                        &|| rt.block_on(pose_graph.publish(&records)).map_err(|e| e.to_string()),
+                        &|| {
+                            rt.block_on(pose_graph.publish(&records))
+                                .map_err(|e| e.to_string())
+                        },
                         "pose_graph",
                     );
                     if !dump_path.is_empty() {
@@ -660,7 +677,7 @@ impl Worker {
             let solve_finished =
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
             if solve_finished && pgo.update() {
-                let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+                let last_time = last_keyframe_time(&pgo);
                 publisher.send(&pgo, false, last_time);
                 self.log_solve(&pgo, last_time);
             }
@@ -673,30 +690,36 @@ impl Worker {
                 )
             };
             if !fixes.is_empty() || !sightings.is_empty() {
-                for f in fixes {
-                    pgo.add_coordinate_factor(f.ts, f.frame, f.lever, f.position, f.covariance);
+                for fix in fixes {
+                    pgo.add_coordinate_factor(
+                        fix.ts,
+                        fix.frame,
+                        fix.lever,
+                        fix.position,
+                        fix.covariance,
+                    );
                 }
-                for s in sightings {
-                    match s.sighting {
+                for landmark_sighting in sightings {
+                    match landmark_sighting.sighting {
                         Some(sighting) => pgo.replace_landmark_factor(
                             sighting,
-                            s.ts,
-                            s.landmark,
-                            s.rotation,
-                            s.position,
-                            s.information,
+                            landmark_sighting.ts,
+                            landmark_sighting.landmark,
+                            landmark_sighting.rotation,
+                            landmark_sighting.position,
+                            landmark_sighting.information,
                         ),
                         None => pgo.add_landmark_factor(
-                            s.ts,
-                            s.landmark,
-                            s.rotation,
-                            s.position,
-                            s.information,
+                            landmark_sighting.ts,
+                            landmark_sighting.landmark,
+                            landmark_sighting.rotation,
+                            landmark_sighting.position,
+                            landmark_sighting.information,
                         ),
                     }
                 }
                 if pgo.update() {
-                    let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+                    let last_time = last_keyframe_time(&pgo);
                     publisher.send(&pgo, false, last_time);
                     self.log_solve(&pgo, last_time);
                 }
@@ -776,7 +799,7 @@ impl Worker {
         }
         pgo.finish();
         pgo.overshoot_report();
-        let last_time = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+        let last_time = last_keyframe_time(&pgo);
         self.log_odometry_drift(&pgo, last_time);
     }
 
@@ -807,7 +830,7 @@ impl Worker {
         }
         let closures = pgo.committed_closures();
         let judged = closures.iter().filter(|c| !c.gnc_weight.is_nan()).count();
-        let kept = closures.iter().filter(|c| c.gnc_weight > 0.5).count();
+        let kept = closures.iter().filter(|closure| closure.is_kept()).count();
         self.log(
             "solve",
             ts,
@@ -829,7 +852,7 @@ impl Worker {
         let kept = pgo
             .committed_closures()
             .iter()
-            .filter(|c| c.gnc_weight > 0.5)
+            .filter(|closure| closure.is_kept())
             .count();
         if kept > 0 {
             let (drift, measured) = pgo.odometry_error_estimate_for_next_run();
@@ -851,7 +874,10 @@ impl Worker {
             }
             let mut ratios = serde_json::Map::new();
             for (name, ratio, jobs, _) in pgo.runtime_profile() {
-                ratios.insert(name.into(), serde_json::json!({ "measured_over_estimated_p99": ratio, "jobs": jobs }));
+                ratios.insert(
+                    name.into(),
+                    serde_json::json!({ "measured_over_estimated_p99": ratio, "jobs": jobs }),
+                );
             }
             fields.insert("let_measured".into(), serde_json::Value::Object(ratios));
             self.log("odometry_drift", ts, serde_json::Value::Object(fields));
@@ -863,7 +889,7 @@ impl Worker {
         if events.len() <= *sent {
             return;
         }
-        let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+        let ts = last_keyframe_time(pgo);
         let msg = build_closure_edge_records(&events[*sent..], pgo.key_poses(), ts, frame_id);
         self.publish(&self.closure_edges, &msg, "closure_edges");
         *sent = events.len();

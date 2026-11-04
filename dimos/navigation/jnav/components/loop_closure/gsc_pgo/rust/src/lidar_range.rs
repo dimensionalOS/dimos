@@ -75,7 +75,9 @@ impl LidarRangeConfig {
                 self.decay_half_life_updates
             ));
         }
-        if !(self.l1_range_m > 0.0 && self.mid360_range_m > 0.0) || self.l1_range_m == self.mid360_range_m {
+        if !(self.l1_range_m > 0.0 && self.mid360_range_m > 0.0)
+            || self.l1_range_m == self.mid360_range_m
+        {
             return Err(format!(
                 "lidar_range.l1_range_m and mid360_range_m must be positive and differ (got {} and {})",
                 self.l1_range_m, self.mid360_range_m
@@ -86,7 +88,8 @@ impl LidarRangeConfig {
 
     /// The odometry error estimate at `range_m`: linear between the L1 and the Mid-360, the nearer one's outside them.
     pub fn odometry_error_estimate_at(&self, range_m: f64) -> OdometryErrorEstimate {
-        let t = ((range_m - self.l1_range_m) / (self.mid360_range_m - self.l1_range_m)).clamp(0.0, 1.0);
+        let t =
+            ((range_m - self.l1_range_m) / (self.mid360_range_m - self.l1_range_m)).clamp(0.0, 1.0);
         std::array::from_fn(|source| {
             std::array::from_fn(|unit| {
                 self.l1_odometry_error_estimate[source][unit] * (1.0 - t)
@@ -134,7 +137,6 @@ impl LidarRange {
         self.estimate_m = Some(estimate);
         Some(estimate)
     }
-
 }
 
 #[cfg(test)]
@@ -158,12 +160,25 @@ mod tests {
     #[test]
     fn estimate_is_linear_between_the_lidars_and_held_outside() {
         let c = config();
-        assert_eq!(c.odometry_error_estimate_at(10.0), c.l1_odometry_error_estimate);
-        assert_eq!(c.odometry_error_estimate_at(30.0), c.mid360_odometry_error_estimate);
-        assert_eq!(c.odometry_error_estimate_at(100.0), c.mid360_odometry_error_estimate);
-        assert_eq!(c.odometry_error_estimate_at(1.0), c.l1_odometry_error_estimate);
+        assert_eq!(
+            c.odometry_error_estimate_at(10.0),
+            c.l1_odometry_error_estimate
+        );
+        assert_eq!(
+            c.odometry_error_estimate_at(30.0),
+            c.mid360_odometry_error_estimate
+        );
+        assert_eq!(
+            c.odometry_error_estimate_at(100.0),
+            c.mid360_odometry_error_estimate
+        );
+        assert_eq!(
+            c.odometry_error_estimate_at(1.0),
+            c.l1_odometry_error_estimate
+        );
         let half = c.odometry_error_estimate_at(20.0)[0][1];
-        let expected = (c.l1_odometry_error_estimate[0][1] + c.mid360_odometry_error_estimate[0][1]) / 2.0;
+        let expected =
+            (c.l1_odometry_error_estimate[0][1] + c.mid360_odometry_error_estimate[0][1]) / 2.0;
         assert!((half - expected).abs() < 1e-12);
     }
 
@@ -174,10 +189,16 @@ mod tests {
         let updates: Vec<f64> = (0..40).filter_map(|_| range.add(20.0, &c)).collect();
         assert_eq!(updates, vec![20.0; 4]);
         // blending every scan (a window of 5): once the median is the new range, each blend moves the estimate less
-        let c = LidarRangeConfig { window_scans: 5, ..c };
+        let c = LidarRangeConfig {
+            window_scans: 5,
+            ..c
+        };
         let mut range = LidarRange::default();
         (0..10).for_each(|_| _ = range.add(20.0, &c));
-        let moves: Vec<f64> = (0..10).filter_map(|_| range.add(40.0, &c)).skip(2).collect();
+        let moves: Vec<f64> = (0..10)
+            .filter_map(|_| range.add(40.0, &c))
+            .skip(2)
+            .collect();
         let steps: Vec<f64> = moves.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(steps.windows(2).all(|s| s[1] < s[0]), "{moves:?}");
     }
