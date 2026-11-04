@@ -30,8 +30,9 @@ import threading
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.localize.localize import LocalizeTrace, answer_window, memory_key
-from dimos.perception.localize.memento import Gap, Memento, Sighting
+from dimos.perception.localize.memento import FrameSpan, Gap, Memento, Sighting
 from dimos.perception.localize.tools.tool_localize import XARM_PARAMS
 from dimos.perception.localize.types import Localization, LocalizeParams
 
@@ -79,20 +80,38 @@ class Desk:
         self.reads: list[dict[str, tuple[tuple[float, float], ...]]] = []
         self.detected: list[tuple[str, float]] = []
 
-    def read(self, gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
-        self.reads.append({label: gap.spans for label, gap in gaps.items()})
+    def read(self, gaps: dict[str, Gap]) -> dict[str, tuple[list[FrameSpan], list[Sighting]]]:
+        detected: dict[str, list[float]] = {label: [] for label in gaps}
         found: dict[str, list[Sighting]] = {label: [] for label in gaps}
         for ts in (float(t) for t in range(math.floor(self.recorded) + 1)):
             for label, gap in gaps.items():
-                if ts not in gap:
+                if ("camera", ts) not in gap:
                     continue
                 self.detected.append((label, ts))
+                detected[label].append(ts)
                 found[label] += [
                     _sighting(stay, ts)
                     for stay in self.stays
                     if stay.label == label and stay.start <= ts <= stay.end
                 ]
-        return found
+        # a read is the runs of frames it detected, per label that detected any
+        runs = {label: _runs(ts) for label, ts in detected.items() if ts}
+        if runs:
+            self.reads.append(runs)
+        return {
+            label: ([("camera", a, b) for a, b in runs.get(label, ())], found[label])
+            for label in gaps
+        }
+
+
+def _runs(ts: list[float]) -> tuple[tuple[float, float], ...]:
+    runs = [[ts[0], ts[0]]]
+    for t in ts[1:]:
+        if t - runs[-1][1] == 1:
+            runs[-1][1] = t
+        else:
+            runs.append([t, t])
+    return tuple((a, b) for a, b in runs)
 
 
 def _sighting(stay: Stay, ts: float) -> Sighting:
@@ -102,7 +121,7 @@ def _sighting(stay: Stay, ts: float) -> Sighting:
         camera="camera",
         score=0.6,
         points=np.asarray(stay.at) + grid.reshape(-1, 3),
-        viewpoint=(math.cos(0.3 * ts), math.sin(0.3 * ts), 1.0),
+        viewpoint=Vector3(math.cos(0.3 * ts), math.sin(0.3 * ts), 1.0),
         detection=(stay.label, stay.at, ts),
     )
 
@@ -328,7 +347,7 @@ def test_an_overlapping_window_reads_only_its_new_part(desk: Desk) -> None:
     desk.detected.clear()
     trace = LocalizeTrace()
     book = ask(desk, memento, ["book"], (20, 50), traces=[trace])["book"]
-    assert desk.reads[1] == {"book": ((35, 50),)}
+    assert desk.reads[1] == {"book": ((36, 50),)}
     assert [ts for _, ts in desk.detected] == [float(t) for t in range(36, 51)]
     assert spans(book) == [(20, 50)]  # 20 to 35 from memory, 36 to 50 just read
     fresh_trace = LocalizeTrace()
@@ -341,7 +360,7 @@ def test_an_overlapping_window_with_a_new_label_reads_each_labels_own_gap(desk: 
     ask(desk, memento, ["book"], (10, 35))
     desk.detected.clear()
     answers = ask(desk, memento, ["book", "pen"], (20, 50))
-    assert desk.reads[1] == {"book": ((35, 50),), "pen": ((20, 50),)}
+    assert desk.reads[1] == {"book": ((36, 50),), "pen": ((20, 50),)}
     assert [ts for label, ts in desk.detected if label == "book"] == [
         float(t) for t in range(36, 51)
     ]
@@ -370,7 +389,7 @@ def test_a_window_across_two_read_spans_reads_only_the_hole_between(desk: Desk) 
     ask(desk, memento, ["book"], (40, 60))
     desk.detected.clear()
     ask(desk, memento, ["book"], (10, 50))
-    assert desk.reads[2] == {"book": ((20, 40),)}
+    assert desk.reads[2] == {"book": ((21, 39),)}
     assert [ts for _, ts in desk.detected] == [float(t) for t in range(21, 40)]
 
 
@@ -383,7 +402,7 @@ def test_a_window_across_three_read_spans_reads_only_both_holes_and_coalesces(
     ask(desk, memento, ["book"], (60, 75))
     desk.detected.clear()
     book = ask(desk, memento, ["book"], (10, 70))["book"]
-    assert desk.reads[3] == {"book": ((15, 30), (45, 60))}
+    assert desk.reads[3] == {"book": ((16, 29), (46, 59))}
     assert [ts for _, ts in desk.detected] == [
         *[float(t) for t in range(16, 30)],
         *[float(t) for t in range(46, 60)],
@@ -405,6 +424,29 @@ def test_no_frame_is_detected_twice_and_memory_answers_like_a_fresh_read(desk: D
         for label in labels:
             assert evidence(remembered[label]) == evidence(fresh[label])
     assert len(desk.detected) == len(set(desk.detected))
+
+
+def test_a_frame_an_earlier_window_did_not_detect_is_detected_by_a_later_one() -> None:
+    memento, key, detected = Memento(), memory_key(XARM_PARAMS), []
+
+    def sparse(gaps: dict[str, Gap]) -> dict[str, tuple[list[FrameSpan], list[Sighting]]]:
+        # picks the window's start, middle and end, as retrieve picks by the window
+        a, b = gaps["book"].spans[0]
+        picked = [
+            t for t in (a, float(math.floor((a + b) / 2)), b) if ("camera", t) in gaps["book"]
+        ]
+        detected.extend(picked)
+        found = [
+            _sighting(stay, t) for t in picked for stay in DESK[:2] if stay.start <= t <= stay.end
+        ]
+        return {"book": ([("camera", t, t) for t in picked], found)}
+
+    memento.recall(["book"], key, (10, 50), 100, sparse)
+    found, _ = memento.recall(["book"], key, (40, 70), 100, sparse)
+    assert detected == [10.0, 30.0, 50.0, 40.0, 55.0, 70.0]
+    assert [s.ts for s in found["book"]] == [40.0, 50.0, 55.0, 70.0]
+    memento.recall(["book"], key, (40, 70), 100, sparse)
+    assert len(detected) == 6
 
 
 def test_a_window_past_the_newest_frame_reads_the_rest_once_it_arrives() -> None:
@@ -446,23 +488,26 @@ def test_numpy_scalar_timestamps_and_scores_round_trip_and_compare_as_floats(
 ) -> None:
     memento, key = Memento(), memory_key(XARM_PARAMS)
 
-    def read_np(gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
+    def read_np(gaps: dict[str, Gap]) -> dict[str, tuple[list[FrameSpan], list[Sighting]]]:
+        picked = [t for t in (10.0, 20.0, 80.0, 90.0) if ("camera", np.float32(t)) in gaps["book"]]
         return {
-            "book": [
-                Sighting(
-                    ts=float(np.float32(t)),
-                    camera="camera",
-                    score=float(np.float32(0.75)),
-                    points=np.asarray(A) + np.zeros((18, 3), dtype=np.float32),
-                    viewpoint=(
-                        float(np.float32(math.cos(t))),
-                        float(np.float32(math.sin(t))),
-                        float(np.float32(1.0)),
-                    ),
-                )
-                for t in (10.0, 20.0, 80.0, 90.0)
-                if np.float32(t) in gaps["book"]
-            ]
+            "book": (
+                [("camera", float(np.float32(t)), float(np.float32(t))) for t in picked],
+                [
+                    Sighting(
+                        ts=float(np.float32(t)),
+                        camera="camera",
+                        score=float(np.float32(0.75)),
+                        points=np.asarray(A) + np.zeros((18, 3), dtype=np.float32),
+                        viewpoint=Vector3(
+                            float(np.float32(math.cos(t))),
+                            float(np.float32(math.sin(t))),
+                            float(np.float32(1.0)),
+                        ),
+                    )
+                    for t in picked
+                ],
+            )
         }
 
     # Construct Sighting with raw numpy.float32 scalars at runtime as callers might.
@@ -473,7 +518,7 @@ def test_numpy_scalar_timestamps_and_scores_round_trip_and_compare_as_floats(
     s_early.__post_init__()
     s_late.ts = np.float32(80.0)  # type: ignore[assignment]
     s_late.score = np.float32(0.8)  # type: ignore[assignment]
-    s_late.viewpoint = (np.float32(0.0), np.float32(1.0), np.float32(1.0))  # type: ignore[assignment]
+    s_late.viewpoint = Vector3(np.float32(0.0), np.float32(1.0), np.float32(1.0))
     s_late.__post_init__()
 
     memento.recall(
@@ -481,7 +526,7 @@ def test_numpy_scalar_timestamps_and_scores_round_trip_and_compare_as_floats(
         key,
         (float(np.float32(0.0)), float(np.float32(100.0))),
         float(np.float32(100.0)),
-        lambda _: {"book": [s_early, s_late]},
+        lambda _: {"book": ([("camera", 0.0, 100.0)], [s_early, s_late])},
     )
     memento.forget(np.float32(50.0))  # type: ignore[arg-type]
     memento.dump(tmp_path / "np.db")
@@ -489,13 +534,13 @@ def test_numpy_scalar_timestamps_and_scores_round_trip_and_compare_as_floats(
     found, _ = loaded.recall(["book"], key, (50.0, 100.0), 100.0, read_np)
     assert [s.ts for s in found["book"]] == [80.0]
     assert isinstance(found["book"][0].score, float)
-    assert all(isinstance(v, float) for v in found["book"][0].viewpoint)
+    assert all(isinstance(v, float) for v in found["book"][0].viewpoint.to_tuple())
 
 
 def test_a_failed_read_leaves_nothing_behind(desk: Desk) -> None:
     memento = Memento()
 
-    def broken(gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
+    def broken(gaps: dict[str, Gap]) -> dict[str, tuple[list[FrameSpan], list[Sighting]]]:
         desk.read(gaps)
         raise RuntimeError("detector died")
 
@@ -518,19 +563,20 @@ def test_a_failed_read_leaves_nothing_behind(desk: Desk) -> None:
 def test_a_read_rejected_after_storing_a_sighting_leaves_nothing_behind(desk: Desk) -> None:
     memento, key = Memento(), memory_key(XARM_PARAMS)
 
-    def stray(gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
+    def stray(gaps: dict[str, Gap]) -> dict[str, tuple[list[FrameSpan], list[Sighting]]]:
         # the first is stored before the second, outside the gap, is refused
-        return {"book": [_sighting(DESK[0], 10.0), _sighting(DESK[0], 80.0)]}
+        spans = [("camera", 10.0, 10.0), ("camera", 80.0, 80.0)]
+        return {"book": (spans, [_sighting(DESK[0], 10.0), _sighting(DESK[0], 80.0)])}
 
     with pytest.raises(ValueError):
         memento.recall(["book"], key, (0, 50), desk.head, stray)
 
     with pytest.raises(ValueError):
-        memento.recall(["book"], key, (0, 50), desk.head, lambda _: {"pen": []})
+        memento.recall(["book"], key, (0, 50), desk.head, lambda _: {"pen": ([], [])})
 
     retried: list[dict[str, Gap]] = []
 
-    def nothing(gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
+    def nothing(gaps: dict[str, Gap]) -> dict[str, tuple[list[FrameSpan], list[Sighting]]]:
         retried.append(gaps)
         return {}
 
@@ -544,7 +590,7 @@ def test_forgotten_time_is_read_again_and_only_it(desk: Desk) -> None:
     ask(desk, memento, ["book"], (0, 100))
     memento.forget(50)
     book = ask(desk, memento, ["book"], (0, 100))["book"]
-    assert desk.reads[1] == {"book": ((0, 50),)}
+    assert desk.reads[1] == {"book": ((0, 49),)}
     assert spans(book) == [(55, 100), (0, 50)]
 
 

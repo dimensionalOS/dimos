@@ -14,9 +14,10 @@
 
 """Memento: what localize has read, by label, read params and time.
 
-A window is answered only from sightings inside it. A span a label has
-already read under the same read params is never read again: the window takes
-its sightings from here, and only the window's unread gap goes to the reader.
+A window is answered only from sightings inside it. A frame a label has
+already detected under the same read params is never detected again: the
+window takes its sightings from here, and the reader detects only its unread
+frames.
 """
 
 from __future__ import annotations
@@ -26,11 +27,14 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
 Span = tuple[float, float]  # closed [start, end], seconds
+FrameSpan = tuple[str, float, float]  # (camera, start, end), every frame in it detected
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sightings (
@@ -46,13 +50,14 @@ CREATE TABLE IF NOT EXISTS sightings (
     points BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sightings_in_time ON sightings (label, key, ts);
-CREATE TABLE IF NOT EXISTS spans (
+CREATE TABLE IF NOT EXISTS frame_spans (
     label TEXT NOT NULL,
     key TEXT NOT NULL,
+    camera TEXT NOT NULL,
     start REAL NOT NULL,
     end REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS spans_of_label ON spans (label, key);
+CREATE INDEX IF NOT EXISTS frame_spans_of_label ON frame_spans (label, key, camera);
 """
 
 
@@ -64,47 +69,44 @@ class Sighting:
     camera: str
     score: float
     points: np.ndarray  # (n, 3) world frame, held as float32
-    viewpoint: tuple[float, float, float]  # camera position, world frame
+    viewpoint: Vector3  # camera position, world frame
     id: int = -1  # row id, set once stored
     detection: Any = None  # the lifted detection; this process only, never stored
 
     def __post_init__(self) -> None:
         self.ts = float(self.ts)
         self.score = float(self.score)
-        vx, vy, vz = self.viewpoint
-        self.viewpoint = (float(vx), float(vy), float(vz))
+        self.viewpoint = Vector3(self.viewpoint)
         self.points = np.ascontiguousarray(self.points, dtype=np.float32).reshape(-1, 3)
 
 
 @dataclass(frozen=True)
 class Gap:
-    """The part of a window a label has not read: ``spans``, less the closed ``read`` spans."""
+    """The part of a window a label has not read: ``spans``, less the ``read`` frame spans."""
 
     spans: tuple[Span, ...]
-    read: tuple[Span, ...]
+    read: tuple[FrameSpan, ...]
 
     def __bool__(self) -> bool:
         return bool(self.spans)
 
-    def __contains__(self, ts: object) -> bool:
-        t = float(ts)  # type: ignore[arg-type]
+    def __contains__(self, frame: object) -> bool:
+        camera, ts = cast("tuple[str, float]", frame)
+        t = float(ts)
         return any(a <= t <= b for a, b in self.spans) and not any(
-            a <= t <= b for a, b in self.read
+            c == camera and a <= t <= b for c, a, b in self.read
         )
 
-    @property
-    def seconds(self) -> float:
-        return sum(b - a for a, b in self.spans)
 
-
-Reader = Callable[[dict[str, Gap]], Mapping[str, Iterable[Sighting]]]
+# per label: the frame spans it detected, and the sightings lifted from them
+Reader = Callable[[dict[str, Gap]], Mapping[str, tuple[Iterable[FrameSpan], Iterable[Sighting]]]]
 
 
 class Memento:
-    """Sightings by label and read params in sqlite, with the spans each label has read.
+    """Sightings by label and read params in sqlite, with the frame spans each label has read.
 
     In memory by default; ``dump`` and ``load`` move it to and from a file. One
-    lock serializes recalls, so two windows never read the same span twice.
+    lock serializes recalls, so two windows never detect the same frame twice.
     """
 
     def __init__(self, path: str | Path = ":memory:") -> None:
@@ -119,30 +121,33 @@ class Memento:
         """Each label's sightings inside ``window``, reading only its unread gap.
 
         ``read`` gets the gap of every label that has one, up to ``head``, the
-        newest frame there is, and returns the sightings it lifted, each inside
-        its label's gap. They are stored and the window up to ``head`` marked
-        read in one transaction, so a failed read leaves nothing behind and a
-        frame that arrives later is read by a later call.
+        newest frame there is, and returns the frame spans it detected and the
+        sightings it lifted from them. They are stored and the frame spans
+        marked read in one transaction, so a failed read leaves nothing behind.
         """
         with self._lock:
             window = (float(window[0]), float(window[1]))
             end = min(window[1], float(head))
             gaps = {label: self._gap(label, key, (window[0], end)) for label in labels}
             todo = {label: gap for label, gap in gaps.items() if gap}
-            fresh = {label: list(found) for label, found in read(todo).items()} if todo else {}
+            done = read(todo) if todo else {}
+            fresh: dict[str, list[Sighting]] = {}
             with self._db:
-                for label, found in fresh.items():
+                for label, (spans, found) in done.items():
                     if label not in todo:
                         raise ValueError(f"{label!r} has no unread gap")
-                    for sighting in found:
-                        if sighting.ts not in todo[label]:
+                    spans = [(str(c), float(a), float(b)) for c, a, b in spans]
+                    fresh[label] = list(found)
+                    for sighting in fresh[label]:
+                        if (sighting.camera, sighting.ts) not in todo[label] or not any(
+                            c == sighting.camera and a <= sighting.ts <= b for c, a, b in spans
+                        ):
                             raise ValueError(
-                                f"{label!r} sighting at {sighting.ts} lies outside its unread gap"
+                                f"{label!r} sighting at {sighting.ts} lies outside its detected frames"
                             )
                         sighting.id = self._insert(label, key, sighting)
-                if window[0] <= end:
-                    for label in todo:
-                        self._mark(label, key, (window[0], end))
+                    for camera, a, b in spans:
+                        self._mark(label, key, camera, (a, b))
             for found in fresh.values():
                 for sighting in found:
                     self._held[sighting.id] = sighting
@@ -159,8 +164,8 @@ class Memento:
                 )
             ]
             self._db.execute("DELETE FROM sightings WHERE ts < ?", (before,))
-            self._db.execute("DELETE FROM spans WHERE end < ?", (before,))
-            self._db.execute("UPDATE spans SET start = ? WHERE start < ?", (before, before))
+            self._db.execute("DELETE FROM frame_spans WHERE end < ?", (before,))
+            self._db.execute("UPDATE frame_spans SET start = ? WHERE start < ?", (before, before))
             for row_id in dropped:
                 self._held.pop(row_id, None)
 
@@ -195,44 +200,36 @@ class Memento:
         if start > end:
             return Gap((), ())
         read = tuple(
-            (float(a), float(b))
-            for a, b in self._db.execute(
-                "SELECT start, end FROM spans WHERE label = ? AND key = ? AND end >= ? "
-                "AND start <= ? ORDER BY start",
+            (str(c), float(a), float(b))
+            for c, a, b in self._db.execute(
+                "SELECT camera, start, end FROM frame_spans WHERE label = ? AND key = ? "
+                "AND end >= ? AND start <= ? ORDER BY start",
                 (label, key, start, end),
             )
         )
-        if not read:
-            return Gap(((start, end),), read)
-        spans: list[Span] = []
-        cursor = start
-        for a, b in read:
-            if a > cursor:
-                spans.append((cursor, min(a, end)))
-            cursor = max(cursor, b)
-        if cursor < end:
-            spans.append((cursor, end))
-        return Gap(tuple(spans), read)
+        return Gap(((start, end),), read)
 
-    def _mark(self, label: str, key: str, span: Span) -> None:
+    def _mark(self, label: str, key: str, camera: str, span: Span) -> None:
         start, end = span
         rows = list(
             self._db.execute(
-                "SELECT rowid, start, end FROM spans WHERE label = ? AND key = ? AND end >= ? "
-                "AND start <= ?",
-                (label, key, start, end),
+                "SELECT rowid, start, end FROM frame_spans WHERE label = ? AND key = ? "
+                "AND camera = ? AND end >= ? AND start <= ?",
+                (label, key, camera, start, end),
             )
         )
         for _, a, b in rows:
             start, end = min(start, a), max(end, b)
-        self._db.executemany("DELETE FROM spans WHERE rowid = ?", [(row,) for row, _, _ in rows])
+        self._db.executemany(
+            "DELETE FROM frame_spans WHERE rowid = ?", [(row,) for row, _, _ in rows]
+        )
         self._db.execute(
-            "INSERT INTO spans (label, key, start, end) VALUES (?, ?, ?, ?)",
-            (label, key, start, end),
+            "INSERT INTO frame_spans (label, key, camera, start, end) VALUES (?, ?, ?, ?, ?)",
+            (label, key, camera, start, end),
         )
 
     def _insert(self, label: str, key: str, sighting: Sighting) -> int:
-        vx, vy, vz = sighting.viewpoint
+        vx, vy, vz = sighting.viewpoint.to_tuple()
         cursor = self._db.execute(
             "INSERT INTO sightings (label, key, ts, camera, score, vx, vy, vz, points) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -264,7 +261,7 @@ class Memento:
                 camera=camera,
                 score=score,
                 points=np.frombuffer(blob, dtype=np.float32),
-                viewpoint=(vx, vy, vz),
+                viewpoint=Vector3(vx, vy, vz),
                 id=row_id,
             )
             for row_id, ts, camera, score, vx, vy, vz, blob in rows

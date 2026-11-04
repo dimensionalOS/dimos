@@ -266,9 +266,9 @@ class PerceptionLocalize(Module):
         ``start`` and ``duration`` are seconds and name the window. A positive
         ``start`` counts forward from the beginning of the feed; a negative one
         counts back from the newest frame, so the default reads the last ten
-        seconds. The answer holds only what was seen inside the window. A span
-        an earlier call read for a label is answered from memory, not detected
-        again, so an overlapping window detects only its new part.
+        seconds. The answer holds only what was seen inside the window. A frame
+        an earlier call detected for a label is answered from memory, not
+        detected again, so an overlapping window detects only what is new.
 
         ``params`` is a JSON object of LocalizeParams field overrides for this
         call only, e.g. '{"accept_score": 0.45, "verify_radius_m": 2.0}'.

@@ -64,7 +64,9 @@ class Groups:
         else:
             self._fuse(hit, points, centroid, voxel)
 
-        self.members[hit].extend((sighting.ts, sighting.score, *centroid, *sighting.viewpoint))
+        self.members[hit].extend(
+            (sighting.ts, sighting.score, *centroid, *sighting.viewpoint.to_tuple())
+        )
         self.sightings[hit].append(sighting)
         return hit
 

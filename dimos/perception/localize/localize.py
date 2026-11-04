@@ -50,7 +50,7 @@ from dimos.perception.localize.association import (
     M_TS,
     Groups,
 )
-from dimos.perception.localize.memento import Gap, Memento, Reader, Sighting, Span
+from dimos.perception.localize.memento import FrameSpan, Gap, Memento, Reader, Sighting, Span
 from dimos.perception.localize.rig import Rig, camera_hz
 from dimos.perception.localize.support_plane import (
     SupportPlane,
@@ -101,7 +101,36 @@ def _per_camera(counts: dict[str, int]) -> str:
 
 
 def _inside(gap: Gap) -> Callable[[Any], bool]:
-    return lambda obs: obs.ts in gap
+    return lambda obs: any(a <= obs.ts <= b for a, b in gap.spans)
+
+
+def _unread(gap: Gap, obs: Any) -> bool:
+    return (obs.tags["camera"], obs.ts) in gap
+
+
+def _frame_spans(
+    index: Stream[Any, Any], gaps: dict[str, Gap], detected: set[int]
+) -> dict[str, list[FrameSpan]]:
+    """Each query's runs of index frames, per camera, that are detected or already read."""
+    spans: dict[str, list[FrameSpan]] = {q: [] for q in gaps}
+    runs: dict[tuple[str, str], list[float]] = {}
+    window = next(iter(gaps.values())).spans[0]
+    for obs in index.time_range(*window).order_by("ts"):
+        camera = obs.tags["camera"]
+        for q, gap in gaps.items():
+            unread = _unread(gap, obs)
+            run = runs.get((q, camera))
+            if obs.id in detected or not unread:
+                if run is None:
+                    runs[(q, camera)] = [obs.ts, obs.ts]
+                else:
+                    run[1] = obs.ts
+            elif run is not None:
+                spans[q].append((camera, run[0], run[1]))
+                del runs[(q, camera)]
+    for (q, camera), (a, b) in runs.items():
+        spans[q].append((camera, a, b))
+    return spans
 
 
 def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
@@ -266,7 +295,8 @@ def retrieve(
             sightings.extend(found)
             found_by[frame] = len(found)
         for peak in sightings:
-            candidate_ids.add(peak.id)
+            if _unread(gap, peak):
+                candidate_ids.add(peak.id)
             peak_key = (peak.tags["camera"], peak.ts, gap)
             if peak_key in expanded:
                 continue
@@ -275,7 +305,7 @@ def retrieve(
                 gathered: Stream[Any, Any] = feed.near(
                     peak.pose_stamped, radius=params.verify_radius_m
                 ).transform(QualityWindow(lambda f: f.sharpness, window=params.verify_window_s))
-                candidate_ids.update(obs.id for obs in gathered)
+                candidate_ids.update(obs.id for obs in gathered if _unread(gap, obs))
         logger.info(
             f"localize {q!r}: {len(sightings)} semantic peaks of {index_count} embedded "
             f"({_per_camera(found_by)})"
@@ -338,7 +368,7 @@ def detect(
             active = [
                 j
                 for j, q in enumerate(queries)
-                if q in gaps and obs.ts in gaps[q] and queries.index(q) == j
+                if q in gaps and _unread(gaps[q], obs) and queries.index(q) == j
             ]
             if not active:
                 continue
@@ -397,7 +427,7 @@ def lift(
                     camera=camera,
                     score=float(det3d.confidence),
                     points=np.asarray(det3d.pointcloud.pointcloud.points),
-                    viewpoint=(viewpoint.x, viewpoint.y, viewpoint.z),
+                    viewpoint=viewpoint,
                     detection=det3d if keep else None,
                 ),
             )
@@ -432,9 +462,9 @@ def localize(
     viewpoint. Coexisting instances of one label are all returned, each
     carrying ``ambiguity_margin`` against its rivals, and an object that moved
     inside the window is an instance per place. ``memento`` keeps every
-    sighting read: a span a label has read under the same params, the answer
-    gates aside, is answered from it with no detector pass, so a window
-    overlapping earlier ones detects only its unread gap. ``traces``, one per
+    sighting read: a frame a label has detected under the same params, the
+    answer gates aside, is answered from it with no detector pass, so a window
+    overlapping earlier ones detects only the frames they did not. ``traces``, one per
     query, collect what a renderer needs.
     """
     params = replace(params, embed_hz=rig.cap_embed_hz(params.embed_hz))
@@ -442,7 +472,7 @@ def localize(
         list(traces) if traces is not None else [None] * len(queries)
     )
 
-    def read(gaps: dict[str, Gap]) -> dict[str, list[Sighting]]:
+    def read(gaps: dict[str, Gap]) -> dict[str, tuple[list[FrameSpan], list[Sighting]]]:
         candidates = retrieve(gaps, index=index, rig=rig, embedder=embedder, params=params)
         planes = support_planes(rig, candidates, params)
         detections = detect(
@@ -458,7 +488,8 @@ def localize(
             traces=label_traces,
         ):
             found[label].append(sighting)
-        return found
+        spans = _frame_spans(index, gaps, {obs.id for obs in candidates})
+        return {q: (spans[q], found[q]) for q in gaps}
 
     return answer_window(
         queries,
@@ -492,8 +523,8 @@ def answer_window(
     found, gaps = memento.recall(queries, key, window, head, read)
     for q in queries:
         logger.info(
-            f"memento {q!r}: read {gaps[q].seconds:.1f}s of the {window[1] - window[0]:.1f}s "
-            f"window, {len(found[q])} sightings in it"
+            f"memento {q!r}: {len(gaps[q].read)} frame spans read in the "
+            f"{window[1] - window[0]:.1f}s window, {len(found[q])} sightings in it"
         )
     return [_finalize(q, found[q], params, world_frame, traces[j]) for j, q in enumerate(queries)]
 

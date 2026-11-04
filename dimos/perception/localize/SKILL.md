@@ -56,11 +56,11 @@ a view count and when it was first and last seen; an empty answer is an answer.
 - An answer holds only what was seen inside its window. Earlier calls never add
   objects to it, and nothing seen outside the window changes its positions,
   ages, scores or views.
-- A span of time is read once per label and params; the fields that only build
+- A frame is detected once per label and params; the fields that only build
   the answer, `accept_score`, `min_views`, `cluster_radius_m` and
   `fuse_voxel_m`, aside. A window never read for a label costs detector passes.
   The same window asked again is answered from memory with no detector pass,
-  and a window overlapping earlier ones reads only its new part.
+  and a window overlapping earlier ones detects only the frames they did not.
 
 ## Reading the answer
 
