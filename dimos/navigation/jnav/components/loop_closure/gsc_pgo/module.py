@@ -27,6 +27,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.jnav.msgs.LocationConstraint import LocationConstraint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -64,6 +65,8 @@ class PGOConfig(NativeModuleConfig):
             "solve_keyframe_power": 2.017,
             "solve_closure_power": -0.215,
             "solve_rejected_power": 0.558,
+            "solve_closure_free_scans_scale": 6.606e-4,
+            "solve_closure_free_keyframe_power": 1.651,
             "debounce_scans_per_keyframe": 6.093487031356368e-06,
             "merge_scans_per_keyframe": 3.0032671115943386e-07,
             "pressure_scans_fixed_overhead": 0.0007777038336858567,
@@ -200,6 +203,19 @@ class PGOConfig(NativeModuleConfig):
     learned_odometry_error_estimate_from_closures: bool = True
     # noise learner reads only pairwise-consistent (PCM core) kept closures
     odometry_error_estimate_evidence_core: bool = True
+    # "scan_context": scan-context place recognition proposes closures; "inputs_only": none, the graph is odometry plus the
+    # external inputs (landmark_sighting, world_position), and a landmark re-seen on a later visit seeds an ICP closure
+    closure_sources: str = "scan_context"
+    # with inputs_only: run that landmark-seeded ICP closure (false = landmarks and world positions alone)
+    landmark_closure_icp: bool = True
+    # 2D: odometry taken as x, y, yaw (z, roll, pitch dropped, clouds levelled) and the solve holds every keyframe's
+    # z, roll and pitch at 0; closures, landmark sightings and world positions count only in the plane
+    planar_pose_graph: bool = False
+    # a solve with landmark sightings first solves with the odometry's xy variances times this (<= 1 = off), so a re-sighting
+    # across a long drifted loop can pull it shut; the real solve (and its outlier verdicts) starts from that shape
+    landmark_warm_start_xy_variance_scale: float = 1000.0
+    # ...then xy stiffens stage by stage (scale divided by this each time) so every stage's LM converges
+    landmark_warm_start_xy_variance_ladder: float = 10.0
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = 50
     closure_icp_max_correspondence_m: float = 10.0
@@ -253,8 +269,9 @@ class GscPGO(NativeModule):
     odometry: In[Odometry]
     # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
     coordinate_factor: In[Odometry]
-    # landmark sighting: header.frame_id = sensor, child_frame_id = landmark name, 6x6 covariance (unknown dims: -1)
-    landmark_factor: In[Odometry]
+    # landmark sighting: frame_id = sensor, to_id = landmark, (rotation, position) covariance (unknown dims: -1);
+    # a repeated constraint_instance_id replaces that sighting (TagSightings publishes these)
+    landmark_factor: In[LocationConstraint]
     corrected_odometry: Out[Odometry]
     # the map -> odometry correction, identity until the first one
     tf: IO[TFMessage]
