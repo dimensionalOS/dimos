@@ -231,6 +231,7 @@ jobs:
         with:
           name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
           path: .cachix-marker
+          include-hidden-files: true  # The marker lives in a dot directory.
           if-no-files-found: error
           overwrite: true  # A re-run of this job replaces its earlier upload.
 
@@ -300,6 +301,7 @@ jobs:
         with:
           name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
           path: .cachix-marker
+          include-hidden-files: true  # The marker lives in a dot directory.
           if-no-files-found: error
           overwrite: true  # A re-run of this job replaces its earlier upload.
 
