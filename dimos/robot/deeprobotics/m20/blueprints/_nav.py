@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from types import ModuleType
+from typing import TYPE_CHECKING
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -34,6 +36,11 @@ from dimos.robot.deeprobotics.m20.constants import (
     BODY_WIDTH_M,
     PLANNING_HEIGHT_M,
 )
+
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
+
+    from dimos.visualization.rerun.bridge import VisualOverride
 
 VOXEL_SIZE_M = 0.08
 WALL_CLEARANCE_M = 0.3
@@ -78,7 +85,7 @@ _m20_nav = autoconnect(
 )
 
 
-def _robot_body(rr: Any) -> list[Any]:
+def _robot_body(rr: ModuleType) -> list[Archetype]:
     return [
         rr.Boxes3D(
             half_sizes=[
@@ -93,12 +100,12 @@ def _robot_body(rr: Any) -> list[Any]:
     ]
 
 
-def m20_nav_static() -> dict[str, Any]:
+def m20_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     """Bridge static entities for navigation: the body box on base_link."""
     return {"world/robot_body": _robot_body}
 
 
-def m20_nav_overrides() -> dict[str, Any]:
+def m20_nav_overrides() -> dict[str, VisualOverride]:
     """Bridge overrides for the navigation maps, paths and planner debug, with the raw clouds hidden."""
     return {
         "world/lidar": None,

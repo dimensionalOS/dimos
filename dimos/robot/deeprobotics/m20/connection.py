@@ -319,6 +319,7 @@ class M20Connection(Module):
 
     def _heartbeat(self) -> None:
         address = (self.config.basic_server_host, self.config.basic_server_udp_port)
+        failing = False
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
             while not self._heartbeat_stop.wait(_BASIC_SERVER_HEARTBEAT_PERIOD_S):
                 _message_id, apdu = self._encode_basic_server_apdu(
@@ -327,7 +328,13 @@ class M20Connection(Module):
                 try:
                     udp.sendto(apdu, address)
                 except OSError as exc:
-                    logger.warning("M20 basic_server heartbeat failed: %s", exc)
+                    if not failing:
+                        logger.warning("M20 basic_server heartbeat failed: %s", exc)
+                    failing = True
+                    continue
+                if failing:
+                    logger.info("M20 basic_server heartbeat recovered")
+                failing = False
 
     def _encode_basic_server_apdu(
         self, message_type: int, command: int, items: dict[str, Any]

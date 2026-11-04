@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from functools import partial
+from itertools import pairwise
 from pathlib import Path
 
 import mujoco
@@ -103,10 +104,10 @@ def _add_guard(spec: mujoco.MjSpec, sensor: Sensor) -> None:
     body.pos = sensor.mount_xyz
     body.quat = Rotation.from_matrix(sensor.mount_r).as_quat(scalar_first=True)
     capsules = [
-        *zip(GUARD_CENTERLINE, GUARD_CENTERLINE[1:], GUARD_RADII, strict=False),
-        (*SHELL_CENTERLINE, SHELL_RADIUS),
+        *zip(pairwise(GUARD_CENTERLINE), GUARD_RADII, strict=True),
+        (SHELL_CENTERLINE, SHELL_RADIUS),
     ]
-    for start, end, radius in capsules:
+    for (start, end), radius in capsules:
         for side in (1.0, -1.0):
             geom = body.add_geom()
             geom.type = mujoco.mjtGeom.mjGEOM_CAPSULE
