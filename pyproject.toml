@@ -590,7 +590,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "683b13fae900320d00a62265b1906d4cabf491fc" }
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "b2b4d4cab2545e0ab99f585a5eefe7118cf86a64" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
