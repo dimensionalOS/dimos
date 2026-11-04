@@ -22,12 +22,12 @@ def test_walk_forward(
     lcm_spy, start_blueprint, wait_for_system_ready, human_input, dim_sim
 ) -> None:
     start_blueprint(
+        "--agentic",
         "run",
         "--disable",
         "spatial-memory",
-        "--disable",
-        "security-module",
-        "unitree-go2-agentic",
+        "unitree-go2",
+        "mcp-client",
         simulator="dimsim",
     )
     wait_for_system_ready(timeout=300.0)
