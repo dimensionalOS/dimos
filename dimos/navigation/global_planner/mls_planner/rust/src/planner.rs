@@ -22,7 +22,7 @@ use crate::edges::PlannerGraph;
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
 use crate::nodes::{NodeId, NO_NODE};
-use crate::terrain::within_step;
+use crate::terrain::{climb, within_step};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 /// Robot-rooted candidate search radius, in multiples of node spacing.
@@ -688,6 +688,8 @@ pub(crate) struct PathLimits {
     pub(crate) voxel_size: f32,
     /// Max traversable vertical step, the hard bound shared with the graph.
     pub(crate) step_m: f32,
+    /// How far fit noise alone moves a surface height.
+    pub(crate) noise_m: f32,
 }
 
 impl PathLimits {
@@ -710,7 +712,7 @@ impl PathLimits {
     /// The robot steps from cell `a` to cell `b`.
     pub(crate) fn steps(&self, plg: &PlannerGraph, a: CellId, b: CellId) -> bool {
         let gap = plg.cells.gap(a, b, self.voxel_size);
-        within_step(gap, self.voxel_size, self.step_m)
+        within_step(gap, self.voxel_size, self.step_m, self.noise_m)
     }
 
     pub(crate) fn from_config(config: &Config) -> Self {
@@ -720,6 +722,7 @@ impl PathLimits {
             buffer_weight: config.wall_buffer_weight,
             voxel_size: config.voxel_size,
             step_m: config.step_threshold_m,
+            noise_m: config.plane_noise_m,
         }
     }
 }
@@ -779,7 +782,7 @@ fn segment_metrics(
     let reached = walk_chord(plg, a, b, limits, |id, rise| {
         let pen = limits.penalty(plg, id);
         max_pen = max_pen.max(pen);
-        total += rise;
+        total += climb(rise, limits.noise_m);
         pen.is_finite()
     });
     reached.then_some((max_pen, total))
@@ -843,6 +846,7 @@ mod tests {
             wall_buffer_weight: 4.0,
             step_threshold_m: 0.25,
             max_surface_slope_deg: 45.0,
+            plane_noise_m: 0.01,
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
@@ -875,6 +879,7 @@ mod tests {
             wall_buffer_weight: 4.0,
             step_threshold_m: 0.25,
             max_surface_slope_deg: 45.0,
+            plane_noise_m: 0.01,
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
@@ -1048,6 +1053,7 @@ mod tests {
             buffer_weight: 4.0,
             voxel_size: VOXEL,
             step_m: 0.25,
+            noise_m: 0.0,
         };
         for pair in wp[1..wp.len() - 1].windows(2) {
             assert!(
@@ -1103,6 +1109,7 @@ mod tests {
             buffer_weight: 4.0,
             voxel_size: VOXEL,
             step_m: VOXEL,
+            noise_m: 0.0,
         };
         plg.wall_state.dist = vec![f32::INFINITY; plg.cells.slot_capacity()];
         let open = string_pull(&plg, &path, &limits);
@@ -1308,6 +1315,7 @@ mod tests {
             buffer_weight: 4.0,
             voxel_size: VOXEL,
             step_m: 2.0 * VOXEL,
+            noise_m: 0.0,
         };
         assert!(segment_metrics(&plg, (5, 5, 0), (5, 5, 4), &limits).is_none());
         assert_eq!(

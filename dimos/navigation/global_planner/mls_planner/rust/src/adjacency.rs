@@ -19,7 +19,7 @@
 use ahash::AHashMap;
 use rayon::prelude::*;
 
-use crate::terrain::{surface_gap, within_step, Gap, Slope, Surface, Terrain};
+use crate::terrain::{climb, surface_gap, within_step, Gap, Slope, Surface, Terrain};
 use crate::voxel::VoxelKey;
 
 pub type SurfaceLookup = AHashMap<(i32, i32), Vec<i32>>;
@@ -297,10 +297,10 @@ fn edges_of(
                 .get(&dest_key)
                 .expect("neighbor cell exists in lookup");
             let gap = view.gap(src, dest, terrain.voxel_size);
-            if !within_step(gap, terrain.voxel_size, terrain.step_m) {
+            if !within_step(gap, terrain.voxel_size, terrain.step_m, terrain.noise_m) {
                 continue;
             }
-            let rise = view.rise(src, dest, terrain.voxel_size);
+            let rise = climb(view.rise(src, dest, terrain.voxel_size), terrain.noise_m);
             let cost = terrain.voxel_size.hypot(rise);
             out.push(Edge {
                 dest,
@@ -361,6 +361,7 @@ pub(crate) fn build_whole_voxel_cells(
         voxel_size,
         robot_height: voxel_size,
         step_m: step_cells as f32 * voxel_size,
+        noise_m: 0.0,
         max_slope: 0.0,
     };
     build_surface_cells(cells, surface_lookup, &terrain);

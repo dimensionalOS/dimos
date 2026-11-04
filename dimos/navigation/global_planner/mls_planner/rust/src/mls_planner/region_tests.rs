@@ -92,6 +92,7 @@ fn test_config() -> Config {
         wall_buffer_weight: 1.0,
         step_threshold_m: 0.25,
         max_surface_slope_deg: 45.0,
+        plane_noise_m: 0.01,
         step_penalty_weight: 0.0,
         goal_tolerance: 0.3,
         viz_publish_hz: 2.0,

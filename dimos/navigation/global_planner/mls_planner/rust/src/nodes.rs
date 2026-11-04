@@ -730,6 +730,7 @@ mod tests {
             voxel_size: VOXEL,
             robot_height: 5.0 * VOXEL,
             step_m: 2.0 * VOXEL,
+            noise_m: 0.0,
             max_slope: 0.0,
         }
     }

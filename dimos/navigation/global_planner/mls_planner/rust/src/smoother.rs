@@ -17,6 +17,7 @@
 use crate::adjacency::CellId;
 use crate::edges::PlannerGraph;
 use crate::planner::PathLimits;
+use crate::terrain::climb;
 
 /// Densify target between smoothed waypoints, in voxels.
 const SMOOTH_SPACING_CELLS: f32 = 2.0;
@@ -197,7 +198,7 @@ fn chord_cost(
                 if !limits.steps(plg, p, id) {
                     return f32::INFINITY;
                 }
-                rise += plg.cells.rise(p, id, vs);
+                rise += climb(plg.cells.rise(p, id, vs), limits.noise_m);
             }
             prev = Some(id);
             pen = limits.penalty(plg, id);
@@ -234,6 +235,7 @@ mod tests {
             buffer_weight: 4.0,
             voxel_size: VOXEL,
             step_m: 2.0 * VOXEL,
+            noise_m: 0.0,
         }
     }
 

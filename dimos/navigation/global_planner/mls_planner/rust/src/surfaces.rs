@@ -252,6 +252,7 @@ mod tests {
             voxel_size: VOXEL,
             robot_height: clearance as f32 * VOXEL,
             step_m: VOXEL,
+            noise_m: 0.0,
             max_slope: 0.0,
         };
         let mut out = Vec::new();

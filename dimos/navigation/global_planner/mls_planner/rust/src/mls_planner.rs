@@ -85,6 +85,9 @@ pub struct Config {
     /// Steepest voxel plane, in degrees from level, a cell takes its height from; steeper stand at their top face.
     #[validate(range(min = 0.0, exclusive_max = 90.0))]
     pub max_surface_slope_deg: f32,
+    /// How far fit noise alone moves a plane's height; plane moves and rises this small are ignored.
+    #[validate(range(min = 0.0))]
+    pub plane_noise_m: f32,
     /// Soft cost added per meter of vertical climb.
     #[validate(range(min = 0.0))]
     pub step_penalty_weight: f32,
@@ -134,6 +137,7 @@ impl Config {
             voxel_size: self.voxel_size,
             robot_height: self.robot_height,
             step_m: self.step_threshold_m,
+            noise_m: self.plane_noise_m,
             max_slope: self.max_slope(),
         }
     }
@@ -498,8 +502,9 @@ impl Planner {
         }
     }
 
-    /// Replace the cylinder's voxels with the local map points, ignoring
-    /// points outside it. Returns the voxel edits.
+    /// Replace the cylinder's voxels and planes with the local map points,
+    /// ignoring points outside it; a plane moved less than plane_noise_m keeps
+    /// its old fit, so the map matches a full rebuild within that. Returns the voxel edits.
     fn replace_region_voxels(
         &mut self,
         local_points: &[MapPoint],
@@ -542,7 +547,7 @@ impl Planner {
                 let k @ (ix, iy, iz) = inside(point)?;
                 let plane = SurfacePlane::from_fit(point.1, min_normal_z);
                 let old = planes.get(&k).copied();
-                (old != plane).then(|| {
+                SurfacePlane::moved(old, plane, voxel_size, config.plane_noise_m).then(|| {
                     let existed = by_col
                         .get((ix, iy))
                         .is_some_and(|zs| zs.binary_search(&iz).is_ok());
