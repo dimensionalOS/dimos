@@ -1,4 +1,4 @@
-import type { AgentToolName, DetailsByTool } from "../../shared/protocol/tools/details.ts";
+import type { AgentToolName, DetailsByTool } from "#dimos/agents/shared/protocol/tools/details.ts";
 import type { Context } from "@earendil-works/chord/context";
 import type { ToolExecutionResult, ToolHookCall, ToolRegistration } from "@earendil-works/pi-durable";
 

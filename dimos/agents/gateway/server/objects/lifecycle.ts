@@ -1,13 +1,13 @@
-import type { GatewayProcess } from "../../../shared/protocol/lifecycle/contract.ts";
-import type { Handlers } from "./lib/bind.ts";
-import type { ServeObject } from "./base.ts";
-import type { Standing } from "../../../shared/protocol/actions/standing.ts";
-import { LIFECYCLE_ACTIONS } from "../../../shared/protocol/actions/lifecycle.ts";
-import { LifecycleContract } from "../../../shared/protocol/lifecycle/contract.ts";
-import { bind } from "./lib/bind.ts";
-import { carried } from "../../../shared/protocol/schema.ts";
-import { done } from "../../../shared/protocol/outcome.ts";
-import { grantOf } from "../../auth/principal.ts";
+import type { GatewayProcess } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
+import type { Handlers } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import type { ServeObject } from "#dimos/agents/gateway/server/objects/base.ts";
+import type { Standing } from "#dimos/agents/shared/protocol/actions/standing.ts";
+import { LIFECYCLE_ACTIONS } from "#dimos/agents/shared/protocol/actions/lifecycle.ts";
+import { LifecycleContract } from "#dimos/agents/shared/protocol/lifecycle/contract.ts";
+import { bind } from "#dimos/agents/gateway/server/objects/lib/bind.ts";
+import { carried } from "#dimos/agents/shared/protocol/schema.ts";
+import { done } from "#dimos/agents/shared/protocol/outcome.ts";
+import { grantOf } from "#dimos/agents/gateway/auth/principal.ts";
 
 const STOP_AFTER_MS = 100;
 

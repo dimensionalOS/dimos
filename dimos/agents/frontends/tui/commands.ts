@@ -1,28 +1,28 @@
-import { owner } from "../../sdk/failures.ts";
-import { retryByRequestId } from "../../sdk/retry.ts";
+import { owner } from "#dimos/agents/sdk/failures.ts";
+import { retryByRequestId } from "#dimos/agents/sdk/retry.ts";
 import type { Ref } from "@earendil-works/chord";
-import { ConversationContract } from "../../shared/protocol/conversation/contract.ts";
-import type { AgentModuleName } from "../../shared/protocol/runtime/event.ts";
+import { ConversationContract } from "#dimos/agents/shared/protocol/conversation/contract.ts";
+import type { AgentModuleName } from "#dimos/agents/shared/protocol/runtime/event.ts";
 import type { ConversationId, JsonObject } from "@earendil-works/pi-durable";
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import type { FileRenderer } from "../../shared/render/render.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import type { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import type { ImageContent, ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { JobAction, JobName } from "../../shared/protocol/jobs/state.ts";
-import type { Role } from "../../sdk/state.ts";
+import type { JobAction, JobName } from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { Role } from "#dimos/agents/sdk/state.ts";
 import type { TUI } from "@earendil-works/pi-tui";
-import type { TimelineRow } from "../../shared/view-models/conversation/timeline.ts";
-import type { TranscriptView } from "./conversation/transcript.ts";
-import type { Ui } from "./session.ts";
-import { ProgressPanel } from "./conversation/progress.ts";
-import { muted } from "./style.ts";
-import { backgroundTarget, runningCalls } from "../../shared/view-models/conversation/tools.ts";
+import type { TimelineRow } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
+import type { TranscriptView } from "#dimos/agents/frontends/tui/conversation/transcript.ts";
+import type { Ui } from "#dimos/agents/frontends/tui/session.ts";
+import { ProgressPanel } from "#dimos/agents/frontends/tui/conversation/progress.ts";
+import { muted } from "#dimos/agents/frontends/tui/style.ts";
+import { backgroundTarget, runningCalls } from "#dimos/agents/shared/view-models/conversation/tools.ts";
 import { basename, resolve } from "node:path";
-import { clean } from "../../shared/view-models/text.ts";
-import { editorTextOf } from "../../shared/view-models/conversation/queue.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { editorTextOf } from "#dimos/agents/shared/view-models/conversation/queue.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { inspectPath } from "./inspect.ts";
-import { isRunning } from "../../shared/view-models/conversation/timeline.ts";
-import { newActionRequest, newUserRequest } from "../../shared/protocol/actions/request.ts";
+import { inspectPath } from "#dimos/agents/frontends/tui/inspect.ts";
+import { isRunning } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
+import { newActionRequest, newUserRequest } from "#dimos/agents/shared/protocol/actions/request.ts";
 
 type Shown = { readonly conversation: Ref<typeof ConversationContract>; readonly id: ConversationId };
 
@@ -138,6 +138,7 @@ const KEYS: readonly string[] = [
   "Sidebar: Up/Down select a stream; Left/Right fold or show it; Esc returns to chat",
   "Ctrl+O  switch conversations",
   "Ctrl+B  send the running tool call to the background",
+  "Down    with an empty editor, select a call in the background (↑/↓, then Enter shows its output, x stops it, Esc returns)",
   "Esc     while running, stop the run; with an empty editor, select a message (↑/↓, then e edit, u summarize up to, f summarize from)",
   "Up      with an empty editor, bring queued user messages back for editing",
   "Ctrl-C  clear the editor; with an empty editor, detach (the conversation keeps running)",

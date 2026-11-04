@@ -1,5 +1,5 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { Refusal } from "../shared/protocol/outcome.ts";
+import type { Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
 
 /** Why an owner request came back as a viewer, or null when the requested role was granted. */
 export function attachRefusal(

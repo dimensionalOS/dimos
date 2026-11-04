@@ -19,13 +19,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dimos.agents.annotation import skill
-from dimos.core.coordination.python_worker import PythonWorker
+from dimos.core.coordination.python_worker import Actor, MethodCallProxy, PythonWorker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.encode.cbor import decode, encode
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.stats import WorkerStats
@@ -55,7 +56,7 @@ class SimpleModule(Module):
         return global_config.robot_ip
 
     @rpc
-    def unpicklable(self) -> threading.Lock:
+    def unencodable(self) -> threading.Lock:
         return threading.Lock()
 
     @rpc
@@ -188,29 +189,29 @@ def test_worker_shutdown_kills_and_reaps_a_process_that_ignores_terminate(mocker
     assert worker.pid is None
 
 
-def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
-    """An RPC result that cannot pickle comes back as the error, not a dead worker."""
+def test_unencodable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
+    """An RPC result that cannot be encoded comes back as the error, not a dead worker."""
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(SimpleModule, global_config, {})
     module.start()
 
-    with pytest.raises(TypeError, match="cannot pickle"):
-        module.unpicklable()
+    with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+        module.unencodable()
 
     assert module.increment() == 1
 
     module.stop()
 
 
-def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
-    """A response the worker pipe cannot pickle errors out; the worker lives on."""
+def test_unencodable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
+    """A response the worker pipe cannot encode errors out; the worker lives on."""
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(SimpleModule, global_config, {})
     module.start()
     module.make_lock()
 
     # Attribute access rides the pipe, unlike rpc calls, which ride the transport.
-    with pytest.raises(RuntimeError, match="(?i)pickle"):
+    with pytest.raises(RuntimeError, match="Cannot CBOR-encode"):
         module.actor_instance.lock  # noqa: B018
 
     assert module.increment() == 1
@@ -510,3 +511,12 @@ def test_module_can_opt_out_of_input_warm_up(create_worker_manager):
 
     assert _wait_for_warm_up(module) == (None, "warmup-UnwarmedInputsModule")
     module.stop()
+
+
+def test_actor_and_method_call_proxy_cross_processes_as_ids() -> None:
+    actor = Actor(None, SimpleModule, worker_id=3, module_id=7, lock=threading.Lock())
+    restored = decode(encode(MethodCallProxy(actor)))
+    assert type(restored) is MethodCallProxy
+    inner = restored._actor
+    assert (inner._worker_id, inner._module_id) == (3, 7)
+    assert inner._conn is None and inner._cls is None and inner._lock is None

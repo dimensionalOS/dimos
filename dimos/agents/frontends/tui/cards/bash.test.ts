@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import type { ToolResult } from "../../../shared/protocol/conversation/state.ts";
-import { BashCard } from "./bash.ts";
+import type { ToolResult } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import { BashCard } from "#dimos/agents/frontends/tui/cards/bash.ts";
 import { ProcessTerminal, TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { once } from "node:events";

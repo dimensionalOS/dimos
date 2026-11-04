@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Operator hold through the coordinator: request, preempt, reject, publish, acknowledge.
+"""Operator hold through the coordinator: request, preempt, reject, publish, e-stop, acknowledge.
 
 A rig wires one mock arm, one mock twist base, the canonical trajectory task
 and the hold task into a real, unmodified coordinator, then ticks it by hand
@@ -155,6 +155,8 @@ class Rig:
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
         )
+        # The coordinator reads joint positions from its tick loop's last tick.
+        self.coordinator._tick_loop = self._loop
 
     def tick(self) -> None:
         self._loop._tick()
@@ -223,6 +225,7 @@ class TestRequest:
 
 class TestWhileHeld:
     def test_running_trajectory_is_preempted(self, rig):
+        rig.tick()
         assert (
             rig.coordinator.execute_trajectory(_trajectory()).status
             is TrajectoryExecutionStatus.ACCEPTED
@@ -282,6 +285,40 @@ class TestStatus:
         assert rig.statuses == []
 
 
+class TestEstop:
+    def test_estop_cancels_the_trajectory_and_turns_the_hold_on(self, rig):
+        rig.tick()
+        rig.coordinator.execute_trajectory(_trajectory())
+        rig.tick()
+        writes_before = len(rig.arm_writes())
+
+        assert rig.coordinator.set_estop(True)
+        rig.tick()
+
+        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
+        status = rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status")
+        assert status.on and status.route == "failsafe" and status.reason == "e-stop"
+        assert status.estopped
+        assert rig.statuses[-1].estopped
+        assert len(rig.arm_writes()) == writes_before  # nothing commands the arm while stopped
+
+    def test_clear_holds_the_arm_where_it_is_then_until_acknowledged(self, rig):
+        rig.coordinator.set_estop(True)
+        rig.tick()
+        rig.arm.read_joint_positions.return_value = [0.15, 0.25, 0.35]
+
+        assert rig.coordinator.set_estop(False)
+        rig.tick()
+
+        status = rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status")
+        assert status.on and status.route == "failsafe" and not status.estopped
+        assert rig.arm_writes()[-1] == pytest.approx([0.15, 0.25, 0.35])
+        assert rig.base_writes()[-1] == [0.0, 0.0, 0.0]
+
+        assert rig.acknowledge().on is False
+        assert not rig.hold_task.is_active()
+
+
 class TestAcknowledge:
     def test_turns_the_hold_off(self, rig):
         rig.request()
@@ -301,6 +338,7 @@ class TestAcknowledge:
     def test_autonomy_does_not_resume_but_teleop_can_take_over(self, rig):
         teleop = TeleopStub([0.4, 0.5, 0.6])
         rig.coordinator.add_task(teleop)
+        rig.tick()
         assert (
             rig.coordinator.execute_trajectory(_trajectory()).status
             is TrajectoryExecutionStatus.ACCEPTED
