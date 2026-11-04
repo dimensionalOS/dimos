@@ -376,9 +376,9 @@ robots:
       manufacturer: DeepRobotics
       dirs: [dimos/robot/deeprobotics/m20]
       blueprints:
-        deeprobotics-m20-kronknav-control:
+        m20-nav:
           title: M20 3D navigation
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning and holonomic control.'
+          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
           recommended_config:
           - module: m20connection
             field: basic_server_host

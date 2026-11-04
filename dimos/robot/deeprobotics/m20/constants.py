@@ -14,8 +14,6 @@
 
 """Documented and provisional geometry values for the Lynx M20."""
 
-import math
-
 # Documented body dimensions in the vendor hardware guide.
 BODY_LENGTH_M = 0.82
 BODY_WIDTH_M = 0.506
@@ -28,8 +26,9 @@ BASE_LINK_HEIGHT_M = 0.48
 # and remains a hardware-tuning value rather than a vendor specification.
 PLANNING_HEIGHT_M = 0.65
 
-ROTATION_DIAMETER_M = math.hypot(BODY_LENGTH_M, BODY_WIDTH_M)
-
 # Vendor AOS H.265 camera streams documented for the M20 internal network.
 FRONT_CAMERA_RTSP_URL = "rtsp://10.21.31.103:8554/video1"
 REAR_CAMERA_RTSP_URL = "rtsp://10.21.31.103:8554/video2"
+
+# The vendor LIO's odometry frame, passed through by drdds-zenoh-bridge.
+WORLD_FRAME = "map"
