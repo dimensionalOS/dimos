@@ -52,6 +52,7 @@ from dimos.control.hardware_interface import (
 )
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
+from dimos.control.tasks.operator_hold_task.operator_hold_task import OperatorHoldTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     TrajectoryCancellationResult,
@@ -153,7 +154,10 @@ class ControlCoordinator(Module):
 
     The kinds are listed in ``connection_source.COMMAND_PORTS`` and
     ``READING_PORTS``. Joints and their limits come from ``config.model``,
-    named ``<robot>/<joint>``; a base alone needs no model. A robot is
+    named ``<robot>/<joint>``; a base alone needs no model. A robot with a
+    ``cmd_vel`` port takes base speeds too: tasks claim its axes
+    (``go2/base/vx``, ...) and win them in arbitration like joints, and an
+    axis no task drives is told 0. A robot is
     commanded every tick once it has reported, and not while its newest
     reading is older than ``config.reading_timeout_s``. In a fleet, each
     connection module sets ``frame_id_prefix`` to its robot's name so
@@ -445,12 +449,37 @@ class ControlCoordinator(Module):
                 }
                 for joint in source.joint_names:
                     self._joint_to_hardware[joint] = robot
+                # A robot with a base port gets its base axes (go2/base/vx,
+                # ...) routed to it too, so a velocity task can claim and
+                # drive them like an adapter base's virtual joints.
+                for axis in source.base_joint_names:
+                    self._joint_to_hardware[axis] = robot
         for robot, source in self._connections.items():
             for kind in source.reading_ports:
                 handler = functools.partial(source.on_message, kind)
                 port = self.inputs[f"{robot}_{kind}"]
                 self.register_disposable(Disposable(port.subscribe(handler)))
         logger.info(f"Driving robots through connection modules: {robots}")
+        self._tell_holds_the_base_axes()
+
+    def _connection_base_axes(self) -> list[str]:
+        """Every connection robot's base axes (``go2/base/vx``, ...)."""
+        with self._hardware_lock:
+            return [
+                axis for source in self._connections.values() for axis in source.base_joint_names
+            ]
+
+    def _tell_holds_the_base_axes(self) -> None:
+        """Name the connection base axes for every registered operator hold.
+
+        A base axis is a commanded speed, never a read position, so a hold
+        cannot find one in the joint-state snapshot the way it finds joints.
+        """
+        axes = self._connection_base_axes()
+        with self._task_lock:
+            for task in self._tasks.values():
+                if isinstance(task, OperatorHoldTask):
+                    task.set_base_axes(axes)
 
     def _publish_command(self, robot: str, values: dict[str, float]) -> None:
         """Send one robot its command for this tick. Called by the tick loop,
@@ -619,6 +648,9 @@ class ControlCoordinator(Module):
                 "task_type; the inputs it remaps come from the type's card, so pass task_type"
             )
 
+        if isinstance(task, OperatorHoldTask):
+            task.set_base_axes(self._connection_base_axes())
+
         with self._task_lock:
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
@@ -725,8 +757,8 @@ class ControlCoordinator(Module):
     def _sync_stream_subscriptions(self) -> None:
         """Subscribe streams that gained consumers; drop those whose last consumer left.
 
-        A consumer is a card-declared task route, or BASE hardware for
-        ``twist_command``. The whole compute+apply runs under
+        A consumer is a card-declared task route, or a base — BASE hardware
+        or a connection module's base port — for ``twist_command``. The whole compute+apply runs under
         ``_subscribe_lock`` (with ``_task_lock`` and ``_hardware_lock`` taken
         sequentially inside it) so concurrent syncs cannot apply a stale
         ``active`` set last. The nesting is deadlock-free: no code path
@@ -741,7 +773,7 @@ class ControlCoordinator(Module):
                 has_base = any(
                     hw.component.hardware_type == HardwareType.BASE
                     for hw in self._hardware.values()
-                )
+                ) or any(source.base_joint_names for source in self._connections.values())
             if has_base:
                 active.add("twist_command")
             for stream in active - self._stream_unsubs.keys():
@@ -821,7 +853,7 @@ class ControlCoordinator(Module):
                     )
 
     def _map_twist_to_base_joints(self, msg: Twist) -> None:
-        """Map Twist onto BASE virtual joints (base/vx ← linear.x, ...) via joint_command."""
+        """Map Twist onto BASE virtual joints and connection base axes via joint_command."""
         names: list[str] = []
         velocities: list[float] = []
 
@@ -839,6 +871,14 @@ class ControlCoordinator(Module):
                     value = getattr(getattr(msg, group), axis)
                     names.append(joint_name)
                     velocities.append(value)
+            # A robot behind a connection module takes the twist on its base
+            # axes ("r1pro/base/vx"); the last segment names the axis.
+            for source in self._connections.values():
+                for axis_name in source.base_joint_names:
+                    mapping = TWIST_SUFFIX_MAP[axis_name.rsplit("/", 1)[-1]]
+                    group, axis = mapping
+                    names.append(axis_name)
+                    velocities.append(getattr(getattr(msg, group), axis))
 
         if names:
             joint_state = JointState(name=names, velocity=velocities)

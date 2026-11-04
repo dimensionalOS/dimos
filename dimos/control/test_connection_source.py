@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+import math
 from pathlib import Path
 import tempfile
 
@@ -249,6 +250,38 @@ def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     assert first.port == "cmd_vel" and rest == []
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
     assert source.joint_names == []
+
+
+def test_a_base_axis_is_a_speed_a_task_can_win() -> None:
+    source = base()
+    assert source.base_joint_names == ["go2/base/vx", "go2/base/vy", "go2/base/wz"]
+    source.on_message("odom", PoseStamped(frame_id="odom"))
+    source.on_message("base_velocity", TwistStamped(frame_id="base"))
+
+    values = source.command({"go2/base/vx": 0.5, "go2/base/wz": -0.2}, ControlMode.VELOCITY)
+
+    # The axes the task did not drive are told 0.
+    assert values == {"go2/base/vx": 0.5, "go2/base/vy": 0.0, "go2/base/wz": -0.2}
+    (msg,) = source.command_messages(values, ts=1.0)
+    assert msg.port == "cmd_vel"
+    twist = msg.message
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.5, 0.0, -0.2)
+
+    # The task gone, every axis is zeroed again.
+    assert source.command({}, None) == {
+        "go2/base/vx": 0.0,
+        "go2/base/vy": 0.0,
+        "go2/base/wz": 0.0,
+    }
+
+
+def test_a_non_finite_base_speed_is_refused() -> None:
+    with pytest.raises(ValueError, match="not a finite speed"):
+        base().command({"go2/base/vx": math.nan}, ControlMode.VELOCITY)
+
+
+def test_a_robot_without_a_base_port_has_no_base_axes() -> None:
+    assert arm().base_joint_names == []
 
 
 def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> None:
