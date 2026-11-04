@@ -138,3 +138,27 @@ The final integration slice provides [G1 GR00T beside a desk](/docs/development/
 lidar, IMU and encoders. MuJoCo is the validated backend. Native renderer/raycaster
 adapters are selectable; another physics backend and cross-renderer fidelity have
 not been validated. The core imports no robot-specific policy or coordinator code.
+
+## Review stack
+
+[The nine draft PRs](https://github.com/dimensionalOS/dimos/stack/5042) build on
+[shared configuration #4937](https://github.com/dimensionalOS/dimos/pull/4937).
+The companion [dimos-lcm #31](https://github.com/dimensionalOS/dimos-lcm/pull/31)
+owns the schemas and generated codecs.
+
+| PR | Review scope |
+| --- | --- |
+| [#5033](https://github.com/dimensionalOS/dimos/pull/5033) | Message integration |
+| [#5034](https://github.com/dimensionalOS/dimos/pull/5034) | Shared models and scenes |
+| [#5035](https://github.com/dimensionalOS/dimos/pull/5035) | SimModule and physics backend |
+| [#5036](https://github.com/dimensionalOS/dimos/pull/5036) | IMU |
+| [#5037](https://github.com/dimensionalOS/dimos/pull/5037) | Joint encoders |
+| [#5038](https://github.com/dimensionalOS/dimos/pull/5038) | Camera |
+| [#5039](https://github.com/dimensionalOS/dimos/pull/5039) | Lidar |
+| [#5040](https://github.com/dimensionalOS/dimos/pull/5040) | Blueprints and evaluation |
+| [#5041](https://github.com/dimensionalOS/dimos/pull/5041) | G1 GR00T integration |
+
+Each PR targets the preceding branch so its diff shows only its capability.
+The final tree matches the tested Option E implementation; each lower capability
+was also tested on its own branch. The previous broad drafts #4982/#4983 are
+closed with their review history preserved.
