@@ -35,7 +35,7 @@ from dimos.simulation.m20_sim.world import (
 from dimos.simulation.scenes.procedural import Scene, office
 from dimos.simulation.sensors.airy.lidar import LENS_HEIGHT
 from dimos.simulation.sensors.airy.pattern import FRAME_RATE, POINT_RATE, AiryPattern
-from dimos.simulation.sensors.mujoco_raycaster import INCLUDE_STATIC, NO_BODY_EXCLUDED
+from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 from dimos.simulation.sim_world.world import FRAME_DT, LidarFrame, Sim
 
 pytestmark = pytest.mark.self_hosted
@@ -88,9 +88,8 @@ def test_frames_come_out_at_10hz_in_base_link_from_both_lidars(sim: Sim) -> None
     for got, want in zip(sim.odom_pose(), sim.base_pose(), strict=True):
         assert np.array_equal(got, want)
     x = frames[-1].points[:, 0]
-    # both lidars contribute, past the blind range that keeps the robot out of its own cloud
-    assert (x > FRONT_LIDAR_XYZ_M[0]).sum() > 1_000
-    assert (x < REAR_LIDAR_XYZ_M[0]).sum() > 1_000
+    assert (x > FRONT_LIDAR_XYZ_M[0]).sum() > 5_000
+    assert (x < REAR_LIDAR_XYZ_M[0]).sum() > 5_000
     _floor_is_flat(frames[-1], sim)
 
 
@@ -122,7 +121,10 @@ def test_the_guards_block_the_lidars_without_touching_the_physics(sim: Sim) -> N
         assert not model.geom_contype[geoms].any() and not model.geom_conaffinity[geoms].any()
         position, rotation = sim.sensor_pose(sensor)
         lens = position + rotation @ np.array([0.0, 0.0, LENS_HEIGHT])
-        dist, _ = lidar.raycaster.cast(lens, directions @ rotation.T, 10.0)
+        keeps_own = MujocoRaycaster(
+            model, sim.data, sim.lidar_groups, lidar.raycaster.excluded_body
+        )
+        dist, _ = keeps_own.cast(lens, directions @ rotation.T, 10.0)
         assert 0.2 < ((dist >= 0.0) & (dist < GUARD_REACH)).mean() < 0.35
 
 
@@ -147,51 +149,35 @@ def test_standing_robot_touches_the_floor_only_with_its_wheels(sim: Sim) -> None
 def test_the_lidars_see_the_robot_by_its_collision_shapes(sim: Sim) -> None:
     position, _ = sim.sensor_pose(M20_RIG.sensors[0])
     left = sim.base_pose()[1] @ np.array([0.0, 1.0, 0.0])
-    dist, _ = sim.lidars[0].raycaster.cast(position, left[None, :], 10.0)
+    keeps_own = MujocoRaycaster(
+        sim.model, sim.data, sim.lidar_groups, sim.lidars[0].raycaster.excluded_body
+    )
+    dist, _ = keeps_own.cast(position, left[None, :], 10.0)
     assert 0.03 < dist[0] < 0.1
 
 
-def _farthest_self_return(sim: Sim, directions: NDArray[np.float64]) -> float:
-    """How far any lidar sees its own robot, measured as the blind range is (from the sensor, lens included)."""
-    model, data = sim.model, sim.data
-    robot = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, M20_RIG.base_body)
-    lens = np.array([0.0, 0.0, LENS_HEIGHT])
-    farthest = 0.0
-    for sensor in M20_RIG.sensors:
-        position, rotation = sim.sensor_pose(sensor)
-        n = len(directions)
-        geom, dist = np.full(n, -1, np.int32), np.full(n, -1.0)
-        mujoco.mj_multiRay(
-            model,
-            data,
-            position + rotation @ lens,
-            directions.ravel().copy(),
-            sim.lidar_groups,
-            INCLUDE_STATIC,
-            NO_BODY_EXCLUDED if sensor.sees_base else robot,
-            geom,
-            dist,
-            np.zeros(3 * n),
-            n,
-            10.0,
-        )
-        own = (geom >= 0) & (model.body_rootid[model.geom_bodyid[np.maximum(geom, 0)]] == robot)
-        if own.any():
-            in_sensor = directions[own] * dist[own, None] @ rotation + lens
-            farthest = max(farthest, float(np.linalg.norm(in_sensor, axis=1).max()))
-    return farthest
-
-
-def test_the_lidars_never_keep_a_return_off_their_own_robot(sim: Sim) -> None:
+def test_the_lidars_never_return_their_own_robot(sim: Sim) -> None:
     directions = np.random.default_rng(0).normal(size=(20_000, 3))
     directions /= np.linalg.norm(directions, axis=1, keepdims=True)
-    farthest = [_farthest_self_return(sim, directions)]
-    for command in GAIT:
-        for tick in range(100):
+    robot_hits = 0
+    for command in (STILL, *GAIT):
+        for tick in range(60):
             sim.tick(command)
-            if tick % 5 == 0:
-                farthest.append(_farthest_self_return(sim, directions))
-    assert 0.9 < max(farthest) < LIO_BLIND_RANGE
+            if tick % 10:
+                continue
+            for sensor, lidar in zip(M20_RIG.sensors, sim.lidars, strict=True):
+                position, rotation = sim.sensor_pose(sensor)
+                world_directions = directions @ rotation.T
+                unfiltered = MujocoRaycaster(
+                    sim.model, sim.data, sim.lidar_groups, lidar.raycaster.excluded_body
+                )
+                raw, _ = unfiltered.cast(position, world_directions, 10.0)
+                dist, _ = lidar.raycaster.cast(position, world_directions, 10.0)
+                hit_robot = (raw >= 0.0) & (dist < 0.0)
+                robot_hits += int(hit_robot.sum())
+                # every kept return lands on the scene, at the range the unfiltered ray found
+                assert np.array_equal(dist[dist >= 0.0], raw[dist >= 0.0])
+    assert robot_hits > 0
 
 
 def test_the_blind_range_is_the_worlds_config() -> None:

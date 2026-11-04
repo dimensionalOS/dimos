@@ -31,11 +31,14 @@ class MujocoRaycaster:
         data: mujoco.MjData,
         geom_groups: NDArray[np.uint8],
         excluded_body: int = NO_BODY_EXCLUDED,
+        dropped_root: int = NO_BODY_EXCLUDED,
     ) -> None:
         self.model = model
         self.data = data
         self.geom_groups = geom_groups
         self.excluded_body = excluded_body
+        # hits on any body under this root body come back as no return
+        self.dropped_root = dropped_root
 
     def cast(
         self, origin: NDArray[np.float64], directions: NDArray[np.float64], max_range: float
@@ -59,4 +62,13 @@ class MujocoRaycaster:
             max_range,
         )
         dist[geom < 0] = -1.0
+        if self.dropped_root != NO_BODY_EXCLUDED:
+            hit = geom >= 0
+            dist[
+                hit
+                & (
+                    self.model.body_rootid[self.model.geom_bodyid[np.maximum(geom, 0)]]
+                    == self.dropped_root
+                )
+            ] = -1.0
         return dist, normals.reshape(n, 3)
