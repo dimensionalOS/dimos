@@ -116,9 +116,7 @@ def test_one_publication_reaches_every_pending_peek_and_subscriber(module, mocke
     "stream_name",
     [
         "odom",
-        pytest.param(
-            "incoming", marks=pytest.mark.skip(reason="flaky in CI, disabled until fixed")
-        ),
+        "incoming",
         "duplex",
     ],
 )
