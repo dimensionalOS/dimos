@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 # Import LCM types
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
-from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import core_schema
@@ -297,11 +296,7 @@ class CameraInfo(Timestamped):
         msg = LCMCameraInfo()
 
         # Header
-        msg.header = Header()
-        msg.header.seq = 0
-        msg.header.frame_id = self.frame_id
-        msg.header.stamp.sec = int(self.ts)
-        msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
+        msg.header = self.acquisition_header(self.frame_id)
 
         # Image dimensions
         msg.height = self.height
@@ -338,7 +333,7 @@ class CameraInfo(Timestamped):
         msg = LCMCameraInfo.lcm_decode(data)
 
         # Extract timestamp
-        ts = msg.header.stamp.sec + msg.header.stamp.nsec / 1e9 if hasattr(msg, "header") else None
+        ts = msg.header.time_ns / 1e9
 
         camera_info = cls(
             height=msg.height,
@@ -352,7 +347,7 @@ class CameraInfo(Timestamped):
             binning_y=msg.binning_y,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=ts,
-        )
+        ).with_sample_header(msg.header)
 
         # Set ROI if present
         if hasattr(msg, "roi"):

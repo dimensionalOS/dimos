@@ -204,6 +204,15 @@ def mj_objectVelocity(
     result: NDArray[np.float64],
     flg_local: int,
 ) -> None: ...
+def mj_objectAcceleration(
+    model: MjModel,
+    data: MjData,
+    objtype: int,
+    objid: int,
+    result: NDArray[np.float64],
+    flg_local: int,
+) -> None: ...
+def mj_rnePostConstraint(m: MjModel, d: MjData) -> None: ...
 def mj_ray(
     model: MjModel,
     data: MjData,

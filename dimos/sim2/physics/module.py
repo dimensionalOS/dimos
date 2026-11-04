@@ -12,271 +12,156 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Normal DimOS lifecycle around an ordinary, robot-independent simulation owner."""
+"""DimOS lifecycle and typed ports around the standalone Simulation owner."""
 
 from collections.abc import Callable
-from concurrent.futures import Future
-from queue import Empty, Full, Queue
+from queue import Empty
 import threading
-import time
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, cast
 
-from dimos_lcm.sim_msgs import Actions, Observations
+from dimos_lcm.control_msgs import BodyWrench, JointCommand
+from dimos_lcm.sensor_msgs import JointState
+from dimos_lcm.sim_msgs import BodyMotion, BodyPoses, SimulationClock
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import IO, In, Out
-from dimos.msgs.control_msgs.ControlValues import ControlValues
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.description import ModelSourceSpec, World
-from dimos.sim2.messages.control import feedback, joint_targets
-from dimos.sim2.messages.observations import observations
-from dimos.sim2.physics.interface import PhysicsBackend, Wrench
-from dimos.sim2.physics.runtime import Runtime
-from dimos.sim2.state import Frame, Layout, WorldState
+from dimos.core.stream import In, Out
+from dimos.sim2.description import ModelSourceSpec, SceneConfig
+from dimos.sim2.physics.interface import PhysicsBackend
+from dimos.sim2.physics.simulation import Simulation, SimulationConfig
 from dimos.spec.utils import Spec
 
 
 class SimulationSpec(Spec, Protocol):
-    def describe(self) -> Layout: ...
-    def state(self) -> WorldState: ...
-    def describe_world(self) -> World: ...
-    def sample(self) -> Observations: ...
-    def reset(self) -> WorldState: ...
-    def place(self, body: str, pose: tuple[float, ...]) -> WorldState: ...
-    def apply_wrench(self, wrench: Wrench) -> None: ...
-    def timing(self) -> dict[str, Any]: ...
+    def inspect(self, joints: tuple[str, ...] = ()) -> tuple[BodyPoses, JointState]: ...
+    def reset(self) -> tuple[BodyPoses, JointState]: ...
+    def place(self, body_id: str, pose: tuple[float, ...]) -> tuple[BodyPoses, JointState]: ...
+    def status(self) -> dict[str, Any]: ...
 
 
 class SimConfig(ModuleConfig):
-    world: World
-    backend: Callable[[World], PhysicsBackend]
-    publish_hz: float = 50.0
-    control_joints: tuple[str, ...] = ()
+    scene: SceneConfig
+    backend: Callable[[], PhysicsBackend]
+    timing: SimulationConfig = SimulationConfig()
 
 
 class SimModule(Module):
     config: SimConfig
     dedicated_worker: ClassVar[bool] = True
     _models: ModelSourceSpec
-    tf: IO[TFMessage]
-    actions: In[Actions]
-    observations: Out[Observations]
-    robot_feedback: Out[ControlValues]
-    imu: Out[Imu]
-    joint_state: Out[JointState]
+    joint_command: In[JointCommand]
+    body_wrench: In[BodyWrench]
+    body_poses: Out[BodyPoses]
+    body_motion: Out[BodyMotion]
+    joint_truth: Out[JointState]
+    clock: Out[SimulationClock]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._done = threading.Event()
-        self._ready: Future[Runtime] = Future()
-        self._operations: Queue[tuple[str, tuple[Any, ...], Future[WorldState]]] = Queue(32)
-        self._frames: Queue[Frame] = Queue(1)
-        self._latest: WorldState | None = None
+        self._threads: list[threading.Thread] = []
+        self._simulation: Simulation | None = None
         self._error = ""
-        self._late_steps = 0
-        self._dropped_publications = 0
-        self._owner: threading.Thread | None = None
-        self._publisher: threading.Thread | None = None
+        self._lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
         super().start()
-        self._world = self.config.world.resolve(self._models.resolved_models())
-        if not 0 < self.config.publish_hz <= 1 / self.config.world.dt:
-            raise ValueError("publication rate must be positive and no faster than physics")
-        self._owner = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
-        self._owner.start()
-        self._ready.result(timeout=30)
-        self._publisher = threading.Thread(target=self._publish, name="sim2-publish", daemon=True)
-        self._publisher.start()
+        scene = self.config.scene.resolve(self._models.resolved_models())
+        sim = Simulation(self.config.backend(), scene, self.config.timing)
+        self._simulation = sim
+        self._threads = [threading.Thread(target=sim.run, name="sim2-physics", daemon=True)]
+        self._threads[0].start()
+        sim.ready.result(timeout=30)
+        # Scene serialization cannot block high-rate motion/joint publication.
+        for name, target in (
+            ("sim2-truth", self._publish_truth),
+            ("sim2-scene", self._publish_scene),
+        ):
+            thread = threading.Thread(target=target, name=name, daemon=True)
+            self._threads.append(thread)
+            thread.start()
 
-    def _run(self) -> None:
+    def _owner(self) -> Simulation:
+        if self._simulation is None:
+            raise RuntimeError("simulation has not started")
+        return self._simulation
+
+    def _publish_truth(self) -> None:
+        sim = self._owner()
         try:
-            backend = self.config.backend(self._world)
-            every = max(1, round(1 / (self.config.publish_hz * backend.dt)))
-            runtime = Runtime(backend, self.config.control_joints)
-            self._latest = runtime.snapshot()
-            self._ready.set_result(runtime)
-            last_sent = (-1, -1)
-            sent_at = 0.0
-            deadline = time.monotonic()
+            while not self._done.is_set():
+                sent = False
+                for queue, output in (
+                    (sim.joint_truth, self.joint_truth),
+                    (sim.body_motion, self.body_motion),
+                    (sim.clock, self.clock),
+                ):
+                    try:
+                        sample = queue.get_nowait()
+                    except Empty:
+                        continue
+                    output.publish(sample)
+                    sent = True
+                if not sent:
+                    self._done.wait(0.001)
+        except Exception as error:
+            self._publication_failed(error)
+
+    def _publish_scene(self) -> None:
+        sim = self._owner()
+        try:
             while not self._done.is_set():
                 try:
-                    operation, args, future = self._operations.get_nowait()
+                    poses = sim.body_poses.get(timeout=0.1)
                 except Empty:
-                    pass
-                else:
-                    try:
-                        result = runtime.reset() if operation == "reset" else runtime.place(*args)
-                        future.set_result(result)
-                        deadline = time.monotonic()
-                    except Exception as error:
-                        future.set_exception(error)
-                runtime.prepare()
-                if runtime.tick % every == 0:
-                    identity = (runtime.epoch, runtime.tick)
-                    if identity != last_sent or time.monotonic() - sent_at > 0.1:
-                        frame = runtime.capture()
-                        self._latest = frame.state
-                        self._queue_frame(frame)
-                        last_sent, sent_at = identity, time.monotonic()
-                    if not runtime.controlled():
-                        # Inference waits slow simulation time, never reset it or
-                        # let the robot run ahead with stale policy commands.
-                        deadline = time.monotonic()
-                        self._done.wait(0.001)
-                        continue
-                runtime.advance()
-                deadline += runtime.backend.dt
-                delay = deadline - time.monotonic()
-                if delay < -runtime.backend.dt:
-                    self._late_steps += 1
-                    # Slow simulation time under load; never reset state or skip physics steps.
-                    deadline = time.monotonic()
-                self._done.wait(max(0, delay))
+                    continue
+                self.body_poses.publish(poses)
         except Exception as error:
+            self._publication_failed(error)
+
+    def _publication_failed(self, error: Exception) -> None:
+        with self._lock:
             self._error = repr(error)
-            if not self._ready.done():
-                self._ready.set_exception(error)
-            self._done.set()
-
-    def _queue_frame(self, frame: Frame) -> None:
-        try:
-            self._frames.put_nowait(frame)
-        except Full:
-            try:
-                self._frames.get_nowait()
-            except Empty:
-                pass
-            self._frames.put_nowait(frame)
-            self._dropped_publications += 1
-
-    def _publish(self) -> None:
-        try:
-            self._publish_frames()
-        except Exception as error:
-            self._error = repr(error)
-            self._done.set()
-
-    def _publish_frames(self) -> None:
-        layout = self.describe()
-        roots = [(name, layout.bodies.index(name)) for name in layout.roots]
-        while not self._done.is_set():
-            try:
-                frame = self._frames.get(timeout=0.1)
-            except Empty:
-                continue
-            state = frame.state
-            runtime = self._ready.result()
-            self.observations.publish(observations(runtime.run_id, layout, state))
-            self.robot_feedback.publish(feedback(runtime.run_id, layout, frame))
-            for index, name in enumerate(layout.imu_frames):
-                sample = frame.imu[index]
-                pose = state.poses[layout.bodies.index(name)]
-                self.imu.publish(
-                    Imu(
-                        ts=state.wall_time,
-                        frame_id=name,
-                        orientation=Quaternion(*pose[3:]),
-                        linear_acceleration=Vector3(*sample[:3]),
-                        angular_velocity=Vector3(*sample[3:]),
-                    )
-                )
-            self.joint_state.publish(
-                JointState(
-                    ts=state.wall_time,
-                    name=list(layout.joints),
-                    position=state.position.tolist(),
-                    velocity=state.velocity.tolist(),
-                    effort=state.effort.tolist(),
-                )
-            )
-            # UrdfManager owns every internal joint/mount edge. Sim owns only world -> roots.
-            self.tfbuffer.publish(
-                *(
-                    Transform(
-                        frame_id="world",
-                        child_frame_id=name,
-                        ts=state.wall_time,
-                        translation=Vector3(*state.poses[index, :3]),
-                        rotation=Quaternion(*state.poses[index, 3:]),
-                    )
-                    for name, index in roots
-                )
-            )
-
-    async def handle_actions(self, message: Actions) -> None:
-        runtime = self._ready.result(timeout=30)
-        try:
-            runtime.submit(joint_targets(message, runtime.run_id, runtime.backend.layout))
-        except ValueError as error:
-            runtime.rejected += 1
-            runtime.last_error = str(error)
+        self._owner().request_stop()
+        self._done.set()
 
     @rpc
-    def describe_world(self) -> World:
-        """The same configured models/mounts used by physics, available to late readers."""
-        self._ready.result(timeout=30)
-        return self._world
+    def submit(self, command: JointCommand | BodyWrench) -> None:
+        self._owner().submit(command)
+
+    async def handle_joint_command(self, command: JointCommand) -> None:
+        self._owner().submit(command)
+
+    async def handle_body_wrench(self, command: BodyWrench) -> None:
+        self._owner().submit(command)
 
     @rpc
-    def sample(self) -> Observations:
-        """A self-contained baseline; subscribing readers can also start at any next batch."""
-        runtime = self._ready.result(timeout=30)
-        return observations(runtime.run_id, runtime.backend.layout, self.state())
+    def inspect(self, joints: tuple[str, ...] = ()) -> tuple[BodyPoses, JointState]:
+        return cast("tuple[BodyPoses, JointState]", self._owner().request("inspect", joints))
 
     @rpc
-    def describe(self) -> Layout:
-        return self._ready.result(timeout=30).backend.layout
+    def reset(self) -> tuple[BodyPoses, JointState]:
+        return cast("tuple[BodyPoses, JointState]", self._owner().request("reset"))
 
     @rpc
-    def state(self) -> WorldState:
-        if self._latest is None:
-            raise RuntimeError("simulation has not published its first sample")
-        return self._latest
+    def place(self, body_id: str, pose: tuple[float, ...]) -> tuple[BodyPoses, JointState]:
+        return cast("tuple[BodyPoses, JointState]", self._owner().request("place", body_id, pose))
 
     @rpc
-    def reset(self) -> WorldState:
-        return self._operation("reset", ())
-
-    @rpc
-    def place(self, body: str, pose: tuple[float, ...]) -> WorldState:
-        return self._operation("place", (body, pose))
-
-    def _operation(self, name: str, args: tuple[Any, ...]) -> WorldState:
-        if self._done.is_set():
-            raise RuntimeError(self._error or "simulation stopped")
-        future: Future[WorldState] = Future()
-        self._operations.put_nowait((name, args, future))
-        return future.result(timeout=5)
-
-    @rpc
-    def apply_wrench(self, wrench: Wrench) -> None:
-        """Queue an operator intervention for the next tick; read timing() for rejection details."""
-        self._ready.result(timeout=30).submit(wrench)
-
-    @rpc
-    def timing(self) -> dict[str, Any]:
-        runtime = self._ready.result(timeout=30)
-        return {
-            "late_steps": self._late_steps,
-            "dropped_publications": self._dropped_publications,
-            "rejected_commands": runtime.rejected,
-            "last_rejection": runtime.last_error,
-            "error": self._error,
-            "tick": runtime.tick,
-        }
+    def status(self) -> dict[str, Any]:
+        result = self._owner().status()
+        with self._lock:
+            result["publication_error"] = self._error
+        return result
 
     @rpc
     def stop(self) -> None:
         self._done.set()
-        for thread in (self._owner, self._publisher):
-            if thread is not None:
-                thread.join(timeout=5)
+        if self._simulation is not None:
+            self._simulation.request_stop()
+        for thread in self._threads:
+            thread.join(timeout=5)
+            if thread.is_alive():
+                raise RuntimeError(f"{thread.name} did not stop")
         super().stop()

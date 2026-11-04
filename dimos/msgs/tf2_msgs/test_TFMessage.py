@@ -128,8 +128,8 @@ def test_tfmessage_lcm_encode_decode() -> None:
     ts1 = lcm_msg.transforms[0]
     assert ts1.header.frame_id == "world"
     assert ts1.child_frame_id == "robot"
-    assert ts1.header.stamp.sec == 123
-    assert ts1.header.stamp.nsec == 456000000
+    assert ts1.header.clock_id == "unix"
+    assert ts1.header.time_ns == 123_456_000_000
     assert ts1.transform.translation.x == 1.0
     assert ts1.transform.translation.y == 2.0
     assert ts1.transform.translation.z == 3.0

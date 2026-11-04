@@ -1,181 +1,136 @@
-# sim2: descriptions, observations and actions
+# Sim2: physical truth and independent sensors
 
-The physics engine owns the simulation. Other processes receive **absolute body
-poses** through generated `sim_msgs.Observations`; camera and lidar do not receive
-joint state or a native simulator checkpoint. Every publication is complete,
-including stationary bodies. There is no change detection or delta replay.
+A **body** is a rigid frame with a pose. A **joint** constrains motion between
+bodies and has a scalar coordinate. A **scene** is the resolved robot/object
+geometry plus initial placement and drive parameters. A **measurement** is a
+sensor model's output, acquired at a specified time; it is not physical truth.
 
-## Where code belongs
+## Code map
 
-```text
-dimos/sim2/
-├── description.py       World, Instance, drives and sensor profiles; model resolution
-├── state.py             Layout, WorldState and the physics/IMU sample
-├── physics/
-│   ├── interface.py     PhysicsBackend; joint targets, efforts and body wrenches
-│   ├── runtime.py       Step ownership, command expiry and reset epochs
-│   ├── module.py        SimModule: lifecycle, RPCs and publication
-│   └── mujoco.py        MuJoCo compilation and dynamics
-├── sensors/
-│   ├── interface.py     SensorReader and scan result contract
-│   ├── module.py        SimSensorModule: acquisition scheduling and sensor outputs
-│   └── mujoco.py        Pose-driven query scene, RGB/depth and lidar
-├── messages/
-│   ├── observations.py  Body-pose wire conversion and validation
-│   └── control.py       Joint-action decoding and robot-feedback encoding
-└── examples/
-    └── basic.py         Runnable pusher/box blueprint
+```
+sim2/
+  description.py              SceneConfig, Instance, Drive; no sensor configuration
+  physics/
+    interface.py              PhysicsBackend protocol (no MuJoCo types)
+    simulation.py             Simulation: clock, steps, command validation/expiry/reset
+    module.py                 SimModule: DimOS lifecycle, queues and typed ports
+    mujoco.py                 Native dynamics and physical truth queries
+  geometry/
+    mujoco.py                 Shared model-to-native geometry compiler
+    query.py                  Geometry-only scene: no qpos, actuators or stepping
+    poses.py                  Complete body-pose validation
+  sensors/
+    sampling.py               Acquisition cadence and clock/epoch checks
+    poses.py                  Bounded camera/lidar worker lifecycle
+    imu/module.py             BodyMotion → Imu
+    encoder/module.py         Joint truth → measured JointState
+    camera/{config,module}.py Camera acquisition and renderer protocol
+    camera/renderers/mujoco.py Native camera implementation
+    lidar/{config,module}.py  Rolling scan acquisition and raycaster protocol
+    lidar/mid360.py           Calibrated four-channel direction pattern
+    lidar/raycasters/mujoco.py Native geometry ray queries
 ```
 
-Tests live beside the code they exercise. Add a physics engine under `physics/`
-implementing `PhysicsBackend`; add a renderer/raycaster under `sensors/`
-implementing `SensorReader`. These are separate choices in a blueprint.
-`messages/` adapts generated dimos-lcm messages; their schemas belong in dimos-lcm.
-Robot model/asset resolution stays in `robot/assets` and `UrdfManager`; G1 policy
-and blueprint code stays in `robot/unitree/g1`. Neither belongs in the generic core.
-
-The current MuJoCo sensor implementation reuses `physics/mujoco.py`'s pure scene
-compiler to build its separate query model. It does not use the running physics
-backend or its native state. `description.py` and `state.py` import neither engine
-implementations nor module workers.
-
-## The objects and their meanings
-
-| Object | Exact contents and purpose |
-|---|---|
-| `RobotModel` | Configured source URDF, selected subtree, prefix and fixed mounts. Existing robot asset machinery, also used outside simulation. |
-| `LoadedRobotModel` | Resolved URDF text, link/joint description and asset paths. `UrdfManager.resolved_models()` provides this once to consumers. |
-| `World` | Named instances with initial placement, floating/fixed roots, drives, sensor profiles and physics timestep. `resolve(models)` binds each instance to the owner's resolved description. |
-| `Layout` | Stable body, joint, drive, root and IMU names and their array order; model revision. No changing physical values. |
-| `WorldState` | Local physics sample: body poses/twists and joint position/velocity/actuator effort at one epoch/tick. Used inside the owner and by diagnostic `state()` RPC; not broadcast to sensors. Not sufficient to restore solver state. |
-| `Observations` | Generated wire message identifying run, model revision, reset epoch, tick, simulation time and wall timestamp, with a list of typed entity observations. |
-| `SceneSample` | Validated observation batch as a read-only body-pose array in `Layout.bodies` order. Only input state needed by the camera/lidar query scene. |
-| `Actions` | Generated command batch, addressed to run/model/epoch. Its initial kind is `JointCommand`, with named desired position, velocity, kp, kd and feedforward effort arrays. |
-
-An **entity ID is a body/frame name**, such as `robot/hand` or `box`, not a whole
-articulated robot and not a joint. A joint names a constrained degree of freedom
-between bodies. A pose is world-from-body: XYZ metres and a unit XYZW quaternion,
-in a right-handed Z-up world. Articulated links each publish their own pose.
+The existing `robot/assets/RobotModel` defines source geometry, names and fixed
+mounts. `UrdfManager.resolved_models()` resolves it once; it also serves the model
+and publishes its TF tree. A blueprint passes the **same SceneConfig** to physics
+and geometry sensors; each binds it to those resolved descriptions. Sensor settings
+are passed to their own modules. No camera or lidar appears in SceneConfig.
 
 ```mermaid
-flowchart TD
-    M["RobotModel: source + prefix + mounts"] --> U["UrdfManager: resolve once; serve URDF/assets"]
-    U --> W["World.resolve: descriptions + placement + drives + sensors"]
-    W --> P["SimModule → Runtime → PhysicsBackend"]
-    W --> S["SimSensorModule → SensorReader"]
-    P -->|"Observations: all body poses"| S
-    S -->|"Image / depth / PointCloud2"| D["DimOS Desktop or perception"]
-    P -->|"ControlValues: joints + native IMU"| C["Robot controller / policy"]
-    C -->|"Actions: JointCommand"| P
-    P -->|"world→root TF; JointState"| U
-    U -->|"joint TF + model files"| D
+flowchart LR
+    U["UrdfManager: resolved geometry + mounts"] --> P["SimModule / Simulation / PhysicsBackend"]
+    U --> C["SimCameraModule / renderer"]
+    U --> L["SimLidarModule / raycaster"]
+    P -->|BodyPoses| C
+    P -->|BodyPoses history| L
+    P -->|BodyPoses| U
+    P -->|BodyMotion| I[SimImuModule]
+    P -->|joint_truth: JointState| E[SimJointEncoderModule]
+    I -->|Imu| R[Policy]
+    E -->|joint_state: JointState| R
+    R -->|JointCommand| P
+    C -->|Image + CameraInfo| D[Desktop / perception]
+    L -->|PointCloud2| D
+    U -->|TF + model files| D
 ```
 
-`Observation.POSE` contains the existing generated `geometry_msgs.Pose` encoding.
-`Observation.CBOR` is an optional extension with a versioned schema name. It cannot
-supply missing poses. Unknown optional kinds can be skipped. Unknown **actions**
-reject the entire command batch. See the companion dimos-lcm `docs/sim_messages.md`
-for the wire contract and shared Python/TypeScript fixtures.
+## Calls and ports
 
-## Modules and interfaces
-
-| Module / object | Input | Output / methods |
-|---|---|---|
-| `UrdfManager` | `model=` or named `models=`; `coordinator_joint_state: JointState` | `resolved_models()`; joint TF; requested URDF and referenced files. `name.urdf` selects a named model; legacy requests select the first model. |
-| `SimModule` | Configured `world`, backend factory; `actions: Actions` | `observations: Observations`, `robot_feedback: ControlValues`, `joint_state`, native `imu`, root TF. RPCs: `describe`, `describe_world`, `sample`, `state`, `reset`, `place`, `apply_wrench`, `timing`. |
-| `SimSensorModule` | Injected `SimulationSpec` for resolved world/layout; `observations`; explicit camera/lidar frame selection | `color_image`, `depth_image`, `camera_info`, `lidar`; `statistics()`. Camera/lidar rates live in `World.sensors`. |
-| `Runtime` | Synchronous backend; queued internal targets, efforts and wrenches | `submit`, `prepare`, `advance`, `snapshot`, `capture`, `reset`, `place`. Owns expiry and reset identity; has no transport or renderer. |
-| `PhysicsBackend` | Resolved `World` | `layout`, `dt`, `targets`, `efforts`, `hold`, `validate_wrench`, `step`, `snapshot`, `reset`, `place`. MuJoCo is the implemented backend. |
-| `SensorReader` | Resolved `World`, `Layout`; generated observations | `observe` → `SceneSample`, `camera(frame, sample)`, `lidar(frame, duration)`, `close`, `gaps`. MuJoCo is the implemented reader. |
-
-Source: [description](/dimos/sim2/description.py), [state](/dimos/sim2/state.py),
-[physics interface](/dimos/sim2/physics/interface.py), [SimModule](/dimos/sim2/physics/module.py),
-[runtime](/dimos/sim2/physics/runtime.py), [observations](/dimos/sim2/messages/observations.py),
-[control messages](/dimos/sim2/messages/control.py), [sensor interface](/dimos/sim2/sensors/interface.py),
-[SimSensorModule](/dimos/sim2/sensors/module.py),
-[MuJoCo physics](/dimos/sim2/physics/mujoco.py), [MuJoCo sensors](/dimos/sim2/sensors/mujoco.py).
-
-The sensor query model flattens geometry-bearing bodies into independently posed
-bodies: **zero joints, zero generalized coordinates, zero actuators**. Applying
-observations updates each body's world pose. Rendering/raycasting runs in another
-worker and never steps dynamics. The cost is per-body pose extraction, encoding,
-transport, decoding and geometry updates; this is deliberately not zero-copy.
-
-Robot feedback stays separate because a controller needs joint coordinates and
-native IMU measurements, not only geometry poses. `ControlValues` uses named
-`joint/position`, `joint/velocity`, `joint/effort`, mounted IMU fields and `sim/time`.
-The policy produces `JointCommand`; the backend applies
-`tau = kp*(position-q) + kd*(velocity-dq) + effort` each physics tick.
-
-## Time, reset and late readers
-
-A run ID identifies an owner process; model revision identifies its description.
-Reset/placement increments an integer epoch, invalidates commands/history and
-restarts ticks/time. Compare `(epoch, tick)` only within a bound run/model. Stale
-samples are ignored. A new process/model requires rebinding; it is not silently
-accepted as a continuation.
-
-`complete=true` means exactly one valid pose per declared body. Readers validate
-all of it before replacing their view. A late camera can load `describe_world()`
-and `describe()` then render `sample()`, or the next complete publication. It
-needs no earlier pose messages. Lidar needs a subsequent full scan interval;
-missing history causes a rejected scan, not invented motion. Partial batches are
-reserved by the schema but deliberately rejected by the initial reader.
-
-Physics uses fixed 2 ms steps by default. Optional `control_joints` makes the
-module wait at publication ticks for a command answering that exact feedback
-tick. Slow inference slows simulation time without resetting physics or bursting
-through stale commands. Rendering cannot block this loop. This is simulation
-pacing, not a physical-robot safety mechanism.
-
-## Minimal runnable core
-
-```bash
-source .venv/bin/activate
-dimos run sim2-basic --daemon
-dimos shell
-```
+`SimModule.start()` resolves the scene and creates `Simulation(backend, scene,
+timing)`. Its owner thread calls `backend.load()`, then repeatedly processes
+commands, exports due truth samples, and calls `backend.step()`. Only this owner
+touches native dynamics. Separate publication threads carry queued messages;
+rendering and raycasting happen in separate sensor workers.
 
 ```python
-from dimos_lcm.sim_msgs import Action, Actions, JointCommand
-from dimos.core.transport_factory import make_transport
-from dimos.sim2.physics.interface import Wrench
-
-sim = app.SimModule
-baseline = sim.sample()
-command = JointCommand(n=1, names=["tool_joint"], position=[0.75],
-                       velocity=[0.0], kp=[80.0], kd=[8.0], effort=[0.0])
-payload = command.lcm_encode()
-transport = make_transport("/actions", Actions)
-transport.start()
-transport.broadcast(None, Actions(
-    run_id=baseline.run_id, model_revision=baseline.model_revision,
-    epoch=baseline.epoch, tick=-1, ttl=2.0, actions_length=1,
-    actions=[Action(kind=Action.JOINT_COMMAND, data_length=len(payload), data=payload)],
-))
-# Operator intervention, separate from robot commands:
-state = sim.reset()
-sim.apply_wrench(Wrench(state.epoch, "box", force=(0, 6, 0), duration=0.2))
-transport.stop()
+# PhysicsBackend methods; concrete payloads are generated dimos-lcm types.
+load(scene: SceneConfig, dt_ns: int) -> None
+read_body_poses() -> list[BodyPose]
+read_motion(frame_id: str) -> BodyMotion
+read_joints(joint_ids: tuple[str, ...]) -> JointState
+set_joint_targets(targets: list[JointTarget]) -> None
+step(wrenches: tuple[BodyWrench, ...]) -> None
+hold(joint_ids: tuple[str, ...]) -> None
+reset() -> None
+place(body_id: str, pose: tuple[float, ...]) -> None
+close() -> None
 ```
 
-Open Controller in DimOS Desktop; fixed frame `world`, follow frame `base`.
-The pusher demo has no mobile-base policy. Stop with `dimos stop`.
+`SimModule` inputs are `joint_command` and `body_wrench`; outputs are `body_poses`,
+`body_motion`, `joint_truth`, and `clock`. RPCs: `inspect(joints=())`, `submit(command)`,
+`reset()`, `place(body_id, pose)`, `status()`. `inspect()` returns body poses and the
+requested joint sample; it is diagnostic, not a solver checkpoint.
 
-## Verification and scope
+The backend exports kinematic acceleration at the requested origin in world axes.
+`SimImuModule.measure()` rotates velocity/acceleration into sensor axes, subtracts
+gravity, and applies bias/noise. Ideal orientation is an explicit option, not an
+attitude estimator. `SimJointEncoderModule.measure()` selects joints and applies
+position offset/quantization/noise. Its velocity channel is explicitly ideal;
+effort is unavailable and empty. Both preserve acquisition identity and cache a
+repeated acquisition rather than drawing fresh noise.
 
-```bash
-pytest dimos/sim2 dimos/robot/assets/test_model.py
-pytest dimos/sim2/physics/test_module.py -m native_e2e
+Camera and lidar get complete body poses, not physics checkpoints. Each creates
+its own geometry-only query scene from the same models. Camera intrinsics and
+native camera objects belong in `sensors/camera`; lidar pattern, scan timing and
+range response belong in `sensors/lidar`. The raycaster only returns intersections.
+The MuJoCo camera currently supports a centered, square-pixel pinhole camera.
+Mid360 supplies a fitted directional pattern; material response is not modeled.
+
+## Time and failure behavior
+
+Every truth and measurement message has `SampleHeader(clock_id, epoch, time_ns,
+source_id, sequence, frame_id)`. Time is acquisition time, never receipt time.
+Reset/placement increments epoch and returns simulation time to zero. Joining,
+interpolation and recording must never cross epochs or clock IDs.
+
+Physics defaults to 2 ms. Independent schedules export poses at 200 Hz, selected
+motion/joints at 500 Hz; sensors choose their own rates. A non-integral period
+uses the first actual physics sample at/after its deadline (200 Hz at 2 ms steps:
+0, 6, 10, 16, 20 ms), preserving the actual acquisition time.
+
+A configured controller must answer an exact sample boundary. Physics waits there
+until its command arrives, with a finite host-time deadline. Expiry/fault never
+teleports or resets a robot. Slow rendering drops queued scene samples; a rolling
+scan detects insufficient history and drops that scan. High-rate truth queue
+overflow is a visible fault rather than silent control data loss. `status()` and
+sensor `statistics()` expose failures and counters.
+
+## Run and verify
+
+Requires the companion dimos-lcm draft revision pinned by this branch.
+
+```sh
+uv sync --extra sim
+source .venv/bin/activate
+dimos run sim2-basic --daemon
+dimos status
+dimos shell
+dimos stop
+pytest dimos/sim2 -o addopts='' --import-mode=importlib
 ```
 
-Tests cover forces/contact, joint drives/expiry, model resolution, full wire
-samples, malformed batches, reset ordering, late readers, RGB/depth/lidar and
-actual worker lifecycle. Sensor messages remain normal DimOS messages.
-
-This implementation accepts URDF models with fixed/independent scalar joints.
-It does not add MJCF-to-URDF conversion, a second physics backend, dynamic scene
-population, automatic real/sim connection replacement or calibrated sensor
-realism. Mesh contents are assumed immutable; the model revision hashes resolved
-XML/configuration, not the bytes of every referenced asset. Those limits should
-be tested explicitly before expanding the contract.
+The G1/GR00T example and real asset/policy acceptance test are in the second PR.
+The core imports no G1 code and changes no control coordinator. MuJoCo is the
+implemented backend; a second backend has not been validated. The native camera
+and raycaster are selectable adapters, not a claim of cross-engine fidelity.

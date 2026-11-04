@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configured world: resolved models, placements, drives and mounted sensor profiles."""
+"""Physical scene: shared robot descriptions, placements and actuator parameters."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass, replace
 from functools import cached_property
 import hashlib
 import json
-from typing import Literal, Protocol
+from typing import Protocol
 
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.spec.utils import Spec
@@ -57,43 +57,11 @@ class ModelSourceSpec(Spec, Protocol):
 
 
 @dataclass(frozen=True)
-class Camera:
-    """Optical axes; the shared model owns the mount."""
-
-    frame: str
-    kind: Literal["camera"] = "camera"
-    hz: float = 5.0
-    width: int = 320
-    height: int = 240
-    fovy: float = 65.0
-
-
-@dataclass(frozen=True)
-class Lidar:
-    frame: str
-    kind: Literal["lidar"] = "lidar"
-    hz: float = 10.0
-    rays: int = 192
-    packets: int = 6
-    elevations: tuple[float, ...] = (-0.65, -0.3, 0.0, 0.15)
-    min_range: float = 0.05
-    max_range: float = 10.0
-    max_pose_age: float = 0.03
-
-
-@dataclass(frozen=True)
-class Imu:
-    frame: str
-    kind: Literal["imu"] = "imu"
-
-
-@dataclass(frozen=True)
-class World:
+class SceneConfig:
     instances: tuple[Instance, ...]
-    sensors: tuple[Camera | Lidar | Imu, ...] = ()
-    dt: float = 0.002
+    gravity_world: tuple[float, float, float] = (0.0, 0.0, -9.81)
 
-    def resolve(self, models: dict[str, LoadedRobotModel]) -> World:
+    def resolve(self, models: dict[str, LoadedRobotModel]) -> SceneConfig:
         instances = []
         for instance in self.instances:
             model = models.get(instance.id)
@@ -108,7 +76,7 @@ class World:
     def revision(self) -> str:
         """Identity of the materialized description; not a native solver checkpoint."""
         payload = {
-            "dt": self.dt,
+            "gravity_world": self.gravity_world,
             "instances": [
                 {
                     "id": i.id,
@@ -120,7 +88,6 @@ class World:
                 }
                 for i in self.instances
             ],
-            "sensors": [{"kind": s.kind, **asdict(s)} for s in self.sensors],
         }
         return hashlib.sha256(
             json.dumps(json.loads(json.dumps(payload), parse_int=float), sort_keys=True).encode()

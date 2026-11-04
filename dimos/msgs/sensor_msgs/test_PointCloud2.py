@@ -191,7 +191,8 @@ def test_lcm_decode_maps_ros_time_and_ring() -> None:
     kinds = {"<f4": PointField.FLOAT32, "<u2": PointField.UINT16}
     msg = LCMPointCloud2()
     msg.header.frame_id = "utlidar_lidar"
-    msg.header.stamp.sec = 100
+    msg.header.clock_id = "unix"
+    msg.header.time_ns = 100_000_000_000
     msg.height, msg.width, msg.point_step = 1, 3, 24
     msg.row_step = 72
     msg.fields = [

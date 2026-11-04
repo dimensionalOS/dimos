@@ -46,7 +46,7 @@ def _fields_of(source: Any) -> tuple[Any, ...]:
     if isinstance(source, JointState):
         return (source.ts, source.frame_id, *(list(getattr(source, f)) for f in _FIELDS[2:]))
     return (
-        source.header.stamp.sec + (source.header.stamp.nsec / 1_000_000_000),
+        source.header.time_ns / 1e9,
         source.header.frame_id,
         *(list(getattr(source, f) or []) for f in _FIELDS[2:]),
     )
@@ -85,6 +85,10 @@ class JointState(Timestamped):
             effort: List of joint efforts (Nm or N)
         """
         stamp: Any = ts
+        if isinstance(ts, JointState):
+            self.sample_header = ts.sample_header
+        elif isinstance(ts, LCMJointState):
+            self.sample_header = ts.header
         if isinstance(stamp, dict | JointState | LCMJointState):
             stamp, frame_id, name, position, velocity, effort = _fields_of(stamp)
 
@@ -97,8 +101,7 @@ class JointState(Timestamped):
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMJointState()
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
-        lcm_msg.header.frame_id = self.frame_id
+        lcm_msg.header = self.acquisition_header(self.frame_id)
         lcm_msg.name_length = len(self.name)
         lcm_msg.name = self.name
         lcm_msg.position_length = len(self.position)
@@ -113,13 +116,13 @@ class JointState(Timestamped):
     def lcm_decode(cls, data: bytes) -> JointState:
         lcm_msg = LCMJointState.lcm_decode(data)
         return cls(
-            ts=lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000),
+            ts=lcm_msg.header.time_ns / 1e9,
             frame_id=lcm_msg.header.frame_id,
             name=list(lcm_msg.name) if lcm_msg.name else [],
             position=list(lcm_msg.position) if lcm_msg.position else [],
             velocity=list(lcm_msg.velocity) if lcm_msg.velocity else [],
             effort=list(lcm_msg.effort) if lcm_msg.effort else [],
-        )
+        ).with_sample_header(lcm_msg.header)
 
     def __str__(self) -> str:
         return f"JointState({len(self.name)} joints, frame_id='{self.frame_id}')"
