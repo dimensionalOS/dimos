@@ -8,7 +8,7 @@
   description = "dimos-gsc-pgo: lidar loop closure (Scan Context + ICP) and pose graph optimization, all Rust";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/549bd84d6279f9852cae6225e372cc67fb91a4c1";
+    nixpkgs.url = "github:NixOS/nixpkgs/b1b875982b17dabde9b4a37f3e229e74913e6db3";
     flake-utils.url = "github:numtide/flake-utils/11707dc2f618dd54ca8739b309ec4fc024de578b";
     crate2nix = {
       url = "github:nix-community/crate2nix";

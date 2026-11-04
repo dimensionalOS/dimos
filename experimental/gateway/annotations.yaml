@@ -116,6 +116,13 @@ robots:
           title: Go2 + Mid-360 recording
           description: Drive a Go2 carrying a Livox Mid-360 and record the lidar, the robot and its pose.
           recommended_config: *robot_ip_only
+        unitree-go2-mid360-pgo:
+          title: Go2 + Mid-360 live PGO
+          description: Loop-closes a Go2-mounted Mid-360's Point-LIO odometry with GSC PGO and shows the pose graph in Rerun.
+          recommended_config: []
+        unitree-go2-pgo:
+          title: Go2 live PGO
+          description: Loop-closes the Go2's own lidar and odometry with GSC PGO and shows the pose graph in Rerun.
         unitree-go2-hol-path-controller:
           title: Go2 3D navigation (MLS + holonomic)
           description: '3D navigation: a voxel map, MLS planning and a holonomic controller.'

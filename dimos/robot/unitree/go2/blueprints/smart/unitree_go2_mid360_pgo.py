@@ -15,7 +15,7 @@
 """unitree_go2_mid360_pgo: run the jnav PGO live on a Go2's Livox Mid-360 +
 Point-LIO and visualize the optimized pose graph in Rerun.
 
-Point-LIO reads the Mid-360 and publishes a registered `lidar` (PointCloud2) plus
+The Mid-360 driver feeds Point-LIO, which publishes a registered `lidar` (PointCloud2) plus
 `odometry` (Odometry); its `lidar` is remapped to the PGO's `cloud` In. The PGO
 consumes both and emits a loop-closed `pose_graph` (one packed record per keyframe,
 see gsc_pgo/records.py). The Rerun bridge renders it as the keyframe positions;
@@ -36,10 +36,12 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.navigation.jnav.components.loop_closure.gsc_pgo.module import GscPGO
 from dimos.visualization.vis_module import vis_module
 
 unitree_go2_mid360_pgo = autoconnect(
+    mid360_for_pointlio(),
     PointLio.blueprint().remappings([(PointLio, "lidar", "cloud")]),
     GscPGO.blueprint(),
     vis_module("rerun"),

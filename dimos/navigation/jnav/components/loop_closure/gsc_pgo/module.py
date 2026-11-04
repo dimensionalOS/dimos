@@ -79,7 +79,7 @@ class PGOConfig(NativeModuleConfig):
     )
     source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"
     executable: str = "result/bin/gsc-pgo"
-    build_command: str | None = "nix build .#default --no-write-lock-file"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     # outputs: map → odom
