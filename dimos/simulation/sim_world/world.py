@@ -271,7 +271,6 @@ class Sim:
             for i, sensor in enumerate(rig.sensors)
         ]
         self.lio = GroundTruthLio()
-        self._lio_counts = [0] * len(rig.sensors)
         self.ticks_per_frame = round(FRAME_DT / self.robot.dt)
         self.t = 0.0
         self._tick = 0
@@ -334,15 +333,13 @@ class Sim:
         """Advance one control tick. Returns the lidar frame that completed on this tick, if any."""
 
         def cast() -> None:
-            for i, (sensor, lidar, n) in enumerate(
-                zip(self.rig.sensors, self.lidars, self._points_per_step, strict=True)
+            for sensor, lidar, n in zip(
+                self.rig.sensors, self.lidars, self._points_per_step, strict=True
             ):
                 position, rotation = self.sensor_pose(sensor)
-                points = lidar.cast(position, rotation, n)
+                points = lidar.cast(position, rotation, n, sensor.lio_keep_every)
                 kept = points[np.linalg.norm(points, axis=1) >= sensor.lio_blind_range]
-                first = -self._lio_counts[i] % sensor.lio_keep_every
-                self._lio_counts[i] += len(kept)
-                self.lio.add(kept[first :: sensor.lio_keep_every], position, rotation)
+                self.lio.add(kept, position, rotation)
 
         self.robot.tick(command, cast)
         self._tick += 1
