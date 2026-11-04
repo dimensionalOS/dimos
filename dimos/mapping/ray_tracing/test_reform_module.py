@@ -12,16 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-
-import pytest
-
 from dimos.mapping.ray_tracing.reform_module import (
     ReformRayTracingVoxelMap,
     ReformRayTracingVoxelMapConfig,
 )
-
-REPO = Path(__file__).resolve().parents[3]
 
 
 def test_the_module_declares_the_closure_inputs() -> None:
@@ -34,12 +28,3 @@ def test_the_module_declares_the_closure_inputs() -> None:
         "reform_blend_time_sigma_s",
         "reform_min_shift_m",
     } <= set(config.to_config_dict())
-
-
-def test_the_warp_is_the_planners() -> None:
-    # Each crate builds alone under nix, so the ray tracer keeps its own copy.
-    ours = REPO / "dimos/mapping/ray_tracing/rust/src/reform.rs"
-    planners = REPO / "dimos/navigation/global_planner/mls_planner/rust/src/reform.rs"
-    if not planners.exists():
-        pytest.skip("no mls_planner reform.rs on this branch to compare against")
-    assert ours.read_text() == planners.read_text()

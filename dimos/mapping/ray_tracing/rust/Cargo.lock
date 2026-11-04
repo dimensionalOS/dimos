@@ -598,7 +598,7 @@ dependencies = [
 [[package]]
 name = "dimos-module"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
+source = "git+https://github.com/dimensionalOS/dimos?rev=128847174ee50174360ec5ce3128c17e355fc280#128847174ee50174360ec5ce3128c17e355fc280"
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
@@ -618,12 +618,24 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
+source = "git+https://github.com/dimensionalOS/dimos?rev=128847174ee50174360ec5ce3128c17e355fc280#128847174ee50174360ec5ce3128c17e355fc280"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "dimos-reform"
+version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos?rev=128847174ee50174360ec5ce3128c17e355fc280#128847174ee50174360ec5ce3128c17e355fc280"
+dependencies = [
+ "ahash",
+ "fast-reform",
+ "lcm-msgs",
+ "libc",
+ "rayon",
 ]
 
 [[package]]
@@ -633,9 +645,9 @@ dependencies = [
  "ahash",
  "arrayvec",
  "dimos-module",
+ "dimos-reform",
  "fast-reform",
  "lcm-msgs",
- "libc",
  "nalgebra",
  "rayon",
  "serde",

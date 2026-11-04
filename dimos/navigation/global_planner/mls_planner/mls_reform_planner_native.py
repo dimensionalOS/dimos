@@ -27,20 +27,13 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
 class MLSReformPlannerNativeConfig(MLSPlannerNativeConfig):
     executable: str = "result/bin/mls_reform_planner"
 
-    # Spatial width of the blend between keyframe corrections, m. 0 picks twice
-    # the mean keyframe spacing.
+    # spatial blend width between keyframe corrections, m (0 = twice the mean keyframe spacing)
     reform_blend_sigma_m: float = 0.0
-    # Temporal width, s, which keeps the passes of a revisited place apart. A
-    # voxel is stamped when it lands, a little after it was seen, so this is
-    # wider than the keyframe interval. 0 picks twice the mean interval.
+    # temporal blend width, s, keeping a revisited place's passes apart (0 = twice the mean keyframe interval)
     reform_blend_time_sigma_s: float = 5.0
-    # A keyframe whose correction moves its surroundings less than this waits
-    # for a later closure. Half a voxel moves no voxel.
+    # a keyframe moving its surroundings less than this waits for a later closure (half a voxel moves none)
     reform_min_shift_m: float = 0.04
-    # A warp blends one keyframe per cell of this size (and of the time width in
-    # time), m: the one nearest the cell's center. 0 picks the blend width,
-    # negative blends every keyframe. At sigma a live small_loop_go2 closure takes
-    # tracer p90 421 ms / planner 344 ms under load, against 648 / 574 blending all.
+    # a warp blends the one keyframe nearest each cell of this size, m (0 = the blend width, negative = every keyframe)
     reform_thin_cell_m: float = 0.0
     # Where to write the module's map state every 10 s for offline checks, empty for never.
     dump_path: str = ""

@@ -61,9 +61,9 @@ region_bounds = "geometry_msgs.PoseStamped"
 map_regions = "sensor_msgs.PointCloud2"
 
 [dependencies]
-# Resident memory for the periodic memory log.
-libc = "0.2"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "128847174ee50174360ec5ce3128c17e355fc280" }
+# reform.rs and rss.rs, shared by the ray tracer and the MLS planner.
+dimos-reform = { git = "https://github.com/dimensionalOS/dimos", rev = "128847174ee50174360ec5ce3128c17e355fc280" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
