@@ -30,12 +30,8 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import load_policy
 from dimos.simulation.go2_legged.robot import LeggedGo2, apply_fitted_physics, go2_spec
 from dimos.simulation.scenes.procedural import Scene
-from dimos.simulation.sensors.mid360.lidar import (
-    HOUSING_HALF_EXTENTS,
-    OcclusionMap,
-    Raycaster,
-    SimMid360,
-)
+from dimos.simulation.sensors.lidar import OcclusionMap, Raycaster, SimLidar
+from dimos.simulation.sensors.mid360.lidar import HOUSING_HALF_EXTENTS, sim_mid360
 from dimos.simulation.sim_world.body import BodyShape, Rig, Sensor
 from dimos.simulation.sim_world.world import Sim, SimWorld, SimWorldConfig
 from dimos.utils.data import get_data
@@ -55,14 +51,14 @@ def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     return matrix[:3, 3].copy(), matrix[:3, :3].copy()
 
 
-def _lidar(raycaster: Raycaster, seed: int) -> SimMid360:
+def _lidar(raycaster: Raycaster, seed: int) -> SimLidar:
     """The Mid-360 shadowed by the Go2 mount."""
     occlusion = OcclusionMap.load(get_data("go2_sim") / "go2_mid360_occlusion.npz")
-    return SimMid360.fitted(raycaster, seed, occlusion)
+    return sim_mid360(raycaster, seed, occlusion)
 
 
 MOUNT_XYZ, MOUNT_R = _mount()
-MID360 = Sensor("mid360", MOUNT_XYZ, MOUNT_R, _lidar)
+MID360 = Sensor("mid360", MOUNT_XYZ, MOUNT_R, _lidar, HOUSING_HALF_EXTENTS)
 
 SHAPE = BodyShape(
     half_width=ROBOT_WIDTH / 2,
