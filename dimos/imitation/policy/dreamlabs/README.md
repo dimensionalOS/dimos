@@ -31,19 +31,25 @@ Neither blueprint starts rollout automatically.
 
 ## Preflight and preview
 
-Attach the operator panel with `dimos imitation control`. **Start preview** runs
-inference without dispatching actions. **Execute on robot** explicitly enables
-trajectory dispatch. Both actions run preflight first; **Stop policy** stops
-either mode. The panel shows PREVIEW or EXECUTE and blocks restarting while a
-stopped rollout is still DRAINING. Preview uploads images and state just like
-execution.
+Run `dimos imitation control` in another terminal for task/model editing,
+**Preview once**, **Execute 1 chunk**, **Execute continuous**, and **Stop rollout**
+(**F8**). Apply edits while idle; Apply does not infer or move. Starting either
+preview or execution preflights local inputs first. Every start uses new observations
+and inference, rather than replaying a displayed preview. The panel shows phase,
+retry countdown, input presence, chunk counters, EEF target deltas and disabled checks.
 
+Cloud warming/rate-limit refusals marked retryable by the SDK are retried using its
+retry delay (at least one second). A cloud retry revokes dispatch and recovers into a
+single preview: press Execute again after inspecting it. Other errors, including
+hardware faults, are not automatically retried. Stop interrupts retry waits and
+invalidates pending replies.
 
-Attach with `dimos shell` and use the policy module's RPCs:
+Alternatively, attach with `dimos shell` and use the policy module's RPCs:
 
 ```python
+policy = app.get_module("policy")
 policy.preflight_rollout()
-policy.start_rollout()  # Remote inference and image/state upload, preview only.
+policy.start_rollout(dispatch_actions=False, max_chunks=1)  # Upload and preview.
 policy.rollout_status()
 policy.get_last_preview()
 policy.get_last_action_response()
@@ -58,10 +64,15 @@ Wait for `busy=False` after stop before another episode. Use `set_task(text)` to
 stop, drain, and replace task language. An in-flight request may finish after stop;
 its result cannot preview or dispatch. Stop is not an E-stop.
 
+Cloud requests use the pinned SDK's 15-second timeout by default. Override it with
+`--policy.dreamlabs.timeout-ms 30000` for a slower connection. This controls request
+waiting, not motion speed or the coordinator's execution deadman. Do not repeatedly
+start rollout while a request is active or draining.
+
 Actuator dispatch is a separate opt-in:
 
 ```python
-policy.start_rollout(dispatch_actions=True)
+policy.start_rollout(dispatch_actions=True, max_chunks=1)  # One chunk; omit limit for continuous.
 ```
 
 Physical dispatch through this integrated backend requires separate station
@@ -72,8 +83,14 @@ EEF tracking. Stop and drain policy before manual planning execution.
 
 Provide `DreamlabsBackendConfig(mode="eef", model=..., arms=...)` to the shared
 `policy_module`. Each `DreamlabsArmConfig` names its controlled joints, fixed arm
-base, target frame, normalized gripper joint, and measured target-to-SDK-TCP
-transform. The arm base must be fixed relative to the model root.
+base, target frame, normalized gripper joint, and `sdk_tcp_frame` in the same
+model. The SDK TCP must be rigidly connected to the execution target; it may be
+the target itself. Define tool geometry with `RobotModel.with_fixed_frame`, as
+the standard Metal model does for `grasp_frame` and the distinct `dreamlabs_tcp`
+protocol frame (135 mm along `link6` +X, RPY `(pi/2, 0, pi/2)`). No separate TCP JSON is needed
+for that standard model. Existing explicit `target_to_sdk_xyz` and
+`target_to_sdk_xyzw` transforms remain supported instead of a named SDK frame;
+specifying both forms is rejected. The arm base must be fixed relative to the model root.
 The model and target frames must match the coordinator's EEF task configuration.
 
 The adapter uses metres, radians, and normalized `[0,1]` gripper openings. SDK
@@ -101,8 +118,18 @@ overshoot rejects the whole chunk. Shared hardware limits remain authoritative.
 
 EEF execution samples Cartesian targets on coordinator ticks, solves all target
 frames together, and bounds commands using the existing Pink control core.
+For station debugging, `policy.check_observation_timing=false` disables the local
+observation age and camera/state skew gates. This allows unsynchronized or old
+camera/state observations. Required inputs, finite-value checks, hardware limits,
+and coordinator execution supervision remain active. The default is `true`.
 Tracking error, invalid feedback, IK failure, and settling timeout fault the task.
 Completion requires measured TCP and gripper error within configured tolerances.
+For temporary time-only EEF playback, set
+`policy.dreamlabs.require_endpoint_convergence` to `false` in station configuration.
+Each chunk then completes at its scheduled duration and holds measured joint
+positions. Unreached endpoint errors are logged as warnings; `chunks_completed`
+counts elapsed chunks, not confirmed endpoint accuracy. Tracking, feedback, IK,
+velocity, start-state, and deadman checks still apply. The default remains `true`.
 Dreamlabs dispatch retains the standalone adapter's coordinator deadman, with a
 one-second default. The runtime refreshes it while awaiting execution. Lost
 heartbeats abort the task; ordinary planning trajectories have no default deadman.

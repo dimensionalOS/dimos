@@ -105,7 +105,12 @@ def joint_actions(
     return rows.astype(np.float32)
 
 
-def policy_config(checkpoint: str, timeout_ms: int, mode: str = "joint") -> dict[str, Any]:
+def policy_config(
+    checkpoint: str,
+    timeout_ms: int,
+    mode: str = "joint",
+    camera_roles: tuple[str, ...] = CAMERAS,
+) -> dict[str, Any]:
     parts = {
         "right_arm": [0, 6],
         "right_gripper": [6, 7],
@@ -144,6 +149,6 @@ def policy_config(checkpoint: str, timeout_ms: int, mode: str = "joint") -> dict
                     "left_grip": [19, 20],
                 }
             ),
-            "video": {role: f"observation.images.{role}" for role in CAMERAS},
+            "video": {role: f"observation.images.{role}" for role in camera_roles},
         },
     }

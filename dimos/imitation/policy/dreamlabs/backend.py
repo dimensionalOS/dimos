@@ -30,7 +30,6 @@ from dimos.control.tasks.eef_trajectory_task.trajectory import EefTrajectory, Ee
 from dimos.imitation.policy.dreamlabs.config import DreamlabsBackendConfig, yam_arms
 from dimos.imitation.policy.dreamlabs.constants import (
     ACTION_HZ,
-    CAMERAS,
     HORIZON,
     OBSERVATION_PERIOD,
     OBSERVATION_WINDOW,
@@ -128,11 +127,11 @@ class DreamlabsBackend:
         if not task.strip() or not np.isfinite(timestamp):
             raise ValueError("Dreamlabs requires a task and finite capture timestamp")
         positions = self._positions(state)
-        if set(images) != set(CAMERAS):
-            raise ValueError(f"Dreamlabs requires camera roles {CAMERAS}")
+        if set(images) != set(self.config.camera_roles):
+            raise ValueError(f"Dreamlabs requires camera roles {self.config.camera_roles}")
         frames = {
             f"video.{role}": encode_image(Image(data=images[role], format=ImageFormat.RGB))
-            for role in CAMERAS
+            for role in self.config.camera_roles
         }
         with self._lock:
             if self._closed:
@@ -145,7 +144,12 @@ class DreamlabsBackend:
                 client = create_client()
                 try:
                     client.policy(
-                        policy_config(self._checkpoint, self.config.timeout_ms, self.config.mode)
+                        policy_config(
+                            self._checkpoint,
+                            self.config.timeout_ms,
+                            self.config.mode,
+                            self.config.camera_roles,
+                        )
                     )
                 except Exception:
                     client.close()

@@ -19,14 +19,21 @@ import pickle
 from pydantic import ValidationError
 import pytest
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.experimental.isolated_python.module import contract_rpc_names
 from dimos.imitation.policy.module import (
+    PolicyControlSpec,
     PolicyModule,
     PolicyModuleConfig,
     policy_class,
 )
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.spec.utils import spec_annotation_compliance
 from dimos.utils.data import get_project_root
+
+
+def test_policy_control_spec_matches_coordinator_rpc_signatures():
+    assert spec_annotation_compliance(ControlCoordinator, PolicyControlSpec)
 
 
 def test_contract_imports_without_runtime_dependencies() -> None:
@@ -35,6 +42,7 @@ def test_contract_imports_without_runtime_dependencies() -> None:
         "get_last_action_response",
         "get_last_preview",
         "set_task",
+        "set_policy_path",
         "preflight_rollout",
         "rollout_status",
         "start_rollout",

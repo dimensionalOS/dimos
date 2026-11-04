@@ -16,10 +16,13 @@
 
 from __future__ import annotations
 
+import asyncio
+
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
-from textual.widgets import Button, Footer, Static
+from textual.widgets import Button, Footer, Input, Static
 
 from dimos.cli import theme
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -72,13 +75,29 @@ class ControlSession:
             raise RuntimeError("This stack has no episode controls")
         return self.episodes.command(event)
 
-    def start_policy(self, *, dispatch_actions: bool = False) -> RolloutStatus:
+    def start_policy(
+        self, dispatch_actions: bool = False, max_chunks: int | None = 1
+    ) -> RolloutStatus:
         if self.policy is None:
             raise RuntimeError("This stack has no policy controls")
         ready = self.policy.preflight_rollout()
         if not ready["policy_ready"] or not ready["observations_ready"]:
             return ready
-        return self.policy.start_rollout(dispatch_actions=dispatch_actions)
+        return self.policy.start_rollout(dispatch_actions=dispatch_actions, max_chunks=max_chunks)
+
+    def configure_policy(self, task: str, policy_path: str) -> RolloutStatus:
+        if self.policy is None:
+            raise RuntimeError("This stack has no policy controls")
+        if not task.strip() or not policy_path.strip():
+            raise ValueError("Model and task must not be blank")
+        current = self.policy.rollout_status()
+        if current["active"] or current.get("busy", False):
+            raise RuntimeError("Stop rollout and wait for it to drain before editing")
+        if policy_path != current["policy_path"]:
+            self.policy.set_policy_path(policy_path)
+        if task != current["task"]:
+            self.policy.set_task(task)
+        return self.policy.rollout_status()
 
     def stop_policy(self) -> RolloutStatus:
         if self.policy is None:
@@ -116,7 +135,8 @@ class ControlApp(App[None]):
     """
     BINDINGS = [
         Binding("q", "quit", "Detach"),
-        Binding("ctrl+c", "quit", "Detach", show=False),
+        Binding("f8", "stop_rollout", "Stop rollout", priority=True),
+        Binding("ctrl+c", "quit", "Detach", show=False, priority=True),
     ]
 
     def __init__(self, session: ControlSession, *, speech: CollectionSpeech | None = None) -> None:
@@ -133,6 +153,9 @@ class ControlApp(App[None]):
         self._message = "Attached. Detaching leaves the stack running."
         self._confirming_stop = False
         self._quit_armed = False
+        self._command_pending = False
+        self._poll_pending = False
+        self._revision = 0
 
     def compose(self) -> ComposeResult:
         with Container(id="dashboard"):
@@ -144,11 +167,27 @@ class ControlApp(App[None]):
                     yield Button("Save episode", id="save-episode")
                     yield Button("Discard", id="discard-episode", variant="error")
             if self._policy is not None:
-                yield Static(id="policy-status", classes="status")
+                yield Static(id="policy-status", classes="status", markup=False)
+                model = Input(
+                    value=self._policy.get("policy_path", ""),
+                    placeholder="Model checkpoint",
+                    id="policy-model",
+                )
+                model.border_title = "Model checkpoint"
+                yield model
+                task = Input(
+                    value=self._policy["task"], placeholder="Task prompt", id="policy-task"
+                )
+                task.border_title = "Task prompt"
+                yield task
+                yield Button("Apply model / task", id="apply-policy")
+                yield Static("Preview uploads images/state. Execute moves the robot.", markup=False)
                 with Horizontal(classes="actions"):
-                    yield Button("Start preview", id="start-policy", variant="success")
-                    yield Button("Execute on robot", id="execute-policy", variant="warning")
-                    yield Button("Stop policy", id="stop-policy", variant="error")
+                    yield Button("Preview once", id="start-policy")
+                    yield Button("Execute 1 chunk", id="execute-once", variant="warning")
+                    yield Button("Execute continuous", id="execute-continuous", variant="success")
+                yield Button("Stop rollout", id="stop-policy", variant="error")
+                yield Static(id="preview-summary", classes="status", markup=False)
             yield Static(id="message")
             with Container(id="confirmation"):
                 yield Static("Support the arm(s). Shut down the entire stack?")
@@ -184,7 +223,7 @@ class ControlApp(App[None]):
                     self._audio_error = f"Audio unavailable: {exc}"
 
     def _refresh(self) -> None:
-        blocked = self._disconnected or self._confirming_stop
+        blocked = self._disconnected or self._confirming_stop or self._command_pending
         if self._episode is not None:
             episode = self._episode
             recording = episode.state == "recording"
@@ -196,34 +235,81 @@ class ControlApp(App[None]):
             self.query_one("#save-episode", Button).disabled = blocked or not recording
             self.query_one("#discard-episode", Button).disabled = blocked or not recording
         if self._policy is not None:
-            active = self._policy["active"]
-            busy = self._policy["busy"]
-            mode = "EXECUTE" if self._policy["dispatch_actions"] else "PREVIEW"
-            state = "ACTIVE" if active else "DRAINING" if busy else "STOPPED"
-            self.query_one("#policy-status", Static).update(
-                f"POLICY | {state} | {mode} | {self._policy['task']}\n"
-                f"{self._policy['last_error'] or ''}"
+            policy = self._policy
+            active = policy["active"] or policy.get("busy", False)
+            phase = policy.get("phase", "active" if active else "stopped").upper()
+            retry = policy.get("retry_in_s")
+            retry_text = f" | retry in {retry:.0f}s (preview only)" if retry is not None else ""
+            if policy.get("execution_requires_restart"):
+                retry_text += " | cloud retry switched to preview; Execute again to move"
+            camera_text = "  ".join(
+                f"{name}: {'PRESENT' if ready else 'MISSING'}"
+                for name, ready in policy.get("cameras", {}).items()
             )
-            self.query_one("#start-policy", Button).disabled = blocked or active or busy
-            self.query_one("#execute-policy", Button).disabled = blocked or active or busy
-            self.query_one("#stop-policy", Button).disabled = blocked or not (active or busy)
+            self.query_one("#policy-status", Static).update(
+                f"ROLLOUT | {policy.get('backend', 'policy')} | {phase} | {'EXECUTE' if policy.get('dispatch_actions') else 'PREVIEW'}{retry_text}\n"
+                f"Received {policy.get('chunks_received', 0)}  Submitted {policy.get('chunks_accepted', 0)}  Finished {policy.get('chunks_completed', 0)}\n"
+                f"{camera_text}\n{policy['last_error'] or ''}"
+            )
+            dirty = (
+                self.query_one("#policy-model", Input).value != policy.get("policy_path", "")
+                or self.query_one("#policy-task", Input).value != policy["task"]
+            )
+            for name in (
+                "start-policy",
+                "execute-once",
+                "execute-continuous",
+                "apply-policy",
+                "policy-model",
+                "policy-task",
+            ):
+                self.query_one(f"#{name}").disabled = (
+                    blocked
+                    or active
+                    or (dirty and name in {"start-policy", "execute-once", "execute-continuous"})
+                )
+            self.query_one("#stop-policy", Button).disabled = blocked or not active
+            debug = []
+            if policy.get("check_observation_timing") is False:
+                debug.append("observation timing OFF")
+            if policy.get("require_endpoint_convergence") is False:
+                debug.append("endpoint convergence OFF; Finished means elapsed, not pose accuracy")
+            self.query_one("#preview-summary", Static).update(
+                policy.get("preview_summary", "No preview yet.")
+                + ("\nDebug: " + "; ".join(debug) if debug else "")
+            )
         self.query_one("#message", Static).update(self._audio_error or self._message)
         self.query_one("#confirmation").display = self._confirming_stop
         self.query_one("#stop-stack", Button).disabled = self._disconnected
 
     def _poll(self) -> None:
-        if self._disconnected:
+        if self._disconnected or self._poll_pending or self._command_pending:
             return
+        self._poll_pending = True
+        self._poll_worker()
+
+    @work(group="status")
+    async def _poll_worker(self) -> None:
+        revision = self._revision
         try:
-            self._set_episode_status(self._session.episode_status())
-            self._policy = self._session.policy_status()
+            episode = await asyncio.to_thread(self._session.episode_status)
+            policy = await asyncio.to_thread(self._session.policy_status)
+            if revision == self._revision and not self._command_pending and not self._disconnected:
+                self._set_episode_status(episode)
+                self._policy = policy
         except Exception as exc:
-            self._disconnected = True
-            self._confirming_stop = False
-            self._message = f"Connection lost; robot and recording may still be running: {exc}"
-            self.stop_audio()
-            self._session.close()
-        self._refresh()
+            if revision == self._revision and not self._command_pending:
+                self._disconnected = True
+                self._confirming_stop = False
+                self._message = f"Connection lost; robot and recording may still be running: {exc}"
+                self.stop_audio()
+        finally:
+            self._poll_pending = False
+            self._refresh()
+
+    def action_stop_rollout(self) -> None:
+        if self._policy is not None:
+            self.query_one("#stop-policy", Button).press()
 
     def action_quit(self) -> None:  # type: ignore[override]
         if (
@@ -246,8 +332,28 @@ class ControlApp(App[None]):
             self._confirming_stop = False
             self._refresh()
             return
-        if self._disconnected:
+        if self._disconnected or self._command_pending:
             return
+        self._revision += 1
+        self._command_pending = True
+        self._message = (
+            "Checking inputs and policy…"
+            if action in {"start-policy", "execute-once", "execute-continuous"}
+            else "Working…"
+        )
+        self._refresh()
+        self._command(action)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if self.is_mounted(event.input) and event.input.id in {"policy-model", "policy-task"}:
+            self._refresh()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id in {"policy-model", "policy-task"}:
+            self.query_one("#apply-policy", Button).press()
+
+    @work(group="command")
+    async def _command(self, action: str | None) -> None:
         try:
             if action in {"start-episode", "save-episode", "discard-episode"}:
                 commands: dict[str, EpisodeCommand] = {
@@ -255,24 +361,38 @@ class ControlApp(App[None]):
                     "save-episode": "save",
                     "discard-episode": "discard",
                 }
-                status = self._session.episode_command(commands[action])
+                status = await asyncio.to_thread(self._session.episode_command, commands[action])
                 self._set_episode_status(status)
                 self._message = f"Episode: {status.last_event}."
                 self._quit_armed = False
-            elif action in {"start-policy", "execute-policy"}:
-                self._policy = self._session.start_policy(
-                    dispatch_actions=action == "execute-policy"
+            elif action in {"start-policy", "execute-once", "execute-continuous"}:
+                self._policy = await asyncio.to_thread(
+                    self._session.start_policy,
+                    action != "start-policy",
+                    None if action == "execute-continuous" else 1,
+                )
+                self._message = (
+                    "Rollout requested. Stop cancels policy work; it is not an emergency stop."
+                )
+            elif action == "apply-policy":
+                self._policy = await asyncio.to_thread(
+                    self._session.configure_policy,
+                    self.query_one("#policy-task", Input).value,
+                    self.query_one("#policy-model", Input).value,
+                )
+                self._message = (
+                    "Configuration applied. Next start runs preflight and fresh inference."
                 )
             elif action == "stop-policy":
-                self._policy = self._session.stop_policy()
+                self._policy = await asyncio.to_thread(self._session.stop_policy)
             elif action == "stop-stack":
-                self._set_episode_status(self._session.episode_status())
+                self._set_episode_status(await asyncio.to_thread(self._session.episode_status))
                 if self._episode is not None and self._episode.state == "recording":
                     self._message = "Save or discard the active episode before stopping the stack."
                 else:
                     self._confirming_stop = True
             elif action == "confirm-stop":
-                self._session.stop_stack()
+                await asyncio.to_thread(self._session.stop_stack)
                 self._confirming_stop = False
                 self._disconnected = True
                 self._message = "Stack shutdown requested. Detach to close this panel."
@@ -280,4 +400,5 @@ class ControlApp(App[None]):
         except Exception as exc:
             self._confirming_stop = False
             self._message = f"Command failed: {exc}"
+        self._command_pending = False
         self._refresh()

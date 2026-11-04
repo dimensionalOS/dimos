@@ -180,7 +180,7 @@ class JointTrajectoryTask(BaseControlTask):
         ...     ),
         ... )
         >>> coordinator.add_task(task)
-        >>> task.execute(my_trajectory, current_positions)
+        >>> coordinator.task_invoke(task.name, "execute", {"trajectory": my_trajectory})
     """
 
     def __init__(self, config: JointTrajectoryTaskConfig) -> None:

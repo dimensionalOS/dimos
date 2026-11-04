@@ -15,6 +15,7 @@
 """Shared rollout behavior without network inference or robot hardware."""
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import time
 from typing import Any
@@ -130,6 +131,21 @@ def test_remote_rollout_defaults_to_preview(rollout: tuple[Any, Any, Any]) -> No
     control.cancel.assert_not_called()
 
 
+def test_rollout_reports_coordinator_fault_reason(rollout):
+    module, backend, control = rollout
+    control.status.return_value = TrajectoryStatus(
+        state=TrajectoryState.FAULT, error="EEF final target outside position tolerance"
+    )
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: not module.rollout_status()["active"], timeout=1)
+    module.stop_rollout()
+    assert module.rollout_status()["last_error"] == (
+        "trajectory ended in FAULT: EEF final target outside position tolerance"
+    )
+    assert module.rollout_status()["chunks_completed"] == 0
+
+
 def test_stop_discards_a_delayed_inference_and_blocks_restart_until_drained(
     rollout: tuple[Any, Any, Any], mocker: Any
 ) -> None:
@@ -169,9 +185,11 @@ def test_cancel_uncertainty_prevents_restart(rollout: tuple[Any, Any, Any]) -> N
     assert module.start_rollout()["active"] is False
 
 
-def test_eef_chunk_uses_eef_task_and_cancellation(rollout: tuple[Any, Any, Any]) -> None:
+@pytest.mark.parametrize("require_convergence", [True, False])
+def test_eef_chunk_uses_eef_task_and_cancellation(rollout, require_convergence):
     module, backend, control = rollout
     module.config.dreamlabs.mode = "eef"
+    module.config.dreamlabs.require_endpoint_convergence = require_convergence
     backend.predict.return_value = EefTrajectory(
         points=[
             EefTrajectoryPoint(0.0, {"tool": PoseStamped(frame_id="world")}),
@@ -188,11 +206,14 @@ def test_eef_chunk_uses_eef_task_and_cancellation(rollout: tuple[Any, Any, Any])
     control.execute.assert_not_called()
     control.eef_cancel.assert_called_once_with()
     assert module.rollout_status()["chunks_accepted"] == 1
-    assert control.eef_execute.call_args.kwargs == {"deadman_timeout": 1.0}
+    expected_kwargs = {"deadman_timeout": 1.0}
+    if not require_convergence:
+        expected_kwargs["require_endpoint_convergence"] = False
+    assert control.eef_execute.call_args.kwargs == expected_kwargs
     control.task_invoke.assert_any_call(
         "eef_trajectory",
         "execute",
-        {"trajectory": backend.predict.return_value, "deadman_timeout": 1.0},
+        {"trajectory": backend.predict.return_value, **expected_kwargs},
     )
     control.task_invoke.assert_any_call("eef_trajectory", "cancel", {})
     control.task_invoke.assert_any_call("eef_trajectory", "keepalive", {})
@@ -246,6 +267,116 @@ def test_stale_or_skewed_inputs_cannot_preflight(rollout: tuple[Any, Any, Any]) 
     backend.predict.assert_not_called()
 
 
+def test_transient_skew_waits_for_aligned_inputs_without_inference(rollout, mocker):
+    module, backend, control = rollout
+    stamp = time.time()
+    provide_observation(module, ts=stamp - 0.2)
+    module._on_joint_state(JointState(ts=stamp, name=["joint"], position=[0.0]))
+    attempted = Event()
+    snapshot = module._snapshot_observation
+
+    def capture(now):
+        try:
+            return snapshot(now)
+        finally:
+            attempted.set()
+
+    mocker.patch.object(module, "_snapshot_observation", side_effect=capture)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(module._wait_for_observation)
+        assert attempted.wait(timeout=1)
+        assert not result.done()
+        provide_observation(module)
+        images, state, _ = result.result(timeout=1)
+    assert set(images) == {"observation.images.wrist"}
+    np.testing.assert_array_equal(state, [0.0])
+    backend.predict.assert_not_called()
+    backend.observe.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+def test_persistent_skew_still_times_out(rollout, mocker):
+    module, backend, control = rollout
+    stamp = time.time()
+    provide_observation(module, ts=stamp - 0.2)
+    module._on_joint_state(JointState(ts=stamp, name=["joint"], position=[0.0]))
+    mocker.patch.object(policy_runtime.time, "monotonic", side_effect=[0.0, 0.6])
+    with pytest.raises(RuntimeError, match="timestamp skew"):
+        module._wait_for_observation()
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+def test_stop_interrupts_waiting_for_aligned_observations(rollout, mocker):
+    module, backend, control = rollout
+    stamp = time.time()
+    provide_observation(module, ts=stamp - 0.2)
+    module._on_joint_state(JointState(ts=stamp, name=["joint"], position=[0.0]))
+    waiting = Event()
+    wait = module._observation_changed.wait
+
+    def observed_wait(timeout):
+        waiting.set()
+        return wait(timeout)
+
+    mocker.patch.object(module._observation_changed, "wait", side_effect=observed_wait)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(module._wait_for_observation)
+        assert waiting.wait(timeout=1)
+        module.stop_rollout()
+        assert result.result(timeout=1) is None
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+def test_stale_inputs_are_not_retried(rollout, mocker):
+    module, backend, control = rollout
+    provide_observation(module, ts=time.time() - 2)
+    wait = mocker.spy(module._observation_changed, "wait")
+    with pytest.raises(RuntimeError, match="stale"):
+        module._wait_for_observation()
+    wait.assert_not_called()
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("timing", ["stale", "skew"])
+def test_station_can_disable_observation_timing_checks(rollout, timing):
+    module, backend, control = rollout
+    now = time.time()
+    provide_observation(module, ts=now - (2.0 if timing == "stale" else 0.2))
+    module._on_joint_state(JointState(ts=now, name=["joint"], position=[0.0]))
+    with pytest.raises(RuntimeError, match="stale|skew"):
+        module._snapshot_observation(now)
+    module.config.check_observation_timing = False
+    images, positions, stamp = module._snapshot_observation(now)
+    assert set(images) == {"observation.images.wrist"}
+    np.testing.assert_array_equal(positions, [0.0])
+    assert stamp < now
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid", ["missing_state", "nan_position", "nan_timestamp"])
+def test_timing_opt_out_keeps_required_input_and_finite_value_checks(rollout, invalid):
+    module, backend, control = rollout
+    module.config.check_observation_timing = False
+    if invalid == "missing_state":
+        module._latest_joint_state = None
+    else:
+        module._on_joint_state(
+            JointState(
+                ts=float("nan") if invalid == "nan_timestamp" else time.time(),
+                name=["joint"],
+                position=[float("nan") if invalid == "nan_position" else 0.0],
+            )
+        )
+    with pytest.raises(RuntimeError, match="no coordinator|non-finite|invalid timestamp"):
+        module._snapshot_observation(time.time())
+    backend.predict.assert_not_called()
+    control.task_invoke.assert_not_called()
+
+
 def test_manual_takeover_stops_an_accepted_chunk(rollout: tuple[Any, Any, Any]) -> None:
     module, backend, control = rollout
     module.preflight_rollout()
@@ -294,3 +425,146 @@ def test_reset_failure_requires_new_preflight(rollout):
     assert "session reset refused" in status["last_error"]
     backend.close.assert_called_once_with()
     assert module.start_rollout()["active"] is False
+
+
+@pytest.mark.parametrize("dispatch", [False, True])
+def test_one_chunk_is_enforced_in_runtime(rollout, dispatch):
+    module, backend, control = rollout
+    control.status.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=dispatch, max_chunks=1)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    status = module.rollout_status()
+    assert status["chunks_received"] == 1
+    assert status["chunks_accepted"] == int(dispatch)
+    assert status["chunks_completed"] == int(dispatch)
+    assert backend.predict.call_count == 1
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_invalid_chunk_limit_never_starts_inference(rollout, limit):
+    module, backend, control = rollout
+    module.preflight_rollout()
+    status = module.start_rollout(max_chunks=limit)
+    assert "positive integer" in status["last_error"]
+    backend.predict.assert_not_called()
+    control.execute.assert_not_called()
+
+
+def capacity_error(reason="pool_warming", retryable=True):
+    error = RuntimeError("Cloud has no live serve")
+    error.reason = reason
+    error.code = "DA-2000"
+    error.retryable = retryable
+    error.retry_after_s = 60
+    return error
+
+
+@pytest.mark.parametrize("reason", ["pool_warming", "rate_limited"])
+def test_cloud_retry_recovers_to_one_preview_without_moving(rollout, mocker, reason):
+    module, backend, control = rollout
+    backend.predict.side_effect = [capacity_error(reason), np.array([[0.1]], dtype=np.float32)]
+
+    def retry_wait(delay):
+        provide_observation(module)
+        return False
+
+    mocker.patch.object(module._stop_event, "wait", side_effect=retry_wait)
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    status = module.rollout_status()
+    assert status["phase"] == "preview ready"
+    assert status["chunks_received"] == 1
+    assert status["chunks_accepted"] == 0
+    assert status["execution_requires_restart"] is True
+    assert backend.predict.call_count == 2
+    control.execute.assert_not_called()
+    control.eef_execute.assert_not_called()
+
+
+def test_stop_interrupts_warming_and_prevents_retry(rollout):
+    module, backend, control = rollout
+    backend.predict.side_effect = capacity_error()
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: module.rollout_status()["phase"] == "warming", timeout=1)
+    assert module.rollout_status()["retry_in_s"] > 0
+    status = module.stop_rollout()
+    assert status["busy"] is False
+    assert backend.predict.call_count == 1
+    control.eef_execute.assert_not_called()
+
+
+def test_nonretryable_cloud_failure_stops_with_structured_error(rollout):
+    module, backend, control = rollout
+    backend.predict.side_effect = capacity_error(retryable=False)
+    module.preflight_rollout()
+    module.start_rollout(max_chunks=1)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    status = module.rollout_status()
+    assert status["phase"] == "error"
+    assert status["error_info"]["code"] == "DA-2000"
+    assert status["error_info"]["retryable"] is False
+    assert backend.predict.call_count == 1
+
+
+def test_model_edit_invalidates_preview_and_requires_new_preflight(rollout):
+    module, backend, control = rollout
+    module.preflight_rollout()
+    module.start_rollout(max_chunks=1)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
+    assert module.get_last_preview() is not None
+    status = module.set_policy_path("dreamlabs/dream-1-beta-flash")
+    assert status["policy_path"] == "dreamlabs/dream-1-beta-flash"
+    assert status["policy_ready"] is False
+    assert module.get_last_preview() is None
+    backend.close.assert_called_once_with()
+    assert "preflight has not passed" in module.start_rollout()["last_error"]
+
+
+def test_model_cannot_change_while_trajectory_is_running(rollout):
+    module, backend, control = rollout
+    module.preflight_rollout()
+    module.start_rollout(dispatch_actions=True)
+    wait_until(lambda: module.rollout_status()["chunks_accepted"] == 1, timeout=1)
+    with pytest.raises(RuntimeError, match="wait until busy=False"):
+        module.set_policy_path("other-model")
+    assert module.rollout_status()["policy_path"] == "dreamlabs/dream-1-beta"
+
+
+def test_preview_summary_measures_first_target_and_largest_displacement():
+    trajectory = EefTrajectory(
+        [
+            EefTrajectoryPoint(
+                0,
+                {
+                    "tool": PoseStamped(
+                        frame_id="world", position=[0, 0, 0], orientation=[0, 0, 0, 1]
+                    )
+                },
+                {"gripper": 0.2},
+            ),
+            EefTrajectoryPoint(
+                0.05,
+                {
+                    "tool": PoseStamped(
+                        frame_id="world", position=[0.03, 0, 0], orientation=[0, 0, 0, 1]
+                    )
+                },
+                {"gripper": 0.8},
+            ),
+            EefTrajectoryPoint(
+                0.1,
+                {
+                    "tool": PoseStamped(
+                        frame_id="world", position=[0.06, 0, 0], orientation=[0, 0, 1, 0]
+                    )
+                },
+                {"gripper": 0.5},
+            ),
+        ]
+    )
+    summary = policy_runtime.summarize_preview(trajectory)
+    assert "first 30.0mm / 0.0deg; max 6.0cm / 180.0deg" in summary
+    assert "gripper: 0.20..0.80" in summary

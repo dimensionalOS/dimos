@@ -19,10 +19,7 @@ dimos imitation control
 
 Use `openyam-lerobot-quest-rollout` for the graph with Quest takeover.
 The shared control panel discovers `RolloutControlSpec` and shows policy
-state and errors. Select **Start preview** to inspect policy output without dispatching actions,
-or **Execute on robot** to dispatch trajectories. Both actions run preflight.
-The panel shows the current mode and waits for pending work to drain before
-allowing another start. Before
+state and errors. Select **Preview once** to inspect one chunk without motion, **Execute 1 chunk** for bounded execution, or **Execute continuous** to keep running. Before
 starting, preflight loads the checkpoint and checks the control task and fresh
 observations without sending a trajectory. A failed check leaves the policy
 stopped and reports the error.

@@ -63,9 +63,10 @@ def dual_metal_model_config(
                 name=f"{side}_arm",
                 joint_names=ARM_JOINTS[side],
                 base_link="dual_metal_base",
-                tip_link=f"{side}_gripper_base",
+                tip_link=f"{side}_grasp_frame",
             )
             for side in SIDES
         ],
+        gripper_hardware_ids={f"{side}_arm": f"{side}_arm" for side in SIDES},
         auto_convert_meshes=True,
     )

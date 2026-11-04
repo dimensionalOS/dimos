@@ -19,8 +19,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -99,6 +102,60 @@ def test_execute_forwards_same_canonical_trajectory_object_unchanged() -> None:
     result = _manager(coordinator).execute(plan, blocking=False)
     assert result.status is ExecutionStatus.ACCEPTED
     assert _dispatched(coordinator, JOINT_TRAJECTORY_TASK_NAME) is plan.trajectory
+
+
+@pytest.fixture
+def registered_coordinator(mocker):
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    coordinator = ControlCoordinator(hardware=[], publish_joint_state=False)
+    try:
+        task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["left/j1", "right/j1"]))
+        coordinator.add_task(task, task_type="trajectory")
+        yield coordinator
+    finally:
+        coordinator.stop()
+
+
+@pytest.mark.parametrize(
+    "positions,expected,status",
+    [
+        (
+            {"left/j1": 0.0, "right/j1": 0.0},
+            TrajectoryExecutionStatus.ACCEPTED,
+            ExecutionStatus.ACCEPTED,
+        ),
+        (
+            {"left/j1": 0.0},
+            TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
+            ExecutionStatus.REJECTED,
+        ),
+        (
+            {"left/j1": float("nan"), "right/j1": 0.0},
+            TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
+            ExecutionStatus.REJECTED,
+        ),
+        (
+            {"left/j1": 0.5, "right/j1": 0.5},
+            TrajectoryExecutionStatus.START_STATE_MISMATCH,
+            ExecutionStatus.REJECTED,
+        ),
+    ],
+)
+def test_manager_dispatches_through_real_task_validation_using_coordinator_state(
+    registered_coordinator, positions, expected, status, mocker
+):
+    coordinator = registered_coordinator
+    coordinator._set_latest_state(
+        CoordinatorState(joints=JointStateSnapshot(joint_positions=positions), t_now=10.0, dt=0.01)
+    )
+    # A separate feedback RPC must not become an execution argument or a prerequisite.
+    mocker.patch.object(
+        coordinator, "get_joint_positions", side_effect=AssertionError("Use task context")
+    )
+    result = _manager(coordinator).execute(_plan(), blocking=False)
+    assert result.coordinator_result.status is expected
+    assert result.status is status
 
 
 @pytest.mark.parametrize(

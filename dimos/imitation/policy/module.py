@@ -21,7 +21,7 @@ from functools import cache
 import json
 import keyword
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 from pydantic import Field, field_validator
 
@@ -46,7 +46,9 @@ from dimos.utils.generic import classproperty
 class PolicyControlSpec(Spec, Protocol):
     """Coordinator operations used by policy rollout."""
 
-    def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any]) -> Any: ...
+    def task_invoke(
+        self, task_name: str, method: str, kwargs: dict[str, Any] | None = None
+    ) -> Any: ...
 
     def list_tasks(self) -> list[str]: ...
 
@@ -67,15 +69,30 @@ class RolloutStatus(TypedDict):
     chunks_completed: int
     chunks_accepted: int
     last_error: str | None
+    execution_requires_restart: NotRequired[bool]
+    preview_summary: NotRequired[str]
+    phase: NotRequired[str]
+    retry_in_s: NotRequired[float | None]
+    error_info: NotRequired[dict[str, Any] | None]
+    max_chunks: NotRequired[int | None]
+    observation_count: NotRequired[int]
+    cameras: NotRequired[dict[str, bool]]
+    check_observation_timing: NotRequired[bool]
+    require_endpoint_convergence: NotRequired[bool]
 
 
 class RolloutControlSpec(Spec, Protocol):
     """The existing policy's operator controls, discoverable by attached clients."""
 
     def preflight_rollout(self) -> RolloutStatus: ...
-    def start_rollout(self, dispatch_actions: bool | None = None) -> RolloutStatus: ...
+    def start_rollout(
+        self, dispatch_actions: bool | None = None, max_chunks: int | None = None
+    ) -> RolloutStatus: ...
     def stop_rollout(self) -> RolloutStatus: ...
     def rollout_status(self) -> RolloutStatus: ...
+    def set_task(self, task: str) -> RolloutStatus: ...
+    def set_policy_path(self, policy_path: str) -> RolloutStatus: ...
+    def get_last_preview(self) -> JointTrajectory | EefTrajectory | None: ...
 
 
 class PolicyModuleConfig(IsolatedPythonModuleConfig):
@@ -96,6 +113,7 @@ class PolicyModuleConfig(IsolatedPythonModuleConfig):
     joint_names: list[str] = Field(min_length=1)
     fps: float | None = Field(default=None, gt=0)
     robot_type: str = ""
+    check_observation_timing: bool = True
     max_observation_age_s: float = Field(default=0.5, gt=0)
     max_observation_skew_s: float = Field(default=0.1, gt=0)
     rollout_button: str = "A"
@@ -156,8 +174,10 @@ class PolicyModule(IsolatedPythonModule):
         raise NotImplementedError
 
     @rpc
-    def start_rollout(self, dispatch_actions: bool | None = None) -> RolloutStatus:
-        """Start the configured policy until explicitly stopped or it fails."""
+    def start_rollout(
+        self, dispatch_actions: bool | None = None, max_chunks: int | None = None
+    ) -> RolloutStatus:
+        """Start fresh inference, optionally stopping after max_chunks validated chunks."""
         raise NotImplementedError
 
     @rpc
@@ -183,6 +203,11 @@ class PolicyModule(IsolatedPythonModule):
     @rpc
     def set_task(self, task: str) -> RolloutStatus:
         """Stop the current rollout and set the language for the next episode."""
+        raise NotImplementedError
+
+    @rpc
+    def set_policy_path(self, policy_path: str) -> RolloutStatus:
+        """Change the checkpoint while idle; invalidate preview and require preflight."""
         raise NotImplementedError
 
 

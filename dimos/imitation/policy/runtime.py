@@ -19,6 +19,7 @@ from __future__ import annotations
 from functools import partial
 from importlib import import_module
 import json
+import math
 from threading import Condition, Event, RLock, Thread, current_thread
 import time
 from typing import Any, cast
@@ -44,6 +45,47 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class _ObservationSkewError(RuntimeError):
+    """Fresh asynchronous inputs have not yet formed a synchronized observation."""
+
+
+def summarize_preview(trajectory: JointTrajectory | EefTrajectory) -> str:
+    """Describe target deltas from the measured chunk anchor, not tracking accuracy."""
+    if not isinstance(trajectory, EefTrajectory):
+        return f"Joint preview: {trajectory.duration:.2f}s"
+    lines = [
+        f"EEF targets from measured anchor ({trajectory.duration:.2f}s); not a collision check:"
+    ]
+    anchor = trajectory.points[0]
+    for frame, pose in anchor.poses.items():
+        positions = np.array(
+            [[p.poses[frame].x, p.poses[frame].y, p.poses[frame].z] for p in trajectory.points]
+        )
+        distances = np.linalg.norm(positions - positions[0], axis=1)
+        q = pose.orientation
+        quats = np.array(
+            [
+                [
+                    p.poses[frame].orientation.x,
+                    p.poses[frame].orientation.y,
+                    p.poses[frame].orientation.z,
+                    p.poses[frame].orientation.w,
+                ]
+                for p in trajectory.points
+            ]
+        )
+        angles = np.degrees(
+            2 * np.arccos(np.clip(np.abs(quats @ np.array([q.x, q.y, q.z, q.w])), 0, 1))
+        )
+        lines.append(
+            f"{frame}: first {distances[1] * 1000:.1f}mm / {angles[1]:.1f}deg; max {max(distances) * 100:.1f}cm / {max(angles):.1f}deg"
+        )
+    for joint in anchor.grippers:
+        values = [p.grippers[joint] for p in trajectory.points]
+        lines.append(f"{joint}: {min(values):.2f}..{max(values):.2f} (0 closed, 1 open)")
+    return "\n".join(lines)
+
+
 class _PolicyRuntime(PolicyModule):
     """One rollout controller for local joint policies and remote joint/EEF policies."""
 
@@ -63,6 +105,12 @@ class _PolicyRuntime(PolicyModule):
         self._chunks_completed = 0
         self._observation_count = 0
         self._last_error: str | None = None
+        self._preview_summary = "No preview yet."
+        self._phase = "idle"
+        self._execution_requires_restart = False
+        self._retry_at: float | None = None
+        self._error_info: dict[str, Any] | None = None
+        self._max_chunks: int | None = None
         self._active = False
         self._stopping = False
         self._manual_control = False
@@ -112,6 +160,7 @@ class _PolicyRuntime(PolicyModule):
             if self._busy() or self._active or self._stopping:
                 self._last_error = "cannot preflight while a rollout is active or draining"
                 return self._status_locked()
+            self._phase = "checking"
             try:
                 self._snapshot_observation(time.time())
                 if self._task_name not in self._control.list_tasks():
@@ -119,8 +168,11 @@ class _PolicyRuntime(PolicyModule):
                 if self._loaded_policy is None:
                     self._loaded_policy = self._load_policy()
                 self._last_error = None
+                self._error_info = None
+                self._phase = "ready"
             except Exception as exc:
                 self._last_error = str(exc)
+                self._phase = "error"
                 policy, self._loaded_policy = self._loaded_policy, None
                 if policy is not None:
                     try:
@@ -130,10 +182,18 @@ class _PolicyRuntime(PolicyModule):
             return self._status_locked()
 
     @rpc
-    def start_rollout(self, dispatch_actions: bool | None = None) -> RolloutStatus:
+    def start_rollout(
+        self, dispatch_actions: bool | None = None, max_chunks: int | None = None
+    ) -> RolloutStatus:
         """Start an episode. Dreamlabs defaults to preview; dispatch requires explicit opt-in."""
         with self._lock:
             try:
+                if max_chunks is not None and (
+                    isinstance(max_chunks, bool)
+                    or not isinstance(max_chunks, int)
+                    or max_chunks < 1
+                ):
+                    raise ValueError("max_chunks must be a positive integer or None")
                 if self._manual_control:
                     raise RuntimeError("release the controller grips before starting rollout")
                 if self._busy() or self._active or self._stopping:
@@ -146,10 +206,16 @@ class _PolicyRuntime(PolicyModule):
             except Exception as exc:
                 self._last_error = str(exc)
                 return self._status_locked()
+            self._execution_requires_restart = False
+            self._max_chunks = max_chunks
+            self._error_info = None
+            self._retry_at = None
+            self._phase = "gathering observations"
             self._stop_event.clear()
             self._chunks_accepted = self._chunks_received = self._chunks_completed = 0
             self._observation_count = 0
             self._last_preview = None
+            self._preview_summary = "No preview yet."
             self._last_error = None
             self._dispatch = (
                 self.config.backend != "dreamlabs" if dispatch_actions is None else dispatch_actions
@@ -164,6 +230,7 @@ class _PolicyRuntime(PolicyModule):
         """Invalidate pending replies, cancel submitted work, then drain owned workers."""
         with self._observation_changed:
             self._stopping = True
+            self._phase = "stopping"
             self._stop_event.set()
             self._active = False
             self._observation_changed.notify_all()
@@ -177,6 +244,8 @@ class _PolicyRuntime(PolicyModule):
                 self._record_error("policy workers are still draining")
             self._stopping = False
             self._dispatch = False
+            if not self._busy():
+                self._phase = "stopped"
             return self._status_locked()
 
     @rpc
@@ -187,8 +256,34 @@ class _PolicyRuntime(PolicyModule):
         with self._lock:
             if self._busy() or self._submitted_task is not None:
                 return self._status_locked()
-            self.config.task = task
+            self.config.task = task.strip()
+            self._invalidate_policy()
             return self._status_locked()
+
+    @rpc
+    def set_policy_path(self, policy_path: str) -> RolloutStatus:
+        path = self.config.policy_path_must_not_be_blank(policy_path)
+        with self._lock:
+            self._require_idle()
+            self.config.policy_path = path
+            self._invalidate_policy()
+            return self._status_locked()
+
+    def _require_idle(self) -> None:
+        if self._active or self._busy() or self._stopping or self._submitted_task is not None:
+            raise RuntimeError("stop rollout and wait until busy=False before editing")
+
+    def _invalidate_policy(self) -> None:
+        policy, self._loaded_policy = self._loaded_policy, None
+        self._last_preview = None
+        self._preview_summary = "No preview yet."
+        self._last_error = None
+        self._error_info = None
+        self._execution_requires_restart = False
+        self._retry_at = None
+        self._phase = "idle"
+        if policy is not None:
+            policy.close()
 
     @rpc
     def rollout_status(self) -> RolloutStatus:
@@ -213,6 +308,18 @@ class _PolicyRuntime(PolicyModule):
         except RuntimeError:
             ready = False
         return {
+            "execution_requires_restart": self._execution_requires_restart,
+            "preview_summary": self._preview_summary,
+            "phase": "stopping" if self._stop_event.is_set() and self._busy() else self._phase,
+            "retry_in_s": max(0.0, self._retry_at - time.monotonic())
+            if self._retry_at is not None
+            else None,
+            "error_info": self._error_info,
+            "max_chunks": self._max_chunks,
+            "observation_count": self._observation_count,
+            "cameras": {port: port in self._latest_images for port in self.config.image_mapping},
+            "check_observation_timing": self.config.check_observation_timing,
+            "require_endpoint_convergence": self.config.dreamlabs.require_endpoint_convergence,
             "backend": self.config.backend,
             "active": self._active,
             "busy": self._busy(),
@@ -282,13 +389,15 @@ class _PolicyRuntime(PolicyModule):
         if state is None:
             raise RuntimeError("no coordinator joint state has been received")
         stamps.append(state.ts)
-        if any(
-            not np.isfinite(t) or not 0 <= now - t <= self.config.max_observation_age_s
-            for t in stamps
-        ):
-            raise RuntimeError("observation is stale or has an invalid timestamp")
-        if max(stamps) - min(stamps) > self.config.max_observation_skew_s:
-            raise RuntimeError("camera/state timestamp skew exceeds configured tolerance")
+        if any(not np.isfinite(t) for t in stamps):
+            raise RuntimeError("observation has an invalid timestamp")
+        if self.config.check_observation_timing:
+            if any(not 0 <= now - t <= self.config.max_observation_age_s for t in stamps):
+                raise RuntimeError("observation is stale or has an invalid timestamp")
+            if max(stamps) - min(stamps) > self.config.max_observation_skew_s:
+                raise _ObservationSkewError(
+                    "camera/state timestamp skew exceeds configured tolerance"
+                )
         if len(state.name) != len(state.position) or len(set(state.name)) != len(state.name):
             raise RuntimeError("joint state names must be unique and match its position count")
         positions = dict(zip(state.name, state.position, strict=True))
@@ -299,6 +408,20 @@ class _PolicyRuntime(PolicyModule):
         if not np.all(np.isfinite(vector)):
             raise RuntimeError("joint state contains non-finite positions")
         return images, vector, min(stamps)
+
+    def _wait_for_observation(self) -> tuple[Images, NDArray[np.float32], float] | None:
+        """Wait briefly for fresh camera/state alignment without relaxing validation."""
+        deadline = time.monotonic() + self.config.max_observation_age_s
+        with self._observation_changed:
+            while not self._stop_event.is_set():
+                try:
+                    return self._snapshot_observation(time.time())
+                except _ObservationSkewError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise
+                    self._observation_changed.wait(timeout=remaining)
+        return None
 
     def _load_policy(self) -> PolicyBackend:
         if self.config.backend == "dreamlabs":
@@ -312,8 +435,11 @@ class _PolicyRuntime(PolicyModule):
         last_stamp = float("-inf")
         try:
             while not self._stop_event.is_set():
+                observation = self._wait_for_observation()
+                if observation is None:
+                    break
+                images, state, stamp = observation
                 with self._lock:
-                    images, state, stamp = self._snapshot_observation(time.time())
                     task = self.config.task
                 if stamp > last_stamp:
                     policy.observe(images, state, task=task, timestamp=stamp)
@@ -353,14 +479,32 @@ class _PolicyRuntime(PolicyModule):
                         or self._observation_count >= policy.observations_required
                     )
             while not self._stop_event.is_set():
+                observation = self._wait_for_observation()
+                if observation is None:
+                    break
+                images, state, state_ts = observation
                 with self._lock:
-                    images, state, state_ts = self._snapshot_observation(time.time())
                     task = self.config.task
-                chunk = policy.predict(images, state, task=task)
+                    self._phase = "inferring"
+                try:
+                    chunk = policy.predict(images, state, task=task)
+                except Exception as exc:
+                    if self._retry_inference(exc):
+                        continue
+                    raise
                 with self._lock:
                     if self._stop_event.is_set():
                         break
-                    _, anchor, _ = self._snapshot_observation(time.time())
+                    self._retry_at = None
+                    self._error_info = None
+                    self._last_error = None
+                observation = self._wait_for_observation()
+                if observation is None:
+                    break
+                _, anchor, _ = observation
+                with self._lock:
+                    if self._stop_event.is_set():
+                        break
                     assert self._latest_joint_state is not None
                     state_ts = self._latest_joint_state.ts
                 trajectory = self._prepare_trajectory(chunk, anchor, policy)
@@ -372,12 +516,19 @@ class _PolicyRuntime(PolicyModule):
                             break
                         self._snapshot_observation(time.time())
                         self._last_preview = trajectory
+                        self._preview_summary = summarize_preview(trajectory)
                         self._chunks_received += 1
+                        self._phase = "executing" if self._dispatch else "preview ready"
                         dispatch = self._dispatch
                     if dispatch:
                         kwargs: dict[str, Any] = {"trajectory": trajectory}
                         if self.config.backend == "dreamlabs":
                             kwargs["deadman_timeout"] = self.config.dreamlabs.deadman_timeout_s
+                            if (
+                                self._task_name == "eef_trajectory"
+                                and not self.config.dreamlabs.require_endpoint_convergence
+                            ):
+                                kwargs["require_endpoint_convergence"] = False
                         result = self._control.task_invoke(self._task_name, "execute", kwargs)
                         retry_state = (
                             result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
@@ -396,15 +547,26 @@ class _PolicyRuntime(PolicyModule):
                     continue
                 if self._dispatch:
                     self._wait_for_completion()
-                else:
+                with self._lock:
+                    limit_reached = (
+                        self._max_chunks is not None and self._chunks_received >= self._max_chunks
+                    )
+                if limit_reached:
+                    break
+                if not self._dispatch:
                     self._stop_event.wait(trajectory.duration)
         except Exception as exc:
             with self._lock:
                 if not self._stop_event.is_set():
                     self._record_error(str(exc))
+                    self._phase = "error"
+                    self._error_info = self._exception_info(exc)
                     logger.exception("Policy rollout stopped", error=str(exc))
         finally:
             with self._submission_lock, self._observation_changed:
+                if self._phase not in {"error", "stopping", "preview ready"}:
+                    self._phase = "completed" if self._chunks_completed else "stopped"
+                self._retry_at = None
                 self._stop_event.set()
                 self._active = False
                 self._cancel_locked()
@@ -426,6 +588,41 @@ class _PolicyRuntime(PolicyModule):
                         with self._lock:
                             self._record_error(f"policy close failed: {close_error}")
 
+    @staticmethod
+    def _exception_info(exc: Exception) -> dict[str, Any]:
+        return {
+            "message": str(exc),
+            "code": getattr(exc, "code", None),
+            "reason": getattr(exc, "reason", None),
+            "retryable": getattr(exc, "retryable", False),
+        }
+
+    def _retry_inference(self, exc: Exception) -> bool:
+        # SDK remains isolated. Use its structured error contract, never parse messages.
+        info = self._exception_info(exc)
+        if (
+            self.config.backend != "dreamlabs"
+            or info["retryable"] is not True
+            or info["reason"] not in {"pool_warming", "rate_limited"}
+        ):
+            return False
+        delay = getattr(exc, "retry_after_s", None)
+        delay = float(delay) if isinstance(delay, (int, float)) else 1.0
+        if not math.isfinite(delay) or delay < 0:
+            delay = 1.0
+        delay = max(1.0, delay)
+        with self._lock:
+            # Waiting for cloud capacity invalidates authorization to move later.
+            self._execution_requires_restart = True
+            self._dispatch = False
+            self._max_chunks = 1
+            self._error_info = info
+            self._last_error = str(exc)
+            self._phase = "warming" if info["reason"] == "pool_warming" else "rate limited"
+            self._retry_at = time.monotonic() + delay
+        self._stop_event.wait(delay)
+        return True
+
     def _wait_for_completion(self) -> None:
         while not self._stop_event.is_set():
             with self._lock:
@@ -444,7 +641,8 @@ class _PolicyRuntime(PolicyModule):
                     self._submitted_task = None
                 return
             if status.state != TrajectoryState.EXECUTING:
-                raise RuntimeError(f"trajectory ended in {status.state.name}")
+                detail = f": {status.error}" if status.error else ""
+                raise RuntimeError(f"trajectory ended in {status.state.name}{detail}")
             self._stop_event.wait(0.05)
 
     def _wait_for_newer_joint_state(self, previous_ts: float) -> None:
@@ -489,6 +687,7 @@ class _PolicyRuntime(PolicyModule):
         return JointTrajectory(joint_names=self.config.joint_names, points=points)
 
     def _record_error(self, message: str) -> None:
+        self._phase = "error"
         self._last_error = f"{self._last_error}; {message}" if self._last_error else message
 
     def _cancel_locked(self) -> None:

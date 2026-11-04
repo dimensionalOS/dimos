@@ -19,7 +19,7 @@ from pathlib import Path
 import attrs
 import pytest
 
-from dimos.control._control_test_helpers import execute_with_state
+from dimos.control._control_test_helpers import execute_with_state, task_state_context
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.eef_trajectory_task.eef_trajectory_task import (
@@ -121,6 +121,59 @@ def test_eef_unreached_final_target_faults_after_settling_timeout(setup_task):
     assert task.compute(state(t=13.1)) is None
     assert task.get_state() == TrajectoryState.FAULT
     assert "completion" in task.get_status().error
+    assert "position=0.100000m (limit=0.005000m)" in task.get_status().error
+    assert "gripper=1.000000 (limit=0.020000)" in task.get_status().error
+
+
+def test_time_only_playback_holds_measured_state_and_next_episode_defaults_to_convergence(
+    setup_task,
+):
+    task, solver = setup_task
+    with task_state_context(task, state()):
+        result = task.execute(trajectory(), require_endpoint_convergence=False)
+    assert result.status == TrajectoryExecutionStatus.ACCEPTED
+    assert task.compute(state(t=10)) is not None
+    hold = task.compute(state(t=11))
+    assert task.get_state() == TrajectoryState.COMPLETED
+    assert hold.positions == [0.0, 0.0]
+    assert task.compute(state(t=12)) is None
+
+    execute_with_state(task, trajectory(), state().joints.joint_positions)
+    assert task.compute(state(t=20)) is not None
+    assert task.compute(state(t=21)) is not None
+    assert task.get_state() == TrajectoryState.EXECUTING
+    assert task.compute(state(t=23.1)) is None
+    assert task.get_state() == TrajectoryState.FAULT
+
+
+@pytest.mark.parametrize("failure", ["tracking", "ik"])
+def test_time_only_playback_preserves_tracking_and_ik_guards(setup_task, failure):
+    task, solver = setup_task
+    with task_state_context(task, state()):
+        task.execute(trajectory(), require_endpoint_convergence=False)
+    assert task.compute(state(t=10)) is not None
+    if failure == "tracking":
+        solver.frame_poses.return_value = {frame: pose(-0.2) for frame in ("left", "right")}
+    else:
+        solver.step.return_value = None
+    assert task.compute(state(t=10.5)) is None
+    assert task.get_state() == TrajectoryState.FAULT
+    assert ("tracking" if failure == "tracking" else "Pink IK") in task.get_status().error
+
+
+@pytest.mark.parametrize(
+    "residual, expected", [(0.04, TrajectoryState.COMPLETED), (0.06, TrajectoryState.FAULT)]
+)
+def test_relaxed_position_tolerance_still_rejects_outside_endpoints(setup_task, residual, expected):
+    original, solver = setup_task
+    task = EefTrajectoryTask(
+        attrs.evolve(original._config, position_tolerance_m=0.05), solver=solver
+    )
+    execute_with_state(task, trajectory(), state().joints.joint_positions)
+    task.compute(state(t=10))
+    solver.frame_poses.return_value = {frame: pose(0.1 - residual) for frame in ("left", "right")}
+    task.compute(state(t=13.1, opening=1))
+    assert task.get_state() == expected
 
 
 @pytest.mark.parametrize("stop", ["cancel", "estop", "preempt", "reset"])
@@ -404,6 +457,21 @@ def test_eef_rejects_invalid_deadman_before_start(setup_task, timeout):
         == TrajectoryExecutionStatus.INVALID_TRAJECTORY
     )
     assert not task.is_active()
+
+
+def test_coordinator_passes_time_only_eef_playback_option(coordinator, setup_task):
+    task, _ = setup_task
+    coordinator.add_task(task, task_type="eef_trajectory")
+    coordinator._set_latest_state(state())
+    result = coordinator.task_invoke(
+        "eef_trajectory",
+        "execute",
+        {"trajectory": trajectory(), "require_endpoint_convergence": False},
+    )
+    assert result.status == TrajectoryExecutionStatus.ACCEPTED
+    assert task.compute(state(t=10)) is not None
+    assert task.compute(state(t=11)) is not None
+    assert task.get_state() == TrajectoryState.COMPLETED
 
 
 def test_coordinator_passes_eef_deadman_and_exposes_keepalive(coordinator, setup_task, mocker):

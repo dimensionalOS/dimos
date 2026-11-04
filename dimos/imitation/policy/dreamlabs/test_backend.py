@@ -30,6 +30,23 @@ from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 STATE = np.array([0.25, 0.2], dtype=np.float32)
 
 
+@pytest.mark.parametrize("timeout, expected", [(None, 15000), (30000, 30000)])
+def test_cloud_request_timeout_reaches_sdk(
+    policy_config_fixture, images, mocker, timeout, expected
+):
+    if timeout is not None:
+        original = policy_config_fixture.dreamlabs
+        policy_config_fixture.dreamlabs = DreamlabsBackendConfig(
+            mode=original.mode, model=original.model, arms=original.arms, timeout_ms=timeout
+        )
+    client = mocker.Mock()
+    mocker.patch("dimos.imitation.policy.dreamlabs.backend.create_client", return_value=client)
+    with closing(DreamlabsBackend(policy_config_fixture)) as instance:
+        instance.observe(images, STATE, task="move", timestamp=1000.0)
+    assert client.policy.call_args.args[0]["timeout_ms"] == expected
+    client.get_action.assert_not_called()
+
+
 def test_observation_encodes_each_rgb_once_without_request_or_recording(backend, images, mocker):
     instance, client = backend
     encode = mocker.spy(cv2, "imencode")
@@ -217,3 +234,25 @@ def test_eef_reply_accepts_sdk_flat_gripper_shape(backend, images):
     trajectory = instance.predict(images, STATE, task="move")
     assert trajectory.points[-1].grippers == {"grip": 0.75}
     assert instance.get_last_action_response()["per_key"]["action.left_grip"] == [0.75] * 48
+
+
+@pytest.mark.parametrize(
+    "roles", [("overhead",), ("wrist_l", "wrist_r"), ("overhead", "wrist_l", "wrist_r")]
+)
+def test_camera_contract_encodes_only_configured_views(
+    policy_config_fixture, images, roles, mocker
+):
+    policy_config_fixture.dreamlabs.camera_roles = roles
+    client = mocker.Mock()
+    mocker.patch("dimos.imitation.policy.dreamlabs.backend.create_client", return_value=client)
+    with closing(DreamlabsBackend(policy_config_fixture)) as instance:
+        selected = {role: images[role] for role in roles}
+        instance.observe(selected, STATE, task="move", timestamp=1000.0)
+        frames = client.set_observation.call_args.args[0]
+        assert set(frames) == {f"video.{role}" for role in roles}
+        assert client.policy.call_args.args[0]["embodiment"]["video"] == {
+            role: f"observation.images.{role}" for role in roles
+        }
+        with pytest.raises(ValueError, match="camera roles"):
+            instance.observe({}, STATE, task="move", timestamp=1000.2)
+        assert client.set_observation.call_count == 1
