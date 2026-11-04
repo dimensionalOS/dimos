@@ -12,20 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Galaxea R1 Pro connection Module: ROS 2 control + sensor streams.
+"""Galaxea R1 Pro connection module: ROS 2 control + sensor streams.
 
-Owns all ROS 2 traffic for the R1 Pro and exposes it as dimos streams:
-whole-body joint control (18 DOF: torso 4 + left arm 7 + right arm 7) for
-the whole-body adapter, chassis ``cmd_vel``/``odom`` for the twist-base
-adapter, plus cameras and IMUs. The chassis lidar is ours, not the vendor's:
-see ``r1pro_lidar_odometry``.
+Owns all ROS 2 traffic for the R1 Pro and exposes it as dimos streams under
+the control contract: the upper body's 18 joints (torso 4 + left arm 7 +
+right arm 7) take positions on ``position_command``, the chassis takes
+speeds on ``cmd_vel``, and feedback goes out on ``joint_state``, the two
+IMU streams and wheel odometry. The chassis lidar is ours, not the
+vendor's: see ``r1pro_lidar_odometry``.
+
+Commands arrive as standard messages and go through ``command``: checked
+against the URDF limits and ``base_range`` (out-of-range base speeds are
+clamped), then forwarded by ``write``. Once a command was accepted, going
+``deadman_timeout_s`` without another halts the robot: zero chassis speed
+and the arms held where they were last measured.
 
 Sensors run on a second RawROS node. Conversion happens on per-stream workers
 behind latest-wins queues.
 
-The on-robot joint tracker manages PD gains; only ``q`` and ``dq`` are
-forwarded. Chassis gate handling lives in the on-robot ``galaxea-dimos``
-gatekeeper. ROS env (``ROS_DOMAIN_ID`` etc.) comes from the environment.
+The on-robot joint tracker manages PD gains; targets are followed at
+``config.tracking_speed``. Chassis gate handling lives in the on-robot
+``galaxea-dimos`` gatekeeper. ROS env (``ROS_DOMAIN_ID`` etc.) comes from
+the environment.
 """
 
 from __future__ import annotations
@@ -47,26 +55,37 @@ if TYPE_CHECKING:
     from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.connection.connection_module import (
+    ConnectionConfig,
+    ConnectionModule,
+    Values,
+)
+from dimos.control.contract.convert import (
+    TWIST_INTERFACES,
+    joint_state_to_values,
+    twist_to_values,
+)
+from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.hardware.whole_body.spec import VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.galaxea.r1pro.config import R1PRO_CONNECTION_MODEL, R1PRO_PLANAR_BASE
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Joint layout — flat 18-element MotorCommandArray indexing.
+# Joint layout — flat 18-element command indexing, torso then left then right.
 _TORSO_SLICE = slice(0, 4)
 _LEFT_SLICE = slice(4, 11)
 _RIGHT_SLICE = slice(11, 18)
@@ -76,6 +95,11 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
+
+#: The chassis as the control contract names it: "r1pro/base", with vx/vy/wz.
+R1PRO_BASE = f"r1pro{SEPARATOR}base"
+#: The chassis' axes as control tasks claim them, e.g. "r1pro/base/vx".
+R1PRO_BASE_JOINTS: list[str] = [f"{R1PRO_BASE}{SEPARATOR}{axis}" for axis in TWIST_INTERFACES]
 
 # JPEG color streams gated by config.enable_wrist_color: stream name → ROS topic.
 _COLOR_CAMERAS: dict[str, str] = {
@@ -129,46 +153,83 @@ def _ros_stamp_now() -> Any:
     return RosTime(sec=sec, nanosec=int((t - sec) * 1e9))
 
 
-class R1ProConnectionConfig(ModuleConfig):
+def _r1pro_base_range() -> Twist:
+    """The chassis' top speeds, shared with the planning model's planar base."""
+    vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
+    return Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz))
+
+
+class R1ProConnectionConfig(ConnectionConfig):
+    """How the R1 Pro is told to move, plus its sensor and vendor-stack knobs.
+
+    The contract fields (``source``, ``model``, ``joint_commands``,
+    ``base_range``, ``deadman_timeout_s``) default to the real robot: the
+    18 upper-body joints take positions only — the vendor tracker's speed
+    is a tracking-speed cap, not a continuous velocity command — and the
+    chassis takes vx/vy/wz clamped to ``R1PRO_PLANAR_BASE.velocity_limits``.
+
+    Attributes:
+        tracking_speed: rad/s the on-board tracker follows targets at.
+        publish_odom_tf: Gates wheel odometry's odom -> base_link tf and the
+            `odom` pose; `odometry` always goes out.
+        frame_id: The robot's root frame, stamped on feedback.
+        odom_frame_id: The frame wheel odometry integrates in.
+        publish_rate_hz: How often the aggregated joint_state goes out.
+        sensor_stats_interval_s: Seconds between per-stream stats log lines
+            (0 disables).
+        enable_wrist_depth: Wrist depth is raw 16-bit at up to 30 Hz per
+            wrist — too heavy for the on-robot CPU budget by default.
+        enable_wrist_color: Each wrist copies and publishes JPEG frames even
+            when unread; turn off if nothing reads them.
+        color_publish_hz: Max Hz per color camera (0 = no cap); the cameras
+            arrive at ~28 Hz, so 30 passes every frame.
+        boot_vendor_stack: Boot the vendor stack (HDAS, mobiman), which
+            serves every ROS topic used here, if it is not running.
+        vendor_profile: "" boots vendor_setup.sh's own set; a vendor profile,
+            e.g. "ATCStandard/R1PROVRTeleop", boots that.
+    """
+
+    source: str = "r1pro"
+    model: RobotModel | None = R1PRO_CONNECTION_MODEL
+    joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+    base_range: Twist | None = Field(default_factory=_r1pro_base_range)
     publish_rate_hz: float = Field(default=100.0)
-    # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
-    # Wheel odometry always goes out on `odometry`; this gates its odom -> base_link tf and the `odom` pose.
     publish_odom_tf: bool = Field(default=True)
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
-    # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
-    # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
-    # on-robot CPU budget by default; enable when manipulation needs it.
     enable_wrist_depth: bool = Field(default=False)
-    # Each wrist copies and publishes JPEG frames even when unread; turn off if nothing reads them.
     enable_wrist_color: bool = Field(default=True)
-    # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
     color_publish_hz: float = Field(default=30.0)
-    # Boot the vendor stack (HDAS, mobiman), which serves every ROS topic used here, if it is not running.
     boot_vendor_stack: bool = Field(default=True)
-    # "" boots vendor_setup.sh's own set; a vendor profile, e.g. "ATCStandard/R1PROVRTeleop", boots that.
     vendor_profile: str = Field(default="")
 
 
-class R1ProConnection(Module):
-    """R1 Pro Module — ROS 2 control and sensor nodes."""
+class R1ProConnection(ConnectionModule):
+    """R1 Pro connection module — ROS 2 control and sensor nodes.
+
+    ``position_command`` carries all 18 upper-body joints' targets in rad,
+    named ``r1pro/<joint>``; ``cmd_vel`` carries the chassis' speeds. Both
+    are checked against the limits table before anything is sent. Feedback
+    is published once every segment (torso, left arm, right arm) has
+    reported, at ``config.publish_rate_hz``.
+    """
 
     config: R1ProConnectionConfig
 
     # Control inputs.
-    motor_command: In[MotorCommandArray]
+    position_command: In[JointState]
     cmd_vel: In[Twist]
 
     # Whole-body feedback.
-    motor_states: Out[JointState]
+    joint_state: Out[JointState]
     imu_chassis: Out[Imu]
     imu_torso: Out[Imu]
 
-    # Base feedback. `odom` feeds the twist-base transport adapter;
-    # `odometry` carries the same wheel odometry as pose + twist for
-    # navigation consumers (voxel map, planner).
+    # Base feedback. `odometry` carries the wheel odometry as pose + twist
+    # for navigation consumers (voxel map, planner); `odom` is the same pose
+    # as a PoseStamped, gated with the tf by config.publish_odom_tf.
     odom: Out[PoseStamped]
     odometry: Out[Odometry]
     tf: Out[TFMessage]
@@ -241,10 +302,8 @@ class R1ProConnection(Module):
             setup = Path(__file__).with_name("vendor_setup.sh")
             subprocess.run(["bash", str(setup), self.config.vendor_profile], check=True)
 
-    @rpc
-    def start(self) -> None:
-        super().start()
-
+    def connect(self) -> None:
+        """Bring up both RawROS nodes and every topic, moving nothing."""
         # Lazy import — RawROS pulls rclpy which must not load on import in
         # environments without ROS 2.
         from dimos.protocol.pubsub.impl.rospubsub import RawROS
@@ -257,8 +316,12 @@ class R1ProConnection(Module):
         self._setup_control_topics()
         self._setup_sensor_streams()
 
+    @rpc
+    def start(self) -> None:
+        super().start()
+
         # Wait for at least one feedback frame from each segment so the
-        # publish loop can ship a fully-populated motor_states.
+        # publish loop can ship a fully-populated joint_state.
         deadline = time.monotonic() + _FEEDBACK_DISCOVERY_TIMEOUT_S
         while time.monotonic() < deadline:
             with self._lock:
@@ -271,12 +334,22 @@ class R1ProConnection(Module):
         if not all(seen):
             logger.warning(
                 "Feedback discovery timeout: torso=%s left=%s right=%s — "
-                "motor_states will gate first publish until all three arrive.",
+                "joint_state will gate first publish until all three arrive.",
                 *seen,
             )
 
-        self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
-        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+        self.register_disposable(
+            Disposable(
+                self.position_command.subscribe(
+                    lambda msg: self.command(joint_state_to_values(msg, (Interface.POSITION,)))
+                )
+            )
+        )
+        self.register_disposable(
+            Disposable(
+                self.cmd_vel.subscribe(lambda msg: self.command(twist_to_values(msg, R1PRO_BASE)))
+            )
+        )
 
         self._publish_thread = Thread(target=self._publish_loop, name="r1pro-publish", daemon=True)
         self._publish_thread.start()
@@ -290,7 +363,7 @@ class R1ProConnection(Module):
             self._publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._publish_thread = None
 
-        # Unblock sensor workers, then stop both ROS nodes.
+        # Unblock sensor workers.
         for q in self._queues.values():
             try:
                 q.put_nowait(None)
@@ -300,6 +373,10 @@ class R1ProConnection(Module):
             t.join(timeout=1.0)
         self._sensor_workers.clear()
         self._queues.clear()
+
+        # Halts the robot (zero chassis speed, arms held) before the ROS
+        # nodes come down, then tears the module down.
+        super().stop()
 
         for unsubs in (self._sensor_unsubs, self._control_unsubs):
             for unsub in unsubs:
@@ -322,7 +399,92 @@ class R1ProConnection(Module):
             self._latest_imu_chassis = None
             self._latest_imu_torso = None
 
-        super().stop()
+    # The control contract
+
+    def write(self, values: Values) -> None:
+        """Forward one checked command: joint targets to the three vendor
+        joint-state topics, chassis speeds to the speed topic."""
+        ros = self._ros
+        if ros is None:
+            raise RuntimeError("R1ProConnection is not connected")
+        stamp = _ros_stamp_now()
+
+        positions = [
+            values.get(f"{joint}{SEPARATOR}{Interface.POSITION}")
+            for joint in R1PRO_UPPER_BODY_JOINTS
+        ]
+        if any(target is not None for target in positions):
+            if not all(target is not None for target in positions):
+                raise ValueError(
+                    "a position command must cover all "
+                    f"{_NUM_MOTORS} joints, got "
+                    f"{sum(target is not None for target in positions)}"
+                )
+            self._send_joint_targets([float(q) for q in positions if q is not None], stamp)
+
+        speeds = [values.get(f"{R1PRO_BASE}{SEPARATOR}{axis}") for axis in TWIST_INTERFACES]
+        if any(speed is not None for speed in speeds):
+            vx, vy, wz = (0.0 if speed is None else speed for speed in speeds)
+            self._send_chassis_speed(vx, vy, wz, stamp)
+
+    def halt(self) -> None:
+        """Zero the chassis, and hold the arms where they were last measured.
+
+        Safe to call any number of times, including before any command or
+        feedback: without a full reading there is nothing to hold the arms
+        at, and the vendor tracker keeps its last target.
+        """
+        ros = self._ros
+        if ros is None:
+            return
+        stamp = _ros_stamp_now()
+        if self._speed_topic is not None:
+            self._send_chassis_speed(0.0, 0.0, 0.0, stamp)
+        with self._lock:
+            if not (self._torso_seen and self._left_seen and self._right_seen):
+                return
+            q = list(self._latest_torso_q) + list(self._latest_left_q) + list(self._latest_right_q)
+        self._send_joint_targets(q, stamp)
+
+    # ROS command senders
+
+    def _send_joint_targets(self, q: list[float], stamp: Any) -> None:
+        """One ROS JointState per segment: position targets + tracking speed."""
+        from sensor_msgs.msg import JointState as RosJointState
+
+        ros = self._ros
+        if ros is None:
+            return  # pre-connect / post-stop
+        speed = self.config.tracking_speed
+        for topic, sl in (
+            (self._cmd_torso_topic, _TORSO_SLICE),
+            (self._cmd_left_topic, _LEFT_SLICE),
+            (self._cmd_right_topic, _RIGHT_SLICE),
+        ):
+            if topic is None:
+                continue
+            segment = q[sl]
+            cmd = RosJointState()
+            cmd.header.stamp = stamp
+            cmd.name = [""]
+            cmd.position = segment
+            cmd.velocity = [speed] * len(segment)
+            cmd.effort = [0.0]
+            ros.publish(topic, cmd)
+
+    def _send_chassis_speed(self, vx: float, vy: float, wz: float, stamp: Any) -> None:
+        from geometry_msgs.msg import TwistStamped
+
+        ros = self._ros
+        if ros is None or self._speed_topic is None:
+            return  # pre-connect / post-stop
+
+        cmd = TwistStamped()
+        cmd.header.stamp = stamp
+        cmd.twist.linear.x = vx
+        cmd.twist.linear.y = vy
+        cmd.twist.angular.z = wz
+        ros.publish(self._speed_topic, cmd)
 
     # Control topics
 
@@ -513,54 +675,6 @@ class R1ProConnection(Module):
             for name, s in self._stats_snapshot().items()
         }
 
-    # Control input handlers
-
-    def _on_motor_command(self, msg: MotorCommandArray) -> None:
-        if msg.num_joints != _NUM_MOTORS:
-            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
-            return
-
-        from sensor_msgs.msg import JointState as RosJointState
-
-        ros = self._ros
-        if ros is None:
-            return  # pre-start / post-stop
-        stamp = _ros_stamp_now()
-
-        for topic, sl in (
-            (self._cmd_torso_topic, _TORSO_SLICE),
-            (self._cmd_left_topic, _LEFT_SLICE),
-            (self._cmd_right_topic, _RIGHT_SLICE),
-        ):
-            if topic is None:
-                continue
-            cmd = RosJointState()
-            cmd.header.stamp = stamp
-            cmd.name = [""]
-            cmd.position = list(msg.q[sl])
-            cmd.velocity = self._tracking_velocities(msg.dq[sl])
-            cmd.effort = [0.0]
-            ros.publish(topic, cmd)
-
-    def _tracking_velocities(self, dqs: list[float]) -> list[float]:
-        """Map MotorCommand.dq to ROS tracking velocity (0/sentinel → configured)."""
-        speed = self.config.tracking_speed
-        return [speed if (v == 0.0 or v == VEL_STOP) else float(v) for v in dqs]
-
-    def _on_cmd_vel(self, msg: Twist) -> None:
-        from geometry_msgs.msg import TwistStamped
-
-        ros = self._ros
-        if ros is None or self._speed_topic is None:
-            return
-
-        cmd = TwistStamped()
-        cmd.header.stamp = _ros_stamp_now()
-        cmd.twist.linear.x = msg.linear.x
-        cmd.twist.linear.y = msg.linear.y
-        cmd.twist.angular.z = msg.angular.z
-        ros.publish(self._speed_topic, cmd)
-
     # Control feedback callbacks (3 segments)
 
     def _on_feedback_torso(self, msg: Any, _topic: Any) -> None:
@@ -622,7 +736,6 @@ class R1ProConnection(Module):
 
         from dimos.msgs.geometry_msgs.Pose import Pose
         from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         half = self._odom_yaw * 0.5
         position = Vector3(self._odom_x, self._odom_y, 0.0)
@@ -643,7 +756,7 @@ class R1ProConnection(Module):
             self.odom.publish(pose)
             self.tf.publish(TFMessage(Transform.from_pose(base, pose)))
 
-    # Aggregated motor_states publish loop
+    # Aggregated joint_state publish loop
 
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)
@@ -683,7 +796,7 @@ class R1ProConnection(Module):
                     ts = min(self._ts_torso, self._ts_left, self._ts_right)
 
             if bootstrapped:
-                self.motor_states.publish(
+                self.joint_state.publish(
                     JointState(
                         ts=ts,
                         frame_id=frame_id,

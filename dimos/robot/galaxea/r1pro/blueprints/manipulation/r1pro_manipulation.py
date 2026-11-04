@@ -23,7 +23,6 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.components import make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
@@ -35,7 +34,7 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_visualization,
 )
 from dimos.robot.galaxea.r1pro.config import make_r1pro_model_config
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_BODY_JOINTS
 
 # One canonical trajectory task spans both arms and the torso; the planner
 # selects an arm through the model's planning groups, not through task names.
@@ -44,7 +43,7 @@ _manipulation_tasks = [
     TaskConfig(
         name="vel_chassis",
         type="velocity",
-        joint_names=make_twist_base_joints("chassis"),
+        joint_names=R1PRO_BASE_JOINTS,
         priority=10,
     ),
 ]

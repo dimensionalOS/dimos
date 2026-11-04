@@ -46,6 +46,29 @@ dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 ```
 
+## Control path
+
+`R1ProConnection` is a connection module: the coordinator talks to it
+directly, with no transport adapters in between. `position_command` carries
+all 18 upper-body joints' targets (rad, `r1pro/<joint>`, positions only;
+the vendor tracker's speed is a tracking-speed cap, not a velocity command),
+`cmd_vel` carries chassis speeds (clamped to ±1/±1 m/s, ±2 rad/s), and
+feedback goes out on `joint_state`. Every command is checked against the
+URDF limits first; an out-of-range command is refused whole.
+
+Chassis speeds flow `/cmd_vel` bus → the coordinator's `twist_command` →
+the `vel_chassis` task's arbitration, as before, teleop and nav publishers
+are unchanged.
+
+**Deadman.** While the coordinator runs it sends a complete command every
+tick, so the deadman stays quiet. When commands stop, estop, or the
+coordinator going down, `R1ProConnection` halts within
+`deadman_timeout_s` (0.1 s): the chassis is told zero speed once and the
+arms are held where they were last measured. Stale feedback
+(`reading_timeout_s`, 0.2 s) also stops commands until fresh readings
+return. This replaces the old adapter path, where an estopped robot simply
+kept its last position command with no deadman.
+
 ## Point-LIO
 
 Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
