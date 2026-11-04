@@ -77,6 +77,5 @@ m20_sim_nav = autoconnect(
     ),
     UrdfManager.blueprint(model=M20_MODEL),
     _m20_nav,
-    # gossip off until zenoh fixes its pending-connection bug: with it on, native modules
-    # spawned together never link
+    # gossip off: with it on, zenoh's pending-connection bug keeps native modules spawned together from linking
 ).global_config(zenoh_gossip=False, n_workers=9)

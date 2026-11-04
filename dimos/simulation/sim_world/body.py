@@ -51,10 +51,7 @@ class BodyShape:
 
 @dataclass(frozen=True)
 class Sensor:
-    """A lidar mounted on the robot's base.
-
-    A lidar that looks out through a window in the base mesh does not see the base.
-    """
+    """A lidar mounted on the robot's base; one looking out through a window in the base mesh does not see the base."""
 
     name: str
     mount_xyz: NDArray[np.float64]
@@ -68,10 +65,7 @@ class Sensor:
 
 @dataclass(frozen=True)
 class Rig:
-    """A robot as a scene is built around it. Odometry and the cloud report at cloud_frame.
-
-    The lidars see the scene and the robot's geoms in lidar_group.
-    """
+    """A robot as a scene is built around it: odometry and the cloud report at cloud_frame, the lidars see its lidar_group."""
 
     spec: Callable[[], mujoco.MjSpec]
     base_body: str

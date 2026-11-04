@@ -34,6 +34,7 @@ from dimos.simulation.go2_legged.robot import (
 )
 from dimos.simulation.m20_sim.policy import LEG_JOINTS, LEGS, M20Policy
 
+# the policy acts at 50 Hz
 CONTROL_DT = 0.02
 VISUAL_GROUP = 2
 COLLISION_GROUP = 1

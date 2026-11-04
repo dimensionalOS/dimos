@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 from itertools import pairwise
 from pathlib import Path
 
 import mujoco
 import numpy as np
+from pydantic import Field
 from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
@@ -45,12 +47,15 @@ from dimos.simulation.sim_world.world import Sim, SimWorld, SimWorldConfig
 
 # the walking policy climbs 2.5 cm and stalls at 3 cm
 STEP_LIMIT = 0.02
+# the base's height standing in the policy's default pose (the vendor MJCF's home keyframe)
 STAND_HEIGHT = 0.566
 # the trunk top, at its highest while walking
 CLEARANCE_HEIGHT = 0.66
+# the trunk's collision shapes with the lidar housings, in base_link
 TRUNK_HALF_EXTENTS = (0.41, 0.121, 0.087)
-# the driver's minimum distance
-LIO_BLIND_RANGE = 0.2
+# past the farthest each Airy sees its own robot (the far wheel, 1.02 m mid-stride; test_world measures it),
+# so the robot's legs never become obstacles around itself
+LIO_BLIND_RANGE = 1.05
 # the vendor LIO's skip_num
 LIO_KEEP_EVERY = 5
 COLLISION_RGBA = (0.3, 0.3, 0.3, 1.0)
@@ -148,8 +153,17 @@ M20_RIG = Rig(
 )
 
 
+def with_blind_range(rig: Rig, lio_blind_range: float) -> Rig:
+    """The rig with every lidar dropping returns nearer than lio_blind_range."""
+    return replace(
+        rig, sensors=tuple(replace(s, lio_blind_range=lio_blind_range) for s in rig.sensors)
+    )
+
+
 class SimM20WorldConfig(SimWorldConfig):
     policy: Path | None = None
+    # returns nearer each lidar than this are dropped, as the vendor driver does
+    lio_blind_range: float = Field(default=LIO_BLIND_RANGE, ge=0.0)
 
 
 class SimM20World(SimWorld):
@@ -165,4 +179,5 @@ class SimM20World(SimWorld):
         super().start()
 
     def _build(self, scene: Scene, seed: int) -> Sim:
-        return Sim(scene, seed, self.rig, partial(LeggedM20, policy=self._policy))
+        rig = with_blind_range(self.rig, self.config.lio_blind_range)
+        return Sim(scene, seed, rig, partial(LeggedM20, policy=self._policy))
