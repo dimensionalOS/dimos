@@ -714,17 +714,17 @@ wheels = [
 
 [[package]]
 name = "can-motor-control"
-version = "0.0.8"
+version = "0.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/42/74653f686df6738ba0eb622f8f0813bf594aabf833bc9e821db6dca5c103/can_motor_control-0.0.8.tar.gz", hash = "sha256:75e27ed43ecd9b63d39aefe3bc56f147651b47b861a6808b39bf5a610ae8c13e", size = 146135, upload-time = "2026-09-03T22:11:41.371Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/cb/5a0ee8928733bb7d3b04e8bfd5feee892929974614c8d91afae743e65144/can_motor_control-0.0.12.tar.gz", hash = "sha256:e2031605b3ceea75bd10735274820daab11a8facf0600f24839fbe8fae720328", size = 159066, upload-time = "2026-11-03T03:42:13.833Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/80/9ab2d4014807437b3caab66ded800a59461ddd2e217462191e374ff653e4/can_motor_control-0.0.8-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:2173c65f374d285ab07548b30c185f0f059edea67787d14541948bdfe22afeca", size = 588545, upload-time = "2026-09-03T22:11:37.197Z" },
-    { url = "https://files.pythonhosted.org/packages/64/57/4be1a13d198eea248b78a447fc7d333d286db6c8c3d13f2cebac149993e2/can_motor_control-0.0.8-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:d9bf09fa818e8c8d2ce28d7b3e4ae11fe55eacd026f866f12411f2f26cb717b5", size = 514656, upload-time = "2026-09-03T22:11:38.807Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/dc/2b676cb39e2239ee40eac9b14138336247f6109b3e67d4bbe355b84903d6/can_motor_control-0.0.8-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:8438f3461720d19324c1befd3dd4e37ed10e22a9abaa61a8afb76c6f48bd6607", size = 539934, upload-time = "2026-09-03T22:11:40.046Z" },
+    { url = "https://files.pythonhosted.org/packages/39/28/756e3ad3835caf8f8ade2bb63daee77b4316b4f28afca9d68c381423502a/can_motor_control-0.0.12-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:1d4784a1ba3b4792e26de79a57457d188f5bf8c1e4a25d10100340cd1e57ad28", size = 605841, upload-time = "2026-11-03T03:42:09.843Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/e1/92da7b96661283e5633f68bd0dc31e3a67c555e1401eaa8278bca7199b26/can_motor_control-0.0.12-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:28bf27c124b333ad5b9e7a0701897c72971cfdd1e2082d36c2435ccc608655e9", size = 530427, upload-time = "2026-11-03T03:42:11.214Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/63/f3e2ba0c1100d221efd0b56370aa2ef007ad21dd0e4cbad8681f882858cb/can_motor_control-0.0.12-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:3c490923ee27fd18df84fc6a466b527162fc7170fab1ae1ec1fc062b35b524c9", size = 552911, upload-time = "2026-11-03T03:42:12.518Z" },
 ]
 
 [[package]]
@@ -2567,7 +2567,7 @@ requires-dist = [
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
-    { name = "can-motor-control", marker = "extra == 'control'", specifier = ">=0.0.8" },
+    { name = "can-motor-control", marker = "extra == 'control'", specifier = "==0.0.12" },
     { name = "cbor2", specifier = ">=6.1.5,<7" },
     { name = "chromadb", marker = "extra == 'perception'", specifier = ">=1.0.0" },
     { name = "cmeel-tinyxml2", specifier = ">=11,<12" },
@@ -2725,7 +2725,7 @@ docs = [
 ]
 lint = [
     { name = "aiortc", specifier = ">=1.14.0" },
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = "==0.0.12" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "deptry", specifier = "==0.25.1" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
@@ -2770,7 +2770,7 @@ lint = [
     { name = "xacro" },
 ]
 project-deps = [
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = "==0.0.12" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
@@ -2798,7 +2798,7 @@ project-deps = [
 ]
 tests = [
     { name = "build", specifier = ">=1.2.2" },
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = "==0.0.12" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },
@@ -2857,7 +2857,7 @@ tests = [
 ]
 tests-self-hosted = [
     { name = "build", specifier = ">=1.2.2" },
-    { name = "can-motor-control", specifier = ">=0.0.8" },
+    { name = "can-motor-control", specifier = "==0.0.12" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "click", specifier = ">=8.3" },
     { name = "coacd", specifier = ">=1.0.0" },

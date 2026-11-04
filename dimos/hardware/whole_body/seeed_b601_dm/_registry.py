@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
-from typing import Protocol
-
-from dimos.spec.utils import Spec
-
-
-class SimWorldSpec(Spec, Protocol):
-    def reset_pose(self, x: float, y: float, z: float, yaw: float) -> None: ...
+ADAPTER_FACTORIES = {
+    "seeed_b601_dm": "dimos.hardware.whole_body.seeed_b601_dm.adapter:SeeedB601DMAdapter",
+}

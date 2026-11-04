@@ -69,8 +69,10 @@ EXPECTED_NAMES = {
     "whole_body": {
         "dual_openyam_damiao",
         "mock_whole_body",
+        "makermods_metal",
         "openarm_damiao",
         "openyam_damiao",
+        "seeed_b601_dm",
         "sim_mujoco_g1",
         "transport_lcm",
         "transport_ros",

@@ -761,3 +761,33 @@ def test_prefix_preserves_mimic_references_and_fixed_mounts(tmp_path):
     assert model.load().root_link == "root"
     with pytest.raises(ValueError, match="Unknown model frame"):
         loaded.resolve_frame("camera")
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf")])
+def test_joint_velocity_limits_reject_invalid_values(tmp_path: Path, value: float) -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        robot_model.RobotModel.from_file(tmp_path / "robot.urdf").with_joint_velocity_limits(
+            {"slide": value}
+        )
+
+
+def test_joint_velocity_limits_replace_only_requested_limits(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='tip'/>"
+        "<joint name='slide' type='prismatic'><parent link='base'/><child link='tip'/>"
+        "<limit lower='0' upper='1' effort='10' velocity='50'/></joint></robot>"
+    )
+    loaded = (
+        robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits({"slide": 0.2}).load()
+    )
+    limit = ET.fromstring(loaded.xml).find("joint/limit")
+    assert limit is not None
+    assert limit.attrib == {"lower": "0", "upper": "1", "effort": "10", "velocity": "0.2"}
+    assert "velocity='50'" in urdf.read_text()
+    with pytest.raises(ValueError, match="Joint not found"):
+        robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits({"missing": 0.2}).load()
+    with pytest.raises(ValueError, match="already replaced"):
+        robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits(
+            {"slide": 0.2}
+        ).with_joint_velocity_limits({"slide": 0.3}).load()

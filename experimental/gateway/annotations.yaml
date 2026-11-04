@@ -128,18 +128,6 @@ robots:
           title: Several Go2s, keyboard driving
           description: Several Go2s, with a keyboard driving window per robot.
           recommended_config: *fleet_config
-        unitree-go2-nav-3d:
-          title: Go2 3D navigation (Mid-360)
-          description: '3D navigation with a Livox Mid-360 on the Go2: ray-traced voxel map and MLS planning.'
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization:
-          title: Go2 3D navigation in a saved map
-          description: 3D navigation (Mid-360) that relocalizes in a map you made before.
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization-replay:
-          title: Go2 3D navigation in a saved map (replay)
-          description: The relocalized 3D navigation stack driven by a recording instead of a robot.
-          recommended_config: *robot_ip_only
         unitree-go2-map:
           title: Go2 with a permanent map
           description: Map and navigation with live loop closure, kept in a map file that's loaded, extended and saved.
@@ -468,6 +456,16 @@ robots:
             placeholder: 192.168.1.185
             required: false
             when: {simulation: ''}
+        xarm7-keyboard-teleop:
+          title: xArm7 keyboard driving (XArmConnection)
+          description: Move a real xArm7's end with this computer's keyboard, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
+        xarm6-keyboard-teleop:
+          title: xArm6 keyboard driving (XArmConnection)
+          description: Move a real xArm6's end with this computer's keyboard, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
         xarm-perception-sim-agent:
           title: xArm pick and place agent (sim)
           description: The simulated pick-and-place stack plus an AI agent with manipulation skills.
@@ -614,6 +612,36 @@ robots:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+    makermods_metal:
+      name: MakerMods Metal
+      description: The six-joint Metal arm and gripper, over CAN.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: can_port, label: CAN port or USB serial}
+      blueprints:
+        coordinator-makermods-metal:
+          title: Metal coordinator
+          description: A Metal arm behind a ControlCoordinator.
+        makermods-metal-planner-coordinator:
+          title: Metal motion planning
+          description: Motion planning, execution, and Viser for a Metal arm.
+    dual_makermods_metal:
+      name: Dual MakerMods Metal
+      description: Two Metal arms in one planning and collision world.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/dual_makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: left_can_port, label: Left CAN port or USB serial}
+        - {module: ControlCoordinator, field: right_can_port, label: Right CAN port or USB serial}
+      blueprints:
+        dual-makermods-metal-planner-coordinator:
+          title: Dual Metal motion planning
+          description: Coordinated motion planning, execution, and Viser for two Metal arms.
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
@@ -673,6 +701,27 @@ robots:
         teleop-webxr-openarm:
           title: OpenArm VR teleop
           description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+    seeed_b601_dm:
+      name: Seeed reBot B601-DM
+      description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
+      type: arm
+      manufacturer: Seeed Studio
+      dirs: [dimos/robot/manipulators/seeed_b601_dm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - module: controlcoordinator
+          field: can_port
+          label: CAN port
+          placeholder: /dev/ttyACM0
+          when: {simulation: ''}
+      blueprints:
+        seeed-b601-dm-planner-coordinator:
+          title: B601-DM motion planning
+          description: Motion planning and execution for a Seeed reBot B601-DM arm.
+        coordinator-seeed-b601-dm:
+          title: B601-DM coordinator
+          description: A B601-DM behind a ControlCoordinator (a building block).
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.
