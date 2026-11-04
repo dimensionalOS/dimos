@@ -17,8 +17,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pydantic import Field
+
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.reform import ReformConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -88,6 +91,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     viz_emit_every: int = 0
     # Unchanged cells published per viz tick, round robin.
     viz_sweep_cells: int = 32
+    # Whether and how the map warps through each loop_closure_event.
+    reform: ReformConfig = Field(default_factory=ReformConfig)
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -99,6 +104,10 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # An externally loaded map cloud, placed by the latest tf world_frame ->
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]
+    # With config.reform.enabled: one record per keyframe (x, y, z, node_id, ts, qx, qy, qz, qw), for the anchors that hold the unmoved parts.
+    pose_graph: In[PointCloud2]
+    # With config.reform.enabled: one record per keyframe a closure moved, its pose_graph record then the delta (post = delta * pre).
+    loop_closure_event: In[PointCloud2]
     tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]

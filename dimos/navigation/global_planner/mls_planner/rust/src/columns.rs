@@ -201,9 +201,6 @@ impl ColumnIz {
     }
 }
 
-/// A footprint past this many columns is reported: only a stray voxel makes one.
-const MAX_MASK_COLUMNS: usize = 250_000_000;
-
 /// Dense set of columns over an inclusive box, for change footprints that
 /// dilate by the morphology reach.
 #[derive(Clone)]
@@ -220,14 +217,6 @@ impl ColumnMask {
     pub fn new((x0, x1, y0, y1): ColumnWindow, margin: i32) -> Self {
         let width = (x1 as i64 - x0 as i64 + 1 + 2 * margin as i64).max(0) as usize;
         let height = (y1 as i64 - y0 as i64 + 1 + 2 * margin as i64).max(0) as usize;
-        if width.saturating_mul(height) > MAX_MASK_COLUMNS {
-            tracing::warn!(
-                cells = width.saturating_mul(height),
-                x = ?(x0, x1),
-                y = ?(y0, y1),
-                "A change footprint spans an enormous box: some voxel is far from the rest."
-            );
-        }
         Self {
             x0: x0 - margin,
             y0: y0 - margin,
@@ -338,9 +327,6 @@ pub struct ColumnEdit {
     pub added: Vec<i32>,
 }
 
-/// Largest box voxels are bucketed over: ~32 bytes a column, so 50M is ~1.6 GB.
-const MAX_BUCKET_COLUMNS: usize = 50_000_000;
-
 /// Incoming voxels bucketed by column over a column bbox, each column's z
 /// values sorted and deduped.
 pub struct ColumnBuckets {
@@ -364,23 +350,6 @@ impl ColumnBuckets {
     pub fn new(keys: &[VoxelKey], (x0, x1, y0, y1): ColumnWindow) -> Self {
         let width = (x1 as i64 - x0 as i64 + 1).max(0) as usize;
         let height = (y1 as i64 - y0 as i64 + 1).max(0) as usize;
-        // Per-column scratch over the whole box: refuse a box no sane region has.
-        if width.saturating_mul(height) > MAX_BUCKET_COLUMNS {
-            tracing::error!(
-                columns = width.saturating_mul(height),
-                x = ?(x0, x1),
-                y = ?(y0, y1),
-                voxels = keys.len(),
-                "Refused to bucket voxels over an enormous box; they are dropped."
-            );
-            return Self {
-                x0,
-                y0,
-                width: 0,
-                height: 0,
-                bands: Vec::new(),
-            };
-        }
         let n_bands = height.div_ceil(BAND_ROWS);
         let band_of = |&(_, iy, _): &VoxelKey| {
             let y = iy - y0;

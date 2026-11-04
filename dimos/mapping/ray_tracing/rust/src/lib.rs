@@ -16,7 +16,5 @@ pub mod background_warp;
 pub mod mapper;
 pub mod module;
 pub use dimos_reform as reform;
-pub mod reform_module;
 pub mod region_viz;
-pub use dimos_reform::rss;
 pub mod voxel_ray_tracer;

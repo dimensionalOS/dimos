@@ -17,71 +17,60 @@ import pytest
 
 pytest.importorskip("dimos_mls_planner")
 
-from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
-from dimos.navigation.global_planner.mls_planner.mls_reform_planner_native import (
-    MLSReformPlannerNative,
-    MLSReformPlannerNativeConfig,
+from dimos.navigation.global_planner.mls_planner.mls_planner import (
+    LOOP_CLOSURE_EVENT_DTYPE,
+    POSE_GRAPH_DTYPE,
+    MLSPlanner,
 )
 
-VOXEL = 0.2
-POSE = np.dtype([("xyz", "<f4", 3), ("id", "<u4"), ("ts", "<f8"), ("q", "<f4", 4)])
-EVENT = np.dtype(
-    [
-        ("xyz", "<f4", 3),
-        ("id", "<u4"),
-        ("ts", "<f8"),
-        ("q", "<f4", 4),
-        ("dt", "<f4", 3),
-        ("dq", "<f4", 4),
-    ]
-)
+VOXEL_SIZE = 0.2
 
 
-def floor_with_wall() -> np.ndarray:
-    coords = np.arange(-3.0, 3.0, VOXEL, dtype=np.float32) + VOXEL / 2
+def floor_with_wall():
+    coords = np.arange(-3.0, 3.0, VOXEL_SIZE, dtype=np.float32) + VOXEL_SIZE / 2
     xs, ys = np.meshgrid(coords, coords)
-    floor = np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, VOXEL / 2, np.float32)], axis=1)
+    floor = np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, VOXEL_SIZE / 2, np.float32)], axis=1)
     wall = np.array(
         [(0.1, y, z) for y in coords if abs(y) > 1.0 for z in coords[coords > 0][:8]], np.float32
     )
     return np.concatenate([floor, wall])
 
 
-def keyframes() -> np.ndarray:
+def keyframes():
     grid = np.arange(-2.5, 3.0, 1.0)
-    out = np.zeros(len(grid) ** 2, POSE)
-    out["xyz"] = [(x, y, 0.3) for x in grid for y in grid]
-    out["id"] = np.arange(len(out))
-    out["ts"] = np.arange(len(out), dtype=float)
-    out["q"] = (0, 0, 0, 1)
-    return out
+    records = np.zeros(len(grid) ** 2, POSE_GRAPH_DTYPE)
+    records["x"], records["y"] = np.repeat(grid, len(grid)), np.tile(grid, len(grid))
+    records["z"] = 0.3
+    records["node_id"] = np.arange(len(records))
+    records["ts"] = np.arange(len(records), dtype=float)
+    records["qw"] = 1.0
+    return records
 
 
-def shift_all(kfs: np.ndarray, dx: float, dy: float) -> bytes:
-    event = np.zeros(len(kfs), EVENT)
-    for name in ("xyz", "id", "ts", "q"):
-        event[name] = kfs[name]
-    event["dt"] = (dx, dy, 0.0)
-    event["dq"] = (0, 0, 0, 1)
+def shift_all(keyframe_records, dx, dy):
+    event = np.zeros(len(keyframe_records), LOOP_CLOSURE_EVENT_DTYPE)
+    for name in keyframe_records.dtype.names:
+        event[name] = keyframe_records[name]
+    event["dx"], event["dy"], event["dqw"] = dx, dy, 1.0
     return event.tobytes()
 
 
-def make_planner(**kwargs) -> MLSPlanner:
-    return MLSPlanner(voxel_size=VOXEL, robot_height=1.0, **kwargs)
+def make_planner(**kwargs):
+    return MLSPlanner(voxel_size=VOXEL_SIZE, robot_height=1.0, **kwargs)
 
 
-def test_a_loop_closure_moves_the_graph_and_the_held_goal() -> None:
+def test_a_loop_closure_moves_the_graph_and_the_held_goal():
     world = floor_with_wall()
     planner = make_planner(voxel_times=True)
     planner.update_global_map(world, stamp=0.0)
-    kfs = keyframes()
-    assert planner.add_keyframes(kfs.tobytes()) == len(kfs)
+    keyframe_records = keyframes()
+    assert planner.add_keyframes(keyframe_records.tobytes()) == len(keyframe_records)
 
     result = planner.apply_loop_closure(
-        shift_all(kfs, 1.0, 0.4), held=[(2.0, 2.0, 0.2)], blend_sigma_m=1.0
+        shift_all(keyframe_records, 1.0, 0.4), held=[(2.0, 2.0, 0.2)], blend_sigma_m=1.0
     )
     assert result is not None
-    assert result["keyframes_moved"] == len(kfs)
+    assert result["keyframes_moved"] == len(keyframe_records)
     assert result["voxels_warped"] == planner.voxel_count() > 0
     np.testing.assert_allclose(result["held"][0], (3.0, 2.4, 0.2), atol=1e-4)
 
@@ -95,27 +84,19 @@ def test_a_loop_closure_moves_the_graph_and_the_held_goal() -> None:
     np.testing.assert_allclose(path[-1][:2], (2.0, 2.4), atol=0.3)
 
 
-def test_a_closure_below_min_shift_is_held_for_the_next() -> None:
+def test_a_closure_below_min_shift_is_held_for_the_next():
     planner = make_planner()
     planner.update_global_map(floor_with_wall())
-    kfs = keyframes()
-    planner.add_keyframes(kfs.tobytes())
-    assert planner.apply_loop_closure(shift_all(kfs, 0.01, 0.0), min_shift_m=0.04) is None
+    keyframe_records = keyframes()
+    planner.add_keyframes(keyframe_records.tobytes())
+    assert (
+        planner.apply_loop_closure(shift_all(keyframe_records, 0.01, 0.0), min_shift_m=0.04) is None
+    )
 
 
-def test_records_of_the_wrong_size_are_rejected() -> None:
+def test_records_of_the_wrong_size_are_rejected():
     planner = make_planner()
     with pytest.raises(ValueError):
-        planner.apply_loop_closure(b"\x00" * 67)
+        planner.apply_loop_closure(b"\x00" * (np.dtype(LOOP_CLOSURE_EVENT_DTYPE).itemsize - 1))
     with pytest.raises(ValueError):
-        planner.add_keyframes(b"\x00" * 41)
-
-
-def test_the_module_declares_the_closure_inputs() -> None:
-    ports = MLSReformPlannerNative.__annotations__
-    assert {"pose_graph", "loop_closure_event"} <= set(ports)
-    config = MLSReformPlannerNativeConfig()
-    assert config.executable.endswith("mls_reform_planner")
-    assert {"reform_blend_sigma_m", "reform_blend_time_sigma_s", "reform_min_shift_m"} <= set(
-        config.to_config_dict()
-    )
+        planner.add_keyframes(b"\x00" * (np.dtype(POSE_GRAPH_DTYPE).itemsize + 1))

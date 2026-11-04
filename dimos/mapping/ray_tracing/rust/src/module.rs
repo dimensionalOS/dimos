@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use crate::background_warp::{BackgroundWarp, WarpJob};
 use crate::mapper::{register, Mapper, Pose, WarpReport};
-use crate::reform::Warp;
+use crate::reform::{decode_loop_closure_event, decode_pose_graph, ReformState, Warp};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
     partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
@@ -33,10 +33,10 @@ use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Messages queued to the worker in arrival order.
-pub(crate) enum Job {
+enum Job {
     /// A live cloud and when it was queued.
     Lidar(PointCloud2, Instant),
     LoadedMap(PointCloud2),
@@ -48,9 +48,6 @@ pub(crate) enum Job {
     /// A warp finished on its copy, ready to swap in.
     WarpDone(Box<WarpJob>, WarpReport),
 }
-
-/// How often the reform ray tracer logs its memory and container sizes.
-const MEMORY_LOG_PERIOD: Duration = Duration::from_secs(10);
 
 /// Messages the handlers can queue ahead of the worker before they wait.
 const JOB_QUEUE_CAPACITY: usize = 256;
@@ -68,6 +65,14 @@ pub struct RayTracingVoxelMap {
     // An externally loaded map cloud. Only the first one seeds the map.
     #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
+
+    // Every keyframe's pose, for the anchors that hold the unmoved parts (config.reform).
+    #[input(decode = PointCloud2::decode, handler = on_pose_graph)]
+    pose_graph: Input<PointCloud2>,
+
+    // Per closure, each keyframe it moved: its pre pose and the delta (config.reform).
+    #[input(decode = PointCloud2::decode, handler = on_loop_closure_event)]
+    loop_closure_event: Input<PointCloud2>,
 
     #[tf]
     tf: Tf,
@@ -102,7 +107,11 @@ pub struct RayTracingVoxelMap {
     #[config]
     config: Config,
 
-    worker: WorkerHandle,
+    jobs: Option<mpsc::Sender<Job>>,
+    worker: Option<JoinHandle<()>>,
+    reform: ReformState,
+    // Whether the last pose_graph or loop_closure_event failed to decode, so a bad stream warns once.
+    undecodable: bool,
 }
 
 /// Whether transforms have already moved past a cloud's stamp, so the one it needs will never
@@ -117,58 +126,83 @@ fn is_stale(stamp: f64, latest_tf: Option<f64>, max_age_s: f64) -> bool {
     max_age_s > 0.0 && latest_tf.is_some_and(|latest| latest - stamp > max_age_s)
 }
 
-/// The worker's outputs, cloned from whichever module owns them.
-pub(crate) struct WorkerOutputs {
-    pub global_map: Output<PointCloud2>,
-    pub local_map: Output<PointCloud2>,
-    pub local_map_fine: Output<PointCloud2>,
-    pub region_bounds: Output<PoseStamped>,
-    pub map_regions: Output<PointCloud2>,
-    pub seed_map: Output<PointCloud2>,
-    pub seed_bounds: Output<PoseStamped>,
-}
-
-/// The worker's queue and task, shared by the plain and reform modules.
-#[derive(Default)]
-pub(crate) struct WorkerHandle {
-    jobs: Option<mpsc::Sender<Job>>,
-    worker: Option<JoinHandle<()>>,
-}
-
-impl WorkerHandle {
-    /// Start the worker. `track_voxel_times` stamps each voxel as it lands, for warps;
-    /// `dump_path` gets the healthy voxel centers every MEMORY_LOG_PERIOD, for offline checks.
-    pub fn spawn(
-        tf: Tf,
-        config: Config,
-        outputs: WorkerOutputs,
-        track_voxel_times: bool,
-        dump_path: Option<String>,
-    ) -> Self {
+impl RayTracingVoxelMap {
+    async fn spawn_worker(&mut self) {
         let (tx, rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
         let worker = Worker {
             jobs: rx,
             job_sender: tx.downgrade(),
-            tf,
-            config,
-            outputs,
-            track_voxel_times,
-            dump_path,
+            tf: self.tf.clone(),
+            config: self.config.clone(),
+            global_map: self.global_map.clone(),
+            local_map: self.local_map.clone(),
+            local_map_fine: self.local_map_fine.clone(),
+            region_bounds: self.region_bounds.clone(),
+            map_regions: self.map_regions.clone(),
+            seed_map: self.seed_map.clone(),
+            seed_bounds: self.seed_bounds.clone(),
         };
-        Self {
-            jobs: Some(tx),
-            worker: Some(tokio::spawn(worker.run())),
-        }
+        self.jobs = Some(tx);
+        self.worker = Some(tokio::spawn(worker.run()));
     }
 
-    pub fn stop(&mut self) {
+    async fn stop_worker(&mut self) {
         self.jobs = None;
         if let Some(handle) = self.worker.take() {
             handle.abort();
         }
     }
 
-    pub async fn enqueue(&self, job: Job) {
+    async fn on_lidar(&mut self, msg: PointCloud2) {
+        self.enqueue(Job::Lidar(msg, Instant::now())).await;
+    }
+
+    async fn on_loaded_map(&mut self, msg: PointCloud2) {
+        self.enqueue(Job::LoadedMap(msg)).await;
+    }
+
+    async fn on_pose_graph(&mut self, msg: PointCloud2) {
+        if !self.config.reform.enabled {
+            return;
+        }
+        if let Some(records) = self.decoded(decode_pose_graph(&msg), "pose_graph") {
+            self.reform.add_keyframes(&records);
+        }
+    }
+
+    async fn on_loop_closure_event(&mut self, msg: PointCloud2) {
+        if !self.config.reform.enabled {
+            return;
+        }
+        let Some(moved) = self.decoded(decode_loop_closure_event(&msg), "loop_closure_event")
+        else {
+            return;
+        };
+        match self.reform.closure(&moved, &self.config.reform) {
+            Some(warp) => self.enqueue(Job::Warp(warp)).await,
+            None => debug!(
+                keyframes = moved.len(),
+                "Loop closure moved nothing past reform.min_shift_m, held for the next."
+            ),
+        }
+    }
+
+    /// The decoded records, or None with a warning when the stream turns undecodable.
+    fn decoded<T>(
+        &mut self,
+        result: Result<T, crate::reform::DecodeError>,
+        input: &str,
+    ) -> Option<T> {
+        if let Err(e) = &result {
+            if !self.undecodable {
+                warn!(error = %e, input, "Failed to decode a closure record cloud, dropping until one decodes.");
+            }
+        }
+        self.undecodable = result.is_err();
+        result.ok()
+    }
+
+    async fn enqueue(&self, job: Job) {
         let Some(jobs) = &self.jobs else {
             return;
         };
@@ -178,42 +212,6 @@ impl WorkerHandle {
                 "Ray tracing worker is gone, dropped a message.",
             );
         }
-    }
-}
-
-impl RayTracingVoxelMap {
-    fn outputs(&self) -> WorkerOutputs {
-        WorkerOutputs {
-            global_map: self.global_map.clone(),
-            local_map: self.local_map.clone(),
-            local_map_fine: self.local_map_fine.clone(),
-            region_bounds: self.region_bounds.clone(),
-            map_regions: self.map_regions.clone(),
-            seed_map: self.seed_map.clone(),
-            seed_bounds: self.seed_bounds.clone(),
-        }
-    }
-
-    async fn spawn_worker(&mut self) {
-        self.worker = WorkerHandle::spawn(
-            self.tf.clone(),
-            self.config.clone(),
-            self.outputs(),
-            false,
-            None,
-        );
-    }
-
-    async fn stop_worker(&mut self) {
-        self.worker.stop();
-    }
-
-    async fn on_lidar(&mut self, msg: PointCloud2) {
-        self.worker.enqueue(Job::Lidar(msg, Instant::now())).await;
-    }
-
-    async fn on_loaded_map(&mut self, msg: PointCloud2) {
-        self.worker.enqueue(Job::LoadedMap(msg)).await;
     }
 }
 
@@ -322,6 +320,8 @@ struct State {
     seed: SeedState,
     viz: RegionSweep,
     background_warp: BackgroundWarp,
+    // Whether the last local region was far larger than the lidar's range, so a bad pose warns once.
+    oversized_region: bool,
 }
 
 fn warn_if_seed_starved(seed: &SeedState) {
@@ -343,8 +343,6 @@ fn warn_if_seed_starved(seed: &SeedState) {
 enum Turn {
     Job(Job),
     SeedTile,
-    /// Nothing arrived for a while.
-    Idle,
     Closed,
 }
 
@@ -352,11 +350,7 @@ enum Turn {
 /// waiting, and without a load the worker waits for a job.
 async fn next_turn(jobs: &mut mpsc::Receiver<Job>, loading: bool) -> Turn {
     if !loading {
-        // Wake at least once a period, so the memory log and dump keep up when idle.
-        return match tokio::time::timeout(MEMORY_LOG_PERIOD, jobs.recv()).await {
-            Ok(job) => job.map_or(Turn::Closed, Turn::Job),
-            Err(_) => Turn::Idle,
-        };
+        return jobs.recv().await.map_or(Turn::Closed, Turn::Job);
     }
     match jobs.try_recv() {
         Ok(job) => Turn::Job(job),
@@ -374,15 +368,19 @@ struct Worker {
     job_sender: mpsc::WeakSender<Job>,
     tf: Tf,
     config: Config,
-    outputs: WorkerOutputs,
-    track_voxel_times: bool,
-    dump_path: Option<String>,
+    global_map: Output<PointCloud2>,
+    local_map: Output<PointCloud2>,
+    local_map_fine: Output<PointCloud2>,
+    region_bounds: Output<PoseStamped>,
+    map_regions: Output<PointCloud2>,
+    seed_map: Output<PointCloud2>,
+    seed_bounds: Output<PoseStamped>,
 }
 
 impl Worker {
     async fn run(mut self) {
         let mut mapper = Mapper::new(self.config.clone());
-        if self.track_voxel_times {
+        if self.config.reform.enabled {
             mapper.track_voxel_times();
         }
         let mut state = State {
@@ -391,27 +389,9 @@ impl Worker {
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
             background_warp: BackgroundWarp::default(),
+            oversized_region: false,
         };
-        let mut last_memory_log = Instant::now();
         loop {
-            if self.track_voxel_times && last_memory_log.elapsed() >= MEMORY_LOG_PERIOD {
-                last_memory_log = Instant::now();
-                let (voxels, chunks, voxel_times) = state.mapper.sizes();
-                warn!(
-                    rss_mb = crate::rss::rss_mb().unwrap_or(f64::NAN),
-                    voxels,
-                    chunks,
-                    voxel_times,
-                    queued_jobs = self.jobs.len(),
-                    "Ray tracer memory."
-                );
-                if let Some(path) = &self.dump_path {
-                    let centers = state.mapper.healthy_centers();
-                    if let Err(e) = crate::rss::dump_f32(path, &centers) {
-                        warn!(error = %e, path, "Failed to dump the voxel map.");
-                    }
-                }
-            }
             let loading = matches!(state.seed, SeedState::Loading(_));
             match next_turn(&mut self.jobs, loading).await {
                 Turn::Job(job) => self.handle(&mut state, job).await,
@@ -419,7 +399,6 @@ impl Worker {
                     self.seed_step(&mut state).await;
                     tokio::task::yield_now().await;
                 }
-                Turn::Idle => {}
                 Turn::Closed => return,
             }
         }
@@ -588,11 +567,10 @@ impl Worker {
         // Bounds pair with local_map by stamp, so publish them on its cadence.
         if let Some(c) = region {
             let limit = 2.0 * self.config.max_range;
-            if !(c.radius.is_finite() && c.cx.is_finite() && c.cy.is_finite())
-                || (limit > 0.0 && c.radius > limit)
-            {
-                warn_throttled!(
-                    Duration::from_secs(5),
+            let oversized = !(c.radius.is_finite() && c.cx.is_finite() && c.cy.is_finite())
+                || (limit > 0.0 && c.radius > limit);
+            if oversized && !state.oversized_region {
+                warn!(
                     radius = c.radius,
                     center_x = c.cx,
                     center_y = c.cy,
@@ -602,21 +580,22 @@ impl Worker {
                     "Local region is far larger than the lidar's range: a cloud or its pose is off."
                 );
             }
+            state.oversized_region = oversized;
             let bounds_msg = bounds_to_pose(&c, out_frame_id, stamp.clone());
-            publish_bounds(&self.outputs.region_bounds, &bounds_msg).await;
+            publish_bounds(&self.region_bounds, &bounds_msg).await;
         }
 
         if let Some(points) = global_points {
             let global = points_to_cloud(&points, out_frame_id, stamp.clone());
-            publish_cloud(&self.outputs.global_map, &global).await;
+            publish_cloud(&self.global_map, &global).await;
         }
         if let Some(points) = local_points {
             let local = points_to_cloud(&points, out_frame_id, stamp.clone());
-            publish_cloud(&self.outputs.local_map, &local).await;
+            publish_cloud(&self.local_map, &local).await;
         }
         if let Some(points) = fine_points {
             let fine = points_to_cloud(&points, out_frame_id, stamp.clone());
-            publish_cloud(&self.outputs.local_map_fine, &fine).await;
+            publish_cloud(&self.local_map_fine, &fine).await;
         }
 
         if state.mapper.viz_due() {
@@ -645,7 +624,7 @@ impl Worker {
         for (cell, points) in due {
             let mut cloud = points_to_cloud(&points, &self.config.world_frame, stamp.clone());
             cloud.header.seq = pack_cell(cell);
-            publish_cloud(&self.outputs.map_regions, &cloud).await;
+            publish_cloud(&self.map_regions, &cloud).await;
         }
     }
 
@@ -739,8 +718,8 @@ impl Worker {
         let points = tokio::task::block_in_place(|| mapper.local_points(&cylinder.bounds()));
         let (bounds_msg, cloud) =
             seed_region_messages(cylinder, &points, seq, &self.config.world_frame, stamp);
-        publish_bounds(&self.outputs.seed_bounds, &bounds_msg).await;
-        publish_cloud(&self.outputs.seed_map, &cloud).await;
+        publish_bounds(&self.seed_bounds, &bounds_msg).await;
+        publish_cloud(&self.seed_map, &cloud).await;
     }
 }
 
@@ -937,6 +916,7 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reform::ReformConfig;
     use crate::voxel_ray_tracer::{
         emit_points, update_map, LocalBounds, VoxelKey, VoxelMap, CHUNK_EDGE,
     };
@@ -969,6 +949,7 @@ mod tests {
             viz_cell_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            reform: ReformConfig::off(),
         }
     }
 

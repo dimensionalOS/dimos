@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::reform::{self, KeyframeRecord, MovedRecord, ReformParams, ReformState};
+use crate::reform::{self, KeyframeRecord, MovedRecord, ReformConfig, ReformState};
 use crate::voxel_ray_tracer::Config;
 use fast_reform::{Quat, Vec3};
 
@@ -43,6 +43,7 @@ fn config() -> Config {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        reform: ReformConfig::off(),
     }
 }
 
@@ -82,11 +83,13 @@ fn closure(state: &mut ReformState, moved: std::ops::Range<u32>, shift: f64) -> 
             delta,
         })
         .collect();
-    let params = ReformParams {
+    let params = ReformConfig {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 1.0,
         min_shift_m: 0.04,
         thin_cell_m: -1.0,
+        reach_sigmas: 3.0,
+        enabled: true,
     };
     state
         .closure(&moved, &params)
@@ -186,38 +189,4 @@ fn a_warp_that_arrives_mid_warp_waits_and_no_scan_is_warped_twice() {
         .is_none());
 
     assert_eq!(sorted_centers(&live), sorted_centers(&in_place));
-}
-
-/// How long the worker holds still to copy a full-size map for a background warp.
-/// `cargo test --release clone_time -- --ignored --nocapture`
-#[test]
-#[ignore]
-fn clone_time_at_full_map_size() {
-    let mut mapper = Mapper::new(config());
-    mapper.track_voxel_times();
-    // ~7M voxels, the size of the huge_loop_go2 map.
-    let side = 1900;
-    let points: Vec<Point> = (0..side * side)
-        .flat_map(|i| {
-            let (x, y) = ((i % side) as f32 * 0.1, (i / side) as f32 * 0.1);
-            [(x, y, 0.05), (x, y, 0.15)]
-        })
-        .collect();
-    let created = mapper.seed_points(&points);
-    let start = std::time::Instant::now();
-    let copy = mapper.clone();
-    let clone_ms = start.elapsed().as_secs_f64() * 1e3;
-    drop(copy);
-    let mut state = ReformState::default();
-    for i in 0..20 {
-        state.add_keyframes(&[keyframe(i)]);
-    }
-    let warp = closure(&mut state, 10..20, 0.5);
-    let start = std::time::Instant::now();
-    let report = mapper.apply_warp(&warp);
-    let warp_ms = start.elapsed().as_secs_f64() * 1e3;
-    println!(
-        "voxels {created}, clone {clone_ms:.0} ms, in-place warp {warp_ms:.0} ms ({} warped)",
-        report.voxels_warped
-    );
 }

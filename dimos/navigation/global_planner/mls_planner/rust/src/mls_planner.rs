@@ -18,9 +18,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ahash::{AHashMap, AHashSet};
-use dimos_module::{debug_throttled, native_config, warn_throttled, worker_pool};
+use dimos_module::{debug_throttled, native_config, worker_pool};
 use rayon::prelude::*;
-use validator::ValidationError;
+use validator::{Validate, ValidationError};
 
 use crate::adjacency::{
     build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId, SurfaceCells,
@@ -38,6 +38,7 @@ use crate::nodes::{
     wall_distances_region, PlacementParams, HOLE_SPAN_CELLS,
 };
 use crate::planner;
+use crate::reform::ReformConfig;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
 use crate::voxel::{voxelize, VoxelKey};
 
@@ -97,6 +98,20 @@ pub struct Config {
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
+    /// Whether and how the graph warps through each loop_closure_event.
+    #[validate(nested)]
+    pub reform: ReformConfig,
+    /// How far around the start, goal and route a plan re-keys cells a warp moved, m.
+    #[validate(range(exclusive_min = 0.0))]
+    pub reform_rekey_radius_m: f32,
+    /// With no full route publish no path, instead of following the cached route to a standoff short of the blockage.
+    pub require_full_route: bool,
+    /// A region update spanning more columns is a bad pose or bound, refused before it allocates per-column scratch.
+    #[validate(range(min = 1))]
+    pub max_region_columns: u64,
+    /// A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
+    #[validate(range(min = 1))]
+    pub max_closing_box_cells: u64,
 }
 
 /// The soft wall penalty needs a non-zero zone to act in.
@@ -165,20 +180,9 @@ pub(crate) const DEBUG_LOG_PERIOD: Duration = Duration::from_secs(5);
 /// Cells a repair window reaches past the band it must keep exact.
 const WINDOW_SLACK_CELLS: i32 = 2;
 
-/// How far around its start, goal and route a plan re-keys cells a warp moved.
-const PLAN_REBIN_M: f32 = 3.0;
-
-/// Re-key-and-replan rounds before a plan settles for the route it has.
-const PLAN_REBIN_PASSES: usize = 3;
-
 pub(crate) fn ms_since(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1e3
 }
-
-/// Largest region box a local map update allocates over: 10M columns is a
-/// radius of ~126 m at 8 cm voxels, already four times a lidar's range, and
-/// costs ~300 MB of per-column scratch. A larger one is a bad pose or bound.
-pub const MAX_REGION_COLUMNS: f64 = 1e7;
 
 /// Cylindrical region the planner re-derives from a local map slice.
 #[derive(Clone, Copy)]
@@ -216,9 +220,8 @@ impl RegionBounds {
         side * side
     }
 
-    /// Why this region can't be ingested, None when it can: a non-finite field,
-    /// an inverted height range, or a box past MAX_REGION_COLUMNS.
-    pub fn defect(&self, voxel_size: f32) -> Option<&'static str> {
+    /// Why this region can't be ingested, None when it can: a non-finite field, an inverted height range, or a box past max_columns.
+    pub fn defect(&self, voxel_size: f32, max_columns: u64) -> Option<&'static str> {
         let fields = [
             self.origin_x,
             self.origin_y,
@@ -232,7 +235,7 @@ impl RegionBounds {
         if self.radius < 0.0 || self.z_min > self.z_max {
             return Some("a negative radius or inverted height range");
         }
-        if self.column_count(voxel_size) > MAX_REGION_COLUMNS {
+        if self.column_count(voxel_size) > max_columns as f64 {
             return Some("a box too large to allocate over");
         }
         None
@@ -256,8 +259,7 @@ pub struct Planner {
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
-    // Last successful path and its goal: a warp moves it and a replan re-keys
-    // along it. Cleared when a replan finds no full path.
+    // Last successful path and its goal, which a warp moves: followed while safe when a replan finds no full path.
     last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
@@ -269,6 +271,8 @@ pub struct Planner {
     // re-keys what is near it without scanning the whole map. Built on the first
     // region update after a warp.
     displaced: Option<warp::DisplacedIndex>,
+    // Whether the last region update had bad bounds, so a bad pose warns once.
+    region_rejected: bool,
 }
 
 /// Seconds since `epoch` at which each voxel was added, and the clock edits
@@ -297,7 +301,7 @@ impl VoxelTimes {
     }
 }
 
-/// How big the planner's containers are, for the periodic memory log.
+/// How big the planner's containers are.
 #[derive(Clone, Debug, Default)]
 pub struct PlannerSizes {
     pub voxels: usize,
@@ -312,23 +316,6 @@ pub struct PlannerSizes {
 }
 
 impl Planner {
-    /// Voxel centers and surface cell points, flat xyz triples, for offline checks.
-    pub fn dump_centers(&self, voxel_size: f32) -> (Vec<f32>, Vec<f32>) {
-        let half = voxel_size * 0.5;
-        let voxels = self
-            .placed_voxels(voxel_size)
-            .flat_map(|(x, y, z)| [x, y, z].map(|k| k as f32 * voxel_size + half))
-            .collect();
-        let surface = self
-            .placed_surface(voxel_size)
-            .flat_map(|(ix, iy, iz)| {
-                let (x, y, z) = crate::voxel::surface_point_xyz(ix, iy, iz, voxel_size);
-                [x, y, z]
-            })
-            .collect();
-        (voxels, surface)
-    }
-
     /// Each voxel's key where its point sits, which a warp can move off its own key.
     pub fn placed_voxels(&self, voxel_size: f32) -> impl Iterator<Item = VoxelKey> + '_ {
         self.voxel_map.iter().map(move |&k| {
@@ -378,6 +365,7 @@ impl Planner {
             last_result: None,
             voxel_times: None,
             displaced: None,
+            region_rejected: false,
         }
     }
 
@@ -422,6 +410,7 @@ impl Planner {
             &self.voxel_map,
             config.headroom_cells(),
             config.closing_passes(),
+            config.max_closing_box_cells,
             &mut self.by_col,
             &mut surface,
         );
@@ -460,9 +449,14 @@ impl Planner {
         config: &Config,
         window_steps: i32,
     ) -> Option<ColumnWindow> {
-        if let Some(defect) = bounds.defect(config.voxel_size) {
-            warn_throttled!(
-                Duration::from_secs(5),
+        let defect = bounds.defect(config.voxel_size, config.max_region_columns);
+        let first_rejected = defect.is_some() && !self.region_rejected;
+        self.region_rejected = defect.is_some();
+        if let Some(defect) = defect {
+            if !first_rejected {
+                return None;
+            }
+            tracing::warn!(
                 defect,
                 origin_x = bounds.origin_x,
                 origin_y = bounds.origin_y,
@@ -471,7 +465,7 @@ impl Planner {
                 z_max = bounds.z_max,
                 columns = bounds.column_count(config.voxel_size),
                 points = local_points.len(),
-                "Rejected a region update with bad bounds."
+                "Rejected a region update with bad bounds, and will until one is good."
             );
             return None;
         }
@@ -507,8 +501,13 @@ impl Planner {
             }
             let write = footprint.dilated(pad);
             let stage = Instant::now();
-            let new_cells =
-                extract_surfaces_region(&self.by_col, clearance, config.closing_passes(), &write);
+            let new_cells = extract_surfaces_region(
+                &self.by_col,
+                clearance,
+                config.closing_passes(),
+                config.max_closing_box_cells,
+                &write,
+            );
             let extract_ms = ms_since(stage);
             let stage = Instant::now();
             let (added, removed) = self.replace_surface_region(&write, &new_cells);
@@ -942,8 +941,8 @@ impl Planner {
         }
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
-            self.rebin_near((start.0, start.1), PLAN_REBIN_M, config);
-            self.rebin_near((goal.0, goal.1), PLAN_REBIN_M, config);
+            self.rebin_near((start.0, start.1), config.reform_rekey_radius_m, config);
+            self.rebin_near((goal.0, goal.1), config.reform_rekey_radius_m, config);
         });
     }
 
@@ -967,35 +966,34 @@ impl Planner {
             .collect()
     }
 
-    /// Plan to the goal, re-keying along a route a warp moved. Empty when no
-    /// full route exists: there is no partial or cached-route fallback.
-    pub fn replan(
+    /// Plan to the goal, re-keying along a route a warp moved; with no full route, follow the cached path while safe
+    /// (empty with `config.require_full_route`). Empty means stop.
+    pub fn plan_or_truncate(
         &mut self,
         start: (f32, f32, f32),
         goal: (f32, f32, f32),
         config: &Config,
     ) -> Vec<(f32, f32, f32)> {
         self.rebin_for_plan(start, goal, config);
-        let mut waypoints = self.replan_keys(start, goal, config);
-        // No route while a warp left cells off their keys: the re-keyed discs around the
-        // start and goal may sit apart from their unmoved surroundings, so re-key everything
-        // still displaced and plan again (once per warp: after it nothing is displaced).
-        if waypoints.is_empty() && self.voxel_times.is_some() {
+        let mut waypoints = self.plan_or_truncate_keys(start, goal, config);
+        // No full route while a warp left cells off their keys: re-key everything still displaced and plan again.
+        if self.last_result == Some((goal, false)) && self.voxel_times.is_some() {
             let pool = Arc::clone(&self.pool);
             if pool.install(|| self.rebin_all_displaced(config)) {
-                waypoints = self.replan_keys(start, goal, config);
+                waypoints = self.plan_or_truncate_keys(start, goal, config);
             }
         }
-        // A route through cells a warp moved without re-keying: re-key along it and plan again,
-        // so the route's geometry reads one consistent grid.
-        for _ in 0..PLAN_REBIN_PASSES {
-            let displaced = self.displaced_path_points(config.voxel_size);
-            if displaced.is_empty() {
+        // A route through cells a warp moved: re-key along it and plan again until it reads one grid, or a re-key changes nothing.
+        let mut displaced = self.displaced_path_points(config.voxel_size);
+        while !displaced.is_empty() {
+            let pool = Arc::clone(&self.pool);
+            pool.install(|| self.rebin_around(&displaced, config.reform_rekey_radius_m, config));
+            waypoints = self.plan_or_truncate_keys(start, goal, config);
+            let next = self.displaced_path_points(config.voxel_size);
+            if next == displaced {
                 break;
             }
-            let pool = Arc::clone(&self.pool);
-            pool.install(|| self.rebin_around(&displaced, PLAN_REBIN_M, config));
-            waypoints = self.replan_keys(start, goal, config);
+            displaced = next;
         }
         let path = self
             .last_path
@@ -1005,7 +1003,7 @@ impl Planner {
         self.placed_waypoints(waypoints, &path, config.voxel_size)
     }
 
-    fn replan_keys(
+    fn plan_or_truncate_keys(
         &mut self,
         start: (f32, f32, f32),
         goal: (f32, f32, f32),
@@ -1022,17 +1020,26 @@ impl Planner {
             }
         }
         if self.last_result != Some((goal, false)) {
-            tracing::warn!(?goal, "no full path to goal, no path");
+            if config.require_full_route {
+                tracing::warn!(?goal, "no full path to goal, no path");
+            } else {
+                tracing::warn!(
+                    ?goal,
+                    "no full path to goal, following any cached path while safe"
+                );
+            }
         }
         self.last_result = Some((goal, false));
-        // No route: nothing to follow, so no stale route stays cached either.
-        self.last_path = None;
-        Vec::new()
-    }
-
-    /// Whether each leg of `waypoints` walks over traversable surface (the chord walk, cell to cell).
-    pub fn legs_traversable(&self, waypoints: &[(f32, f32, f32)], config: &Config) -> Vec<bool> {
-        planner::legs_traversable(&self.graph, waypoints, config)
+        if config.require_full_route {
+            self.last_path = None;
+            return Vec::new();
+        }
+        match &self.last_path {
+            Some((cached_goal, cells)) if *cached_goal == goal => {
+                planner::truncate_to_safe(&self.graph, cells, start, config)
+            }
+            _ => Vec::new(),
+        }
     }
 
     pub fn graph(&self) -> &PlannerGraph {

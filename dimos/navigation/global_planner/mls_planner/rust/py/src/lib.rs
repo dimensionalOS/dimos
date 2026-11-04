@@ -20,8 +20,8 @@ use validator::Validate;
 
 use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
 use dimos_mls_planner::reform::{
-    decode_loop_closure_event, decode_pose_graph, record_cloud, ReformParams, ReformState,
-    LOOP_EVENT_FIELDS, POSE_GRAPH_FIELDS,
+    decode_loop_closure_event, decode_pose_graph, loop_event_fields, numpy_dtype, record_cloud,
+    ReformConfig, ReformState, KEYFRAME_FIELDS,
 };
 use dimos_mls_planner::voxel::{surface_point_xyz, VoxelKey};
 use pyo3::types::PyDict;
@@ -87,6 +87,10 @@ impl MLSPlanner {
         step_penalty_weight = 4.0,
         worker_threads = 4,
         voxel_times = false,
+        reform_rekey_radius_m = 3.0,
+        require_full_route = false,
+        max_region_columns = 10_000_000,
+        max_closing_box_cells = 250_000_000,
     ))]
     fn new(
         voxel_size: f32,
@@ -101,6 +105,10 @@ impl MLSPlanner {
         step_penalty_weight: f32,
         worker_threads: u32,
         voxel_times: bool,
+        reform_rekey_radius_m: f32,
+        require_full_route: bool,
+        max_region_columns: u64,
+        max_closing_box_cells: u64,
     ) -> PyResult<Self> {
         let config = Config {
             world_frame: String::new(),
@@ -124,6 +132,11 @@ impl MLSPlanner {
             viz_cell_m: 4.0,
             viz_sweep_cells: 0,
             worker_threads,
+            reform: ReformConfig::off(),
+            reform_rekey_radius_m,
+            require_full_route,
+            max_region_columns,
+            max_closing_box_cells,
         };
         config
             .validate()
@@ -320,28 +333,6 @@ impl MLSPlanner {
         )
     }
 
-    /// As the module replans: re-key along the route a warp moved, then plan. `(W, 3)`, empty when no full route exists.
-    fn replan<'py>(
-        &mut self,
-        py: Python<'py>,
-        start: (f32, f32, f32),
-        goal: (f32, f32, f32),
-    ) -> Bound<'py, PyArray2<f32>> {
-        let config = &self.config;
-        let planner = &mut self.planner;
-        let waypoints = py.allow_threads(|| planner.replan(start, goal, config));
-        let flat: Vec<f32> = waypoints.iter().flat_map(|&(x, y, z)| [x, y, z]).collect();
-        Array2::from_shape_vec((waypoints.len(), 3), flat)
-            .expect("3 elements pushed per waypoint")
-            .into_pyarray(py)
-    }
-
-    /// Whether each leg of `waypoints` (W, 3) walks over traversable surface (the planner's chord check).
-    fn legs_traversable(&self, waypoints: &Bound<'_, PyAny>) -> PyResult<Vec<bool>> {
-        let pts = extract_points(waypoints)?;
-        Ok(self.planner.legs_traversable(&pts, &self.config))
-    }
-
     fn voxel_count(&self) -> usize {
         self.planner.voxel_count()
     }
@@ -378,7 +369,7 @@ impl MLSPlanner {
     /// already known keep the pose the map holds them at.
     fn add_keyframes(&mut self, records: Vec<u8>) -> PyResult<usize> {
         check_records(&records, 40)?;
-        let msg = record_cloud(POSE_GRAPH_FIELDS, records);
+        let msg = record_cloud(&KEYFRAME_FIELDS, records);
         let records = decode_pose_graph(&msg).map_err(|e| PyValueError::new_err(e.0))?;
         self.reform.add_keyframes(&records);
         Ok(self.reform.len())
@@ -388,7 +379,7 @@ impl MLSPlanner {
     /// each). `held` points warp along and come back in the result. Returns
     /// None when no keyframe moved past min_shift_m, else a dict of what the
     /// warp did and cost.
-    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, thin_cell_m = 0.0))]
+    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, thin_cell_m = 0.0, reach_sigmas = 3.0))]
     #[allow(clippy::too_many_arguments)]
     fn apply_loop_closure<'py>(
         &mut self,
@@ -399,15 +390,18 @@ impl MLSPlanner {
         blend_time_sigma_s: f64,
         min_shift_m: f64,
         thin_cell_m: f64,
+        reach_sigmas: f64,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
         check_records(&records, 68)?;
-        let msg = record_cloud(LOOP_EVENT_FIELDS, records);
+        let msg = record_cloud(&loop_event_fields(), records);
         let moved = decode_loop_closure_event(&msg).map_err(|e| PyValueError::new_err(e.0))?;
-        let params = ReformParams {
+        let params = ReformConfig {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
             thin_cell_m,
+            reach_sigmas,
+            enabled: true,
         };
         let started = std::time::Instant::now();
         let Some(warp) = self.reform.closure(&moved, &params) else {
@@ -456,5 +450,10 @@ fn dimos_mls_planner_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .with_writer(std::io::stderr)
         .try_init();
     m.add_class::<MLSPlanner>()?;
+    m.add("POSE_GRAPH_DTYPE", numpy_dtype(&KEYFRAME_FIELDS))?;
+    m.add(
+        "LOOP_CLOSURE_EVENT_DTYPE",
+        numpy_dtype(&loop_event_fields()),
+    )?;
     Ok(())
 }

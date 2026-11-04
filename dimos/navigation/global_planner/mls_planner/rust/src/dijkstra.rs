@@ -106,7 +106,7 @@ pub fn dijkstra(
 ) {
     state.reset(cells.slot_capacity());
     if cells.coord_ordered() {
-        if cells.slot_capacity() >= BANDED_MIN_CELLS && rayon::current_num_threads() > 1 {
+        if rayon::current_num_threads() > 1 && cells.slot_capacity() >= banded_min_cells() {
             return dijkstra_banded(cells, sources, state, weight);
         }
         return dijkstra_packed(cells, sources, state, weight);
@@ -180,8 +180,16 @@ fn dijkstra_packed(
     }
 }
 
-/// Graphs at least this big search in parallel bands.
-const BANDED_MIN_CELLS: usize = 100_000;
+/// Fewest cells a band of the parallel search holds.
+const MIN_BAND_CELLS: usize = 4096;
+
+/// Bands per pool thread, so a band that settles early leaves its thread others to take.
+const BANDS_PER_THREAD: usize = 4;
+
+/// A graph searches in parallel bands once it fills every band the pool's threads take.
+fn banded_min_cells() -> usize {
+    rayon::current_num_threads() * BANDS_PER_THREAD * MIN_BAND_CELLS
+}
 
 /// dijkstra over cells whose ids follow their coordinates, in parallel and with
 /// the same labels. Ids then run x-major, so each band of ids is a strip of the
@@ -196,7 +204,9 @@ fn dijkstra_banded(
 ) {
     use std::cmp::Reverse;
     let n = cells.slot_capacity();
-    let bands = (rayon::current_num_threads() * 4).min(n / 4096).max(1);
+    let bands = (rayon::current_num_threads() * BANDS_PER_THREAD)
+        .min(n / MIN_BAND_CELLS)
+        .max(1);
     let bounds: Vec<usize> = (0..=bands).map(|i| i * n / bands).collect();
     let band_of = |id: CellId| bounds.partition_point(|&b| b <= id as usize) - 1;
     let mut seeds: Vec<Vec<(CellId, f32)>> = vec![Vec::new(); bands];

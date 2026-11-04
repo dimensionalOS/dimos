@@ -17,7 +17,11 @@
 from __future__ import annotations
 
 try:
-    from dimos_mls_planner import MLSPlanner  # noqa: F401  (re-exported)
+    from dimos_mls_planner import (  # noqa: F401  (re-exported)
+        LOOP_CLOSURE_EVENT_DTYPE,
+        POSE_GRAPH_DTYPE,
+        MLSPlanner,
+    )
 except ImportError as e:
     raise ImportError(
         "dimos_mls_planner is not built. Run: "

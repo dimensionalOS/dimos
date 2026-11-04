@@ -92,6 +92,11 @@ pub(super) fn test_config() -> Config {
         viz_cell_m: 4.0,
         viz_sweep_cells: 0,
         worker_threads: 4,
+        reform: ReformConfig::off(),
+        reform_rekey_radius_m: 3.0,
+        require_full_route: false,
+        max_region_columns: 10_000_000,
+        max_closing_box_cells: 250_000_000,
     }
 }
 
@@ -1531,27 +1536,55 @@ fn door_world(door_open: bool) -> Vec<(f32, f32, f32)> {
     pts
 }
 
-/// The door to the goal closes after a route through it was planned, and the
-/// robot is in the other room: no full route exists, so the planner returns no
-/// path at all (no partial route, no line back to the stale route through a wall).
+/// The door to the goal closes after a route through it was planned and the robot is in the other room: with require_full_route the planner returns no path, by default it follows the cached route while safe.
 #[test]
-fn an_unreachable_goal_gets_no_path() {
-    let mut cfg = test_config();
-    cfg.wall_clearance_m = 0.1;
+fn an_unreachable_goal_gets_no_path_only_with_require_full_route() {
     let goal = (1.5, 3.5, 0.1);
-    let mut p = Planner::new(cfg.worker_threads);
-    p.update_global_map(&door_world(true), &cfg);
-    assert!(
-        !p.replan((1.5, 0.5, 0.1), goal, &cfg).is_empty(),
-        "the open door gives a route"
-    );
+    let robot = (1.5, 0.5, 0.1);
+    for require_full_route in [true, false] {
+        let mut cfg = test_config();
+        cfg.wall_clearance_m = 0.1;
+        cfg.require_full_route = require_full_route;
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&door_world(true), &cfg);
+        assert!(
+            !p.plan_or_truncate(robot, goal, &cfg).is_empty(),
+            "the open door gives a route"
+        );
 
-    p.update_global_map(&door_world(false), &cfg);
-    let robot = (4.5, 1.0, 0.1);
-    assert!(
-        p.plan(robot, goal, &cfg).is_none(),
-        "the closed door leaves no route"
-    );
-    let wp = p.replan(robot, goal, &cfg);
-    assert!(wp.is_empty(), "no route must give no path, got {wp:?}");
+        p.update_global_map(&door_world(false), &cfg);
+        assert!(
+            p.plan(robot, goal, &cfg).is_none(),
+            "the closed door leaves no route"
+        );
+        let waypoints = p.plan_or_truncate(robot, goal, &cfg);
+        assert_eq!(waypoints.is_empty(), require_full_route, "{waypoints:?}");
+    }
+}
+
+/// Every box a region update buckets or masks is its own column box plus the closing reach, so the region cap bounds them below the old fixed caps (50M bucketed, 250M masked columns).
+#[test]
+fn the_region_cap_bounds_every_box_a_region_update_allocates() {
+    let cfg = test_config();
+    let side = (cfg.max_region_columns as f64).sqrt().floor();
+    let pad = 2.0 * cfg.closing_passes() as f64;
+    let widest = (side + 4.0 * pad).powi(2);
+    assert!(widest < 50e6, "{widest}");
+    let region = RegionBounds {
+        origin_x: 0.0,
+        origin_y: 0.0,
+        radius: ((side - 2.0) * cfg.voxel_size as f64 / 2.0) as f32,
+        z_min: 0.0,
+        z_max: 1.0,
+    };
+    assert!(region
+        .defect(cfg.voxel_size, cfg.max_region_columns)
+        .is_none());
+    let wider = RegionBounds {
+        radius: region.radius * 1.01,
+        ..region
+    };
+    assert!(wider
+        .defect(cfg.voxel_size, cfg.max_region_columns)
+        .is_some());
 }

@@ -292,6 +292,7 @@ fn emit_due(frame_count: u32, every: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reform::ReformConfig;
 
     const IDENTITY: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
 
@@ -321,6 +322,7 @@ mod tests {
             viz_cell_m: 4.0,
             viz_emit_every: 0,
             viz_sweep_cells: 0,
+            reform: ReformConfig::off(),
         }
     }
 

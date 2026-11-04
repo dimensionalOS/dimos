@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::*;
-use crate::reform::{KeyframeRecord, MovedRecord, Pose, ReformParams, ReformState};
+use crate::reform::{KeyframeRecord, MovedRecord, Pose, ReformConfig, ReformState};
 use crate::voxel_ray_tracer::{voxel_moves, Config};
 use fast_reform::{warp_positions, Quat, Vec3};
 
@@ -45,6 +45,7 @@ fn config() -> Config {
         viz_cell_m: 4.0,
         viz_emit_every: 0,
         viz_sweep_cells: 0,
+        reform: ReformConfig::off(),
     }
 }
 
@@ -98,11 +99,13 @@ fn closure(state: &mut ReformState) -> Warp {
             delta: shift,
         })
         .collect();
-    let params = ReformParams {
+    let params = ReformConfig {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 1.0,
         min_shift_m: 0.04,
         thin_cell_m: -1.0,
+        reach_sigmas: 3.0,
+        enabled: true,
     };
     state
         .closure(&moved, &params)
@@ -229,11 +232,13 @@ fn shifts_smaller_than_a_voxel_add_up_over_closures() {
             pose: at(i as f64),
         }]);
     }
-    let params = ReformParams {
+    let params = ReformConfig {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 1.0,
         min_shift_m: 0.02,
         thin_cell_m: -1.0,
+        reach_sigmas: 3.0,
+        enabled: true,
     };
     // Each keyframe's pose before the nudge is where the last one left it.
     let nudge = |state: &mut ReformState, done: f64| {

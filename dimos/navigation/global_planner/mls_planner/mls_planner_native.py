@@ -16,8 +16,11 @@
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.reform import ReformConfig
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
@@ -58,6 +61,16 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
+    # Whether and how the graph warps through each loop_closure_event.
+    reform: ReformConfig = Field(default_factory=ReformConfig)
+    # How far around the start, goal and route a plan re-keys cells a warp moved, m.
+    reform_rekey_radius_m: float = 3.0
+    # With no full route publish no path, instead of following the cached route to a standoff short of the blockage.
+    require_full_route: bool = False
+    # A region update spanning more columns is a bad pose or bound (10M is ~126 m of radius at 8 cm), refused before it allocates.
+    max_region_columns: int = 10_000_000
+    # A surface cluster spanning a box of more cells is left unclosed, as only a stray voxel makes one.
+    max_closing_box_cells: int = 250_000_000
 
 
 class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
@@ -77,6 +90,9 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     seed_map: In[PointCloud2]
     seed_bounds: In[PoseStamped]
     goal: In[PointStamped]
+    # With config.reform.enabled: GscPGO's keyframes and per-closure moves, as RayTracingVoxelMap takes them.
+    pose_graph: In[PointCloud2]
+    loop_closure_event: In[PointCloud2]
     tf: In[TFMessage]
 
     path: Out[Path]

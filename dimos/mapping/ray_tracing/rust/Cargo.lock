@@ -598,7 +598,7 @@ dependencies = [
 [[package]]
 name = "dimos-module"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=128847174ee50174360ec5ce3128c17e355fc280#128847174ee50174360ec5ce3128c17e355fc280"
+source = "git+https://github.com/dimensionalOS/dimos?rev=8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08#8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08"
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
@@ -618,7 +618,7 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=128847174ee50174360ec5ce3128c17e355fc280#128847174ee50174360ec5ce3128c17e355fc280"
+source = "git+https://github.com/dimensionalOS/dimos?rev=8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08#8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -629,13 +629,14 @@ dependencies = [
 [[package]]
 name = "dimos-reform"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=128847174ee50174360ec5ce3128c17e355fc280#128847174ee50174360ec5ce3128c17e355fc280"
+source = "git+https://github.com/dimensionalOS/dimos?rev=8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08#8bd6dc95b777043ba17a8b0cf0d1e6816eb8bb08"
 dependencies = [
  "ahash",
  "fast-reform",
  "lcm-msgs",
- "libc",
  "rayon",
+ "serde",
+ "validator",
 ]
 
 [[package]]

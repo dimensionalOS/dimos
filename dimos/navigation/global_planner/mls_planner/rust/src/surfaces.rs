@@ -17,7 +17,6 @@
 //! across walls.
 
 use ahash::{AHashMap, AHashSet};
-use dimos_module::warn_throttled;
 use rayon::prelude::*;
 
 use crate::bit_grid::BitGrid;
@@ -49,6 +48,7 @@ pub fn extract_surfaces(
     voxel_map: &AHashSet<VoxelKey>,
     clearance_cells: i32,
     closing_passes: u32,
+    max_box_cells: u64,
     by_col: &mut ColumnIz,
     out: &mut Vec<VoxelKey>,
 ) {
@@ -68,7 +68,14 @@ pub fn extract_surfaces(
         .flatten_iter()
         .collect();
 
-    close_surface_holes(standable, by_col, closing_passes, clearance_cells, out);
+    close_surface_holes(
+        standable,
+        by_col,
+        closing_passes,
+        clearance_cells,
+        max_box_cells,
+        out,
+    );
 }
 
 /// Standable cells in one column: any cell with robot clearance above, plus
@@ -96,6 +103,7 @@ pub fn extract_surfaces_region(
     by_col: &ColumnIz,
     clearance_cells: i32,
     closing_passes: u32,
+    max_box_cells: u64,
     write: &ColumnMask,
 ) -> Vec<VoxelKey> {
     let pad = (2 * closing_passes) as i32;
@@ -121,6 +129,7 @@ pub fn extract_surfaces_region(
         by_col,
         closing_passes,
         clearance_cells,
+        max_box_cells,
         &mut closed,
     );
     closed
@@ -135,6 +144,7 @@ fn close_surface_holes(
     by_col: &ColumnIz,
     closing_passes: u32,
     clearance_cells: i32,
+    max_box_cells: u64,
     out: &mut Vec<VoxelKey>,
 ) {
     if standable.is_empty() || closing_passes == 0 {
@@ -156,11 +166,16 @@ fn close_surface_holes(
                 .map(move |cluster| (iz, cluster))
         })
         .collect();
-    out.par_extend(
-        tasks.par_iter().flat_map_iter(|(iz, xys)| {
-            close_at_z(xys, *iz, by_col, closing_passes, clearance_cells)
-        }),
-    );
+    out.par_extend(tasks.par_iter().flat_map_iter(|(iz, xys)| {
+        close_at_z(
+            xys,
+            *iz,
+            by_col,
+            closing_passes,
+            clearance_cells,
+            max_box_cells,
+        )
+    }));
 }
 
 /// Split a slice into clusters that closing cannot connect.
@@ -221,10 +236,6 @@ fn has_support(by_col: &ColumnIz, ix: i32, iy: i32, iz: i32) -> bool {
     false
 }
 
-/// Largest box a cluster is closed over: past it the dense grids alone would
-/// take hundreds of MB, which only a stray voxel far from the rest causes.
-const MAX_CLOSING_CELLS: usize = 250_000_000;
-
 /// Close holes in one cluster of an xy slice.
 fn close_at_z(
     xys: &[(i32, i32)],
@@ -232,6 +243,7 @@ fn close_at_z(
     by_col: &ColumnIz,
     closing_passes: u32,
     clearance_cells: i32,
+    max_box_cells: u64,
 ) -> Vec<VoxelKey> {
     let pad = closing_passes as i64;
     let mut min_x = i64::MAX;
@@ -248,9 +260,8 @@ fn close_at_z(
     let h = (max_y - min_y + 1 + 2 * pad) as usize;
     let x0 = min_x - pad;
     let y0 = min_y - pad;
-    if w.saturating_mul(h) > MAX_CLOSING_CELLS {
-        warn_throttled!(
-            std::time::Duration::from_secs(5),
+    if w.saturating_mul(h) as u64 > max_box_cells {
+        tracing::warn!(
             cells = w.saturating_mul(h),
             columns = xys.len(),
             iz,
@@ -307,7 +318,7 @@ mod tests {
         let map = voxel_map(cells);
         let mut by_col = ColumnIz::default();
         let mut out = Vec::new();
-        extract_surfaces(&map, clearance, closing, &mut by_col, &mut out);
+        extract_surfaces(&map, clearance, closing, u64::MAX, &mut by_col, &mut out);
         out
     }
 

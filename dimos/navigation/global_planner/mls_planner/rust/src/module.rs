@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::mls_planner::{ms_since, Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
-use crate::reform::Warp;
+use crate::reform::{decode_loop_closure_event, decode_pose_graph, DecodeError, ReformState, Warp};
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
 use dimos_module::time::now;
@@ -31,15 +31,12 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
-/// How often the planner logs its memory and container sizes.
-const MEMORY_LOG_PERIOD: Duration = Duration::from_secs(10);
-
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
 type Xyzi = (f32, f32, f32, f32);
 
 /// State shared between the handle loop and the worker.
-pub(crate) type Shared<T> = Arc<Mutex<Option<T>>>;
+type Shared<T> = Arc<Mutex<Option<T>>>;
 
 /// A map input handed from the handle loop to the worker, its points already
 /// extracted so the worker only mutates the graph. Only the newest is kept,
@@ -250,6 +247,14 @@ pub struct MlsPlanner {
     #[input(decode = PointStamped::decode, handler = on_goal)]
     goal: Input<PointStamped>,
 
+    // Every keyframe's pose, for the anchors that hold the unmoved parts (config.reform).
+    #[input(decode = PointCloud2::decode, handler = on_pose_graph)]
+    pose_graph: Input<PointCloud2>,
+
+    // Per closure, each keyframe it moved: its pre pose and the delta (config.reform).
+    #[input(decode = PointCloud2::decode, handler = on_loop_closure_event)]
+    loop_closure_event: Input<PointCloud2>,
+
     #[tf]
     tf: Tf,
 
@@ -269,117 +274,39 @@ pub struct MlsPlanner {
     #[config]
     config: Config,
 
-    intake: Intake,
-    tasks: WorkerTasks,
-}
-
-impl MlsPlanner {
-    async fn spawn_worker(&mut self) {
-        let outputs = WorkerOutputs {
-            surface_map: self.surface_map.clone(),
-            nodes: self.nodes.clone(),
-            node_edges: self.node_edges.clone(),
-            path: self.path.clone(),
-        };
-        self.tasks = self
-            .intake
-            .spawn(self.tf.clone(), self.config.clone(), outputs, false, None);
-    }
-
-    async fn stop_worker(&mut self) {
-        self.tasks.stop();
-    }
-
-    async fn on_global_map(&mut self, msg: PointCloud2) {
-        self.intake.global_map(msg);
-    }
-
-    async fn on_local_map(&mut self, msg: PointCloud2) {
-        self.intake.local_map(msg);
-    }
-
-    async fn on_region_bounds(&mut self, msg: PoseStamped) {
-        self.intake.region_bounds(msg);
-    }
-
-    async fn on_seed_map(&mut self, msg: PointCloud2) {
-        self.intake.seed_map(msg);
-    }
-
-    async fn on_seed_bounds(&mut self, msg: PoseStamped) {
-        self.intake.seed_bounds(msg);
-    }
-
-    async fn on_goal(&mut self, msg: PointStamped) {
-        self.intake.goal(msg);
-    }
-}
-
-/// The outputs the worker and its viz publisher write.
-pub(crate) struct WorkerOutputs {
-    pub(crate) surface_map: Output<PointCloud2>,
-    pub(crate) nodes: Output<PointCloud2>,
-    pub(crate) node_edges: Output<Path>,
-    pub(crate) path: Output<Path>,
-}
-
-/// The worker and viz publisher tasks a module runs.
-#[derive(Default)]
-pub(crate) struct WorkerTasks {
-    worker: Option<tokio::task::JoinHandle<()>>,
-    viz_publisher: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl WorkerTasks {
-    pub(crate) fn stop(&mut self) {
-        if let Some(handle) = self.worker.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self.viz_publisher.take() {
-            handle.abort();
-        }
-    }
-}
-
-/// The handle loop's side of a planner module: inputs held until they pair,
-/// and the handoffs to the worker, so the loop never blocks on map work.
-#[derive(Default)]
-pub(crate) struct Intake {
     // Held on the handle loop until stamps match, then handed off paired.
     pending_local: Option<PointCloud2>,
     pending_bounds: Option<PoseStamped>,
     pending_seeds: SeedPairs,
 
-    // Written by the handle loop, read by the worker. Seed regions and warps
-    // queue in arrival order, since every one must land.
+    // Written by the handle loop, read by the worker, so the loop never blocks on map processing. Seed regions and warps queue in arrival order.
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
     warps: Arc<Mutex<VecDeque<Warp>>>,
     active_goal: Shared<Xyz>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
+
+    worker: Option<tokio::task::JoinHandle<()>>,
+    viz_publisher: Option<tokio::task::JoinHandle<()>>,
+
+    reform: ReformState,
+    // Whether the last pose_graph or loop_closure_event failed to decode, so a bad stream warns once.
+    undecodable: bool,
 }
 
-impl Intake {
-    /// Start the worker and its viz publisher. `track_voxel_times` keeps when
-    /// each voxel landed, which warps read.
-    pub(crate) fn spawn(
-        &self,
-        tf: Tf,
-        config: Config,
-        outputs: WorkerOutputs,
-        track_voxel_times: bool,
-        dump_path: Option<String>,
-    ) -> WorkerTasks {
+impl MlsPlanner {
+    async fn spawn_worker(&mut self) {
         let (viz_tx, viz_rx) = mpsc::channel(VIZ_QUEUE_CAPACITY);
         let publisher = VizPublisher {
             batches: viz_rx,
-            voxel_size: config.voxel_size,
-            frame: config.world_frame.clone(),
-            surface_map: outputs.surface_map,
-            nodes: outputs.nodes,
-            node_edges: outputs.node_edges,
+            voxel_size: self.config.voxel_size,
+            frame: self.config.world_frame.clone(),
+            surface_map: self.surface_map.clone(),
+            nodes: self.nodes.clone(),
+            node_edges: self.node_edges.clone(),
         };
+        self.viz_publisher = Some(tokio::spawn(publisher.run()));
         let worker = Worker {
             pending: Arc::clone(&self.pending),
             seed_regions: Arc::clone(&self.seed_regions),
@@ -387,52 +314,90 @@ impl Intake {
             active_goal: Arc::clone(&self.active_goal),
             goal_changed: Arc::clone(&self.goal_changed),
             wake: Arc::clone(&self.wake),
-            tf,
-            config,
+            tf: self.tf.clone(),
+            config: self.config.clone(),
             viz: viz_tx,
-            path: outputs.path,
-            track_voxel_times,
-            dump_path,
+            path: self.path.clone(),
         };
-        WorkerTasks {
-            viz_publisher: Some(tokio::spawn(publisher.run())),
-            worker: Some(tokio::spawn(worker.run())),
+        self.worker = Some(tokio::spawn(worker.run()));
+    }
+
+    async fn stop_worker(&mut self) {
+        if let Some(handle) = self.worker.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.viz_publisher.take() {
+            handle.abort();
         }
     }
 
-    pub(crate) fn global_map(&mut self, msg: PointCloud2) {
+    async fn on_global_map(&mut self, msg: PointCloud2) {
         if let Some(points) = cloud_points(&msg, "global_map") {
             let stamp = seconds(&msg.header.stamp);
             self.hand_off(MapUpdate::Global { points, stamp });
         }
     }
 
-    pub(crate) fn local_map(&mut self, msg: PointCloud2) {
+    async fn on_local_map(&mut self, msg: PointCloud2) {
         self.pending_local = Some(msg);
         self.try_pair();
     }
 
-    pub(crate) fn region_bounds(&mut self, msg: PoseStamped) {
+    async fn on_region_bounds(&mut self, msg: PoseStamped) {
         self.pending_bounds = Some(msg);
         self.try_pair();
     }
 
-    pub(crate) fn seed_map(&mut self, msg: PointCloud2) {
+    async fn on_seed_map(&mut self, msg: PointCloud2) {
         if let Some(region) = self.pending_seeds.pair_cloud(msg) {
             self.queue_seed(region);
         }
     }
 
-    pub(crate) fn seed_bounds(&mut self, msg: PoseStamped) {
+    async fn on_seed_bounds(&mut self, msg: PoseStamped) {
         if let Some(region) = self.pending_seeds.pair_bounds(msg) {
             self.queue_seed(region);
         }
     }
 
-    /// Queue a warp of the whole graph, applied before any other work.
-    pub(crate) fn queue_warp(&self, warp: Warp) {
-        self.warps.lock().expect("warp mutex").push_back(warp);
-        self.wake.notify_one();
+    async fn on_pose_graph(&mut self, msg: PointCloud2) {
+        if !self.config.reform.enabled {
+            return;
+        }
+        if let Some(records) = self.decoded(decode_pose_graph(&msg), "pose_graph") {
+            self.reform.add_keyframes(&records);
+        }
+    }
+
+    async fn on_loop_closure_event(&mut self, msg: PointCloud2) {
+        if !self.config.reform.enabled {
+            return;
+        }
+        let Some(moved) = self.decoded(decode_loop_closure_event(&msg), "loop_closure_event")
+        else {
+            return;
+        };
+        match self.reform.closure(&moved, &self.config.reform) {
+            Some(warp) => {
+                self.warps.lock().expect("warp mutex").push_back(warp);
+                self.wake.notify_one();
+            }
+            None => debug!(
+                keyframes = moved.len(),
+                "Loop closure moved nothing past reform.min_shift_m, held for the next."
+            ),
+        }
+    }
+
+    /// The decoded records, or None with a warning when the stream turns undecodable.
+    fn decoded<T>(&mut self, result: Result<T, DecodeError>, input: &str) -> Option<T> {
+        if let Err(e) = &result {
+            if !self.undecodable {
+                warn!(error = %e, input, "Failed to decode a closure record cloud, dropping until one decodes.");
+            }
+        }
+        self.undecodable = result.is_err();
+        result.ok()
     }
 
     /// Hand off the local map and bounds once their stamps match.
@@ -482,7 +447,7 @@ impl Intake {
     }
 
     /// Set or cancel the active goal from a click, then wake the worker.
-    pub(crate) fn goal(&mut self, msg: PointStamped) {
+    async fn on_goal(&mut self, msg: PointStamped) {
         *self.active_goal.lock().expect("goal mutex") = goal_position(&msg.point);
         self.goal_changed.store(true, Ordering::SeqCst);
         self.wake.notify_one();
@@ -522,9 +487,6 @@ struct Worker {
     config: Config,
     viz: mpsc::Sender<VizBatch>,
     path: Output<Path>,
-    track_voxel_times: bool,
-    // Where the map state goes every MEMORY_LOG_PERIOD, for offline checks.
-    dump_path: Option<String>,
 }
 
 /// Builds and publishes viz messages from the worker's ticks, so the worker
@@ -565,7 +527,7 @@ impl VizPublisher {
 impl Worker {
     async fn run(self) {
         let mut planner = Planner::new(self.config.worker_threads);
-        if self.track_voxel_times {
+        if self.config.reform.enabled {
             planner.track_voxel_times();
         }
         let mut last_path_at: Option<Instant> = None;
@@ -577,12 +539,7 @@ impl Worker {
         );
         let mut seed_progress = SeedProgress::default();
         let mut path_out = false;
-        let mut last_memory_log = Instant::now();
         loop {
-            if self.track_voxel_times && last_memory_log.elapsed() >= MEMORY_LOG_PERIOD {
-                last_memory_log = Instant::now();
-                self.log_memory(&planner);
-            }
             // A warp moves the frame everything else is in, so it goes first.
             let warp = self.warps.lock().expect("warp mutex").pop_front();
             if let Some(warp) = warp {
@@ -641,8 +598,7 @@ impl Worker {
                     seed_progress.finish();
                 }
             } else {
-                // Wake at least once a period, so the memory log and dump keep up when idle.
-                let _ = tokio::time::timeout(MEMORY_LOG_PERIOD, self.wake.notified()).await;
+                self.wake.notified().await;
             }
         }
     }
@@ -650,8 +606,7 @@ impl Worker {
     /// Carry the graph and the active goal through a warp.
     fn apply_warp(&self, planner: &mut Planner, warp: &Warp, viz: &mut RegionViz) {
         let started = Instant::now();
-        // The lock is not held through the warp, so a click lands meanwhile.
-        // A goal set during the warp is already in the new frame and stays.
+        // The lock is not held through the warp, so a goal clicked meanwhile is already in the new frame and stays.
         let before = *self.active_goal.lock().expect("goal mutex");
         let mut held: Vec<Xyz> = before.iter().copied().collect();
         let report = planner.apply_warp(warp, &mut held, &self.config);
@@ -684,34 +639,6 @@ impl Worker {
                 worst_to = ?to,
                 "A warp sent points somewhere non-finite or implausibly far; they stayed put."
             );
-        }
-    }
-
-    /// Resident memory and the containers that hold it, every MEMORY_LOG_PERIOD.
-    fn log_memory(&self, planner: &Planner) {
-        let sizes = planner.sizes();
-        warn!(
-            rss_mb = crate::rss::rss_mb().unwrap_or(f64::NAN),
-            voxels = sizes.voxels,
-            column_tiles = sizes.column_tiles,
-            surface_cells = sizes.surface_cells,
-            surface_slots = sizes.surface_slots,
-            surface_edges = sizes.surface_edges,
-            nodes = sizes.nodes,
-            node_edges = sizes.node_edges,
-            dijkstra_slots = sizes.dijkstra_slots,
-            voxel_times = sizes.voxel_times,
-            queued_warps = self.warps.lock().expect("warp mutex").len(),
-            queued_seeds = self.seed_regions.lock().expect("seed mutex").len(),
-            "Planner memory."
-        );
-        if let Some(path) = &self.dump_path {
-            let (voxels, surface) = planner.dump_centers(self.config.voxel_size);
-            for (suffix, values) in [("voxels", voxels), ("surface", surface)] {
-                if let Err(e) = crate::rss::dump_f32(&format!("{path}.{suffix}"), &values) {
-                    warn!(error = %e, path, "Failed to dump the planner state.");
-                }
-            }
         }
     }
 
@@ -884,9 +811,10 @@ impl Worker {
         };
 
         let plan_start = Instant::now();
-        let waypoints = tokio::task::block_in_place(|| planner.replan(start, goal, &self.config));
+        let waypoints =
+            tokio::task::block_in_place(|| planner.plan_or_truncate(start, goal, &self.config));
         if waypoints.is_empty() {
-            // No full path: publish an empty path, so stop.
+            // No full path and nothing safe ahead on the cached path, so stop.
             *path_out = false;
             publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             return;

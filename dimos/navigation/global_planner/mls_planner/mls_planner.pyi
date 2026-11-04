@@ -12,8 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import numpy as np
 from numpy.typing import NDArray
+
+# pose_graph and loop_closure_event record layouts, as numpy dtype fields.
+POSE_GRAPH_DTYPE: list[tuple[str, str]]
+LOOP_CLOSURE_EVENT_DTYPE: list[tuple[str, str]]
 
 class MLSPlanner:
     """Multi-level surface path planner over a voxelized global map."""
@@ -32,8 +38,13 @@ class MLSPlanner:
         step_threshold_m: float = 0.16,
         step_penalty_weight: float = 4.0,
         worker_threads: int = 4,
+        voxel_times: bool = False,
+        reform_rekey_radius_m: float = 3.0,
+        require_full_route: bool = False,
+        max_region_columns: int = 10_000_000,
+        max_closing_box_cells: int = 250_000_000,
     ) -> None: ...
-    def update_global_map(self, points: NDArray[np.float32]) -> None:
+    def update_global_map(self, points: NDArray[np.float32], stamp: float | None = None) -> None:
         """Voxelize the map and rebuild surfaces, nodes, and edges. Shape (N, 3) float32."""
         ...
 
@@ -45,6 +56,7 @@ class MLSPlanner:
         z_min: float,
         z_max: float,
         sensor_z: float,
+        stamp: float | None = None,
     ) -> None:
         """Replace the cylindrical region with a local map slice and rebuild.
 
@@ -106,6 +118,23 @@ class MLSPlanner:
         """Drop the graph and buffered state."""
         ...
 
+    def add_keyframes(self, records: bytes) -> int:
+        """Take keyframes from raw pose_graph records; returns how many are known."""
+        ...
+
+    def apply_loop_closure(
+        self,
+        records: bytes,
+        held: list[tuple[float, float, float]] = ...,
+        blend_sigma_m: float = 0.0,
+        blend_time_sigma_s: float = 0.0,
+        min_shift_m: float = 0.04,
+        thin_cell_m: float = 0.0,
+        reach_sigmas: float = 3.0,
+    ) -> dict[str, Any] | None:
+        """Warp the planner through raw loop_closure_event records; None when no keyframe moved past min_shift_m."""
+        ...
+
     def __repr__(self) -> str: ...
 
-__all__ = ["MLSPlanner"]
+__all__ = ["LOOP_CLOSURE_EVENT_DTYPE", "POSE_GRAPH_DTYPE", "MLSPlanner"]

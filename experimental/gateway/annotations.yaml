@@ -123,6 +123,9 @@ robots:
         unitree-go2-pgo:
           title: Go2 live PGO
           description: Loop-closes the Go2's own lidar and odometry with GSC PGO and shows the pose graph in Rerun.
+        unitree-go2-mls-reform:
+          title: Go2 PGO with a reforming map and MLS planner
+          description: GSC PGO's loop closures warp the voxel map and the MLS planner's graph in place.
         unitree-go2-hol-path-controller:
           title: Go2 3D navigation (MLS + holonomic)
           description: '3D navigation: a voxel map, MLS planning and a holonomic controller.'

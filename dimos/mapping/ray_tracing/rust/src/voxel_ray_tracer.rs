@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::reform::ReformConfig;
 use ahash::{AHashMap, AHashSet};
 use dimos_module::native_config;
 use nalgebra::{Matrix3, Vector3};
 use rayon::prelude::*;
-use validator::ValidationError;
+use validator::{Validate, ValidationError};
 
 mod chunk_map;
 mod normals;
@@ -157,6 +158,9 @@ pub struct Config {
     pub viz_emit_every: u32,
     /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
     pub viz_sweep_cells: u32,
+    /// Whether and how the map warps through each loop_closure_event.
+    #[validate(nested)]
+    pub reform: ReformConfig,
 }
 
 pub(crate) fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
