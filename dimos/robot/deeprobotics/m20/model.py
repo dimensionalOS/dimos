@@ -24,11 +24,12 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.deeprobotics.m20.assets.description import SparseDescriptionSource
 
-M20_DESCRIPTION_SOURCE = RobotDescriptionSource(
+M20_DESCRIPTION_SOURCE = SparseDescriptionSource(
     url="https://github.com/DeepRoboticsLab/deep_robotics_model",
     ref="52352f5bbf2a30b5d02ece91900415188e7abc74",
+    sparse_paths=("M20/urdf",),
 )
 # M20Connection's camera relay owns the camera frames (with their optical and rear yaw rotations).
 M20_MODEL = RobotModel.from_file(
