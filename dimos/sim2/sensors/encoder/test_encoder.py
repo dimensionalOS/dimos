@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.common_msgs import SampleHeader
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -27,8 +28,9 @@ def encoder():
     module.dispose()
 
 
-def test_encoder_calibration_is_used_and_effort_is_not_fabricated(simulation, encoder):
-    truth = simulation.inspect(("left/slide_x",))[1]
+def test_encoder_calibration_is_used_and_effort_is_not_fabricated(backend, encoder):
+    truth = backend.read_joints(("left/slide_x",))
+    truth.header = SampleHeader(clock_id="test")
     measured = encoder.measure(truth)
     assert measured.position == pytest.approx([0.01])
     assert measured.effort == []

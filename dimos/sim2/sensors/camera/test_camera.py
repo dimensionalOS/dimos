@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.control_msgs import JointTarget
 import numpy as np
 import pytest
 
@@ -28,16 +29,17 @@ def renderer(world):
     renderer.close()
 
 
-def test_camera_renders_recorded_body_poses_without_physics_state(simulation, renderer, command):
-    sample = simulation.inspect()[0]
+def test_camera_renders_recorded_body_poses_without_physics_state(backend, poses, renderer):
+    sample = poses()
     renderer.set_poses(sample)
     rgb, depth = renderer.render(poses_by_id(sample)["left/camera"])
     assert rgb.std() > 5
     assert depth.shape == (240, 320) and np.isfinite(depth).all()
     assert renderer.geometry.model.nq == renderer.geometry.model.nv == 0
-    simulation.submit(command(simulation))
-    simulation.advance(300)
-    moved = simulation.inspect()[0]
+    backend.set_joint_targets([JointTarget(joint_id="left/slide_x", position=0.2, kp=200, kd=20)])
+    for _ in range(300):
+        backend.step(())
+    moved = poses()
     renderer.set_poses(moved)
     after, _ = renderer.render(poses_by_id(moved)["left/camera"])
     assert np.mean(np.abs(after.astype(float) - rgb)) > 2
