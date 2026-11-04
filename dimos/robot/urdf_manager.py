@@ -23,8 +23,10 @@ import time
 from typing import Any
 import xml.etree.ElementTree as ET
 
+from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from pydantic import Field
+from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -65,6 +67,7 @@ class UrdfManager(Module):
     # IO: the joints it poses are published on it (and UrdfManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
+    observations: In[WorldState]
     # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
     # gets that file. Either goes out on file_info named as requested.
     render_file_request: In[String]
@@ -92,6 +95,9 @@ class UrdfManager(Module):
                     raise ValueError(f"duplicate model joint {joint.name}; namespace the models")
                 self._joints[joint.name] = joint
         self._next_joint_tf_t = 0.0
+        self._sim_clock: str | None = None
+        self._sim_epoch = -1
+        self._next_sim_tf_ns = 0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
 
@@ -117,6 +123,56 @@ class UrdfManager(Module):
     def robot_models(self) -> dict[str, Any]:
         """Deliver materialized models before build; receivers select robot_models."""
         return {"robot_models": self._descriptions}
+
+    async def handle_observations(self, sample: WorldState) -> None:
+        """Publish the same model tree from a complete physical pose sample."""
+        if not self.config.publish_joint_tf:
+            return
+        h = sample.header
+        if self._sim_clock is not None and self._sim_clock != h.clock_id:
+            raise ValueError("robot model TF clock changed; restart its binding")
+        self._sim_clock = h.clock_id
+        if h.epoch < self._sim_epoch:
+            return
+        if h.epoch > self._sim_epoch:
+            self._sim_epoch, self._next_sim_tf_ns = h.epoch, 0
+        if h.time_ns < self._next_sim_tf_ns:
+            return
+        period = round(1e9 / self.config.joint_tf_hz)
+        self._next_sim_tf_ns = (h.time_ns // period + 1) * period
+        poses = {}
+        for body in sample.body_poses:
+            p, q = body.pose_world.position, body.pose_world.orientation
+            matrix = np.eye(4)
+            matrix[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+            matrix[:3, 3] = [p.x, p.y, p.z]
+            poses[body.body_id] = matrix
+        edges = []
+        for model in self._descriptions.values():
+            if model.root_link not in poses:
+                raise ValueError(f"missing model root in body poses: {model.root_link}")
+            edges.append(
+                Transform.from_matrix(
+                    poses[model.root_link],
+                    frame_id="world",
+                    child_frame_id=model.root_link,
+                    ts=sample.header.time_ns / 1e9,
+                ).with_sample_header(sample.header)
+            )
+            for joint in model.joints:
+                parent, child = poses[joint.parent_link], poses[joint.child_link]
+                relative = np.eye(4)
+                relative[:3, :3] = parent[:3, :3].T @ child[:3, :3]
+                relative[:3, 3] = parent[:3, :3].T @ (child[:3, 3] - parent[:3, 3])
+                edges.append(
+                    Transform.from_matrix(
+                        relative,
+                        frame_id=joint.parent_link,
+                        child_frame_id=joint.child_link,
+                        ts=sample.header.time_ns / 1e9,
+                    ).with_sample_header(sample.header)
+                )
+        self.tfbuffer.publish(*edges)
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
         await asyncio.to_thread(self.add_joint_state, state)
