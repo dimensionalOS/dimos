@@ -19,7 +19,7 @@ indices are bound once. Fixed links are retained so logical frame IDs agree
 with UrdfManager even when the model includes massless sensor frames.
 """
 
-from dimos_lcm.control_msgs import BodyWrench, JointTarget
+from dimos_lcm.control_msgs import CborCommand, JointTarget
 from dimos_lcm.geometry_msgs import Point, Pose, Quaternion
 from dimos_lcm.sim_msgs import BodyMotion, BodyPose, CborExtension, JointTruth
 import mujoco
@@ -48,7 +48,16 @@ class MujocoBackend:
         self._bias = self.model.actuator_biasprm.copy()
         self.reset()
 
-    def set_joint_targets(self, targets: list[JointTarget]) -> None:
+    def apply_action(
+        self, joint_targets: list[JointTarget], cbor_commands: list[CborCommand]
+    ) -> None:
+        """Validate before mutation. This backend implements joint targets only."""
+        if cbor_commands:
+            command = cbor_commands[0]
+            raise ValueError(f"unsupported CBOR command: {command.key} ({command.schema})")
+        if not joint_targets:
+            return
+        targets = joint_targets
         names = [t.joint_id for t in targets]
         if not names or len(set(names)) != len(names):
             raise ValueError("targets require unique, nonempty joint IDs")
@@ -92,28 +101,7 @@ class MujocoBackend:
 
         mujoco.mj_forward(self.model, self.data)
 
-    def validate_wrench(self, wrench: BodyWrench) -> None:
-        if wrench.body_id not in self.body_ids:
-            raise ValueError(f"unknown wrench body: {wrench.body_id}")
-        if not np.isfinite(
-            (*wrench.force_world, *wrench.torque_world, *(wrench.point_world))
-        ).all():
-            raise ValueError("nonfinite wrench")
-
-    def step(self, wrenches: tuple[BodyWrench, ...]) -> None:
-        self.data.qfrc_applied[:] = 0
-        for wrench in wrenches:
-            body = self.model.body(wrench.body_id).id
-            point = np.asarray(wrench.point_world)
-            mujoco.mj_applyFT(
-                self.model,
-                self.data,
-                np.asarray(wrench.force_world),
-                np.asarray(wrench.torque_world),
-                point,
-                body,
-                self.data.qfrc_applied,
-            )
+    def step(self) -> None:
         mujoco.mj_step(self.model, self.data)
         # mj_step leaves derived positions/sensors at the previous integration boundary.
         # Refresh for coherent pose, joint and accelerometer samples at the new time.
