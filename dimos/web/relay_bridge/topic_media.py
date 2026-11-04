@@ -103,7 +103,7 @@ def _compress(data: bytes) -> bytes:
     return zlib.compress(data, level=1)
 
 
-def _jpeg(image: PILImage.Image, settings: Mapping[str, Any], meta: dict[str, Any]) -> MediaOutput:
+def _jpeg(image: PILImage.Image, meta: dict[str, Any], settings: Mapping[str, Any]) -> MediaOutput:
     # The settings are normalized: the box never exceeds the profile size and
     # the quality never exceeds the profile quality. Report what is in force.
     width, height = settings["maxResolution"]
@@ -118,11 +118,7 @@ def _jpeg(image: PILImage.Image, settings: Mapping[str, Any], meta: dict[str, An
         image.close()
 
 
-def _compressed_image(
-    data: bytes, profile: MediaProfile, settings: Mapping[str, Any]
-) -> MediaOutput:
-    if profile.kind != "jpeg":
-        raise ValueError("compressed color image cannot use a depth profile")
+def _compressed_image(data: bytes) -> tuple[PILImage.Image, dict[str, Any]]:
     reader = _Reader(data, "b8d011c10412b9a1")
     size = reader.integer()
     meta = reader.header()
@@ -144,12 +140,66 @@ def _compressed_image(
             image = opened.convert("RGB")
     except PILImage.DecompressionBombError as error:
         raise ValueError("compressed dimensions exceed budget") from error
-    return _jpeg(image, settings, meta)
+    meta.update(w=image.width, h=image.height)
+    return image, meta
+
+
+def decode_color(data: bytes) -> tuple[PILImage.Image, dict[str, Any]]:
+    """An RGB picture and its acquisition metadata from an Image or CompressedImage.
+
+    The caller closes the picture. Shared by the JPEG profiles and the H.264
+    video encoder, so both read the same bounded LCM layouts.
+    """
+    if data[:8].hex() == "b8d011c10412b9a1":
+        return _compressed_image(data)
+    reader = _Reader(data, "535cface1f4f5717")
+    size = reader.integer()
+    meta = reader.header()
+    height, width = reader.integer(), reader.integer()
+    _dimensions(width, height, MAX_MEDIA_PIXELS)
+    if not width or not height:
+        raise ValueError("empty image")
+    encoding = reader.string()
+    reader.flag()  # byte order applies to multi-byte depth samples only
+    step = reader.integer()
+    pixels = reader.take(size)
+    reader.end()
+    meta.update(w=width, h=height)
+    if encoding in ("jpeg", "jpg", "png"):
+        try:
+            with PILImage.open(BytesIO(pixels)) as opened:
+                if opened.size != (width, height):
+                    raise ValueError("compressed image shape mismatch")
+                image = opened.convert("RGB")
+        except PILImage.DecompressionBombError as error:
+            raise ValueError("compressed dimensions exceed budget") from error
+        return image, meta
+    modes = {
+        "rgb8": (3, "RGB"),
+        "bgr8": (3, "BGR"),
+        "rgba8": (4, "RGBA"),
+        "bgra8": (4, "BGRA"),
+        "mono8": (1, "L"),
+        "8UC1": (1, "L"),
+    }
+    if encoding not in modes:
+        raise ValueError("unsupported color image encoding")
+    channels, mode = modes[encoding]
+    if step < width * channels or len(pixels) != step * height:
+        raise ValueError("invalid color row stride")
+    target_mode = "L" if channels == 1 else "RGBA" if channels == 4 else "RGB"
+    # Pillow accepts the buffer protocol; its stub omits memoryview.
+    image = PILImage.frombytes(target_mode, (width, height), cast("Any", pixels), "raw", mode, step)
+    if channels == 4:
+        image = image.convert("RGB")
+    return image, meta
 
 
 def _image(data: bytes, profile: MediaProfile, settings: Mapping[str, Any]) -> MediaOutput:
+    if profile.kind != "depth":
+        return _jpeg(*decode_color(data), settings)
     if data[:8].hex() == "b8d011c10412b9a1":
-        return _compressed_image(data, profile, settings)
+        raise ValueError("compressed color image cannot use a depth profile")
     reader = _Reader(data, "535cface1f4f5717")
     size = reader.integer()
     meta = reader.header()
@@ -161,57 +211,26 @@ def _image(data: bytes, profile: MediaProfile, settings: Mapping[str, Any]) -> M
     pixels = reader.take(size)
     reader.end()
     meta.update(w=width, h=height)
-    if profile.kind == "depth":
-        if width > 4096 or height > 4096:
-            raise ValueError("depth dimensions exceed decoder budget")
-        if encoding not in ("16UC1", "32FC1", "mono16"):
-            raise ValueError("depth profile requires 16UC1 or 32FC1")
-        itemsize = 4 if encoding == "32FC1" else 2
-        if step < width * itemsize or len(pixels) != step * height:
-            raise ValueError("invalid depth row stride")
-        # Slice whole samples rather than convert floats: retain NaN payloads,
-        # +/-infinity, signed zero, integer zero and every numeric bit exactly.
-        rows = np.frombuffer(pixels, dtype=np.uint8).reshape(height, step)
-        packed = rows[:, : width * itemsize].reshape(height, width, itemsize)
-        if big:
-            packed = packed[:, :, ::-1]
-        meta.update(
-            pixelEncoding=encoding,
-            units="m" if encoding == "32FC1" else "mm",
-            unitScale=1 if encoding == "32FC1" else 0.001,
-            littleEndian=True,
-        )
-        return MediaOutput(_compress(packed.tobytes()), DEPTH_ENCODING, meta)
-    if encoding in ("jpeg", "jpg", "png"):
-        try:
-            with PILImage.open(BytesIO(pixels)) as opened:
-                if opened.size != (width, height):
-                    raise ValueError("compressed image shape mismatch")
-                image = opened.convert("RGB")
-        except PILImage.DecompressionBombError as error:
-            raise ValueError("compressed dimensions exceed budget") from error
-    else:
-        modes = {
-            "rgb8": (3, "RGB"),
-            "bgr8": (3, "BGR"),
-            "rgba8": (4, "RGBA"),
-            "bgra8": (4, "BGRA"),
-            "mono8": (1, "L"),
-            "8UC1": (1, "L"),
-        }
-        if encoding not in modes:
-            raise ValueError("unsupported color image encoding")
-        channels, mode = modes[encoding]
-        if step < width * channels or len(pixels) != step * height:
-            raise ValueError("invalid color row stride")
-        target_mode = "L" if channels == 1 else "RGBA" if channels == 4 else "RGB"
-        # Pillow accepts the buffer protocol; its stub omits memoryview.
-        image = PILImage.frombytes(
-            target_mode, (width, height), cast("Any", pixels), "raw", mode, step
-        )
-        if channels == 4:
-            image = image.convert("RGB")
-    return _jpeg(image, settings, meta)
+    if width > 4096 or height > 4096:
+        raise ValueError("depth dimensions exceed decoder budget")
+    if encoding not in ("16UC1", "32FC1", "mono16"):
+        raise ValueError("depth profile requires 16UC1 or 32FC1")
+    itemsize = 4 if encoding == "32FC1" else 2
+    if step < width * itemsize or len(pixels) != step * height:
+        raise ValueError("invalid depth row stride")
+    # Slice whole samples rather than convert floats: retain NaN payloads,
+    # +/-infinity, signed zero, integer zero and every numeric bit exactly.
+    rows = np.frombuffer(pixels, dtype=np.uint8).reshape(height, step)
+    packed = rows[:, : width * itemsize].reshape(height, width, itemsize)
+    if big:
+        packed = packed[:, :, ::-1]
+    meta.update(
+        pixelEncoding=encoding,
+        units="m" if encoding == "32FC1" else "mm",
+        unitScale=1 if encoding == "32FC1" else 0.001,
+        littleEndian=True,
+    )
+    return MediaOutput(_compress(packed.tobytes()), DEPTH_ENCODING, meta)
 
 
 def _cloud(data: bytes, settings: Mapping[str, Any]) -> MediaOutput:
