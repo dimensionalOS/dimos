@@ -27,6 +27,7 @@ from pydantic import Field
 from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
+from dimos.navigation.embodiment.m20 import M20
 from dimos.robot.deeprobotics.m20.constants import (
     BODY_WIDTH_M,
     CMD_VEL_TIMEOUT_S,
@@ -47,6 +48,8 @@ from dimos.simulation.sim_world.world import Sim, SimWorld, SimWorldConfig
 
 # the walking policy climbs 2.5 cm and stalls at 3 cm
 STEP_LIMIT = 0.02
+# the real M20 with the sim policy's step, so the sim's planners route around what it cannot climb
+SIM_M20 = replace(M20, steppable=STEP_LIMIT)
 # the base's height standing in the policy's default pose (the vendor MJCF's home keyframe)
 STAND_HEIGHT = 0.566
 # the trunk top, at its highest while walking

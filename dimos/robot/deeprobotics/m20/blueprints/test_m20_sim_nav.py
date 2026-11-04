@@ -12,17 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulator runs the navigation the robot runs, unmodified."""
+"""The simulator runs the navigation the robot runs, with only the step limit lowered to its policy's."""
+
+from dataclasses import replace
 
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.module import ModuleBase
+from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    _m20_nav,
     m20_nav_overrides,
+    m20_nav_stack,
     m20_nav_static,
 )
 from dimos.robot.deeprobotics.m20.blueprints.m20_nav import (
@@ -30,6 +33,7 @@ from dimos.robot.deeprobotics.m20.blueprints.m20_nav import (
 )
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav import m20_sim_nav
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav_episode import m20_sim_nav_episode
+from dimos.simulation.m20_sim.world import SIM_M20, STEP_LIMIT
 from dimos.spec.utils import Spec
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -46,9 +50,22 @@ def _remappings(
 
 def test_sim_composes_the_navigation_the_robot_runs() -> None:
     sim, robot = _atoms(m20_sim_nav), _atoms(m20_nav)
-    for name in _atoms(_m20_nav):
-        assert (sim[name].module, sim[name].kwargs) == (robot[name].module, robot[name].kwargs)
+    sim_stack, robot_stack = _atoms(m20_nav_stack(SIM_M20)), _atoms(m20_nav_stack())
+    for name in robot_stack:
+        assert (robot[name].module, robot[name].kwargs) == (
+            robot_stack[name].module,
+            robot_stack[name].kwargs,
+        )
+        assert (sim[name].module, sim[name].kwargs) == (
+            sim_stack[name].module,
+            sim_stack[name].kwargs,
+        )
         assert _remappings(m20_sim_nav, name) == _remappings(m20_nav, name)
+
+
+def test_the_sim_plans_only_steps_its_policy_climbs() -> None:
+    assert SIM_M20.steppable == STEP_LIMIT
+    assert replace(SIM_M20, steppable=M20.steppable) == M20
 
 
 def test_the_world_feeds_the_streams_the_vendor_lio_and_the_urdf_manager_read() -> None:

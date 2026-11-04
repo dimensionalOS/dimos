@@ -23,8 +23,8 @@ from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    _m20_nav,
     m20_nav_overrides,
+    m20_nav_stack,
     m20_nav_static,
 )
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
@@ -108,7 +108,7 @@ deeprobotics_m20_kronknav_control = (
         ),
         UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
-        _m20_nav,
+        m20_nav_stack(),
     )
     .global_config(
         n_workers=4,

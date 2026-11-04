@@ -21,13 +21,13 @@ from typing import TYPE_CHECKING, Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    _m20_nav,
     m20_nav_overrides,
+    m20_nav_stack,
     m20_nav_static,
 )
 from dimos.robot.deeprobotics.m20.model import M20_MODEL
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.simulation.m20_sim.world import SimM20World
+from dimos.simulation.m20_sim.world import SIM_M20, SimM20World
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:
@@ -76,6 +76,6 @@ m20_sim_nav = autoconnect(
         ]
     ),
     UrdfManager.blueprint(model=M20_MODEL),
-    _m20_nav,
+    m20_nav_stack(SIM_M20),
     # gossip off: with it on, zenoh's pending-connection bug keeps native modules spawned together from linking
 ).global_config(zenoh_gossip=False, n_workers=9)
