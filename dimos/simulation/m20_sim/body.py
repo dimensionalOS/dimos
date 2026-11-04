@@ -17,13 +17,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.msgs.sim_msgs.Contacts import Part
-from dimos.robot.deeprobotics.m20.model import M20_MODEL
+from dimos.robot.deeprobotics.m20.model import M20_MJCF
 from dimos.simulation.go2_legged.policy import Proprioception
 from dimos.simulation.go2_legged.robot import (
     BASE_ANGULAR_VELOCITY,
@@ -36,37 +37,21 @@ from dimos.simulation.m20_sim.policy import LEG_JOINTS, LEGS, M20Policy
 
 # the policy acts at 50 Hz
 CONTROL_DT = 0.02
-VISUAL_GROUP = 2
+# the vendor MJCF's collision geom group
 COLLISION_GROUP = 1
-# contact settings of the vendor's sdk_deploy MJCF, which the walking policy was trained on
-COLLISION_SOLREF = (0.005, 1.0)
-COLLISION_FRICTION = (1.0, 0.01, 0.001)
 
 
 def m20_spec() -> mujoco.MjSpec:
-    """An editable spec of the vendor M20 URDF (the model the real robot's UrdfManager shows) with no ground."""
-    spec = mujoco.MjSpec.from_string(M20_MODEL.load().xml)
-    spec.body("base_link").add_freejoint(name="floating_base")
-    spec.add_material(name="default_material", rgba=[0.7, 0.7, 0.7, 1.0])
-    spec.add_material(name="collision_material", rgba=[0.0, 0.0, 0.0, 0.0])
-    for geom in spec.geoms:
-        if geom.type == mujoco.mjtGeom.mjGEOM_MESH:
-            geom.contype, geom.conaffinity, geom.group = 0, 0, VISUAL_GROUP
-            geom.material = "default_material"
-        else:
-            geom.contype, geom.conaffinity, geom.group = 1, 1, COLLISION_GROUP
-            geom.material = "collision_material"
-            geom.condim = 3
-            geom.solref = COLLISION_SOLREF
-            geom.friction = COLLISION_FRICTION
-    # torque motors limited to each joint's URDF effort
-    for joint in spec.joints:
-        if joint.type != mujoco.mjtJoint.mjJNT_HINGE:
-            continue
-        motor = spec.add_actuator(name=joint.name, target=joint.name)
-        motor.trntype = mujoco.mjtTrn.mjTRN_JOINT
-        motor.ctrllimited = mujoco.mjtLimited.mjLIMITED_TRUE  # type: ignore[attr-defined]
-        motor.ctrlrange = joint.actfrcrange
+    """An editable spec of the vendor M20 MJCF (the model M20_MODEL is derived from), its demo floor and light removed."""
+    spec = mujoco.MjSpec.from_file(str(M20_MJCF))
+    spec.meshdir = str(Path(spec.modelfiledir) / spec.meshdir)
+    world = spec.worldbody
+    for element in [*world.geoms, *world.lights]:
+        spec.delete(element)
+    for material in [m for m in spec.materials if m.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB]]:
+        spec.delete(material)
+    for texture in list(spec.textures):
+        spec.delete(texture)
     return spec
 
 

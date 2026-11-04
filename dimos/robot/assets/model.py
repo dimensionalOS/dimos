@@ -23,7 +23,7 @@ import math
 import os
 from pathlib import Path
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -180,6 +180,8 @@ class RobotModel:
 
     _source_path: Path | str | os.PathLike[str] | None
     _root_model: _RootModel | None = None
+    # "mjcf": _source_path is a MuJoCo model, converted to URDF when loaded
+    _source_format: Literal["urdf", "mjcf"] = "urdf"
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame | _AttachedModel, ...] = ()
@@ -206,6 +208,11 @@ class RobotModel:
             _package_paths=tuple((package_paths or {}).items()),
             _xacro_args=tuple((xacro_args or {}).items()),
         )
+
+    @classmethod
+    def from_mjcf(cls, source_path: Path | str | os.PathLike[str]) -> RobotModel:
+        """Create a lazy model from a MuJoCo MJCF file, converted to URDF when loaded."""
+        return cls(_source_path=source_path, _source_format="mjcf")
 
     @classmethod
     def from_root_link(cls, root_link: str, *, name: str = "robot") -> RobotModel:
@@ -381,13 +388,22 @@ class RobotModel:
         source_path = None
         if self._source_path is not None:
             source_path = Path(os.fspath(self._source_path)).resolve()
-            if source_path.suffix.lower() not in {".urdf", ".xacro"}:
+            if self._source_format != "mjcf" and source_path.suffix.lower() not in {
+                ".urdf",
+                ".xacro",
+            }:
                 raise ValueError(
                     f"RobotModel source must reference a .urdf or .xacro file, got {source_path.name!r}"
                 )
             if not source_path.exists():
                 raise FileNotFoundError(f"Robot model not found: {source_path}")
-            if source_path.suffix.lower() == ".xacro":
+            if self._source_format == "mjcf":
+                import mujoco
+
+                from dimos.robot.assets.mjcf import mjcf_spec_to_urdf_xml
+
+                xml = mjcf_spec_to_urdf_xml(mujoco.MjSpec.from_file(str(source_path)))
+            elif source_path.suffix.lower() == ".xacro":
                 xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
             else:
                 xml = source_path.read_text()

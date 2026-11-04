@@ -22,8 +22,8 @@ import numpy as np
 from numpy.typing import NDArray
 import onnxruntime as ort
 
+from dimos.robot.deeprobotics.m20.model import M20_POLICY
 from dimos.simulation.go2_legged.policy import Proprioception
-from dimos.utils.data import get_data
 
 LEGS = ("fl", "fr", "hl", "hr")
 LEG_JOINTS = 12
@@ -61,7 +61,7 @@ class M20Policy:
 
     @classmethod
     def load(cls) -> M20Policy:
-        return cls(get_data("m20_sdk") / "policy.onnx")
+        return cls(Path(M20_POLICY))
 
     def reset(self) -> None:
         self._last_action = np.zeros(len(self.joint_names))
