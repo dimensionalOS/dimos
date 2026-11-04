@@ -370,8 +370,6 @@ def test_concurrent_calls(rpc_context, impl_name: str) -> None:
                 result, _ = client.call_sync("concurrent_add", ([a, b], {}), rpc_timeout=10.0)
                 results.append(result)
 
-            # A burst of 1000 threads timed out a call or two on slow CI
-            # runners. 100 still exercises concurrent routing of the replies.
             n_calls = 100
             for i in range(n_calls):
                 t = threading.Thread(target=make_call, args=(i, i + 1))
