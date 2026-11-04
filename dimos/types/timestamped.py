@@ -13,7 +13,7 @@
 # limitations under the License.
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Generic, Self, TypeVar, Union
+from typing import Generic, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 from dimos_lcm.common_msgs import SampleHeader
@@ -22,6 +22,7 @@ from reactivex.disposable import CompositeDisposable
 
 # from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
+from typing_extensions import Self
 
 from dimos.types.weaklist import WeakList
 from dimos.utils.logging_config import setup_logger
