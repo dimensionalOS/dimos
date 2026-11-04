@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""3d navigation on a Go2 that follows GSC PGO's loop closures, on its onboard L1 lidar
-or (``unitree_go2_mls_reform_mid360``) a Mid-360 through Point-LIO.
+"""3d navigation on a Go2 that follows GSC PGO's loop closures, on a Mid-360 through Point-LIO
+(``unitree_go2_mls_reform_mid360``).
 
 GSC corrects odometry into ``map`` (tf map -> world). The ray tracer and the MLS
 planner both work in ``map`` and warp themselves through each loop_closure_event
@@ -48,7 +48,6 @@ from dimos.robot.unitree.go2.nav_3d_config import (
     voxel_size,
     wall_clearance_m,
 )
-from dimos.robot.unitree.go2.normalize_go2_lidar import NormalizeGo2Lidar
 from dimos.visualization.vis_module import vis_module
 
 planner_viz_hz = 10.0
@@ -67,10 +66,10 @@ _rerun_config = {
 
 
 def _reform_nav(odom_frame: str) -> Blueprint:
-    """GSC, the reforming map and planner, and path following, on a base_link cloud + odometry."""
+    """GSC, the reforming map and planner, and path following, on a base_link cloud (GSC poses it from tf odom_frame -> base_link)."""
     return autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
-        GscPGO.blueprint(child_frame_id=odom_frame),
+        GscPGO.blueprint(odom_frame=odom_frame),
         ReformRayTracingVoxelMap.blueprint(
             **ray_tracing_config.model_copy(
                 # map -> odom_frame comes from GSC once per cloud it processes (~0.13 s apart, later when busy).
@@ -97,13 +96,6 @@ def _reform_nav(odom_frame: str) -> Blueprint:
         MovementManager.blueprint(),
     )
 
-
-unitree_go2_mls_reform = autoconnect(
-    _reform_nav(odom_frame="world"),
-    GO2Connection.blueprint(),
-    # The L1 cloud arrives accumulated in world; this re-expresses it in base_link.
-    NormalizeGo2Lidar.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 
 unitree_go2_mls_reform_mid360 = autoconnect(
     _reform_nav(odom_frame="odom"),
