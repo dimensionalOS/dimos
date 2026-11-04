@@ -313,8 +313,8 @@ CLI values are parsed as JSON when possible; quote lists as shown below.
 supplies the robot stack plus `McpServer`, and its skill containers are the tools.
 There is no tool filter. The agent's `modules` list is appended to the
 launch command (`dimos run <blueprint> <modules>`), and `autoconnect` dedups
-anything shared with the case, so `--set 'modules=["unitree-go2-agentic"]'` adds
-the whole shipped agentic stack. On a `Dataset` case the agent's `modules`
+anything shared with the case, so `--set 'modules=["mcp-client"]'` adds
+an LLM agent on top. On a `Dataset` case the agent's `modules`
 are the whole launched stack (`dimos run <modules>`, no simulator or robot
 underneath), torn down with the case. Configure those modules to read the
 recording if their tools need it. `Dataset(mcp_url=...)` attaches an
@@ -417,7 +417,7 @@ go_to_bed = EvalCase(
 ```
 
 ```bash
-dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["unitree-go2-agentic"]'
+dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["mcp-client"]'
 ```
 
 The recording holds the whole history, so "never left the zone" is `min` over

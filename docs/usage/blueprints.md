@@ -287,10 +287,10 @@ fleet = autoconnect(
 
 Inside a namespace everything is prefixed:
 
-* instance names (`robot0/go2connection`),
+* instance names (`robot0/go2webrtc`),
 * stream names and topics (`/robot0/lidar`),
 * TF frames (`frame_id_prefix`, unless you set one yourself),
-* and RPC topics (`robot0/go2connection/move`).
+* and RPC topics (`robot0/go2webrtc/move`).
 
 Prefixed streams only connect within their namespace.
 
@@ -306,8 +306,8 @@ namespace first, then enclosing namespaces, then globally, so per-robot
 consumers bind to their own robot's providers.
 
 Dynamic CLI configuration uses the canonical namespaced instance address:
-`--robot0/go2connection.ip=10.0.0.5`. Environment configuration uses
-`ROBOT0_GO2CONNECTION__IP=...`. `.remappings` accepts an instance name string
+`--robot0/go2webrtc.ip=10.0.0.5`. Environment configuration uses
+`ROBOT0_GO2WEBRTC__IP=...`. `.remappings` accepts an instance name string
 wherever it accepts a module class.
 
 The downside of this is that the number of modules is fixed at blueprint creation. But it can be easily overcome by using a global variable. For example you can invoke with this:
@@ -324,11 +324,6 @@ robot_ips = (global_config.robot_ips or "").split(",")
 
 For convenience `global_config.processed_robot_ips` is available which automatically splits the string and errors if no IPs are present.
 
-This works in simulation too: adding `--simulation` starts one MuJoCo instance per robot and the IPs are ignored. For example, to run two simulated Go2 robots:
-
-```bash
-ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
-```
 
 ## Running across machines
 

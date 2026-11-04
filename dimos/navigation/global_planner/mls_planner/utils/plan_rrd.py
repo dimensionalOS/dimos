@@ -54,7 +54,7 @@ from dimos.navigation.global_planner.viz import (
     robot_body_box,
     robot_clearance,
 )
-from dimos.robot.unitree.go2.constants import (
+from dimos.robot.unitree.go2.config import (
     BASE_LINK_HEIGHT,
     ROBOT_HEIGHT,
     ROBOT_LENGTH,

@@ -13,174 +13,44 @@ robots:
   robots:
     go2:
       name: Unitree Go2
-      description: 'Unitree''s quadruped: camera, lidar, WebRTC, DDS or a zenoh bridge.'
+      description: 'Unitree''s quadruped: camera, lidar and driving over WebRTC.'
       type: dog
       manufacturer: Unitree
       dirs: [dimos/robot/unitree/go2]
-      recommended: [unitree-go2, unitree-go2-agentic, unitree-go2-basic, teleop-phone-go2]
+      recommended: [unitree-go2, teleop-phone-go2]
       defaults:
         recommended_config:
-        - &robot_replay_or_simulator
-          label: Run it on
-          choices:
-          - {label: Robot, set: {replay: false, simulation: ''}}
-          - {label: Replay, set: {replay: true, simulation: ''}}
-          - {label: Simulator, set: {replay: false, simulation: mujoco}}
         - global: robot_ip
           label: Robot IP
           placeholder: 192.168.12.1
           required: true
-          docs: &go2_ip_docs https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
-          when: {replay: false, simulation: ''}
-        - <<: &recording {global: replay_db, label: Recording, kind: recording}
-          streams: [[go2_lidar, lidar], [go2_odom, odom], [color_image]]
-          when: {replay: true, simulation: ''}
+          docs: https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
       blueprints:
-        unitree-go2-basic:
-          title: Go2 basic
-          description: 'Connects to a Go2 and streams its camera, lidar and pose. The simplest way to get a Go2 going: drive it from Controller.'
-          starter: 1
         unitree-go2:
           title: Go2 with map + navigation
-          description: Builds a 3D map and a costmap as it walks; click a spot to send it there, or let it explore on its own.
-          starter: 2
-        unitree-go2-agentic:
-          title: Go2 with an agent
-          description: Map and navigation plus an AI agent you can talk to (over MCP), with a memory of what it has seen.
-          starter: 3
+          description: Builds a 3D voxel map as it walks and plans over it; click a spot to send it there. Runs on the robot, in simulation or on a recording.
+          starter: 1
           recommended_config:
-          - *robot_replay_or_simulator
+          - label: Run it on
+            choices:
+            - {label: Robot or recording, set: {simulation: ''}}
+            - {label: Simulator, set: {simulation: mujoco}}
           - global: robot_ip
-          - global: replay_db
-          - module: perceiveloopskill
-            field: detection_model
-            label: Detection model
-        unitree-go2-webrtc-keyboard-teleop:
-          title: Go2 keyboard driving
-          description: Drive a Go2 with this computer's keyboard, over WebRTC.
-        unitree-go2-detection:
-          title: Go2 with 3D detection
-          description: Map and navigation plus 3D object detection on its camera.
-          starter: 5
+            label: Robot IP
+            placeholder: 192.168.12.1
+            when: {simulation: ''}
+          - module: replay
+            field: db
+            label: Recording (in place of the robot)
+            kind: recording
+            streams: [[lidar], [odom], [color_image]]
+            when: {simulation: ''}
         teleop-phone-go2:
           title: Go2 phone driving
           description: Drive a Go2 from a phone's touch controls.
           starter: 6
           recommended_config: &robot_ip_only
           - global: robot_ip
-        unitree-go2-agentic-cockpit:
-          title: Go2 agent with a cockpit
-          description: 'The Go2 agent with an authored cockpit: video over the 3D voxel map.'
-        unitree-go2-agentic-huggingface:
-          title: Go2 agent (Hugging Face model)
-          description: The Go2 agent with its language model served from Hugging Face.
-        unitree-go2-agentic-ollama:
-          title: Go2 agent (Ollama model)
-          description: The Go2 agent with a local language model served by Ollama.
-        unitree-go2-cockpit:
-          title: Go2 with a cockpit
-          description: 'Map and navigation with an authored cockpit: video over the 3D voxel map.'
-        unitree-go2-coordinator:
-          title: Go2 control coordinator
-          description: A Go2 behind dimos's ControlCoordinator (the base for controller experiments).
-          recommended_config: *robot_ip_only
-        unitree-go2-fleet:
-          title: Go2 fleet
-          description: 'Several Go2s driven together: every command goes to all of them.'
-          recommended_config: &fleet_config
-          - global: robot_ips
-            label: Robot IPs
-            placeholder: 192.168.12.1,192.168.12.2
-            required: true
-            docs: *go2_ip_docs
-          - global: robot_ip
-        unitree-go2-holonomic-benchmark:
-          title: Go2 holonomic benchmark
-          description: Benchmarks the holonomic full-pose controller on a Go2.
-          recommended_config: *robot_ip_only
-        unitree-go2-holonomic-controller:
-          title: Go2 holonomic controller
-          description: A standalone holonomic full-pose controller for a Go2, with keyboard driving.
-          recommended_config: *robot_ip_only
-        unitree-go2-keyboard-teleop:
-          title: Go2 keyboard driving (DDS)
-          description: Drive a Go2 with the keyboard through the ControlCoordinator over DDS (SDK2).
-          recommended_config: *robot_ip_only
-        unitree-go2-markers:
-          title: Go2 with marker detection
-          description: Map and navigation plus fiducial marker detection mirrored into TF.
-        unitree-go2-memory:
-          title: Go2 with memory
-          description: Map and navigation, recording everything it sees into dimos memory.
-        unitree-go2-mid360-record:
-          title: Go2 + Mid-360 recording
-          description: Drive a Go2 carrying a Livox Mid-360 and record the lidar, the robot and its pose.
-          recommended_config: *robot_ip_only
-        unitree-go2-hol-path-controller:
-          title: Go2 3D navigation (MLS + holonomic)
-          description: '3D navigation: a voxel map, MLS planning and a holonomic controller.'
-          recommended_config: *robot_ip_only
-        unitree-go2-multi:
-          title: Several Go2s
-          description: Several independent Go2s on one coordinator.
-          recommended_config: *fleet_config
-        unitree-go2-multi-teleop:
-          title: Several Go2s, keyboard driving
-          description: Several Go2s, with a keyboard driving window per robot.
-          recommended_config: *fleet_config
-        unitree-go2-nav-3d:
-          title: Go2 3D navigation (Mid-360)
-          description: '3D navigation with a Livox Mid-360 on the Go2: ray-traced voxel map and MLS planning.'
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization:
-          title: Go2 3D navigation in a saved map
-          description: 3D navigation (Mid-360) that relocalizes in a map you made before.
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization-replay:
-          title: Go2 3D navigation in a saved map (replay)
-          description: The relocalized 3D navigation stack driven by a recording instead of a robot.
-          recommended_config: *robot_ip_only
-        unitree-go2-map:
-          title: Go2 with a permanent map
-          description: Map and navigation with live loop closure, kept in a map file that's loaded, extended and saved.
-        unitree-go2-ros:
-          title: Go2 with ROS
-          description: Map and navigation, bridged to ROS.
-        unitree-go2-rpp-benchmark:
-          title: Go2 RPP benchmark
-          description: Benchmarks the regulated pure pursuit path follower on a Go2.
-          recommended_config: *robot_ip_only
-        unitree-go2-rpp-controller:
-          title: Go2 RPP controller
-          description: A standalone regulated pure pursuit path-following controller for a Go2.
-          recommended_config: *robot_ip_only
-        unitree-go2-security:
-          title: Go2 security patrol
-          description: An agent that patrols with the Go2 and watches for people.
-        unitree-go2-spatial:
-          title: Go2 with spatial memory
-          description: Map and navigation plus a spatial memory of what it has seen.
-        unitree-go2-temporal-memory:
-          title: Go2 agent with temporal memory
-          description: The Go2 agent with a memory of when it saw things.
-        unitree-go2-typesafe:
-          title: Go2 go-to-object
-          description: 'Say `go to the <object>`: the Go2 finds it with 2D detection and walks there.'
-        unitree-go2-vlm-stream-test:
-          title: Go2 VLM stream test
-          description: Tests a vision-language model on the Go2's camera stream.
-        unitree-go2-webrtc-rage-keyboard-teleop:
-          title: Go2 keyboard driving (rage mode)
-          description: Keyboard driving over WebRTC with the Go2's rage mode (faster gaits) on.
-          recommended_config: *robot_ip_only
-        teleop-webxr-go2:
-          title: Go2 VR driving
-          description: Drive a Go2 from a VR headset's thumbsticks, with its camera in the headset.
-          recommended_config: *robot_ip_only
-        teleop-phone-go2-fleet:
-          title: Go2 fleet phone driving
-          description: 'Drive a fleet of Go2s from a phone: every command goes to all of them.'
-          recommended_config: *fleet_config
         teleop-hosted-go2-multicam:
           title: Go2 remote driving (two cameras)
           description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker, with a RealSense as a second camera.
@@ -189,39 +59,6 @@ robots:
           title: Go2 remote driving
           description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker.
           recommended_config: *robot_ip_only
-        go2-dds:
-          title: 'Go2 over DDS'
-          description: 'The Go2''s own streams and driving over DDS, on the Jetson wired to it; also the zenoh router a viewer dials.'
-        go2-dds-mid360:
-          title: 'Go2 over DDS + Mid-360'
-          description: 'DDS Go2 with a Mid-360: Point-LIO odometry in place of the head lidar''s.'
-        go2-nav:
-          title: 'Go2: navigation'
-          description: 'DDS Go2 with a Mid-360 (Point-LIO), MLS global planner and local planner; headless, watch it with the nav viewer.'
-        go2-nav-l1:
-          title: 'Go2: navigation + head L1'
-          description: 'go2-nav plus the head L1 lidar''s deskewed scans, in Point-LIO''s odometry frame.'
-        go2-nav-viewer:
-          title: 'Go2: nav viewer'
-          description: 'The screen for go2-nav on another machine: dials the Go2''s zenoh router and shows its maps and plans.'
-        go2-nav-viewer-mesh:
-          title: 'Go2: nav viewer (meshed map)'
-          description: 'The go2-nav viewer, meshing the map regions on this machine''s GPU.'
-        go2-nav-hosted:
-          title: 'Go2: navigation across hosts'
-          description: 'go2-nav split over dimos hosts: the stack on the Go2''s host, the mesher on the GPU host, the viewer here.'
-        go2-sim:
-          title: 'Go2 in simulation (keyboard)'
-          description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
-        go2-sim-nav:
-          title: 'Go2 in simulation (navigation)'
-          description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
-        go2-localize:
-          title: 'Go2 with object localization'
-          description: 'The Go2 plus perception that places what its camera detects in 3D, using the lidar.'
-        unitree-go2-joystick-record:
-          title: 'Go2 drive and record'
-          description: 'Drive the Go2 from the keyboard and show your input next to its lidar, odometry and camera; run with --record to save them. Needs the robot''s IP.'
     g1:
       name: Unitree G1
       description: Unitree's humanoid.
@@ -804,7 +641,7 @@ robots:
         relocalize-mid360:
           title: Mid-360 relocalization (recording)
           description: Relocalization against a saved map, driven by a recording instead of a robot.
-          recommended_config: [*recording]
+          recommended_config: [&recording {global: replay_db, label: Recording, kind: recording}]
         demo-dim-slam-realsense:
           title: dimSLAM on a RealSense
           description: dimSLAM visual SLAM on a RealSense stereo camera.

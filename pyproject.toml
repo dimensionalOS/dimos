@@ -332,6 +332,8 @@ cuda = [
 sim = [
     # Simulation
     "mujoco>=3.3.4",
+    # the Go2 sim behind go2/connections/webrtc_sim.py, until sim2
+    "dim-go2-sim>=0.5.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
@@ -472,6 +474,7 @@ tests = [
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
     "mujoco>=3.3.4",
+    "dim-go2-sim>=0.5.1",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
@@ -763,6 +766,8 @@ module = [
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
+    "dim_go2_sim",
+    "dim_go2_sim.*",
     "lz4",
     "lz4.*",
     "dimos_mls_planner",

@@ -96,10 +96,10 @@ $ dimos mem summary recordings/<run-id>/memory.db
 ```
 Replay memory from DB:
 ```bash
-dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
+dimos run unitree-go2 --replay.db recordings/<run-id>/memory.db
 ```
 
-`--replay` swaps the robot connection for the recording; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds. `dimos map pose-fill` instead derives poses from `odom` by default.
+`--replay.db` plays the recording in the robot connection's place; it needs `lidar`, `odom`, and `color_image`, so record all streams (the default) if you intend to replay. Poses are not stored per frame; `tf` is recorded like any other stream and `dimos map global` uses it to register clouds. `dimos map pose-fill` instead derives poses from `odom` by default.
 
 ## Behavior
 
@@ -110,4 +110,4 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 - The Python recorder uses one writer thread. Its queue holds 1000 messages, then
   drops and warns. The Rust recorder uses its existing native encoding pool and
   ordered writer pipeline.
-- We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly.
+- We also still have explicit recorder modules (`unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly.

@@ -34,7 +34,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
 from dimos.teleop.utils.stream_stats import LiveStreamStats
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
@@ -52,8 +52,8 @@ class HostedStatsModule(Module):
     config: HostedStatsConfig
 
     # RPC ref to the driver, for battery SOC pulled in the telemetry loop.
-    # Optional: the xarm blueprints have no GO2Connection — soc stays None there.
-    go2: GO2Connection | None = None
+    # Optional: the xarm blueprints have no Go2WebRtc — soc stays None there.
+    go2: Go2WebRtc | None = None
 
     state_json: In[bytes]
     cmd_raw: In[bytes]

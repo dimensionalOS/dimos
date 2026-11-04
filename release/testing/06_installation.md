@@ -46,7 +46,7 @@ Install Nix with flakes enabled and add the Cachix substituter from [Native modu
 ```bash
 bin/native-modules --dry-run
 bin/native-modules --build
-uv run dimos --build-native run go2-sim-nav
+uv run dimos --build-native --simulation run unitree-go2
 ```
 
 Expected result: the dry run ends with "Would build: nothing" when the cache has every module. The build prints a DONE line per module and no FAIL. The forced rebuild logs "Build command completed" for each native module before the simulated Go2 appears in Rerun.

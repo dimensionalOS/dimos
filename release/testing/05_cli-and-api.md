@@ -1,11 +1,11 @@
 # 5. CLI and Python API
 
-Follow the shared setup in the release testing plan. Go2 commands without `--replay` or `--simulation` require a connected robot and room for the requested motion. Agentic blueprints also need their configured credentials. Run each foreground blueprint separately, and use another terminal for commands that interact with it.
+Follow the shared setup in the release testing plan. Go2 commands without `--replay.db` or `--simulation` require a connected robot and room for the requested motion. Agentic blueprints also need their configured credentials. Run each foreground blueprint separately, and use another terminal for commands that interact with it.
 
 ## 5.1 Daemon lifecycle
 
 ```bash
-uv run dimos --replay run unitree-go2 --daemon
+uv run dimos run unitree-go2 --replay.db go2_short --daemon
 uv run dimos status
 uv run dimos log -n 50
 uv run dimos log -f   # Ctrl+C
@@ -19,20 +19,20 @@ Expected result: status identifies the running instance, logs can be read and fo
 ## 5.2 MCP CLI
 
 ```bash
-uv run dimos run unitree-go2-agentic --daemon
-uv run dimos mcp call move_to --arg x=0.3 --arg relative=true
+uv run dimos --simulation run unitree-g1-agentic-sim --daemon
+uv run dimos mcp call move --arg x=0.3 --arg duration=1.0
 uv run dimos mcp call observe
 uv run dimos stop
 ```
 
-Expected result: the robot moves forward by about 30 cm, and observation returns an image from its camera.
+Expected result: the simulated robot moves forward by about 30 cm, and observation returns an image from its camera.
 
 ## 5.3 Python API
 
 Start the robot blueprint and open a Python REPL:
 
 ```bash
-uv run dimos run unitree-go2-agentic --daemon
+uv run dimos --simulation run unitree-g1-agentic-sim --daemon
 uv run python
 ```
 
@@ -46,7 +46,7 @@ from dimos import Dimos
 
 app = Dimos.connect()
 try:
-    app.skills.move_to(x=0.3, relative=True)
+    app.skills.move(x=0.3, duration=1.0)
     img = app.peek_stream("color_image", timeout=5.0)
     cv2.imshow("color_image", np.asarray(img.data))
     cv2.waitKey(0)
@@ -61,12 +61,12 @@ After leaving the REPL, stop the blueprint:
 uv run dimos stop
 ```
 
-Expected result: the robot moves forward by about 30 cm and the window shows its camera image.
+Expected result: the simulated robot moves forward by about 30 cm and the window shows its camera image.
 
 ## 5.4 dimos shell
 
 ```bash
-uv run dimos --replay run unitree-go2 --daemon
+uv run dimos run unitree-go2 --replay.db go2_short --daemon
 uv run dimos shell
 # After leaving the shell with Ctrl+D:
 uv run dimos stop
@@ -75,15 +75,15 @@ uv run dimos stop
 ...in the shell:
 
 ```python
-app.ReplanningAStarPlanner.get_state()
+modules()
 ```
 
-Expected result: the planner returns `NavigationState.IDLE`, and Tab completes RPC names after `app.GO2Connection.`.
+Expected result: `modules()` lists the running modules, and Tab completes RPC names after `app.Go2WebRtc.`.
 
 ## 5.5 Module configuration
 
 ```bash
-uv run dimos --replay run unitree-go2-agentic --daemon --disable speak-skill --mcpserver.port 9992
+uv run dimos --simulation run unitree-g1-agentic-sim --daemon --disable speak-skill --mcpserver.port 9992
 uv run dimos mcp modules
 uv run dimos stop
 ```
@@ -92,16 +92,16 @@ Expected result: `dimos mcp modules` reaches the server on port 9992 and lists n
 
 ## 5.6 Transports and topics
 
-Run the replay blueprint, then use another terminal for the other commands. The LCM run also needs the host multicast and socket-buffer setup described in [2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation). If it was skipped during installation, startup prompts to apply it with `sudo`. Arrange administrator access before starting the LCM run.
+Run the replay blueprint, then use another terminal for the other commands. The LCM run also needs the host's multicast and socket-buffer setup. If it was skipped during installation, startup prompts to apply it with `sudo`. Arrange administrator access before starting the LCM run.
 
 ```bash
-uv run dimos --replay run unitree-go2
+uv run dimos run unitree-go2 --replay.db go2_short
 uv run dimos spy   # q quits
 uv run dimos topic echo /cmd_vel
 # In a third terminal:
 uv run dimos topic send /cmd_vel 'Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))'
 # Stop the blueprint, then run it on LCM:
-uv run dimos --transport lcm --replay run unitree-go2
+uv run dimos --transport lcm run unitree-go2 --replay.db go2_short
 uv run dimos spy --transport lcm
 ```
 
@@ -110,7 +110,7 @@ Expected result: the spy lists the replay topics on zenoh with live rates, the s
 ## 5.7 dtop
 
 ```bash
-uv run dimos --dtop --replay run unitree-go2
+uv run dimos --dtop run unitree-go2 --replay.db go2_short
 # In another terminal:
 uv run dtop
 ```
@@ -120,10 +120,10 @@ Expected result: the monitoring interface opens and displays the running modules
 ## 5.8 Rerun viewer modes
 
 ```bash
-uv run dimos --replay run unitree-go2 --rerunbridgemodule.rerun-open web
-uv run dimos --replay run unitree-go2 --rerunbridgemodule.rerun-open none --rerunbridgemodule.rerun-save true
+uv run dimos run unitree-go2 --replay.db go2_short --rerunbridgemodule.rerun-open web
+uv run dimos run unitree-go2 --replay.db go2_short --rerunbridgemodule.rerun-open none --rerunbridgemodule.rerun-save true
 uv run rerun recordings/<run-id>/rerun.rrd
-uv run dimos --viewer none --replay run unitree-go2
+uv run dimos --viewer none run unitree-go2 --replay.db go2_short
 # In another terminal:
 uv run dimos rerun-bridge --rerun-open web
 ```
@@ -135,7 +135,7 @@ Expected result: the first run opens the web viewer at http://localhost:9878. Th
 Needs Graphviz.
 
 ```bash
-uv run dimos graph unitree-go2-agentic --rpc --output /tmp/go2-agentic.svg
+uv run dimos graph unitree-go2 --rpc --output /tmp/go2.svg
 uv sync --group docs --inexact
 uv run dimos docs
 ```
@@ -158,7 +158,7 @@ Expected result: `doctor` passes every check but two. Reachability warns because
 
 ## 5.11 Native module examples
 
-Needs nix with flakes. The first run of each example builds its binaries. Run the examples separately, stopping each with Ctrl+C before starting the next. The C++ command below uses LCM, so it also needs the privileged multicast setup described in [2.3](02_replay-and-simulation.md#23-dimsim-browser-simulation). Arrange administrator access before running that command if setup was skipped during installation.
+Needs nix with flakes. The first run of each example builds its binaries. Run the examples separately, stopping each with Ctrl+C before starting the next. The C++ command below uses LCM, so it also needs the privileged multicast setup described in [5.6](#56-transports-and-topics). Arrange administrator access before running that command if setup was skipped during installation.
 
 ```bash
 uv run python examples/native-modules/rust_ping_pong.py --transport zenoh
@@ -177,12 +177,12 @@ mkdir -p /tmp/my-robot-stack && cat > /tmp/my-robot-stack/pyproject.toml <<'EOF'
 name = "my-robot-stack"
 version = "0.1.0"
 [project.entry-points."dimos.blueprints"]
-go2 = "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2"
+go2 = "dimos.robot.unitree.go2.blueprints.unitree_go2:unitree_go2"
 keyboard-teleop = "dimos.robot.unitree.keyboard_teleop:KeyboardTeleop"
 EOF
 uv pip install /tmp/my-robot-stack
 uv run dimos list
-uv run dimos --replay run my-robot-stack.go2 my-robot-stack.keyboard-teleop
+uv run dimos run my-robot-stack.go2 my-robot-stack.keyboard-teleop --replay.db go2_short
 uv pip uninstall my-robot-stack
 ```
 
@@ -203,7 +203,7 @@ Expected result: the blueprint clones the xArm assets into the temporary cache a
 
 ## 5.14 Cloud sign-in and data
 
-Needs a Dimensional cloud account and a recording from the [recording check](02_replay-and-simulation.md#24-recording-and-playback).
+Needs a Dimensional cloud account and a recording from the [recording check](02_replay-and-simulation.md#23-recording-and-playback).
 
 ```bash
 uv run dimos login

@@ -78,7 +78,7 @@ of several small, per-concern modules: `Go2CommandModule` (command / E-STOP /
 drive guard), `CameraMuxModule` (camera → video track), `MapCompressModule`
 (costmap → minimap), and `HostedStatsModule` (telemetry + acks). The
 broker-bound modules run in one worker so they share a single broker session;
-the `GO2Connection` driver runs in a second worker (`n_workers=2`).
+the `Go2WebRtc` driver runs in a second worker (`n_workers=2`).
 
 Enable the glass-to-glass latency benchmark with
 `--latency-stamp=true`.

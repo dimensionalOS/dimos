@@ -50,39 +50,7 @@ uv run dimos hardware g1 disable    # after the headset check
 
 Expected result: the G1 reaches the clicked point, `ready` moves both arms to the ready pose, the arms follow the headset, and `disable` disarms the robot.
 
-## 10.4 Multiple Go2s
-
-No robot is needed. In simulation the IP count sets the number of robots, and the simulated motion does not use those robot addresses. Zenoh may still warn that it cannot connect to the listed IPs.
-
-```bash
-ROBOT_IPS=10.0.0.1,10.0.0.2 uv run dimos --simulation run unitree-go2-multi-teleop
-# In another terminal:
-uv run dimos topic echo /robot0/odom
-```
-
-* Two MuJoCo windows open, with teleop windows titled `robot0/keyboardteleop` and `robot1/keyboardteleop`.
-* Focus one teleop window and hold W. Only that robot walks. Repeat with the other window.
-
-Expected result: each teleop window drives only its own robot, and the echo prints poses from robot0 only.
-
-## 10.5 Go2 over DDS on the Jetson
-
-Needs a Go2 whose Jetson has a dimos checkout and nix, a Mid-360 on the robot, and a laptop that reaches the Jetson on port 7447.
-
-```bash
-# On the Jetson:
-uv run dimos run go2-nav --mid360.lidar-ip <lidar-ip>
-# On the laptop:
-uv run dimos --zenoh-connect tcp/<robot-ip>:7447 run go2-nav-viewer
-# No hardware: play a recorded Go2 DDS session.
-uv run dimos mem rerun go2_dds_stairs.mcap --seconds 60
-```
-
-* The viewer shows the camera, the odometry and the surface map. Click a point in the 3D view. The robot drives there.
-
-Expected result: the robot reaches the clicked goal, and the recording plays its point cloud, odometry and camera in Rerun.
-
-## 10.6 FlowBase holonomic base
+## 10.4 FlowBase holonomic base
 
 Needs the lab FlowBase powered on, with its controller reachable from the laptop at `172.6.2.20:11323`. There is no mock or simulated FlowBase.
 

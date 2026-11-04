@@ -146,20 +146,14 @@ We’ll go through these layers top-down.
 
 See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
-From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
+Using the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/unitree_go2.py) blueprint.
 
 Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L187)) so you can visualize in **rviz2**.
 
 ```python skip
-nav = autoconnect(
-    basic,
-    voxel_mapper(voxel_size=0.1),
-    cost_mapper(),
-    replanning_a_star_planner(),
-    wavefront_frontier_explorer(),
-).global_config(n_workers=6, robot_model="unitree_go2")
+from dimos.robot.unitree.go2.blueprints.unitree_go2 import unitree_go2
 
-ros = nav.transports(
+ros = unitree_go2.transports(
     {
         ("lidar", PointCloud2): ROSTransport("lidar", PointCloud2),
         ("global_map", PointCloud2): ROSTransport("global_map", PointCloud2),

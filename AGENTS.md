@@ -16,10 +16,10 @@ bash scripts/install.sh --mode dev --project-dir .
 dimos list
 
 # --- Go2 quadruped ---
-dimos --replay run unitree-go2                  # perception + mapping, replay data
-dimos --replay run unitree-go2 --daemon         # same, backgrounded
-dimos --replay run unitree-go2-agentic          # + LLM agent (gpt-5.6-luna) + skills + MCP server
-dimos run unitree-go2-agentic --robot-ip 192.168.123.161  # real Go2 hardware
+dimos run unitree-go2 --replay.db go2_short     # mapping + navigation, replay data
+dimos run unitree-go2 --replay.db go2_short --daemon  # same, backgrounded
+dimos run unitree-go2 --simulation mujoco       # Go2 in MuJoCo sim
+dimos run unitree-go2 --robot-ip 192.168.123.161  # real Go2 hardware
 
 # --- G1 humanoid ---
 dimos --simulation run unitree-g1-agentic-sim   # G1 in MuJoCo sim + agent + skills
@@ -39,7 +39,7 @@ dimos restart          # stop + re-run with same original args
 
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
-| `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
+| `unitree-go2` | Go2 | real | — | — | Mapping + navigation over WebRTC |
 | `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
 | `xarm-grasp-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
@@ -53,11 +53,11 @@ Run `dimos list` for the full list.
 
 ## Tools available to you (MCP)
 
-**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `McpClient`. E.g.: `unitree-go2-agentic`.
+**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `McpClient`. E.g.: `unitree-g1-agentic-sim`.
 
 ```bash
 # Start the MCP-enabled blueprint first:
-dimos --replay run unitree-go2-agentic --daemon
+dimos --simulation run unitree-g1-agentic-sim --daemon
 
 # Then use MCP tools:
 dimos mcp list-tools                                              # all available skills as JSON
@@ -80,15 +80,16 @@ Use **both** `McpServer.blueprint()` and `McpClient.blueprint()`.
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 
-unitree_go2_agentic = autoconnect(
-    unitree_go2_spatial,   # robot stack
-    McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
-    McpClient.blueprint(), # LLM agent — fetches tools from McpServer
-    _common_agentic,       # skill containers
+_agentic_skills = autoconnect(
+    McpServer.blueprint(),                              # HTTP MCP server — exposes all @skill methods on port 9990
+    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT), # LLM agent — fetches tools from McpServer
+    NavigationSkillContainer.blueprint(),               # skill containers
+    UnitreeG1SkillContainer.blueprint(),
 )
+unitree_g1_agentic_sim = autoconnect(unitree_g1_sim, _agentic_skills)
 ```
 
-Reference: `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic.py`
+Reference: `dimos/robot/unitree/g1/blueprints/agentic/_agentic_skills.py`
 
 ---
 

@@ -1,6 +1,6 @@
 # How to Optimize Point-LIO Configs
 
-1. Record mid360 with PCAP enabled — see [Recording a Map (Go2 + Mid-360)](go2_mid360.md)
+1. Record mid360 with PCAP enabled — `dimos run mid360-realsense-record-with-pcap`
 2. Use `pcap_to_db.py` to generate alternative lidar/odom outcomes - renders to rerun
 
 # Modules

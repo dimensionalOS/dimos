@@ -15,16 +15,16 @@ from dimos import Dimos
 app = Dimos(n_workers=8)
 
 # Run a blueprint by name.
-app.run("unitree-go2-agentic")
+app.run("unitree-go2")
 
 # Call skills.
-app.skills.move_to(x=2.0, relative=True)
+app.skills.get_battery_soc()
 
 # List all available skills.
 print(app.skills)
 
 # Access a module directly.
-app.ReplanningAStarPlanner
+app.MLSPlannerNative
 
 # Add another module dynamically.
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
@@ -44,9 +44,9 @@ Modules can define `@rpc` methods which you can call. Here's an example:
 ```python skip
 from dimos.msgs.geometry_msgs.Twist import Twist
 # Rotate right.
-app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.05)
+app.Go2WebRtc.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.05)
 # Move forward.
-app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
+app.Go2WebRtc.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
 ```
 
 ## Manipulation SDK
@@ -89,7 +89,7 @@ app.list_modules()
 camera = app.get_module("robot0/camera")
 
 # A class name also works when exactly one instance has that class.
-planner = app.get_module("ReplanningAStarPlanner")
+planner = app.get_module("MLSPlannerNative")
 
 # Discover every advertised RPC, or filter by a name or proxy.
 app.list_rpcs()
@@ -117,7 +117,7 @@ inspection:
 ```python skip
 import inspect
 
-move = app.get_module("GO2Connection").move
+move = app.get_module("Go2WebRtc").move
 print(inspect.signature(move))
 help(move)
 ```
@@ -170,7 +170,7 @@ running system continues.
 Start a coordinator first (via CLI or another script), then connect to it:
 
 ```bash
-dimos run unitree-go2-agentic
+dimos run unitree-go2
 ```
 
 ```python skip
@@ -181,7 +181,7 @@ app = Dimos.connect()
 # Everything works the same as local mode
 print(app)                     # <Dimos(remote=True, modules=[...])>
 print(app.skills)              # list all skills
-app.skills.move_to(x=2.0, relative=True)
+app.skills.get_battery_soc()
 app.stop()  # closes the connection (does NOT stop the remote process)
 ```
 

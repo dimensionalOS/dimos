@@ -2,18 +2,14 @@
 
 5-minute tour. For deeper guides see [scenes.md](scenes.md) and [evals.md](evals.md).
 
-## The two ways DimSim runs
+## Running DimSim
 
 ```bash
-# 1. dimos drives DimSim (production / agentic / CI)
-uv run dimos --simulation dimsim run unitree-go2-agentic --go2connection.dimsim.scene=apartment
-
-# 2. DimSim runs standalone (engine dev / scene authoring)
 cd misc/DimSim/cli
 deno run -A --unstable-net cli.ts dev --scene apartment
 ```
 
-Both end up with a Vite-built `dist/` and a bridge on port 8090. Same scenes, same browser. The difference is just who's driving the agent.
+This builds `dist/` with Vite and serves a bridge on port 8090.
 
 If you install the CLI globally, replace the `deno run` boilerplate with `dimsim`:
 
@@ -95,5 +91,3 @@ docs/       guides
   (`dimsim dev --scene <name>`) for a clean reset.
 - **First launch is slow.** Vite builds `dist/` on first run (~20s); later runs reuse it.
 - **Headless slow to boot on CI.** Use `--render cpu` and bump `--timeout 120000`.
-- **`unitree-go2-basic` hides lidar in Rerun** by override. Click the eye icon in the Rerun entity tree, or use `unitree-go2-spatial` / `unitree-go2-agentic` which leave it visible.
-- **Click-to-nav** in Rerun only works on nav-enabled blueprints (`unitree-go2-agentic` and friends). `unitree-go2-basic` has no nav stack.

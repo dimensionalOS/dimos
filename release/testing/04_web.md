@@ -6,38 +6,21 @@ These checks need the `web` extra and Chromium or Firefox. They run in simulatio
 
 ```bash
 # The first run downloads Deno and builds the web bundles.
-uv run dimos --simulation run unitree-go2-cockpit
+uv run dimos --simulation run --local-relay unitree-go2
 ```
 
-* Open http://127.0.0.1:7780/ and inspect the video, 3D map and 2D map together. The robot pose and visible obstacles should agree with the simulated scene.
-* Click a free spot on the 2D map. A path is drawn and the robot drives there. Click `cancel` and the robot stops.
+* Open http://127.0.0.1:7780/ and inspect the video and the map together. The robot pose and visible obstacles should agree with the simulated scene.
 * Click the teleop panel so it reads `armed`. Drive with WASD and strafe with Q/E. Space stops the robot.
 * Hold W and close the tab. The robot stops within about a second.
 
-Expected result: the views agree with the robot's motion, and navigation, keyboard controls and stopping on tab closure work.
+Expected result: the views agree with the robot's motion, and keyboard controls and stopping on tab closure work.
 
-## 4.2 Agentic cockpit
-
-Needs the agent credentials, ffmpeg and a microphone.
-
-```bash
-uv run dimos --simulation run unitree-go2-agentic-cockpit
-# In another terminal, once the page is open:
-uv run dimos agent-send "say hello"
-```
-
-* In the Agent chat panel, type "move forward 1 meter" and click send. "thinking..." shows, then the reply, and the robot moves on the maps. Wait for each movement and final reply before sending the next command.
-* Hold the talk button next to the input, say "please rotate 180 degrees", and release. The transcript shows the text and the robot turns.
-* The `agent-send` text and its reply appear in the same transcript.
-
-Expected result: typed, spoken and `agent-send` commands all reach the agent, and the robot acts on them.
-
-## 4.3 WebRTC video
+## 4.2 WebRTC video
 
 Needs a Cloudflare Realtime app id and secret in `rtc.json`, see [Relay hosting](../../docs/web/relay_hosting.md#video-through-cloudflare).
 
 ```bash
-uv run dimos --replay run unitree-go2-cockpit --rtc-file rtc.json
+uv run dimos run --local-relay unitree-go2 --replay.db go2_short --rtc-file rtc.json
 # In another terminal:
 curl http://127.0.0.1:7780/api/info
 ```
@@ -47,7 +30,7 @@ curl http://127.0.0.1:7780/api/info
 
 Expected result: `/api/info` answers `"rtc": true` and the video plays over WebRTC in both browsers.
 
-## 4.4 Hosted relay with TLS and auth
+## 4.3 Hosted relay with TLS and auth
 
 Needs Docker, mkcert with libnss3-tools and Firefox on the relay machine, following the LAN recipe in [Relay hosting](../../docs/web/relay_hosting.md). No robot is needed.
 
@@ -58,7 +41,7 @@ mkdir -p docker/relay/config && mkcert -cert-file docker/relay/config/fullchain.
 echo '{"robots": {"go2-lab": "<key>"}, "viewers": {"tester": "<token>"}}' > docker/relay/config/auth.json
 sudo chown -R 1993:1993 docker/relay/config
 sudo docker compose -f docker/relay/compose.yaml up -d --build
-uv run dimos --replay --relay-url https://<relay-ip> run unitree-go2-cockpit --relay-ca "$(mkcert -CAROOT)/rootCA.pem" --robot-id go2-lab --relay-key <key>
+uv run dimos --relay-url https://<relay-ip> run unitree-go2 --replay.db go2_short --relay-ca "$(mkcert -CAROOT)/rootCA.pem" --robot-id go2-lab --relay-key <key>
 curl -H "Authorization: Bearer <token>" https://<relay-ip>/api/stats
 sudo docker compose -f docker/relay/compose.yaml restart relay
 ```
@@ -67,7 +50,7 @@ sudo docker compose -f docker/relay/compose.yaml restart relay
 
 Expected result: after the token the page shows the replay robot's video and maps, the stats call lists `go2-lab` under `robots`, and after the relay restart the page and the robot reconnect by themselves.
 
-## 4.5 Hosted teleop
+## 4.4 Hosted teleop
 
 Needs a physical Go2, an API key from the [Dimensional console](https://console.dimensional.org/console/keys) and internet access from the robot machine. See [Remote teleop](../../docs/capabilities/teleoperation/hosted.md).
 

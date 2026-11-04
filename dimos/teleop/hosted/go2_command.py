@@ -14,7 +14,7 @@
 
 """Go2 command plane: operator command / E-STOP / drive dispatch.
 
-Driver calls go over RPC (``go2: GO2Connection`` ref); operator-facing planes go
+Driver calls go over RPC (``go2: Go2WebRtc`` ref); operator-facing planes go
 over transport — commands in on ``state_json``, acks out on ``cmd_ack``. Drive is
 a guarded stream filter: operator cmd_vel → E-STOP/stale/reorder/nav-yield guard
 → ``tele_cmd_vel``.
@@ -37,7 +37,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
@@ -74,11 +74,11 @@ class Go2CommandConfig(ModuleConfig):
 
 
 class Go2CommandModule(Module):
-    """Operator command/E-STOP/drive plane, driving GO2Connection over RPC."""
+    """Operator command/E-STOP/drive plane, driving Go2WebRtc over RPC."""
 
     config: Go2CommandConfig
 
-    go2: GO2Connection
+    go2: Go2WebRtc
 
     state_json: In[bytes]
     cmd_ack: Out[bytes]

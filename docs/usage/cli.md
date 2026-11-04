@@ -33,9 +33,9 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 
 Values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Global environment variables use uppercase field names, such as `ROBOT_IPS` (transport also accepts `DIMOS_TRANSPORT`).
 
-Module settings go after the blueprint names, for example `dimos run unitree-go2 --go2connection.replay-exit true`. Use `dimos run <blueprint> --help` for that stack's options. See [Configuration](/docs/usage/configuration.md#migrating-former-global-settings) for the migration from global flags.
+Module settings go after the blueprint names, for example `dimos run unitree-go2 --go2webrtc.obstacle-avoidance true`. Use `dimos run <blueprint> --help` for that stack's options. See [Configuration](/docs/usage/configuration.md#migrating-former-global-settings) for the migration from global flags.
 
-Module booleans require an explicit value (`--go2connection.replay-exit true` or `--go2connection.replay-exit=true`); they have no bare-flag or `--no-` form. Global booleans still accept paired flags such as `--replay` / `--no-replay`.
+Module booleans require an explicit value (`--go2webrtc.obstacle-avoidance true` or `--go2webrtc.obstacle-avoidance=true`); they have no bare-flag or `--no-` form. Global booleans still accept paired flags such as `--replay` / `--no-replay`.
 
 ---
 
@@ -72,20 +72,20 @@ as `--relocalizationmodule.map-file`. Global flags work on either side of
 dimos run unitree-go2
 
 # Background (returns immediately)
-dimos run unitree-go2-agentic --daemon
+dimos run unitree-go2 --daemon
 
 # Replay with Rerun viewer
-dimos --replay --viewer rerun run unitree-go2
+dimos --viewer rerun run unitree-go2 --replay.db go2_short
 
 # Record every stream of a run, then replay it
-dimos --record --simulation run unitree-go2
-dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
+dimos --record run unitree-go2 --simulation mujoco
+dimos run unitree-go2 --replay.db recordings/<run-id>/memory.db
 
 # Replay Big Office (Zenoh is the default transport)
-dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+dimos --transport=zenoh --dtop run unitree-go2 --replay.db=go2_bigoffice
 
 # Real robot
-dimos run unitree-go2-agentic --robot-ip 192.168.123.161
+dimos run unitree-go2 --robot-ip 192.168.123.161
 
 # Blueprint configuration (both value forms are accepted)
 dimos run unitree-go2 --map-file recording_go2
@@ -100,7 +100,7 @@ dimos run my-robot-stack.go2
 dimos run unitree-go2 my-robot-stack.keyboard-teleop
 
 # Disable specific modules
-dimos run unitree-go2-agentic --disable OsmSkill WebInput
+dimos run unitree-go2 --disable LocalMapRelocalization
 ```
 
 External blueprint names are always fully qualified as
@@ -138,8 +138,8 @@ opening its runtime transports. RPC relationships are hidden by default; pass `-
 to include RPC contracts and their declared Spec methods as dashed edges.
 
 ```bash
-dimos graph unitree-go2-agentic
-dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
+dimos graph unitree-go2
+dimos graph unitree-go2 --rpc --output go2.svg
 ```
 
 The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`
@@ -290,8 +290,8 @@ Example output:
 
 ```text
 Built-in blueprints:
+  unitree-g1
   unitree-go2
-  unitree-go2-agentic
 
 External blueprints:
   my-robot-stack.go2
@@ -366,7 +366,7 @@ Works with any agentic blueprint. Does not require MCP. Publishes directly to th
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `McpClient` in the blueprint find the endpoint themselves).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-g1-agentic-sim`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `McpClient` in the blueprint find the endpoint themselves).
 
 To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 

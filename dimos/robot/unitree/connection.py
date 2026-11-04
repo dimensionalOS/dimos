@@ -43,7 +43,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.go2.config import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,

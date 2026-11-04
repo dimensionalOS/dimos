@@ -15,9 +15,8 @@
 """foxglove_msgs::msg::CompressedVideo — one encoded video packet.
 
 Just the encoded bytes + codec name. Inter-frame codecs (h264) can't be decoded
-one packet at a time — feed the ordered stream through
-:class:`~dimos.robot.unitree.go2.dds.video.H264Decoder` to get ``Image`` frames,
-or let the rerun bridge log it as a ``VideoStream`` and decode in-viewer.
+one packet at a time — let the rerun bridge log it as a ``VideoStream`` and
+decode in-viewer.
 """
 
 from __future__ import annotations

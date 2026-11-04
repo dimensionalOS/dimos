@@ -159,37 +159,22 @@ replay.stream(
 
 ## Usage: Stub Connections for Testing
 
-A common pattern is creating replay-based connection stubs for testing without hardware. From [`robot/unitree/go2/connection.py`](/dimos/robot/unitree/go2/connection.py#L83):
-
-This is a bit primitive. We'd like to write a higher-order API for recording full module I/O for any module, but this is a work in progress at the moment.
+A common pattern is replaying a recording in a robot connection's place, to test without hardware. The Go2 blueprint does this with [`ReplayNative`](/dimos/memory/replay_native/native.py), a Rust module that publishes every stream of a `.db` or `.mcap`. From [`robot/unitree/go2/blueprints/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/unitree_go2.py#L37):
 
 ```python skip
-class ReplayConnection(UnitreeWebRTCConnection):
-    dir_name = "go2_sf_office"
+class Replay(ReplayNative):
+    """A Go2 recording in the connection's place: idle until ``--replay.db <x.db|x.mcap>``."""
 
-    def __init__(self, **kwargs) -> None:
-        get_data(self.dir_name)
-        self.replay_config = {
-            "loop": kwargs.get("loop"),
-            "seek": kwargs.get("seek"),
-            "duration": kwargs.get("duration"),
-        }
-
-    def lidar_stream(self):
-        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")
-        return lidar_store.stream(**self.replay_config)
-
-    def video_stream(self):
-        video_store = TimedSensorReplay(f"{self.dir_name}/video")
-        return video_store.stream(**self.replay_config)
+    lidar: Out[PointCloud2]
+    odom: Out[PoseStamped]
+    color_image: Out[Image]
+    camera_info: Out[CameraInfo]
 ```
 
-This allows running the full perception pipeline against recorded data:
+This allows running the full navigation pipeline against recorded data:
 
-```python skip
-# Use replay connection instead of real hardware
-connection = ReplayConnection(loop=True, seek=5.0)
-robot = GO2Connection(connection=connection)
+```bash
+dimos run unitree-go2 --replay.db go2_short
 ```
 
 ## Data Format

@@ -34,26 +34,14 @@ Five components, each independently testable:
 
 ## Quickstart
 
-```bash
-# With a real robot or simulation
-export OPENAI_API_KEY=...
-dimos --simulation run unitree-go2-temporal-memory
-
-# With replay data
-dimos --replay run unitree-go2-temporal-memory
-
-# Chat with the agent (queries temporal memory)
-humancli
-```
-
-The standalone `temporal-memory` component is registered in `all_blueprints.py`
-and can be composed with any camera source:
+The `temporal-memory` component is registered in `all_blueprints.py` and can be
+composed with any source of `color_image` and `odom` (set `OPENAI_API_KEY`):
 
 ```python
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.perception.experimental.temporal_memory import temporal_memory
+from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory
 
-bp = autoconnect(your_camera_blueprint, temporal_memory())
+bp = autoconnect(your_camera_blueprint, TemporalMemory.blueprint())
 ```
 
 ## Configuration

@@ -128,7 +128,7 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
     # Importing the blueprint builds LCM handles. memq keeps them off the network.
     env = {**os.environ, "LCM_DEFAULT_URL": "memq://"}
     leaked = _leaked_modules(
-        "import dimos.robot.unitree.go2.blueprints.smart.unitree_go2",
+        "import dimos.robot.unitree.go2.blueprints.unitree_go2",
         BLUEPRINT_MUST_NOT_IMPORT,
         env=env,
     )

@@ -15,13 +15,13 @@
 """Hosted teleop blueprints — Cloudflare broker (module-based).
 
 Operator-facing planes ride Cloudflare transports; robot-internal driver
-commands go over RPC (``go2: GO2Connection`` ref). All broker-bound modules
+commands go over RPC (``go2: Go2WebRtc`` ref). All broker-bound modules
 share one worker so the Cloudflare transports resolve to a single session
-(GO2Connection is RPC/LCM only in its own worker — no session fragmentation).
+(Go2WebRtc is RPC/LCM only in its own worker — no session fragmentation).
 
 Drive routing: broker cmd_unreliable → Go2CommandModule ``cmd_vel_in`` → guard
 → ``tele_cmd_vel`` → MovementManager (arbitrates manual vs nav, sole cmd_vel
-producer) → GO2Connection. ``state_reliable`` fans to stats AND command modules.
+producer) → Go2WebRtc. ``state_reliable`` fans to stats AND command modules.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
 from dimos.stream.audio.base import AudioEvent
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
@@ -58,7 +58,7 @@ from dimos.teleop.hosted.robot_type import RobotType
 # Single camera: only the Go2's front camera feeds the video track.
 teleop_hosted_go2_transport = (
     autoconnect(
-        GO2Connection.blueprint(),
+        Go2WebRtc.blueprint(),
         Go2CommandModule.blueprint(allow_acrobatics=True),
         Go2AudioBridgeModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1"]),
@@ -71,7 +71,7 @@ teleop_hosted_go2_transport = (
     )
     .remappings(
         [
-            (GO2Connection, "color_image", "cam1"),
+            (Go2WebRtc, "color_image", "cam1"),
         ]
     )
     .transports(
@@ -103,7 +103,7 @@ teleop_hosted_go2_transport = (
 # Multicam: adds a RealSense as cam2 (operator-selectable in the mux).
 teleop_hosted_go2_multicam = (
     autoconnect(
-        GO2Connection.blueprint(),
+        Go2WebRtc.blueprint(),
         Go2CommandModule.blueprint(allow_acrobatics=True),
         Go2AudioBridgeModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
@@ -117,7 +117,7 @@ teleop_hosted_go2_multicam = (
     )
     .remappings(
         [
-            (GO2Connection, "color_image", "cam1"),
+            (Go2WebRtc, "color_image", "cam1"),
             (RealSenseCamera, "color_image", "cam2"),
         ]
     )

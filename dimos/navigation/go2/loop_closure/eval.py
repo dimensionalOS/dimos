@@ -38,7 +38,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.go2.loop_closure.pgo import PGO
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.config import front_camera_info
 from dimos.utils.data import get_data
 
 DEFAULT_DATASETS = [f"hk_village{i}" for i in range(1, 7)]
@@ -65,7 +65,7 @@ def _eval_recording(
 ) -> tuple[float, float]:
     """Returns (pgo_time_s, spread_m) for one recording."""
     db_path = get_data(f"{name}.db")
-    cam_info = _camera_info_static()
+    cam_info = front_camera_info()
 
     store = SqliteStore(path=str(db_path))
     with store:

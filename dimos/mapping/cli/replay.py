@@ -183,13 +183,13 @@ def main(
     from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-    from dimos.robot.unitree.go2.connection import _camera_info_static
+    from dimos.robot.unitree.go2.config import front_camera_info
 
     src_path = resolve_dataset(dataset)
     store = open_store(src_path)
     if out is None:
         out = Path.cwd() / f"{src_path.stem}.rrd"
-    cam_info = _camera_info_static()
+    cam_info = front_camera_info()
 
     with store:
         # Resolve which streams to voxelize: all PointCloud2 streams, or the

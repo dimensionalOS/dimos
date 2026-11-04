@@ -49,9 +49,8 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
-from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
-from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
+from dimos.protocol.tf.static_tf_publisher import FrameSpec, frames_to_edge_transforms
+from dimos.robot.unitree.go2.config import CMD_VEL_TIMEOUT
 from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
 from dimos.simulation.scenes.procedural import Family, Scene, generate
@@ -103,6 +102,15 @@ BOX_EDGES = np.array(
     ],
     dtype=np.float64,
 )
+
+
+# The Go2 + Mid-360 rig, measured: base_link -> front_camera (the URDF camera mount), then the lidar 3.2 cm back,
+# 12 cm up and pitched 60 deg down.
+FRAMES: list[FrameSpec] = [
+    ("base_link", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("front_camera", "base_link", (0.32715, -0.00003, 0.04297), (0.0, 0.0, 0.0)),
+    ("mid360_link", "front_camera", (-0.032, 0.0, 0.12), (0.0, math.radians(60.0), 0.0)),
+]
 
 
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:

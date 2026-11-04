@@ -448,7 +448,7 @@ def main(
     from dimos.navigation.go2.loop_closure.pgo import PGO, PGOKwargs
     from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
-    from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, _camera_info_static
+    from dimos.robot.unitree.go2.config import BASE_TO_OPTICAL, front_camera_info
     from dimos.visualization.rerun.init import rerun_init
 
     db_path = resolve_dataset(dataset)
@@ -640,7 +640,7 @@ def main(
             )
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
-        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
+        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else front_camera_info()
         xf = DetectMarkers(
             camera_info=cam_info,
             marker_length_m=marker_size,

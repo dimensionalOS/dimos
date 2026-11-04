@@ -73,7 +73,6 @@ from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
-from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
     help="Dimensional CLI",
@@ -109,7 +108,6 @@ main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 hardware_app.add_typer(can_app, name="can")
 main.add_typer(hardware_app, name="hardware")
 main.add_typer(data_app, name="data")
-main.add_typer(go2tool_app, name="go2tool")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
 main.command("login")(cloud_login)

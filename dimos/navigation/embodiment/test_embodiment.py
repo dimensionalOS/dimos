@@ -23,7 +23,7 @@ import pytest
 from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.robot.diy.alfred.config import alfred_model
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT
+from dimos.robot.unitree.go2.config import ROBOT_HEIGHT
 
 
 def test_go2_height_matches_the_robot_constant() -> None:

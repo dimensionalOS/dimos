@@ -8,7 +8,7 @@ Needs Ollama running (`ollama serve`) and `OPENAI_API_KEY`, since `SpeakSkill` s
 
 ```bash
 ollama pull qwen3:8b
-uv run dimos --replay run unitree-go2-agentic-ollama --daemon
+uv run dimos --simulation run unitree-g1-agentic-sim --daemon --mcpclient.model ollama:qwen3:8b
 ```
 
 In another terminal, start `uv run humancli` and leave it open for both runs. Send the first greeting from the original terminal:
@@ -22,7 +22,7 @@ Wait for the spoken greeting to finish and the final assistant reply to appear i
 ```bash
 uv run dimos stop
 RELEASE_TRACE_DIR="$(mktemp -d)"
-uv run dimos --replay run unitree-go2-agentic --daemon --mcpclient.trace-dir "$RELEASE_TRACE_DIR"
+uv run dimos --simulation run unitree-g1-agentic-sim --daemon --mcpclient.trace-dir "$RELEASE_TRACE_DIR"
 uv run dimos agent-send "say hello"
 ```
 
@@ -33,7 +33,7 @@ ls "$RELEASE_TRACE_DIR"
 uv run dimos stop
 ```
 
-Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory. `unitree-go2-agentic-huggingface` is the same check with a local Hugging Face model, which downloads on first start.
+Expected result: the Ollama run greets through the speakers with the local model, and the provider run produces complete request/response pairs in the new trace directory.
 
 ## 7.2 Tool streams and capability conflicts
 
@@ -52,7 +52,7 @@ Expected result: the first prompt shows two live tool boxes that stream at the s
 
 ## 7.3 Point navigation skill
 
-Needs the Habitat setup from the [Habitat check](08_navigation.md#87-habitat-simulation).
+Needs the Habitat setup from the [Habitat check](08_navigation.md#85-habitat-simulation).
 
 ```bash
 uv run dimos run habitat-nav mcp-server point-nav-skill-container
@@ -68,7 +68,7 @@ Expected result: each `go_to` prints a line starting with "Navigating." and draw
 
 ## 7.4 TypeSafe navigation agent
 
-Needs a TypeSafe API key from https://console.typesafe.ai/settings/keys and the Habitat setup from the [Habitat check](08_navigation.md#87-habitat-simulation).
+Needs a TypeSafe API key from https://console.typesafe.ai/settings/keys and the Habitat setup from the [Habitat check](08_navigation.md#85-habitat-simulation).
 
 ```bash
 export TYPESAFENAVIGATIONAGENT__API_KEY=<typesafe-api-key>
@@ -81,32 +81,22 @@ uv run humancli --transport zenoh
 
 Expected result: the robot turns toward the chair and drives up to it, and the agent ends with `goal reached or unreachable; stopped`.
 
-## 7.5 Object detection in replay
+## 7.5 Perception localize
 
-The first run pulls the YOLO weights.
-
-```bash
-uv run dimos --replay run unitree-go2-detection
-# In another terminal, as soon as Rerun opens. The recording plays once and lasts 60 s.
-uv run dimos topic echo /detected_image_0
-```
-
-Expected result: the echo prints one `Image(shape=...)` line for each camera frame with a detection. In Rerun, `world/detected_pointcloud_0` highlights the detected object's points on the map.
-
-## 7.6 Perception localize
-
-Needs a CUDA GPU. The first run downloads the SigLIP, OWLv2 and EdgeTAM weights.
+Needs a CUDA GPU. The first run downloads the SigLIP, OWLv2 and EdgeTAM weights. See [the localize demo](../../dimos/perception/localize/demo_blueprints/README.md).
 
 ```bash
-uv run dimos --replay run go2-localize
-# In another terminal. Repeat until the state reads ready.
+uv run dimos run xarm-localize-live
+# In another terminal, the recorded xArm feed:
+uv run python -m dimos.perception.localize.demo_blueprints.xarm_feed --seek 427 --duration 76
+# In a third terminal. Repeat until the state reads ready.
 uv run dimos mcp call state
-uv run dimos mcp call localize -j '{"objects": "table", "start": 0, "duration": 60}' --timeout 300
+uv run dimos mcp call localize -j '{"objects": "book", "start": 0, "duration": 76}' --timeout 300
 ```
 
-Expected result: `state` goes from `not ready` to `ready`, and `localize` prints a `'table' at (x, y, z) in world` line with a score for each instance it found.
+Expected result: `state` goes from `not ready` to `ready`, and `localize` prints a `'book' at (x, y, z) in world` line with a score for each instance it found.
 
-## 7.7 Camera calibration and AprilTag markers
+## 7.6 Camera calibration and AprilTag markers
 
 Needs a webcam, a printed chessboard with 8 by 6 inner corners, and the tag from the first command printed at 100% scale. See [Camera calibration](../../docs/usage/camera_calibration.md).
 
@@ -123,19 +113,16 @@ uv run dimos run desk-marker-tf rerun-bridge-module --marker-length-m 0.1
 
 Expected result: calibration prints an RMS line and writes both files, and Rerun shows the webcam feed with a box labelled with the tag id.
 
-## 7.8 Agent evals
-
-The live case needs the DimSim assets from the [DimSim check](02_replay-and-simulation.md#23-dimsim-browser-simulation), the [LCM multicast host setup](05_cli-and-api.md#56-transports-and-topics), and an `OPENAI_API_KEY` for the agentic stack's `SpeakSkill` startup. It takes several minutes.
+## 7.7 Agent evals
 
 ```bash
 uv run dimos evals list
 uv run dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.question_answer
-DIMOS_TRANSPORT=lcm uv run dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["unitree-go2-agentic"]'
 ```
 
-Expected result: `list` prints the suites. The examples run prints `PASS` for both cases and a summary line that ends in the run directory, which holds `results.jsonl` and `summary.json`. In the live run the robot tours the apartment and drives to the bed, and `dimsim_go_to_bed` passes.
+Expected result: `list` prints the suites. The examples run prints `PASS` for both cases and a summary line that ends in the run directory, which holds `results.jsonl` and `summary.json`.
 
-## 7.9 VQA dataset generation
+## 7.8 VQA dataset generation
 
 Needs a CUDA GPU and a fresh recording, since the shipped replay datasets have no `camera_info` or `tf` streams.
 
@@ -150,7 +137,7 @@ The first recorded images can precede the first `camera_info` or `tf` message. I
 
 Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors.
 
-## 7.10 xArm6 WorldBelief
+## 7.9 xArm6 WorldBelief
 
 The `xarm6-worldbelief` hardware blueprint has a broken TF tree, so this check runs its `scan` and `recall` skills on a recorded xArm6 session. The first run downloads the detector and embedding models.
 
@@ -164,17 +151,3 @@ uv run dimos stop
 ```
 
 Expected result: `scan` prints `Scan complete: <n> object(s) present` with a confirmed `pen` among the objects, and `recall` returns the pen with `when_ts`, `where_camera` and a `where_object` position.
-
-## 7.11 Depth2DepthCloud
-
-Needs a Go2 whose Jetson has a dimos checkout and nix. The first start builds the native modules with nix. On the Jetson it also builds the TensorRT engine, which takes minutes.
-
-```bash
-# On the Jetson:
-uv run dimos run go2-dds depth2-depth-cloud --daemon
-uv run dimos topic echo /depth_cloud   # Ctrl+C after a few messages
-uv run dimos log -n 50
-uv run dimos stop
-```
-
-Expected result: the echo prints `PointCloud2(frame_id=..., num_points=...)` messages with a nonzero point count, and the log shows `Depth model loaded.` and `depth2depth_cloud timing` lines.
