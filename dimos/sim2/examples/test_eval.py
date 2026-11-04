@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import uuid
 
 from dimos_lcm.common_msgs import SampleHeader
-from dimos_lcm.control_msgs import JointCommand, JointTarget
+from dimos_lcm.control_msgs import ActionCommand, JointTarget
 import numpy as np
 import pytest
 
@@ -88,7 +88,7 @@ class PushEnvironment(Environment):
         sample = sim.inspect().header
         end_ns = sample.time_ns + 100_000_000
         sim.submit(
-            JointCommand(
+            ActionCommand(
                 header=SampleHeader(
                     clock_id=sample.clock_id,
                     epoch=sample.epoch,
@@ -99,8 +99,8 @@ class PushEnvironment(Environment):
                 based_on_time_ns=sample.time_ns,
                 apply_at_ns=sample.time_ns,
                 valid_until_ns=end_ns,
-                targets_length=1,
-                targets=[JointTarget(joint_id="left/slide_x", position=x, kp=200, kd=20)],
+                joint_targets_length=1,
+                joint_targets=[JointTarget(joint_id="left/slide_x", position=x, kp=200, kd=20)],
             )
         )
         # SimModule advances to the next controller boundary, then waits for this subject.

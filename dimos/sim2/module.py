@@ -25,7 +25,7 @@ from typing import Any, ClassVar, cast
 import uuid
 
 from dimos_lcm.common_msgs import SampleHeader
-from dimos_lcm.control_msgs import BodyWrench, JointCommand
+from dimos_lcm.control_msgs import ActionCommand
 from dimos_lcm.sim_msgs import SimulationClock, WorldState
 
 from dimos.core.core import rpc
@@ -33,7 +33,7 @@ from dimos.core.module import ModuleConfig
 from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.sim2.description import SceneConfig
-from dimos.sim2.extensions import validate_extensions
+from dimos.sim2.extensions import validate_cbor_entries
 from dimos.sim2.physics.interface import PhysicsBackend
 
 
@@ -60,8 +60,7 @@ class SimConfig(ModuleConfig):
 class SimModule(SharedConfigModule):
     config: SimConfig
     dedicated_worker: ClassVar[bool] = True
-    joint_command: In[JointCommand]
-    body_wrench: In[BodyWrench]
+    actions: In[ActionCommand]
     observations: Out[WorldState]
     clock: Out[SimulationClock]
 
@@ -74,8 +73,8 @@ class SimModule(SharedConfigModule):
         self._observations: Queue[WorldState] = Queue(512)
         self._clock_queue: Queue[SimulationClock] = Queue(1)
         self._ready: Future[None] = Future()
-        self._commands: Queue[JointCommand | BodyWrench] = Queue(256)
-        self._pending: list[JointCommand | BodyWrench] = []
+        self._commands: Queue[ActionCommand] = Queue(256)
+        self._pending: list[ActionCommand] = []
         self._operations: Queue[tuple[str, tuple[Any, ...], Future[Any]]] = Queue(32)
         self._done = threading.Event()
         self._status_lock = threading.Lock()
@@ -92,7 +91,6 @@ class SimModule(SharedConfigModule):
         self._sequences: dict[str, int] = {}
         self._answered: dict[str, int] = {}
         self._expires: dict[str, int] = {}
-        self._wrenches: list[BodyWrench] = []
         self._next_sample_ns = 0
         self._last_state: WorldState | None = None
         self._waiting_since: float | None = None
@@ -119,13 +117,10 @@ class SimModule(SharedConfigModule):
             raise
 
     @rpc
-    def submit(self, command: JointCommand | BodyWrench) -> None:
+    def submit(self, command: ActionCommand) -> None:
         self._commands.put_nowait(command)
 
-    async def handle_joint_command(self, command: JointCommand) -> None:
-        self.submit(command)
-
-    async def handle_body_wrench(self, command: BodyWrench) -> None:
+    async def handle_actions(self, command: ActionCommand) -> None:
         self.submit(command)
 
     @rpc
@@ -208,7 +203,7 @@ class SimModule(SharedConfigModule):
         motion = [self._backend.read_motion(frame) for frame in self.config.motion_frames]
         joints = self._backend.read_joints(self.config.joint_ids or self._backend.joint_ids)
         extensions = self._backend.read_extensions()
-        validate_extensions(
+        validate_cbor_entries(
             extensions, {"world", *self._backend.body_ids, *self._backend.joint_ids}
         )
         return WorldState(
@@ -244,33 +239,37 @@ class SimModule(SharedConfigModule):
                     continue
                 if not self._time_ns < command.valid_until_ns <= self._time_ns + 10_000_000_000:
                     raise ValueError("command validity must be in (0, 10] simulation seconds")
-                if isinstance(command, JointCommand):
-                    if command.targets_length != len(command.targets):
-                        raise ValueError("invalid target count")
-                    if command.based_on_time_ns > command.apply_at_ns:
-                        raise ValueError("command cannot depend on a future measurement")
-                    names = {t.joint_id for t in command.targets}
-                    for controller in self.config.controllers:
-                        if names.intersection(controller.joint_ids):
-                            if (
-                                h.source_id != controller.controller_id
-                                or names != set(controller.joint_ids)
-                                or command.based_on_time_ns != self._time_ns
-                                or command.apply_at_ns != self._time_ns
-                                or command.valid_until_ns < self._time_ns + controller.period_ns
-                                or self._time_ns % controller.period_ns
-                            ):
-                                raise ValueError(
-                                    "controlled joints require their exact current sample"
-                                )
-                    self._backend.set_joint_targets(command.targets)
-                    self._expires.update((n, command.valid_until_ns) for n in names)
-                    self._answered[h.source_id] = self._time_ns
-                else:
-                    self._backend.validate_wrench(command)
-                    if len(self._wrenches) >= 256:
-                        raise ValueError("too many active wrenches")
-                    self._wrenches.append(command)
+                if command.joint_targets_length != len(command.joint_targets):
+                    raise ValueError("invalid joint target count")
+                if command.cbor_commands_length != len(command.cbor_commands):
+                    raise ValueError("invalid CBOR command count")
+                if not command.joint_targets and not command.cbor_commands:
+                    raise ValueError("empty action")
+                if command.based_on_time_ns > command.apply_at_ns:
+                    raise ValueError("command cannot depend on a future measurement")
+                validate_cbor_entries(
+                    command.cbor_commands,
+                    {"world", *self._backend.body_ids, *self._backend.joint_ids},
+                )
+                names = {t.joint_id for t in command.joint_targets}
+                answered = []
+                for controller in self.config.controllers:
+                    if names.intersection(controller.joint_ids):
+                        if (
+                            h.source_id != controller.controller_id
+                            or names != set(controller.joint_ids)
+                            or command.based_on_time_ns != self._time_ns
+                            or command.apply_at_ns != self._time_ns
+                            or command.valid_until_ns < self._time_ns + controller.period_ns
+                            or self._time_ns % controller.period_ns
+                        ):
+                            raise ValueError("controlled joints require their exact current sample")
+                        answered.append(controller.controller_id)
+                # Backend validates the whole action before changing any native state.
+                self._backend.apply_action(command.joint_targets, command.cbor_commands)
+                self._expires.update((n, command.valid_until_ns) for n in names)
+                # An unrelated CBOR operation is never a controller's motor reply.
+                self._answered.update((source, self._time_ns) for source in answered)
                 self._sequences[h.source_id] = h.sequence
             except ValueError as error:
                 with self._status_lock:
@@ -283,8 +282,7 @@ class SimModule(SharedConfigModule):
             self._backend.hold(expired)
             for name in expired:
                 del self._expires[name]
-        self._wrenches = [w for w in self._wrenches if w.valid_until_ns > self._time_ns]
-        self._backend.step(tuple(self._wrenches))
+        self._backend.step()
         self._time_ns += self.config.dt_ns
         with self._status_lock:
             self._status.update(time_ns=self._time_ns, epoch=self._epoch)
@@ -391,7 +389,6 @@ class SimModule(SharedConfigModule):
         self._answered.clear()
         self._expires.clear()
         self._sequences.clear()
-        self._wrenches.clear()
         self._pending.clear()
         self._next_sample_ns = 0
         self._waiting_since = None
