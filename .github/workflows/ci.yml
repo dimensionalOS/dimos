@@ -1090,12 +1090,12 @@ jobs:
       - name: Cache the replay dataset archive
         uses: actions/cache@v6
         with:
-          path: data/.lfs/go2_ranch_short.db.tar.gz
-          key: lfs-go2-ranch-short-${{ hashFiles('data/.lfs/go2_ranch_short.db.tar.gz') }}
+          path: data/.lfs/go2_short.db.tar.gz
+          key: lfs-go2-short-${{ hashFiles('data/.lfs/go2_short.db.tar.gz') }}
       - name: Fetch the replay dataset from LFS if not cached
         run: |
-          if git lfs pointer --check --file data/.lfs/go2_ranch_short.db.tar.gz; then
-            git lfs pull --include="data/.lfs/go2_ranch_short.db.tar.gz" --exclude=""
+          if git lfs pointer --check --file data/.lfs/go2_short.db.tar.gz; then
+            git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
           else
             echo "archive already smudged"
           fi
@@ -1132,7 +1132,7 @@ jobs:
       - name: Compile the dimos bytecode
         run: uv run python -m compileall -q -j 0 dimos
       - name: Pre-extract the replay database
-        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_ranch_short.db'))"
+        run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
       - name: Precompile the numba kernels
         run: |
           uv run python -c "

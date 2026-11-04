@@ -41,7 +41,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
-from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
+from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 from dimos.agents.skills.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
 from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE

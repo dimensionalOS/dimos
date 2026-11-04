@@ -14,12 +14,18 @@
 
 import pytest
 
-from dimos.e2e_tests.go2_sim_client import RANCH_ARG
+from dimos.e2e_tests.go2_sim_client import RANCH_ARG, Go2SimClient, go2_sim  # noqa: F401
 
 # The DimSim test's arena, 8 m east of the ranch house's walls on its open ground (the lidar sees no
 # floor out there, so the arena brings its own). The house's own loops all pass through gaps the
 # local planner won't take (the dining room's 0.7 m by the wall), so the walls are added as there.
 DX = 8.0
+
+
+@pytest.fixture
+def dim_sim(go2_sim: Go2SimClient) -> Go2SimClient:
+    """spawn_wall_on_pose's wall goes into the MuJoCo ranch."""
+    return go2_sim
 
 
 @pytest.mark.self_hosted_large

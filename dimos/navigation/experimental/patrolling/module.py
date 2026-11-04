@@ -30,7 +30,7 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
-from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
+from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

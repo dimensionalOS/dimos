@@ -4,7 +4,7 @@ The Go2 navigation stack runs entirely without ROS. It uses a **column-carving v
 
 ![Live Go2 navigation in Rerun](assets/noros_nav.gif)
 
-For return visits to a known space, use a [permanent map](/docs/capabilities/navigation/go2/index.md) instead of relying on live mapping alone.
+For return visits to a known space, use a [permanent map](/docs/capabilities/navigation/index.md) instead of relying on live mapping alone.
 
 ## Data Flow
 
@@ -61,7 +61,7 @@ Each incoming LiDAR frame is spliced into the global map via column carving: any
 - Dynamic objects (people, doors) get cleared automatically
 - The latest observation always wins
 
-Live loop closure corrects odometry drift when the robot revisits a place. For return visits across runs, use a [permanent map](/docs/capabilities/navigation/go2/index.md).
+Live loop closure corrects odometry drift when the robot revisits a place. For return visits across runs, use a [permanent map](/docs/capabilities/navigation/index.md).
 
 
 #### Configuration
@@ -104,7 +104,7 @@ class HeightCostConfig(OccupancyConfig):
 
 ![Global costmap](assets/3-globalcostmap.png)
 
-### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/go2/replanning_a_star/module.py))
+### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py))
 
 The planner processes the terrain gradient and computes its own planning costmap, preferring safe free paths but willing to path aggressively through tight spaces when it has to.
 
@@ -172,7 +172,7 @@ from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_
 )
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.experimental.patrolling.module import PatrollingModule
-from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.connections.webrtc.module import Go2WebRtc
 
 unitree_go2 = autoconnect(

@@ -23,7 +23,7 @@ from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding
 try:
-    from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
+    from dimos.navigation.replanning_a_star.min_cost_astar_ext import (
         min_cost_astar_cpp as _astar_cpp,
     )
 

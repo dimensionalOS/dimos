@@ -200,6 +200,7 @@ def test_run_scores_every_episode_and_rescores_the_same(
             blueprint="fake",
             procs=3,
             out_dir=tmp_path / "run",
+            min_free_gb=0.0,  # the runs here are tiny; the floor is the host's
             overrides=(
                 f"--fake-recordings={tmp_path / 'recordings'}",
                 "--set-x=1",
@@ -244,6 +245,7 @@ def test_keeping_failures_drops_the_recordings_of_successes_and_rescores_the_sam
             blueprint="fake",
             procs=3,
             out_dir=tmp_path / "run",
+            min_free_gb=0.0,  # the runs here are tiny; the floor is the host's
             overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
             keep="failures",
             command=(sys.executable, str(tmp_path / "fake.py")),
@@ -285,6 +287,7 @@ def test_an_interrupted_run_keeps_finished_episodes_and_drops_the_rest(tmp_path:
         blueprint="fake",
         procs=2,
         out_dir=tmp_path / "run",
+        min_free_gb=0.0,  # the runs here are tiny; the floor is the host's
         overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
         command=(sys.executable, str(tmp_path / "fake.py")),
     )
@@ -326,6 +329,7 @@ def test_harness_failures_are_errors_that_survive_a_rescore(tmp_path: Path) -> N
             blueprint="fake",
             procs=2,
             out_dir=tmp_path / "run",
+            min_free_gb=0.0,  # the runs here are tiny; the floor is the host's
             overrides=(f"--fake-recordings={tmp_path / 'recordings'}",),
             command=(sys.executable, str(tmp_path / "fake.py")),
         )

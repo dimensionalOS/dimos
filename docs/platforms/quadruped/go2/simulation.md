@@ -9,7 +9,7 @@ See [Setup](/docs/platforms/quadruped/go2/setup.md) for installing dimOS first.
 ```bash
 # Replay a recorded Go2 session (a .db, a dimos .mcap, or a dataset name)
 # First run downloads the dataset from LFS
-dimos run unitree-go2 --replay.db go2_ranch_short
+dimos run unitree-go2 --replay.db go2_short
 ```
 
 Opens the Rerun 3D visualization. Watch the Go2 map an office in real time.

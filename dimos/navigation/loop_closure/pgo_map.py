@@ -18,7 +18,7 @@ The map is anchored at the robot: current data stays where raw odometry puts it.
 
 Check against the offline method on a recording::
 
-    uv run python -m dimos.navigation.go2.loop_closure.pgo_map go2_hongkong_office
+    uv run python -m dimos.navigation.loop_closure.pgo_map go2_hongkong_office
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ import numpy as np
 from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.go2.loop_closure.pgo import PGOConfig, PGOState, _pose_to_pose3
-from dimos.navigation.go2.loop_closure.premap import (
+from dimos.navigation.loop_closure.pgo import PGOConfig, PGOState, _pose_to_pose3
+from dimos.navigation.loop_closure.premap import (
     ROS_GTSAM_SWAP,
     Premap,
     apply,

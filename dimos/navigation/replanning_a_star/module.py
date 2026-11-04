@@ -29,7 +29,7 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationInterface, NavigationState
-from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
+from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -7,8 +7,8 @@ The bridge is `RelayBridgeModule`, a dimOS module that runs inside the robot pro
 There are two ways. A flag on the command line appends a bridge with the default cockpit to any blueprint:
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_ranch_tour --local-relay
-uv run dimos run unitree-go2 --replay.db go2_ranch_tour --relay-url http://localhost:7780
+uv run dimos run unitree-go2 --replay.db go2_short --local-relay
+uv run dimos run unitree-go2 --replay.db go2_short --relay-url http://localhost:7780
 ```
 
 Or the blueprint composes `cockpit(...)` itself, as the Go2 cockpit blueprints do. Then the bridge is part of the blueprint with exactly the panels and channels declared, and the flags only choose the relay. Without `--relay-url` such a blueprint starts a local relay by itself.

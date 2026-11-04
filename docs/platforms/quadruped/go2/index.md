@@ -18,7 +18,7 @@
 
 - [Navigation overview](/docs/capabilities/navigation/index.md): live mapping vs premap relocalization
 - [Navigation stack](/docs/capabilities/navigation/deep_dive.md): column-carving voxel mapping, costmap generation, A* planning
-- [Mapping and relocalization](/docs/capabilities/navigation/go2/index.md): relocalizing on a saved map
+- [Mapping and relocalization](/docs/capabilities/navigation/index.md): relocalizing on a saved map
 - [Visualization](/docs/usage/visualization.md): Rerun, performance tuning
 - [Data Streams](/docs/usage/data_streams/index.md): RxPY streams, backpressure, quality filtering
 - [Transports](/docs/usage/transports/index.md): Zenoh, LCM, DDS

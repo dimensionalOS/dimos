@@ -14,7 +14,12 @@
 
 import pytest
 
-from dimos.e2e_tests.go2_sim_client import RANCH_ARG, distance_to_nearest
+from dimos.e2e_tests.go2_sim_client import (  # noqa: F401
+    RANCH_ARG,
+    distance_to_nearest,
+    explore_ranch,
+    go2_sim,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 

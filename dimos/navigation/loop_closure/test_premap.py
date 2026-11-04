@@ -22,9 +22,9 @@ from scipy.spatial.transform import Rotation
 # TODO(PY311): drop. Skip before importing test_pgo, which skips mid-import without gtsam.
 gtsam = pytest.importorskip("gtsam")
 
-from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
-from dimos.navigation.go2.loop_closure.premap import ROS_GTSAM_SWAP, Premap
-from dimos.navigation.go2.loop_closure.test_pgo import _make_lidar_stream
+from dimos.navigation.loop_closure.pgo_map import PGOMap
+from dimos.navigation.loop_closure.premap import ROS_GTSAM_SWAP, Premap
+from dimos.navigation.loop_closure.test_pgo import _make_lidar_stream
 
 
 def _to_gtsam(premap: Premap):

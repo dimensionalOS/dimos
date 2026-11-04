@@ -166,7 +166,7 @@ Activate the environment using the command printed by the installer, then run:
 ```bash
 # Replay a recorded quadruped session (no hardware needed): the recording stands in for the robot's
 # connection and the navigation stack runs on it. The first run downloads the recording from LFS.
-dimos run unitree-go2 --replay.db go2_ranch_short
+dimos run unitree-go2 --replay.db go2_short
 
 # Any Go2 recording (.db or dimos .mcap) with lidar, odom, color_image and camera_info streams
 dimos run unitree-go2 --replay.db path/to/recording.db
@@ -193,7 +193,7 @@ dimos run unitree-go2
 
 | Run command | What it does |
 |-------------|-------------|
-| `dimos run unitree-go2 --replay.db go2_ranch_short` | Quadruped navigation replay — voxel map, MLS planning, local planner |
+| `dimos run unitree-go2 --replay.db go2_short` | Quadruped navigation replay — voxel map, MLS planning, local planner |
 | `dimos run unitree-go2 --simulation mujoco` | Quadruped navigation in MuJoCo simulation |
 | `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |

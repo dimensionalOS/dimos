@@ -17,7 +17,7 @@ import numpy as np
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
+from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
 
 
 def test_find_wide_path_with_start_inside_inflation() -> None:

@@ -16,7 +16,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.navigation.experimental.patrolling.module import PatrollingConfig, PatrollingModule
-from dimos.navigation.go2.replanning_a_star.module import (
+from dimos.navigation.replanning_a_star.module import (
     ReplanningAStarPlanner,
     ReplanningAStarPlannerConfig,
 )

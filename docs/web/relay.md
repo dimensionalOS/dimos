@@ -78,7 +78,7 @@ The first line on stdout is the ready line:
 `wtUrl` is the WebTransport endpoint. Its QUIC port is ephemeral and changes on every start, so clients discover it through `/api/info` and you never type it. Attach a robot with the relay's HTTP address:
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_ranch_tour --relay-url http://localhost:7780
+uv run dimos run unitree-go2 --replay.db go2_short --relay-url http://localhost:7780
 ```
 
 Then open `http://localhost:7780/` for the cockpit. Things to know:

@@ -16,7 +16,7 @@ import math
 
 import pytest
 
-from dimos.e2e_tests.go2_sim_client import RANCH_ARG
+from dimos.e2e_tests.go2_sim_client import RANCH_ARG, go2_sim  # noqa: F401
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 

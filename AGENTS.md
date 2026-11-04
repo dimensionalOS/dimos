@@ -16,8 +16,8 @@ bash scripts/install.sh --mode dev --project-dir .
 dimos list
 
 # --- Go2 quadruped ---
-dimos run unitree-go2 --replay.db go2_ranch_short     # mapping + navigation, replay data
-dimos run unitree-go2 --replay.db go2_ranch_short --daemon  # same, backgrounded
+dimos run unitree-go2 --replay.db go2_short     # mapping + navigation, replay data
+dimos run unitree-go2 --replay.db go2_short --daemon  # same, backgrounded
 dimos run unitree-go2 --simulation mujoco       # Go2 in MuJoCo sim
 dimos run unitree-go2 --robot-ip 192.168.123.161  # real Go2 hardware
 

@@ -14,8 +14,8 @@
 
 """Cockpit browser e2e (the T3 + T5 acceptance demos, in CI).
 
-Starts `dimos run unitree-go2 --replay.db go2_ranch_tour --local-relay` (the go2
-blueprint on the go2_ranch_tour recording: recorded odom + camera, no
+Starts `dimos run unitree-go2 --replay.db go2_short --local-relay` (the go2
+blueprint on the go2_short recording: recorded odom + camera, no
 MuJoCo and no hardware) and drives the served Cockpit with a real headless
 browser: live odom must tick, the video panel must decode real camera frames
 at rate, the session must stay connected (Firefox's tight QUIC stream credit
@@ -67,7 +67,7 @@ def start_go2_replay() -> Iterator[Callable[[], DimosCliCall]]:
         # connection means no MuJoCo and no hardware.
         call.global_args = ["--viewer", "none"]
         call.extra_env = {"RELAYBRIDGEMODULE__OPEN_BROWSER": "false"}
-        call.demo_args = ["run", "unitree-go2", "--replay.db", "go2_ranch_tour", "--local-relay"]
+        call.demo_args = ["run", "unitree-go2", "--replay.db", "go2_short", "--local-relay"]
         call.start()
         calls.append(call)
         return call

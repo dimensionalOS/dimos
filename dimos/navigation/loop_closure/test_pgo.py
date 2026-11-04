@@ -24,7 +24,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.go2.loop_closure.pgo import (
+from dimos.navigation.loop_closure.pgo import (
     PGO,
     Keyframe,
     PGOConfig,
@@ -65,7 +65,7 @@ class TestPGOConfig:
 
     def test_kwargs_typed_dict_matches_config(self) -> None:
         """`PGOKwargs` must mirror every `PGOConfig` field 1:1."""
-        from dimos.navigation.go2.loop_closure.pgo import PGOKwargs
+        from dimos.navigation.loop_closure.pgo import PGOKwargs
 
         assert set(PGOConfig.model_fields.keys()) == set(PGOKwargs.__annotations__.keys())
 

@@ -26,9 +26,9 @@ gtsam = pytest.importorskip("gtsam")
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.go2.loop_closure.pgo import PGOConfig, PGOState
-from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
-from dimos.navigation.go2.loop_closure.premap import Premap, apply, matrix_pose
+from dimos.navigation.loop_closure.pgo import PGOConfig, PGOState
+from dimos.navigation.loop_closure.pgo_map import PGOMap
+from dimos.navigation.loop_closure.premap import Premap, apply, matrix_pose
 
 # The room is the map; the live odom frame sees it through TRUE.
 ROOM = (12.0, 6.0, 2.5)

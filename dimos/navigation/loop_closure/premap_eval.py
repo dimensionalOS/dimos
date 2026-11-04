@@ -17,7 +17,7 @@
 The relocalizer runs inline, paced as on the robot: the next attempt waits for as much
 recording time as the last one took to run::
 
-    uv run python -m dimos.navigation.go2.loop_closure.premap_eval \\
+    uv run python -m dimos.navigation.loop_closure.premap_eval \\
         go2_hongkong_office --premap go2_hongkong_office_first_half --seek 280
 """
 
@@ -34,9 +34,9 @@ import typer
 from dimos.memory.cli.dataset import open_dataset
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
-from dimos.navigation.go2.loop_closure.premap import Premap
-from dimos.navigation.go2.loop_closure.relocalizer import PremapMatcher, attempt_fix
+from dimos.navigation.loop_closure.pgo_map import PGOMap
+from dimos.navigation.loop_closure.premap import Premap
+from dimos.navigation.loop_closure.relocalizer import PremapMatcher, attempt_fix
 
 # what counts as the same surface, and how far out the premap still overlaps the live map
 SURFACE_M = 0.10

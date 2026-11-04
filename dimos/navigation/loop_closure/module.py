@@ -34,10 +34,10 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.go2.loop_closure.pgo import PGOConfig
-from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO, PGOMap
-from dimos.navigation.go2.loop_closure.premap import MAP_SUFFIX, Premap
-from dimos.navigation.go2.loop_closure.relocalizer import PremapMatcher, attempt_fix
+from dimos.navigation.loop_closure.pgo import PGOConfig
+from dimos.navigation.loop_closure.pgo_map import LIVE_PGO, PGOMap
+from dimos.navigation.loop_closure.premap import MAP_SUFFIX, Premap
+from dimos.navigation.loop_closure.relocalizer import PremapMatcher, attempt_fix
 from dimos.robot.unitree.type.lidar import repair_stale_ts
 from dimos.utils.data import backup_file, resolve_named_path
 from dimos.utils.logging_config import setup_logger

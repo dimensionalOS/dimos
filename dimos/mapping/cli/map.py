@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.navigation.go2.loop_closure.pgo import PoseGraph
+    from dimos.navigation.loop_closure.pgo import PoseGraph
 
 PATH_THICKNESS = 0.01
 # Pin pattern (from dimos/memory/vis/space/rerun.py): thin vertical line
@@ -445,8 +445,8 @@ def main(
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.navigation.go2.loop_closure.pgo import PGO, PGOKwargs
-    from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO
+    from dimos.navigation.loop_closure.pgo import PGO, PGOKwargs
+    from dimos.navigation.loop_closure.pgo_map import LIVE_PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.config import BASE_TO_OPTICAL, front_camera_info
     from dimos.visualization.rerun.init import rerun_init
@@ -708,8 +708,8 @@ def main(
         print(f'    pcd = PointCloud2.lcm_decode(open("{out_path.name}", "rb").read())')
 
     if export:
-        from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
-        from dimos.navigation.go2.loop_closure.premap import MAP_SUFFIX
+        from dimos.navigation.loop_closure.pgo_map import PGOMap
+        from dimos.navigation.loop_closure.premap import MAP_SUFFIX
 
         map_path = Path.cwd() / f"{db_path.stem}{MAP_SUFFIX}"
         print(f"exporting PGO graph to {map_path}...")

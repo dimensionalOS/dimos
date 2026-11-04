@@ -20,7 +20,7 @@ Expected result: the views agree with the robot's motion, and keyboard controls 
 Needs a Cloudflare Realtime app id and secret in `rtc.json`, see [Relay hosting](../../docs/web/relay_hosting.md#video-through-cloudflare).
 
 ```bash
-uv run dimos run --local-relay unitree-go2 --replay.db go2_ranch_tour --rtc-file rtc.json
+uv run dimos run --local-relay unitree-go2 --replay.db go2_short --rtc-file rtc.json
 # In another terminal:
 curl http://127.0.0.1:7780/api/info
 ```
@@ -41,7 +41,7 @@ mkdir -p docker/relay/config && mkcert -cert-file docker/relay/config/fullchain.
 echo '{"robots": {"go2-lab": "<key>"}, "viewers": {"tester": "<token>"}}' > docker/relay/config/auth.json
 sudo chown -R 1993:1993 docker/relay/config
 sudo docker compose -f docker/relay/compose.yaml up -d --build
-uv run dimos --relay-url https://<relay-ip> run unitree-go2 --replay.db go2_ranch_tour --relay-ca "$(mkcert -CAROOT)/rootCA.pem" --robot-id go2-lab --relay-key <key>
+uv run dimos --relay-url https://<relay-ip> run unitree-go2 --replay.db go2_short --relay-ca "$(mkcert -CAROOT)/rootCA.pem" --robot-id go2-lab --relay-key <key>
 curl -H "Authorization: Bearer <token>" https://<relay-ip>/api/stats
 sudo docker compose -f docker/relay/compose.yaml restart relay
 ```

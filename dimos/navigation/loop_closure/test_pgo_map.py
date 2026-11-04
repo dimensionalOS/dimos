@@ -21,7 +21,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 pytest.importorskip("gtsam")
 
-from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
+from dimos.navigation.loop_closure.pgo_map import PGOMap
 
 VOXEL = 0.05
 

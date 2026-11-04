@@ -17,9 +17,12 @@ its RPCs, and the NJ ranch scan its e2e tests and evals run in."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 import math
 import time
 from typing import Any
+
+import pytest
 
 from dimos.core.rpc_client import RPCClient
 from dimos.core.transport import PubSubTransport
@@ -186,3 +189,17 @@ def distance_to_nearest(
         math.hypot(max(x0 - x, 0.0, x - x1), max(y0 - y, 0.0, y - y1))
         for x0, y0, x1, y1 in rectangles
     )
+
+
+# fixtures for the MuJoCo ranch tests, kept out of conftest.py (it stays DimSim's)
+@pytest.fixture
+def go2_sim() -> Iterator[Go2SimClient]:
+    client = Go2SimClient()
+    client.start()
+    yield client
+    client.stop()
+
+
+@pytest.fixture
+def explore_ranch(go2_sim: Go2SimClient) -> Callable[[], None]:
+    return go2_sim.look_around_ranch

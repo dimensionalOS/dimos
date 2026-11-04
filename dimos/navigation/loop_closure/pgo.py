@@ -45,7 +45,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.go2.loop_closure.premap import ROS_GTSAM_SWAP
+from dimos.navigation.loop_closure.premap import ROS_GTSAM_SWAP
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     import gtsam  # type: ignore[import-not-found,import-untyped]
     from typing_extensions import Unpack  # TODO(PY311): import from typing
 
-    from dimos.navigation.go2.loop_closure.premap import Premap
+    from dimos.navigation.loop_closure.premap import Premap
 
 T = TypeVar("T")
 

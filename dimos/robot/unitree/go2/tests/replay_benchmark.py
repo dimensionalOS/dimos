@@ -30,7 +30,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_ranch_short")
+REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_short")
 RUN_TIMEOUT = 420.0  # spawn -> exit deadline, inside the test timeout
 # GO2Connection source streams. camera_info is deliberately absent: it is
 # published by a 1 Hz forever-loop thread, so it never quiesces.
@@ -200,7 +200,7 @@ def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float
 @pytest.mark.skipif_macos_bug
 @pytest.mark.timeout(900)
 def test_go2_replay_realtime_load() -> None:
-    """Run `dimos run unitree-go2 --replay.db go2_ranch_short --replay.exit-on-complete=true` to completion."""
+    """Run `dimos run unitree-go2 --replay.db go2_short --replay.exit-on-complete=true` to completion."""
     from dimos.memory.replay import resolve_db_path
 
     db_path = str(resolve_db_path(REPLAY_DB))  # LFS pull/extract on miss

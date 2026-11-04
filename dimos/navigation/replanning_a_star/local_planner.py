@@ -27,10 +27,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
-from dimos.navigation.go2.replanning_a_star.controllers import Controller, PController
-from dimos.navigation.go2.replanning_a_star.navigation_map import NavigationMap
-from dimos.navigation.go2.replanning_a_star.path_clearance import PathClearance
-from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer
+from dimos.navigation.replanning_a_star.controllers import Controller, PController
+from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
+from dimos.navigation.replanning_a_star.path_clearance import PathClearance
+from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
