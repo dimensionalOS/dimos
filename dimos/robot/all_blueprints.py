@@ -355,6 +355,7 @@ all_modules = {
     "relocalization-module": "dimos.mapping.relocalization.module.RelocalizationModule",
     "replanning-a-star-planner": "dimos.navigation.go2.replanning_a_star.module.ReplanningAStarPlanner",
     "replay-module": "dimos.memory.replay_module.ReplayModule",
+    "replay-native": "dimos.memory.replay_native.native.ReplayNative",
     "rerun-bridge-module": "dimos.visualization.rerun.bridge.RerunBridgeModule",
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
