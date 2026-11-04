@@ -57,18 +57,6 @@ impl SurfacePlane {
     fn center_z(&self, voxel_size: f32) -> f32 {
         (0.5 * voxel_size + self.z0).clamp(-voxel_size, voxel_size)
     }
-
-    /// Whether the two surfaces differ anywhere in a voxel by more than `tol` meters.
-    pub fn moved(a: Option<Self>, b: Option<Self>, voxel_size: f32, tol: f32) -> bool {
-        match (a, b) {
-            (Some(a), Some(b)) => {
-                let corner = 0.5 * voxel_size * ((a.gx - b.gx).abs() + (a.gy - b.gy).abs());
-                (a.z0 - b.z0).abs() + corner > tol
-            }
-            (None, None) => false,
-            _ => true,
-        }
-    }
 }
 
 /// A surface's slope, dz/dx then dz/dy.
@@ -87,8 +75,6 @@ pub struct Terrain<'a> {
     pub voxel_size: f32,
     pub robot_height: f32,
     pub step_m: f32,
-    /// How far fit noise alone moves a plane's height.
-    pub noise_m: f32,
     /// The steepest slope a plane may have, dz per meter.
     pub max_slope: f32,
 }
@@ -154,12 +140,12 @@ impl Terrain<'_> {
     /// `steppable` from `a` with its surface already in hand.
     pub fn steps_onto(&self, a: VoxelKey, a_surface: Surface, b: VoxelKey) -> bool {
         let gap = surface_gap(a_surface, self.surface(b), (a, b), self.voxel_size);
-        within_step(gap, self.voxel_size, self.step_m, self.noise_m)
+        within_step(gap, self.voxel_size, self.step_m)
     }
 
     /// The most z cells a step between adjacent columns can span: plane center within a voxel, edge half a slope further.
     pub fn step_reach_cells(&self) -> i32 {
-        ((self.step_m + self.noise_m) / self.voxel_size + 2.0 + self.max_slope).floor() as i32
+        (self.step_m / self.voxel_size + 2.0 + self.max_slope).floor() as i32
     }
 }
 
@@ -189,18 +175,12 @@ pub fn surface_gap(
     Gap::Planes(((zb - bx * hx - by * hy) - (za + ax * hx + ay * hy)).abs())
 }
 
-/// Whether a gap is within a step: past fit noise between planes, in whole voxels otherwise.
-pub fn within_step(gap: Gap, voxel_size: f32, step_m: f32, noise_m: f32) -> bool {
+/// Whether a gap is within a step: in meters between planes, in whole voxels otherwise.
+pub fn within_step(gap: Gap, voxel_size: f32, step_m: f32) -> bool {
     match gap {
-        Gap::Planes(m) => climb(m, noise_m) <= step_m,
+        Gap::Planes(m) => m <= step_m,
         Gap::Voxels(n) => n <= (step_m / voxel_size).floor() as i32,
     }
-}
-
-/// The climb in a rise between two surfaces: none within plane fit noise, so
-/// a noisy flat floor costs nothing to cross.
-pub fn climb(rise: f32, noise_m: f32) -> f32 {
-    (rise - noise_m).max(0.0)
 }
 
 #[cfg(test)]
@@ -216,7 +196,6 @@ mod tests {
             voxel_size: VOXEL,
             robot_height: 0.3,
             step_m: 0.05,
-            noise_m: 0.0,
             max_slope: 1.0,
         }
     }
@@ -268,14 +247,5 @@ mod tests {
         for w in keys.windows(2) {
             assert!(t.steppable(w[0], w[1]), "{:?} -> {:?}", w[0], w[1]);
         }
-    }
-
-    #[test]
-    fn plane_moves_compare_the_whole_voxel() {
-        let flat = SurfacePlane::level(0.0);
-        let tipped = SurfacePlane::sloped(0.0, 0.2, 0.0);
-        assert!(!SurfacePlane::moved(Some(flat), Some(flat), VOXEL, 0.005));
-        assert!(SurfacePlane::moved(Some(flat), Some(tipped), VOXEL, 0.005));
-        assert!(SurfacePlane::moved(Some(flat), None, VOXEL, 0.005));
     }
 }

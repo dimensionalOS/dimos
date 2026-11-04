@@ -31,7 +31,6 @@ class MLSPlanner:
         wall_buffer_weight: float = 100.0,
         step_threshold_m: float = 0.16,
         max_surface_slope_deg: float = 45.0,
-        plane_noise_m: float = 0.01,
         step_penalty_weight: float = 4.0,
         worker_threads: int = 4,
     ) -> None: ...

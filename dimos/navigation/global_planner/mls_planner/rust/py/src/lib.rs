@@ -70,7 +70,6 @@ impl MLSPlanner {
         wall_buffer_weight = 100.0,
         step_threshold_m = 0.16,
         max_surface_slope_deg = 45.0,
-        plane_noise_m = 0.01,
         step_penalty_weight = 4.0,
         worker_threads = 4,
     ))]
@@ -85,7 +84,6 @@ impl MLSPlanner {
         wall_buffer_weight: f32,
         step_threshold_m: f32,
         max_surface_slope_deg: f32,
-        plane_noise_m: f32,
         step_penalty_weight: f32,
         worker_threads: u32,
     ) -> PyResult<Self> {
@@ -104,7 +102,6 @@ impl MLSPlanner {
             wall_buffer_weight,
             step_threshold_m,
             max_surface_slope_deg,
-            plane_noise_m,
             step_penalty_weight,
             // Unused here. Only the binary's replan loop reads goal_tolerance.
             goal_tolerance: 1.0,
