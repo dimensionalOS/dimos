@@ -1,4 +1,4 @@
-import type { Live } from "../shared/protocol/status.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
 
 export type Role = "owner" | "viewer";
 

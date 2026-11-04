@@ -2,16 +2,16 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import { agentPaths } from "../gateway/config/paths.ts";
-import type { Command, CommandContext } from "./commands/base.ts";
-import { runConversations } from "./commands/conversations.ts";
-import { runGatewayCommand } from "./commands/gateway.ts";
-import { printRun } from "./commands/run.ts";
-import { runStatus } from "./commands/status.ts";
-import { runStop } from "./commands/stop.ts";
-import { runTui } from "./commands/tui.ts";
-import { runVersion } from "./commands/version.ts";
-import { ensureGateway } from "./process.ts";
+import { agentPaths } from "#dimos/agents/gateway/config/paths.ts";
+import type { Command, CommandContext } from "#dimos/agents/cli/commands/base.ts";
+import { runConversations } from "#dimos/agents/cli/commands/conversations.ts";
+import { runGatewayCommand } from "#dimos/agents/cli/commands/gateway.ts";
+import { printRun } from "#dimos/agents/cli/commands/run.ts";
+import { runStatus } from "#dimos/agents/cli/commands/status.ts";
+import { runStop } from "#dimos/agents/cli/commands/stop.ts";
+import { runTui } from "#dimos/agents/cli/commands/tui.ts";
+import { runVersion } from "#dimos/agents/cli/commands/version.ts";
+import { ensureGateway } from "#dimos/agents/cli/process.ts";
 
 const USAGE = `dimos agent [--conversation ID] [--view] [--cwd DIR]              open a terminal (a new conversation without --conversation)
 dimos agent run [--conversation ID] [--cwd DIR] [--json] PROMPT   submit one input and print the answer, as JSON lines with --json

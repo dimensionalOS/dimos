@@ -31,4 +31,5 @@ class DamiaoRuntimeConfig:
 
     bus_devices: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
     gravity_comp: bool = Field(default=True, strict=True)
+    passive_grippers: tuple[_NonEmptyString, ...] = ()
     tick_deadline_us: int = Field(default=1_000, ge=1, strict=True)

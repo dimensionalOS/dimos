@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { cloudFrame, gridFrame, imageFrame, topDownCamera } from "./frames.ts";
+import { cloudFrame, gridFrame, imageFrame, topDownCamera } from "#dimos/agents/shared/render/frames.ts";
 import { test } from "node:test";
 
 async function pixels(png: Buffer): Promise<{ data: Buffer; width: number; height: number; channels: number }> {
