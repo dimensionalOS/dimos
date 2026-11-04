@@ -63,6 +63,13 @@ export class TopicEgress {
     if (this.delivery === "latest") this.#drain();
   }
 
+  /** Drop the frames not sent yet, keeping each key's rate history. */
+  discard(): void {
+    if (this.delivery !== "latest") return;
+    for (const frame of this.#queue) this.#release(frame.bytes.byteLength);
+    this.#queue = [];
+  }
+
   #release(size: number): void {
     this.#bytes -= size;
     this.#frames--;

@@ -1055,6 +1055,60 @@ Deno.test("a change sent before the previous one is acknowledged keeps that one'
   h.close();
 });
 
+Deno.test("a variant acknowledged before the route opens serves its viewer once the route is open", () => {
+  const h = mediaSetup();
+  h.subscribe("a");
+  const b = h.subscribe("b", { quality: 40 });
+  assertEquals(h.variants().map((m) => m.variant), ["v2"]);
+  // A provider may answer the variant before the route itself.
+  h.variantReady();
+  assertEquals(b.ready(), []);
+  h.opened();
+  assertEquals(b.ready().map((m) => m.settings), [{ ...LOW, quality: 40 }]);
+  h.close();
+});
+
+Deno.test("a viewer moving off a variant lowers that variant's rate to whoever remains", () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a");
+  h.subscribe("b", { maxHz: 5 });
+  h.opened();
+  const open = h.provider.opens()[0];
+  assertEquals(h.variants(), []);
+  h.update(a, 1, { quality: 40 });
+  h.variantReady();
+  // Only b is left on v1: it samples at b's rate now.
+  assertEquals(h.variants().at(-1), {
+    t: "topic_variant",
+    route: open.route,
+    gen: open.gen,
+    variant: "v1",
+    settings: { ...LOW, maxHz: 5 },
+  });
+  h.close();
+});
+
+Deno.test("frames queued under the old variant are dropped when the viewer moves", async () => {
+  const h = mediaSetup();
+  const a = h.subscribe("a", { maxHz: 1 });
+  h.opened();
+  h.activate(a);
+  h.frame(1, "v1");
+  h.frame(2, "v1");
+  await flush();
+  assertEquals(h.received(a), [1]);
+  h.update(a, 1, { quality: 40 });
+  h.variantReady();
+  // The second frame was due now, but it carries the old settings.
+  h.tick(1000);
+  await flush();
+  assertEquals(h.received(a), [1]);
+  h.frame(3, "v2");
+  await flush();
+  assertEquals(h.received(a), [1, 3]);
+  h.close();
+});
+
 Deno.test("a fifth settings set rejects with variant_limit until a variant in its grace period can be retired", () => {
   const h = mediaSetup();
   const viewers = [10, 20, 30, 40].map((quality, i) => h.subscribe(`viewer${i}`, { quality }));
