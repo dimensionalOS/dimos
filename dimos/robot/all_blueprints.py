@@ -229,6 +229,7 @@ all_modules = {
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
     "dan-holonomic-tc": "dimos.navigation.experimental.dannav.holonomic_tc.module.DanHolonomicTC",
     "dan-local-planner": "dimos.navigation.experimental.dannav.local_planner.module.DanLocalPlanner",
+    "dds-bridge": "dimos.protocol.dds_bridge.module.DdsBridge",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",
     "demo-monitoring": "dimos.agents.demos.demo_capabilities.DemoMonitoring",
     "demo-robot": "dimos.agents.skills.demo_robot.DemoRobot",
