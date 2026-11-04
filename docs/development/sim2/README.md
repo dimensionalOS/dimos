@@ -10,10 +10,10 @@ sensor model's output, acquired at a specified time; it is not physical truth.
 ```
 sim2/
   description.py              SceneConfig, Instance, Drive; no sensor configuration
+  module.py                   SimModule: DimOS lifecycle, queues and typed ports
   physics/
     interface.py              PhysicsBackend protocol (no MuJoCo types)
     simulation.py             Simulation: clock, steps, command validation/expiry/reset
-    module.py                 SimModule: DimOS lifecycle, queues and typed ports
     mujoco.py                 Native dynamics and physical truth queries
   geometry/
     mujoco.py                 Shared model-to-native geometry compiler

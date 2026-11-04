@@ -21,7 +21,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.geometry.poses import poses_by_id
-from dimos.sim2.physics.module import SimModule
+from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.physics.simulation import SimulationConfig
 from dimos.sim2.sensors.camera.config import CameraConfig

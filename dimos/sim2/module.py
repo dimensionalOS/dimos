@@ -17,7 +17,7 @@
 from collections.abc import Callable
 from queue import Empty
 import threading
-from typing import Any, ClassVar, Protocol, cast
+from typing import Any, ClassVar, cast
 
 from dimos_lcm.control_msgs import BodyWrench, JointCommand
 from dimos_lcm.sensor_msgs import JointState
@@ -29,14 +29,6 @@ from dimos.core.stream import In, Out
 from dimos.sim2.description import ModelSourceSpec, SceneConfig
 from dimos.sim2.physics.interface import PhysicsBackend
 from dimos.sim2.physics.simulation import Simulation, SimulationConfig
-from dimos.spec.utils import Spec
-
-
-class SimulationSpec(Spec, Protocol):
-    def inspect(self, joints: tuple[str, ...] = ()) -> tuple[BodyPoses, JointState]: ...
-    def reset(self) -> tuple[BodyPoses, JointState]: ...
-    def place(self, body_id: str, pose: tuple[float, ...]) -> tuple[BodyPoses, JointState]: ...
-    def status(self) -> dict[str, Any]: ...
 
 
 class SimConfig(ModuleConfig):
