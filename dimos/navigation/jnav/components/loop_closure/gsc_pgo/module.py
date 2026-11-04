@@ -35,7 +35,9 @@ logger = setup_logger()
 
 
 # the core's defaults, shared with the Rust `Config::default()`
-DEFAULTS: dict[str, Any] = json.loads((Path(__file__).parent / "rust" / "defaults.json").read_text())
+DEFAULTS: dict[str, Any] = json.loads(
+    (Path(__file__).parent / "rust" / "defaults.json").read_text()
+)
 ODOMETRY_ERROR_ESTIMATE_FIELDS = [
     f"odometry_error_estimate_{source}_per_sqrt_{unit}"
     for source in ("xy", "z", "yaw", "tilt")
@@ -79,7 +81,9 @@ class PGOConfig(NativeModuleConfig):
     # stop single-scan ICP once its fitness can no longer pass the gate
     closure_icp_early_stop: bool = DEFAULTS["closure_icp_early_stop"]
     # retry alternative places only at or above this pressure
-    closure_alternative_places_min_pressure: float = DEFAULTS["closure_alternative_places_min_pressure"]
+    closure_alternative_places_min_pressure: float = DEFAULTS[
+        "closure_alternative_places_min_pressure"
+    ]
     # drop points a scan re-sends from the previous scan (Go2 L1 republishes its last seconds)
     drop_reseen_points: bool = DEFAULTS["drop_reseen_points"]
     # min points per keyframe cloud; a due keyframe aggregates scans until reached (0 = off)
@@ -170,7 +174,9 @@ class PGOConfig(NativeModuleConfig):
     # with closure_likelihood_confidence: ignore source points no target scan saw
     closure_likelihood_visibility: bool = DEFAULTS["closure_likelihood_visibility"]
     # learn the odometry noise scale from kept closures (max likelihood)
-    learned_odometry_error_estimate_from_closures: bool = DEFAULTS["learned_odometry_error_estimate_from_closures"]
+    learned_odometry_error_estimate_from_closures: bool = DEFAULTS[
+        "learned_odometry_error_estimate_from_closures"
+    ]
     # noise learner reads only pairwise-consistent (PCM core) kept closures
     odometry_error_estimate_evidence_core: bool = DEFAULTS["odometry_error_estimate_evidence_core"]
     # "scan_context": place recognition proposes closures; "inputs_only": only landmarks / world positions (plus landmark-seeded ICP)
@@ -182,7 +188,9 @@ class PGOConfig(NativeModuleConfig):
     # landmark warm start: first solve with odometry xy variances times this (<= 1 = off) so a re-sighting can pull a loop shut
     landmark_warm_start_xy_variance_scale: float = DEFAULTS["landmark_warm_start_xy_variance_scale"]
     # ...then xy stiffens stage by stage (scale divided by this each time) so every stage's LM converges
-    landmark_warm_start_xy_variance_ladder: float = DEFAULTS["landmark_warm_start_xy_variance_ladder"]
+    landmark_warm_start_xy_variance_ladder: float = DEFAULTS[
+        "landmark_warm_start_xy_variance_ladder"
+    ]
     # closure-verification ICP: iteration cap and correspondence gate (m)
     closure_icp_max_iterations: int = DEFAULTS["closure_icp_max_iterations"]
     closure_icp_max_correspondence_m: float = DEFAULTS["closure_icp_max_correspondence_m"]
@@ -209,7 +217,9 @@ class PGOConfig(NativeModuleConfig):
     # LidarRangeConfig: window, blends per window, and the Go2 L1 and Mid-360 range calibrations; keys not given keep the defaults
     lidar_range: dict[str, Any] = Field(default_factory=lambda: dict(DEFAULTS["lidar_range"]))
     # loops' worth of evidence the stated estimate counts as in the learner (0 = closures alone, inf = never learn)
-    learned_odometry_error_estimate_stiffness: float = DEFAULTS["learned_odometry_error_estimate_stiffness"]
+    learned_odometry_error_estimate_stiffness: float = DEFAULTS[
+        "learned_odometry_error_estimate_stiffness"
+    ]
 
     # depth of each scan queue: waiting for tf drops the oldest, waiting for the solver keeps only the newest (<= 0 = unbounded)
     max_scan_queue: int = 5
@@ -218,7 +228,10 @@ class PGOConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _fill_defaults(self) -> PGOConfig:
-        self.deterministic_config = {**DEFAULTS["deterministic_config"], **self.deterministic_config}
+        self.deterministic_config = {
+            **DEFAULTS["deterministic_config"],
+            **self.deterministic_config,
+        }
         self.lidar_range = {**DEFAULTS["lidar_range"], **self.lidar_range}
         given = {name: getattr(self, name) for name in ODOMETRY_ERROR_ESTIMATE_FIELDS}
         if self.odometry_error_estimate_from_lidar_range is None:

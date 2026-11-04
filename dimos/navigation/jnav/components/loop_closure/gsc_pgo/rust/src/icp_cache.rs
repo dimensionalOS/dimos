@@ -174,7 +174,8 @@ pub fn from_bytes(bytes: &[u8]) -> Result<HashMap<String, Vec<f64>>, String> {
     let u32_at = |slice: &[u8]| u32::from_le_bytes(slice.try_into().unwrap()) as usize;
     while at < bytes.len() {
         let key_len = u32_at(take(&mut at, 4)?);
-        let key = String::from_utf8(take(&mut at, key_len)?.to_vec()).map_err(|e| e.to_string())?;
+        let key = String::from_utf8(take(&mut at, key_len)?.to_vec())
+            .map_err(|error| error.to_string())?;
         let count = u32_at(take(&mut at, 4)?);
         let value = take(&mut at, 8 * count)?
             .as_chunks::<8>()

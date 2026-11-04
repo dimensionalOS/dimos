@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The pose graph GSC keeps (`GscPgo`'s solve side): started on a background thread whenever closures, fixes or sightings
-//! arrive, adopted when it finishes, its verdicts and noise evidence fed back.
+//! The pose graph GSC keeps (`GscPgo`'s solve side): started on a background thread whenever closures, fixes or sightings arrive, adopted when it finishes, its verdicts and noise evidence fed back.
 
 use std::thread::JoinHandle;
 
@@ -158,8 +157,7 @@ impl GscPgo {
         self.landmark_sightings
             .push((time, landmark, rotation, position, information));
     }
-    /// Sighting `sighting` (any caller id) of landmark `landmark`, as `add_landmark_factor`; a later call with the same
-    /// `sighting` replaces its factor in the pose graph rather than adding another.
+    /// Sighting `sighting` (any caller id) of landmark `landmark`, as `add_landmark_factor`; a later call with the same `sighting` replaces its factor in the pose graph rather than adding another.
     pub fn replace_landmark_factor(
         &mut self,
         sighting: u64,
@@ -298,8 +296,7 @@ impl GscPgo {
         }
         self.adoption_inline = true;
         moved |= self.settle();
-        // the learned estimate for the next run's config: one more solve of the final graph with the evidence on
-        // (a planar solve measures none)
+        // the learned estimate for the next run's config: one more solve of the final graph with the evidence on (a planar solve measures none)
         if self.config.learned_odometry_error_estimate_from_closures
             && !self.config.planar_pose_graph
             && self.committed_closures.iter().any(|c| c.is_kept())

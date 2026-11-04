@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stage 3, connection fit quality: how well a connection's two places line up without the graph (ICP of the
-//! source scan onto the target submap, its fitness and likelihood ratio).
+//! Stage 3, connection fit quality: how well a connection's two places line up without the graph (ICP of the source scan onto the target submap, its fitness and likelihood ratio).
 
 use rayon::prelude::*;
 
@@ -622,17 +621,14 @@ fn rigid_fit(pairs: &[Correspondence]) -> (Mat3, Vec3) {
 /// `.icp` dump layout version, the file's last 4 bytes; a file without it is version 1.
 pub const ICP_DUMP_VERSION: u32 = 2;
 
-/// Write an ICP's input and result (little-endian, layout in the body below) to `<dir>/<source>_<target><suffix>.icp`.
-#[allow(clippy::too_many_arguments)]
+/// Write an ICP's input and result (little-endian, layout in the body below) to `<dir>/<name>.icp`, name `<source>_<target><suffix>`.
 pub fn dump_icp(
     dir: &str,
-    source_id: usize,
-    target_id: usize,
+    name: &str,
     source: &[[f32; 3]],
     target: &[[f32; 3]],
     init: (&Mat3, &Vec3),
     icp: &IcpResult,
-    suffix: &str,
 ) {
     let mut bytes = Vec::with_capacity(8 + 12 * (source.len() + target.len()) + 105);
     bytes.extend_from_slice(&(source.len() as u32).to_le_bytes());
@@ -656,10 +652,10 @@ pub fn dump_icp(
     bytes.extend_from_slice(&icp.iterations.to_le_bytes());
     bytes.push(icp.stop.code());
     bytes.extend_from_slice(&ICP_DUMP_VERSION.to_le_bytes());
-    let path = std::path::Path::new(dir).join(format!("{source_id}_{target_id}{suffix}.icp"));
-    if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, bytes)) {
-        eprintln!(
-            "closure_icp_dump_dir: could not write {}: {e}",
+    let path = std::path::Path::new(dir).join(format!("{name}.icp"));
+    if let Err(error) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, bytes)) {
+        tracing::warn!(
+            "closure_icp_dump_dir: could not write {}: {error}",
             path.display()
         );
     }

@@ -55,13 +55,19 @@ class LocationConstraint(Timestamped):
     msg_name = "jnav.LocationConstraint"
 
     ts: float
-    to_id: str  # location variable id, URL-like (apriltag://36h11/40cm/5) or UUID; the bridge/loop key
+    to_id: (
+        str  # location variable id, URL-like (apriltag://36h11/40cm/5) or UUID; the bridge/loop key
+    )
     map_id: str  # whose frame system (multi-map); "" for single-graph consumers
     frame_id: str  # the "from": the observation frame the pose is relative to (camera for a tag), not the map root
     kind: str  # optional category; defaults to the to_id URL scheme
-    constraint_instance_id: str  # same id -> replaces the earlier instance; a fresh id per event adds
+    constraint_instance_id: (
+        str  # same id -> replaces the earlier instance; a fresh id per event adds
+    )
     pose: Pose  # relative transform frame_id -> location
-    covariance: list[float]  # 6x6 row-major, tangent order [rot(3), trans(3)]; huge variance on unobserved DOFs
+    covariance: list[
+        float
+    ]  # 6x6 row-major, tangent order [rot(3), trans(3)]; huge variance on unobserved DOFs
 
     def __init__(
         self,

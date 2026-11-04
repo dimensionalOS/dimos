@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stage 4, proportional confidence: the evidence a connection needs grows with its yank (stdevs of predicted spread);
-//! confidence must reach 1 - exp(-required evidence), and a shortfall gets extended ICP on more keyframes.
+//! Stage 4, proportional confidence: the evidence a connection needs grows with its yank (stdevs of predicted spread); confidence must reach 1 - exp(-required evidence), and a shortfall gets extended ICP on more keyframes.
 
 use crate::connection_fit::{self, dump_icp, icp, IcpParams, IcpResult};
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
@@ -374,18 +373,17 @@ impl ClosureSearch {
                     &params,
                 );
                 if !self.config.closure_icp_dump_dir.is_empty() {
-                    let t0 = std::time::Instant::now();
+                    let dump_started = std::time::Instant::now();
                     dump_icp(
                         &self.config.closure_icp_dump_dir,
-                        cur_idx,
-                        target_idx,
+                        &format!("{cur_idx}_{target_idx}_c{j}"),
                         &source,
                         target_points,
                         (&first.rotation, &first.translation),
                         &icp,
-                        &format!("_c{j}"),
                     );
-                    *self.dump_s.lock().expect("dump seconds") += t0.elapsed().as_secs_f64();
+                    *self.dump_s.lock().expect("dump seconds") +=
+                        dump_started.elapsed().as_secs_f64();
                 }
                 let mut v = vec![source.len() as f64];
                 v.extend(crate::icp_cache::encode_icp(&icp));

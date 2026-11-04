@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Pose graph over keyframe poses: Levenberg-Marquardt on a sparse Cholesky, GNC (truncated least squares) picking inlier
-//! closures by agreement with the odometry and each other, then a Huber pass on the kept ones.
+//! Pose graph over keyframe poses: Levenberg-Marquardt on a sparse Cholesky, GNC (truncated least squares) picking inlier closures by agreement with the odometry and each other, then a Huber pass on the kept ones.
 
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::linalg::solvers::SolveCore;
@@ -67,11 +66,9 @@ pub struct SolveConfig {
     pub seed_closure_weights: Vec<f64>,
     /// Per keyframe, the accepted graph as an alternate start used where it fits (`solve_seed_from_accepted`); empty = none.
     pub seed_start: Vec<(Mat3, Vec3)>,
-    /// `planar_pose_graph`: every keyframe's roll, pitch and z are held, and edges and priors weigh only x, y and yaw; GNC's
-    /// cutoffs stay the 3D ones (a 3-DoF cutoff on the stated odometry error estimate drops the true loop on huge_fastlio).
+    /// `planar_pose_graph`: every keyframe's roll, pitch and z are held, and edges and priors weigh only x, y and yaw; GNC's cutoffs stay the 3D ones (a 3-DoF cutoff on the stated odometry error estimate drops the true loop on huge_fastlio).
     pub planar: bool,
-    /// With landmark sightings, the solve starts from solves with the odometry's xy variances times this, then divided by
-    /// `landmark_warm_start_xy_variance_ladder` stage by stage down to the stated ones; either <= 1 = off.
+    /// With landmark sightings, the solve starts from solves with the odometry's xy variances times this, then divided by `landmark_warm_start_xy_variance_ladder` stage by stage down to the stated ones; either <= 1 = off.
     pub landmark_warm_start_xy_variance_scale: f64,
     pub landmark_warm_start_xy_variance_ladder: f64,
 }
@@ -113,32 +110,8 @@ pub struct Solution {
     pub converged: bool,
     /// Per source (xy, z, yaw, tilt, closure rotation, translation): (whitened sum of squares, redundancy).
     pub odometry_error_estimate_evidence: Option<[(f64, f64); 6]>,
-    /// How GNC reached this solution, only when `GSC_SOLVE_LOG` is set (`solve_log_path`).
-    pub trace: Option<SolveTrace>,
     /// Whether it started from `SolveConfig::seed_start`.
     pub seeded: bool,
-}
-
-/// GNC's path to a solution, for the solve log.
-#[derive(Clone)]
-pub struct SolveTrace {
-    pub gnc_iterations: usize,
-    /// The mu of GNC's last iteration (NaN when nothing exceeded its cutoff, so GNC never ran).
-    pub gnc_mu: f64,
-    /// "under_cutoff" (GNC never ran), "converged" (weights settled at 0/1), "cost_change" or "max_iterations".
-    pub gnc_stop: &'static str,
-    /// Per closure, GNC's final weight before rounding at 0.5.
-    pub gnc_weights: Vec<f64>,
-    /// Whitened cost [odometry, closures, priors+sightings] at the start (all closures in) and solution (kept, Huber).
-    pub initial_cost: [f64; 3],
-    pub final_cost: [f64; 3],
-}
-
-/// `GSC_SOLVE_LOG=<path>`: one JSON line per adopted solve (`GscPgo::apply_solve`); read once, unset costs nothing.
-pub fn solve_log_path() -> Option<&'static std::path::Path> {
-    static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| std::env::var_os("GSC_SOLVE_LOG").map(std::path::PathBuf::from))
-        .as_deref()
 }
 
 /// Solve every `free` keyframe's pose from `rotations`/`positions`; the rest are held (at least one, to pin the map).
@@ -170,17 +143,13 @@ pub(crate) struct FastSolve {
     pub(crate) positions: Vec<Vec3>,
     /// Whether every Levenberg-Marquardt pass reached a minimum within its steps.
     pub(crate) converged: bool,
-    /// The largest whitened squared residual of a `new` closure at GNC's start (all in, variances x `gnc_variance_scale`),
-    /// over GNC's cutoff; under 1, GNC would not even run on this window and would keep every closure.
+    /// The largest whitened squared residual of a `new` closure at GNC's start (all in, variances x `gnc_variance_scale`), over GNC's cutoff; under 1, GNC would not even run on this window and would keep every closure.
     pub(crate) worst_over_cutoff: f64,
     /// How much the new closures raise the window's whitened cost at GNC's start, over that cutoff.
     pub(crate) cost_rise_over_cutoff: f64,
 }
 
-/// GNC's start without GNC: least squares with every closure in at GNC's scaled variances, the `new` closures' residuals
-/// read against GNC's cutoff, then (if under it) `solve_core`'s polish (own variances, Huber passes). No covariances. Each
-/// Levenberg-Marquardt pass stops after `steps` steps, bounding the cost (every step lowers the cost, so a pass cut short
-/// is still nearer the minimum than its start).
+/// GNC's start without GNC: least squares with every closure in at GNC's scaled variances, the `new` closures' residuals read against GNC's cutoff, then (if under it) `solve_core`'s polish (own variances, Huber passes). No covariances. Each Levenberg-Marquardt pass stops after `steps` steps, bounding the cost (every step lowers the cost, so a pass cut short is still nearer the minimum than its start).
 pub(crate) fn solve_fast_path(
     start: Start,
     odometry: &[Edge],
@@ -355,10 +324,7 @@ pub(crate) fn solve_core(
     sightings: &[LandmarkSighting],
     config: &SolveConfig,
 ) -> Solution {
-    // a re-sighting across a drifted loop needs big heading changes, which a solve from the odometry cannot reach through
-    // its stiff xy edges (each turned segment would stretch them); with xy loosened and every sighting in (a tag's id makes
-    // a wrong match rare) they pull the loop shut almost linearly in position, then xy stiffens stage by stage (each from
-    // the last, so LM converges in each) and the real solve, GNC verdicts on the sightings included, starts from that shape
+    // a re-sighting across a drifted loop needs big heading changes, which a solve from the odometry cannot reach through its stiff xy edges (each turned segment would stretch them); with xy loosened and every sighting in (a tag's id makes a wrong match rare) they pull the loop shut almost linearly in position, then xy stiffens stage by stage (each from the last, so LM converges in each) and the real solve, GNC verdicts on the sightings included, starts from that shape
     let (mut scale, ladder) = (
         config.landmark_warm_start_xy_variance_scale,
         config.landmark_warm_start_xy_variance_ladder,
@@ -558,20 +524,6 @@ fn solve_from(
         0.0
     };
     let mut sighting_weights = vec![1.0; sightings.len()];
-    let tracing = solve_log_path().is_some();
-    let initial_cost = if tracing {
-        cost_parts(
-            &state,
-            own.weighted(
-                &vec![1.0; closures.len()],
-                &unary_weights,
-                &sighting_weights,
-            ),
-        )
-    } else {
-        [f64::NAN; 3]
-    };
-    let (mut gnc_iterations, mut gnc_mu, mut gnc_stop) = (0, f64::NAN, "under_cutoff");
     // whether the newest Levenberg-Marquardt pass of GNC (or of its start, when GNC never runs) reached a minimum
     let mut converged = levenberg_marquardt(
         &mut state,
@@ -607,10 +559,7 @@ fn solve_from(
             }
         };
         let mut previous_cost = f64::INFINITY;
-        gnc_stop = "max_iterations";
         for _ in 0..100 {
-            gnc_iterations += 1;
-            gnc_mu = mu;
             for (w, &r) in weights.iter_mut().zip(&r2) {
                 *w = tls(r, threshold, mu);
             }
@@ -645,7 +594,6 @@ fn solve_from(
             if mu >= 1.0
                 && (settled || (previous_cost - weighted_cost).abs() <= 1e-5 * weighted_cost)
             {
-                gnc_stop = if settled { "converged" } else { "cost_change" };
                 break;
             }
             previous_cost = weighted_cost;
@@ -673,7 +621,6 @@ fn solve_from(
         .iter()
         .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
         .collect();
-    let gnc_weights = if tracing { weights } else { Vec::new() };
     let unary_kept: Vec<f64> = unary_weights
         .iter()
         .map(|&w| if w >= 0.5 { 1.0 } else { 0.0 })
@@ -758,16 +705,7 @@ fn solve_from(
     } else {
         None
     };
-    let trace = tracing.then(|| SolveTrace {
-        gnc_iterations,
-        gnc_mu,
-        gnc_stop,
-        gnc_weights,
-        initial_cost,
-        final_cost: cost_parts(&state, own.weighted(&huber, &unary_kept, &sighting_kept)),
-    });
     Solution {
-        trace,
         seeded,
         odometry_error_estimate_evidence,
         rotations: state.rotation,
@@ -1307,37 +1245,6 @@ pub(crate) fn linearize_between(
         }
     }
     (residual, jf, jt)
-}
-
-/// `cost`, split as [odometry, closures, priors and sightings].
-fn cost_parts(state: &State, factors: Factors) -> [f64; 3] {
-    let none = Factors::unweighted(&[], &[], &[], &[]);
-    [
-        cost(
-            state,
-            Factors {
-                odometry: factors.odometry,
-                ..none
-            },
-        ),
-        cost(
-            state,
-            Factors {
-                closures: factors.closures,
-                closure_weights: factors.closure_weights,
-                ..none
-            },
-        ),
-        cost(
-            state,
-            Factors {
-                odometry: &[],
-                closures: &[],
-                closure_weights: &[],
-                ..factors
-            },
-        ),
-    ]
 }
 
 fn cost(state: &State, factors: Factors) -> f64 {

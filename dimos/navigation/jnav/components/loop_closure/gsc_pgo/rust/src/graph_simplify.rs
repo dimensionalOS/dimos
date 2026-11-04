@@ -510,19 +510,13 @@ impl Expansion {
         solution.rotations = rotations;
         solution.positions = positions;
         // a closure out of this solve keeps its last verdict
-        let spread = |weights: &[f64]| -> Vec<f64> {
-            let mut all: Vec<f64> = (0..self.closure_count)
-                .map(|i| self.closures.weight(i))
-                .collect();
-            for (&index, &weight) in self.closure_index.iter().zip(weights) {
-                all[index] = weight;
-            }
-            all
-        };
-        solution.closure_weights = spread(&solution.closure_weights);
-        if let Some(trace) = &mut solution.trace {
-            trace.gnc_weights = spread(&trace.gnc_weights);
+        let mut all: Vec<f64> = (0..self.closure_count)
+            .map(|i| self.closures.weight(i))
+            .collect();
+        for (&index, &weight) in self.closure_index.iter().zip(&solution.closure_weights) {
+            all[index] = weight;
         }
+        solution.closure_weights = all;
         solution
     }
 }
@@ -874,7 +868,6 @@ mod tests {
             relative_position_covariance: Vec::new(),
             converged: true,
             odometry_error_estimate_evidence: None,
-            trace: None,
             seeded: false,
         };
         let expanded = expansion.expand(solution);

@@ -1441,13 +1441,11 @@ impl ClosureSearch {
             let (source_cloud, target_cloud, _) = clouds();
             dump_icp(
                 &self.config.closure_icp_dump_dir,
-                cur_idx,
-                target_idx,
+                &format!("{cur_idx}_{target_idx}"),
                 source_cloud,
                 target_cloud,
                 (&init_rotation, &init_translation),
                 &icp,
-                "",
             );
             *self.dump_s.lock().expect("dump seconds") += dump_started.elapsed().as_secs_f64();
         }
@@ -1609,8 +1607,8 @@ impl ClosureSearch {
 
 impl GscPgo {
     pub fn new(config: Config) -> GscPgo {
-        if let Err(e) = config.validate() {
-            panic!("gsc_pgo config: {e}");
+        if let Err(error) = config.validate() {
+            panic!("gsc_pgo config: {error}");
         }
         let scan_context_config = similarity_discovery::Config {
             n_rings: config.scan_context_num_rings.max(0) as usize,

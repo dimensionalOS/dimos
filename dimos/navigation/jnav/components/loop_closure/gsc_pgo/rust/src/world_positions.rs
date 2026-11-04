@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Absolute position priors for the pose graph: positions of a sensor in one or more fixed world frames (GPS, motion
-//! capture, a total station), each its own map -> frame alignment, folded into `big_picture_fit`'s solve.
+//! Absolute position priors for the pose graph: positions of a sensor in one or more fixed world frames (GPS, motion capture, a total station), each its own map -> frame alignment, folded into `big_picture_fit`'s solve.
 
 use crate::big_picture_fit::{
     solve_core, Edge, LandmarkSighting, Solution, SolveConfig, Start, Unary,

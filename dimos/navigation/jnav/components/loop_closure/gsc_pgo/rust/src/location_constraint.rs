@@ -52,7 +52,7 @@ impl Reader<'_> {
     fn text(&mut self) -> io::Result<String> {
         let length = u32::from_be_bytes(self.take(4)?.try_into().expect("4 bytes")) as usize;
         String::from_utf8(self.take(length)?.to_vec())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 }
 
