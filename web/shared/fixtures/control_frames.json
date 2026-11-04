@@ -433,6 +433,75 @@
       "b64": "HQAAAHsidCI6InRvcGljX3Vuc3ViIiwiaWQiOiJzMSJ9"
     },
     {
+      "name": "topic_rtc_offer",
+      "message": {
+        "t": "topic_rtc_offer",
+        "id": "s1",
+        "route": "@t:v2",
+        "gen": 3,
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n"
+      },
+      "b64": "bwEAAHsidCI6InRvcGljX3J0Y19vZmZlciIsImlkIjoiczEiLCJyb3V0ZSI6IkB0OnYyIiwiZ2VuIjozLCJzZHAiOiJ2PTBcclxubz0tIDQ2MTE3MzE0MDA0MzAwNTEzMzYgMiBJTiBJUDQgMTI3LjAuMC4xXHJcbnM9LVxyXG50PTAgMFxyXG5hPWdyb3VwOkJVTkRMRSAwIDFcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MFxyXG5hPXNlbmRvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MVxyXG5hPXNlbmRvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxuIn0="
+    },
+    {
+      "name": "topic_rtc_offer_provider",
+      "message": {
+        "t": "topic_rtc_offer",
+        "id": "r1",
+        "route": "@t:p1",
+        "gen": 3,
+        "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n",
+        "variant": "v1"
+      },
+      "b64": "fgEAAHsidCI6InRvcGljX3J0Y19vZmZlciIsImlkIjoicjEiLCJyb3V0ZSI6IkB0OnAxIiwiZ2VuIjozLCJzZHAiOiJ2PTBcclxubz0tIDQ2MTE3MzE0MDA0MzAwNTEzMzYgMiBJTiBJUDQgMTI3LjAuMC4xXHJcbnM9LVxyXG50PTAgMFxyXG5hPWdyb3VwOkJVTkRMRSAwIDFcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MFxyXG5hPXNlbmRvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxubT12aWRlbyA5IFVEUC9UTFMvUlRQL1NBVlBGIDk2XHJcbmM9SU4gSVA0IDAuMC4wLjBcclxuYT1taWQ6MVxyXG5hPXNlbmRvbmx5XHJcbmE9cnRwbWFwOjk2IEgyNjQvOTAwMDBcclxuIiwidmFyaWFudCI6InYxIn0="
+    },
+    {
+      "name": "topic_rtc_answer",
+      "message": {
+        "t": "topic_rtc_answer",
+        "id": "s1",
+        "route": "@t:v2",
+        "gen": 3,
+        "sdp": "v=0\r\no=- 7 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\n"
+      },
+      "b64": "XgEAAHsidCI6InRvcGljX3J0Y19hbnN3ZXIiLCJpZCI6InMxIiwicm91dGUiOiJAdDp2MiIsImdlbiI6Mywic2RwIjoidj0wXHJcbm89LSA3IDIgSU4gSVA0IDEyNy4wLjAuMVxyXG5zPS1cclxudD0wIDBcclxuYT1ncm91cDpCVU5ETEUgMCAxXHJcbm09dmlkZW8gOSBVRFAvVExTL1JUUC9TQVZQRiA5NlxyXG5jPUlOIElQNCAwLjAuMC4wXHJcbmE9bWlkOjBcclxuYT1yZWN2b25seVxyXG5hPXJ0cG1hcDo5NiBIMjY0LzkwMDAwXHJcbm09dmlkZW8gOSBVRFAvVExTL1JUUC9TQVZQRiA5NlxyXG5jPUlOIElQNCAwLjAuMC4wXHJcbmE9bWlkOjFcclxuYT1yZWN2b25seVxyXG5hPXJ0cG1hcDo5NiBIMjY0LzkwMDAwXHJcbiJ9"
+    },
+    {
+      "name": "topic_rtc_candidate",
+      "message": {
+        "t": "topic_rtc_candidate",
+        "id": "s1",
+        "route": "@t:v2",
+        "gen": 3,
+        "candidate": "candidate:1 1 udp 2130706431 192.168.1.20 51234 typ host generation 0",
+        "mid": "0"
+      },
+      "b64": "mwAAAHsidCI6InRvcGljX3J0Y19jYW5kaWRhdGUiLCJpZCI6InMxIiwicm91dGUiOiJAdDp2MiIsImdlbiI6MywiY2FuZGlkYXRlIjoiY2FuZGlkYXRlOjEgMSB1ZHAgMjEzMDcwNjQzMSAxOTIuMTY4LjEuMjAgNTEyMzQgdHlwIGhvc3QgZ2VuZXJhdGlvbiAwIiwibWlkIjoiMCJ9"
+    },
+    {
+      "name": "topic_rtc_candidate_end",
+      "message": {
+        "t": "topic_rtc_candidate",
+        "id": "r1",
+        "route": "@t:p1",
+        "gen": 3,
+        "candidate": "",
+        "mid": "0"
+      },
+      "b64": "VgAAAHsidCI6InRvcGljX3J0Y19jYW5kaWRhdGUiLCJpZCI6InIxIiwicm91dGUiOiJAdDpwMSIsImdlbiI6MywiY2FuZGlkYXRlIjoiIiwibWlkIjoiMCJ9"
+    },
+    {
+      "name": "topic_rtc_close",
+      "message": {
+        "t": "topic_rtc_close",
+        "id": "s1",
+        "route": "@t:v2",
+        "gen": 3,
+        "reason": "rtc_limit"
+      },
+      "b64": "TgAAAHsidCI6InRvcGljX3J0Y19jbG9zZSIsImlkIjoiczEiLCJyb3V0ZSI6IkB0OnYyIiwiZ2VuIjozLCJyZWFzb24iOiJydGNfbGltaXQifQ=="
+    },
+    {
       "name": "topic_update",
       "message": {
         "t": "topic_update",
