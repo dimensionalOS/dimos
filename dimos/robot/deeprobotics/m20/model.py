@@ -14,7 +14,6 @@
 
 """The vendor's M20 URDF, and its standing pose for robots that do not report joint angles."""
 
-from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -25,10 +24,16 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.deeprobotics.m20.assets.description import SparseDescriptionSource
 
-# The vendor's URDF and meshes (BSD-3-Clause, assets/LICENSE); M20Connection's camera relay owns the camera frames.
+M20_DESCRIPTION_SOURCE = SparseDescriptionSource(
+    url="https://github.com/DeepRoboticsLab/deep_robotics_model",
+    ref="52352f5bbf2a30b5d02ece91900415188e7abc74",
+    sparse_paths=("M20/urdf",),
+)
+# M20Connection's camera relay owns the camera frames (with their optical and rear yaw rotations).
 M20_MODEL = RobotModel.from_file(
-    Path(__file__).parent / "assets" / "M20.urdf"
+    M20_DESCRIPTION_SOURCE / "M20" / "urdf" / "M20.urdf"
 ).without_joint_subtrees("front_camera_joint", "rear_camera_joint")
 
 # Hip pitch and knee of the vendor SDK's standing pose; front knees fold back, hind knees forward.
