@@ -205,8 +205,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev libturbojpeg
-      - name: Fetch the go2_short replay dataset
-        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+      - name: Fetch the go2_ranch_tour replay dataset
+        run: git lfs pull --include="data/.lfs/go2_ranch_tour.db.tar.gz" --exclude=""
       - name: Install dependencies
         run: uv sync --group tests --group browser-tests --frozen
       - name: Install Playwright browsers  # the e2e runs in both engines

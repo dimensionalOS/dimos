@@ -174,7 +174,7 @@ class Replay(ReplayNative):
 This allows running the full navigation pipeline against recorded data:
 
 ```bash
-dimos run unitree-go2 --replay.db go2_short
+dimos run unitree-go2 --replay.db go2_ranch_short
 ```
 
 ## Data Format

@@ -5,7 +5,7 @@ These checks do not require a physical robot. Prepare the replay datasets and Mu
 ## 2.1 Replay mode (no hardware)
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_short
+uv run dimos run unitree-go2 --replay.db go2_ranch_short
 uv run dimos run unitree-go2 --replay.db go2_bigoffice
 ```
 

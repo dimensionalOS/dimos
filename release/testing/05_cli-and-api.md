@@ -5,7 +5,7 @@ Follow the shared setup in the release testing plan. Go2 commands without `--rep
 ## 5.1 Daemon lifecycle
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_short --daemon
+uv run dimos run unitree-go2 --replay.db go2_ranch_short --daemon
 uv run dimos status
 uv run dimos log -n 50
 uv run dimos log -f   # Ctrl+C
@@ -66,7 +66,7 @@ Expected result: the simulated robot moves forward by about 30 cm and the window
 ## 5.4 dimos shell
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_short --daemon
+uv run dimos run unitree-go2 --replay.db go2_ranch_short --daemon
 uv run dimos shell
 # After leaving the shell with Ctrl+D:
 uv run dimos stop
@@ -95,13 +95,13 @@ Expected result: `dimos mcp modules` reaches the server on port 9992 and lists n
 Run the replay blueprint, then use another terminal for the other commands. The LCM run also needs the host's multicast and socket-buffer setup. If it was skipped during installation, startup prompts to apply it with `sudo`. Arrange administrator access before starting the LCM run.
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_short
+uv run dimos run unitree-go2 --replay.db go2_ranch_short
 uv run dimos spy   # q quits
 uv run dimos topic echo /cmd_vel
 # In a third terminal:
 uv run dimos topic send /cmd_vel 'Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))'
 # Stop the blueprint, then run it on LCM:
-uv run dimos --transport lcm run unitree-go2 --replay.db go2_short
+uv run dimos --transport lcm run unitree-go2 --replay.db go2_ranch_short
 uv run dimos spy --transport lcm
 ```
 
@@ -110,7 +110,7 @@ Expected result: the spy lists the replay topics on zenoh with live rates, the s
 ## 5.7 dtop
 
 ```bash
-uv run dimos --dtop run unitree-go2 --replay.db go2_short
+uv run dimos --dtop run unitree-go2 --replay.db go2_ranch_short
 # In another terminal:
 uv run dtop
 ```
@@ -120,10 +120,10 @@ Expected result: the monitoring interface opens and displays the running modules
 ## 5.8 Rerun viewer modes
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_short --rerunbridgemodule.rerun-open web
-uv run dimos run unitree-go2 --replay.db go2_short --rerunbridgemodule.rerun-open none --rerunbridgemodule.rerun-save true
+uv run dimos run unitree-go2 --replay.db go2_ranch_short --rerunbridgemodule.rerun-open web
+uv run dimos run unitree-go2 --replay.db go2_ranch_short --rerunbridgemodule.rerun-open none --rerunbridgemodule.rerun-save true
 uv run rerun recordings/<run-id>/rerun.rrd
-uv run dimos --viewer none run unitree-go2 --replay.db go2_short
+uv run dimos --viewer none run unitree-go2 --replay.db go2_ranch_short
 # In another terminal:
 uv run dimos rerun-bridge --rerun-open web
 ```
@@ -182,7 +182,7 @@ keyboard-teleop = "dimos.robot.unitree.keyboard_teleop:KeyboardTeleop"
 EOF
 uv pip install /tmp/my-robot-stack
 uv run dimos list
-uv run dimos run my-robot-stack.go2 my-robot-stack.keyboard-teleop --replay.db go2_short
+uv run dimos run my-robot-stack.go2 my-robot-stack.keyboard-teleop --replay.db go2_ranch_short
 uv pip uninstall my-robot-stack
 ```
 

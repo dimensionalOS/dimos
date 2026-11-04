@@ -908,7 +908,7 @@ run_post_install_tests() {
     [[ ",$EXTRAS," == *,unitree,* ]] || return 0
     prompt_confirm "Run a quick smoke test? (starts unitree-go2 replay for 60s)" yes || return 0
     local exit_code=0
-    run_bounded 60 .venv/bin/dimos --viewer none run unitree-go2 --replay.db go2_short || exit_code=$?
+    run_bounded 60 .venv/bin/dimos --viewer none run unitree-go2 --replay.db go2_ranch_short || exit_code=$?
     case "$exit_code" in
         0|124) ok "smoke test passed" ;;
         *) die "smoke test failed (exit $exit_code)" ;;

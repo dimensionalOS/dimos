@@ -31,7 +31,7 @@ See [installation](/docs/installation/index.md) for library/developer modes, pla
 dimOS applications are launched from **blueprints**. A blueprint is a ready to run bundle of modules that you start by name with `dimos run`. The `--replay.db` option feeds it recorded sensor data instead of connecting to a robot:
 
 ```bash
-dimos run unitree-go2 --replay.db go2_short
+dimos run unitree-go2 --replay.db go2_ranch_short
 ```
 
 **What you should see:** a [Rerun](https://rerun.io) visualization window opens, and after a short wait it fills with the robot's camera feed, a LiDAR point cloud, and a map of an office being built up as the robot navigates through it, with its planned path drawn on top.
@@ -93,7 +93,7 @@ Add `--local-relay` to see the camera and the map in your browser and drive the 
 
 ```bash
 uv pip install 'dimos[base,unitree,web]'
-dimos run unitree-go2 --replay.db go2_short --local-relay
+dimos run unitree-go2 --replay.db go2_ranch_short --local-relay
 ```
 
 The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) covers the cockpit, the web SDK for pages of your own, and hosting a relay so a robot can be reached from anywhere.
@@ -102,7 +102,7 @@ The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) 
 
 | Command | What it does |
 | --- | --- |
-| `dimos run unitree-go2 --replay.db go2_short` | Quadruped navigation replay with a ray-traced voxel map and MLS planning |
+| `dimos run unitree-go2 --replay.db go2_ranch_short` | Quadruped navigation replay with a ray-traced voxel map and MLS planning |
 | `dimos --simulation run unitree-g1-agentic-sim` | Humanoid LLM agent plus MCP server in simulation (needs `OPENAI_API_KEY`) |
 | `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |

@@ -176,7 +176,7 @@ Without Docker, the command from [Without Docker](#without-docker) works with th
 What a hosted relay is verified with. Repeat it after changes to the relay, the image, or this guide.
 
 - [ ] Fresh Ubuntu VM with a domain, DNS through Run top to bottom, then `curl https://.../api/info` from a laptop.
-- [ ] Replay robot on another, NATed network (`dimos run unitree-go2 --replay.db go2_short --relay-url ...`).
+- [ ] Replay robot on another, NATed network (`dimos run unitree-go2 --replay.db go2_ranch_tour --relay-url ...`).
 - [ ] Laptop on a third network, in Chromium and in Firefox: wrong token rejected, right token connects, robot picker with two robots, live map and video, teleop drives the replay robot.
 - [ ] `docker compose restart relay` with the page open: the page reconnects, the robot re-registers.
 - [ ] The deploy hook by hand: the relay restarts with the installed files, and `sudo certbot renew --dry-run` passes.

@@ -11,7 +11,7 @@ This page starts with "show odom on my own page", then adds a channel of your ow
 Any blueprint works, and a recording needs no hardware:
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_short --local-relay
+uv run dimos run unitree-go2 --replay.db go2_ranch_tour --local-relay
 ```
 
 `--local-relay` starts a relay on `http://127.0.0.1:7780` and connects the robot to it. The relay serves:
@@ -55,7 +55,7 @@ Create `ui/index.html`:
 Stop the run above (Ctrl-C) and start it again with your directory served instead of the cockpit:
 
 ```bash
-uv run dimos run unitree-go2 --replay.db go2_short --local-relay --serve-dir ui
+uv run dimos run unitree-go2 --replay.db go2_ranch_tour --local-relay --serve-dir ui
 ```
 
 `http://127.0.0.1:7780` opens automatically and you get live odometry on your own page.
@@ -220,7 +220,7 @@ Install the package into the same environment as dimos and run it:
 
 ```bash
 uv pip install -e ./my-ui
-uv run dimos run my-ui.go2-web --replay.db go2_short --local-relay --serve-dir my-ui/page
+uv run dimos run my-ui.go2-web --replay.db go2_ranch_tour --local-relay --serve-dir my-ui/page
 ```
 
 The page opens automatically and the health line updates once a second.

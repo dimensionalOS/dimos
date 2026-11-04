@@ -75,7 +75,7 @@ dimos run unitree-go2
 dimos run unitree-go2 --daemon
 
 # Replay with Rerun viewer
-dimos --viewer rerun run unitree-go2 --replay.db go2_short
+dimos --viewer rerun run unitree-go2 --replay.db go2_ranch_short
 
 # Record every stream of a run, then replay it
 dimos --record run unitree-go2 --simulation mujoco
