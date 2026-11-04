@@ -11,6 +11,6 @@ license = "Apache-2.0"
 ahash = "0.8"
 fast-reform = "0.2.1"
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
-# Resident memory for the modules' periodic memory log (rss.rs).
-libc = "0.2"
 rayon = "1"
+serde = { version = "1", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }

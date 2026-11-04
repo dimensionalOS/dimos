@@ -14,15 +14,10 @@
 
 //! GscPGO's keyframe corrections (`pose_graph`, `loop_closure_event` records) as a fast-reform warp of world points, moving each keyframe from its applied pose.
 
-pub mod rss;
-
 use ahash::{AHashMap, AHashSet};
 use fast_reform::{Quat, Vec3};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use rayon::prelude::*;
-
-/// Gaussian widths past which an anchor's weight counts as nothing.
-const REACH_SIGMAS: f64 = 3.0;
 
 /// A keyframe pose: world-frame rotation and translation.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -186,10 +181,11 @@ fn pose_at(record: &[u8], t: &[usize; 3], q: &[usize; 4]) -> Pose {
 /// Decode a pose_graph cloud, one record per keyframe.
 pub fn decode_pose_graph(msg: &PointCloud2) -> Result<Vec<KeyframeRecord>, DecodeError> {
     let fields = Fields::new(msg)?;
-    let t = fields.f32s(["x", "y", "z"])?;
-    let q = fields.f32s(["qx", "qy", "qz", "qw"])?;
-    let id = fields.offset("node_id", PointField::UINT32 as u8, 4)?;
-    let ts = fields.offset("ts", PointField::FLOAT64 as u8, 8)?;
+    let [x, y, z, node_id, ts, qx, qy, qz, qw] = KEYFRAME_FIELDS.map(|(name, _)| name);
+    let t = fields.f32s([x, y, z])?;
+    let q = fields.f32s([qx, qy, qz, qw])?;
+    let id = fields.offset(node_id, PointField::UINT32 as u8, 4)?;
+    let ts = fields.offset(ts, PointField::FLOAT64 as u8, 8)?;
     Ok((0..fields.count)
         .map(|i| {
             let r = fields.record(i);
@@ -206,8 +202,9 @@ pub fn decode_pose_graph(msg: &PointCloud2) -> Result<Vec<KeyframeRecord>, Decod
 pub fn decode_loop_closure_event(msg: &PointCloud2) -> Result<Vec<MovedRecord>, DecodeError> {
     let keyframes = decode_pose_graph(msg)?;
     let fields = Fields::new(msg)?;
-    let dt = fields.f32s(["dx", "dy", "dz"])?;
-    let dq = fields.f32s(["dqx", "dqy", "dqz", "dqw"])?;
+    let [dx, dy, dz, dqx, dqy, dqz, dqw] = DELTA_FIELDS.map(|(name, _)| name);
+    let dt = fields.f32s([dx, dy, dz])?;
+    let dq = fields.f32s([dqx, dqy, dqz, dqw])?;
     Ok(keyframes
         .into_iter()
         .enumerate()
@@ -218,8 +215,8 @@ pub fn decode_loop_closure_event(msg: &PointCloud2) -> Result<Vec<MovedRecord>, 
         .collect())
 }
 
-/// Field layout of pose_graph, for building test and replay clouds.
-pub const POSE_GRAPH_FIELDS: &[(&str, u8)] = &[
+/// pose_graph's record layout, as GscPGO writes it.
+pub const KEYFRAME_FIELDS: [(&str, u8); 9] = [
     ("x", PointField::FLOAT32 as u8),
     ("y", PointField::FLOAT32 as u8),
     ("z", PointField::FLOAT32 as u8),
@@ -231,17 +228,8 @@ pub const POSE_GRAPH_FIELDS: &[(&str, u8)] = &[
     ("qw", PointField::FLOAT32 as u8),
 ];
 
-/// pose_graph's fields then the delta's.
-pub const LOOP_EVENT_FIELDS: &[(&str, u8)] = &[
-    ("x", PointField::FLOAT32 as u8),
-    ("y", PointField::FLOAT32 as u8),
-    ("z", PointField::FLOAT32 as u8),
-    ("node_id", PointField::UINT32 as u8),
-    ("ts", PointField::FLOAT64 as u8),
-    ("qx", PointField::FLOAT32 as u8),
-    ("qy", PointField::FLOAT32 as u8),
-    ("qz", PointField::FLOAT32 as u8),
-    ("qw", PointField::FLOAT32 as u8),
+/// The delta a loop_closure_event record carries after its keyframe's fields.
+pub const DELTA_FIELDS: [(&str, u8); 7] = [
     ("dx", PointField::FLOAT32 as u8),
     ("dy", PointField::FLOAT32 as u8),
     ("dz", PointField::FLOAT32 as u8),
@@ -250,6 +238,30 @@ pub const LOOP_EVENT_FIELDS: &[(&str, u8)] = &[
     ("dqz", PointField::FLOAT32 as u8),
     ("dqw", PointField::FLOAT32 as u8),
 ];
+
+/// loop_closure_event's record layout: KEYFRAME_FIELDS then DELTA_FIELDS.
+pub fn loop_event_fields() -> Vec<(&'static str, u8)> {
+    KEYFRAME_FIELDS
+        .iter()
+        .chain(&DELTA_FIELDS)
+        .copied()
+        .collect()
+}
+
+/// A record layout as numpy dtype fields, so Python builds records from this layout.
+pub fn numpy_dtype(layout: &[(&'static str, u8)]) -> Vec<(&'static str, &'static str)> {
+    layout
+        .iter()
+        .map(|&(name, datatype)| {
+            let code = match datatype {
+                d if d == PointField::FLOAT64 as u8 => "<f8",
+                d if d == PointField::UINT32 as u8 => "<u4",
+                _ => "<f4",
+            };
+            (name, code)
+        })
+        .collect()
+}
 
 /// A record cloud over raw packed records with the given layout.
 pub fn record_cloud(layout: &[(&str, u8)], data: Vec<u8>) -> PointCloud2 {
@@ -285,20 +297,40 @@ pub fn record_cloud(layout: &[(&str, u8)], data: Vec<u8>) -> PointCloud2 {
     }
 }
 
-/// How a closure turns into a warp.
-#[derive(Clone, Copy, Debug)]
-pub struct ReformParams {
+/// How a module follows loop closures, the `reform` config of the ray tracer and the MLS planner.
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, validator::Validate)]
+#[serde(deny_unknown_fields)]
+pub struct ReformConfig {
+    /// Warp through each loop_closure_event; off ignores pose_graph and loop_closure_event.
+    pub enabled: bool,
     /// Spatial blend width, m. 0 picks twice the mean keyframe spacing.
+    #[validate(range(min = 0.0))]
     pub blend_sigma_m: f64,
     /// Temporal blend width, s. 0 picks twice the mean keyframe interval.
+    #[validate(range(min = 0.0))]
     pub blend_time_sigma_s: f64,
-    /// A keyframe whose correction moves its surroundings less than this
-    /// waits for a later closure.
+    /// A keyframe whose correction moves its surroundings less than this waits for a later closure.
+    #[validate(range(min = 0.0))]
     pub min_shift_m: f64,
-    /// A warp blends one keyframe per cell of this size in space (and of the
-    /// time width in time), m: the one nearest the cell's center. 0 picks the
-    /// blend width; negative blends every keyframe.
+    /// A warp blends the keyframe nearest each cell of this size, m (0 = the blend width, negative = every keyframe).
     pub thin_cell_m: f64,
+    /// Blend widths past which a keyframe's weight counts as nothing.
+    #[validate(range(exclusive_min = 0.0))]
+    pub reach_sigmas: f64,
+}
+
+impl ReformConfig {
+    /// Closures ignored, for tests and offline tools that never warp.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            blend_sigma_m: 0.0,
+            blend_time_sigma_s: 0.0,
+            min_shift_m: 0.0,
+            thin_cell_m: 0.0,
+            reach_sigmas: 1.0,
+        }
+    }
 }
 
 /// A keyframe as the map holds it.
@@ -323,8 +355,7 @@ impl ReformState {
         self.applied.is_empty()
     }
 
-    /// Take the pose of each keyframe not seen before. A known keyframe keeps
-    /// its applied pose: the map has not moved for its newer pose yet.
+    /// Take the pose of each keyframe not seen before; a known one keeps its applied pose, as the map has not moved for its newer one.
     pub fn add_keyframes(&mut self, records: &[KeyframeRecord]) {
         for r in records {
             self.applied.entry(r.id).or_insert(Applied {
@@ -334,9 +365,8 @@ impl ReformState {
         }
     }
 
-    /// The warp a closure asks for, or None when no keyframe moved enough.
-    /// The keyframes it warps for take their post pose.
-    pub fn closure(&mut self, moved: &[MovedRecord], params: &ReformParams) -> Option<Warp> {
+    /// The warp a closure asks for (its keyframes take their post pose), or None when no keyframe moved enough.
+    pub fn closure(&mut self, moved: &[MovedRecord], params: &ReformConfig) -> Option<Warp> {
         // A keyframe new to us arrives at its pre pose, as the map holds it.
         for m in moved {
             self.applied.entry(m.keyframe.id).or_insert(Applied {
@@ -356,7 +386,7 @@ impl ReformState {
             2.0 * mean_interval(self.applied.values().map(|a| a.ts))
         }
         .max(1e-6);
-        let reach = REACH_SIGMAS * sigma;
+        let reach = params.reach_sigmas * sigma;
 
         let mut corrections: AHashMap<u32, Pose> = AHashMap::new();
         for m in moved {
@@ -502,8 +532,7 @@ struct Anchor {
     moved: bool,
 }
 
-/// One anchor per cell of `cell` meters and `time_sigma` seconds, the one
-/// nearest the cell's center; every anchor when `cell` is 0.
+/// The anchor nearest each cell of `cell` meters and `time_sigma` seconds; every anchor when `cell` is 0.
 fn thinned(anchors: &[Anchor], cell: f64, time_sigma: f64) -> Vec<Anchor> {
     if cell <= 0.0 {
         return anchors.to_vec();
@@ -552,8 +581,7 @@ fn graph_delta(anchors: &[Anchor], sigma: f64, time_sigma: f64) -> fast_reform::
     }
 }
 
-/// One closure's warp: every keyframe as an anchor carrying its correction
-/// (identity for the unmoved), blended per point by plain fast-reform.
+/// One closure's warp: every keyframe an anchor carrying its correction (identity for the unmoved), blended per point by fast-reform.
 pub struct Warp {
     anchors: Vec<Anchor>,
     blended: usize,
@@ -624,8 +652,7 @@ impl Warp {
         (shifts[shifts.len() / 2], shifts[shifts.len() - 1])
     }
 
-    /// The farthest a warped point may sensibly land from where it was: the
-    /// largest keyframe shift plus a rotation's swing over the blend's reach.
+    /// The farthest a warped point may sensibly land: the largest keyframe shift plus a rotation's swing over the blend's reach.
     pub fn max_plausible_move_m(&self) -> f64 {
         let (_, max_shift) = self.keyframe_shift_m();
         let max_angle = self
@@ -658,8 +685,7 @@ impl Warp {
         }
     }
 
-    /// Warp world points, each with the time it was observed, NaN for unknown
-    /// (which blends by distance alone), by fast-reform.
+    /// Warp world points by fast-reform, each at the time it was observed (NaN blends by distance alone).
     pub fn apply(&self, points: &[[f32; 3]], times: &[f64]) -> Vec<[f32; 3]> {
         assert_eq!(points.len(), times.len());
         if times.iter().all(|t| !t.is_nan()) {
@@ -685,10 +711,7 @@ impl Warp {
 /// A voxel grid key.
 pub type Key = (i32, i32, i32);
 
-/// The voxels to re-key together with `seeds`: a voxel a warp moved off its key
-/// still holds that stale key until it is re-keyed, so a seed whose points now
-/// sit there takes it along, and so on down the chain. `placed(k)` is the key a
-/// displaced voxel's points sit in, None for a voxel in place or no voxel.
+/// `seeds` plus the displaced voxels holding the keys they move into, down the chain; `placed(k)` is where a displaced voxel's points sit, else None.
 pub fn with_chained(seeds: Vec<Key>, placed: impl Fn(&Key) -> Option<Key>) -> Vec<Key> {
     let mut all: AHashSet<Key> = seeds.iter().copied().collect();
     let mut out = seeds;
@@ -722,12 +745,7 @@ fn neighbors(a: Key, b: Key) -> bool {
     (a.0 - b.0).abs() <= 1 && (a.1 - b.1).abs() <= 1 && (a.2 - b.2).abs() <= 1
 }
 
-/// The key each warped voxel lands in. Re-quantizing a smoothly warped grid
-/// sends some neighbors to one key, which would merge them and thin the map a
-/// little at every closure; so where a voxel's key is taken by a former
-/// neighbor (another mover, or a voxel that stays: `stays(key)`), it takes the
-/// free key next to it nearest its point. Voxels that were apart before the
-/// warp and meet in one key are a surface the closure brings together, and merge.
+/// The key each warped voxel lands in: one whose key a former neighbor took (a mover, or `stays(key)`) takes the nearest free key beside it, so warps don't thin the map.
 pub fn landing_keys(
     from: &[Key],
     warped: &[[f32; 3]],
@@ -748,8 +766,7 @@ pub fn landing_keys(
             .then_with(|| a.1.total_cmp(&b.1))
             .then_with(|| a.2.cmp(&b.2))
     });
-    // Where each key's run of movers starts, so finding a key's first mover stays linear
-    // however many movers pile onto one key.
+    // Where each key's run of movers starts, so finding a key's first mover stays linear.
     let mut run_start = vec![0usize; order.len()];
     for n in 1..order.len() {
         run_start[n] = if order[n].0 == order[n - 1].0 {
@@ -840,95 +857,6 @@ mod tests {
         }
     }
 
-    /// cargo test --release --lib landing_keys_bench -- --ignored --nocapture
-    #[test]
-    #[ignore = "a timing, not a check"]
-    fn landing_keys_bench() {
-        let vs = 0.08_f32;
-        let from: Vec<Key> = (0..400)
-            .flat_map(|x| (0..300).flat_map(move |y| (0..10).map(move |z| (x, y, z))))
-            .collect();
-        let (s, c) = 0.02_f32.sin_cos();
-        let warped: Vec<[f32; 3]> = from
-            .iter()
-            .map(|k| {
-                let (x, y) = ((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
-                [c * x - s * y + 0.13, s * x + c * y, (k.2 as f32 + 0.5) * vs]
-            })
-            .collect();
-        let started = std::time::Instant::now();
-        let landed = landing_keys(&from, &warped, vs, |_| false);
-        println!("{} voxels: {:?}", landed.len(), started.elapsed());
-    }
-
-    /// RT_THIN_BENCH=<gsc keyframes dump> cargo test --release --lib thinning_bench -- --ignored --nocapture
-    #[test]
-    #[ignore = "needs RT_THIN_BENCH, a gsc keyframes dump"]
-    fn thinning_bench() {
-        let raw = std::fs::read(std::env::var("RT_THIN_BENCH").unwrap()).unwrap();
-        let f: Vec<f64> = raw
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|b| f64::from_le_bytes(*b))
-            .collect();
-        let pose = |v: &[f64]| Pose {
-            translation: Vec3::new(v[0], v[1], v[2]),
-            rotation: Quat::new(v[3], v[4], v[5], v[6]).normalized_or_identity(),
-        };
-        let kfs: Vec<(KeyframeRecord, Pose)> = f
-            .as_chunks::<15>()
-            .0
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                let raw = pose(&r[1..8]);
-                let corrected = pose(&r[8..15]);
-                (
-                    KeyframeRecord {
-                        id: i as u32,
-                        ts: r[0],
-                        pose: raw,
-                    },
-                    corrected.compose(&raw.inverse()),
-                )
-            })
-            .collect();
-        for cell in [-1.0, 0.0, 1.0, 2.0, 4.0] {
-            let mut state = ReformState::default();
-            state.add_keyframes(&kfs.iter().map(|k| k.0).collect::<Vec<_>>());
-            let params = ReformParams {
-                blend_sigma_m: 0.0,
-                blend_time_sigma_s: 5.0,
-                min_shift_m: 0.04,
-                thin_cell_m: cell,
-            };
-            // Half the drive corrected at once, then the rest: the second warm-starts.
-            for half in [kfs.len() / 2, 0] {
-                let moved: Vec<MovedRecord> = kfs[half..]
-                    .iter()
-                    .map(|(k, d)| MovedRecord {
-                        keyframe: KeyframeRecord {
-                            pose: state.applied[&k.id].pose,
-                            ..*k
-                        },
-                        delta: d.compose(&k.pose.compose(&state.applied[&k.id].pose.inverse())),
-                    })
-                    .collect();
-                let started = std::time::Instant::now();
-                let warp = state.closure(&moved, &params);
-                println!(
-                    "cell {cell}: {} keyframes -> {} blended (sigma {:.2} m, tau {:.2} s), {:?}",
-                    kfs.len(),
-                    warp.as_ref().map_or(0, |w| w.blended_keyframes()),
-                    warp.as_ref().map_or(0.0, |w| w.sigma()),
-                    warp.as_ref().map_or(0.0, |w| w.time_sigma()),
-                    started.elapsed()
-                );
-            }
-        }
-    }
-
     #[test]
     fn voxels_that_were_apart_still_merge() {
         let vs = 0.1_f32;
@@ -987,15 +915,17 @@ mod tests {
                 data.extend_from_slice(&(v as f32).to_le_bytes());
             }
         }
-        record_cloud(LOOP_EVENT_FIELDS, data)
+        record_cloud(&loop_event_fields(), data)
     }
 
-    fn params() -> ReformParams {
-        ReformParams {
+    fn params() -> ReformConfig {
+        ReformConfig {
             blend_sigma_m: 1.0,
             blend_time_sigma_s: 1.0,
             min_shift_m: 0.02,
             thin_cell_m: -1.0,
+            reach_sigmas: 3.0,
+            enabled: true,
         }
     }
 
@@ -1007,7 +937,7 @@ mod tests {
         };
         let mut data = Vec::new();
         put_pose(&mut data, 7, 12.5, &pose);
-        let msg = record_cloud(POSE_GRAPH_FIELDS, data);
+        let msg = record_cloud(&KEYFRAME_FIELDS, data);
         assert_eq!(msg.point_step, 40);
         let got = decode_pose_graph(&msg).unwrap();
         assert_eq!(got.len(), 1);
@@ -1033,10 +963,10 @@ mod tests {
 
     #[test]
     fn decode_rejects_a_short_buffer_and_a_wrong_type() {
-        let mut msg = record_cloud(POSE_GRAPH_FIELDS, vec![0; 40]);
+        let mut msg = record_cloud(&KEYFRAME_FIELDS, vec![0; 40]);
         msg.width = 2;
         assert!(decode_pose_graph(&msg).is_err());
-        let mut msg = record_cloud(POSE_GRAPH_FIELDS, vec![0; 40]);
+        let mut msg = record_cloud(&KEYFRAME_FIELDS, vec![0; 40]);
         msg.fields[3].datatype = PointField::FLOAT32 as u8;
         assert!(decode_pose_graph(&msg).is_err());
     }
@@ -1079,8 +1009,7 @@ mod tests {
 
     #[test]
     fn time_picks_the_segment_a_point_was_seen_from_at_a_seam() {
-        // Keyframes 0..10 go out along x at y=0, 10..20 come back over the
-        // same line. Only the return leg is corrected.
+        // Keyframes 0..10 go out along y=0 and 10..20 come back over it; only the return leg is corrected.
         let mut state = ReformState::default();
         let kfs: Vec<KeyframeRecord> = (0..20)
             .map(|i| {
@@ -1104,7 +1033,7 @@ mod tests {
                 delta: shift,
             })
             .collect();
-        let p = ReformParams {
+        let p = ReformConfig {
             blend_time_sigma_s: 10.0,
             ..params()
         };
