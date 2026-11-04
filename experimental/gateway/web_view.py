@@ -42,15 +42,16 @@ def app_dir() -> Path:
 
 
 def _sources(app: Path) -> list[Path]:
+    # dist and node_modules are pruned, not walked: node_modules' symlinks reach ~25k files (4 s on the M20 per request)
     files = []
-    for path in sorted(app.rglob("*")):
-        parts = path.relative_to(app).parts
-        skipped = {"dist", "node_modules"} & set(parts) or any(
-            part.startswith(".") for part in parts
-        )
-        if path.is_file() and not skipped and ".test." not in path.name:
-            files.append(path)
-    return files
+    for folder, dirs, names in os.walk(app):
+        dirs[:] = [d for d in dirs if d not in ("dist", "node_modules") and not d.startswith(".")]
+        files += [
+            Path(folder) / name
+            for name in names
+            if not name.startswith(".") and ".test." not in name and (Path(folder) / name).is_file()
+        ]
+    return sorted(files)
 
 
 def stamp(app: Path) -> str:

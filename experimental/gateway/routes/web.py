@@ -23,7 +23,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
 from experimental.gateway import msgs, responses, store, web_view
-from experimental.gateway.routes.catalog import check_name, find_blueprint
+from experimental.gateway.routes.catalog import check_blueprint
 from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter()
@@ -37,12 +37,11 @@ VIEW_FILE = re.compile(r"[A-Za-z0-9_-]+\.(js|css)")
 async def blueprint_view(
     state: GatewayState, name: str, view: str | None = None, run: str | None = None
 ) -> str:
-    check_name(name)
     if view not in (None, "logs"):
         raise ApiError(400, f"view {view} isn't logs")
     if run is not None and not re.fullmatch("[A-Za-z0-9_.-]+", run):
         raise ApiError(400, f"not a run id: {run}")
-    await find_blueprint(state, name)
+    await check_blueprint(state, name)
     dist = await web_view.built_dist()
     if dist is None:
         raise ApiError(

@@ -60,6 +60,16 @@ async def find_blueprint(state: State, name: str) -> dict[str, Any]:
     return found
 
 
+async def check_blueprint(state: State, name: str) -> None:
+    """find_blueprint's 404 without building every blueprint's catalog entry (notes_for alone is ~1.5 s on the M20)."""
+    check_name(name)
+    if (
+        not await has_locally(state, name)
+        and await asyncio.to_thread(running_source, state, name) is None
+    ):
+        raise ApiError(404, f"no blueprint {name}")
+
+
 async def has_locally(state: State, name: str) -> bool:
     return any(entry["name"] == name for entry in await listed(state))
 
@@ -138,7 +148,7 @@ async def scan_all(
 async def scan_blueprint(
     state: GatewayState, name: str, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
 ) -> dict[str, Any]:
-    await find_blueprint(state, name)
+    await check_blueprint(state, name)
     return {"job": state.scanner.start_one(name, timeout).id}
 
 
@@ -167,7 +177,7 @@ async def blueprint(state: GatewayState, name: str, fields: str | None = None) -
     openapi_extra={"x-slow": True},
 )
 async def blueprint_config(state: GatewayState, name: str) -> Any:
-    await find_blueprint(state, name)
+    await check_blueprint(state, name)
     found = await from_run_checkout(state, ["config", name], await has_locally(state, name))
     found.pop("checkout")
     found.pop("checkoutError")
