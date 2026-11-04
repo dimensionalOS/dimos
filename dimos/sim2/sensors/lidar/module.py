@@ -53,6 +53,7 @@ class SimLidarModule(_PoseSensorModule):
             or c.range_std < 0
         ):
             raise ValueError("invalid lidar timing/range model")
+        self._pattern = c.pattern()
         self._history: deque[BodyPoses] = deque()
         self._sampling = Acquisition(c.scan_hz)
         self._epoch = -1
@@ -85,7 +86,7 @@ class SimLidarModule(_PoseSensorModule):
         if start < self._history[0].header.time_ns:
             self.count("gaps")
             return None
-        directions, offsets = c.pattern.rays(start, duration)
+        directions, offsets = self._pattern.rays(start, duration)
         # Piecewise-held geometry at a bounded physical sample interval.
         # Keep each point's actual acquisition time, never scan-publication time.
         interval = round(1e9 / c.motion_hz)
