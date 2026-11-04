@@ -218,6 +218,36 @@ const controlMsgs: Record<string, Msg> = {
   topic_close: { t: "topic_close", route: "@t:p1", gen: 3 },
   topic_credit: { t: "topic_credit", route: "@t:v2", gen: 3, frames: 40, bytes: 13000 },
   topic_unsub: { t: "topic_unsub", id: "s1" },
+  // Direct topic video (PLAN_2b): the viewer leg names the subscription and
+  // viewer route; the relay forwards the offer with a private peer id, the
+  // provider route and the variant, and maps the replies back.
+  topic_rtc_offer: { t: "topic_rtc_offer", id: "s1", route: "@t:v2", gen: 3, sdp: sdpOffer },
+  topic_rtc_offer_provider: {
+    t: "topic_rtc_offer",
+    id: "r1",
+    route: "@t:p1",
+    gen: 3,
+    sdp: sdpOffer,
+    variant: "v1",
+  },
+  topic_rtc_answer: { t: "topic_rtc_answer", id: "s1", route: "@t:v2", gen: 3, sdp: sdpAnswer },
+  topic_rtc_candidate: {
+    t: "topic_rtc_candidate",
+    id: "s1",
+    route: "@t:v2",
+    gen: 3,
+    candidate: "candidate:1 1 udp 2130706431 192.168.1.20 51234 typ host generation 0",
+    mid: "0",
+  },
+  topic_rtc_candidate_end: {
+    t: "topic_rtc_candidate",
+    id: "r1",
+    route: "@t:p1",
+    gen: 3,
+    candidate: "",
+    mid: "0",
+  },
+  topic_rtc_close: { t: "topic_rtc_close", id: "s1", route: "@t:v2", gen: 3, reason: "rtc_limit" },
   // Settings updates (PLAN_2a): null resets one key to the profile default,
   // the acknowledgement carries the normalized settings in force.
   topic_update: {
@@ -1259,6 +1289,34 @@ const invalidTopics = {
         },
       },
     })),
+    ...[
+      ["oversized_sdp", { sdp: "v=0\r\n".padEnd(48 * 1024 + 1, "a") }],
+      ["empty_sdp", { sdp: "" }],
+      ["numeric_sdp", { sdp: 1 }],
+      ["rtc_variant_beyond_bound", { variant: "v5" }],
+      ["rtc_null_variant", { variant: null }],
+      ["rtc_literal_key_route", { route: "demo/a" }],
+      ["rtc_negative_gen", { gen: -1 }],
+      ["rtc_missing_id", { id: undefined }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_rtc_offer, ...fields as Record<string, unknown> },
+    })),
+    ...[
+      ["long_candidate", { candidate: "a".repeat(513) }],
+      ["null_candidate", { candidate: null }],
+      ["long_mid", { mid: "0".repeat(17) }],
+      ["numeric_mid", { mid: 0 }],
+      ["candidate_fractional_gen", { gen: 1.5 }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_rtc_candidate, ...fields as Record<string, unknown> },
+    })),
+    { name: "rtc_close_empty_reason", message: { ...controlMsgs.topic_rtc_close, reason: "" } },
+    {
+      name: "rtc_close_long_reason",
+      message: { ...controlMsgs.topic_rtc_close, reason: "x".repeat(65) },
+    },
     { name: "oversized_page", message: { ...controlMsgs.topic_list, limit: 33 } },
     { name: "fractional_limit", message: { ...controlMsgs.topic_list, limit: 1.5 } },
     { name: "negative_credit", message: { ...controlMsgs.topic_credit, bytes: -1 } },

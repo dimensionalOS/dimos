@@ -34,6 +34,13 @@ MAX_TOPIC_KEYS = 128
 MAX_TOPIC_PAGE = 32
 MAX_TOPIC_VARIANTS = 4
 MAX_TOPIC_PROFILE_OPTIONS = 8
+# An SDP rides a control frame or an @control payload, so it stays well under
+# MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section). SDP is ASCII,
+# so this character count and the TS mirror's string length agree.
+MAX_SDP_LEN = 48 * 1024
+MAX_MID_LEN = 16
+MAX_TOPIC_RTC_CANDIDATES = 64
+MAX_TOPIC_RTC_CANDIDATE_LEN = 512
 TOPIC_ROUTE_PREFIX = "@t:"
 TOPIC_PUBLISH_CHANNEL = "@put"
 TOPIC_GUARD_CHANNEL = "@guard"
@@ -94,6 +101,9 @@ TopicVariantId = Annotated[str, Field(pattern=r"^v[1-4]$")]  # MAX_TOPIC_VARIANT
 TopicName = Annotated[str, Field(min_length=1, max_length=32)]
 TopicNames = Annotated[list[TopicName], Field(max_length=16), AfterValidator(_unique)]
 TopicSize = Annotated[list[TopicCount], Field(min_length=2, max_length=2)]
+TopicSdp = Annotated[str, Field(min_length=1, max_length=MAX_SDP_LEN)]
+TopicMid = Annotated[str, Field(max_length=MAX_MID_LEN)]
+TopicCandidate = Annotated[str, Field(max_length=MAX_TOPIC_RTC_CANDIDATE_LEN)]
 
 
 class _TopicModel(BaseModel):
@@ -289,6 +299,49 @@ class TopicUnsub(_TopicModel):
     id: TopicId
 
 
+class TopicRtcOffer(_TopicModel):
+    """Direct WebRTC video for a video route, signaled through the relay.
+
+    On the viewer leg ``id`` is the subscription and ``route`` the viewer
+    route; the relay forwards with a private peer id, the provider route and
+    the variant the peer is fed from. No data frames flow on a video route.
+    """
+
+    t: Literal["topic_rtc_offer"] = "topic_rtc_offer"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    sdp: TopicSdp
+    variant: Annotated[TopicVariantId | None, BeforeValidator(_reject_none)] = None
+
+
+class TopicRtcAnswer(_TopicModel):
+    t: Literal["topic_rtc_answer"] = "topic_rtc_answer"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    sdp: TopicSdp
+
+
+class TopicRtcCandidate(_TopicModel):
+    """Either direction, trickled. An empty candidate is end-of-candidates."""
+
+    t: Literal["topic_rtc_candidate"] = "topic_rtc_candidate"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    candidate: TopicCandidate
+    mid: TopicMid
+
+
+class TopicRtcClose(_TopicModel):
+    t: Literal["topic_rtc_close"] = "topic_rtc_close"
+    id: TopicId
+    route: TopicRoute
+    gen: TopicGeneration
+    reason: Annotated[str, Field(min_length=1, max_length=64)]
+
+
 class TopicCredit(_TopicModel):
     t: Literal["topic_credit"] = "topic_credit"
     route: TopicRoute
@@ -423,6 +476,10 @@ TopicMsg = (
     | TopicClose
     | TopicCredit
     | TopicUnsub
+    | TopicRtcOffer
+    | TopicRtcAnswer
+    | TopicRtcCandidate
+    | TopicRtcClose
     | TopicUpdate
     | TopicApplied
     | TopicVariant
