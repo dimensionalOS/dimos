@@ -13,6 +13,7 @@ import {
   MAX_TOPIC_PUBLISH_BYTES,
   MAX_TOPIC_PUBLISH_PENDING,
   MAX_TOPIC_ROUTES,
+  MAX_TOPIC_RTC_CANDIDATES,
   MAX_TOPIC_SOURCES,
   MAX_TOPIC_VARIANTS,
   type Msg,
@@ -103,6 +104,18 @@ interface Move {
   settings: TopicSettings;
   deadline: number;
 }
+/** One direct video peer: the provider knows it by `token`, the viewer by
+ * its subscription id and route. Candidates are counted per direction. */
+interface Peer {
+  token: string;
+  sub: Subscription;
+  /** The variant the peer is fed from; a move to another closes it. */
+  variant: Variant | null;
+  /** Answer deadline; 0 once the provider answered. */
+  deadline: number;
+  fromViewer: number;
+  fromProvider: number;
+}
 interface Subscription {
   viewer: TopicViewer;
   state: ViewerState;
@@ -118,6 +131,8 @@ interface Subscription {
   variant: Variant | null;
   /** A move in progress: the viewer keeps its variant until the target is ready. */
   target: Move | null;
+  /** The direct video peer of a video route, one per subscription. */
+  peer: Peer | null;
 }
 interface PendingList {
   viewer: TopicViewer;
@@ -149,6 +164,7 @@ export class TopicRegistry {
   #routes = new Map<string, Subscription>();
   #lists = new Map<string, PendingList>();
   #publications = new Map<string, PendingPublication>();
+  #peers = new Map<string, Peer>();
   #generation = 0;
   #counter = 0;
   #desired = 0;
@@ -321,6 +337,7 @@ export class TopicRegistry {
           settings: { maxHz: msg.maxHz },
           variant: null,
           target: null,
+          peer: null,
         };
         state.subs.set(msg.id, sub);
         this.#desired++;
@@ -365,6 +382,65 @@ export class TopicRegistry {
       case "topic_unsub": {
         const sub = state.subs.get(msg.id);
         if (sub !== undefined) this.#drop(sub);
+        break;
+      }
+      case "topic_rtc_offer":
+      case "topic_rtc_candidate":
+      case "topic_rtc_close": {
+        // The same binding as topic_activate: this viewer's route, on the
+        // source generation it was readied with, plus the subscription id.
+        const sub = this.#routes.get(msg.route);
+        if (
+          sub?.viewer !== viewer || sub.spec.id !== msg.id || sub.group?.source.gen !== msg.gen ||
+          !sub.group.opened
+        ) {
+          this.#error(reply, msg.id, "unknown_topic_handle");
+          return;
+        }
+        const group = sub.group;
+        if (msg.t === "topic_rtc_offer") {
+          if (sub.peer !== null && sub.peer.deadline > 0) {
+            this.#error(reply, msg.id, "rtc_offer_pending");
+            return;
+          }
+          // A new offer replaces a live peer: the SDK offers again after a failure.
+          if (sub.peer !== null) this.#closePeer(sub.peer, "replaced", "provider");
+          const peer: Peer = {
+            token: this.#id("r"),
+            sub,
+            variant: sub.variant,
+            deadline: this.now() + REQUEST_TIMEOUT_MS,
+            fromViewer: 0,
+            fromProvider: 0,
+          };
+          sub.peer = peer;
+          this.#peers.set(peer.token, peer);
+          group.source.peer.sendControl({
+            t: "topic_rtc_offer",
+            id: peer.token,
+            route: group.route,
+            gen: group.source.gen,
+            sdp: msg.sdp,
+            ...(sub.variant === null ? {} : { variant: sub.variant.id }),
+          });
+        } else if (msg.t === "topic_rtc_candidate") {
+          const peer = sub.peer;
+          if (peer === null) return; // late trickle after the peer ended
+          if (++peer.fromViewer > MAX_TOPIC_RTC_CANDIDATES) {
+            this.#closePeer(peer, "rtc_candidate_limit", "both");
+            return;
+          }
+          group.source.peer.sendControl({
+            t: "topic_rtc_candidate",
+            id: peer.token,
+            route: group.route,
+            gen: group.source.gen,
+            candidate: msg.candidate,
+            mid: msg.mid,
+          });
+        } else if (sub.peer !== null) {
+          this.#closePeer(sub.peer, msg.reason, "provider");
+        }
         break;
       }
       case "topic_list": {
@@ -632,6 +708,10 @@ export class TopicRegistry {
     const previous = sub.variant;
     sub.target = null;
     sub.variant = variant;
+    // A video peer is fed from one encoder; the viewer offers again for the new one.
+    if (sub.peer !== null && sub.peer.variant !== variant) {
+      this.#closePeer(sub.peer, "settings_changed", "both");
+    }
     sub.requested = requested;
     sub.settings = settings;
     // Frames still queued were encoded by the old variant; the
@@ -691,7 +771,35 @@ export class TopicRegistry {
     }
   }
 
+  /** End a peer on the sides that do not already know. */
+  #closePeer(peer: Peer, reason: string, notify: "viewer" | "provider" | "both"): void {
+    this.#peers.delete(peer.token);
+    if (peer.sub.peer === peer) peer.sub.peer = null;
+    const group = peer.sub.group;
+    if (group === null) return;
+    const gen = group.source.gen;
+    if (notify !== "viewer" && this.#sources.get(group.source.id) === group.source) {
+      group.source.peer.sendControl({
+        t: "topic_rtc_close",
+        id: peer.token,
+        route: group.route,
+        gen,
+        reason,
+      });
+    }
+    if (notify !== "provider" && peer.sub.route !== null) {
+      peer.sub.state.reply({
+        t: "topic_rtc_close",
+        id: peer.sub.spec.id,
+        route: peer.sub.route,
+        gen,
+        reason,
+      });
+    }
+  }
+
   #detach(sub: Subscription): void {
+    if (sub.peer !== null) this.#closePeer(sub.peer, "route_closed", "provider");
     sub.egress?.dispose();
     sub.egress = null;
     if (sub.route !== null) this.#routes.delete(sub.route);
@@ -764,6 +872,26 @@ export class TopicRegistry {
       for (const sub of [...group.subs]) {
         if (sub.target?.variant === variant) this.#move(sub);
       }
+    } else if (
+      msg.t === "topic_rtc_answer" || msg.t === "topic_rtc_candidate" || msg.t === "topic_rtc_close"
+    ) {
+      const found = this.#peers.get(msg.id);
+      const group = found?.sub.group;
+      if (
+        found === undefined || group === null || group === undefined ||
+        group.source.peer !== peer ||
+        group.source.gen !== msg.gen || group.route !== msg.route || found.sub.route === null
+      ) return;
+      if (msg.t === "topic_rtc_close") {
+        this.#closePeer(found, msg.reason, "viewer");
+        return;
+      }
+      if (msg.t === "topic_rtc_answer") found.deadline = 0;
+      else if (++found.fromProvider > MAX_TOPIC_RTC_CANDIDATES) {
+        this.#closePeer(found, "rtc_candidate_limit", "both");
+        return;
+      }
+      found.sub.state.reply({ ...msg, id: found.sub.spec.id, route: found.sub.route });
     } else if (msg.t === "topic_error") {
       const group = this.#groups.get(msg.id);
       if (group?.source.peer === peer) {
@@ -899,8 +1027,10 @@ export class TopicRegistry {
   onFrame(peer: TopicProvider, header: FrameHeader, payload: Uint8Array, stream: symbol): void {
     const group = this.#groups.get(header.ch);
     const meta = topicSampleMeta(header.meta);
+    // A video route carries its media on direct peers, never as data frames.
     if (
       group?.source.peer !== peer || !group.opened || !group.active || meta === null ||
+      group.spec.profile.startsWith("video.") ||
       meta.gen !== group.source.gen || header.delivery !== group.spec.delivery ||
       !Number.isSafeInteger(header.seq) || header.seq < 1 || !Number.isFinite(header.ts) ||
       payload.byteLength > MAX_TOPIC_PAYLOAD_BYTES
@@ -973,6 +1103,11 @@ export class TopicRegistry {
           this.#idle(sub.group!, variant);
           this.#updateRate(sub.group!);
         }
+      }
+    }
+    for (const peer of [...this.#peers.values()]) {
+      if (peer.deadline > 0 && nowMs >= peer.deadline) {
+        this.#closePeer(peer, "rtc_answer_timeout", "both");
       }
     }
     for (const group of this.#groups.values()) {
