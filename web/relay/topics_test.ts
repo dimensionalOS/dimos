@@ -193,6 +193,31 @@ Deno.test("different latest rates share one provider route and retain each viewe
   }
 });
 
+Deno.test("a source at the viewer's own rate loses no frames to late deliveries", async () => {
+  using time = new FakeTime(0);
+  const { registry, viewer, send, opened, activate, sample } = setup();
+  try {
+    send({ ...spec, delivery: "latest", maxHz: 30 });
+    opened();
+    activate();
+    const period = 1000 / 30;
+    let at = 0;
+    for (let seq = 1; seq <= 300; seq++) {
+      // Every third frame reaches the relay 1.5 ms late, as a busy event loop delivers it.
+      const arrival = (seq - 1) * period + (seq % 3 === 0 ? 1.5 : 0);
+      time.tick(arrival - at);
+      at = arrival;
+      sample(seq);
+      await flush();
+    }
+    time.tick(2 * period);
+    await flush();
+    assertEquals(viewer.sink.decoded().length, 300);
+  } finally {
+    registry.viewerClosed(viewer);
+  }
+});
+
 const GUARD_OPEN: FrameHeader = {
   ch: "@guard",
   seq: 0,
