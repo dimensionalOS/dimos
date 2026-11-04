@@ -634,9 +634,14 @@ export class TopicRegistry {
     sub.variant = variant;
     sub.requested = requested;
     sub.settings = settings;
+    // Frames still queued were encoded by the old variant; the
+    // acknowledgement promises the new settings from here on.
+    if (previous !== null) sub.egress?.discard();
     sub.egress?.setRate(settings.maxHz);
     if (previous === null) this.#ready(sub);
     else this.#idle(group, previous);
+    // The old variant now samples for whoever remains on it.
+    this.#updateRate(group);
     if (previous !== null || revision > 0) {
       sub.state.reply({ t: "topic_applied", id: sub.spec.id, revision, settings });
     }
@@ -744,15 +749,18 @@ export class TopicRegistry {
       if (variant !== null) variant.ready = true;
       for (const sub of [...group.subs]) {
         if (group.variants === null) this.#ready(sub);
-        else if (sub.target?.variant === variant) this.#move(sub);
+        // The route's own variant, and any the provider acknowledged first.
+        else if (sub.target?.variant.ready) this.#move(sub);
       }
     } else if (msg.t === "topic_variant_ready") {
       const group = this.#groups.get(msg.route);
-      if (group?.source.peer !== peer || group.source.gen !== msg.gen || !group.opened) return;
+      if (group?.source.peer !== peer || group.source.gen !== msg.gen) return;
       const variant = group.variants?.get(msg.variant);
       // A late acknowledgement of a retired variant names different settings.
       if (variant === undefined || variantKey(msg.settings) !== variant.key) return;
       variant.ready = true;
+      // Before topic_opened, viewers wait for the route itself.
+      if (!group.opened) return;
       for (const sub of [...group.subs]) {
         if (sub.target?.variant === variant) this.#move(sub);
       }
