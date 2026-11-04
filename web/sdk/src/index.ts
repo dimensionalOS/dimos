@@ -58,6 +58,7 @@ export type {
   TopicSubscription,
 } from "./topics.ts";
 export type { TopicDescriptor, TopicSourceInfo } from "@dimos/shared";
+export type { TopicVideo, TopicVideoMode, TopicVideoOptions } from "./topicVideo.ts";
 export { type CborData, type CborProjection, projectCbor } from "./decoders/cbor.ts";
 export { TopicMediaDecoder } from "./media.ts";
 export {
