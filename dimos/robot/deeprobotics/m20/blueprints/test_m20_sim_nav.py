@@ -18,6 +18,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.module import ModuleBase
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.deeprobotics.m20.blueprints._nav import (
     _m20_nav,
@@ -55,6 +56,15 @@ def test_the_world_feeds_the_streams_the_vendor_lio_feeds() -> None:
         ("simm20world", "lidar"): "slam_body_points",
         ("simm20world", "odometry"): "slam_odom",
     }
+
+
+def test_teleop_cancel_reaches_the_planner() -> None:
+    def goal_topic(module: type[ModuleBase]) -> tuple[str | type[ModuleBase] | type[Spec], type]:
+        (atom,) = (a for a in m20_nav.active_blueprints if a.module is module)
+        (stream,) = (s for s in atom.streams if s.name == "goal")
+        return m20_nav.remapping_map.get((atom.name, "goal"), "goal"), stream.type
+
+    assert goal_topic(MLSPlannerNative) == goal_topic(MovementManager)
 
 
 def test_one_movement_manager() -> None:

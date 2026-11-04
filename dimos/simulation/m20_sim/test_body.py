@@ -24,6 +24,8 @@ import pytest
 from dimos.simulation.m20_sim.body import CONTROL_DT, LeggedM20, m20_spec
 from dimos.simulation.m20_sim.policy import M20Policy
 
+pytestmark = pytest.mark.self_hosted
+
 
 @pytest.fixture(scope="module")
 def policy() -> M20Policy:

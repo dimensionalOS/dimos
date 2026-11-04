@@ -32,6 +32,8 @@ from dimos.simulation.sensors.airy.lidar import LENS_HEIGHT
 from dimos.simulation.sensors.airy.pattern import FRAME_RATE, POINT_RATE, AiryPattern
 from dimos.simulation.sim_world.world import FRAME_DT, LidarFrame, Sim
 
+pytestmark = pytest.mark.self_hosted
+
 STILL = np.zeros(3)
 FORWARD = np.array([0.5, 0.0, 0.0])
 WHEEL_TOP = 0.22
