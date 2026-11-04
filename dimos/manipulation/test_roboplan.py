@@ -51,6 +51,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.utils.testing.cbor import roundtrip
 from dimos.utils.transform_utils import pose_to_matrix
 
 
@@ -775,9 +776,8 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
 ) -> None:
-    # The world snapshots obstacles with deepcopy and hands copies back out. A
-    # raw ndarray field would make that snapshot uncomparable, so the points
-    # stay plain tuples.
+    # The world snapshots obstacles with deepcopy and hands copies back out. The
+    # points are an ndarray, so Obstacle.__eq__ has to keep the snapshot comparable.
     world = _make_world(fake_roboplan, robot_config)
     obstacle = Obstacle(
         name="voxel-map",
@@ -790,8 +790,18 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
 
     stored = world.get_obstacles()[0]
     assert stored == world.get_obstacles()[0]
-    assert stored.points == ((0.0, 0.0, 0.0),)
+    assert stored == obstacle
+    assert stored != Obstacle(
+        name="voxel-map",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        points=((0.0, 0.0, 1.0),),
+        octree_resolution=0.05,
+    )
+    np.testing.assert_array_equal(stored.points, [(0.0, 0.0, 0.0)])
     assert stored.octree_resolution == 0.05
+    # The reason for the array: the map crosses worker RPC as one ndarray tag.
+    assert roundtrip(stored) == stored
 
 
 def test_octree_obstacle_rejects_geometry_it_cannot_build(

@@ -44,15 +44,9 @@ pytestmark = pytest.mark.self_hosted
 class PingModule(Module):
     data: Out[str]
 
-    def start(self):
-        super().start()
-
 
 class PongModule(Module):
     data: Out[str]
-
-    def start(self):
-        super().start()
 
 
 @pytest.fixture(autouse=True)

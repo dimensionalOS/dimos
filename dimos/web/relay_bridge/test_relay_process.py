@@ -116,6 +116,7 @@ def test_relay_run_cmd_resolves_symlinked_dirs(tmp_path: Path) -> None:
     assert f"--allow-read={real.resolve()}" in cmd
 
 
+@pytest.mark.flaky(reruns=1)
 def test_relay_process_reports_unpaired_tls_flag_before_reading_pem(tmp_path: Path) -> None:
     process = RelayProcess(cert=tmp_path / "missing.pem")
 

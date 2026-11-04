@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+import copy
 from dataclasses import dataclass, field
 import json
 import os
@@ -402,22 +403,19 @@ class ZenohService(Service):
         self._session_pool = session_pool or default_session_pool
         self._session: zenoh.Session | None = None
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Drop the live session, which pyo3 cannot pickle.
+    # Services ride into workers as blueprint config (``pubsubs=[Zenoh(...)]``): only
+    # their settings cross, the far side uses the default session pool, and a copy
+    # is a fresh, unstarted service. RPC services are never sent, so their
+    # rpc_timeouts have no place here.
+    def cbor_encode(self) -> dict[str, Any]:
+        return self.config.model_dump()
 
-        A module travels to its worker by pickle, so anything holding a session
-        has to shed it and re-acquire from the pool on the far side -- the same
-        move LCMService makes with its own runtime handles.
-        """
-        state = self.__dict__.copy()
-        state.pop("_session", None)
-        state.pop("_session_pool", None)
-        return state
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> ZenohService:
+        return cls(**data)
 
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self.__dict__.update(state)
-        self._session_pool = default_session_pool
-        self._session = None
+    def __deepcopy__(self, memo: dict[int, Any]) -> ZenohService:
+        return type(self).cbor_decode(copy.deepcopy(self.cbor_encode(), memo))
 
     def start(self) -> None:
         try:

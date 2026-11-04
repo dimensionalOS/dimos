@@ -14,10 +14,10 @@
 
 import os
 from pathlib import Path
-import pickle
 
 import pytest
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.git_cache import GitAssetCache
 from dimos.robot.assets.source import RobotDescriptionPath, RobotDescriptionSource
 
@@ -117,13 +117,13 @@ def test_custom_source_handle_needs_no_registration(tmp_path: Path) -> None:
     ]
 
 
-def test_lazy_path_survives_pickle_without_checkout(
+def test_lazy_path_survives_the_round_trip_without_checkout(
     robot_source: tuple[RobotDescriptionSource, RecordingGitAssetCache],
 ) -> None:
     source, git_cache = robot_source
     model_path = source / "robots" / "testbot" / "model.urdf"
 
-    restored = pickle.loads(pickle.dumps(model_path))
+    restored = decode(encode(model_path))
 
     assert isinstance(restored, RobotDescriptionPath)
     assert restored.suffix == ".urdf"

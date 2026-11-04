@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+from dataclasses import asdict
 import json
+import os
 from pathlib import Path
 from threading import Event, Thread
 import time
@@ -35,19 +37,18 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path as PathMsg
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
-from dimos.navigation.bench.ground_truth import GroundTruth
-from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, stalled, stuck
+from dimos.navigation.bench.ground_truth import Envelope, GroundTruth
+from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
 from dimos.navigation.bench.suite import Manifest
-from dimos.simulation.go2_sim.world import ODOM_FRAME_ID
-from dimos.simulation.go2_sim.world_spec import SimWorldSpec
+from dimos.simulation.sim_world.world_spec import SimWorldSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 TERMINAL_FILE = "terminal.json"
+ROBOT_FILE = "robot.xml"
 HARNESS_REASONS = ("driver_error", "no_ground_truth", "no_reference_route", "goal_lost", "stopped")
 WATCH_DT = 0.05
 FIRST_POSE_WAIT_S = 60.0
@@ -74,7 +75,6 @@ class EpisodeDriver(Module):
     cmd_vel: In[Twist]
 
     clicked_point: Out[PointStamped]
-    loaded_map: Out[PointCloud2]
     reference_path: Out[PathMsg]
     phase: Out[String]
 
@@ -87,8 +87,8 @@ class EpisodeDriver(Module):
         manifest = Manifest.load(self.config.manifest)
         self._rules = manifest.rules
         self._case = manifest.case(self.config.case_id)
-        self._truth = GroundTruth(self._case.scene())
         self._pose: tuple[float, NDArray[np.float64], NDArray[np.float64]] | None = None
+        self._frame = ""
         self._recent: deque[tuple[float, NDArray[np.float64], NDArray[np.float64]]] = deque()
         self._commands: deque[tuple[float, NDArray[np.float64]]] = deque()
         self._echo: float | None = None
@@ -111,6 +111,7 @@ class EpisodeDriver(Module):
     def _on_pose(self, msg: PoseStamped) -> None:
         xyz = np.array(tuple(msg.position), dtype=np.float64)
         rpy = np.array(tuple(msg.orientation.to_euler()), dtype=np.float64)
+        self._frame = msg.frame_id
         self._pose = (msg.ts, xyz, rpy)
         self._recent.append(self._pose)
         while self._recent and self._recent[0][0] < msg.ts - self._rules.stuck_s:
@@ -140,23 +141,28 @@ class EpisodeDriver(Module):
 
     def _episode(self) -> dict[str, object]:
         case, rules = self._case, self._rules
+        self._world.load_scene(case.family, case.seed, case.params)
+        shape = self._world.shape()
+        self._truth = GroundTruth(
+            case.scene(), Envelope(shape.half_width, shape.headroom, shape.step)
+        )
+        record: dict[str, object] = {"case_id": case.id, "body": asdict(shape)}
+        self.config.out_dir.mkdir(parents=True, exist_ok=True)
+        self._world.export_model(self.config.out_dir / ROBOT_FILE)
         if not self._wait(lambda: self._pose is not None, FIRST_POSE_WAIT_S):
-            return {"reason": "no_ground_truth"}
+            return {**record, "reason": "no_ground_truth"}
+        shortest = self._truth.route(case.start, case.goal)
+        route = self._truth.route(case.start, case.goal, centered=True)
+        if shortest is None or route is None:
+            return {**record, "reason": "no_reference_route"}
+        record["route_length"] = shortest.length
         self.phase.publish(String("reset"))
         self._reset_to_start()
-        record: dict[str, object] = {"case_id": case.id}
         started = time.time()
-        route = self._truth.route(case.start, case.goal, centered=True)
-        if route is None:
-            return {**record, "reason": "no_reference_route"}
-        self.reference_path.publish(_path(route.points))
+        self.reference_path.publish(_path(route.points, self._frame))
         self.phase.publish(String("premap"))
-        cloud = self._truth.premap_cloud(route.points)
-        self.loaded_map.publish(
-            PointCloud2.from_numpy(cloud, frame_id=ODOM_FRAME_ID, timestamp=time.time())
-        )
+        record["premap_points"] = self._world.publish_premap(route.points, case.premap_objects)
         self._stop_event.wait(self.config.seed_settle_s)
-        record["premap_points"] = len(cloud)
         record["premap_s"] = round(time.time() - started, 2)
         self.phase.publish(String("goal"))
         t0 = self._send_goal()
@@ -164,7 +170,7 @@ class EpisodeDriver(Module):
             return {**record, "reason": "goal_lost"}
         record["t0"] = t0
         self.phase.publish(String("navigate"))
-        reason = self._watch(t0, rules.timeout_s(case.route_length))
+        reason = self._watch(t0, rules.timeout_s(shortest.length))
         self.phase.publish(String(reason))
         return {**record, "reason": reason, "t_end": time.time()}
 
@@ -179,7 +185,7 @@ class EpisodeDriver(Module):
         deadline = time.time() + self.config.goal_wait_s
         while self._echo is None and time.time() < deadline and not self._stop_event.is_set():
             self.clicked_point.publish(
-                PointStamped(*self._case.goal, ts=time.time(), frame_id=ODOM_FRAME_ID)
+                PointStamped(*self._case.goal, ts=time.time(), frame_id=self._frame)
             )
             self._wait(lambda: self._echo is not None, self.config.goal_resend_s)
         return self._echo
@@ -201,7 +207,7 @@ class EpisodeDriver(Module):
         return "stopped"
 
     def _stuck_or_stalled(self, t0: float, now: float) -> str | None:
-        """The scorer's stuck and stalled rules over the windows the callbacks keep."""
+        """The scorer's stuck, dithering and stalled rules over the windows the callbacks keep."""
         recent, commands = list(self._recent), list(self._commands)
         poses = Poses(
             np.array([t for t, _, _ in recent]),
@@ -211,8 +217,8 @@ class EpisodeDriver(Module):
         twists = Commands(
             np.array([t for t, _ in commands]), np.array([v for _, v in commands]).reshape(-1, 3)
         )
-        if stuck(poses, twists, self._rules, now):
-            return "stuck"
+        if nowhere := no_progress(poses, twists, self._rules, now):
+            return nowhere
         if stalled(twists, self._rules, t0, now):
             return "stalled"
         return None
@@ -228,14 +234,16 @@ class EpisodeDriver(Module):
     def _write(self, record: dict[str, object]) -> None:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         path = self.config.out_dir / TERMINAL_FILE
-        path.write_text(json.dumps(record, indent=2) + "\n")
+        partial = path.with_name(path.name + ".partial")
+        partial.write_text(json.dumps(record, indent=2) + "\n")
+        os.replace(partial, path)
         logger.info("Episode terminal", **{k: v for k, v in record.items() if k != "t0"})
 
 
-def _path(points: NDArray[np.float64]) -> PathMsg:
+def _path(points: NDArray[np.float64], frame: str) -> PathMsg:
     now = time.time()
     return PathMsg(
         ts=now,
-        frame_id=ODOM_FRAME_ID,
-        poses=[PoseStamped(*map(float, p), ts=now, frame_id=ODOM_FRAME_ID) for p in points],
+        frame_id=frame,
+        poses=[PoseStamped(*map(float, p), ts=now, frame_id=frame) for p in points],
     )
