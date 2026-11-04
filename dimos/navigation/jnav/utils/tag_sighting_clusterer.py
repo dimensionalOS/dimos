@@ -24,16 +24,12 @@ from typing import Any
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-# One tag observation: ts, marker_id, t_cam_marker (xyz + xyzw quat), and the
-# per-glimpse quality fields (sharpness, reproj_px, tag_px, speed).
+# One tag observation: ts, marker_id, the stable-frame tag pose and optionally t_cam_marker (xyz + xyzw quat).
 Detection = dict[str, Any]
 
 
 def view_quality(t_cam_marker: list[float]) -> tuple[float, float]:
-    """(distance_m, view_angle_deg) for a tag pose in the camera optical frame.
-
-    distance is the camera->tag range; view_angle is the angle between the line
-    of sight and the tag's surface normal (0 = perfectly head-on)."""
+    """(distance_m, view_angle_deg) of a camera-frame tag pose: range, and line of sight to tag normal angle (0 = head-on)."""
     translation = np.array(t_cam_marker[:3], dtype=np.float64)
     distance = float(np.linalg.norm(translation))
     normal = Rotation.from_quat(t_cam_marker[3:7]).as_matrix()[:, 2]
@@ -66,33 +62,15 @@ def _huber_weights(residuals: np.ndarray, delta: float) -> np.ndarray:
 
 
 def glimpse_passes(
-    detection: Detection,
-    *,
-    max_distance_m: float,
-    max_view_angle_deg: float,
-    min_sharpness: float,
-    max_reproj_px: float,
-    min_tag_px: float,
-    max_linear_speed_mps: float,
-    max_angular_speed_dps: float,
+    detection: Detection, *, max_distance_m: float, max_view_angle_deg: float
 ) -> str | None:
-    """None when a glimpse passes every per-glimpse quality gate, else the rejection reason
-    (a gate whose field the detection lacks passes)."""
-    if detection.get("sharpness") is not None and detection["sharpness"] < min_sharpness:
-        return "blur"
-    if detection.get("reproj_px") is not None and detection["reproj_px"] > max_reproj_px:
-        return "reproj"
-    if detection.get("tag_px") is not None and detection["tag_px"] < min_tag_px:
-        return "small"
+    """None when a glimpse passes the range and view-angle gates (which need `t_cam_marker`), else the rejection reason."""
     if detection.get("t_cam_marker") is not None:
         distance, view_angle = view_quality(detection["t_cam_marker"])
         if distance > max_distance_m:
             return "far"
         if view_angle > max_view_angle_deg:
             return "oblique"
-    speed = detection.get("speed")
-    if speed is not None and (speed[0] > max_linear_speed_mps or speed[1] > max_angular_speed_dps):
-        return "motion"
     return None
 
 
@@ -102,19 +80,12 @@ STABLE_POSE_KEY = "t_odom_marker"
 
 @dataclass(frozen=True)
 class SightingClustering:
-    """How `SightingClusterer` turns a tag's detections into sightings. The glimpse gates are loose on purpose: the
-    medoid and its Huber outlier test reject the noisy glimpses, and a glance never reaches `min_inliers`."""
+    """How `SightingClusterer` turns detections into sightings; loose glimpse gates, as the medoid's Huber test drops noisy ones."""
 
     # per-glimpse gates (`glimpse_passes`)
     max_distance_m: float = 2.0  # camera-to-tag range; PnP depth error grows with range
     max_view_angle_deg: float = 60.0  # off-axis view; PnP pose flips grow toward grazing views
-    min_sharpness: float = 30.0  # Laplacian variance over the tag ROI (blur)
-    max_reproj_px: float = 3.0  # RMS solvePnP corner reprojection error
-    min_tag_px: float = 16.0  # tag side in pixels; corners get unreliable below this
-    # robot speed; motion blur and camera/odom time skew grow with it
-    max_linear_speed_mps: float = 1.0
-    max_angular_speed_dps: float = 90.0  # robot turn rate; same reason as the linear gate
-    # the same tag seen again within this long joins the open sighting, whose medoid is recomputed
+    # the same tag seen again within this long joins the open sighting, whose medoid is over its last this-long of detections
     cooldown_s: float = 5.0
     # a sighting is first published once this many detections agree with its medoid
     min_inliers: int = 3
@@ -125,18 +96,6 @@ class SightingClustering:
     rotation_weight_m_per_rad: float = 0.5
     # a published sighting is republished under its id (superseding it) once its medoid moves further than this
     republish_shift_m: float = 0.02
-
-    def gate_thresholds(self) -> dict[str, float]:
-        """The `glimpse_passes` keyword thresholds."""
-        return {
-            "max_distance_m": self.max_distance_m,
-            "max_view_angle_deg": self.max_view_angle_deg,
-            "min_sharpness": self.min_sharpness,
-            "max_reproj_px": self.max_reproj_px,
-            "min_tag_px": self.min_tag_px,
-            "max_linear_speed_mps": self.max_linear_speed_mps,
-            "max_angular_speed_dps": self.max_angular_speed_dps,
-        }
 
 
 @dataclass(frozen=True)
@@ -158,8 +117,7 @@ def cluster_inliers(
     min_huber_weight: float,
     pose_key: str = STABLE_POSE_KEY,
 ) -> tuple[Detection, list[Detection]]:
-    """The medoid and the detections whose Huber weight about it is at least `min_huber_weight` (the rest are
-    outliers); the medoid is re-picked among the inliers until they stop changing."""
+    """The medoid and its inliers (Huber weight >= `min_huber_weight`), the medoid re-picked among them until they settle."""
     poses = np.array([detection[pose_key] for detection in cluster], dtype=np.float64)
     members = np.arange(len(cluster))
     for _ in range(len(cluster)):
@@ -188,9 +146,7 @@ class _OpenSighting:
 
 
 class SightingClusterer:
-    """Streams tag detections (time order, each with `STABLE_POSE_KEY`) into sightings: a tag's detections within
-    `cooldown_s` of each other are one sighting, published once `min_inliers` agree with their medoid and republished
-    under the same id whenever that medoid moves."""
+    """Streams tag detections (time order, with `STABLE_POSE_KEY`) into sightings: published once `min_inliers` of a tag's last `cooldown_s` of detections agree with their medoid, republished under the same id when it moves."""
 
     def __init__(self, clustering: SightingClustering | None = None) -> None:
         self.clustering = clustering or SightingClustering()
@@ -201,7 +157,11 @@ class SightingClusterer:
     def add(self, detection: Detection) -> SightingUpdate | None:
         """Take one detection; the sighting update it causes, if any."""
         clustering = self.clustering
-        reason = glimpse_passes(detection, **clustering.gate_thresholds())
+        reason = glimpse_passes(
+            detection,
+            max_distance_m=clustering.max_distance_m,
+            max_view_angle_deg=clustering.max_view_angle_deg,
+        )
         if reason is not None:
             self.rejected[reason] += 1
             return None
@@ -213,6 +173,8 @@ class SightingClusterer:
         ):
             sighting = self._open[marker] = _OpenSighting()
         sighting.detections.append(detection)
+        while detection["ts"] - sighting.detections[0]["ts"] > clustering.cooldown_s:
+            sighting.detections.pop(0)
         medoid, inliers = cluster_inliers(
             sighting.detections,
             clustering.rotation_weight_m_per_rad,

@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Closure search as two stages of logical-execution-time jobs: scan-context buffer -> fast match -> (if uncertain)
-//! verification buffer -> rounds. Jobs land at dispatch + ceil(estimate) scans (deterministic) or on finish (fast).
+//! Closure search as two stages of logical-execution-time jobs: scan-context buffer -> fast match -> (if uncertain) verification buffer -> rounds. Jobs land at dispatch + ceil(estimate) scans (deterministic) or on finish (fast).
 
 use crate::gsc_pgo::{ClosureSearch, ClosureSearchResult, GscPgo, SearchStage};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -423,25 +422,6 @@ impl GscPgo {
             },
             overshoot,
         );
-        if overshoot {
-            let count = if job.kind == JobKind::Verification {
-                self.verification_overshoots += 1;
-                self.verification_overshoots
-            } else {
-                self.closure_search_overshoots += 1;
-                self.closure_search_overshoots
-            };
-            eprintln!(
-                "gsc_pgo: CLOSURE {} OVERSHOOT #{count}: keyframe {} onto {} took {seconds:.3}s, past the {:.3}s of data its estimate of {estimate_raw_scans:.3} vs ({estimate_scans} scans) spanned",
-                match job.kind {
-                    JobKind::Verification => "VERIFICATION",
-                    JobKind::FastMatch => "FAST MATCH",
-                },
-                diag.source_id,
-                diag.target_id,
-                spanned.unwrap_or(f64::NAN),
-            );
-        }
         match stage {
             SearchStage::Done(result) => self.finish_closure_search(result),
             SearchStage::Extend(pending) => self.verification_buffer.push((pending, job.order)),

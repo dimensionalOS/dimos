@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Landmark factors: keyframe -> landmark between factors with a 6x6 information (any dimension may be unknown);
-//! a landmark never sighted with a rotation is a 3-entry point in the solve, else a 6-entry pose.
+//! Landmark factors: keyframe -> landmark between factors with a 6x6 information (any dimension may be unknown); a landmark never sighted with a rotation is a 3-entry point in the solve, else a 6-entry pose.
 
 use crate::big_picture_fit::{edge_residual, linearize_between, Edge, State};
 use crate::mat3::{self, Mat3, Vec3};
@@ -142,8 +141,7 @@ impl Sighting {
     }
 }
 
-/// `planar_pose_graph`: a body-frame sighting in the level frame `tilt` turns the body into; its translation (and the
-/// translation rows of its information) turn, its rotation turns on the body side (the rotation error is the landmark's).
+/// `planar_pose_graph`: a body-frame sighting in the level frame `tilt` turns the body into; its translation (and the translation rows of its information) turn, its rotation turns on the body side (the rotation error is the landmark's).
 pub fn leveled(
     tilt: &Mat3,
     rotation: &Mat3,

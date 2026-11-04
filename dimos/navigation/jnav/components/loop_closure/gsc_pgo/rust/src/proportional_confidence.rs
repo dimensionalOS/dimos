@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stage 4, proportional confidence: the evidence a connection needs grows with its yank (stdevs of predicted spread);
-//! confidence must reach 1 - exp(-required evidence), and a shortfall gets extended ICP on more keyframes.
+//! Stage 4, proportional confidence: the evidence a connection needs grows with its yank (stdevs of predicted spread); confidence must reach 1 - exp(-required evidence), and a shortfall gets extended ICP on more keyframes.
 
 use crate::connection_fit::{self, dump_icp, icp, IcpParams, IcpResult};
 use crate::gsc_pgo::{ClosureCandidateDiag, ClosureSearch};
@@ -22,6 +21,9 @@ use crate::pointcloud::{
     transform_cloud, voxel_downsample, KdForest, KdTree, NearestIndex, PointCloud,
 };
 use std::sync::{Arc, Mutex, OnceLock};
+
+/// Runs a cloud's computation through the ICP cache; the encoded alignment starts at the given index.
+pub(crate) type IcpMemo<'a> = dyn Fn(&str, usize, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64> + 'a;
 
 /// One keyframe's body-frame scan, lazily voxelized and range-binned; pose-independent, so solves never stale it.
 pub struct KeyframeCloud {
@@ -239,17 +241,14 @@ impl ClosureSearch {
         voxel_downsample(&cloud, resolution)
     }
     /// Fit one more source cloud per round on a growing target; median ratio x agreement vs `UncertaintyRange` decides.
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(crate) fn extended_icp(
         &self,
-        cur_idx: usize,
-        target_idx: usize,
+        (cur_idx, target_idx): (usize, usize),
         first: &IcpResult,
         first_ratio: f64,
         diag: &mut ClosureCandidateDiag,
         required: &mut dyn FnMut(f64, &mut ClosureCandidateDiag) -> f64,
-        // runs a cloud's computation through the ICP cache; the encoded alignment starts at the given index
-        memo: &dyn Fn(&str, usize, &mut dyn FnMut() -> Vec<f64>) -> Vec<f64>,
+        memo: &IcpMemo,
     ) -> Option<IcpResult> {
         let max_clouds = diag
             .extension_budget
@@ -374,20 +373,17 @@ impl ClosureSearch {
                     &params,
                 );
                 if !self.config.closure_icp_dump_dir.is_empty() {
-                    let t0 = std::time::Instant::now();
+                    let dump_started = std::time::Instant::now();
                     dump_icp(
                         &self.config.closure_icp_dump_dir,
-                        cur_idx,
-                        target_idx,
+                        &format!("{cur_idx}_{target_idx}_c{j}"),
                         &source,
                         target_points,
                         (&first.rotation, &first.translation),
                         &icp,
-                        &format!("_c{j}"),
                     );
-                    self.debug_io_s
-                        .set(self.debug_io_s.get() + t0.elapsed().as_secs_f64());
-                    *self.dump_s.lock().expect("dump seconds") += t0.elapsed().as_secs_f64();
+                    *self.dump_s.lock().expect("dump seconds") +=
+                        dump_started.elapsed().as_secs_f64();
                 }
                 let mut v = vec![source.len() as f64];
                 v.extend(crate::icp_cache::encode_icp(&icp));
