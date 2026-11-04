@@ -19,7 +19,8 @@ from __future__ import annotations
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.bench.driver import EpisodeDriver
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
+from dimos.simulation.go2_sim.world import SimGo2World
 
-go2_sim_nav_episode = autoconnect(go2_sim_nav, EpisodeDriver.blueprint()).global_config(
-    n_workers=10
-)
+go2_sim_nav_episode = autoconnect(
+    go2_sim_nav, SimGo2World.blueprint(wait_for_scene=True), EpisodeDriver.blueprint()
+).global_config(n_workers=10)

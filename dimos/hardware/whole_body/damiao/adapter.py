@@ -124,10 +124,13 @@ class DamiaoWholeBodyAdapter(ABC):
         Linux maps ordered logical buses to ``can0``, ``can1``, and so on.
         macOS maps them to matching gs_usb enumeration indices. A runtime
         ``bus_devices`` override is a SocketCAN interface on Linux and a USB
-        serial number on macOS.
+        serial number on macOS. On either platform, an override starting with
+        ``/dev/`` is the serial port of a Damiao USB-CAN bridge.
         """
         index = self._bus_index(name)
         device = self._runtime_config.bus_devices.get(name)
+        if device is not None and device.startswith("/dev/"):
+            return can_motor_control.DmSerialBus(device)
         if sys.platform == "linux":
             return can_motor_control.SocketCanBus(device or f"can{index}")
         if sys.platform == "darwin":
@@ -241,6 +244,8 @@ class DamiaoWholeBodyAdapter(ABC):
                 )
             return False
         try:
+            # Reject invalid arm feedback before enabling or moving the gripper.
+            self.read_motor_states()
             self._preflight_gravity()
             for arm in self._arms.values():
                 arm.set_mode("mit")
@@ -248,10 +253,11 @@ class DamiaoWholeBodyAdapter(ABC):
             self._active = True
             self.read_motor_states()
             return True
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Damiao whole-body adapter failed to activate",
                 hardware_id=self._hardware_id,
+                error=str(exc),
             )
             try:
                 self._robot.disable()
