@@ -849,9 +849,6 @@ robots:
         demo-mid360-pcap-replay:
           title: Mid-360 pcap replay
           description: Replays a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap) through the live driver.
-        demo-virtual-mid360-fastlio:
-          title: Virtual Mid-360 + FAST-LIO
-          description: FAST-LIO fed by a virtual Mid-360 replaying a capture.
         demo-virtual-mid360-pointlio:
           title: Virtual Mid-360 + Point-LIO
           description: Point-LIO fed by a virtual Mid-360 replaying a capture.
