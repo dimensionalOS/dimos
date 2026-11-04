@@ -1,10 +1,10 @@
-import type { RenderedView } from "../../../shared/protocol/media.ts";
-import type { ViewPanel } from "./base.ts";
-import { TerminalImage } from "../lib/terminal-image.ts";
+import type { RenderedView } from "#dimos/agents/shared/protocol/media.ts";
+import type { ViewPanel } from "#dimos/agents/frontends/tui/views/base.ts";
+import { TerminalImage } from "#dimos/agents/frontends/tui/lib/terminal-image.ts";
 import { Text } from "@earendil-works/pi-tui";
-import { clean } from "../../../shared/view-models/text.ts";
-import { muted } from "../style.ts";
-import { readVerified } from "../../../shared/render/files.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { muted } from "#dimos/agents/frontends/tui/style.ts";
+import { readVerified } from "#dimos/agents/shared/render/files.ts";
 
 /** The cached preview of one image. */
 export class ImagePanel implements ViewPanel<"image"> {

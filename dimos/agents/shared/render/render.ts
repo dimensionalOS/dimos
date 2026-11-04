@@ -1,16 +1,17 @@
 import sharp from "sharp";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
-import type { RenderDetails, Sha256 } from "../protocol/media.ts";
-import type { RenderProgress, Rendering } from "./types.ts";
-import type { SourceFile } from "./lib/artifacts.ts";
-import { MAX_VIEWS } from "../protocol/media.ts";
-import { MODEL_IMAGE_BOX, modelImage } from "./lib/model-image.ts";
-import { RenderCache, readSource } from "./lib/artifacts.ts";
+import type { RenderDetails, Sha256 } from "#dimos/agents/shared/protocol/media.ts";
+import type { RenderProgress, Rendering } from "#dimos/agents/shared/render/types.ts";
+import type { SourceFile } from "#dimos/agents/shared/render/lib/artifacts.ts";
+import { MAX_VIEWS } from "#dimos/agents/shared/protocol/media.ts";
+import { MODEL_IMAGE_BOX, modelImage } from "#dimos/agents/shared/render/lib/model-image.ts";
+import { RenderCache, readSource } from "#dimos/agents/shared/render/lib/artifacts.ts";
+import { PREVIEW_PREFIX, previewRefOf } from "#dimos/agents/shared/render/preview-refs.ts";
 import { basename } from "node:path";
-import { clipRenderer } from "./clip.ts";
-import { imageRenderer } from "./image.ts";
-import { pointsRenderer } from "./points.ts";
+import { clipRenderer } from "#dimos/agents/shared/render/clip.ts";
+import { imageRenderer } from "#dimos/agents/shared/render/image.ts";
+import { pointsRenderer } from "#dimos/agents/shared/render/points.ts";
 
 /** Tried in this order; the first that accepts a file renders it. A frame index wins over a cloud, as in dimcode. */
 const RENDERERS = [clipRenderer, pointsRenderer, imageRenderer] as const;
@@ -74,8 +75,11 @@ export class FileRenderer {
           }
           const part = await renderer.render(source, basename(file.path), context);
           details.views.push(part.view);
+          // Local callers (e.g. /inspect) may still use images; stored tool results must omit them and hydrate later.
           images.push(part.image.content);
-          lines.push(`${part.view.label} · ${source.path} · sha256 ${source.sha256} · ${part.caption}`);
+          lines.push(
+            `${part.view.label} · ${source.path} · sha256 ${source.sha256} · ${part.caption}\n${PREVIEW_PREFIX}${previewRefOf(part.view).path}`,
+          );
         } catch (error) {
           details.failed.push({ path: file.path, error: error instanceof Error ? error.message : String(error) });
         }

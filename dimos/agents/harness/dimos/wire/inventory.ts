@@ -1,9 +1,9 @@
-import type { Fact, FactKey, Facts } from "../../../shared/protocol/runtime/context.ts";
-import type { WireDecoder } from "./base.ts";
-import { InventorySchema } from "../../../shared/protocol/runtime/inventory.ts";
+import type { Fact, FactKey, Facts } from "#dimos/agents/shared/protocol/runtime/context.ts";
+import type { WireDecoder } from "#dimos/agents/harness/dimos/wire/base.ts";
+import { InventorySchema } from "#dimos/agents/shared/protocol/runtime/inventory.ts";
 import { Type } from "typebox";
-import { WireError } from "./base.ts";
-import { wireDecoder } from "./decoder.ts";
+import { WireError } from "#dimos/agents/harness/dimos/wire/base.ts";
+import { wireDecoder } from "#dimos/agents/harness/dimos/wire/decoder.ts";
 
 export const inventoryDecoder = wireDecoder("inventory result", InventorySchema);
 

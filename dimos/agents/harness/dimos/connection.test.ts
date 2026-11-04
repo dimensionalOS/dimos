@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import type { LinkStatus } from "../../shared/protocol/gateway/link.ts";
-import { DimosConnection } from "./connection.ts";
-import { dimosFixture } from "../../test/environment.ts";
+import type { LinkStatus } from "#dimos/agents/shared/protocol/gateway/link.ts";
+import { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import { dimosFixture } from "#dimos/agents/test/environment.ts";
 import { join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { test } from "node:test";

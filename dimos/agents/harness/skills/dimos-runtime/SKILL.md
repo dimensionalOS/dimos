@@ -3,7 +3,7 @@ name: dimos-runtime
 description: Work with the running DimOS system. Discover modules, RPCs and streams, read a stream, write agent modules that watch streams or drive the robot, and schedule cron jobs.
 ---
 
-HarnessRuntime is a module inside the running DimOS system. It serves `inventory` and `agent_module` through McpServer. The harness implements `stream_get` locally through the DimOS Web SDK relay session. The gateway that hosts this conversation runs your `job` tool and delivers events, so there is nothing to poll. `dimos/agents/harness/README.md` in the DimOS checkout describes the parts.
+HarnessRuntime is a module inside the running DimOS system. It serves `inventory` and `agent_module` through McpServer. The harness implements `stream_get` locally through the DimOS Web SDK relay session. The gateway that hosts this conversation runs your `job` tool and delivers events, so there is nothing to poll. `docs/usage/agent/harness.md` in the DimOS checkout describes the parts.
 
 The `dimos_runtime` section of the system prompt is a snapshot of the system when this conversation started. Later changes arrive inside messages, as a `<dimos_runtime_change>` block that lists facts added, changed and removed, or as a `<dimos_runtime>` block that states the whole runtime again. The gateway writes them. They are not user input.
 

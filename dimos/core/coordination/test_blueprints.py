@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import pickle
 from types import MappingProxyType
 from typing import Any, Protocol
 
@@ -39,6 +38,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
+from dimos.protocol.encode.cbor import decode, encode
+from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.spec.utils import Spec
 
 
@@ -327,22 +328,22 @@ def test_autoconnect_eliminates_duplicates_keeps_newer() -> None:
     assert module_a_atoms[0].kwargs == {"key1": "new"}
 
 
-def test_disabled_module_proxy_pickle_roundtrip() -> None:
+def test_disabled_module_proxy_roundtrip() -> None:
     proxy = DisabledModuleProxy("SomeSpec")
-    restored = pickle.loads(pickle.dumps(proxy))
+    restored = decode(encode(proxy))
 
     assert repr(restored) == "<DisabledModuleProxy spec=SomeSpec>"
     assert restored.any_method(1, 2, 3) is None
 
 
-def test_blueprint_pickle_roundtrip() -> None:
+def test_blueprint_roundtrip() -> None:
     blueprint = (
         autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
         .global_config(option1=True, option2=42)
         .remappings([(ModuleA, "module_a", ModuleB)])
     )
 
-    restored = pickle.loads(pickle.dumps(blueprint))
+    restored = decode(encode(blueprint))
 
     assert restored == blueprint
     for name in ("transport_map", "global_config_overrides", "remapping_map"):
@@ -464,3 +465,30 @@ def test_namespace_remappings_by_instance_name() -> None:
             ModuleA.blueprint().namespace("robot0"),
             ModuleA.blueprint().namespace("robot1"),
         ).remappings([(ModuleA, "data1", "other")])
+
+
+def _always_ok() -> str | None:
+    return None
+
+
+def test_blueprint_roundtrip_keeps_checks_and_pinned_transports() -> None:
+    pinned = LCMTransport("/pinned", Data1)
+    try:
+        blueprint = (
+            autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+            .transports({("module_a", Data1): pinned})
+            .requirements(_always_ok)
+            .configurators(ClockSyncConfigurator())
+        )
+
+        restored = decode(encode(blueprint))
+
+        assert restored.requirement_checks == (_always_ok,)
+        assert type(restored.configurator_checks[0]) is ClockSyncConfigurator
+        transport = restored.transport_map[("module_a", Data1)]
+        assert type(transport) is LCMTransport
+        assert transport.topic.topic == "/pinned"
+        assert transport.topic.lcm_type is Data1
+        assert [atom.module for atom in restored.blueprints] == [ModuleA, ModuleB]
+    finally:
+        pinned.stop()

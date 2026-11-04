@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import type { FileRef, Sha256 } from "../../../shared/protocol/media.ts";
+import type { FileRef, Sha256 } from "#dimos/agents/shared/protocol/media.ts";
 import { ProcessTerminal, TuiMainScreen, setCapabilities, setCellDimensions } from "@earendil-works/pi-tui";
-import { ProgressPanel } from "./progress.ts";
+import { ProgressPanel } from "#dimos/agents/frontends/tui/conversation/progress.ts";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";

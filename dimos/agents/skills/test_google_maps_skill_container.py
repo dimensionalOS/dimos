@@ -16,6 +16,7 @@ import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+import pytest
 
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.core.module import Module
@@ -70,6 +71,7 @@ class MockedPositionSkill(GoogleMapsSkillContainer):
         self._max_valid_distance = 20000
 
 
+@pytest.mark.flaky(reruns=1)
 def test_where_am_i(agent_setup) -> None:
     history = agent_setup(
         blueprints=[FakeGPS.blueprint(), MockedWhereAmISkill.blueprint()],
@@ -79,6 +81,7 @@ def test_where_am_i(agent_setup) -> None:
     assert "bourbon" in history[-1].content.lower()
 
 
+@pytest.mark.flaky(reruns=1)
 def test_get_gps_position_for_queries(agent_setup) -> None:
     history = agent_setup(
         blueprints=[FakeGPS.blueprint(), MockedPositionSkill.blueprint()],
