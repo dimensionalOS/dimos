@@ -1,0 +1,39 @@
+[package]
+name = "dimos-m20-camera"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: the Deep Robotics M20's two RTSP cameras relayed as H.265 CompressedVideo, every frame"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_m20_camera"
+path = "src/lib.rs"
+
+[[bin]]
+name = "m20_camera"
+path = "src/bin/m20_camera.rs"
+
+[package.metadata.dimos.module.m20_camera]
+path = "dimos_m20_camera::module::M20Camera"
+python = "dimos.robot.deeprobotics.m20.camera.module:M20CameraRelay"
+
+[package.metadata.dimos.module.m20_camera.inputs]
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.m20_camera.outputs]
+front_camera = "foxglove_msgs.CompressedVideo"
+rear_camera = "foxglove_msgs.CompressedVideo"
+front_camera_info = "sensor_msgs.CameraInfo"
+rear_camera_info = "sensor_msgs.CameraInfo"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+retina = { version = "0.4.21", default-features = false, features = ["h265"] }
+futures = "0.3"
+url = "2"
+anyhow = "1"
