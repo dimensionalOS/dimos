@@ -20,6 +20,7 @@ import asyncio
 from pathlib import Path
 from threading import RLock
 import time
+from typing import Any
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -27,13 +28,14 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.shared_config import SharedConfigModule, shared_config
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -44,7 +46,8 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 
 class UrdfManagerConfig(ModuleConfig):
-    model: RobotModel
+    model: RobotModel | None = None
+    models: dict[str, RobotModel] = Field(default_factory=dict)
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -70,9 +73,24 @@ class UrdfManager(Module):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._description = self.config.model.load()
-        self._file_paths = _files_named_by(self._description.xml)
-        self._joints = {joint.name: joint for joint in self._description.joints}
+        sources = self.config.models
+        if self.config.model is not None:
+            if sources:
+                raise ValueError("provide model or named models, not both")
+            sources = {"robot": self.config.model}
+        if not sources:
+            raise ValueError("UrdfManager requires at least one model")
+        self._descriptions = {name: model.load() for name, model in sources.items()}
+        self._description = next(iter(self._descriptions.values()))
+        self._file_paths = set().union(
+            *(_files_named_by(m.xml) for m in self._descriptions.values())
+        )
+        self._joints: dict[str, JointDescription] = {}
+        for model in self._descriptions.values():
+            for joint in model.joints:
+                if joint.name in self._joints:
+                    raise ValueError(f"duplicate model joint {joint.name}; namespace the models")
+                self._joints[joint.name] = joint
         self._next_joint_tf_t = 0.0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
@@ -85,7 +103,8 @@ class UrdfManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(".urdf"):
-            self.file_info.publish(File(name, self._description.xml.encode()))
+            description = self._descriptions.get(Path(name).stem, self._description)
+            self.file_info.publish(File(name, description.xml.encode()))
             return
         # Only files the URDF names: a request is never an arbitrary path into the filesystem.
         if name not in self._file_paths:
@@ -93,6 +112,11 @@ class UrdfManager(Module):
             return
         data = await asyncio.to_thread(Path(name).read_bytes)
         self.file_info.publish(File(name, data))
+
+    @shared_config(SharedConfigModule)
+    def robot_models(self) -> dict[str, Any]:
+        """Deliver materialized models before build; receivers select robot_models."""
+        return {"robot_models": self._descriptions}
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
         await asyncio.to_thread(self.add_joint_state, state)
