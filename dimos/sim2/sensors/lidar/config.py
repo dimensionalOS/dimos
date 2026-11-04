@@ -14,6 +14,7 @@
 
 """Scan timing and return behavior belong to lidar, independently of a ray engine."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -50,7 +51,7 @@ class UniformScan:
 @dataclass(frozen=True)
 class LidarConfig:
     frame_id: str
-    pattern: ScanPattern = UniformScan()
+    pattern: Callable[[], ScanPattern] = UniformScan
     source_id: str = "lidar"
     scan_hz: float = 10
     motion_hz: float = 200
