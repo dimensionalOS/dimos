@@ -23,7 +23,7 @@ import time
 from typing import Any
 
 from dimos_lcm.common_msgs import SampleHeader
-from dimos_lcm.control_msgs import JointCommand, JointTarget
+from dimos_lcm.control_msgs import ActionCommand, JointTarget
 import numpy as np
 
 from dimos.control.components import make_humanoid_joints
@@ -71,7 +71,7 @@ class G1PolicyModule(SharedConfigModule):
     imu: In[Imu]
     joint_state: In[JointState]
     cmd_vel: In[Twist]
-    joint_command: Out[JointCommand]
+    actions: Out[ActionCommand]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -80,7 +80,7 @@ class G1PolicyModule(SharedConfigModule):
         self._velocity = np.zeros(3)
         self._until = 0.0
         self._identity = (-1, -1)
-        self._last_action: JointCommand | None = None
+        self._last_action: ActionCommand | None = None
         self._joints: dict[tuple[int, int], JointState] = {}
         self._imus: dict[tuple[int, int], Imu] = {}
         self._clock_id: str | None = None
@@ -141,7 +141,7 @@ class G1PolicyModule(SharedConfigModule):
                 return
             if identity == self._identity:
                 if self._last_action is not None:
-                    self.joint_command.publish(self._last_action)
+                    self.actions.publish(self._last_action)
                 return
             if isinstance(sample, JointState):
                 self._joints[identity] = sample
@@ -150,12 +150,12 @@ class G1PolicyModule(SharedConfigModule):
             if identity in self._joints and identity in self._imus:
                 action = self.compute(self._joints.pop(identity), self._imus.pop(identity))
                 if action is not None:
-                    self.joint_command.publish(action)
+                    self.actions.publish(action)
             # Bounded join; old samples can never satisfy a later boundary.
             self._joints = {k: v for k, v in self._joints.items() if k >= identity}
             self._imus = {k: v for k, v in self._imus.items() if k >= identity}
 
-    def compute(self, joints: JointState, imu: Imu) -> JointCommand | None:
+    def compute(self, joints: JointState, imu: Imu) -> ActionCommand | None:
         with self._lock:
             h, ih = joints.sample_header, imu.sample_header
             if (
@@ -210,7 +210,7 @@ class G1PolicyModule(SharedConfigModule):
             positions = np.clip(
                 np.r_[result.positions, self._arm_targets], self._lower, self._upper
             )
-            self._last_action = JointCommand(
+            self._last_action = ActionCommand(
                 header=SampleHeader(
                     clock_id=h.clock_id,
                     epoch=h.epoch,
@@ -221,8 +221,8 @@ class G1PolicyModule(SharedConfigModule):
                 based_on_time_ns=h.time_ns,
                 apply_at_ns=h.time_ns,
                 valid_until_ns=h.time_ns + self.config.control.period_ns,
-                targets_length=len(JOINTS),
-                targets=[
+                joint_targets_length=len(JOINTS),
+                joint_targets=[
                     JointTarget(
                         joint_id=n, position=float(q), velocity=0, kp=kp, kd=kd, feedforward=0
                     )
