@@ -56,8 +56,12 @@ PROBE_M = 0.4
 # Pose draw: how far each joint may move from the centre in one pose, radians, scaled by the
 # amplitude; the widest amplitude an arrangement affords; and how the amplitude reacts to a frame
 # without a board (shrink) and with one (recover).
-# The wrist's range keeps two consecutive draws inside a 1.2 rad move, the module's step cap.
-STEP_RANGE = np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.55])
+STEP_RANGE = np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.05])
+# The wrist rolls through this cycle on top of the draw. A sideways offset of the camera in the
+# flange shows in the images only through rolls about the tool axis, by its sine: 30 degree
+# rolls left 7 mm of offset inside a real arm's pose scatter (xArm6, 2026-11-03, two runs 4 mm
+# apart and 7 mm from a ruler), 60 degree rolls do not. Consecutive steps stay under the 1.2 rad cap.
+WRIST_ROLLS_RAD = (1.05, 0.0, -1.05, 0.0)
 AMP_CEIL = {
     False: 1.0,
     True: 0.5,
@@ -597,6 +601,7 @@ def solve_hand_eye(
     tried = moved = unsolved = 0
     while tried < max_poses and robot.clock() <= max_seconds - 5:
         q = centre + amp * rng.uniform(-1.0, 1.0, 6) * STEP_RANGE
+        q[5] += WRIST_ROLLS_RAD[tried % len(WRIST_ROLLS_RAD)]
         tried += 1
         if not robot.move_to_joints([float(v) for v in q]):
             amp = max(amp * AMP_SHRINK, AMP_MIN)
