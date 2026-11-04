@@ -261,3 +261,20 @@ def test_the_table_is_a_planner_obstacle_for_the_run_only(
     assert np.allclose(dims, [0.6, 1.0, 0.2])
     assert np.allclose([pose.position.x, pose.position.y, pose.position.z], [0.6, 0.0, -0.025])
     module._obstacles.remove_obstacle.assert_called_once_with("table-id")
+
+
+def test_record_keeps_every_frame_with_its_pose(
+    module: HandEyeCalibrationModule, frames: threading.Event, tmp_path
+) -> None:
+    module.config.record = True
+
+    report = module.calibrate()
+
+    record_dir = tmp_path / "records"
+    runs = list(record_dir.iterdir())
+    assert len(runs) == 1 and report["record_dir"] == str(runs[0])
+    pngs = sorted(runs[0].glob("frame_*.png"))
+    assert len(pngs) == report["poses_moved"] == 12
+    first = json.loads((runs[0] / "frame_01.json").read_text())
+    assert len(first["joints"]) == 6 and len(first["flange_T"]) == 4 and first["move"] == 1
+    assert json.loads((runs[0] / "report.json").read_text())["passed"] is True

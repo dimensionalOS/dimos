@@ -28,11 +28,14 @@ around a fixed camera, registered with the planner as an obstacle for the run.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import math
+from pathlib import Path
 import threading
 import time
 from typing import Any, Literal, Protocol
 
+import cv2
 import numpy as np
 from pydantic import BaseModel, Field
 from reactivex.disposable import Disposable
@@ -40,6 +43,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.manipulation.calibration import store
 from dimos.manipulation.calibration.hand_eye import (
     BoardSpec,
     CameraNominal,
@@ -147,6 +151,9 @@ class HandEyeCalibrationConfig(ModuleConfig):
     table_top_z: float | None = None
     table_x_m: tuple[float, float] = (0.25, 1.0)
     table_y_m: tuple[float, float] = (-0.6, 0.6)
+    # Keep every captured frame with the joints and flange pose it was taken at, plus the
+    # report, under STATE_DIR/calibration/records/<name>_<time>, for inspection afterwards.
+    record: bool = False
 
 
 @dataclass
@@ -163,6 +170,8 @@ class _Run:
     # One record per target the solver asked for: its joints, what became of it, and the planned
     # path, so a dry run can be inspected before anything moves.
     targets: list[dict[str, Any]] = field(default_factory=list)
+    frames: int = 0
+    record_dir: Path | None = None
 
 
 class HandEyeCalibrationModule(Module):
@@ -221,6 +230,13 @@ class HandEyeCalibrationModule(Module):
             self._abort.clear()
             self._approve.clear()
             self._run = _Run(t0=time.monotonic())
+            if self.config.record:
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                self._run.record_dir = (
+                    store.HAND_EYE_DIR / "records" / f"{self.config.name}_{stamp}"
+                )
+                self._run.record_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("Hand-eye recording", path=str(self._run.record_dir))
             obstacles = self._add_obstacles()
             try:
                 result = solve_hand_eye(
@@ -237,7 +253,11 @@ class HandEyeCalibrationModule(Module):
                     self._obstacles.remove_obstacle(obstacle)
             self._result = result
             self._targets = self._run.targets
-            return self._report(result)
+            report = self._report(result)
+            if self._run.record_dir is not None:
+                report["record_dir"] = str(self._run.record_dir)
+                (self._run.record_dir / "report.json").write_text(json.dumps(report, indent=1))
+            return report
         finally:
             run, self._run = self._run, None
             self._run_lock.release()
@@ -432,7 +452,34 @@ class HandEyeCalibrationModule(Module):
         rgb = image.data if image.format is ImageFormat.RGB else _to_rgb(image)
         K = np.asarray(info.K, dtype=float).reshape(3, 3)
         dist = np.resize(np.asarray(info.D, dtype=float).ravel(), 5)
+        if run.record_dir is not None:
+            self._record_frame(run, rgb, K, dist, image.ts)
         return Frame(rgb, K, dist, image.ts)
+
+    def _record_frame(
+        self, run: _Run, rgb: Any, K: FloatArray, dist: FloatArray, ts: float
+    ) -> None:
+        assert run.record_dir is not None
+        run.frames += 1
+        stem = run.record_dir / f"frame_{run.frames:02d}"
+        cv2.imwrite(str(stem.with_suffix(".png")), np.ascontiguousarray(rgb[:, :, ::-1]))
+        try:
+            flange = self.read_flange_pose().tolist()
+        except RuntimeError as error:
+            flange = str(error)
+        stem.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "ts": ts,
+                    "move": run.moves,
+                    "joints": self.read_joints().tolist(),
+                    "flange_T": flange,
+                    "K": K.tolist(),
+                    "dist": dist.tolist(),
+                },
+                indent=1,
+            )
+        )
 
     def _report(self, result: HandEyeResult) -> dict[str, Any]:
         parent = (
