@@ -125,7 +125,11 @@ this rejects a colliding segment rather than finding a detour.
 | `reset()` | `CommandResult` after stopping motion and clearing a failed state |
 
 Gripper positions are normalized travel: `0.0` closed, `1.0` open. Movement calls
-accept `speed_scale` and execution `timeout` options. Ordinary calls block and
+accept `speed_scale` and execution `timeout` options. Gripper calls accept `timeout`
+only (default 2 s): they wait until the fingers stop, at the target or held on an
+object, and raise `MotionError` if they are still moving then; `timeout=0` returns as
+soon as the command is accepted. Grippers without position feedback (e.g. Lite6)
+report the commanded value, so the wait returns at once there. Ordinary calls block and
 raise on failure, so scripts do not need success checks between every action.
 
 ### Shared presets
