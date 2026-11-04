@@ -48,6 +48,10 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.control.tasks.operator_hold_task.operator_hold_task import (
+    OPERATOR_HOLD_TASK_NAME,
+    OperatorHoldTask,
+)
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
@@ -171,6 +175,15 @@ class TiltingRobots(ArmCoordinator):
     """Ports for a FakeArm with an IMU."""
 
     mock_imu: In[Imu]
+
+
+class WholeRobot(ControlCoordinator):
+    """Ports for one robot, "mock", with joints and a base."""
+
+    mock_position_command: Out[JointState]
+    mock_joint_state: In[JointState]
+    mock_cmd_vel: Out[Twist]
+    mock_odom: In[PoseStamped]
 
 
 # In-process, with the tick loop stepped by hand.
@@ -309,10 +322,10 @@ class Rig:
     def report(self, port: str, msg: Any) -> None:
         self.readings[port].publish(msg)
 
-    def report_base(self) -> None:
+    def report_base(self, robot: str = "go2") -> None:
         """The fake base, standing at the origin."""
-        origin = {"go2/base/x": 0.0, "go2/base/y": 0.0, "go2/base/yaw": 0.0}
-        self.report("go2_odom", pose_from_values(origin, "go2/base", frame_id="odom"))
+        origin = {f"{robot}/base/x": 0.0, f"{robot}/base/y": 0.0, f"{robot}/base/yaw": 0.0}
+        self.report(f"{robot}_odom", pose_from_values(origin, f"{robot}/base", frame_id="odom"))
 
     def report_arm(self, *positions: float) -> None:
         """The fake arm's joint positions, joint1 first, standing still."""
@@ -447,6 +460,60 @@ def test_arm_positions_and_base_speeds_coexist_in_one_tick(
     error.assert_not_called()
 
 
+#: The WholeRobot's base axes, as a task claims them.
+MOCK_BASE_AXES = ["mock/base/vx", "mock/base/vy", "mock/base/wz"]
+
+
+def test_one_robots_joint_and_base_commands_arrive_in_the_same_tick(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    """One robot with joint ports and a cmd_vel port: the base axes split
+    into their own routing entry (no mode conflict with the joints' position
+    mode) and merge back, so both commands leave in the same tick."""
+    error = mocker.patch.object(tick_mod.logger, "error")
+    r = rig(WholeRobot)
+    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
+    task = JointVelocityTask("vel_base", JointVelocityTaskConfig(MOCK_BASE_AXES))
+    task.start()
+    r.coordinator.add_task(task)
+    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
+
+    r.report_arm(*AT_REST)
+    r.report_base("mock")
+    sent_before = len(r.sent)
+    r.tick()
+
+    by_port = dict(r.sent[sent_before:])
+    assert set(by_port) == {"mock_position_command", "mock_cmd_vel"}
+    assert list(by_port["mock_position_command"].position) == [0.5, *AT_REST[1:]]
+    twist = by_port["mock_cmd_vel"]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, 0.0)
+    error.assert_not_called()
+
+
+def test_a_mode_conflict_on_a_connection_robots_route_drops_the_later_joint(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    """Two same-priority tasks driving one robot's joints in different modes:
+    the route-level guard logs the conflict and drops the later joint."""
+    error = mocker.patch.object(tick_mod.logger, "error")
+    r = rig(ArmCoordinator)
+    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
+    task = JointVelocityTask("vel_arm", JointVelocityTaskConfig(["mock/joint2"]))
+    task.start()
+    r.coordinator.add_task(task)
+    task.set_velocities([0.3], t_now=time.perf_counter())
+
+    r.report_arm(*AT_REST)
+    r.tick()
+
+    error.assert_called_once_with(
+        "Mode conflict for hardware mock: joint mock/joint2 wants VELOCITY but "
+        "hardware already has POSITION. Dropping command for mock/joint2."
+    )
+    assert r.positions_sent()[-1] == [0.5, *AT_REST[1:]]
+
+
 def test_a_twist_command_reaches_a_connection_robots_base(rig: Callable[..., Rig]) -> None:
     """The twist pre-hook maps onto the connection robot's base axes, which
     the card-routed velocity task claims."""
@@ -519,28 +586,84 @@ def test_two_tasks_arbitrate_the_base_by_priority(rig: Callable[..., Rig]) -> No
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.1, 0.0, 0.0)
 
 
-def test_a_base_is_zeroed_when_its_velocity_task_times_out(rig: Callable[..., Rig]) -> None:
-    """A velocity task's stream going quiet zeroes every base axis — the
-    connection base gets the same zero_on_timeout safety as an adapter base."""
+def test_the_operator_hold_zeroes_a_running_base_and_keeps_it_after_an_estop_clear(
+    rig: Callable[..., Rig],
+) -> None:
+    """The hold claims a connection robot's base axes even though they never
+    appear in the joint-state snapshot: a running velocity task loses them,
+    and clearing an e-stop does not hand them back."""
     r = rig()
-    task = base_task("vel_base", priority=10, timeout=0.05)
+    task = base_task("vel_base", priority=10)
     r.coordinator.add_task(task)
+    r.coordinator.add_task(OperatorHoldTask(), task_type="operator_hold")
     r.report_base()
 
     task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
     r.tick()
     assert r.twists_sent()[-1].linear.x == 0.4
 
-    time.sleep(0.1)
+    r.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "request", {"route": "manual"})
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
 
-    # The winner expiry may be observed by a later tick than the sleep
-    # boundary (slow/loaded runners), so keep ticking until the zeroed
-    # command shows up instead of asserting on one fixed tick.
-    def zeroed() -> bool:
-        twist = r.twists_sent()[-1]
-        return (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+    assert r.coordinator.set_estop(True)
+    sent = len(r.sent)
+    r.report_base()
+    r.tick()
+    assert len(r.sent) == sent  # e-stopped: nothing is sent
 
-    assert r.tick_until(zeroed)
+    assert r.coordinator.set_estop(False)
+    r.tick()  # the clear drops the source's holds: nothing until the next reading
+    assert len(r.sent) == sent
+    r.report_base()
+    r.tick()
+
+    # The velocity task is still streaming 0.4, but the hold outranks it:
+    # the base stays at zero until the hold is acknowledged.
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+    r.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "acknowledge")
+    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
+    r.tick()
+    assert r.twists_sent()[-1].linear.x == 0.4
+
+
+def test_a_base_is_zeroed_when_its_velocity_task_times_out(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    """A velocity task's stream going quiet zeroes every base axis — the
+    connection base gets the same zero_on_timeout safety as an adapter base.
+
+    Deterministic, no sleeps: the task's clock (perf_counter, which the tick
+    loop stamps ``state.t_now`` from) is advanced past the task timeout by
+    hand, while the base's feedback is re-reported right before each tick so
+    it is fresh no matter how long the runner pauses — only the task command
+    expires.
+    """
+    r = rig()
+    task = base_task("vel_base", priority=10, timeout=0.05)
+    r.coordinator.add_task(task)
+
+    clock = [1000.0]
+    mocker.patch.object(time, "perf_counter", side_effect=lambda: clock[0])
+
+    r.report_base()
+    task.set_velocities([0.4, 0.0, 0.0], t_now=clock[0])
+    r.tick()
+    assert r.twists_sent()[-1].linear.x == 0.4
+
+    # The command stream goes quiet past the task's timeout; the feedback
+    # stays fresh, so the robot is still commanded, with zeros, this tick.
+    clock[0] += 2 * 0.05
+    r.report_base()
+    twists_before = len(r.twists_sent())
+    r.tick()
+
+    assert len(r.twists_sent()) == twists_before + 1  # fresh feedback: still commanded
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
 
 
 def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
