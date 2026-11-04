@@ -82,9 +82,11 @@ topic operation with `topic_read_denied` or `topic_write_denied`.
 
 A standalone provider connects to `/robot` with
 `hello {v:8, role:"robot", token?, topicSource, topicsVersion:1, topicCapabilities}`.
-The optional capabilities contain `read`, `write` and up to 16 fixed `profiles`;
-the relay enforces them and advertises them to viewers. An older raw provider
-omits them and supports `raw`. With an auth file, `token` must be the key bound
+The optional capabilities contain `read`, `write`, up to 16 fixed `profiles`
+and `profileOptions`, the settings each profile takes as
+`{kind, min?, max?, values?, default?}` with the profile value as the default
+and the ceiling; the relay enforces them and advertises them to viewers. An
+older raw provider omits them and supports `raw`. With an auth file, `token` must be the key bound
 to that source in `topicSources`. This hello carries neither robot identity nor
 manifest, and the source never appears in `robots`. Its initial carrier message
 is `topic_sources`, carrying the source's fresh generation. Viewers negotiate
@@ -93,24 +95,43 @@ and is sent again whenever a source connects or leaves.
 
 | Direction | Message | Meaning |
 |---|---|---|
-| Viewer → relay | `topic_sub {id, source, keyExpr, delivery, profile, maxHz}` | Desired subscription, independent of robot watch |
-| Relay → provider | `topic_open {route, gen, keyExpr, delivery, profile, maxHz}` | Server-stamped, shared source request |
+| Viewer → relay | `topic_sub {id, source, keyExpr, delivery, profile, maxHz, settings?}` | Desired subscription, independent of robot watch; `settings` starts it beyond the profile defaults |
+| Relay → provider | `topic_open {route, gen, keyExpr, delivery, profile, maxHz, settings?}` | Server-stamped, shared source request; `settings` is the route's first variant, `v1` |
 | Provider → relay | `topic_opened {route, gen}` | Zenoh subscription installed; publisher may not exist |
-| Relay → viewer | `topic_ready {id, source, route, gen}` | Install this viewer's route before activation |
+| Relay → viewer | `topic_ready {id, source, route, gen, settings}` | Install this viewer's route before activation; `settings` are in force |
 | Viewer → relay → provider | `topic_activate {route, gen}` | Relay maps the viewer route to its provider route; data may begin |
 | Viewer → relay | `topic_credit {route, gen, frames, bytes}` | Cumulative browser receipts for reliable route bytes |
+| Viewer → relay | `topic_update {id, revision, options}` | Change the settings of one desired subscription; `null` resets a key. The revision returns on the acknowledgement or rejection |
+| Relay → viewer | `topic_applied {id, revision, settings}` | The viewer now receives frames with these settings, also when the relay moved it itself |
+| Relay → provider | `topic_variant {route, gen, variant, settings}` | Open encode variant `v1`..`v4` of a media route, or change its rate |
+| Provider → relay | `topic_variant_ready {route, gen, variant, settings}` | The variant encodes with these settings |
+| Relay → provider | `topic_variant_close {route, gen, variant}` | No viewer uses the variant any more |
 | Viewer → relay | `topic_unsub {id}` | Drop only this connection's desired subscription |
 | Relay → provider | `topic_close {route, gen}` | Last consumer released the source subscription |
 | Viewer → relay → provider | `topic_list {id, source, prefix, cursor, limit}` | Bounded catalog page; relay substitutes a private request ID |
 | Provider → relay → viewer | `topic_page {id, source, gen, entries, cursor}` | Known/observed/advertised descriptors, not proof of live payloads |
-| Either leg | `topic_error {id, code, message, outcome}` | Rejected, interrupted, or unknown result |
+| Either leg | `topic_error {id, revision?, code, message, outcome}` | Rejected, interrupted, or unknown result; with a revision, one rejected update |
 
-Dynamic sample metadata is `{key, encoding, gen, ingressTs, sourceTs?}`.
-Relay-to-provider `topic_activate` carries `maxHz`, including on repeated
-activations. The relay shares one route per source, key expression, delivery
-and profile, and updates its rate to the highest requested by its consumers.
+Dynamic sample metadata is `{key, encoding, gen, ingressTs, sourceTs?, variant?}`.
+The relay shares one route per source, key expression, delivery and profile.
 Each latest viewer retains its own rate gate and newest pending sample per key.
 Viewer-supplied activation rates never change the rate calculated by the relay.
+
+Settings are `maxHz`, `maxResolution`, `quality`, `keepEvery` and `fields`.
+The relay validates a `topic_sub` `settings` object or a `topic_update`
+against the provider's `profileOptions` for the profile: an unknown name
+rejects with `unsupported_option`, a value outside its range with
+`option_out_of_range`, and the normalized settings (clamped to the profile
+value) go to the provider and back to the viewer. A media route serves up to
+four variants keyed by their encode settings; each samples at the highest
+rate among its viewers and stamps its frames with `variant`, which the relay
+dispatches on and strips. A viewer keeps its old variant until the new one
+acknowledges, then gets `topic_applied`; a fifth settings set rejects with
+`variant_limit` unless a variant nobody uses can be retired, and such a
+variant closes after a two second grace. Raw routes have no variants: `maxHz`
+is their only setting, gated per viewer by the relay, which acknowledges the
+change itself and sends the route's highest rate on `topic_activate`, as it
+does for a provider without `profileOptions`.
 
 `key` is concrete even on wildcard subscriptions; source and ingress times
 remain distinct from header send time. Payloads remain opaque bytes.
