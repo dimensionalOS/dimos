@@ -22,12 +22,6 @@ env:
   # Disable default package installs. Each job should explicitly install a group.
   UV_NO_SYNC: "1"
 
-# Hosted jobs restore caches on every event but save them only from main. A
-# cache entry saved on a PR's merge ref can be restored by that PR alone, so a
-# per-PR save is a private copy; at ~8 GB of them per run the repository's
-# 10 GB cache pool was recycled on every run, evicting main's entries and the
-# Cachix publish markers with them. uv caches are pruned (`uv cache prune --ci`)
-# so they hold only wheels built from source: ~13 MB instead of 4.4 GB.
 jobs:
   commit-messages:
     name: No AI co-authors
