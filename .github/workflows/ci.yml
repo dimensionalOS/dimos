@@ -101,16 +101,6 @@ jobs:
         run: python3 bin/native-modules --inputs-hash
       - name: Find the publish markers
         id: marker
-        # The marker is a workflow artifact named after the platform and the
-        # inputs hash, uploaded by the publish job once Cachix holds the build.
-        # It used to be an Actions cache entry, but the repository's 10 GB
-        # cache pool is recycled by every CI run, which evicted the 2 KB marker
-        # within hours and re-ran the publish on nearly every push. Artifacts
-        # expire by retention only (90 days here) and, unlike cache entries,
-        # are visible from every branch. Only uploads from runs of this
-        # repository count: a fork PR runs its own copy of this workflow and
-        # could upload a lookalike. A lookup failure reads as "no marker", so
-        # an API outage costs a redundant publish rather than the run.
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_ID: ${{ github.repository_id }}
@@ -224,9 +214,6 @@ jobs:
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
           python3 bin/native-modules --record-links > .cachix-marker/links.txt
       - name: Upload publish marker
-        # Found by cachix-build-check (see there for why an artifact and not a
-        # cache entry) and downloaded by the tests jobs. It expires with the
-        # repository's artifact retention, after which one run publishes again.
         uses: actions/upload-artifact@v7
         with:
           name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
@@ -294,9 +281,6 @@ jobs:
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
           python3 bin/native-modules --record-links > .cachix-marker/links.txt
       - name: Upload publish marker
-        # Found by cachix-build-check (see there for why an artifact and not a
-        # cache entry) and downloaded by the tests jobs. It expires with the
-        # repository's artifact retention, after which one run publishes again.
         uses: actions/upload-artifact@v7
         with:
           name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
@@ -765,8 +749,7 @@ jobs:
       # future macOS leg) skips provisioning; binary-needing tests skip there.
       # Without a marker (a fork PR whose inputs changed, or an expired
       # artifact when the publish was fork-guarded) the binaries are simply
-      # absent: hosted runners never fall back to building the heavy C++
-      # closures.
+      # absent: hosted runners never fall back to building the heavy C++ closures.
       - name: Download publish marker
         if: runner.os == 'Linux' && runner.arch == 'X64' && (needs.cachix-build.result == 'success' || needs.cachix-build-check.outputs.marker-run-linux != '')
         id: native-marker
