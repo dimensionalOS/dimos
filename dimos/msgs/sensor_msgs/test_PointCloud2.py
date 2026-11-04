@@ -171,18 +171,6 @@ def test_lcm_per_point_timing_round_trip() -> None:
     np.testing.assert_array_equal(decoded_lines, lines)
 
 
-def test_lcm_planes_round_trip() -> None:
-    """Surface planes survive an lcm_encode → lcm_decode round trip, NaN included."""
-    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
-    planes = np.array([[0.0, 0.6, 0.8, -0.02], [np.nan] * 4], dtype=np.float32)
-
-    decoded = PointCloud2.lcm_decode(PointCloud2.from_numpy(points, planes=planes).lcm_encode())
-
-    np.testing.assert_array_equal(decoded.planes_f32(), planes)
-    np.testing.assert_allclose(decoded.points_f32(), points)
-    assert PointCloud2.from_numpy(points).planes_f32() is None
-
-
 def test_lcm_decode_maps_ros_time_and_ring() -> None:
     """The L1's ROS-style `time` (f32 s) and `ring` (u16) land on offset_times and lines."""
     from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2

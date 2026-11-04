@@ -75,10 +75,6 @@ def register_colormap_annotation(name: str = "turbo") -> None:
     )
 
 
-# The ray tracer's per-voxel surface plane, in `planes_f32` column order.
-PLANE_FIELDS = ("normal_x", "normal_y", "normal_z", "plane_offset")
-
-
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
 class SectorJson(TypedDict):
     clear_m: float
@@ -204,7 +200,6 @@ class PointCloud2(Timestamped):
         tags: np.ndarray | None = None,
         lines: np.ndarray | None = None,
         stamps: np.ndarray | None = None,
-        planes: np.ndarray | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -219,8 +214,6 @@ class PointCloud2(Timestamped):
             lines: Optional (N,) uint8 array of per-point laser line numbers
             stamps: Optional (N,) float64 array of per-point capture times in
                 absolute seconds. In-memory only, not encoded on the wire.
-            planes: Optional (N, 4) float array of per-point surface planes,
-                normal xyz then offset, NaN where a point has none
 
         Returns:
             PointCloud2 instance
@@ -234,7 +227,6 @@ class PointCloud2(Timestamped):
             ("tags", tags),
             ("lines", lines),
             ("stamps", stamps),
-            ("planes", planes),
         ):
             if values is not None and len(values) != len(points):
                 raise ValueError(f"{name} has {len(values)} entries for {len(points)} points")
@@ -259,10 +251,6 @@ class PointCloud2(Timestamped):
             pcd_t.point["stamps"] = o3c.Tensor(
                 stamps.astype(np.float64).reshape(-1, 1), dtype=o3c.float64
             )
-        if planes is not None:
-            if planes.shape != (len(points), len(PLANE_FIELDS)):
-                raise ValueError(f"planes has shape {planes.shape} for {len(points)} points")
-            pcd_t.point["planes"] = o3c.Tensor(planes.astype(np.float32), dtype=o3c.float32)
         return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
     @classmethod
@@ -502,13 +490,6 @@ class PointCloud2(Timestamped):
         arr = self._pcd_tensor.point[name].numpy().flatten()
         return arr.astype(np_dtype) if arr.dtype != np_dtype else arr  # type: ignore[no-any-return]
 
-    def planes_f32(self) -> np.ndarray | None:
-        """Per-point surface planes as (N, 4) float32 normal xyz and offset, or None if absent."""
-        self._ensure_tensor_initialized()
-        if "planes" not in self._pcd_tensor.point:
-            return None
-        return self._pcd_tensor.point["planes"].numpy().astype(np.float32, copy=False)  # type: ignore[no-any-return]
-
     def offset_times_u32(self) -> np.ndarray | None:
         """Per-point time offsets (ns relative to header stamp) as flat uint32, or None."""
         return self._per_point_field("offset_times", np.uint32)
@@ -649,10 +630,6 @@ class PointCloud2(Timestamped):
         lines = self.lines_u8()
         if lines is not None:
             extras.append(("line", np.dtype("u1"), PointField.UINT8, lines))
-        planes = self.planes_f32()
-        if planes is not None:
-            for column, name in enumerate(PLANE_FIELDS):
-                extras.append((name, np.dtype("<f4"), PointField.FLOAT32, planes[:, column]))
 
         wire_array: np.ndarray = point_data
         if extras:
@@ -730,9 +707,7 @@ class PointCloud2(Timestamped):
             # ROS-style per-point fields (the Go2 L1): seconds after the stamp, and ring.
             "time": PointField.FLOAT32,
             "ring": PointField.UINT16,
-            **dict.fromkeys(PLANE_FIELDS, PointField.FLOAT32),
         }
-        plane_offsets: dict[str, int] = {}
         x_offset = y_offset = z_offset = rgb_offset = intensity_offset = None
         offset_time_offset = tag_offset = line_offset = time_offset = ring_offset = None
         for msgfield in msg.fields:
@@ -758,8 +733,6 @@ class PointCloud2(Timestamped):
                 time_offset = msgfield.offset
             elif msgfield.name == "ring":
                 ring_offset = msgfield.offset
-            elif msgfield.name in PLANE_FIELDS:
-                plane_offsets[msgfield.name] = msgfield.offset
 
         if any(offset is None for offset in [x_offset, y_offset, z_offset]):
             raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
@@ -853,14 +826,6 @@ class PointCloud2(Timestamped):
             pcd_t.point["lines"] = o3c.Tensor(
                 _extract_scalar_field(ring_offset, "<u2").astype(np.uint8).reshape(-1, 1),
                 dtype=o3c.uint8,
-            )
-
-        if len(plane_offsets) == len(PLANE_FIELDS):
-            pcd_t.point["planes"] = o3c.Tensor(
-                np.column_stack(
-                    [_extract_scalar_field(plane_offsets[name], "<f4") for name in PLANE_FIELDS]
-                ),
-                dtype=o3c.float32,
             )
 
         # Extract RGB colors if present

@@ -36,10 +36,10 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def planner_points(cloud: PointCloud2) -> np.ndarray:
-    """The cloud's points as the planner takes them, with their planes when the cloud has them."""
-    planes = cloud.planes_f32()
-    points = cloud.points_f32()
+def planner_points(obs: Observation[PointCloud2]) -> np.ndarray:
+    """The cloud's points as the planner takes them, with the ray tracer's planes when tagged."""
+    planes = obs.tags.get("planes")
+    points = obs.data.points_f32()
     return points if planes is None else np.hstack([points, planes])
 
 
@@ -91,9 +91,7 @@ class MLSPlan(Transformer[PointCloud2, Path]):
 
             ox, oy, radius, z_min, z_max = obs.tags["region_bounds"]
             t_update = time.perf_counter()
-            planner.update_region(
-                planner_points(obs.data), (ox, oy), radius, z_min, z_max, float(z)
-            )
+            planner.update_region(planner_points(obs), (ox, oy), radius, z_min, z_max, float(z))
             t_plan = time.perf_counter()
             waypoints = planner.plan(start, self.goal)
             t_done = time.perf_counter()
