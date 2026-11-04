@@ -336,7 +336,8 @@ class _Track:
 
     @property
     def final(self) -> np.ndarray:
-        return self.pos[-1]
+        last: np.ndarray = self.pos[-1]
+        return last
 
     def rise(self) -> float:
         """Highest the body got above its resting height."""
@@ -399,7 +400,8 @@ def _closed(tracks: dict[str, _Track]) -> np.ndarray | None:
     if base is None or left is None or right is None:
         return None
     gap = np.linalg.norm(left.pos[left.at(base.ts)] - right.pos[right.at(base.ts)], axis=1)
-    return gap < gap.max() - 0.02
+    closed: np.ndarray = gap < gap.max() - 0.02
+    return closed
 
 
 def _came_within(tracks: dict[str, _Track], body: str, radius_m: float) -> bool:
@@ -594,7 +596,7 @@ def word_partial(outcome: Outcome) -> float:
         # Letters upright for this reader (I and S either way up, O at any angle), each credited.
         dots = ups @ up
         upright = flat & ((np.where(flips, np.abs(dots), dots) > cos20) | free)
-        return 0.7 * pairs / (len(WORD) - 1) + 0.3 * float(upright.mean())
+        return float(0.7 * pairs / (len(WORD) - 1) + 0.3 * float(upright.mean()))
 
     return float(max(read(u) for u in (*ups[~free], *(-ups[flips]))))
 
