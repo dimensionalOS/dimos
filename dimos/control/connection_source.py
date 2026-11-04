@@ -147,7 +147,8 @@ class ConnectionSource:
     Each tick the robot gets a complete command: what tasks asked for, and
     for every other joint velocity 0 if tasks drive it by velocity this
     tick, else a hold at its last commanded or reported position, kept
-    within its limit. A base is told 0 on every axis. A robot whose newest
+    within its limit. A base is told what tasks asked for on each axis, and
+    0 on every axis no task drives. A robot whose newest
     reading is older than ``reading_timeout_s`` is not commanded, and is
     held where it is once readings return. Does no I/O.
 
@@ -213,6 +214,13 @@ class ConnectionSource:
             self._joint_ports[Interface.VELOCITY] = VELOCITY_COMMAND
         self._base_port = CMD_VEL if CMD_VEL in commands else None
         self._base = f"{robot}{SEPARATOR}base"
+        #: The base's axes as tasks name them, e.g. "go2/base/vx"; empty for
+        #: a robot with no base port.
+        self._base_axes = (
+            [f"{self._base}{SEPARATOR}{i}" for i in TWIST_INTERFACES]
+            if self._base_port is not None
+            else []
+        )
         self._joints = [
             _Joint(
                 name=name,
@@ -293,6 +301,15 @@ class ConnectionSource:
     def joint_names(self) -> list[str]:
         """Every joint, e.g. ["arm/joint1", "arm/joint2"]."""
         return [joint.name for joint in self._joints]
+
+    @property
+    def base_joint_names(self) -> list[str]:
+        """The base's axes as a task claims them, e.g. ["go2/base/vx", ...].
+
+        Empty for a robot with no base port. A base axis is a velocity only:
+        a task drives it in ``ControlMode.VELOCITY``.
+        """
+        return list(self._base_axes)
 
     @property
     def command_ports(self) -> list[str]:
@@ -415,15 +432,18 @@ class ConnectionSource:
 
         Args:
             winners: What tasks asked for, by joint name, e.g.
-                ``{"arm/joint1": 0.3}``. Only this robot's joints.
+                ``{"arm/joint1": 0.3}``. Only this robot's joints, plus its
+                base's axes (``go2/base/vx``) when it has a base port. A base
+                axis is a speed; the mode belongs to the joint winners.
             mode: How the winners drive their joints. ``None`` when no task
-                drives this robot this tick.
+                drives this robot's joints this tick.
 
         Raises:
             ValueError: If a task drives a joint in a way it does not accept,
-                e.g. by velocity when it only takes a position, or tells it a
-                position outside its limit. The robot then gets no command
-                this tick and its holds are left as they were.
+                e.g. by velocity when it only takes a position, tells it a
+                position outside its limit, or tells the base a non-finite
+                speed. The robot then gets no command this tick and its holds
+                are left as they were.
         """
         with self._lock:
             latest = self._latest
@@ -431,6 +451,7 @@ class ConnectionSource:
                 self._resumed = False
                 self._holds.clear()
         interface = _INTERFACE_BY_MODE.get(mode) if mode is not None else None
+        base_winners = {axis: winners[axis] for axis in self._base_axes if axis in winners}
         # Check every task value first: the connection module refuses the
         # whole message if one is out of range, so no hold may change unless
         # all of them are sendable.
@@ -443,6 +464,9 @@ class ConnectionSource:
             limit = joint.position_limit
             if interface == Interface.POSITION and not _within(value, limit):
                 raise ValueError(f"{joint.name} told {value}, outside {limit.lo}..{limit.hi}")
+        for axis, value in base_winners.items():
+            if not math.isfinite(value):
+                raise ValueError(f"{axis} told {value}, not a finite speed")
         values: Values = {}
         for joint in self._joints:
             if joint.name in winners:
@@ -465,7 +489,9 @@ class ConnectionSource:
             elif velocity_key is not None:
                 values[velocity_key] = 0.0
         if self._base_port is not None:
-            values.update((f"{self._base}{SEPARATOR}{i}", 0.0) for i in TWIST_INTERFACES)
+            # An axis no task drove this tick is told 0: idle and stop are
+            # zero speed, and so is every tick while tasks drive only joints.
+            values.update((axis, base_winners.get(axis, 0.0)) for axis in self._base_axes)
         return values
 
     def command_messages(self, values: Mapping[str, float], ts: float) -> list[PortMessage]:
