@@ -32,8 +32,8 @@ fn fixes(
     keyframes
         .enumerate()
         .map(|(i, k)| {
-            let salt = (i * 7 + frame as usize * 3) as f64;
-            let wobble = [sigma * salt.sin(), sigma * (salt * 1.7).cos(), 0.0];
+            let stream = (i * 7 + frame as usize * 3) as f64;
+            let wobble = [sigma * stream.sin(), sigma * (stream * 1.7).cos(), 0.0];
             PositionPrior {
                 keyframe: k,
                 frame,
