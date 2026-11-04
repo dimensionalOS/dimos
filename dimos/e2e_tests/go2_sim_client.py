@@ -31,23 +31,38 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 RANCH = "supersplat/3f89bbd3"
 # The run arg that puts the sim's Go2 in the ranch.
 RANCH_ARG = f"--go2webrtcsim.scene.package={RANCH}"
-# The most open spot in each labelled room (the ranch's labels), where the Go2 can turn on the spot;
-# from the cooked collision boxes, each at least 0.5 m from anything.
-RANCH_VIEWPOINTS = [
-    (5.23, -3.38),  # entry
-    (5.73, -6.52),  # office
-    (2.73, -4.17),  # hallway
-    (4.03, -8.68),  # south-east bedroom
-    (-0.72, -8.38),  # south-west bedroom
-    (0.03, -4.22),  # hall bathroom
-    (-1.62, -2.42),  # dining room
-    (-5.18, 1.03),  # family room
-    (-5.18, 4.43),  # main bathroom
-    (-2.72, 4.23),  # north hall
-    (-3.22, 8.98),  # north bedroom
-    (-0.02, 3.28),  # kitchen
-    (4.12, 3.43),  # living room, last: no bed in sight of where the tour leaves the robot
-]
+# A walk through the ranch for the robot to be teleported along, a metre a step (0.3 m or more from
+# anything, on the cooked collision boxes), so the lidar maps every room and the floor joining them;
+# True is the most open spot in a room, where it turns once for the camera. It ends in the living
+# room, where it starts, out of sight of every bed.
+RANCH_TOUR = [
+    (4.12, 2.38, False), (4.12, 1.38, False), (4.12, 0.38, False), (4.12, -0.62, False),
+    (4.38, -1.52, False), (4.73, -2.42, False), (5.23, -3.38, True), (4.28, -3.22, False),
+    (3.28, -3.22, False), (2.98, -4.03, False), (2.98, -5.02, False), (2.98, -6.02, False),
+    (2.98, -7.02, False), (3.88, -7.22, False), (4.78, -6.97, False), (5.73, -6.52, True),
+    (4.83, -6.77, False), (3.98, -7.22, False), (3.03, -7.07, False), (2.98, -6.12, False),
+    (2.98, -5.12, False), (2.73, -4.17, True), (2.73, -5.17, False), (2.88, -6.12, False),
+    (3.03, -7.07, False), (3.62, -7.77, False), (4.03, -8.68, True), (3.62, -7.83, False),
+    (2.88, -7.42, False), (1.93, -7.52, False), (0.97, -7.67, False), (0.12, -7.97, False),
+    (-0.72, -8.38, True), (0.28, -8.32, False), (1.18, -8.02, False), (1.93, -7.52, False),
+    (2.68, -6.97, False), (2.68, -5.97, False), (2.68, -4.97, False), (2.33, -4.28, False),
+    (1.33, -4.28, False), (0.03, -4.22, True), (1.03, -4.22, False), (2.03, -4.22, False),
+    (2.62, -3.62, False), (1.98, -3.17, False), (1.03, -3.12, False), (0.18, -2.72, False),
+    (-0.72, -2.47, False), (-1.62, -2.42, True), (-2.57, -2.57, False), (-3.58, -2.57, False),
+    (-4.42, -2.32, False), (-4.42, -1.32, False), (-4.67, -0.42, False), (-4.92, 0.48, False),
+    (-5.18, 1.03, True), (-4.42, 1.78, False), (-3.58, 2.12, False), (-2.67, 2.28, False),
+    (-2.72, 3.23, False), (-2.92, 4.12, False), (-3.92, 4.12, False), (-5.18, 4.43, True),
+    (-4.17, 4.43, False), (-3.17, 4.32, False), (-2.72, 4.23, True), (-2.72, 5.23, False),
+    (-2.72, 6.23, False), (-2.72, 7.23, False), (-2.88, 8.18, False), (-3.22, 8.98, True),
+    (-2.72, 8.18, False), (-2.62, 7.18, False), (-2.62, 6.18, False), (-2.62, 5.18, False),
+    (-2.62, 4.18, False), (-2.62, 3.18, False), (-2.72, 2.23, False), (-3.62, 2.03, False),
+    (-4.17, 1.28, False), (-4.53, 0.38, False), (-4.67, -0.52, False), (-4.47, -1.47, False),
+    (-4.42, -2.42, False), (-3.47, -2.57, False), (-2.47, -2.57, False), (-2.27, -1.67, False),
+    (-1.88, -0.82, False), (-1.27, -0.07, False), (-0.52, 0.53, False), (0.47, 0.53, False),
+    (1.18, 0.93, False), (1.28, 1.88, False), (0.72, 2.68, False), (-0.02, 3.28, True),
+    (0.93, 3.08, False), (1.83, 2.88, False), (2.68, 2.78, False), (3.53, 3.18, False),
+    (4.12, 3.43, True),
+]  # fmt: skip
 
 
 class Go2SimClient:
@@ -117,17 +132,25 @@ class Go2SimClient:
         """The floor rectangle (xmin, ymin, xmax, ymax) of each object called *name*."""
         return footprints(self.objects(), name)
 
-    def look_around_ranch(self, turn_rate: float = 1.0) -> None:
-        """Show the robot every room: teleported to each of RANCH_VIEWPOINTS, it turns once on the
-        spot, so the camera and lidar sweep the room (a blind drive between them catches on doorways)."""
+    def look_around_ranch(self, turn_rate: float = 1.0, step_s: float = 0.5) -> None:
+        """Show the robot the whole ranch: teleported along RANCH_TOUR facing the way it goes, it
+        turns once on the spot in each room (a blind drive between waypoints catches on doorways)."""
         cmd_vel: PubSubTransport[Twist] = make_transport("/cmd_vel", Twist)
         cmd_vel.start()
         try:
-            for x, y in RANCH_VIEWPOINTS:
-                self.teleport(x, y, 0.0)
-                end = time.monotonic() + 1.0 + 2 * math.pi / turn_rate  # a second to settle
+            previous = RANCH_TOUR[0][:2]
+            for x, y, turn in RANCH_TOUR:
+                try:
+                    self.teleport(x, y, math.atan2(y - previous[1], x - previous[0]))
+                except ValueError:  # the sim refused it (raised here as the sim raised it)
+                    if turn:
+                        raise
+                    continue  # a step whose heading puts a leg in a doorframe; the next one will do
+                previous = (x, y)
+                end = time.monotonic() + step_s + (2 * math.pi / turn_rate if turn else 0.0)
                 while time.monotonic() < end:
-                    cmd_vel.publish(Twist(linear=Vector3(), angular=Vector3(0.0, 0.0, turn_rate)))
+                    rate = turn_rate if turn else 0.0
+                    cmd_vel.publish(Twist(linear=Vector3(), angular=Vector3(0.0, 0.0, rate)))
                     time.sleep(0.1)
             cmd_vel.publish(Twist())
         finally:
