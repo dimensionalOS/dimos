@@ -41,15 +41,15 @@ def test_ports_come_from_the_recording(recording: str) -> None:
     cls = replay_native(recording)
     assert cls.__annotations__ == {"goal": Out[PoseStamped], "odom": Out[PoseStamped]}
     assert issubclass(cls, ReplayNative)
-    assert replay_native(recording, topics="odom").__annotations__ == {"odom": Out[PoseStamped]}
+    assert replay_native(recording, topics=["odom"]).__annotations__ == {"odom": Out[PoseStamped]}
     assert replay_native("").__annotations__ == {}
 
 
 def test_portless_class_gets_ports_and_filter_from_config(recording: str) -> None:
-    assert replay_native(recording, topics="odom").blueprint().blueprints[0].kwargs == {
-        "topics": "odom"
+    assert replay_native(recording, topics=["odom"]).blueprint().blueprints[0].kwargs == {
+        "topics": ["odom"]
     }
-    module = replay_native("")(db=recording, topics="odom")
+    module = replay_native("")(db=recording, topics=["odom"])
     try:
         assert sorted(module.outputs) == ["odom", "replay_complete"]
     finally:

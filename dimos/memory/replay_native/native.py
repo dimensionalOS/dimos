@@ -23,6 +23,7 @@ way through. With no ``db`` the module is a no-op: its ports exist, nothing is l
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
 import os
 import signal
@@ -58,7 +59,7 @@ class ReplayNativeConfig(NativeModuleConfig):
     # The recording (.db or .mcap, or a dataset name); empty makes the module a no-op.
     db: str = ""
     # Chooses the ports in Python; the binary gets the result as ``ports``.
-    topics: str = Field(default="*", exclude=True)
+    topics: list[str] = Field(default_factory=lambda: ["*"], exclude=True)
     speed: float = Field(default=1.0, gt=0.0)
     loop: bool = False
     # Once the whole recording has played (loop off), the run shuts down.
@@ -88,13 +89,15 @@ class ReplayNative(NativeModule):
     # The binary announces the recording's end here (exit_on_complete); not a recorded stream.
     replay_complete: Out[Bool]
     stream_types: dict[str, type] = {}  # set by replay_native()
-    topics: str = "*"  # set by replay_native(); carried to workers via the blueprint kwargs
+    topics: tuple[str, ...] = (
+        "*",
+    )  # set by replay_native(); carried to workers via the blueprint kwargs
 
     @classproperty
     def blueprint(cls) -> Any:  # noqa: N805
         from dimos.core.coordination.blueprints import Blueprint
 
-        return partial(Blueprint.create, cls, topics=cls.topics)  # type: ignore[arg-type]
+        return partial(Blueprint.create, cls, topics=list(cls.topics))  # type: ignore[arg-type]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -108,7 +111,7 @@ class ReplayNative(NativeModule):
     def _add_ports(self) -> None:
         types = stream_types_of(self.config.db)
         existing = self.outputs
-        for name in _port_names(self.config.topics, types, owner=ReplayNative):
+        for name in _port_names(",".join(self.config.topics), types, owner=ReplayNative):
             if name not in existing:
                 setattr(self, name, Out(types[name], name, self))
 
@@ -158,7 +161,9 @@ def _run_coordinator_pid() -> int | None:
     return entry.pid
 
 
-def replay_native(db: str, topics: str = "*", name: str = "ReplayNative") -> type[ReplayNative]:
+def replay_native(
+    db: str, topics: Sequence[str] = ("*",), name: str = "ReplayNative"
+) -> type[ReplayNative]:
     """Build a :class:`ReplayNative` subclass with an ``Out`` per stream in *db*.
 
     Assign the result to *name* at module level: deploying to a worker pickles the
@@ -168,13 +173,13 @@ def replay_native(db: str, topics: str = "*", name: str = "ReplayNative") -> typ
     types: dict[str, type] = {}
     if db:
         types = stream_types_of(db)
-        for n in _port_names(topics, types, owner=ReplayNative):
+        for n in _port_names(",".join(topics), types, owner=ReplayNative):
             ports[n] = Out[types[n]]  # type: ignore[valid-type]
     caller = sys._getframe(1).f_globals.get("__name__", __name__)
     namespace = {
         "__annotations__": ports,
         "__module__": caller,
         "stream_types": {n: types[n] for n in ports},
-        "topics": topics,
+        "topics": tuple(topics),
     }
     return type(name, (ReplayNative,), namespace)
