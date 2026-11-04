@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lidar loop closure (Rust): Scan Context++ place recognition, gated ICP, and a background GNC pose graph solve."""
+"""Lidar loop closure (Rust): Scan Context++ place recognition, gated ICP, and a background GNC pose graph solve.
+
+Takes only lidar scans and tf: each scan is posed by odom_frame -> body_frame and its points put in body_frame, both from
+tf at the scan's stamp, so a scan may be in any frame (sensor, body, or a fixed one like world).
+"""
 
 from __future__ import annotations
 
@@ -81,10 +85,9 @@ class PGOConfig(NativeModuleConfig):
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
-    # outputs: map → odom
+    # tf poses body_frame in odom_frame; the map_frame -> odom_frame correction goes back on tf
     map_frame: str = "map"
-    child_frame_id: str = "odom"
-    # TODO: when rust gets tf.get, remove this (don't need to require things in base_link)
+    odom_frame: str = "odom"
     body_frame: str = "base_link"
 
     # Keyframe detection
@@ -236,7 +239,7 @@ class PGOConfig(NativeModuleConfig):
     # loops' worth of evidence the stated estimate counts as in the learner (0 = closures alone, inf = never learn)
     learned_odometry_error_estimate_stiffness: float = 10.0
 
-    # scan queue depth; past it all but the newest scan are dropped (<= 0 = unbounded)
+    # depth of each scan queue: waiting for tf drops the oldest, waiting for the solver keeps only the newest (<= 0 = unbounded)
     max_scan_queue: int = 5
     # rayon threads for closure search and solves (0 = every core)
     worker_threads: int = 0
@@ -259,14 +262,14 @@ class GscPGO(NativeModule):
 
     config: PGOConfig
 
+    # any frame tf connects to body_frame
     cloud: In[PointCloud2]
-    odometry: In[Odometry]
     # a sensor's position in a fixed world frame (GPS, mocap): header.frame_id = world frame, child_frame_id = mount
     coordinate_factor: In[Odometry]
     # landmark sighting (TagSightings): frame_id = sensor, to_id = landmark; a repeated constraint_instance_id replaces it
     landmark_factor: In[LocationConstraint]
     corrected_odometry: Out[Odometry]
-    # the map -> odometry correction, identity until the first one
+    # in: odom_frame -> body_frame and the scans' frames; out: the map_frame -> odom_frame correction, identity until the first one
     tf: IO[TFMessage]
     # a packed record per keyframe: x, y, z, node_id, ts, qx, qy, qz, qw
     pose_graph: Out[PointCloud2]
