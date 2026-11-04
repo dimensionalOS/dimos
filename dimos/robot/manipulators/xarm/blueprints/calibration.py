@@ -43,7 +43,8 @@ from dimos.utils.data import LfsPath
 XARM6_CALIBRATION_HOME = [0.0, -0.247, -0.909, 0.0, 1.156, 0.0]
 # The bench the arm shares with the board, as the planner box the module adds for the run: a
 # table top level with the base plate reaching from just past the base to 1 m out. Set
-# table_top_z and table_x_m on the command line to the measured bench.
+# table_top_z to the highest surface within reach, the board included, plus 15 mm, and
+# table_x_m to the measured edge, on the command line.
 XARM6_BENCH_TOP_Z = 0.0
 XARM6_BENCH_X_M = (0.1, 1.0)
 
