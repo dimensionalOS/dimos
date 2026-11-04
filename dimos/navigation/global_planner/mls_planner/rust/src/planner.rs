@@ -143,59 +143,28 @@ pub fn plan(
 
     let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
 
-    // The goal's Voronoi owner, or for a sub-clearance goal it cannot own, the nearest node by hops.
+    // The penalized Voronoi cannot own sub-clearance goals, so fall back to the
+    // nearest node by hops. A real failure then reports as disconnected below.
     let mut goal_segment = walk_live_preds(plg, goal_cell);
-    let mut owner = *goal_segment
+    let mut goal_node = *goal_segment
         .last()
         .expect("the goal cell is live, so the walk keeps at least it");
-    let mut owner_cost = plg.cell_state.dist[goal_cell as usize];
-    if !node_cells.contains(&owner) {
-        // A node with no edges yet carries no route, so look past it.
-        let routable: AHashSet<NodeId> = node_cells
-            .iter()
-            .copied()
-            .filter(|&n| !plg.node_edges.adjacent(n).is_empty())
-            .collect();
-        let targets = if routable.is_empty() {
-            &node_cells
-        } else {
-            &routable
-        };
-        let Some((node, path)) = nearest_node(&plg.cells, goal_cell, targets) else {
+    if !node_cells.contains(&goal_node) {
+        let Some((node, path)) = nearest_node(&plg.cells, goal_cell, &node_cells) else {
             tracing::debug!(
                 ?goal_coord,
                 "plan failed: goal's connected component has no graph node"
             );
             return None;
         };
-        owner = node;
+        goal_node = node;
         goal_segment = path;
-        owner_cost = 0.0;
     }
+
+    // Rooted at the goal so one pass covers every node's cost-to-go.
+    let (cost_to_go, pred_to_goal) = node_dijkstra(plg, goal_node);
 
     let radius = (config.node_spacing_m * CANDIDATE_RADIUS_FACTOR).max(voxel_size);
-    // The owner and every node near the goal seed the search at their cost from the goal, so the
-    // goal attaches as freely as the start, and a nearby node the graph has cut off is not its only way in.
-    let (goal_dist, goal_pred) = robot_search(&plg.cells, &[goal_cell], radius);
-    let mut seeds: Vec<(NodeId, f32)> = goal_dist
-        .iter()
-        .filter(|(cell, _)| node_cells.contains(cell))
-        .map(|(&cell, &cost)| (cell, cost))
-        .collect();
-    if !goal_dist.contains_key(&owner) {
-        seeds.push((
-            owner,
-            if owner_cost.is_finite() {
-                owner_cost
-            } else {
-                0.0
-            },
-        ));
-    }
-    seeds.sort_unstable_by_key(|&(cell, _)| cell);
-
-    // Seeded at the goal's nodes so one pass covers every node's cost-to-go.
-    let (cost_to_go, pred_to_goal) = node_dijkstra(plg, &seeds);
     // Nearest candidate first so the lead-in anchors at the robot's own cell.
     // The rest are only a fallback when it cannot connect.
     let (near, rest) = start_cells.split_at(start_cells.len().min(1));
@@ -204,6 +173,7 @@ pub fn plan(
             plg,
             group,
             goal_cell,
+            goal_node,
             &cost_to_go,
             &pred_to_goal,
             &node_cells,
@@ -222,16 +192,12 @@ pub fn plan(
 
     let limits = PathLimits::from_config(config);
     // A direct goal connection carries the whole route in its lead-in.
-    let goal_segment: Vec<CellId> = match node_seq.last() {
-        None => Vec::new(),
-        Some(&root) if goal_dist.contains_key(&root) => {
-            let mut segment = walk_local_preds(&goal_pred, root);
-            segment.reverse();
-            segment
-        }
-        Some(_) => goal_segment,
+    let goal_segment: &[CellId] = if node_seq.is_empty() {
+        &[]
+    } else {
+        &goal_segment
     };
-    let cells = assemble_cells(plg, &node_seq, &lead_in, &goal_segment);
+    let cells = assemble_cells(plg, &node_seq, &lead_in, goal_segment);
     let cells = string_pull(plg, &cells, &limits);
     let waypoints = cells_to_waypoints(plg, &cells, start_pose, goal_pose, voxel_size);
     let waypoints =
@@ -439,6 +405,7 @@ fn select_entry(
     plg: &PlannerGraph,
     start_cells: &[CellId],
     goal_cell: CellId,
+    goal_node: NodeId,
     cost_to_go: &AHashMap<NodeId, f32>,
     pred_to_goal: &AHashMap<NodeId, NodeId>,
     node_cells: &AHashSet<NodeId>,
@@ -478,7 +445,7 @@ fn select_entry(
     if best_score.is_finite() {
         let mut lead = walk_local_preds(&connect_pred, entry_node);
         lead.reverse();
-        return Some((lead, follow_preds(entry_node, pred_to_goal)));
+        return Some((lead, follow_preds(entry_node, goal_node, pred_to_goal)?));
     }
 
     for &start_cell in start_cells {
@@ -491,7 +458,10 @@ fn select_entry(
         {
             continue;
         }
-        return Some((start_segment, follow_preds(region_node, pred_to_goal)));
+        let Some(node_seq) = follow_preds(region_node, goal_node, pred_to_goal) else {
+            continue;
+        };
+        return Some((start_segment, node_seq));
     }
     None
 }
@@ -596,20 +566,18 @@ fn walk_local_preds(pred: &AHashMap<CellId, CellId>, from: CellId) -> Vec<CellId
     path
 }
 
-/// Cost-to-go to the cheapest seed for every reachable node, with a predecessor pointing
+/// Cost-to-go to source for every reachable node, with a predecessor pointing
 /// one hop toward it. Nodes are keyed by their CellId. Unreachable nodes are
 /// simply absent from the maps.
 fn node_dijkstra(
     plg: &PlannerGraph,
-    seeds: &[(NodeId, f32)],
+    source: NodeId,
 ) -> (AHashMap<NodeId, f32>, AHashMap<NodeId, NodeId>) {
     let mut dist: AHashMap<NodeId, f32> = AHashMap::new();
     let mut pred: AHashMap<NodeId, NodeId> = AHashMap::new();
+    dist.insert(source, 0.0);
     let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
-    for &(seed, cost) in seeds {
-        dist.insert(seed, cost);
-        heap.push(Scored(cost, seed));
-    }
+    heap.push(Scored(0.0, source));
 
     while let Some(Scored(d, u)) = heap.pop() {
         if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
@@ -629,15 +597,20 @@ fn node_dijkstra(
     (dist, pred)
 }
 
-/// Build the node sequence by following goal-pointing predecessors to a seed.
-fn follow_preds(from: NodeId, pred: &AHashMap<NodeId, NodeId>) -> Vec<NodeId> {
+/// Build the node sequence by following goal-pointing predecessors.
+fn follow_preds(
+    from: NodeId,
+    goal: NodeId,
+    pred: &AHashMap<NodeId, NodeId>,
+) -> Option<Vec<NodeId>> {
     let mut seq = vec![from];
     let mut cur = from;
-    while let Some(&next) = pred.get(&cur) {
+    while cur != goal {
+        let &next = pred.get(&cur)?;
         cur = next;
         seq.push(cur);
     }
-    seq
+    Some(seq)
 }
 
 /// Append a cell, cancelling an out-and-back spur when the next cell retraces
@@ -1166,10 +1139,19 @@ mod tests {
         let goal = plg.cells.id((15, 0, 0)).unwrap();
         let goal_node = plg.nodes[0].cell_id;
         let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-        let (ctg, pred) = node_dijkstra(&plg, &[(goal_node, 0.0)]);
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
 
-        let (lead, node_seq) =
-            select_entry(&plg, &[start], goal, &ctg, &pred, &node_cells, 3.0).unwrap();
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[start],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            3.0,
+        )
+        .unwrap();
 
         assert!(
             node_seq.is_empty(),
@@ -1193,10 +1175,19 @@ mod tests {
         let goal = plg.cells.id((19, 0, 0)).unwrap();
         let goal_node = plg.nodes[0].cell_id;
         let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-        let (ctg, pred) = node_dijkstra(&plg, &[(goal_node, 0.0)]);
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
 
-        let (lead, node_seq) =
-            select_entry(&plg, &[near], goal, &ctg, &pred, &node_cells, 0.3).unwrap();
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[near],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        )
+        .unwrap();
         assert_eq!(
             lead.first(),
             Some(&near),
@@ -1220,15 +1211,25 @@ mod tests {
         let goal = plg.cells.id((19, 0, 0)).unwrap();
         let goal_node = plg.nodes[0].cell_id;
         let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
-        let (ctg, pred) = node_dijkstra(&plg, &[(goal_node, 0.0)]);
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
 
-        let entry = select_entry(&plg, &[near], goal, &ctg, &pred, &node_cells, 0.3);
+        let entry = select_entry(
+            &plg,
+            &[near],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        );
         assert!(entry.is_none(), "disconnected candidate must not connect");
 
         let (lead, node_seq) = select_entry(
             &plg,
             &[far_rest, reaching_rest],
             goal,
+            goal_node,
             &ctg,
             &pred,
             &node_cells,
@@ -1242,75 +1243,6 @@ mod tests {
         );
         assert_eq!(lead.last(), Some(&goal_node));
         assert_eq!(node_seq, vec![goal_node]);
-    }
-
-    #[test]
-    fn plan_attaches_goal_to_any_nearby_node_not_only_its_owner() {
-        // A ring whose short side is the top, with a tail to the robot. The goal
-        // sits on the long bottom side nearer the right node, which owns it.
-        // Only through its owner, the route would go over the top and back.
-        let mut surface: Vec<VoxelKey> = (-40..0).map(|x| (x, 0, 0)).collect();
-        surface.extend((0..=24).flat_map(|x| [(x, 2, 0), (x, -10, 0)]));
-        surface.extend((-10..=2).flat_map(|y| [(0, y, 0), (24, y, 0)]));
-        surface.sort_unstable();
-        surface.dedup();
-        let plg = graph_with_nodes(&surface, &[(0, 0, 0), (24, 0, 0)]);
-        let start = surface_point_xyz(-40, 0, 0, VOXEL);
-        let goal = surface_point_xyz(14, -10, 0, VOXEL);
-        let wp = plan_simple(&plg, start, goal).unwrap();
-        let length: f32 = wp
-            .windows(2)
-            .map(|p| ((p[1].0 - p[0].0).powi(2) + (p[1].1 - p[0].1).powi(2)).sqrt())
-            .sum();
-        // Tail, left side down and bottom to the goal: 64 cells.
-        assert!(
-            length < 7.0,
-            "goal reached via its owner: {length} m, {wp:?}"
-        );
-    }
-
-    #[test]
-    fn plan_reaches_goal_whose_only_nearby_node_has_no_edges_yet() {
-        // A node next to the goal that a region update has not joined to the graph yet
-        // must not be the goal's only way in; its Voronoi owner still is one.
-        let mut plg = graph_with_nodes(&strip(101), &[(0, 0, 0), (100, 0, 0)]);
-        let list = [(0, 0, 0), (100, 0, 0), (62, 0, 0)]
-            .iter()
-            .map(|&c| NodeData {
-                cell_id: plg.cells.id(c).unwrap(),
-                pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
-            })
-            .collect();
-        plg.nodes = Nodes::from_list(&plg.cells, list, &truncate_config().placement_params());
-        let start = surface_point_xyz(0, 0, 0, VOXEL);
-        let goal = surface_point_xyz(60, 0, 0, VOXEL);
-        assert!(
-            plan_simple(&plg, start, goal).is_some(),
-            "goal attached only to an edgeless node"
-        );
-    }
-
-    #[test]
-    fn unowned_goal_falls_back_to_a_node_with_edges() {
-        // A goal the Voronoi does not own falls back to the nearest node by hops, which
-        // must be one in the graph, not an edgeless node beside it.
-        let mut plg = graph_with_nodes(&strip(101), &[(0, 0, 0), (100, 0, 0)]);
-        let list = [(0, 0, 0), (100, 0, 0), (62, 0, 0)]
-            .iter()
-            .map(|&c| NodeData {
-                cell_id: plg.cells.id(c).unwrap(),
-                pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
-            })
-            .collect();
-        plg.nodes = Nodes::from_list(&plg.cells, list, &truncate_config().placement_params());
-        let goal_cell = plg.cells.id((60, 0, 0)).unwrap();
-        plg.cell_state.pred[goal_cell as usize] = crate::adjacency::NO_CELL;
-        let start = surface_point_xyz(0, 0, 0, VOXEL);
-        let goal = surface_point_xyz(60, 0, 0, VOXEL);
-        assert!(
-            plan_simple(&plg, start, goal).is_some(),
-            "fell back to an edgeless node"
-        );
     }
 
     #[test]
