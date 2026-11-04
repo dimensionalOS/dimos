@@ -384,7 +384,7 @@ def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., 
 def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_its_model(
     rig: Callable[..., Rig], tmp_path: Path
 ) -> None:
-    # One arm joint, and a gripper open at 0 rad and closed at 0.85 rad, as the
+    # One arm joint, and a gripper closed at 0 rad and open at 0.85 rad, as the
     # xArm Gripper's drive_joint is.
     urdf = tmp_path / "arm_with_gripper.urdf"
     urdf.write_text(
@@ -399,7 +399,6 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
         name="gripper",
         type="gripper",
         joint_names=["mock/drive_joint"],
-        params={"open_at": "lower"},
     )
     r = rig(ArmCoordinator, model=RobotModel.from_file(urdf), tasks=[gripper])
 
@@ -408,14 +407,14 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
         JointState(name=["mock/joint1", "mock/drive_joint"], position=[0.0, 0.2]),
     )
     r.tick()
-    assert r.coordinator.task_invoke("gripper", "get_normalized") == pytest.approx([1 - 0.2 / 0.85])
+    assert r.coordinator.task_invoke("gripper", "get_normalized") == pytest.approx([0.2 / 0.85])
 
     r.coordinator.task_invoke("gripper", "set_normalized", {"values": [1.0]})
     r.tick()
     r.coordinator.task_invoke("gripper", "set_normalized", {"values": [0.0]})
     r.tick()
     # Held where it reads until told, then open, then closed.
-    assert r.positions_sent() == [[0.0, 0.2], [0.0, 0.0], [0.0, 0.85]]
+    assert r.positions_sent() == [[0.0, 0.2], [0.0, 0.85], [0.0, 0.0]]
 
 
 def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
