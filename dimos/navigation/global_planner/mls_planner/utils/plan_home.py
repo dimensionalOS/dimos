@@ -28,14 +28,12 @@ import argparse
 import json
 from pathlib import Path
 import resource
-import sys
 import time
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-sys.path.insert(0, str(Path(__file__).parent))
-import reform_metrics as rm
+from dimos.navigation.global_planner.mls_planner.utils import reform_metrics as rm
 
 parser = argparse.ArgumentParser()
 parser.add_argument("run", type=Path)
