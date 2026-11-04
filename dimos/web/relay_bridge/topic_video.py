@@ -212,7 +212,9 @@ class SharedEncoder:
         codec.max_b_frames = 0
         options = {"level": "31"}
         if self.codec_name == "libx264":
-            options.update(tune="zerolatency", preset="veryfast")
+            # No scene-cut IDRs: a live camera stream keeps its fixed cadence
+            # (the safety keyframe and PLI/FIR cover recovery) and its bitrate.
+            options.update(tune="zerolatency", preset="veryfast", sc_threshold="0")
             codec.profile = "Baseline"
         elif self.codec_name == "libopenh264":
             options.update(profile="constrained_baseline", allow_skip_frames="0")
