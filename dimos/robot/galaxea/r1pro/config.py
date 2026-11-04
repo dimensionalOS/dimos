@@ -93,6 +93,17 @@ R1PRO_MODEL = (
     .with_fixed_joints(*PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )
+#: The same robot for the connection module's limits table: the driven
+#: joints under their vendor names — the control contract puts the "r1pro"
+#: source in front of them itself (``ConnectionConfig.source``).
+R1PRO_CONNECTION_MODEL = (
+    RobotModel.from_file(
+        R1PRO_MODEL_PATH,
+        package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT},
+    )
+    .with_default_joint_acceleration_limit(2.0)
+    .with_fixed_joints(*PASSIVE_JOINTS)
+)
 R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
 R1PRO_UPPER_BODY_PLANNING_JOINTS = tuple(coordinator_name(joint) for joint in UPPER_BODY_JOINTS)
 R1PRO_PLANNING_JOINTS = (
