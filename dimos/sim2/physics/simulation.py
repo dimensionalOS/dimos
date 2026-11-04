@@ -102,7 +102,7 @@ class Simulation:
         for rate in (c.pose_hz, c.motion_hz, c.joint_hz):
             if not math.isfinite(rate) or not 0 < rate <= 1e9 / c.dt_ns:
                 raise ValueError("truth rate must be positive and no faster than physics")
-        if min(c.control_timeout_s, c.startup_timeout_s) <= 0:
+        if not all(math.isfinite(t) and t > 0 for t in (c.control_timeout_s, c.startup_timeout_s)):
             raise ValueError("control deadlines must be positive")
         self.backend.load(self.scene, c.dt_ns)
         assigned: set[str] = set()
@@ -181,6 +181,8 @@ class Simulation:
                 if isinstance(command, JointCommand):
                     if command.targets_length != len(command.targets):
                         raise ValueError("invalid target count")
+                    if command.based_on_time_ns > command.apply_at_ns:
+                        raise ValueError("command cannot depend on a future measurement")
                     names = {t.joint_id for t in command.targets}
                     for controller in self.config.controllers:
                         if names.intersection(controller.joint_ids):
@@ -188,6 +190,8 @@ class Simulation:
                                 h.source_id != controller.controller_id
                                 or names != set(controller.joint_ids)
                                 or command.based_on_time_ns != self.time_ns
+                                or command.apply_at_ns != self.time_ns
+                                or command.valid_until_ns < self.time_ns + controller.period_ns
                                 or self.time_ns % controller.period_ns
                             ):
                                 raise ValueError(
