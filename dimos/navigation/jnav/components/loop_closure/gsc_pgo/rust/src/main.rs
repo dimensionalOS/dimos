@@ -1,0 +1,1244 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Native PGO module (`dimos_module`): scans wait until tf covers their stamp, are posed (odom -> body) and put in the body frame from tf, and a worker thread feeds them to GscPgo oldest-first and publishes the corrected odometry, tf, graph records and debug_log.
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+
+use dimos_gsc_pgo::gsc_pgo::{CloudWithPose, Config as PgoConfig, GscPgo, PoseWithTime};
+use dimos_gsc_pgo::location_constraint::LocationConstraint;
+use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
+use dimos_gsc_pgo::records::{
+    append_pose_changes, build_closure_edge_records, build_loop_closure_records, build_odometry,
+    build_pose_graph_records, extract_xyz, write_keyframes, HeardPoses,
+};
+use dimos_module::nalgebra::{Isometry3, Matrix3, Rotation3, Translation3, UnitQuaternion};
+use dimos_module::{
+    native_config, run_with_transport, warn_throttled, Input, Module, Output, Tf, Transform,
+};
+use lcm_msgs::nav_msgs::Odometry;
+use lcm_msgs::sensor_msgs::PointCloud2;
+use lcm_msgs::std_msgs;
+use tokio::sync::Notify;
+use tracing::{error, info, warn};
+
+/// The module's own fields, then every `gsc_pgo::Config` field (passed through by `pgo()`).
+macro_rules! config {
+    ($($own:ident: $own_type:ty,)* ; $($pgo:ident: $pgo_type:ty,)*) => {
+        #[native_config]
+        #[derive(Clone)]
+        pub struct Config {
+            $(pub $own: $own_type,)*
+            $(pub $pgo: $pgo_type,)*
+        }
+        impl Config {
+            fn pgo(&self) -> PgoConfig {
+                PgoConfig { $($pgo: self.$pgo.clone(),)* }
+            }
+        }
+    };
+}
+
+config! {
+    // not `frame_id`: the Python coordinator strips base-config field names
+    map_frame: String,
+    // the fixed frame tf poses the body in; the map -> odom_frame correction goes on tf
+    odom_frame: String,
+    body_frame: String,
+    // keyframe dump file for offline checks ("" = none)
+    dump_path: String,
+    // depth of each scan queue (waiting for tf: drop the oldest; waiting for the worker: keep only the newest; <= 0 = unbounded)
+    max_scan_queue: i32,
+    // rayon threads for closure search and solves (0 = every core)
+    worker_threads: usize,
+    ;
+    mode: dimos_gsc_pgo::gsc_pgo::Mode,
+    deterministic_config: dimos_gsc_pgo::gsc_pgo::DeterministicConfig,
+    overshoot_warning_interval_s: f64,
+    keyframe_min_rotation_degrees: f64,
+    keyframe_min_distance_meters: f64,
+    closure_search_radius: f64,
+    closure_icp_inlier_distance_m: f64,
+    closure_icp_max_fitness_m: f64,
+    closure_icp_point_to_plane: bool,
+    closure_icp_target_resolution_m: f64,
+    closure_icp_early_stop: bool,
+    closure_alternative_places_min_pressure: f64,
+    drop_reseen_points: bool,
+    auto_aggregate_cloud_size: usize,
+    closure_target_extra_fraction: f64,
+    closure_target_extra_keyframes: usize,
+    submap_resolution: f64,
+    closure_min_occupancy: i32,
+    closure_min_degeneracy: f64,
+    closure_yank_gate_width: f64,
+    closure_yank_drift_range: f64,
+    closure_extension_skip_unreachable: bool,
+    barely_fail_uncertainty_range: f64,
+    barely_pass_uncertainty_range: f64,
+    decisive_pressure_rate: f64,
+    extension_cloud_spacing: f64,
+    compounding_agreement_sensitivity: f64,
+    graph_change_heat_enabled: bool,
+    graph_change_heat_threshold: f64,
+    graph_change_heat_floor: f64,
+    graph_change_heat_decay: f64,
+    solve_seed_from_accepted: bool,
+    solve_seed_gnc_verdicts: bool,
+    solver_fast_path_enabled: bool,
+    solver_fast_path_max_keyframes: usize,
+    solver_fast_path_max_lm_steps: usize,
+    fast_match_workers: usize,
+    sc_buffer_size: usize,
+    verification_workers: usize,
+    verification_buffer_slots: usize,
+    solve_speed_window_poses: usize,
+    closure_icp_dump_dir: String,
+    closure_extended_icp_max_keyframes: usize,
+    closure_robust_huber_k: f64,
+    closure_icp_max_iterations: u64,
+    closure_icp_max_correspondence_m: f64,
+    closure_gnc_var_scale: f64,
+    closure_gnc_inlier_probability: f64,
+    closure_uninformative_gate: bool,
+    odometry_error_estimate_xy_per_sqrt_m: f64,
+    odometry_error_estimate_xy_per_sqrt_rad: f64,
+    odometry_error_estimate_z_per_sqrt_m: f64,
+    odometry_error_estimate_z_per_sqrt_rad: f64,
+    odometry_error_estimate_yaw_per_sqrt_m: f64,
+    odometry_error_estimate_yaw_per_sqrt_rad: f64,
+    odometry_error_estimate_tilt_per_sqrt_m: f64,
+    odometry_error_estimate_tilt_per_sqrt_rad: f64,
+    odometry_error_estimate_from_lidar_range: bool,
+    lidar_range: dimos_gsc_pgo::lidar_range::LidarRangeConfig,
+    learned_odometry_error_estimate_stiffness: f64,
+    scan_context_num_rings: i32,
+    scan_context_num_sectors: i32,
+    scan_context_max_range_m: f64,
+    scan_context_top_k: i32,
+    scan_context_match_threshold: f64,
+    scan_context_lidar_height_m: f64,
+    closure_likelihood_confidence: bool,
+    closure_alternative_places: bool,
+    closure_likelihood_visibility: bool,
+    learned_odometry_error_estimate_from_closures: bool,
+    odometry_error_estimate_evidence_core: bool,
+    pressure_check_frequency: usize,
+    soft_pressure_half_log10_hazard: f64,
+    soft_pressure_decades: f64,
+    graph_simplify: bool,
+    graph_simplify_frontier_keyframes: usize,
+    graph_simplify_pass_gap_keyframes: usize,
+    graph_simplify_place_radius_m: f64,
+    graph_simplify_localized_keyframes: usize,
+    graph_simplify_closures_per_pair: usize,
+    graph_simplify_offset_sd_m: f64,
+    graph_simplify_offset_sd_rad: f64,
+    graph_simplify_chain_odometry: bool,
+    graph_simplify_chain_fold_max_m: f64,
+    // "scan_context" (default) or "inputs_only": no place recognition, landmarks/world positions only, landmark-seeded ICP closures
+    closure_sources: dimos_gsc_pgo::gsc_pgo::ClosureSources,
+    landmark_closure_icp: bool,
+    // 2D: odometry as x, y, yaw and the solve holding z, roll, pitch at 0
+    planar_pose_graph: bool,
+    // a solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off)
+    landmark_warm_start_xy_variance_scale: f64,
+    // ...and each later stage's scale is the last one's divided by this, down to the stated variances
+    landmark_warm_start_xy_variance_ladder: f64,
+}
+
+// ---- shared state ---------------------------------------------------------------
+
+/// A scan waiting for tf to cover its stamp, its points still in its own frame.
+struct WaitingScan {
+    ts: f64,
+    frame_id: String,
+    points: dimos_gsc_pgo::pointcloud::PointCloud,
+}
+
+/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::replace_landmark_factor` when it has a sighting id, else `add_landmark_factor`).
+struct LandmarkFix {
+    sighting: Option<u64>,
+    ts: f64,
+    landmark: u64,
+    rotation: Mat3,
+    position: Vec3,
+    information: [[f64; 6]; 6],
+}
+
+/// A sensor's measured position in a fixed world frame, waiting for the worker (`GscPgo::add_coordinate_factor`).
+struct WorldFix {
+    ts: f64,
+    frame: u32,
+    lever: Vec3,
+    position: Vec3,
+    covariance: Mat3,
+}
+
+#[derive(Default)]
+struct SharedState {
+    /// World-position fixes not yet handed to the pose graph.
+    world_fixes: Vec<WorldFix>,
+    /// World frame names; index = frame id in the pose graph.
+    world_frames: Vec<String>,
+    /// Landmark sightings not yet handed to the pose graph, and landmark names (index = id).
+    landmark_factors: Vec<LandmarkFix>,
+    landmark_names: Vec<String>,
+    /// Sighting ids (`constraint_instance_id`); index = id in the pose graph.
+    sighting_names: Vec<String>,
+    /// Reject out-of-order scans.
+    last_scan_time: f64,
+    /// Scans waiting for tf, oldest first.
+    waiting_scans: VecDeque<WaitingScan>,
+    /// Posed body-frame scans waiting for the worker.
+    cloud_buffer: VecDeque<CloudWithPose>,
+    /// A background solve finished and waits to be adopted.
+    solve_finished: bool,
+    /// The module is stopping: the worker drains and returns.
+    stopping: bool,
+}
+
+type Shared<T> = Arc<Mutex<T>>;
+
+fn last_keyframe_time(pgo: &GscPgo) -> f64 {
+    pgo.key_poses().last().map_or(0.0, |keyframe| keyframe.time)
+}
+
+/// `name`'s index in `names`, appended if new.
+fn index_of(names: &mut Vec<String>, name: &str) -> usize {
+    names.iter().position(|n| n == name).unwrap_or_else(|| {
+        names.push(name.to_string());
+        names.len() - 1
+    })
+}
+
+// ---- tf matching -------------------------------------------------------------------
+
+/// A tolerance wider than any tf buffer, so `at(ts ± ANY_TIME_S)` only asks which side of `ts` an edge has samples on.
+const ANY_TIME_S: f64 = 1e9;
+/// How long a scan's wait for tf goes before tf warns that it is still missing (the wait then carries on).
+const TF_WAIT_WARN_S: u64 = 10;
+
+/// The tf queries a scan needs: `parent -> child` from the sample nearest `ts`, or from the nearest sample within `tolerance` of `ts`; and the stamp of the path's stalest newest sample (asked silently, as it misses while waiting).
+trait TfLookup {
+    fn newest(&self, parent: &str, child: &str) -> Option<f64>;
+    fn transform(
+        &self,
+        parent: &str,
+        child: &str,
+        ts: f64,
+        tolerance: Option<f64>,
+    ) -> Option<Isometry3<f64>>;
+}
+
+impl TfLookup for Tf {
+    fn newest(&self, parent: &str, child: &str) -> Option<f64> {
+        self.get_latest(parent, child).map(|transform| transform.ts)
+    }
+    fn transform(
+        &self,
+        parent: &str,
+        child: &str,
+        ts: f64,
+        tolerance: Option<f64>,
+    ) -> Option<Isometry3<f64>> {
+        let lookup = self.lookup(parent, child).at(ts);
+        let lookup = match tolerance {
+            Some(tolerance) => lookup.tolerance(tolerance),
+            None => lookup,
+        };
+        lookup.get().map(|transform| {
+            Isometry3::from_parts(
+                Translation3::from(transform.translation()),
+                transform.rotation(),
+            )
+        })
+    }
+}
+
+/// What tf says about a waiting scan.
+enum ScanMatch {
+    /// Some edge on a path has no sample at or after the scan yet.
+    Wait,
+    /// Every edge has later samples but none at or before the scan: the scan is older than the tf buffer.
+    TooOld,
+    /// Posed in `odom_frame` with its points in `body_frame`.
+    Ready(CloudWithPose),
+}
+
+/// Pose a scan from tf (`odom_frame -> body_frame`) and put its points in `body_frame` (`body_frame -> frame_id`), each from the samples nearest the scan's stamp once every edge has a sample on both sides of it.
+fn match_scan(
+    tf: &impl TfLookup,
+    scan: &WaitingScan,
+    odom_frame: &str,
+    body_frame: &str,
+) -> ScanMatch {
+    let paths = [
+        (odom_frame, body_frame),
+        (body_frame, scan.frame_id.as_str()),
+    ];
+    let moving = paths.iter().filter(|(parent, child)| parent != child);
+    if !moving.clone().all(|(parent, child)| {
+        tf.newest(parent, child)
+            .is_some_and(|newest| newest >= scan.ts)
+    }) {
+        return ScanMatch::Wait;
+    }
+    if !moving.into_iter().all(|(parent, child)| {
+        tf.transform(parent, child, scan.ts - ANY_TIME_S, Some(ANY_TIME_S))
+            .is_some()
+    }) {
+        return ScanMatch::TooOld;
+    }
+    let (Some(pose), Some(mount)) = (
+        tf.transform(odom_frame, body_frame, scan.ts, None),
+        tf.transform(body_frame, &scan.frame_id, scan.ts, None),
+    ) else {
+        return ScanMatch::Wait;
+    };
+    let mount = mount.cast::<f32>();
+    let points = scan
+        .points
+        .iter()
+        .map(|point| {
+            let moved = mount * dimos_module::nalgebra::Point3::new(point[0], point[1], point[2]);
+            [moved.x, moved.y, moved.z]
+        })
+        .collect();
+    let rotation = pose.rotation.to_rotation_matrix();
+    let translation = pose.translation.vector;
+    let mut pose = PoseWithTime::new(
+        std::array::from_fn(|i| std::array::from_fn(|j| rotation[(i, j)])),
+        [translation.x, translation.y, translation.z],
+    );
+    let sec = scan.ts.floor();
+    pose.set_time(sec as i32, ((scan.ts - sec) * 1e9) as u32);
+    ScanMatch::Ready(CloudWithPose {
+        cloud: Some(Arc::new(points)),
+        pose,
+    })
+}
+
+/// Hand waiting scans to the worker as tf covers them, oldest first; waits on a new scan or a tf change, never a timer.
+async fn match_scans_to_tf(
+    tf: Tf,
+    state: Shared<SharedState>,
+    scan_arrived: Arc<Notify>,
+    wake: Arc<Condvar>,
+    config: Config,
+) {
+    let (odom_frame, body_frame) = (config.odom_frame.as_str(), config.body_frame.as_str());
+    loop {
+        let head = state
+            .lock()
+            .expect("state")
+            .waiting_scans
+            .front()
+            .map(|scan| (scan.ts, scan.frame_id.clone()));
+        let Some((ts, frame_id)) = head else {
+            scan_arrived.notified().await;
+            continue;
+        };
+        let matched = {
+            let state = state.lock().expect("state");
+            match state.waiting_scans.front() {
+                Some(scan) if scan.ts == ts => match_scan(&tf, scan, odom_frame, body_frame),
+                _ => continue,
+            }
+        };
+        match matched {
+            ScanMatch::Wait => {
+                let covered = async {
+                    for (parent, child) in
+                        [(odom_frame, body_frame), (body_frame, frame_id.as_str())]
+                    {
+                        tf.lookup(parent, child)
+                            .at(ts + ANY_TIME_S)
+                            .tolerance(ANY_TIME_S)
+                            .within(Duration::from_secs(TF_WAIT_WARN_S))
+                            .await;
+                    }
+                };
+                tokio::select! {
+                    _ = covered => {}
+                    _ = scan_arrived.notified() => {}
+                }
+            }
+            ScanMatch::TooOld => {
+                warn_throttled!(
+                    Duration::from_secs(TF_WAIT_WARN_S),
+                    frame = %frame_id,
+                    ts,
+                    "scan is older than the tf buffer; dropped"
+                );
+                let mut state = state.lock().expect("state");
+                if state
+                    .waiting_scans
+                    .front()
+                    .is_some_and(|scan| scan.ts == ts)
+                {
+                    state.waiting_scans.pop_front();
+                }
+            }
+            ScanMatch::Ready(cloud_with_pose) => {
+                let mut state = state.lock().expect("state");
+                if state
+                    .waiting_scans
+                    .front()
+                    .is_some_and(|scan| scan.ts == ts)
+                {
+                    state.waiting_scans.pop_front();
+                }
+                state.cloud_buffer.push_back(cloud_with_pose);
+                let cap = config.max_scan_queue;
+                if cap > 0 && state.cloud_buffer.len() as i32 > cap {
+                    let newest = state.cloud_buffer.pop_back();
+                    state.cloud_buffer.clear();
+                    state.cloud_buffer.extend(newest);
+                }
+                drop(state);
+                wake.notify_one();
+            }
+        }
+    }
+}
+
+// ---- module ----------------------------------------------------------------------
+
+#[derive(Module)]
+#[module(setup = spawn_worker, teardown = stop_worker)]
+struct GscPgoModule {
+    #[input(decode = PointCloud2::decode, handler = on_cloud)]
+    cloud: Input<PointCloud2>,
+
+    // World-frame position fix (GPS, mocap): frame_id = world frame, child_frame_id = sensor mount, xyz cov in m².
+    #[input(decode = Odometry::decode, handler = on_coordinate_factor)]
+    coordinate_factor: Input<Odometry>,
+
+    // Landmark sighting: frame_id = sensor, to_id = name, a repeated constraint_instance_id replaces its sighting; non-positive variance or zero quaternion = unknown.
+    #[input(decode = LocationConstraint::decode, handler = on_landmark_factor)]
+    landmark_factor: Input<LocationConstraint>,
+
+    #[output(encode = Odometry::encode)]
+    corrected_odometry: Output<Odometry>,
+
+    #[tf]
+    tf: Tf,
+
+    #[output(encode = PointCloud2::encode)]
+    pose_graph: Output<PointCloud2>,
+
+    // per keyframe a solve moved: its pose before, and the delta
+    #[output(encode = PointCloud2::encode)]
+    loop_closure_event: Output<PointCloud2>,
+
+    // closure candidate lifecycle events with both keyframes' positions, for drawing closure edges
+    #[output(encode = PointCloud2::encode)]
+    closure_edges: Output<PointCloud2>,
+
+    // JSON lines tagged "kind" (pressure, closure, keyframe, solve, odometry_drift) and "ts"
+    #[output(encode = std_msgs::String::encode)]
+    debug_log: Output<std_msgs::String>,
+
+    #[config]
+    config: Config,
+
+    state: Shared<SharedState>,
+    /// Signaled by callbacks when new work is enqueued.
+    wake: Arc<Condvar>,
+    /// Signaled when a scan joins `waiting_scans`.
+    scan_arrived: Arc<Notify>,
+    worker: Option<WorkerHandle>,
+}
+
+struct WorkerHandle {
+    thread: std::thread::JoinHandle<()>,
+    tf_matcher: tokio::task::JoinHandle<()>,
+}
+
+impl GscPgoModule {
+    async fn spawn_worker(&mut self) {
+        let worker = Worker {
+            state: Arc::clone(&self.state),
+            config: self.config.clone(),
+            corrected_odometry: self.corrected_odometry.clone(),
+            pose_graph: self.pose_graph.clone(),
+            loop_closure_event: self.loop_closure_event.clone(),
+            closure_edges: self.closure_edges.clone(),
+            debug_log: self.debug_log.clone(),
+            tf: self.tf.clone(),
+            runtime: tokio::runtime::Handle::current(),
+            wake: Arc::clone(&self.wake),
+        };
+        let thread = std::thread::Builder::new()
+            .name("gsc-pgo-worker".into())
+            .spawn(move || worker.run())
+            .expect("spawn PGO worker thread");
+        let tf_matcher = tokio::spawn(match_scans_to_tf(
+            self.tf.clone(),
+            Arc::clone(&self.state),
+            Arc::clone(&self.scan_arrived),
+            Arc::clone(&self.wake),
+            self.config.clone(),
+        ));
+        self.worker = Some(WorkerHandle { thread, tf_matcher });
+        info!("PGO native module started");
+    }
+
+    async fn stop_worker(&mut self) {
+        if let Some(WorkerHandle { thread, tf_matcher }) = self.worker.take() {
+            tf_matcher.abort();
+            self.state.lock().expect("state").stopping = true;
+            self.wake.notify_all();
+            let _ = tokio::task::spawn_blocking(move || thread.join()).await;
+        }
+    }
+
+    async fn on_coordinate_factor(&mut self, msg: Odometry) {
+        let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
+        let mount = &msg.child_frame_id;
+        let body = &self.config.body_frame;
+        let lever = if mount.is_empty() || mount == body {
+            [0.0; 3]
+        } else {
+            // no mount tf: drop rather than bias the map
+            let Some(mount_transform) = self.tf.lookup(body, mount).at(ts).get() else {
+                return;
+            };
+            let offset = mount_transform.translation();
+            [offset.x, offset.y, offset.z]
+        };
+        let pose_covariance = &msg.pose.covariance;
+        let covariance: Mat3 =
+            std::array::from_fn(|i| std::array::from_fn(|j| pose_covariance[6 * i + j]));
+        let measured = &msg.pose.pose.position;
+        let position = [measured.x, measured.y, measured.z];
+        if !position
+            .iter()
+            .chain(covariance.iter().flatten())
+            .all(|v| v.is_finite())
+        {
+            warn!(frame = %msg.header.frame_id, "world position not finite; dropped");
+            return;
+        }
+        let mut state = self.state.lock().expect("state");
+        let frame = index_of(&mut state.world_frames, &msg.header.frame_id) as u32;
+        state.world_fixes.push(WorldFix {
+            ts,
+            frame,
+            lever,
+            position,
+            covariance,
+        });
+        drop(state);
+        self.wake.notify_one();
+    }
+
+    async fn on_landmark_factor(&mut self, msg: LocationConstraint) {
+        let ts = msg.ts;
+        let sensor = &msg.frame_id;
+        let body = &self.config.body_frame;
+        let [qx, qy, qz, qw] = msg.orientation_xyzw;
+        let message_covariance = &msg.covariance;
+        // the covariance is already (rotation, position), as the pose graph wants its information, zero where unknown
+        let mut information: [[f64; 6]; 6] =
+            dimos_gsc_pgo::landmarks::known_inverse(&std::array::from_fn(|i| {
+                std::array::from_fn(|j| message_covariance[6 * i + j])
+            }));
+        let norm = (qw * qw + qx * qx + qy * qy + qz * qz).sqrt();
+        let seen: Mat3 = if norm > 0.0 {
+            mat3::mat_from_quat(&[qw / norm, qx / norm, qy / norm, qz / norm])
+        } else {
+            for (i, row) in information.iter_mut().enumerate() {
+                for (j, entry) in row.iter_mut().enumerate() {
+                    if i < 3 || j < 3 {
+                        *entry = 0.0;
+                    }
+                }
+            }
+            mat3::identity()
+        };
+        let mut mount = mat3::identity();
+        let (mut rotation, mut position) = (seen, msg.position);
+        if !sensor.is_empty() && sensor != body {
+            // no mount tf: drop rather than bias the map
+            let Some(mount_transform) = self.tf.lookup(body, sensor).at(ts).get() else {
+                return;
+            };
+            let mount_rotation = mount_transform.rotation().to_rotation_matrix();
+            mount = std::array::from_fn(|i| std::array::from_fn(|j| mount_rotation[(i, j)]));
+            let offset = mount_transform.translation();
+            rotation = mat3::mat_mul(&mount, &seen);
+            position = mat3::add(
+                &mat3::mat_vec(&mount, &position),
+                &[offset.x, offset.y, offset.z],
+            );
+        }
+        // the residual in the pose graph's terms is to_graph times the message's, to_graph = diag(seen^T, mount), so I <- A I A^T
+        let seen_t = mat3::transpose(&seen);
+        let to_graph = |i: usize, k: usize| match (i < 3, k < 3) {
+            (true, true) => seen_t[i][k],
+            (false, false) => mount[i - 3][k - 3],
+            _ => 0.0,
+        };
+        let information: [[f64; 6]; 6] = std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                (0..6)
+                    .flat_map(|k| (0..6).map(move |l| (k, l)))
+                    .map(|(k, l)| to_graph(i, k) * information[k][l] * to_graph(j, l))
+                    .sum()
+            })
+        });
+        if !position
+            .iter()
+            .chain(rotation.iter().flatten())
+            .chain(information.iter().flatten())
+            .all(|v| v.is_finite())
+        {
+            warn!(landmark = %msg.to_id, "landmark sighting not finite; dropped");
+            return;
+        }
+        let mut state = self.state.lock().expect("state");
+        let landmark = index_of(&mut state.landmark_names, &msg.to_id) as u64;
+        let sighting = (!msg.constraint_instance_id.is_empty())
+            .then(|| index_of(&mut state.sighting_names, &msg.constraint_instance_id) as u64);
+        state.landmark_factors.push(LandmarkFix {
+            sighting,
+            ts,
+            landmark,
+            rotation,
+            position,
+            information,
+        });
+        drop(state);
+        self.wake.notify_one();
+    }
+
+    /// Queue a scan until tf covers its stamp (`match_scans_to_tf`).
+    async fn on_cloud(&mut self, msg: PointCloud2) {
+        let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
+        let points = match extract_xyz(&msg) {
+            Ok(points) => points,
+            Err(error) => {
+                error!(error = %error, "lidar PointCloud2 parse failed; dropped");
+                return;
+            }
+        };
+        let mut state = self.state.lock().expect("state");
+        if !push_waiting_scan(
+            &mut state,
+            WaitingScan {
+                ts,
+                frame_id: msg.header.frame_id,
+                points,
+            },
+            self.config.max_scan_queue,
+        ) {
+            return;
+        }
+        drop(state);
+        self.scan_arrived.notify_one();
+    }
+}
+
+/// Queue a scan for tf, dropping the oldest past `cap`; false (and not queued) when it is older than the last scan.
+fn push_waiting_scan(state: &mut SharedState, scan: WaitingScan, cap: i32) -> bool {
+    if scan.ts < state.last_scan_time {
+        return false;
+    }
+    state.last_scan_time = scan.ts;
+    state.waiting_scans.push_back(scan);
+    if cap > 0 && state.waiting_scans.len() as i32 > cap {
+        state.waiting_scans.pop_front();
+    }
+    true
+}
+
+// ---- graph publisher ------------------------------------------------------------
+
+/// Next publish: O(1) graph snapshot, whether a closure closed since the last send (or-ed over skips), data time.
+struct Publish {
+    keys: dimos_gsc_pgo::store::KeyFrames,
+    closure_closed: bool,
+    ts: f64,
+}
+
+/// (newest pending snapshot, stopping), with its wakeup.
+type PendingPublish = Arc<(Mutex<(Option<Publish>, bool)>, Condvar)>;
+
+/// Publishes the O(map) graph records off the scan thread; a newer snapshot replaces an unsent one.
+struct GraphPublisher {
+    pending: PendingPublish,
+}
+
+impl GraphPublisher {
+    fn spawn(worker: &Worker, frame_id: String) -> GraphPublisher {
+        let pending: PendingPublish = Arc::default();
+        let shared = Arc::clone(&pending);
+        let (pose_graph, loop_closure_event) =
+            (worker.pose_graph.clone(), worker.loop_closure_event.clone());
+        let (runtime, dump_path) = (worker.runtime.clone(), worker.config.dump_path.clone());
+        std::thread::Builder::new()
+            .name("gsc-publish".into())
+            .spawn(move || {
+                let mut heard = HeardPoses::default();
+                let publish = |out: &dyn Fn() -> Result<(), String>, what: &str| {
+                    if let Err(error) = out() {
+                        error!(error = %error, "{what} failed to publish");
+                    }
+                };
+                loop {
+                    let next = {
+                        let (lock, ready) = &*shared;
+                        let mut state = lock.lock().expect("publisher");
+                        while state.0.is_none() && !state.1 {
+                            state = ready.wait(state).expect("publisher");
+                        }
+                        match state.0.take() {
+                            Some(next) => next,
+                            None => return,
+                        }
+                    };
+                    let Publish {
+                        keys,
+                        closure_closed,
+                        ts,
+                    } = next;
+                    heard.add_new(&keys);
+                    if let Some(changes) = heard.take_changes(&keys, closure_closed) {
+                        let records = build_loop_closure_records(changes, ts, &frame_id);
+                        publish(
+                            &|| {
+                                runtime
+                                    .block_on(loop_closure_event.publish(&records))
+                                    .map_err(|error| error.to_string())
+                            },
+                            "loop_closure_event",
+                        );
+                        if !dump_path.is_empty() {
+                            let appended = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(format!("{dump_path}.closures"))
+                                .and_then(|mut file| {
+                                    append_pose_changes(&mut file, ts, &records.data)
+                                });
+                            if let Err(error) = appended {
+                                warn!(error = %error, "Failed to dump the loop closure.");
+                            }
+                        }
+                    }
+                    let records = build_pose_graph_records(&keys, ts, &frame_id);
+                    publish(
+                        &|| {
+                            runtime
+                                .block_on(pose_graph.publish(&records))
+                                .map_err(|error| error.to_string())
+                        },
+                        "pose_graph",
+                    );
+                    if !dump_path.is_empty() {
+                        if let Err(error) = write_keyframes(dump_path.as_ref(), &keys) {
+                            warn!(error = %error, "Failed to dump the keyframes.");
+                        }
+                    }
+                }
+            })
+            .expect("spawn graph publisher thread");
+        GraphPublisher { pending }
+    }
+    /// Hand over the current graph; an unsent older one is replaced, its closure flag kept.
+    fn send(&self, pgo: &GscPgo, closure_closed: bool, ts: f64) {
+        let (lock, ready) = &*self.pending;
+        let mut state = lock.lock().expect("publisher");
+        let closed = closure_closed || state.0.as_ref().is_some_and(|p| p.closure_closed);
+        state.0 = Some(Publish {
+            keys: pgo.key_poses().clone(),
+            closure_closed: closed,
+            ts,
+        });
+        ready.notify_one();
+    }
+}
+
+impl Drop for GraphPublisher {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.pending;
+        lock.lock().expect("publisher").1 = true;
+        ready.notify_all();
+    }
+}
+
+// ---- worker (the PGO main loop) -----------------------------------------------------
+
+struct Worker {
+    state: Shared<SharedState>,
+    config: Config,
+    corrected_odometry: Output<Odometry>,
+    tf: Tf,
+    pose_graph: Output<PointCloud2>,
+    loop_closure_event: Output<PointCloud2>,
+    closure_edges: Output<PointCloud2>,
+    debug_log: Output<std_msgs::String>,
+    runtime: tokio::runtime::Handle,
+    wake: Arc<Condvar>,
+}
+
+impl Worker {
+    fn publish<T>(&self, out: &Output<T>, msg: &T, what: &str) {
+        if let Err(error) = self.runtime.block_on(out.publish(msg)) {
+            error!(error = %error, "{what} failed to publish");
+        }
+    }
+
+    fn run(self) {
+        if let Err(error) = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.config.worker_threads)
+            .thread_name(|i| format!("gsc-worker-{i}"))
+            .build_global()
+        {
+            warn!(error = %error, "could not cap the worker threads");
+        }
+        let mut pgo = GscPgo::new(self.config.pgo());
+        let (state, wake) = (Arc::clone(&self.state), Arc::clone(&self.wake));
+        pgo.notify_when_solved(move || {
+            state.lock().expect("state").solve_finished = true;
+            wake.notify_one();
+        });
+        let frame_id = self.config.map_frame.clone();
+        let odom_frame = self.config.odom_frame.clone();
+        let body_frame = self.config.body_frame.clone();
+        // identity until the first correction, so map -> odom resolves from the start
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        self.publish_tf(&mat3::identity(), &[0.0; 3], now, &frame_id, &odom_frame);
+
+        let publisher = GraphPublisher::spawn(&self, frame_id.clone());
+        // progress already sent on debug_log / closure_edges
+        let mut pressure_sent = 0usize;
+        let mut closures_logged = 0usize;
+        let mut edges_sent = 0usize;
+
+        loop {
+            // adopt a finished solve even without scans
+            let solve_finished =
+                std::mem::take(&mut self.state.lock().expect("state").solve_finished);
+            if solve_finished && pgo.update() {
+                let last_time = last_keyframe_time(&pgo);
+                publisher.send(&pgo, false, last_time);
+                self.log_solve(&pgo, last_time);
+            }
+            // fixes and sightings join as they arrive; one alone starts a solve
+            let (fixes, sightings) = {
+                let mut state = self.state.lock().expect("state");
+                (
+                    std::mem::take(&mut state.world_fixes),
+                    std::mem::take(&mut state.landmark_factors),
+                )
+            };
+            if !fixes.is_empty() || !sightings.is_empty() {
+                for fix in fixes {
+                    pgo.add_coordinate_factor(
+                        fix.ts,
+                        fix.frame,
+                        fix.lever,
+                        fix.position,
+                        fix.covariance,
+                    );
+                }
+                for landmark_sighting in sightings {
+                    match landmark_sighting.sighting {
+                        Some(sighting) => pgo.replace_landmark_factor(
+                            sighting,
+                            landmark_sighting.ts,
+                            landmark_sighting.landmark,
+                            landmark_sighting.rotation,
+                            landmark_sighting.position,
+                            landmark_sighting.information,
+                        ),
+                        None => pgo.add_landmark_factor(
+                            landmark_sighting.ts,
+                            landmark_sighting.landmark,
+                            landmark_sighting.rotation,
+                            landmark_sighting.position,
+                            landmark_sighting.information,
+                        ),
+                    }
+                }
+                if pgo.update() {
+                    let last_time = last_keyframe_time(&pgo);
+                    publisher.send(&pgo, false, last_time);
+                    self.log_solve(&pgo, last_time);
+                }
+            }
+            self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
+            self.log_closures(&pgo, &mut closures_logged);
+            let cloud_with_pose = {
+                let mut state = self.state.lock().expect("state");
+                if state.stopping {
+                    break;
+                }
+                state.cloud_buffer.pop_front()
+            };
+            let Some(cloud_with_pose) = cloud_with_pose else {
+                // idle: re-check under the lock so a notify between the checks is not lost, then wait
+                let state = self.state.lock().expect("state");
+                if state.cloud_buffer.is_empty()
+                    && !state.solve_finished
+                    && state.world_fixes.is_empty()
+                    && state.landmark_factors.is_empty()
+                    && !state.stopping
+                {
+                    drop(self.wake.wait(state).expect("state"));
+                }
+                continue;
+            };
+
+            let cur_time = cloud_with_pose.pose.second;
+
+            let keyframe = pgo.add_key_pose(&cloud_with_pose);
+            if let Some((scan, overlap)) = pgo.pressure() {
+                if scan != pressure_sent {
+                    pressure_sent = scan;
+                    self.log(
+                        "pressure",
+                        cur_time,
+                        serde_json::to_value(overlap).unwrap_or_default(),
+                    );
+                }
+            }
+            if !keyframe {
+                self.publish_corrected(
+                    &pgo,
+                    &cloud_with_pose.pose,
+                    cur_time,
+                    &frame_id,
+                    &body_frame,
+                    &odom_frame,
+                );
+                continue;
+            }
+
+            pgo.step_closure_search();
+            let moved = pgo.update();
+            publisher.send(&pgo, moved, cur_time);
+            if moved {
+                self.log_solve(&pgo, cur_time);
+            }
+
+            self.publish_corrected(
+                &pgo,
+                &cloud_with_pose.pose,
+                cur_time,
+                &frame_id,
+                &body_frame,
+                &odom_frame,
+            );
+
+            let scan_queue = self.state.lock().expect("state").cloud_buffer.len();
+            self.log(
+                "keyframe",
+                cur_time,
+                serde_json::json!({
+                    "keyframes": pgo.key_poses().len(),
+                    "scan_queue": scan_queue,
+                    "closure_search_running": pgo.closure_search_running(),
+                    "solve_running": pgo.solve_started().is_some(),
+                    "stage_seconds": pgo.stage_seconds().iter().map(|(k, v)| (k.to_string(), *v)).collect::<std::collections::BTreeMap<_, _>>(),
+                }),
+            );
+        }
+        pgo.finish();
+        let last_time = last_keyframe_time(&pgo);
+        self.log_odometry_drift(&pgo, last_time);
+    }
+
+    fn log(&self, kind: &str, ts: f64, mut fields: serde_json::Value) {
+        fields["kind"] = kind.into();
+        fields["ts"] = ts.into();
+        let msg = std_msgs::String {
+            data: fields.to_string(),
+        };
+        self.publish(&self.debug_log, &msg, "debug_log");
+    }
+
+    /// Log each new `ClosureCandidateDiag` as `kind` "closure".
+    fn log_closures(&self, pgo: &GscPgo, logged: &mut usize) {
+        for diag in &pgo.closure_diagnostics()[*logged..] {
+            self.log(
+                "closure",
+                diag.source_time,
+                serde_json::to_value(diag).unwrap_or_default(),
+            );
+        }
+        *logged = pgo.closure_diagnostics().len();
+    }
+
+    fn log_solve(&self, pgo: &GscPgo, ts: f64) {
+        if pgo.learned_odometry_error_estimate_measured() {
+            self.log_odometry_drift(pgo, ts);
+        }
+        let closures = pgo.committed_closures();
+        let judged = closures
+            .iter()
+            .filter(|closure| !closure.gnc_weight.is_nan())
+            .count();
+        let kept = closures.iter().filter(|closure| closure.is_kept()).count();
+        self.log(
+            "solve",
+            ts,
+            serde_json::json!({
+                "committed": closures.len(),
+                "judged": judged,
+                "kept": kept,
+                "graph_error": pgo.graph_error(),
+                "keyframes": pgo.key_poses().len(),
+                // landmark ids index `landmark_factor` names
+                "landmarks": pgo.landmarks().iter().map(|(id, _, p)| serde_json::json!([id, p])).collect::<Vec<_>>(),
+                "world_alignment": pgo.world_alignment().iter().map(|(f, yaw, t)| serde_json::json!([f, yaw, t])).collect::<Vec<_>>(),
+            }),
+        );
+    }
+
+    /// If a loop is kept, log the measured odometry error estimate as next-run config (`kind` "odometry_drift").
+    fn log_odometry_drift(&self, pgo: &GscPgo, ts: f64) {
+        let kept = pgo
+            .committed_closures()
+            .iter()
+            .filter(|closure| closure.is_kept())
+            .count();
+        if kept > 0 {
+            let (drift, measured) = pgo.odometry_error_estimate_for_next_run();
+            let mut fields = serde_json::Map::new();
+            for (k, source) in ["xy", "z", "yaw", "tilt"].iter().enumerate() {
+                fields.insert(
+                    format!("odometry_error_estimate_{source}_per_sqrt_m"),
+                    drift[k][0].into(),
+                );
+                fields.insert(
+                    format!("odometry_error_estimate_{source}_per_sqrt_rad"),
+                    drift[k][1].into(),
+                );
+                fields.insert(format!("{source}_measured"), measured[k].into());
+            }
+            // plus a deterministic_config fitted to this machine (the overshoot warning points here)
+            if let Ok(suggested) = serde_json::to_value(pgo.suggested_deterministic_config()) {
+                fields.insert("suggested_deterministic_config".into(), suggested);
+            }
+            self.log("odometry_drift", ts, serde_json::Value::Object(fields));
+        }
+    }
+
+    fn publish_closure_edges(&self, pgo: &GscPgo, sent: &mut usize, frame_id: &str) {
+        let events = pgo.closure_edge_events();
+        if events.len() <= *sent {
+            return;
+        }
+        let ts = last_keyframe_time(pgo);
+        let msg = build_closure_edge_records(&events[*sent..], pgo.key_poses(), ts, frame_id);
+        self.publish(&self.closure_edges, &msg, "closure_edges");
+        *sent = events.len();
+    }
+
+    fn publish_corrected(
+        &self,
+        pgo: &GscPgo,
+        pose: &PoseWithTime,
+        ts: f64,
+        frame_id: &str,
+        body_frame: &str,
+        odom_frame: &str,
+    ) {
+        let corrected_rotation = mat3::mat_mul(&pgo.rotation_offset(), &pose.rotation);
+        let corrected_translation = mat3::add(
+            &mat3::mat_vec(&pgo.rotation_offset(), &pose.translation),
+            &pgo.translation_offset(),
+        );
+        let corrected = build_odometry(
+            &corrected_rotation,
+            &corrected_translation,
+            ts,
+            frame_id,
+            body_frame,
+        );
+        self.publish(&self.corrected_odometry, &corrected, "corrected_odometry");
+
+        self.publish_tf(
+            &pgo.rotation_offset(),
+            &pgo.translation_offset(),
+            ts,
+            frame_id,
+            odom_frame,
+        );
+    }
+
+    /// The map -> odometry correction on tf.
+    fn publish_tf(&self, rotation: &Mat3, translation: &Vec3, ts: f64, parent: &str, child: &str) {
+        let iso = Isometry3::from_parts(
+            Translation3::new(translation[0], translation[1], translation[2]),
+            UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(
+                Matrix3::from_fn(|i, j| rotation[i][j]),
+            )),
+        );
+        if let Err(error) = self
+            .runtime
+            .block_on(self.tf.publish(&[Transform::new(parent, child, ts, iso)]))
+        {
+            error!(error = %error, "tf failed to publish");
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    run_with_transport::<GscPgoModule>().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dimos_module::nalgebra::Vector3;
+
+    /// One edge per (parent, child), nearest-sample lookups like dimos-module's tf buffer.
+    #[derive(Default)]
+    struct FakeTf {
+        edges: Vec<(&'static str, &'static str, f64, Isometry3<f64>)>,
+    }
+
+    impl FakeTf {
+        fn add(&mut self, parent: &'static str, child: &'static str, ts: f64, x: f64, yaw: f64) {
+            let iso = Isometry3::new(Vector3::new(x, 0.0, 0.0), Vector3::new(0.0, 0.0, yaw));
+            self.edges.push((parent, child, ts, iso));
+        }
+    }
+
+    impl TfLookup for FakeTf {
+        fn newest(&self, parent: &str, child: &str) -> Option<f64> {
+            self.edges
+                .iter()
+                .filter(|(p, c, _, _)| {
+                    (*p == parent && *c == child) || (*p == child && *c == parent)
+                })
+                .map(|(_, _, t, _)| *t)
+                .reduce(f64::max)
+        }
+        fn transform(
+            &self,
+            parent: &str,
+            child: &str,
+            ts: f64,
+            tolerance: Option<f64>,
+        ) -> Option<Isometry3<f64>> {
+            if parent == child {
+                return Some(Isometry3::identity());
+            }
+            self.edges
+                .iter()
+                .filter_map(|(p, c, t, iso)| {
+                    match (*p == parent, *c == child, *p == child, *c == parent) {
+                        (true, true, _, _) => Some((*t, *iso)),
+                        (_, _, true, true) => Some((*t, iso.inverse())),
+                        _ => None,
+                    }
+                })
+                .filter(|(t, _)| tolerance.is_none_or(|tol| (t - ts).abs() <= tol))
+                .min_by(|a, b| (a.0 - ts).abs().total_cmp(&(b.0 - ts).abs()))
+                .map(|(_, iso)| iso)
+        }
+    }
+
+    fn scan(ts: f64, frame_id: &str) -> WaitingScan {
+        WaitingScan {
+            ts,
+            frame_id: frame_id.into(),
+            points: vec![[1.0, 0.0, 0.0]],
+        }
+    }
+
+    fn ready(matched: ScanMatch) -> CloudWithPose {
+        match matched {
+            ScanMatch::Ready(cloud_with_pose) => cloud_with_pose,
+            ScanMatch::Wait => panic!("waiting"),
+            ScanMatch::TooOld => panic!("too old"),
+        }
+    }
+
+    #[test]
+    fn waits_until_tf_has_a_sample_at_or_after_the_scan() {
+        let mut tf = FakeTf::default();
+        tf.add("odom", "base_link", 1.0, 0.0, 0.0);
+        assert!(matches!(
+            match_scan(&tf, &scan(1.5, "base_link"), "odom", "base_link"),
+            ScanMatch::Wait
+        ));
+        tf.add("odom", "base_link", 2.0, 2.0, 0.0);
+        let posed = ready(match_scan(
+            &tf,
+            &scan(1.9, "base_link"),
+            "odom",
+            "base_link",
+        ));
+        assert_eq!(posed.pose.translation, [2.0, 0.0, 0.0]);
+        assert!((posed.pose.second - 1.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_scan_older_than_the_tf_buffer_is_too_old() {
+        let mut tf = FakeTf::default();
+        tf.add("odom", "base_link", 5.0, 0.0, 0.0);
+        assert!(matches!(
+            match_scan(&tf, &scan(1.0, "base_link"), "odom", "base_link"),
+            ScanMatch::TooOld
+        ));
+    }
+
+    #[test]
+    fn a_fixed_frame_scan_is_put_in_the_body_frame() {
+        // body 2 m along x and turned 90 degrees: the world point (1, 0, 0) sits 1 m behind it, at body (0, 1, 0)
+        let mut tf = FakeTf::default();
+        tf.add("world", "base_link", 1.0, 2.0, std::f64::consts::FRAC_PI_2);
+        let posed = ready(match_scan(&tf, &scan(1.0, "world"), "world", "base_link"));
+        let point = posed.cloud.expect("cloud")[0];
+        assert!(point[0].abs() < 1e-5 && (point[1] - 1.0).abs() < 1e-5 && point[2].abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_sensor_frame_scan_is_moved_by_its_mount() {
+        let mut tf = FakeTf::default();
+        tf.add("odom", "base_link", 1.0, 0.0, 0.0);
+        tf.add("base_link", "lidar", 1.0, 0.5, 0.0);
+        let posed = ready(match_scan(&tf, &scan(1.0, "lidar"), "odom", "base_link"));
+        assert_eq!(posed.cloud.expect("cloud")[0], [1.5, 0.0, 0.0]);
+        // a mount with no sample at or after the scan holds it, though the pose has one
+        tf.add("odom", "base_link", 2.0, 0.0, 0.0);
+        assert!(matches!(
+            match_scan(&tf, &scan(1.2, "lidar"), "odom", "base_link"),
+            ScanMatch::Wait
+        ));
+    }
+
+    #[test]
+    fn the_waiting_queue_drops_the_oldest_and_out_of_order_scans() {
+        let mut state = SharedState::default();
+        for ts in [1.0, 2.0, 3.0] {
+            assert!(push_waiting_scan(&mut state, scan(ts, "base_link"), 2));
+        }
+        assert!(!push_waiting_scan(&mut state, scan(2.5, "base_link"), 2));
+        let queued: Vec<f64> = state.waiting_scans.iter().map(|s| s.ts).collect();
+        assert_eq!(queued, [2.0, 3.0]);
+    }
+}
