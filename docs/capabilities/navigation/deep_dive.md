@@ -120,43 +120,7 @@ All visualization layers shown together:
 
 ## Frontier Exploration
 
-The [`WavefrontFrontierExplorer`](/dimos/navigation/experimental/frontier_exploration/wavefront_frontier_goal_selector.py) drives autonomous exploration of unknown space. It scans the costmap for frontiers, the boundaries between mapped and unmapped cells, picks the best candidate with a wavefront BFS from the robot's position, and publishes it as a navigation goal. When a goal is reached (or fails), it selects the next frontier until the space is fully mapped. Like patrolling below, it is exposed as an agent skill: an LLM agent can call `begin_exploration` and `end_exploration`.
-
-## Patrolling
-
-The patrolling system drives the robot to systematically cover a **known** area. It is exposed as an agent skill. An LLM agent can call `start_patrol` and `stop_patrol` to control it. Note that the area has to be explored first.
-
-### How it works
-
-1. **Visitation tracking:** As the robot moves, a visitation grid aligned to the costmap marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and has not been. Visits expire over time and cells must be covered again.
-
-2. **Goal selection:** A patrol router picks the next goal. The default strategy is coverage: it samples candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals spread evenly across the map rather than clustering in large open areas.
-
-3. **Navigation loop:** The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available, for example when the map has not loaded yet, it retries after a short delay.
-
-4. **Stopping:** When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
-
-### Patrol router strategies
-
-| Router       | Behavior                                                                                       |
-|--------------|------------------------------------------------------------------------------------------------|
-| `coverage`   | Maximizes new-cell coverage per goal. Uses Voronoi weighting for even spatial distribution.     |
-| `random`     | Picks a random unvisited, obstacle-free cell.                                                  |
-| `frontier`   | Targets the boundary between known and unknown space, useful for exploration-style patrol.      |
-
-### Safety
-
-Goal candidates are filtered through a safe mask, which is the free-space region eroded by the robot's clearance radius, so the robot is never sent too close to walls or obstacles. The planner's safe-goal clearance is also tightened while patrolling so the robot can rotate in place at every goal.
-
-### Router comparison
-
-| Coverage | Frontier | Random |
-|----------|----------|--------|
-| ![coverage](assets/coverage.png) | ![frontier](assets/frontier.png) | ![random](assets/random.png) |
-
-### Sample patrol trace (26 min)
-
-![Patrol path](assets/patrol_path.png)
+The [`WavefrontFrontierExplorer`](/dimos/navigation/experimental/frontier_exploration/wavefront_frontier_goal_selector.py) drives autonomous exploration of unknown space. It scans the costmap for frontiers, the boundaries between mapped and unmapped cells, picks the best candidate with a wavefront BFS from the robot's position, and publishes it as a navigation goal. When a goal is reached (or fails), it selects the next frontier until the space is fully mapped.
 
 ## Blueprint Composition
 
@@ -171,7 +135,6 @@ from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_
     WavefrontFrontierExplorer,
 )
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.experimental.patrolling.module import PatrollingModule
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
@@ -181,7 +144,6 @@ unitree_go2 = autoconnect(
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
-    PatrollingModule.blueprint(),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2")
 
