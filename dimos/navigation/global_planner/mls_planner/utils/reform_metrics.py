@@ -43,14 +43,19 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+from typing import Any, cast
 
-from dimos_mls_planner import MLSPlanner
+# re-exported: plan_home.py swaps rm.MLSPlanner for a thread-capped factory
+from dimos_mls_planner import MLSPlanner as MLSPlanner
 import numpy as np
 import psutil
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
-from dimos.mapping.ray_tracing.voxel_map import ReformWarp, VoxelRayMapper
+from dimos.mapping.ray_tracing.voxel_map import (
+    ReformWarp,
+    VoxelRayMapper,
+)
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.robot.unitree.go2.nav_3d_config import mls_planner_config, ray_tracing_config
 
@@ -236,7 +241,7 @@ def rebuild(db: Path, keyframes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     with SqliteStore(path=str(db)) as store:
         odom = [(obs.ts, obs.data) for obs in store.streams.odom.order_by("ts")]
         odom_ts = np.array([ts for ts, _ in odom])
-        pose = lambda o: (  # noqa: E731
+        pose: Callable[[Any], tuple[Rotation, np.ndarray]] = lambda o: (  # noqa: E731
             Rotation.from_quat(
                 [o.orientation.x, o.orientation.y, o.orientation.z, o.orientation.w]
             ),
@@ -264,7 +269,9 @@ def rebuild(db: Path, keyframes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             rotation, translation = correction_rotation[k], correction_translation[k]
             corrected = (rotation.apply(world) + translation).astype(np.float32)
             origin = rotation.apply(t_near) + translation
-            mapper.add_frame_world(corrected, tuple(map(float, origin)))
+            mapper.add_frame_world(
+                corrected, cast("tuple[float, float, float]", tuple(map(float, origin)))
+            )
     tracer = np.asarray(mapper.global_map(), np.float32)
     cfg = mls_planner_config
     planner = MLSPlanner(
@@ -366,7 +373,7 @@ def lockstep(
     on_closure: Callable[[float, np.ndarray, VoxelRayMapper], None] | None = None,
     lidar_stream: str = "lidar",
     odom_stream: str = "odom",
-) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
     """Every scan in order through the module code with no timing or drops.
 
     closures given (A, the reform path): each scan is placed by the correction in
@@ -408,7 +415,7 @@ def lockstep(
         else None
     )
     offset = (Rotation.identity(), np.zeros(3))
-    reports: list[dict] = []
+    reports: list[dict[str, Any]] = []
     next_closure = 0
     with SqliteStore(path=str(db)) as store:
         # an Odometry stream's poses are under .pose; a PoseStamped is its own pose
@@ -417,7 +424,7 @@ def lockstep(
             for obs in getattr(store.streams, odom_stream).order_by("ts")
         ]
         odom_ts = np.array([ts for ts, _ in odom])
-        pose = lambda o: (  # noqa: E731
+        pose: Callable[[Any], tuple[Rotation, np.ndarray]] = lambda o: (  # noqa: E731
             Rotation.from_quat(
                 [o.orientation.x, o.orientation.y, o.orientation.z, o.orientation.w]
             ),
@@ -516,7 +523,9 @@ def lockstep(
                 corrected = (rotation.apply(world) + translation).astype(np.float32)
                 origin = rotation.apply(t_near) + translation
             tracer.set_clock(obs.ts)
-            tracer.add_frame_world(corrected, tuple(map(float, origin)))
+            tracer.add_frame_world(
+                corrected, cast("tuple[float, float, float]", tuple(map(float, origin)))
+            )
             if on_scan is not None:
                 on_scan(obs.ts, corrected, np.asarray(origin, np.float64), tracer)
             cx, cy, radius, z_min, z_max = tracer.take_local_bounds()
@@ -532,7 +541,7 @@ def lockstep(
     )
 
 
-def lockstep_score(db: Path, name: str, out: Path) -> dict:
+def lockstep_score(db: Path, name: str, out: Path) -> dict[str, Any]:
     """Crit 3 on the lockstep replay, after its calibration: A with closures off
     against B with identity corrections must agree, the harness's own floor."""
     voxel = ray_tracing_config.voxel_size
@@ -635,7 +644,7 @@ def peak_rss(rss: Path) -> dict[str, float]:
     return peaks
 
 
-def score(db: Path, name: str, out: Path) -> dict:
+def score(db: Path, name: str, out: Path) -> dict[str, Any]:
     voxel = ray_tracing_config.voxel_size
     on, off = paths(out, name, "closures"), paths(out, name, "no_closures")
     keyframes = np.fromfile(on["keyframes"], KEYFRAME)

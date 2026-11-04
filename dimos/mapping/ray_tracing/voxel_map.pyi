@@ -73,6 +73,33 @@ class VoxelRayMapper:
         """Fold an already world-frame cloud into the map, raycasting from origin."""
         ...
 
+    def track_voxel_times(self) -> None:
+        """Record when each voxel lands, for loop closures, as reform_ray_tracing does."""
+        ...
+
+    def set_clock(self, t: float) -> None:
+        """The time (s) the next frames' new voxels are stamped with."""
+        ...
+
+    def add_keyframes(self, records: bytes) -> int:
+        """Take keyframes from raw pose_graph records (40 bytes each); returns how many are known."""
+        ...
+
+    def apply_loop_closure(
+        self,
+        records: bytes,
+        blend_sigma_m: float = 0.0,
+        blend_time_sigma_s: float = 0.0,
+        min_shift_m: float = 0.04,
+        thin_cell_m: float = 0.0,
+    ) -> dict[str, float | int] | None:
+        """Warp the map through raw loop_closure_event records (68 bytes each); None when nothing moved."""
+        ...
+
+    def healthy_centers(self) -> NDArray[np.float32]:
+        """Every healthy voxel's center, (N, 3) float32."""
+        ...
+
     def seed_points(self, points: NDArray[np.float32]) -> int:
         """Bulk-seed a world-frame map cloud, creating only absent voxels.
 
@@ -164,4 +191,19 @@ class VoxelRayMapper:
     def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
-__all__ = ["SeededRegion", "VoxelRayMapper"]
+class ReformWarp:
+    """The warp taking pose_graph keyframes (40-byte records) to a loop_closure_event's (68-byte records) post poses."""
+
+    def __init__(
+        self,
+        keyframes: bytes,
+        closure: bytes,
+        blend_sigma_m: float = 0.0,
+        blend_time_sigma_s: float = 0.0,
+        min_shift_m: float = 0.0,
+    ) -> None: ...
+    def apply(self, points: NDArray[np.float32], t: float) -> NDArray[np.float32]:
+        """Warp (N, 3) float32 points all observed at time t."""
+        ...
+
+__all__ = ["ReformWarp", "SeededRegion", "VoxelRayMapper"]

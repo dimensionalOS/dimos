@@ -29,10 +29,12 @@ import json
 from pathlib import Path
 import resource
 import time
+from typing import Any, cast
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.navigation.global_planner.mls_planner.utils import reform_metrics as rm
 
 parser = argparse.ArgumentParser()
@@ -117,10 +119,10 @@ if not args.at_dump and (args.run / "solve.jsonl").exists():
         previous = ts
 
 real_planner_class = rm.MLSPlanner
-planner_kwargs: dict = {}
+planner_kwargs: dict[str, Any] = {}
 
 
-def planner_capped(*a, **k):
+def planner_capped(*a: Any, **k: Any) -> Any:
     k["worker_threads"] = threads
     planner_kwargs.update(k)
     return real_planner_class(*a, **k)
@@ -149,50 +151,52 @@ def backtrack_m(path: np.ndarray, near_m: float = 0.3, step_m: float = 0.1) -> f
         for k in range(1, n + 1):
             points.append(u + (v - u) * k / n)
             along.append(along[-1] + d / n)
-    points, along = np.asarray(points), np.asarray(along)
+    point_array, along_array = np.asarray(points), np.asarray(along)
     from scipy.spatial import cKDTree
 
-    pairs = cKDTree(points).query_pairs(near_m, output_type="ndarray")
+    pairs = cKDTree(point_array).query_pairs(near_m, output_type="ndarray")
     if len(pairs) == 0:
         return 0.0
-    gaps = np.abs(along[pairs[:, 1]] - along[pairs[:, 0]])
+    gaps = np.abs(along_array[pairs[:, 1]] - along_array[pairs[:, 0]])
     # two points on one straight stretch are near_m apart along it; anything longer came back
     return float(max(gaps.max() - near_m * 2, 0.0)) if gaps.max() > near_m * 3 else 0.0
 
 
-planners = []
+planners: list[Any] = []
 held: list[tuple[float, float, float]] = []
-state = {"origin": None, "last_fresh": -1e18, "closure_ts": [], "applied": 0}
-plans: list[dict] = []
-closure_rows: list[dict] = []
+state: dict[str, Any] = {"origin": None, "last_fresh": -1e18, "closure_ts": [], "applied": 0}
+plans: list[dict[str, Any]] = []
+closure_rows: list[dict[str, Any]] = []
 
 
 class HomePlanner:
     """The lockstep planner, replanning home after every live region update, the goal passed through every warp."""
 
-    def __init__(self, planner):
+    def __init__(self, planner: Any) -> None:
         self._planner = planner
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._planner, name)
 
-    def update_region(self, *a, **k):
+    def update_region(self, *a: Any, **k: Any) -> None:
         self._planner.update_region(*a, **k)
-        ts = a[-1] if len(a) >= 7 else k.get("stamp")
+        ts: Any = a[-1] if len(a) >= 7 else k.get("stamp")
         replan(float(ts), "scan")
 
-    def apply_loop_closure(self, records, **k):
+    def apply_loop_closure(self, records: bytes, **k: Any) -> Any:
         global held
         started = time.perf_counter()
         result = self._planner.apply_loop_closure(records, held, **k)
         if result is not None and held:
-            held = [tuple(map(float, p)) for p in result["held"]]
+            held = [
+                cast("tuple[float, float, float]", tuple(map(float, p))) for p in result["held"]
+            ]
         state["warp_ms"] = (time.perf_counter() - started) * 1e3
         state["warped"] = result is not None
         return result
 
 
-def modules():
+def modules() -> tuple[VoxelRayMapper, HomePlanner]:
     tracer, planner = real_modules()
     planners.append(planner)
     return tracer, HomePlanner(planner)
@@ -202,7 +206,9 @@ real_modules = rm.lockstep_modules
 rm.lockstep_modules = modules
 
 
-def fresh_plan(start, goal):
+def fresh_plan(
+    start: tuple[float, float, float], goal: tuple[float, float, float]
+) -> tuple[Any, float, float]:
     """The same plan on a planner rebuilt from scratch from the warped planner's voxels."""
     kwargs = dict(planner_kwargs, voxel_times=False)
     rebuilt = real_planner_class(**kwargs)
@@ -288,14 +294,14 @@ def replan(ts: float, why: str) -> None:
         )
 
 
-def on_scan(ts: float, points: np.ndarray, origin: np.ndarray, tracer) -> None:
+def on_scan(ts: float, points: np.ndarray, origin: np.ndarray, tracer: VoxelRayMapper) -> None:
     state["origin"] = origin
 
 
 offset = {"rotation": R.identity(), "translation": np.zeros(3)}
 
 
-def on_closure(ts: float, records: np.ndarray, tracer) -> None:
+def on_closure(ts: float, records: np.ndarray, tracer: VoxelRayMapper) -> None:
     # the correction in force after this closure, as lockstep computes it: newest keyframe's post * raw^-1
     n = records[np.argmax(records["id"])]
     delta = R.from_quat(n["dq"].astype(float))

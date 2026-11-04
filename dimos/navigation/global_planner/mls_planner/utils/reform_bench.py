@@ -40,12 +40,14 @@ usage: reform_bench.py replay --db <src.db> --events <events.bin> --out <json> [
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import itertools
 import json
 from pathlib import Path
 import resource
 import sys
 import time
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from dimos_mls_planner import MLSPlanner
 import numpy as np
@@ -57,6 +59,16 @@ from dimos.navigation.global_planner.mls_planner.mls_reform_planner_native impor
     MLSReformPlannerNativeConfig,
 )
 from dimos.robot.unitree.go2.nav_3d_config import mls_planner_config
+
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
+
+    from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
+    from dimos.memory.type.observation import Observation
+    from dimos.msgs.geometry_msgs.Pose import Pose
+
+TimedParams = ParamSpec("TimedParams")
+TimedResult = TypeVar("TimedResult")
 
 MODULE_DEFAULTS = MLSReformPlannerNativeConfig()
 
@@ -166,7 +178,7 @@ def cpu_s() -> float:
 
 
 def rss_mb() -> float:
-    return psutil.Process().memory_info().rss / 2**20
+    return float(psutil.Process().memory_info().rss / 2**20)
 
 
 def peak_rss_mb() -> float:
@@ -175,7 +187,11 @@ def peak_rss_mb() -> float:
     return peak / 2**20 if sys.platform == "darwin" else peak / 2**10
 
 
-def timed(fn, *args, **kwargs):
+def timed(
+    fn: Callable[TimedParams, TimedResult],
+    *args: TimedParams.args,
+    **kwargs: TimedParams.kwargs,
+) -> tuple[TimedResult, float, float]:
     wall, cpu = time.perf_counter(), cpu_s()
     result = fn(*args, **kwargs)
     return result, (time.perf_counter() - wall) * 1e3, (cpu_s() - cpu) * 1e3
@@ -186,7 +202,7 @@ def path_length(path: np.ndarray) -> float:
 
 
 def hausdorff(a: np.ndarray, b: np.ndarray, step: float = 0.1) -> float:
-    def densify(p):
+    def densify(p: np.ndarray) -> np.ndarray:
         out = [p[0]]
         for u, v in itertools.pairwise(p):
             n = max(1, int(np.linalg.norm(v - u) / step))
@@ -198,7 +214,7 @@ def hausdorff(a: np.ndarray, b: np.ndarray, step: float = 0.1) -> float:
     return float(max(d.min(axis=1).max(), d.min(axis=0).max()))
 
 
-def check(reform: MLSPlanner, keyframes: np.ndarray, rng: np.random.Generator) -> dict:
+def check(reform: MLSPlanner, keyframes: np.ndarray, rng: np.random.Generator) -> dict[str, Any]:
     """Plan between floor cells along the drive on the warped planner and on one rebuilt from its
     voxels, and compare the paths."""
     from scipy.spatial import cKDTree
@@ -232,13 +248,21 @@ def check(reform: MLSPlanner, keyframes: np.ndarray, rng: np.random.Generator) -
     }
 
 
-def patch_in_place(patch, mapper, applied: np.ndarray, latest: np.ndarray, obs) -> dict:
+def patch_in_place(
+    patch: MLSPlanner,
+    mapper: VoxelRayMapper,
+    applied: np.ndarray,
+    latest: np.ndarray,
+    obs: Observation[Any],
+) -> dict[str, Any]:
     cells = moved_cells(applied, latest[: len(applied)], mapper.voxel_size)
     wall, cpu, points_total = time.perf_counter(), cpu_s(), 0
     for x, y in cells:
         center = ((x + 0.5) * PATCH_CELL_M, (y + 0.5) * PATCH_CELL_M)
         near = latest[np.linalg.norm(latest[:, :2] - center, axis=1) < PATCH_CELL_M * 2]
-        sensor_z = float(near[:, 2].mean()) if len(near) else float(obs.pose.position.z)
+        sensor_z = (
+            float(near[:, 2].mean()) if len(near) else float(cast("Pose", obs.pose).position.z)
+        )
         z_min, z_max = sensor_z - 3.0, sensor_z + mls_planner_config.max_overhead_m
         radius = PATCH_CELL_M / np.sqrt(2)
         cell_points = mapper.local_map((*center, sensor_z), radius, z_min, z_max)
@@ -253,7 +277,7 @@ def patch_in_place(patch, mapper, applied: np.ndarray, latest: np.ndarray, obs) 
     }
 
 
-def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> dict:
+def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> dict[str, Any]:
     from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
     from dimos.robot.unitree.go2.nav_3d_config import ray_tracing_config as rt
 
@@ -262,9 +286,16 @@ def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> 
     mapper = VoxelRayMapper(voxel_size=rt.voxel_size, max_range=rt.max_range, emit_every=1)
     patch, reform = planner(), planner(voxel_times=True)
     rotation, translation = Rotation.identity(), np.zeros(3)
-    rows = {"patch_region": [], "reform_region": [], "patch": [], "reform": []}
-    goals: dict[int, tuple] = {}  # keyframe id -> held goal
-    goal_errors, checks, rss = [], [], []
+    rows: dict[str, list[Any]] = {
+        "patch_region": [],
+        "reform_region": [],
+        "patch": [],
+        "reform": [],
+    }
+    goals: dict[int, tuple[float, ...]] = {}  # keyframe id -> held goal
+    goal_errors: list[list[float]] = []
+    checks: list[dict[str, Any]] = []
+    rss: list[list[float]] = []
     applied_xyz, latest_xyz, last_patch = None, None, -np.inf
     next_event = 0
     rng = np.random.default_rng(0)
@@ -317,11 +348,13 @@ def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> 
             )
             if changed and obs.ts - last_patch >= REBUILD_COOLDOWN_S:
                 if applied_xyz is not None:
+                    assert latest_xyz is not None  # changed implies it
                     rows["patch"].append(
                         patch_in_place(patch, mapper, applied_xyz, latest_xyz, obs)
                     )
                 applied_xyz, last_patch = latest_xyz, obs.ts
 
+            assert obs.pose is not None  # every lidar observation carries a pose
             p = obs.pose.position
             origin = (p.x, p.y, p.z)
             mapper.add_frame_world(np.asarray(obs.data.points_f32(), np.float32), origin)
@@ -365,7 +398,7 @@ def replay(db: Path, events_path: Path, checks_wanted: int, max_frames: int) -> 
     }
 
 
-def ivan(db: Path, every: int) -> dict:
+def ivan(db: Path, every: int) -> dict[str, Any]:
     from dimos.navigation.go2.loop_closure import module, pgo_map
 
     cfg = module.PGOVoxelMapperConfig(emit_every=5)  # what unitree-go2-pgo runs
@@ -399,16 +432,16 @@ def ivan(db: Path, every: int) -> dict:
     return {"publishes": publishes, "whole_every": every, "rows": rows, "rss": rss}
 
 
-def stats(values) -> dict:
-    values = np.asarray(values, float)
-    if not len(values):
+def stats(values: ArrayLike) -> dict[str, float]:
+    value_array = np.asarray(values, float)
+    if not len(value_array):
         return {"n": 0}
     return {
-        "n": len(values),
-        "median": round(float(np.median(values)), 1),
-        "p90": round(float(np.percentile(values, 90)), 1),
-        "max": round(float(values.max()), 1),
-        "mean": round(float(values.mean()), 1),
+        "n": len(value_array),
+        "median": round(float(np.median(value_array)), 1),
+        "p90": round(float(np.percentile(value_array, 90)), 1),
+        "max": round(float(value_array.max()), 1),
+        "mean": round(float(value_array.mean()), 1),
     }
 
 
@@ -416,16 +449,16 @@ def per_hour(ms_total: float, duration_s: float) -> float:
     return round(ms_total / 1e3 * 3600 / duration_s, 1)
 
 
-def report(replay_path: Path, ivan_path: Path | None) -> dict:
+def report(replay_path: Path, ivan_path: Path | None) -> dict[str, Any]:
     """The per-approach table: MLS cost per hour of driving, latency per update, memory."""
     run = json.loads(replay_path.read_text())
     rows = run["rows"]
     region = np.asarray(rows["patch_region"], float)
     region_reform = np.asarray(rows["reform_region"], float)
     duration_s = float(region[-1, 0] - region[0, 0])
-    out: dict = {"duration_s": round(duration_s), "closures": run["closures"]}
+    out: dict[str, Any] = {"duration_s": round(duration_s), "closures": run["closures"]}
 
-    def approach(updates: list[dict] | np.ndarray, wall: str, cpu: str) -> dict:
+    def approach(updates: list[dict[str, Any]] | np.ndarray, wall: str, cpu: str) -> dict[str, Any]:
         wall_ms = np.asarray([u[wall] for u in updates], float)
         cpu_ms = np.asarray([u[cpu] for u in updates], float)
         return {
