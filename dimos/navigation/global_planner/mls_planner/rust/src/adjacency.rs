@@ -48,8 +48,7 @@ pub struct Edge {
     pub cost: f32,
 }
 
-/// Coordinate to cell id, split into shards by hash so a full build can index
-/// every cell in parallel; lookups and edits touch one shard.
+/// Coordinate to cell id, sharded by hash so a full build indexes cells in parallel and lookups touch one shard.
 struct CoordIndex {
     hasher: ahash::RandomState,
     shards: Vec<AHashMap<VoxelKey, CellId>>,
@@ -129,12 +128,9 @@ impl CoordIndex {
 #[derive(Default)]
 pub struct SurfaceCells {
     coord: Vec<VoxelKey>,
-    /// Per slot: where a warp moved the cell's point off its key's surface
-    /// point. Outside the local area a cell moves without being re-keyed.
+    /// Per slot: where a warp moved the cell's point off its key's surface point, as cells outside the local area move un-re-keyed.
     offset: Vec<[f32; 3]>,
-    /// Every cell's outgoing edges in one buffer, a cell's at its span. A full
-    /// build lays them out in id order; an edit that grows a cell's list moves it
-    /// to the end, and the buffer compacts once the stranded edges outweigh the live.
+    /// Every cell's outgoing edges in one buffer at its span; a grown list moves to the end and the buffer compacts once stranded edges outweigh live ones.
     flat: Vec<Edge>,
     /// Per slot: (start, len) into `flat`.
     spans: Vec<(u32, u32)>,
@@ -142,8 +138,7 @@ pub struct SurfaceCells {
     stranded: usize,
     by_coord: CoordIndex,
     free: Vec<CellId>,
-    /// Whether every id was appended in coordinate order, as a full build does,
-    /// so ids order cells the way coordinates do. A reused slot breaks it.
+    /// Whether every id was appended in coordinate order, as a full build does; a reused slot breaks it.
     coord_ordered: bool,
 }
 
@@ -333,8 +328,7 @@ impl SurfaceCells {
         }
     }
 
-    /// Re-key cells, each to a free key, keeping their ids and edges; the
-    /// offset left is what the new key does not account for.
+    /// Re-key cells, each to a free key, keeping their ids and edges; the offset left is what the new key does not account for.
     pub fn rekey(&mut self, moves: &[(CellId, VoxelKey)], voxel_size: f32) {
         for &(id, _) in moves {
             self.by_coord.remove(&self.coord[id as usize]);
@@ -461,8 +455,7 @@ pub fn build_surface_cells(
     cells.offset.resize(cells.coord.len(), [0.0; 3]);
     cells.by_coord.fill(&cells.coord);
 
-    // Count each cell's edges, lay the spans out in id order, then fill every
-    // block of cells' slice of the buffer in parallel, with no temporaries.
+    // Count each cell's edges, lay the spans out in id order, then fill each block of the buffer in parallel.
     const BLOCK: usize = 4096;
     let coord: &[VoxelKey] = &cells.coord;
     let neighbors = |(ix, iy, iz): VoxelKey| {

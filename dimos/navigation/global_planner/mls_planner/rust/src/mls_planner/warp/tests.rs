@@ -281,8 +281,7 @@ fn shifts_smaller_than_a_voxel_add_up_over_warps() {
     let all = big_world();
     let mut p = built(&cfg, &all);
     let before = voxel_set(&p);
-    // A third of a voxel keeps every voxel where it is; the second third takes
-    // them past the edge, one voxel over, as a rebuild of the shifted map has them.
+    // A third of a voxel keeps every voxel in place; the second third takes them one voxel over, as a rebuild of the shifted map has them.
     let third = vs as f64 / 3.0 + 1e-4;
     p.apply_warp(&warp_of(shift(third, 0.0), |_| true), &mut [], &cfg);
     assert_eq!(placed_voxels(&p, vs), before);
@@ -291,11 +290,7 @@ fn shifts_smaller_than_a_voxel_add_up_over_warps() {
     assert_eq!(placed_voxels(&p, vs), voxel_set(&rebuilt));
 }
 
-/// A closure that moves the map farther than the plan's re-key reach (a lap closure's
-/// tens of meters): re-keying only discs around the start and goal leaves their cells
-/// keys apart from the cells just outside, and drops movers that land on keys cells
-/// still waiting to move hold, so the warped planner had no route that a rebuild of
-/// the moved map has (huge_l1 at 8:02, a 19 m closure). It must plan like the rebuild.
+/// A closure moving the map past the plan's re-key reach (huge_l1's 19 m one) must still plan like a rebuild of the moved map.
 #[test]
 fn a_shift_beyond_the_rebin_reach_keeps_the_route() {
     let cfg = test_config();

@@ -68,8 +68,7 @@ pub(crate) fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     )
 }
 
-/// The key a voxel's points sit in. A warp moves a voxel's points without
-/// re-keying it outside the local area, so this can differ from its own key.
+/// The key a voxel's points sit in, which a warp can move off the voxel's own key outside the local area.
 #[inline]
 pub(crate) fn placed_key(key: VoxelKey, voxel: &Voxel, voxel_size: f32) -> VoxelKey {
     if voxel.num_pts == 0 {
@@ -468,8 +467,7 @@ pub struct Voxel {
     normal: NormalFit,
     /// The map frame this voxel was last hit (or seeded) in.
     last_hit: u32,
-    /// When the voxel first landed, seconds past the mapper's epoch; NaN when
-    /// untracked. Travels with the voxel through warps.
+    /// When the voxel first landed, seconds past the mapper's epoch (NaN untracked); travels with the voxel through warps.
     pub(crate) time: f32,
 }
 
@@ -1417,9 +1415,7 @@ fn find_misses_along_ray(
 
     let (mut x, mut y, mut z) = origin_voxel;
 
-    // Not f32::signum: it gives ±1 for ±0.0, which stepped an axis the ray never moves along
-    // and, from an origin exactly on a voxel boundary, made its crossing time 0/0 = NaN, so the
-    // walk never ended.
+    // Not f32::signum, whose +-1 for +-0.0 stepped an axis the ray never moves along and never ended the walk.
     let step_of = |d: f32| -> i32 {
         if d > 0.0 {
             1

@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Move the whole planner into a corrected frame in place: every voxel, node,
-//! the cached path and any held points go through the warp, and only what
-//! the grid derives from them is repaired, around what moved.
+//! Move the whole planner into a corrected frame in place, repairing only what the grid derives from what moved.
 
 use super::*;
 use crate::reform::{landing_keys, with_chained, Warp};
@@ -39,8 +37,7 @@ pub struct WarpReport {
     pub worst_implausible: Option<Displacement>,
 }
 
-/// Leave in place every warped point that is non-finite or moved farther than
-/// `max_move_m`, counting them and keeping the worst for the log.
+/// Leave in place every warped point that is non-finite or moved past `max_move_m`, counting them and keeping the worst for the log.
 pub(crate) fn hold_implausible(
     queries: &[[f32; 3]],
     warped: &mut [[f32; 3]],
@@ -67,10 +64,7 @@ pub(crate) fn hold_implausible(
 }
 
 impl Planner {
-    /// Carry the planner through a warp: fast-reform moves every voxel's
-    /// point, every surface cell and node, and `held` (points the caller keeps
-    /// in the map frame, such as the active goal) in place. Keys, edges and
-    /// nodes stay as they are; a region update re-keys what it reaches.
+    /// Carry voxels, surface cells, nodes and `held` points through a warp in place; keys, edges and nodes stay until a region update re-keys them.
     pub fn apply_warp(
         &mut self,
         warp: &Warp,
@@ -162,20 +156,12 @@ impl Planner {
         report
     }
 
-    /// Re-key the voxels and surface cells a warp moved out of their keys
-    /// within `radius_m` of (x, y), by where their points sit now, so a region
-    /// update there meets them in place. A cell that lands on another that was
-    /// not its neighbor before is dropped, as two passes the closure brought
-    /// together; the region's own update settles the surface there.
+    /// Re-key what a warp moved off its keys within `radius_m` of (x, y), dropping a cell that lands on a former non-neighbor.
     pub(crate) fn rebin_near(&mut self, at: (f32, f32), radius_m: f32, config: &Config) {
         self.rebin_around(&[at], radius_m, config);
     }
 
-    /// Re-key every voxel and surface cell a warp left off its key, all at once. A
-    /// disc re-keyed alone sits as far from the cells just outside it, in key space,
-    /// as the warp moved them, so a warp wider than the disc cuts every link across
-    /// its edge; re-keying all of them together keeps each neighbor beside its
-    /// neighbor. Returns whether anything was displaced.
+    /// Re-key everything a warp left off its key at once, so a warp wider than one disc keeps neighbors beside each other; returns whether anything was displaced.
     pub(crate) fn rebin_all_displaced(&mut self, config: &Config) -> bool {
         let half = 0.5 * config.voxel_size;
         let displaced = |o: &[f32; 3]| o.iter().any(|v| v.abs() > half);
@@ -231,8 +217,7 @@ impl Planner {
         self.rebin_candidates(voxel_candidates, cell_candidates, near, config);
     }
 
-    /// Re-key the given voxels and cells a warp left off their keys whose point or key
-    /// center `keep` accepts (see rebin_near).
+    /// Re-key the given displaced voxels and cells whose point or key center `keep` accepts (see rebin_near).
     fn rebin_candidates(
         &mut self,
         voxel_candidates: AHashSet<VoxelKey>,
@@ -374,8 +359,7 @@ impl Planner {
             }
         }
         graph.nodes.rebin(&graph.cells, &config.placement_params());
-        // A re-keyed cell keeps the hops of its old key, and its old neighbors keep their hop to it, so the
-        // adjacency around both keys is rebuilt, or a later partial rebuild leaves hops one way only.
+        // Rebuild the adjacency around a re-keyed cell's old and new key, or hops are left one way only.
         let rekeyed: Vec<VoxelKey> = renamed.iter().flat_map(|(&from, &to)| [from, to]).collect();
         self.rebuild_region_graph(
             Vec::new(),
@@ -388,8 +372,7 @@ impl Planner {
         );
     }
 
-    /// Bucket every voxel and surface cell a warp left off its key, by its point and
-    /// by its key, in buckets `side_m` wide.
+    /// Bucket every displaced voxel and surface cell by its point and by its key, in buckets `side_m` wide.
     fn index_displaced(&self, side_m: f32, vs: f32) -> DisplacedIndex {
         let half = 0.5 * vs;
         let displaced = |o: &[f32; 3]| o.iter().any(|v| v.abs() > half);
@@ -424,8 +407,7 @@ impl Planner {
         index
     }
 
-    /// Move voxels to the keys their points landed in, with their times and
-    /// what is left of their offsets.
+    /// Move voxels to the keys their points landed in, with their times and what is left of their offsets.
     fn rekey_voxels(
         &mut self,
         keys: &[VoxelKey],
@@ -467,8 +449,7 @@ impl Planner {
         }
     }
 
-    /// Waypoints planned over cell keys, placed where a warp moved their cells:
-    /// each takes the offset of the path cell nearest it.
+    /// Waypoints planned over cell keys, each placed by the offset of the path cell nearest it.
     pub(crate) fn placed_waypoints(
         &self,
         waypoints: Vec<(f32, f32, f32)>,
@@ -525,10 +506,7 @@ fn surface_key(p: &[f32; 3], vs: f32) -> VoxelKey {
 #[cfg(test)]
 mod tests;
 
-/// The voxels and surface cells a warp left off their keys, bucketed both by where
-/// their point now sits and by their key, so a region update finds the ones near it
-/// without scanning the map. Entries go stale as voxels are re-keyed or replaced;
-/// callers re-check each candidate.
+/// Displaced voxels and surface cells bucketed by point and by key so a region update finds those near it; callers re-check stale entries.
 pub(crate) struct DisplacedIndex {
     side_m: f32,
     voxels: AHashMap<(i32, i32), Vec<VoxelKey>>,

@@ -376,8 +376,7 @@ impl ChunkMap {
             .map(|(&key, chunk)| ChunkRef { key, chunk })
     }
 
-    /// Build from voxels sorted by key's chunk then slot, each slot once, with
-    /// every support count recounted from the result.
+    /// Build from voxels sorted by chunk then slot, each slot once, recounting every support count.
     pub fn from_sorted(entries: Vec<(VoxelKey, Voxel)>) -> Self {
         let mut starts: Vec<usize> = (0..entries.len())
             .filter(|&i| i == 0 || chunk_of(entries[i].0) != chunk_of(entries[i - 1].0))

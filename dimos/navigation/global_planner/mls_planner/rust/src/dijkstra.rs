@@ -34,8 +34,7 @@ pub struct DijkstraState {
     packed: BinaryHeap<std::cmp::Reverse<u64>>,
 }
 
-/// A distance and an id as one u64 that orders like Scored(dist, heap_key) when
-/// ids follow coordinates: least distance first, then the larger key.
+/// A distance and an id as one u64 ordering like Scored(dist, heap_key) when ids follow coordinates.
 #[inline]
 fn packed_key(dist: f32, id: CellId) -> u64 {
     (dist.to_bits() as u64) << 32 | (u32::MAX - id) as u64
@@ -143,8 +142,7 @@ pub fn dijkstra(
     }
 }
 
-/// dijkstra over cells whose ids follow their coordinates: the same labels from a
-/// heap of packed u64s, a quarter the size of Scored(f32, u128).
+/// dijkstra over cells whose ids follow their coordinates, with the same labels from a heap of packed u64s.
 fn dijkstra_packed(
     cells: &SurfaceCells,
     sources: &[CellId],
@@ -191,11 +189,7 @@ fn banded_min_cells() -> usize {
     rayon::current_num_threads() * BANDS_PER_THREAD * MIN_BAND_CELLS
 }
 
-/// dijkstra over cells whose ids follow their coordinates, in parallel and with
-/// the same labels. Ids then run x-major, so each band of ids is a strip of the
-/// map: the bands search on their own and trade the relaxations that cross into
-/// another band until none improves anything, which gives every cell its exact
-/// shortest distance. Labels then follow the sequential search's tie rule.
+/// dijkstra in parallel x-major bands of ids that trade cross-band relaxations until none improves, giving the sequential search's exact labels.
 fn dijkstra_banded(
     cells: &SurfaceCells,
     sources: &[CellId],
@@ -272,9 +266,7 @@ fn dijkstra_banded(
         }
     }
 
-    // A cell's predecessor is the first neighbor the sequential search would pop
-    // that reaches it at its distance: the nearest, then the larger id. Weights are
-    // symmetric, so a cell's own edges give each neighbor's weight to it.
+    // A cell's predecessor is the neighbor the sequential search would pop first at its distance: the nearest, then the larger id.
     let dist = &state.dist;
     state.pred.par_iter_mut().enumerate().for_each(|(v, pred)| {
         let dv = dist[v];
@@ -357,10 +349,7 @@ pub fn window_clusters(
     clusters
 }
 
-/// Every live cell split into its connected clusters, as window_clusters over
-/// all live cells gives them (clusters ordered by their least id), found in
-/// parallel by a lock-free union-find that links each root under the smaller.
-/// The cells within a cluster come in id order rather than walk order.
+/// Every live cell split into its connected clusters as window_clusters gives them, by a parallel lock-free union-find (cells in id order).
 pub fn all_clusters(cells: &SurfaceCells) -> Vec<Vec<CellId>> {
     use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
     let n = cells.slot_capacity();
@@ -527,9 +516,7 @@ pub enum Frontier<'a> {
 /// Longest cached chain followed before it counts as broken.
 const MAX_CHAIN: usize = 4096;
 
-/// The live source a cell's cached chain reaches without entering the window.
-/// None when the chain enters the window, hits a dead cell, steps between
-/// cells that are no longer neighbors or ends elsewhere.
+/// The live source a cell's cached chain reaches without entering the window, None when the chain enters it, breaks or ends elsewhere.
 pub fn chain_source(
     cells: &SurfaceCells,
     state: &DijkstraState,
@@ -885,8 +872,7 @@ mod tests {
         }
     }
 
-    /// Uneven but symmetric costs, as the wall penalty makes them: each edge
-    /// scales by the mean of its endpoints' factors.
+    /// Uneven but symmetric costs, as the wall penalty makes them: each edge scales by the mean of its endpoints' factors.
     fn uneven(sc: &mut SurfaceCells) {
         let factor = |id: CellId| 1.0 + (id % 5) as f32 * 0.25;
         for (src, edges) in sc.edge_lists_mut() {
@@ -898,8 +884,7 @@ mod tests {
 
     #[test]
     fn banded_search_labels_exactly_like_the_general_one() {
-        // Two levels with ramps, ties everywhere, enough cells for several bands,
-        // with a gap so some cells are unreachable.
+        // Two levels with ramps, ties everywhere, enough cells for several bands, and a gap leaving some unreachable.
         let cells: Vec<VoxelKey> = (-90i32..90)
             .flat_map(|x| (-60i32..60).map(move |y| (x, y)))
             .filter(|&(x, y)| !(x == 10 && y.abs() < 55) && !(x > 70 && y > 50))

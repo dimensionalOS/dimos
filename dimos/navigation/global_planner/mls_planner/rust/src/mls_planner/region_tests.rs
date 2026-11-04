@@ -1505,8 +1505,7 @@ fn far_and_non_finite_points_in_a_sane_region_are_dropped() {
     assert_eq!(p.sizes().voxels, clean.sizes().voxels);
 }
 
-/// Floor 6 x 4 m; a wall along y = 2 with a door at x 1..2 (`door_open`), and a
-/// wall along x = 3 for y < 2 that splits the near side into two rooms.
+/// Floor 6 x 4 m, a wall along y = 2 with a door at x 1..2 (`door_open`), and a wall along x = 3 for y < 2 splitting two rooms.
 fn door_world(door_open: bool) -> Vec<(f32, f32, f32)> {
     let vs = 0.1_f32;
     let half = vs * 0.5;

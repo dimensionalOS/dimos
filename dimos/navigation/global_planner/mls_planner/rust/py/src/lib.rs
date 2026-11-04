@@ -365,8 +365,7 @@ impl MLSPlanner {
         self.reform = ReformState::default();
     }
 
-    /// Take keyframes from raw pose_graph records (40 bytes each). Keyframes
-    /// already known keep the pose the map holds them at.
+    /// Take keyframes from raw pose_graph records; known keyframes keep the pose the map holds them at.
     fn add_keyframes(&mut self, records: Vec<u8>) -> PyResult<usize> {
         check_records(&records, 40)?;
         let msg = record_cloud(&KEYFRAME_FIELDS, records);
@@ -375,10 +374,7 @@ impl MLSPlanner {
         Ok(self.reform.len())
     }
 
-    /// Warp the planner through raw loop_closure_event records (68 bytes
-    /// each). `held` points warp along and come back in the result. Returns
-    /// None when no keyframe moved past min_shift_m, else a dict of what the
-    /// warp did and cost.
+    /// Warp the planner through raw loop_closure_event records, `held` points along; None when no keyframe moved past min_shift_m, else what the warp did and cost.
     #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, thin_cell_m = 0.0, reach_sigmas = 3.0))]
     #[allow(clippy::too_many_arguments)]
     fn apply_loop_closure<'py>(

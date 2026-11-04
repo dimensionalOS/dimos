@@ -56,8 +56,7 @@ fn at(x: f64) -> Pose {
     }
 }
 
-/// A drive along x, one keyframe a meter and a second, each frame seeing the
-/// wall at y = 1.03 beside it, inside its voxels rather than on their edge.
+/// A drive along x, one keyframe a meter and a second, each frame seeing the wall at y = 1.03 inside its voxels.
 fn driven() -> (Mapper, ReformState) {
     driven_with(config())
 }
@@ -171,8 +170,7 @@ fn far_voxels_move_in_place_and_rebin_when_the_local_area_reaches_them() {
         ..config()
     });
     mapper.apply_warp(&closure(&mut state));
-    // The last frame was from x = 19, so the wall at x = 15 is past ray reach:
-    // it keeps its keys but is placed where the closure moved it.
+    // The wall at x = 15 is past the last frame's ray reach: it keeps its keys but is placed where the closure moved it.
     assert!(has(&mapper, 15.05, 1.05, 0.05) && !has(&mapper, 15.05, 1.55, 0.05));
     let placed = mapper.healthy_centers();
     let at = |x: f32, y: f32| {

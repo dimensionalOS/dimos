@@ -127,8 +127,7 @@ impl ColumnIz {
         self.tiles.clear();
     }
 
-    /// Rebuild from a set of voxels: sorted by tile, column and height, then
-    /// each tile's columns filled in parallel.
+    /// Rebuild from a set of voxels: sorted by tile, column and height, then each tile filled in parallel.
     pub fn from_voxels<'a>(voxels: impl IntoIterator<Item = &'a VoxelKey>) -> Self {
         let mut keys: Vec<VoxelKey> = voxels.into_iter().copied().collect();
         let order = |&(ix, iy, iz): &VoxelKey| (tile_of((ix, iy)), slot_of((ix, iy)), iz);

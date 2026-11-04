@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Carry the map through a loop closure's warp in place: every voxel the warp
-//! reaches moves to where fast-reform puts its center, at the time it landed.
+//! Carry the map through a loop closure's warp in place, each voxel moving where fast-reform puts it at the time it landed.
 
 use std::time::Instant;
 
@@ -45,8 +44,7 @@ pub struct WarpReport {
     pub worst_implausible: Option<Displacement>,
 }
 
-/// Leave in place every warped point that is non-finite or moved farther than
-/// `max_move_m`, counting them and keeping the worst for the log.
+/// Leave in place every warped point that is non-finite or moved past `max_move_m`, counting them and keeping the worst for the log.
 fn hold_implausible(
     queries: &[[f32; 3]],
     warped: &mut [[f32; 3]],
@@ -72,8 +70,7 @@ fn hold_implausible(
     (count, worst.map(|(_, from, to)| (from, to)))
 }
 
-/// Seconds since `epoch` at which each voxel landed, and the clock new ones
-/// are stamped with.
+/// Seconds since `epoch` at which each voxel landed, and the clock new ones are stamped with.
 #[derive(Clone, Default)]
 pub(super) struct VoxelTimes {
     epoch: Option<f64>,
@@ -153,9 +150,7 @@ impl Mapper {
         }
     }
 
-    /// Carry the map through a warp: every voxel's points move in place by
-    /// fast-reform, keeping its key; only the voxels in the local area are
-    /// re-keyed by their moved points, the rest when the local area reaches them.
+    /// Carry the map through a warp: every voxel's points move by fast-reform keeping its key, and only the local area's voxels are re-keyed now.
     pub fn apply_warp(&mut self, warp: &Warp) -> WarpReport {
         let pool = std::sync::Arc::clone(&self.pool);
         pool.install(|| self.apply_warp_in_pool(warp))
@@ -216,8 +211,7 @@ impl Mapper {
         far.min(self.config.max_range) + self.config.shadow_depth + 2.0 * self.config.voxel_size
     }
 
-    /// Re-key the voxels a warp left off their keys whose key or points are within
-    /// ray reach of `origin`, so rays meet them where they are.
+    /// Re-key the voxels a warp left off their keys whose key or points are within ray reach of `origin`, so rays meet them where they are.
     pub(super) fn rebin_local(&mut self, origin: Point) -> usize {
         let vs = self.config.voxel_size;
         let r2 = self.last_reach.max(vs).powi(2);

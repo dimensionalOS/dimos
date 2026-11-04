@@ -12,16 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Warping the map through a loop closure off the scan path. The warp runs on a
-//! copy of the map while scans keep landing in the live one and in a cache; then
-//! the warped copy is swapped in and the cached scans are replayed onto it, so the
-//! result is the map an in-place warp would have given, without the scans waiting.
-//!
-//! Warps are numbered as they arrive, and each cached scan carries the number of
-//! the newest warp when it came in: the frame it was placed in. A warp that
-//! arrives while another runs waits its turn; when the running one is swapped in,
-//! the next starts on a copy that holds only the scans from before it, so no scan
-//! is warped twice.
+//! A loop closure's warp run on a copy of the map while scans land in the live one and a cache, then swapped in with the cached scans replayed, one warp at a time so no scan is warped twice.
 
 use std::collections::VecDeque;
 
@@ -37,8 +28,7 @@ struct CachedFrame {
     pose: Pose,
 }
 
-/// A warp to run off the scan path: its number, the copy of the map to warp,
-/// and the warp.
+/// A warp to run off the scan path: its number, the copy of the map to warp, and the warp.
 pub struct WarpJob {
     pub epoch: u64,
     pub map: Mapper,
@@ -56,8 +46,7 @@ pub struct BackgroundWarp {
 }
 
 impl BackgroundWarp {
-    /// A closure's warp: returns the job to start now, or queues it behind the
-    /// running one.
+    /// A closure's warp: the job to start now, or None when it queues behind the running one.
     pub fn on_warp(&mut self, warp: Warp, live: &Mapper) -> Option<WarpJob> {
         self.received += 1;
         if self.running.is_some() {
@@ -84,9 +73,7 @@ impl BackgroundWarp {
         }
     }
 
-    /// The running warp finished on `warped`: make it the live map, replay the
-    /// scans placed in its frame, and return the next waiting warp's job, started
-    /// on a copy taken before the scans placed in later frames are replayed.
+    /// The running warp finished on `warped`: make it live, replay the scans placed in its frame, and start the next waiting warp on a copy taken before later frames' scans replay.
     pub fn on_done(&mut self, epoch: u64, warped: Mapper, live: &mut Mapper) -> Option<WarpJob> {
         debug_assert_eq!(self.running, Some(epoch));
         *live = warped;

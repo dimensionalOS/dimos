@@ -158,9 +158,7 @@ fn find_misses_along_ray_hits_correct_voxels() {
     assert!(walk.deferred.is_empty());
 }
 
-/// A ray that never moves along y or z, from an origin on a y and z voxel boundary that
-/// floor() puts one voxel low (0.4 = 5 * 0.08 floors to voxel 4 in f32), used to step those
-/// axes with a 0/0 crossing time and walk forever.
+/// A ray that never moves along y or z, from an origin on a voxel boundary floor() puts one voxel low, used to walk forever.
 #[test]
 fn axis_aligned_ray_from_a_voxel_boundary_ends() {
     let voxel_size = 0.08_f32;

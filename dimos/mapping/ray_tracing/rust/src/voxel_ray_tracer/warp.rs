@@ -12,14 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Move voxels to the keys a warp lands them in, carrying their health, point
-//! moments and fine cells, and keeping support counts, the healthy mask and
-//! the viz in step.
+//! Move voxels to the keys a warp lands them in, carrying health, point moments and fine cells, with support, the healthy mask and the viz in step.
 
 use super::*;
 
-/// One voxel's move: its key, the key its warped center lands in, and how far
-/// the warped center sits from that voxel's center.
+/// One voxel's move: its key, the key its warped center lands in, and that center's offset from the new key's center.
 #[derive(Clone, Copy, Debug)]
 pub struct VoxelMove {
     pub from: VoxelKey,
@@ -37,8 +34,7 @@ impl Voxel {
         }
     }
 
-    /// Re-center the point moments by `offset`: each point moves with its
-    /// voxel's center, which now sits `offset` from the new voxel's center.
+    /// Re-center the point moments by `offset`, where the voxel's old center now sits from the new voxel's center.
     fn shift(&mut self, offset: Vector3<f32>) {
         let n = self.num_pts as f32;
         self.m2 += self.sum * offset.transpose()
@@ -48,8 +44,7 @@ impl Voxel {
         self.normal = NormalFit::Stale;
     }
 
-    /// Fold another voxel that landed in the same key into this one. Health
-    /// is left to the caller, which owns the healthy mask.
+    /// Fold another voxel that landed in the same key into this one; health is left to the caller, which owns the healthy mask.
     fn absorb(&mut self, other: &Voxel) {
         self.fine |= other.fine;
         self.num_pts += other.num_pts;
@@ -66,8 +61,7 @@ impl Voxel {
 }
 
 impl VoxelMap {
-    /// Move each voxel to its new key, merging into whatever is there. Every
-    /// mover leaves before any lands, so support counts stay exact.
+    /// Move each voxel to its new key, merging into whatever is there; every mover leaves before any lands, so support counts stay exact.
     pub fn move_voxels(&mut self, moves: &[VoxelMove]) {
         let mut changed: AHashSet<VoxelKey> = AHashSet::with_capacity(moves.len());
         let mut removed: Vec<VoxelKey> = Vec::new();
@@ -120,8 +114,7 @@ impl VoxelMap {
         }
     }
 
-    /// Move every voxel's points by its offset, in `ChunkMap::iter` order,
-    /// keeping its key.
+    /// Move every voxel's points by its offset, in `ChunkMap::iter` order, keeping its key.
     pub fn shift_in_place(&mut self, offsets: &[[f32; 3]]) {
         self.voxels.par_for_each_mut(|i, _, v| {
             let o = offsets[i];
@@ -133,8 +126,7 @@ impl VoxelMap {
         self.changed_chunks.extend(chunks);
     }
 
-    /// Voxels whose points sit outside their key, either within `radius` of `origin`.
-    /// A warp can carry a voxel's points far from its key, so every voxel is looked at.
+    /// Voxels whose points sit outside their key, either within `radius` of `origin` (every voxel is looked at).
     pub fn displaced_near(
         &self,
         origin: (f32, f32, f32),
@@ -184,9 +176,7 @@ pub fn voxel_centers(keys: &[VoxelKey], voxel_size: f32) -> Vec<[f32; 3]> {
 }
 
 impl VoxelMap {
-    /// Each voxel's mean point, its center when it holds none. Warping the mean
-    /// rather than the center keeps a sub-voxel shift: it accumulates in the
-    /// moments over closures until the mean crosses into another voxel.
+    /// Each voxel's mean point (its center when it holds none), so a sub-voxel shift accumulates over closures.
     pub fn voxel_means(&self, keys: &[VoxelKey], voxel_size: f32) -> Vec<[f32; 3]> {
         keys.par_iter()
             .map(|&k| {
@@ -202,11 +192,7 @@ impl VoxelMap {
     }
 }
 
-/// Where each voxel lands when its point `from_points[i]` warps to `warped[i]`:
-/// the key of the warped point, and how far the old center lands from the new
-/// one, which re-centers the moments.
-/// Each voxel's move to the key its warped point lands in (see
-/// `reform::landing_keys`); `stays` says which keys hold voxels that do not move.
+/// Each voxel's move to the key its warped point lands in (see `reform::landing_keys`); `stays` says which keys hold voxels that do not move.
 pub fn voxel_moves(
     keys: &[VoxelKey],
     from_points: &[[f32; 3]],

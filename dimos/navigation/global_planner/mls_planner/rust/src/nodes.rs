@@ -252,9 +252,7 @@ pub fn relocate_dead_nodes(
     relocate_nodes(cells, lookup, nodes, &moves, params)
 }
 
-/// relocate_dead_nodes for nodes given as (list index, the coordinate they
-/// sit at, the coordinate to move them to). A node moves to a free live cell
-/// next to its target, or is dropped.
+/// relocate_dead_nodes for (list index, current coordinate, target coordinate): a node moves to a free live cell next to its target, or is dropped.
 pub fn relocate_nodes(
     cells: &SurfaceCells,
     lookup: &SurfaceLookup,
@@ -265,8 +263,7 @@ pub fn relocate_nodes(
     let mut gone: Vec<NodeId> = Vec::with_capacity(moves.len());
     let step = params.step_cells;
     let crowd_m = RELOCATION_CROWDING_FRAC * params.node_spacing_m;
-    // Moving nodes leave the index before any relocates. The old id is what
-    // the edges still reference.
+    // Moving nodes leave the index before any relocates; the edges still reference the old id.
     for &(ni, coord, _) in moves {
         let old = nodes.list[ni].cell_id;
         gone.push(old);

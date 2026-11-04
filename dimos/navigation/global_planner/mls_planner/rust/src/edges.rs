@@ -275,8 +275,7 @@ impl NodeEdges {
         work
     }
 
-    /// Drop the edges of gone nodes, and re-price the touched corridors or
-    /// drop the ones that broke. Returns both nodes of every broken corridor.
+    /// Drop gone nodes' edges and re-price or drop the touched corridors; returns both nodes of every broken corridor.
     fn reprice_or_drop(
         &mut self,
         cells: &SurfaceCells,
@@ -316,9 +315,7 @@ impl NodeEdges {
         broken
     }
 
-    /// Take the fresh crossings in: a new node pair gets its edge, and a
-    /// known pair switches corridor only when the new one is clearly cheaper.
-    /// Returns the new pairs whose corridor walk failed on stale labels.
+    /// Take fresh crossings in (a known pair switches only to a clearly cheaper corridor); returns new pairs whose corridor walk failed on stale labels.
     fn adopt_crossings(
         &mut self,
         cells: &SurfaceCells,
@@ -449,9 +446,7 @@ pub fn build_node_edges(
     out.reindex(cells);
 }
 
-/// Repair the node edges inside a window to match what a full build gives.
-/// Returns the crossings of new node pairs whose corridor walk failed, for
-/// relink_failed once the window is released.
+/// Repair the node edges inside a window to match a full build; returns failed new-pair crossings for relink_failed.
 pub fn build_node_edges_region(
     cells: &SurfaceCells,
     nodes: &Nodes,
@@ -479,10 +474,7 @@ pub fn build_node_edges_region(
     out.adopt_crossings(cells, state, crossings)
 }
 
-/// Re-label the regions of both nodes of every failed crossing, then take
-/// their crossings in again. A corridor walk fails when a cached chain outside
-/// the last window still runs over a hop the update cut, and dropping the pair
-/// would leave two touching regions unlinked until something edits there.
+/// Re-label both nodes' regions of every failed crossing and take their crossings in again, so touching regions stay linked.
 pub fn relink_failed(
     cells: &SurfaceCells,
     nodes: &Nodes,
@@ -545,8 +537,7 @@ pub struct RelinkReport {
     pub failed_again: usize,
 }
 
-/// Every cell labeled with one of `owners` that a walk over such cells reaches
-/// from `roots`, plus the roots and the cells on their cached chains.
+/// Every cell labeled with one of `owners` that a walk over such cells reaches from `roots`, plus the roots and their cached chains.
 fn owned_cells(
     cells: &SurfaceCells,
     state: &DijkstraState,
@@ -1092,8 +1083,7 @@ mod tests {
             .filter(|c| (c.0 - broken.0).abs() + (c.1 - broken.1).abs() <= 4)
             .filter_map(|&c| pg.cells.id(c))
             .collect();
-        // Far outside the window, an update elsewhere cut one hop on the
-        // second node's cached chain, as a re-keyed cell's rebuilt adjacency does.
+        // Far outside the window, an update cut one hop on the second node's cached chain, as a re-keyed cell's rebuilt adjacency does.
         let k = chain.len() - 4;
         let (u, v) = (
             pg.cells.id(chain[k]).unwrap(),

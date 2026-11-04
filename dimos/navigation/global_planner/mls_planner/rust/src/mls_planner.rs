@@ -264,25 +264,20 @@ pub struct Planner {
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
     last_result: Option<((f32, f32, f32), bool)>,
-    // When each voxel landed, for a warp that tells overlapping passes apart.
-    // Off unless asked for.
+    // When each voxel landed, for a warp that tells overlapping passes apart (off unless asked for).
     voxel_times: Option<VoxelTimes>,
-    // What the last warp left off its keys, bucketed by place, so a region update
-    // re-keys what is near it without scanning the whole map. Built on the first
-    // region update after a warp.
+    // What the last warp left off its keys, bucketed by place so a region update re-keys what is near it; built on the first one after a warp.
     displaced: Option<warp::DisplacedIndex>,
     // Whether the last region update had bad bounds, so a bad pose warns once.
     region_rejected: bool,
 }
 
-/// Seconds since `epoch` at which each voxel was added, and the clock edits
-/// are stamped with.
+/// Seconds since `epoch` at which each voxel was added, and the clock edits are stamped with.
 pub(crate) struct VoxelTimes {
     epoch: Option<f64>,
     now: f32,
     by_key: AHashMap<VoxelKey, f32>,
-    /// Where a warped voxel's point sits off its center, so the next warp moves
-    /// that point and a sub-voxel shift adds up instead of being lost. Absent is zero.
+    /// Where a warped voxel's point sits off its center, so sub-voxel shifts add up over warps; absent is zero.
     residual: AHashMap<VoxelKey, [f32; 3]>,
 }
 
@@ -532,12 +527,7 @@ impl Planner {
         })
     }
 
-    /// Patch changed cells, then repair nodes and edges around the change.
-    /// A voxel edit can change a wall scan without changing any surface cell,
-    /// so the repair runs for the edits too. `moves` are nodes, by list index,
-    /// to carry to a target cell, as a warp does. `rekeyed` are the keys cells
-    /// were re-keyed off and onto: the cells keep their ids, and the repair
-    /// rebuilds the adjacency around both keys.
+    /// Patch changed cells and repair nodes and edges around them and the edits; `moves` carry nodes to target cells and `rekeyed` keys get their adjacency rebuilt.
     #[allow(clippy::too_many_arguments)]
     fn rebuild_region_graph(
         &mut self,
@@ -927,9 +917,7 @@ impl Planner {
             .map(|(wp, cells)| self.placed_waypoints(wp, &cells, config.voxel_size))
     }
 
-    /// Re-key the cells a warp moved around the start and the goal, so a plan
-    /// finds them where they are. The rest of the route is planned over the
-    /// keys the cells kept and placed by their offsets.
+    /// Re-key the cells a warp moved around the start and goal, so a plan finds them where they are.
     pub fn rebin_for_plan(
         &mut self,
         start: (f32, f32, f32),
@@ -966,8 +954,7 @@ impl Planner {
             .collect()
     }
 
-    /// Plan to the goal, re-keying along a route a warp moved; with no full route, follow the cached path while safe
-    /// (empty with `config.require_full_route`). Empty means stop.
+    /// Plan to the goal, re-keying along a route a warp moved; with no full route follow the cached path while safe, or nothing with require_full_route.
     pub fn plan_or_truncate(
         &mut self,
         start: (f32, f32, f32),

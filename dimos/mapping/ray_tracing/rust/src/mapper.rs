@@ -38,8 +38,7 @@ pub struct Pose {
     pub orientation: (f32, f32, f32, f32),
 }
 
-/// The per-frame mapping loop shared by the native module and the Python
-/// binding. Callers own transport only. A clone shares the worker pool.
+/// The per-frame mapping loop shared by the native module and the Python binding; a clone shares the worker pool.
 #[derive(Clone)]
 pub struct Mapper {
     config: Config,
@@ -53,11 +52,9 @@ pub struct Mapper {
     last_registered: Vec<Point>,
     last_origin: Point,
     frame_count: u32,
-    // When each voxel landed, for warps that tell overlapping passes apart.
-    // Off unless asked for.
+    // When each voxel landed, for warps that tell overlapping passes apart (off unless asked for).
     voxel_times: Option<VoxelTimes>,
-    // The voxels a warp left off their keys, with where their points sit,
-    // re-keyed as frames come near them.
+    // The voxels a warp left off their keys and where their points sit, re-keyed as frames come near them.
     displaced: Vec<(VoxelKey, [f32; 3])>,
     // How far the last frame's rays reached from its origin.
     last_reach: f32,
