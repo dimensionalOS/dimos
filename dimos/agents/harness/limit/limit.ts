@@ -1,6 +1,6 @@
-import type { ContextBudget } from "./budget.ts";
+import type { ContextBudget } from "#dimos/agents/harness/limit/budget.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { LimitRecord } from "../../shared/protocol/tools/limit.ts";
+import type { LimitRecord } from "#dimos/agents/shared/protocol/tools/limit.ts";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";

@@ -1,4 +1,4 @@
-import type { FileRef, RenderDetails } from "../protocol/media.ts";
+import type { FileRef, RenderDetails } from "#dimos/agents/shared/protocol/media.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 export type RenderProgress = {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import sharp from "sharp";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Sharp } from "sharp";
-import { FileRenderer } from "./render.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -59,15 +59,25 @@ test("an image group shows six views, gives the model inline formats as they are
   );
   assert.deepEqual(rendering.details.listed, [join(dir, "g.avif"), join(dir, "h.png")]);
   assert.deepEqual(rendering.details.failed, []);
+  const previewLines = rendering.details.views.map((view) => {
+    assert(view.kind === "image");
+    return `Preview: ${view.preview.path}`;
+  });
   assert.equal(
     rendering.text,
     [
       `a.png · ${join(dir, "a.png")} · sha256 ${hash.get("a.png")} · png 64x48`,
+      previewLines[0],
       `b.jpg · ${join(dir, "b.jpg")} · sha256 ${hash.get("b.jpg")} · jpeg 64x48`,
+      previewLines[1],
       `c.webp · ${join(dir, "c.webp")} · sha256 ${hash.get("c.webp")} · webp 64x48`,
+      previewLines[2],
       `d.gif · ${join(dir, "d.gif")} · sha256 ${hash.get("d.gif")} · gif 64x48`,
+      previewLines[3],
       `e.tiff · ${join(dir, "e.tiff")} · sha256 ${hash.get("e.tiff")} · tiff 64x48, sent as png 64x48`,
+      previewLines[4],
       `f.svg · ${join(dir, "f.svg")} · sha256 ${hash.get("f.svg")} · svg 128x96, sent as png 128x96`,
+      previewLines[5],
       `[image not shown: ${join(dir, "g.avif")} (64x48); read the path to see it]`,
       `[image not shown: ${join(dir, "h.png")} (64x48); read the path to see it]`,
     ].join("\n"),
@@ -117,7 +127,10 @@ test("a photo over 1600x1200 is resized as JPEG, a transparent one as PNG until 
   );
   assert(rendering !== null);
   assert.deepEqual(
-    rendering.text.split("\n").map((line) => line.split(" · ")[3]),
+    rendering.text
+      .split("\n")
+      .filter((line) => !line.startsWith("Preview: "))
+      .map((line) => line.split(" · ")[3]),
     ["jpeg 3200x1800, sent as jpeg 1600x900", "png 2400x2400, sent as png 900x900", "jpeg 80x120"],
   );
   const sent = await Promise.all(

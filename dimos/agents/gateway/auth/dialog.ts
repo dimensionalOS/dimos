@@ -1,13 +1,13 @@
 import type { AuthInteraction, AuthPrompt, Models } from "@earendil-works/pi-ai";
-import type { DialogId, LoginState } from "../../shared/protocol/auth.ts";
-import type { ModelCatalog } from "./models.ts";
-import type { Outcome } from "../../shared/protocol/outcome.ts";
-import type { Live } from "../../shared/protocol/status.ts";
-import type { Principal } from "./principal.ts";
-import { Status } from "../../shared/protocol/status.ts";
-import { done, refused } from "../../shared/protocol/outcome.ts";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { principalKey } from "./principal.ts";
+import type { DialogId, LoginState } from "#dimos/agents/shared/protocol/auth.ts";
+import type { ModelCatalog } from "#dimos/agents/gateway/auth/models.ts";
+import type { Outcome } from "#dimos/agents/shared/protocol/outcome.ts";
+import type { Live } from "#dimos/agents/shared/protocol/status.ts";
+import type { Principal } from "#dimos/agents/gateway/auth/principal.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { done, refused } from "#dimos/agents/shared/protocol/outcome.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { principalKey } from "#dimos/agents/gateway/auth/principal.ts";
 import { randomUUID } from "node:crypto";
 
 const KEPT_INFO = 5;

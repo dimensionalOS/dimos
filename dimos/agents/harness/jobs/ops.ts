@@ -1,6 +1,6 @@
 import type { Context } from "@earendil-works/chord/context";
 import type { ConversationId, Harness, TaskId } from "@earendil-works/pi-durable";
-import type { EpochMs } from "../../shared/protocol/time.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
 import type {
   JobAction,
   JobDefinition,
@@ -8,15 +8,15 @@ import type {
   JobOutcome,
   JobRun,
   TimeZone,
-} from "../../shared/protocol/jobs/state.ts";
-import type { JobFiringDeps } from "./fire.ts";
-import type { JobTask } from "./task.ts";
-import { CronExpr, localTimeZone, parseTimeZone } from "./cron.ts";
+} from "#dimos/agents/shared/protocol/jobs/state.ts";
+import type { JobFiringDeps } from "#dimos/agents/harness/jobs/fire.ts";
+import type { JobTask } from "#dimos/agents/harness/jobs/task.ts";
+import { CronExpr, localTimeZone, parseTimeZone } from "#dimos/agents/harness/jobs/cron.ts";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { fireJob } from "./fire.ts";
-import { jobIn, putJob, recordRun, removeJob, replaceRun, sameRun } from "./registry.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { fireJob } from "#dimos/agents/harness/jobs/fire.ts";
+import { jobIn, putJob, recordRun, removeJob, replaceRun, sameRun } from "#dimos/agents/harness/jobs/registry.ts";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
 
 /** A job as a caller states it; the time zone is the gateway's when null. */

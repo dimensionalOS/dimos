@@ -14,9 +14,9 @@
 
 """Provider contract for WebRTC DataChannel backends.
 
-``Provider`` is the runtime interface; ``ProviderConfig`` is its picklable,
-hashable description. Transports carry configs across process boundaries
-(module workers receive their transports by pickle) and resolve them to a
+``Provider`` is the runtime interface; ``ProviderConfig`` is its hashable
+description that crosses process boundaries as data. Transports carry configs
+(module workers receive their transports over the CBOR pipe) and resolve them to a
 per-process singleton provider — one PeerConnection per process, shared by
 every transport with an equal config.
 """
@@ -101,7 +101,8 @@ def shutdown_all_providers() -> None:
 
 
 class ProviderConfig(BaseModel):
-    """Picklable provider factory. Equal configs share one provider per process."""
+    """Provider factory that crosses process boundaries as data. Equal configs share one
+    provider per process."""
 
     model_config = {"frozen": True, "extra": "forbid"}
 

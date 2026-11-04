@@ -1,16 +1,16 @@
-import type { AgentTool } from "./base.ts";
-import type { DetailsByTool, RuntimeToolName } from "../../shared/protocol/tools/details.ts";
-import type { DimosConnection, RemoteTool } from "../dimos/connection.ts";
-import type { DimosInstall } from "../dimos/install.ts";
-import type { FileRenderer } from "../../shared/render/render.ts";
+import type { AgentTool } from "#dimos/agents/harness/tools/base.ts";
+import type { DetailsByTool, RuntimeToolName } from "#dimos/agents/shared/protocol/tools/details.ts";
+import type { DimosConnection, RemoteTool } from "#dimos/agents/harness/dimos/connection.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
+import type { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import type { JsonObject, ToolRegistration } from "@earendil-works/pi-durable";
-import type { RuntimeToolSchemas } from "./runtime-catalog.ts";
-import type { RuntimeClient } from "../dimos/client.ts";
-import { DimosUnavailable } from "../dimos/connection.ts";
+import type { RuntimeToolSchemas } from "#dimos/agents/harness/tools/runtime-catalog.ts";
+import type { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
+import { DimosUnavailable } from "#dimos/agents/harness/dimos/connection.ts";
 import { Type } from "typebox";
-import { agentTool } from "./lib/tool.ts";
-import { hasLiveRun } from "../dimos/install.ts";
-import { streamTool } from "./lib/stream.ts";
+import { agentTool } from "#dimos/agents/harness/tools/lib/tool.ts";
+import { hasLiveRun } from "#dimos/agents/harness/dimos/install.ts";
+import { streamTool } from "#dimos/agents/harness/tools/lib/stream.ts";
 
 /** Remote tools remain null until McpServer advertises them; stream_get is local. */
 type RuntimeTools = { readonly [N in RuntimeToolName]: AgentTool<N> | null };

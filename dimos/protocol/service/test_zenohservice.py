@@ -15,9 +15,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import copy
 import json
 import os
-import pickle
 import threading
 from types import SimpleNamespace
 from typing import Any
@@ -25,8 +25,8 @@ from typing import Any
 import pytest
 import zenoh
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
-from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
@@ -161,35 +161,35 @@ def test_different_modes_produce_different_keys() -> None:
     assert peer.session_key != client.session_key
 
 
-def test_pickle_round_trip_sheds_the_session(session_pool) -> None:
-    """A module travels to its worker by pickle and re-acquires on the far side."""
-
+def test_codec_round_trip_sheds_the_session(session_pool) -> None:
+    """A service travels to its worker over the codec and re-acquires on the far side."""
     svc = ZenohService(session_pool=session_pool)
     svc.start()
-    clone = pickle.loads(pickle.dumps(svc))
+    clone = decode(encode(svc))
 
     assert clone._session is None
     assert clone._session_pool is zenohservice.default_session_pool
     assert clone.config.session_key == svc.config.session_key
 
+    clone._session_pool = session_pool  # keep the test on its own pool
     clone.start()
     assert clone.session is not None
     clone.stop()
 
 
-def test_pickled_pubsub_and_rpc_rebuild_their_runtime(session_pool) -> None:
-    pubsub = pickle.loads(pickle.dumps(ZenohPubSubBase(session_pool=session_pool)))
+def test_deepcopy_is_a_fresh_unstarted_service(session_pool) -> None:
+    svc = ZenohService(session_pool=session_pool)
+    svc.start()
+    clone = copy.deepcopy(svc)
+    assert clone._session is None
+    assert clone.config == svc.config
+
+
+def test_pubsub_round_trip_rebuilds_its_runtime(session_pool) -> None:
+    pubsub = decode(encode(ZenohPubSubBase(session_pool=session_pool)))
     assert pubsub._publishers == {}
     assert pubsub._subscribers == []
     assert pubsub._drain_stops == []
-
-    rpc = pickle.loads(pickle.dumps(ZenohRPC(session_pool=session_pool)))
-    assert rpc._pending == {}
-    assert rpc._queryables == []
-    try:
-        assert rpc._get_call_thread_pool().submit(lambda: 42).result(timeout=2.0) == 42
-    finally:
-        rpc.stop()
 
 
 def test_start_creates_session(session_pool) -> None:
