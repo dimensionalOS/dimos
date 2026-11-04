@@ -154,6 +154,8 @@ class HandEyeCalibrationConfig(ModuleConfig):
     # Keep every captured frame with the joints and flange pose it was taken at, plus the
     # report, under STATE_DIR/calibration/records/<name>_<time>, for inspection afterwards.
     record: bool = False
+    # The pose draw's seed; None draws a fresh sequence each run, so repeat runs are independent.
+    seed: int | None = None
 
 
 @dataclass
@@ -172,6 +174,7 @@ class _Run:
     targets: list[dict[str, Any]] = field(default_factory=list)
     frames: int = 0
     record_dir: Path | None = None
+    seed: int = 0
 
 
 class HandEyeCalibrationModule(Module):
@@ -197,6 +200,7 @@ class HandEyeCalibrationModule(Module):
         self._approve = threading.Event()
         self._result: HandEyeResult | None = None
         self._targets: list[dict[str, Any]] = []
+        self._seed: int | None = None
 
     @rpc
     def start(self) -> None:
@@ -230,6 +234,9 @@ class HandEyeCalibrationModule(Module):
             self._abort.clear()
             self._approve.clear()
             self._run = _Run(t0=time.monotonic())
+            self._run.seed = (
+                self.config.seed if self.config.seed is not None else int(time.time_ns() % (2**31))
+            )
             if self.config.record:
                 stamp = time.strftime("%Y%m%d_%H%M%S")
                 self._run.record_dir = (
@@ -247,12 +254,14 @@ class HandEyeCalibrationModule(Module):
                     list(self.config.home_joints),
                     self.config.max_poses,
                     self.config.max_seconds,
+                    seed=self._run.seed,
                 )
             finally:
                 for obstacle in obstacles:
                     self._obstacles.remove_obstacle(obstacle)
             self._result = result
             self._targets = self._run.targets
+            self._seed = self._run.seed
             report = self._report(result)
             if self._run.record_dir is not None:
                 report["record_dir"] = str(self._run.record_dir)
@@ -502,6 +511,7 @@ class HandEyeCalibrationModule(Module):
             "mount": _transform_dict(mount),
             "file": str(path),
             "targets": self._targets,
+            "seed": self._seed,
         }
 
     def _mount_transform(self, T_parent_optical: FloatArray, parent: str) -> Transform:

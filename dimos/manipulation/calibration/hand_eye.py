@@ -84,7 +84,10 @@ N_RESAMPLE = 12
 RESAMPLE_FRAC = 0.7
 PASS_MM = 2.0  # estimated probe-point error must be under this
 CATASTROPHE_MM = 4.0  # and no resample may look like a disaster
-MISCLOSE_MM = 1.0  # the board must land in one place from every pose
+# The board must land in one place from every pose. A real arm's absolute accuracy, a few
+# millimetres over its reach, lands here as well as the camera does, so the gate is wider than
+# the solver alone would need (a perfect-kinematics twin holds 0.1 mm).
+MISCLOSE_MM = 4.0
 MIN_POSES = 4
 NOMINAL_TOL_MULT = 2.0  # a solve further than this many tolerances from the nominal is refused
 
@@ -556,6 +559,7 @@ def solve_hand_eye(
     home_joints: list[float],
     max_poses: int,
     max_seconds: float,
+    seed: int = SEED,
 ) -> HandEyeResult:
     """Run the calibration. Returns the camera pose in ``nominal.frame`` and the verdict.
 
@@ -569,7 +573,7 @@ def solve_hand_eye(
     obs: list[_Obs] = []
     K: FloatArray | None = None
     dist: FloatArray | None = None
-    rng = np.random.default_rng(SEED)
+    rng = np.random.default_rng(seed)
     home = np.asarray(home_joints, dtype=float)
     ceil = AMP_CEIL[eye_to_hand]
     amp = ceil

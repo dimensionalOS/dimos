@@ -47,9 +47,11 @@ XARM6_CALIBRATION_HOME = [0.0, -0.247, -0.909, 0.0, 1.156, 0.0]
 XARM6_BENCH_TOP_Z = 0.0
 XARM6_BENCH_X_M = (0.1, 1.0)
 
-# The wrist RealSense on the xArm6 kit mount: colour optical centre 87 mm off the flange axis,
-# 20 mm forward of the flange face, tilted 15 degrees inward, looking along the tool.
-XARM6_WRIST_CAMERA_NOMINAL_XYZ = (0.087, 0.0, 0.020)
+# The wrist RealSense on the xArm6 kit mount: the camera's screw line 87 mm off the flange
+# axis, tilted 15 degrees inward, looking along the tool. The colour lens sits at one end of
+# the D435 body, 41 mm along it from the screw line, and 26 mm forward of the flange face
+# (first hardware run, 2026-11-03; the kit drawing's screw line was 42 mm off as a prior).
+XARM6_WRIST_CAMERA_NOMINAL_XYZ = (0.079, -0.041, 0.026)
 XARM6_WRIST_CAMERA_NOMINAL_XYZW = (-0.0922963, -0.0922963, 0.7010586, 0.7010561)
 
 XARM6_CALIBRATION_BENCH_PATH = LfsPath("xarm6/calibration_bench.xml")
