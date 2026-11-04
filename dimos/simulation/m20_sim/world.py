@@ -53,8 +53,8 @@ STAND_HEIGHT = 0.566
 CLEARANCE_HEIGHT = 0.66
 # the trunk's collision shapes with the lidar housings, in base_link
 TRUNK_HALF_EXTENTS = (0.41, 0.121, 0.087)
-# the driver's minimum distance
-LIO_BLIND_RANGE = 0.2
+# nearer returns are dropped (the driver's own minimum is 0.2 m)
+LIO_BLIND_RANGE = 0.5
 # the vendor LIO's skip_num
 LIO_KEEP_EVERY = 5
 COLLISION_RGBA = (0.3, 0.3, 0.3, 1.0)
