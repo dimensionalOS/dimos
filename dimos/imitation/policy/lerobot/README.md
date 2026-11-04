@@ -1,6 +1,6 @@
-# LeRobot Policy Module
+# LeRobot policy rollout
 
-`LeRobotPolicyModule` runs trained LeRobot policies in a managed Python-native
+`PolicyModule` runs trained LeRobot policies in a managed Python-native
 subprocess. Its LeRobot, Transformers, Torch, and NumPy versions live in the
 `native/python/lerobot` project and do not change the main DimOS environment.
 
@@ -18,9 +18,9 @@ is already postprocessed into each joint's native absolute coordinate; the
 runtime does not reinterpret gripper values.
 
 ```python
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
+from dimos.imitation.policy.module import policy_module
 
-policy = LeRobotPolicyModule.blueprint(
+policy = policy_module(
     policy_path="outputs/pick/checkpoints/last/pretrained_model",
     task="pick up the object",
     joint_names=["arm/joint1", "arm/joint2", "arm/gripper"],

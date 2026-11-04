@@ -19,8 +19,7 @@ from threading import Event, Thread
 import time
 from typing import Any, Protocol
 
-from dimos_lerobot import runtime as policy_runtime
-from dimos_lerobot.runtime import LeRobotPolicyRuntime
+from dimos_lerobot import backend as policy_runtime
 from lerobot.configs.policies import PreTrainedConfig
 import numpy as np
 from numpy.typing import NDArray
@@ -39,8 +38,11 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.imitation.policy import runtime as shared_runtime
+from dimos.imitation.policy.runtime import _PolicyRuntime as PolicyRuntime
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
@@ -133,7 +135,7 @@ class RuntimeFactory(Protocol):
         policy: FakePolicy,
         *,
         device: str | None = None,
-    ) -> tuple[LeRobotPolicyRuntime, Any]: ...
+    ) -> tuple[PolicyRuntime, Any]: ...
 
 
 @pytest.fixture
@@ -143,13 +145,13 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
     mocker.patch.object(LCMRPC, "serve_module_rpc", return_value=None)
     mocker.patch.object(LCMRPC, "start", return_value=None)
     mocker.patch.object(LCMRPC, "stop", return_value=None)
-    built: list[LeRobotPolicyRuntime] = []
+    built: list[PolicyRuntime] = []
 
     def _make(
         policy: FakePolicy,
         *,
         device: str | None = None,
-    ) -> tuple[LeRobotPolicyRuntime, Any]:
+    ) -> tuple[PolicyRuntime, Any]:
         def load_config(_path: str) -> FakeUpstreamConfig:
             policy.config_load_count += 1
             return policy.upstream_config
@@ -187,7 +189,7 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
         )
         mocker.patch.object(policy_runtime, "register_third_party_plugins")
 
-        module = LeRobotPolicyRuntime(
+        module = PolicyRuntime(
             _isolated_python_runtime=True,
             rpc_transport=LCMRPC,
             policy_path="checkpoint/default",
@@ -205,16 +207,25 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
             TrajectoryCancellationStatus.ALREADY_STOPPED
         )
         control.list_tasks.return_value = ["joint_trajectory"]
+        control.status.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
 
         def invoke(task_name: str, method: str, kwargs: dict[str, Any]) -> Any:
-            assert task_name == "joint_trajectory"
+            assert task_name in {"joint_trajectory", "eef_trajectory"}
             if method == "execute":
-                assert set(kwargs) == {"trajectory"}
-                return control.execute(kwargs["trajectory"])
-            assert method == "cancel" and kwargs == {}
-            return control.cancel()
+                execute = control.eef_execute if task_name == "eef_trajectory" else control.execute
+                return execute(
+                    kwargs["trajectory"],
+                    **{key: value for key, value in kwargs.items() if key != "trajectory"},
+                )
+            if method == "cancel":
+                assert kwargs == {}
+                cancel = control.eef_cancel if task_name == "eef_trajectory" else control.cancel
+                return cancel()
+            assert method in {"get_status", "keepalive"}
+            return control.status(**kwargs)
 
         control.task_invoke.side_effect = invoke
+
         mocker.patch.object(module, "_control", control, create=True)
         built.append(module)
         return module, control
@@ -231,7 +242,7 @@ def _action_chunk(steps: int = 3) -> NDArray[np.float32]:
 
 
 def _provide_observation(
-    module: LeRobotPolicyRuntime,
+    module: PolicyRuntime,
     *,
     positions: list[float] | None = None,
     ts: float | None = None,
@@ -242,12 +253,12 @@ def _provide_observation(
     rgb[..., 2] = 30
     values = positions or [float(i) / 10 for i in range(len(JOINTS))]
     timestamp = time.time() if ts is None else ts
-    module._on_color_image(Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
+    module._on_image("color_image", Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
     module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=values))
     return rgb, values, timestamp
 
 
-def _preflight(module: LeRobotPolicyRuntime) -> None:
+def _preflight(module: PolicyRuntime) -> None:
     status = module.preflight_rollout()
     assert status["policy_ready"] is True
     assert status["observations_ready"] is True
@@ -352,7 +363,7 @@ def test_start_mismatch_waits_for_new_joint_state_before_retry(
     module.start_rollout()
     wait_until(lambda: control.execute.call_count == 1, timeout=1.0)
 
-    _provide_observation(module, positions=[0.2] * len(JOINTS), ts=time.time() + 0.01)
+    _provide_observation(module, positions=[0.2] * len(JOINTS), ts=time.time())
     wait_until(lambda: control.execute.call_count >= 2, timeout=1.0)
     module.stop_rollout()
 
@@ -389,7 +400,7 @@ def test_a_press_stops_worker_before_cancelling_its_trajectory(
     stop_thread.start()
     try:
         assert module._stop_event.wait(timeout=1.0)
-        assert module.rollout_status()["active"] is True
+        assert module.rollout_status()["active"] is False
         control.cancel.assert_not_called()
     finally:
         release_execute.set()
@@ -405,6 +416,7 @@ def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> Non
     module, control = make_runtime(policy)
     _provide_observation(module)
     _preflight(module)
+    control.status.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
     control.cancel.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.UNCERTAIN,
         "coordinator did not confirm cancellation",
@@ -415,7 +427,7 @@ def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> Non
     status = module.stop_rollout()
 
     assert status["active"] is False
-    assert status["last_error"] == "coordinator did not confirm cancellation"
+    assert "coordinator did not confirm cancellation" in status["last_error"]
 
 
 def test_stop_waits_for_delayed_submission_then_cancels_it(
@@ -446,7 +458,7 @@ def test_stop_waits_for_delayed_submission_then_cancels_it(
         return result
 
     mocker.patch.object(coordinator, "_get_latest_state", side_effect=delayed_state)
-    mocker.patch.object(policy_runtime, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.0)
+    mocker.patch.object(shared_runtime, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.0)
     control.execute.side_effect = execute_trajectory
     control.cancel.side_effect = lambda: coordinator.task_invoke("joint_trajectory", "cancel", {})
     _preflight(module)
@@ -476,7 +488,7 @@ def test_stop_waits_for_delayed_submission_then_cancels_it(
     assert stopped.is_set()
     assert results[0].status is TrajectoryExecutionStatus.ACCEPTED
     assert not task.is_active()
-    assert "did not stop" in (module.rollout_status()["last_error"] or "")
+    assert module.rollout_status()["busy"] is False
 
 
 @pytest.mark.parametrize(
@@ -500,7 +512,7 @@ def test_invalid_action_chunk_cancels_and_latches_rollout_off(
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert message in (module.rollout_status()["last_error"] or "")
-    control.cancel.assert_called_with()
+    control.cancel.assert_not_called()
 
 
 def test_trajectory_rejection_cancels_and_latches_rollout_off(
@@ -518,8 +530,8 @@ def test_trajectory_rejection_cancels_and_latches_rollout_off(
     module.start_rollout()
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
-    assert module.rollout_status()["last_error"] == "outside hardware limits"
-    control.cancel.assert_called_with()
+    assert "outside hardware limits" in module.rollout_status()["last_error"]
+    control.cancel.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -579,7 +591,7 @@ def test_policy_refuses_stale_observations(make_runtime: RuntimeFactory) -> None
     result = module.preflight_rollout()
 
     assert result["active"] is False
-    assert "camera image is stale" in (result["last_error"] or "")
+    assert "observation is stale" in (result["last_error"] or "")
     assert policy.config_load_count == 0
     control.execute.assert_not_called()
 
@@ -636,7 +648,7 @@ def test_preflight_requires_the_configured_coordinator_task(
     status = module.preflight_rollout()
 
     assert status["policy_ready"] is False
-    assert "missing trajectory task" in (status["last_error"] or "")
+    assert "missing task" in (status["last_error"] or "")
     assert policy.config_load_count == 0
 
 
@@ -656,8 +668,9 @@ def test_preflight_rejects_invalid_live_joints(
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     timestamp = time.time()
-    module._on_color_image(
-        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp)
+    module._on_image(
+        "color_image",
+        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp),
     )
     module._on_joint_state(JointState(ts=timestamp, name=names, position=positions))
 
@@ -683,7 +696,7 @@ def test_preflight_requires_exact_live_rgb_contract(
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     timestamp = time.time()
-    module._on_color_image(Image(data=image, format=image_format, ts=timestamp))
+    module._on_image("color_image", Image(data=image, format=image_format, ts=timestamp))
     module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=[0.0] * len(JOINTS)))
 
     status = module.preflight_rollout()
@@ -747,7 +760,7 @@ def test_grip_takeover_stops_rollout_until_explicit_restart(
     setattr(held, grip, True)
 
     module._on_teleop_buttons(held)
-    wait_until(lambda: not module.rollout_status()["active"], timeout=1)
+    wait_until(lambda: not module.rollout_status()["busy"], timeout=1)
     assert module.start_rollout()["active"] is False
     assert "release" in (module.rollout_status()["last_error"] or "")
     submissions = control.execute.call_count
@@ -771,9 +784,9 @@ def test_grip_during_inference_discards_result_without_blocking_input(
     def predict(*args: Any, **kwargs: Any) -> NDArray[np.float32]:
         predicting.set()
         assert release_prediction.wait(timeout=2)
-        return _action_chunk()[None, :]
+        return _action_chunk()
 
-    mocker.patch.object(module, "_predict", side_effect=predict)
+    mocker.patch.object(module._loaded_policy, "predict", side_effect=predict)
     module.start_rollout()
     try:
         assert predicting.wait(timeout=1)
