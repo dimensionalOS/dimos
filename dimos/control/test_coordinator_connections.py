@@ -53,6 +53,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
 )
+from dimos.control.tasks.velocity_task.velocity_task import (
+    JointVelocityTask,
+    JointVelocityTaskConfig,
+)
 import dimos.control.tick_loop as tick_mod
 from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -253,6 +257,17 @@ class StopsOnEstop(SendsPositions):
         self.estops.append(estopped)
 
 
+#: The fake base's axes, as a task claims them.
+GO2_BASE_AXES = ["go2/base/vx", "go2/base/vy", "go2/base/wz"]
+
+
+def base_velocity_task() -> JointVelocityTask:
+    """A started velocity task driving the fake base's three axes."""
+    task = JointVelocityTask("vel_base", JointVelocityTaskConfig(GO2_BASE_AXES))
+    task.start()
+    return task
+
+
 class Rig:
     """A started coordinator whose tick loop only moves when ``tick`` is called."""
 
@@ -314,6 +329,9 @@ class Rig:
 
     def positions_sent(self) -> list[list[float]]:
         return [list(msg.position) for name, msg in self.sent if name == "mock_position_command"]
+
+    def twists_sent(self) -> list[Twist]:
+        return [msg for name, msg in self.sent if name == "go2_cmd_vel"]
 
 
 @pytest.fixture
@@ -389,7 +407,14 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
 ) -> None:
     r = rig()
     assert r.coordinator.list_hardware() == ["mock", "go2"]
-    assert r.coordinator.list_joints() == MOCK_JOINTS
+    # The connection robots' joints, plus the base's axes for the robot with
+    # a cmd_vel port, claimable by tasks like an adapter base's virtual joints.
+    assert r.coordinator.list_joints() == [
+        *MOCK_JOINTS,
+        "go2/base/vx",
+        "go2/base/vy",
+        "go2/base/wz",
+    ]
 
     r.tick()
     assert r.sent == []
@@ -465,6 +490,65 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
     r.tick()
     # Held where it reads until told, then open, then closed.
     assert r.positions_sent() == [[0.0, 0.2], [0.0, 0.0], [0.0, 0.85]]
+
+def test_a_velocity_task_drives_a_connection_robots_base(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    task = base_velocity_task()
+    r.coordinator.add_task(task)
+    r.report_base()
+    r.tick()
+
+    # Nothing drives the base yet: every axis is told 0.
+    assert [(t.linear.x, t.linear.y, t.angular.z) for t in r.twists_sent()] == [(0.0, 0.0, 0.0)]
+
+    task.set_velocities([0.4, 0.0, -0.1], t_now=time.perf_counter())
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, -0.1)
+
+    # The task stopped: the base is told 0 again on every axis.
+    task.stop()
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+
+def test_arm_positions_and_base_speeds_coexist_in_one_tick(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    """A position task on the joints and a velocity task on the base never
+    mode-conflict: the base axes route separately and rejoin the command."""
+    error = mocker.patch.object(tick_mod.logger, "error")
+    r = rig()
+    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
+    task = base_velocity_task()
+    r.coordinator.add_task(task)
+    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
+
+    r.report_arm(*AT_REST)
+    r.report_base()
+    r.tick()
+
+    assert r.positions_sent()[-1] == [0.5, *AT_REST[1:]]
+    assert r.twists_sent()[-1].linear.x == 0.4
+    error.assert_not_called()
+
+
+def test_a_twist_command_reaches_a_connection_robots_base(rig: Callable[..., Rig]) -> None:
+    """The twist pre-hook maps onto the connection robot's base axes, which
+    the card-routed velocity task claims."""
+    r = rig()
+    task = base_velocity_task()
+    r.coordinator.add_task(task, task_type="velocity")
+    r.report_base()
+
+    r.coordinator._make_stream_cb("twist_command")(
+        Twist(linear=Vector3(0.4, 0.0, 0.0), angular=Vector3(0.0, 0.0, -0.1))
+    )
+    r.tick()
+
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, -0.1)
 
 
 def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
