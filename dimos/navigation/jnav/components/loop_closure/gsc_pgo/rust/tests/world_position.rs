@@ -14,7 +14,7 @@
 
 //! `solve_with_priors` world-position priors on a drifting closure-free square, in world frames rotated/shifted from the map.
 
-use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, PositionPrior, SolveConfig};
+use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, PositionPrior, SolveConfig, Start};
 use dimos_gsc_pgo::mat3::{self, Vec3};
 
 mod common;
@@ -78,9 +78,11 @@ fn world_positions_pull_a_drifting_path_onto_the_world() {
     priors[5].world = mat3::add(&priors[5].world, &[30.0, -20.0, 0.0]);
     let free: Vec<bool> = (0..N).map(|k| k > 0).collect();
     let solution = solve_with_priors(
-        &rotations,
-        &positions,
-        &free,
+        Start {
+            rotations: &rotations,
+            positions: &positions,
+            free: &free,
+        },
         &edges,
         &[],
         &priors,
@@ -141,9 +143,11 @@ fn two_world_frames_each_get_their_own_alignment() {
     ));
     let free: Vec<bool> = (0..N).map(|k| k > 0).collect();
     let solution = solve_with_priors(
-        &rotations,
-        &positions,
-        &free,
+        Start {
+            rotations: &rotations,
+            positions: &positions,
+            free: &free,
+        },
         &edges,
         &[],
         &priors,
@@ -210,9 +214,11 @@ fn an_off_center_antenna_is_placed_through_its_lever_arm() {
     }
     let free: Vec<bool> = (0..N).map(|k| k > 0).collect();
     let solution = solve_with_priors(
-        &rotations,
-        &positions,
-        &free,
+        Start {
+            rotations: &rotations,
+            positions: &positions,
+            free: &free,
+        },
         &edges,
         &[],
         &priors,

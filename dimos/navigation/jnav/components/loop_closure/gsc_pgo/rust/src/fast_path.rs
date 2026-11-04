@@ -235,9 +235,11 @@ impl GscPgo {
                 };
                 let steps = config.solver_fast_path_max_lm_steps;
                 let fast = solve_fast_path(
-                    &rotations,
-                    &positions,
-                    &free,
+                    crate::big_picture_fit::Start {
+                        rotations: &rotations,
+                        positions: &positions,
+                        free: &free,
+                    },
                     &odometry,
                     &closures,
                     &new,

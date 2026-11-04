@@ -14,7 +14,9 @@
 
 //! `solve_with_priors` landmark sightings correct a drifting closure-free square: rough-range bearings, or one tag pose.
 
-use dimos_gsc_pgo::big_picture_fit::{solve_with_priors, Edge, LandmarkSighting, SolveConfig};
+use dimos_gsc_pgo::big_picture_fit::{
+    solve_with_priors, Edge, LandmarkSighting, SolveConfig, Start,
+};
 use dimos_gsc_pgo::landmarks::known_inverse;
 use dimos_gsc_pgo::mat3::{self, Mat3, Vec3};
 
@@ -93,9 +95,11 @@ fn bearings_with_rough_ranges_pull_a_drifting_path_back() {
             .landmark_warm_start_xy_variance_ladder,
     };
     let solution = solve_with_priors(
-        &rotations,
-        &positions,
-        &free,
+        Start {
+            rotations: &rotations,
+            positions: &positions,
+            free: &free,
+        },
         &edges,
         &[],
         &[],
@@ -194,9 +198,11 @@ fn one_tag_seen_at_both_ends_closes_heading_and_position() {
             .landmark_warm_start_xy_variance_ladder,
     };
     let solution = solve_with_priors(
-        &rotations,
-        &positions,
-        &free,
+        Start {
+            rotations: &rotations,
+            positions: &positions,
+            free: &free,
+        },
         &edges,
         &[],
         &[],
@@ -353,9 +359,11 @@ fn drifted_loop_tag_spread() -> (f64, f64) {
         };
         let free: Vec<bool> = (0..steps).map(|k| k > 0).collect();
         let solution = solve_with_priors(
-            &rotations,
-            &positions,
-            &free,
+            Start {
+                rotations: &rotations,
+                positions: &positions,
+                free: &free,
+            },
             &edges,
             &[],
             &[],

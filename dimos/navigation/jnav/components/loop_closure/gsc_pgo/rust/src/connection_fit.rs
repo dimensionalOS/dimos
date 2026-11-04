@@ -240,18 +240,17 @@ pub fn icp_with_early_stop(
     }
 }
 
-/// `icp_with_early_stop` against `target` voxelized at `resolution` (0 = full), fitness re-measured on the full `tree`.
-#[allow(clippy::too_many_arguments)]
+/// `icp_with_early_stop` from `init` against `target` voxelized at `resolution` (0 = full), fitness re-measured on the full `tree`.
 pub fn icp_thinned(
     source: &[[f32; 3]],
     target: &[[f32; 3]],
     tree: &impl NearestIndex,
-    rotation: &Mat3,
-    translation: &Vec3,
+    init: (&Mat3, &Vec3),
     params: &IcpParams,
     fail_fitness: Option<f64>,
     resolution: f64,
 ) -> IcpResult {
+    let (rotation, translation) = init;
     if resolution <= 0.0 {
         return icp_with_early_stop(
             source,
