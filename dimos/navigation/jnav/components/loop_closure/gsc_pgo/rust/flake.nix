@@ -46,9 +46,7 @@
         cargoNix = cargoNixWith null;
       in {
         devShells.default = pkgs.mkShell {
-          # clippy + rustfmt come from the same nixpkgs pin as cargo/rustc so the
-          # `cargo fmt` / `cargo clippy` subcommands resolve to a matching toolchain
-          # (CI runs them inside this shell; no rustup is present there).
+          # clippy + rustfmt come from the same nixpkgs pin as cargo/rustc so the `cargo fmt` / `cargo clippy` subcommands resolve to a matching toolchain (CI runs them inside this shell; no rustup is present there).
           packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt pkgs.pkg-config ];
         };
 

@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The odometry's real noise, measured per source (xy, z, yaw, tilt) from the solved graph's residuals (Helmert /
-//! Förstner variance components), the reported noise as the prior (`learned_odometry_error_estimate_prior_ln_sd_*`).
+//! The odometry's real noise, measured per source (xy, z, yaw, tilt) from the solved graph's residuals (Helmert / Förstner variance components), the reported noise as the prior (`learned_odometry_error_estimate_prior_ln_sd_*`).
 
 /// The noise components in order: xy translation, z translation, yaw, roll/pitch (per keyframe step, m² or rad²).
 pub const COMPONENTS: usize = 4;

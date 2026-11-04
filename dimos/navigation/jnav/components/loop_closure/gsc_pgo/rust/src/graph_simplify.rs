@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Graph simplification (`Config::graph_simplify`): past the frontier a keyframe near an older pass's kept keyframe rides it
-//! (cloud freed, odometry folded into one edge between kept keyframes), so the solve grows with the mapped area, not the run.
+//! Graph simplification (`Config::graph_simplify`): past the frontier a keyframe near an older pass's kept keyframe rides it (cloud freed, odometry folded into one edge between kept keyframes), so the solve grows with the mapped area, not the run.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -47,8 +46,7 @@ fn identity() -> Pose {
 pub enum Placement {
     /// Its own node (index into the kept nodes).
     Node(usize),
-    /// Rides node `node` at `offset` (its pose = node's pose * offset), known to within `spread`; `place` is the node of
-    /// the kept keyframe it revisits (the per-pair closure cap counts by it).
+    /// Rides node `node` at `offset` (its pose = node's pose * offset), known to within `spread`; `place` is the node of the kept keyframe it revisits (the per-pair closure cap counts by it).
     Anchored {
         node: usize,
         offset: Pose,
@@ -57,8 +55,7 @@ pub enum Placement {
     },
 }
 
-/// How well a riding keyframe's offset is known: the odometry distance (m) and turn (rad) it was carried over from the
-/// node, and whether it starts from a frozen offset (the adopted graph's guess, `graph_simplify_offset_sd_*`).
+/// How well a riding keyframe's offset is known: the odometry distance (m) and turn (rad) it was carried over from the node, and whether it starts from a frozen offset (the adopted graph's guess, `graph_simplify_offset_sd_*`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Spread {
     pub distance: f64,
@@ -210,10 +207,7 @@ impl GraphSimplify {
             (self.kept.len() + k - self.decided(), identity())
         }
     }
-    /// Place decided keyframe `k` and advance the chain walk over it: `kept` its new node, else `place` the node and frozen
-    /// offset of the kept keyframe it may ride. `chain` (`graph_simplify_chain_odometry`, its fold limit in m): a removed
-    /// keyframe rides the walk's node by odometry and the steps fold between consecutive kept keyframes; else it rides
-    /// `place` and the walk follows the nodes ridden.
+    /// Place decided keyframe `k` and advance the chain walk over it: `kept` its new node, else `place` the node and frozen offset of the kept keyframe it may ride. `chain` (`graph_simplify_chain_odometry`, its fold limit in m): a removed keyframe rides the walk's node by odometry and the steps fold between consecutive kept keyframes; else it rides `place` and the walk follows the nodes ridden.
     pub(crate) fn place_next(
         &mut self,
         key_poses: &KeyFrames,
@@ -251,8 +245,7 @@ impl GraphSimplify {
         let reached = compose(&walk.offset, &step);
         let (distance, turn) = (walk.distance + distance, walk.turn + turn);
         if let (Some(fold_max_m), None, Some((node, offset))) = (chain, kept, place) {
-            // past fold_max_m of folded odometry the walk drops it and rides this keyframe's place (no edge): odometry
-            // folded over a long revisit would claim far more than the drift model allows and outvote the closures
+            // past fold_max_m of folded odometry the walk drops it and rides this keyframe's place (no edge): odometry folded over a long revisit would claim far more than the drift model allows and outvote the closures
             let walk = if distance > fold_max_m {
                 Walk {
                     node,
@@ -292,8 +285,7 @@ impl GraphSimplify {
             });
             return placement;
         }
-        // leaving the node: one edge from the entry node to this one over every step since entering, unless both ends are
-        // frozen offsets (that edge would only echo the adopted graph between two old nodes)
+        // leaving the node: one edge from the entry node to this one over every step since entering, unless both ends are frozen offsets (that edge would only echo the adopted graph between two old nodes)
         let pair = (walk.node.min(node), walk.node.max(node));
         if !(walk.anchored && anchored) && self.pairs.insert(pair) {
             self.edges.push(FoldedEdge {
@@ -342,9 +334,7 @@ impl GraphSimplify {
         }
         edges
     }
-    /// Closures as node edges (closure index, edge); one riding a single node drops out, and once a pair of places (the
-    /// kept keyframes the ends are or revisit) has `graph_simplify_closures_per_pair` (0 = no cap) closures, further
-    /// folded ones wait out of the solve.
+    /// Closures as node edges (closure index, edge); one riding a single node drops out, and once a pair of places (the kept keyframes the ends are or revisit) has `graph_simplify_closures_per_pair` (0 = no cap) closures, further folded ones wait out of the solve.
     pub fn closures(
         &self,
         closures: &Closures,
@@ -414,8 +404,7 @@ impl GraphSimplify {
 }
 
 /// `GscPgo::simplify_stats`.
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "native", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 pub struct SimplifyStats {
     pub nodes: usize,
     pub removed: usize,
@@ -448,9 +437,7 @@ impl Expansion {
             (self.kept + k - decided, identity())
         }
     }
-    /// A run of keyframes riding a kept keyframe by odometry, up to the next one placed on its own (a node, or a place the
-    /// walk reset to): the gap between where the run's odometry puts that one and where the solve put it closes along the
-    /// run, by distance travelled.
+    /// A run of keyframes riding a kept keyframe by odometry, up to the next one placed on its own (a node, or a place the walk reset to): the gap between where the run's odometry puts that one and where the solve put it closes along the run, by distance travelled.
     fn spread_runs(&self, poses: &mut [Pose]) {
         let decided = self.placements.len();
         let chained = |k: usize| match self.placements[k] {
@@ -658,8 +645,7 @@ impl GscPgo {
         self.simplify.localizing = ends;
         self.simplify_step();
     }
-    /// The reduced graph over the keyframes so far: nodes, removed keyframes, folded odometry edges, and the newest
-    /// solve's nodes and closures.
+    /// The reduced graph over the keyframes so far: nodes, removed keyframes, folded odometry edges, and the newest solve's nodes and closures.
     pub fn simplify_stats(&self) -> SimplifyStats {
         SimplifyStats {
             nodes: self.simplify.nodes(self.key_poses.len()),
@@ -821,8 +807,7 @@ mod tests {
         assert_eq!(simplify.closures(&closures, 2, &config).len(), 1);
     }
 
-    /// Past the per-pair cap, closures folded onto the same nodes wait out of the solve and keep their verdicts; closures
-    /// between kept keyframes always go in.
+    /// Past the per-pair cap, closures folded onto the same nodes wait out of the solve and keep their verdicts; closures between kept keyframes always go in.
     #[test]
     fn closures_past_the_per_pair_cap_keep_their_verdict() {
         let mut simplify = GraphSimplify::default();

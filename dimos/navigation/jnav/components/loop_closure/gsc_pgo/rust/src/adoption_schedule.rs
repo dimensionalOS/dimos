@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A finished solve reaches the graph via two logical-execution-time jobs: debounce (heat cost, then adopt or hold) and
-//! merge (changed verdicts off-thread, then swap in); each keeps only the newest waiting solve.
+//! A finished solve reaches the graph via two logical-execution-time jobs: debounce (heat cost, then adopt or hold) and merge (changed verdicts off-thread, then swap in); each keeps only the newest waiting solve.
 
 use crate::closure_search_schedule::{hold_scans, SearchPool};
 use crate::gsc_pgo::GscPgo;
@@ -49,10 +48,9 @@ pub struct Debounced {
     seconds: f64,
 }
 
-/// What the merge prepared: the solve, its heat (before, cost, after), the prepared adoption and its seconds.
+/// What the merge prepared: the solve, the prepared adoption and its seconds.
 pub struct Merged {
     finished: FinishedSolve,
-    heat: Option<(f64, f64, f64)>,
     pub(crate) prepared: MergePrepared,
     seconds: f64,
 }
@@ -67,10 +65,7 @@ impl GscPgo {
     /// Hand a finished solve to the debounce: dispatched at once if it is free, else the newest pending one.
     pub(crate) fn offer_debounce(&mut self, finished: FinishedSolve) {
         if self.debounce_job.is_some() {
-            if let Some(older) = self.debounce_waiting.replace(finished) {
-                let heat = self.heat_at(self.key_poses.len());
-                self.log_heat_event("superseded", &older, heat);
-            }
+            self.debounce_waiting = Some(finished);
             return;
         }
         self.dispatch_debounce(finished);
@@ -106,17 +101,14 @@ impl GscPgo {
         });
     }
     /// Hand an adopted solve to the merge: dispatched at once if it is free, else the newest waiting one.
-    pub(crate) fn offer_merge(&mut self, finished: FinishedSolve, heat: Option<(f64, f64, f64)>) {
+    pub(crate) fn offer_merge(&mut self, finished: FinishedSolve) {
         if self.merge_job.is_some() {
-            if let Some((older, _)) = self.merge_waiting.replace((finished, heat)) {
-                let now = self.heat_at(self.key_poses.len());
-                self.log_heat_event("superseded", &older, now);
-            }
+            self.merge_waiting = Some(finished);
             return;
         }
-        self.dispatch_merge(finished, heat);
+        self.dispatch_merge(finished);
     }
-    fn dispatch_merge(&mut self, finished: FinishedSolve, heat: Option<(f64, f64, f64)>) {
+    fn dispatch_merge(&mut self, finished: FinishedSolve) {
         let closures = self.committed_closures.clone();
         let estimate_raw_scans =
             self.config.deterministic_config.merge_scans_per_keyframe * finished.keyframes as f64;
@@ -146,7 +138,6 @@ impl GscPgo {
                 let seconds = started.elapsed().as_secs_f64();
                 *finish.done.lock().expect("merge slot") = Some(Merged {
                     finished,
-                    heat,
                     prepared: MergePrepared {
                         changed,
                         longest_kept,
@@ -177,9 +168,9 @@ impl GscPgo {
             let estimate = self.config.deterministic_config.merge_scans_per_keyframe
                 * merged.finished.keyframes as f64;
             self.record_job_ratio("merge", merged.seconds, estimate);
-            moved |= self.adopt_solution(merged.finished, merged.heat, Some(merged.prepared));
-            if let Some((waiting, heat)) = self.merge_waiting.take() {
-                self.dispatch_merge(waiting, heat);
+            moved |= self.adopt_solution(merged.finished, Some(merged.prepared));
+            if let Some(waiting) = self.merge_waiting.take() {
+                self.dispatch_merge(waiting);
             }
         }
         moved

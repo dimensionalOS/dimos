@@ -9,7 +9,7 @@ license = "Apache-2.0"
 name = "dimos_gsc_pgo"
 path = "src/lib.rs"
 
-# The module executable; behind `native` so `--no-default-features` builds the dependency-free core alone.
+# The module executable; behind `native` so `--no-default-features` builds the core without the module runtime.
 [[bin]]
 name = "gsc-pgo"
 path = "src/main.rs"
@@ -17,7 +17,7 @@ required-features = ["native"]
 
 [features]
 default = ["native"]
-native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:serde", "dep:serde_json", "dep:tracing", "dep:validator"]
+native = ["dep:dimos-module", "dep:lcm-msgs", "dep:tokio", "dep:validator"]
 
 [dependencies]
 rayon = "1"
@@ -25,7 +25,7 @@ faer = "0.24"
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"], optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
-tracing = { version = "0.1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
 validator = { version = "0.21", features = ["derive"], optional = true }

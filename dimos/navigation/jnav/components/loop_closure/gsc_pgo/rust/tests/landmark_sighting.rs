@@ -274,8 +274,7 @@ fn factors_before_the_first_keyframe_wait_for_it() {
     assert!(!pgo.finish());
 }
 
-/// A 200 m square walked 1 m a step whose heading drifts steadily, far past what the odometry states, and a point tag by
-/// the start seen on the first steps and again on the last, with every sighting's world spread: (with, without) warm start.
+/// A 200 m square walked 1 m a step whose heading drifts steadily, far past what the odometry states, and a point tag by the start seen on the first steps and again on the last, with every sighting's world spread: (with, without) warm start.
 fn drifted_loop_tag_spread() -> (f64, f64) {
     let steps = 800;
     let truth: Vec<(f64, Vec3)> = (0..steps)

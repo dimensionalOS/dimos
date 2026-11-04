@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stage 2, similarity discovery: which earlier keyframes this one might be, by position or by Scan Context
-//! (Kim & Kim 2018): a polar max-z grid, ring-key retrieval then column-shifted cosine distance.
+//! Stage 2, similarity discovery: which earlier keyframes this one might be, by position or by Scan Context (Kim & Kim 2018): a polar max-z grid, ring-key retrieval then column-shifted cosine distance.
 
 use std::f64::consts::PI;
 

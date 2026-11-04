@@ -24,8 +24,7 @@ use crate::mat3::{self, Mat3, Vec3};
 use crate::pose_graph_solving::graph_change_cost_on;
 use crate::store::SolvedPoses;
 
-/// What the fast path's worker returns: the first `keyframes` global poses, heat cost, seconds, and the GNC cutoff check
-/// and convergence (`FastSolve`).
+/// What the fast path's worker returns: the first `keyframes` global poses, heat cost, seconds, and the GNC cutoff check and convergence (`FastSolve`).
 struct FastPathResult {
     solved: SolvedPoses,
     converged: bool,
@@ -55,8 +54,7 @@ pub struct FastPathJob {
 }
 
 /// One landed fast path job (`GscPgo::fast_path_records`): when, what, and the window's positions around it.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "native", derive(serde::Serialize))]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct FastPathRecord {
     pub scan: usize,
     pub time: f64,
@@ -80,8 +78,7 @@ pub struct FastPathRecord {
 }
 
 /// A committed closure's latency (`GscPgo::closure_latency`): scan and data time committed, fast path adopted, GNC judged.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "native", derive(serde::Serialize))]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct ClosureLatency {
     pub commit: (usize, f64),
     pub fast_path: Option<(usize, f64)>,
@@ -106,9 +103,6 @@ impl GscPgo {
     }
     pub fn closure_latency(&self) -> &[ClosureLatency] {
         &self.closure_latency
-    }
-    pub fn fast_path_overshoots(&self) -> usize {
-        self.fast_path_overshoots
     }
     /// Land a due fast path job, then dispatch one if a small closure is unjudged and unreflected; true if keyframes moved.
     pub(crate) fn step_fast_path(&mut self) -> bool {
@@ -322,9 +316,6 @@ impl GscPgo {
         let job = self.fast_path_job.take().expect("checked above");
         let overshoot = deterministic && !now && (result.seconds > spanned || job.late);
         self.note_overshoot("fast_path", overshoot);
-        if overshoot {
-            self.fast_path_overshoots += 1;
-        }
         self.record_job_ratio("fast_path", result.seconds, job.estimate_raw_scans);
         let mut record = FastPathRecord {
             scan: self.scans_seen,

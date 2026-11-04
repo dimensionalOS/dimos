@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stage 1, uniqueness: is this scan distinctive enough to place, measured on the scan alone (descriptor
-//! occupancy in `similarity_discovery`, geometric degeneracy here); uniqueness vs the current map is not measured.
+//! Stage 1, uniqueness: is this scan distinctive enough to place, measured on the scan alone (descriptor occupancy in `similarity_discovery`, geometric degeneracy here); uniqueness vs the current map is not measured.
 
 use rayon::prelude::*;
 

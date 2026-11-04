@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! O(1)-snapshot stores for the off-scan-thread jobs: `Appended<T>` (append-only chunked arena read without locks),
-//! `KeyFrames`/`Closures` (fixed data appended; the adopted solve's poses/weights swapped in as an `Arc`).
+//! O(1)-snapshot stores for the off-scan-thread jobs: `Appended<T>` (append-only chunked arena read without locks), `KeyFrames`/`Closures` (fixed data appended; the adopted solve's poses/weights swapped in as an `Arc`).
 
 use crate::gsc_pgo::{CommittedClosure, KeyPoseWithCloud};
 use crate::mat3::{self, Mat3, Vec3};
@@ -244,8 +243,7 @@ impl KeyFrames {
         }
         self.fixed.get(k).heavy.lock().unwrap().descriptor.clone()
     }
-    /// Simplify keyframe `k` away: newer snapshots no longer see its cloud or descriptor. Returns the guard older snapshots hold;
-    /// `release` the keyframe once no one else holds it.
+    /// Simplify keyframe `k` away: newer snapshots no longer see its cloud or descriptor. Returns the guard older snapshots hold; `release` the keyframe once no one else holds it.
     pub(crate) fn remove(&mut self, k: usize) -> Arc<()> {
         self.removals += 1;
         self.fixed

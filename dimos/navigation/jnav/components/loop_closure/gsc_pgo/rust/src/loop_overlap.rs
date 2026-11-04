@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Chance the newest scan overlaps an earlier, unclosed stretch: PPK of each keyframe's relative position uncertainty
-//! (solved covariance, then odometry chain) with a sensor-range blob, weighted by P(off by > `closure_search_radius`).
+//! Chance the newest scan overlaps an earlier, unclosed stretch: PPK of each keyframe's relative position uncertainty (solved covariance, then odometry chain) with a sensor-range blob, weighted by P(off by > `closure_search_radius`).
 
 use crate::big_picture_fit::odometry_edges;
 use crate::gsc_pgo::{Config, GscPgo};
 use crate::mat3::{self, add_mat, det, skew, sub_mat, Mat3, Vec3};
 use crate::store::KeyFrames;
 
-#[derive(Debug, Clone, Copy, Default)]
-#[cfg_attr(feature = "native", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct LoopOverlap {
     /// Chance the newest scan overlaps an earlier unresolved stretch (keyframes a sensor range apart are independent).
     pub unresolved_loop_probability: f64,

@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lidar loop closure (Rust): Scan Context++ place recognition, gated ICP, and a background GNC pose graph solve.
-
-Takes only lidar scans and tf: each scan is posed by odom_frame -> body_frame and its points put in body_frame, both from
-tf at the scan's stamp, so a scan may be in any frame (sensor, body, or a fixed one like world).
-"""
+"""Lidar loop closure (Rust) from lidar scans and tf alone: each scan is posed by odom_frame -> body_frame from tf at its stamp."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -36,49 +34,23 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-# Mid-360 + FAST-LIO/Point-LIO odometry error estimate (fitted to ground truth): the default for unset fields.
-MID360_ODOMETRY_ERROR_ESTIMATE = {
-    "odometry_error_estimate_xy_per_sqrt_m": 3.91e-4,
-    "odometry_error_estimate_xy_per_sqrt_rad": 6.35e-3,
-    "odometry_error_estimate_z_per_sqrt_m": 6.42e-4,
-    "odometry_error_estimate_z_per_sqrt_rad": 3.86e-3,
-    "odometry_error_estimate_yaw_per_sqrt_m": 1e-6,
-    "odometry_error_estimate_yaw_per_sqrt_rad": 8.66e-3,
-    "odometry_error_estimate_tilt_per_sqrt_m": 6.91e-4,
-    "odometry_error_estimate_tilt_per_sqrt_rad": 3.3e-3,
-}
+# the core's defaults, shared with the Rust `Config::default()`
+DEFAULTS: dict[str, Any] = json.loads((Path(__file__).parent / "rust" / "defaults.json").read_text())
+ODOMETRY_ERROR_ESTIMATE_FIELDS = [
+    f"odometry_error_estimate_{source}_per_sqrt_{unit}"
+    for source in ("xy", "z", "yaw", "tilt")
+    for unit in ("m", "rad")
+]
 
 
 class PGOConfig(NativeModuleConfig):
     # "deterministic": jobs held to deterministic_config estimates (same graph on any machine); "fast": land on finish
-    mode: Literal["deterministic", "fast"] = "deterministic"
+    mode: Literal["deterministic", "fast"] = DEFAULTS["mode"]
     # overshoot warnings are logged at most once per this many seconds of data
-    overshoot_warning_interval_s: float = 10.0
-    # per-job cost estimates in scans (a job holds ceil(estimate) scans, at least one; *_power are unitless exponents)
+    overshoot_warning_interval_s: float = DEFAULTS["overshoot_warning_interval_s"]
+    # per-job cost estimates in scans (ceil, at least one; *_power unitless), defaulting to the R1 Jetson fit; keys not given keep it
     deterministic_config: dict[str, float] = Field(
-        default_factory=lambda: {
-            "fast_match_scans_fixed_overhead": 1.3885433563125162,
-            "fast_match_scans_per_keyframe": 1.448251991030438e-07,
-            "fast_match_scans_per_point": 7.970467536600849e-05,
-            "fast_match_scans_per_source_point": 0.00019838511484150277,
-            "verification_scans_fixed_overhead": 5.036066465159226,
-            "verification_scans_per_round": 0.7489339387672495,
-            "verification_scans_per_round_point": 6.563647896724165e-05,
-            "solve_scans_scale": 9.097483642429608e-05,
-            "solve_keyframe_power": 2.017,
-            "solve_closure_power": -0.215,
-            "solve_rejected_power": 0.558,
-            "solve_closure_free_scans_scale": 6.606e-4,
-            "solve_closure_free_keyframe_power": 1.651,
-            "debounce_scans_per_keyframe": 6.093487031356368e-06,
-            "merge_scans_per_keyframe": 3.0032671115943386e-07,
-            "pressure_scans_fixed_overhead": 0.0007777038336858567,
-            "pressure_scans_per_keyframe": 8.708997476399469e-06,
-            "pressure_scans_per_closure": 1.2578234731596874e-05,
-            "fast_path_scans_fixed_overhead": 0.42,
-            "fast_path_scans_per_window_keyframe": 1.7e-3,
-            "fast_path_scans_per_keyframe": 8.4e-5,
-        }
+        default_factory=lambda: dict(DEFAULTS["deterministic_config"])
     )
     source_dir: str | None = "dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"
     executable: str = "result/bin/gsc-pgo"
@@ -91,139 +63,139 @@ class PGOConfig(NativeModuleConfig):
     body_frame: str = "base_link"
 
     # Keyframe detection
-    keyframe_min_rotation_degrees: float = 10.0
-    keyframe_min_distance_meters: float = 0.5
+    keyframe_min_rotation_degrees: float = DEFAULTS["keyframe_min_rotation_degrees"]
+    keyframe_min_distance_meters: float = DEFAULTS["keyframe_min_distance_meters"]
 
     # Loop closure knobs
-    closure_search_radius: float = 3.0
+    closure_search_radius: float = DEFAULTS["closure_search_radius"]
     # ICP pairs points only within this distance (m)
-    closure_icp_inlier_distance_m: float = 0.3872983346207417
+    closure_icp_inlier_distance_m: float = DEFAULTS["closure_icp_inlier_distance_m"]
     # reject a closure whose ICP rms inlier distance (m) is larger
-    closure_icp_max_fitness_m: float = 0.3872983346207417
+    closure_icp_max_fitness_m: float = DEFAULTS["closure_icp_max_fitness_m"]
     # closure ICP minimises gaps along surface normals (point-to-plane); False = point-to-point
-    closure_icp_point_to_plane: bool = True
+    closure_icp_point_to_plane: bool = DEFAULTS["closure_icp_point_to_plane"]
     # single-scan ICP target voxel size (m; fitness still on the full target; 0 = full)
-    closure_icp_target_resolution_m: float = 0.15
+    closure_icp_target_resolution_m: float = DEFAULTS["closure_icp_target_resolution_m"]
     # stop single-scan ICP once its fitness can no longer pass the gate
-    closure_icp_early_stop: bool = True
+    closure_icp_early_stop: bool = DEFAULTS["closure_icp_early_stop"]
     # retry alternative places only at or above this pressure
-    closure_alternative_places_min_pressure: float = 0.8
+    closure_alternative_places_min_pressure: float = DEFAULTS["closure_alternative_places_min_pressure"]
     # drop points a scan re-sends from the previous scan (Go2 L1 republishes its last seconds)
-    drop_reseen_points: bool = True
+    drop_reseen_points: bool = DEFAULTS["drop_reseen_points"]
     # min points per keyframe cloud; a due keyframe aggregates scans until reached (0 = off)
-    auto_aggregate_cloud_size: int = 2000
+    auto_aggregate_cloud_size: int = DEFAULTS["auto_aggregate_cloud_size"]
     # target submap half range = ceil(source clouds x (1 + extra_fraction)) + extra_keyframes
-    closure_target_extra_fraction: float = 0.3
-    closure_target_extra_keyframes: int = 3
-    submap_resolution: float = 0.1
+    closure_target_extra_fraction: float = DEFAULTS["closure_target_extra_fraction"]
+    closure_target_extra_keyframes: int = DEFAULTS["closure_target_extra_keyframes"]
+    submap_resolution: float = DEFAULTS["submap_resolution"]
     # min occupied Scan-Context cells (0 = off)
-    closure_min_occupancy: int = 80
+    closure_min_occupancy: int = DEFAULTS["closure_min_occupancy"]
     # ICP degeneracy (observability) gate; higher = fewer false matches (0 = off)
-    closure_min_degeneracy: float = 0.05
+    closure_min_degeneracy: float = DEFAULTS["closure_min_degeneracy"]
 
     # keyframe dump file for offline checks (f64 ts, raw xyz+q, corrected xyz+q); "" = none
     dump_path: str = ""
 
-    scan_context_num_rings: int = 20
-    scan_context_num_sectors: int = 60
+    scan_context_num_rings: int = DEFAULTS["scan_context_num_rings"]
+    scan_context_num_sectors: int = DEFAULTS["scan_context_num_sectors"]
     # ring range (m), near the lidar's useful range; 0 = auto-scale from the first scan's extent
-    scan_context_max_range_m: float = 0.0
-    scan_context_top_k: int = 10
-    scan_context_match_threshold: float = 0.4
-    scan_context_lidar_height_m: float = 2.0
+    scan_context_max_range_m: float = DEFAULTS["scan_context_max_range_m"]
+    scan_context_top_k: int = DEFAULTS["scan_context_top_k"]
+    scan_context_match_threshold: float = DEFAULTS["scan_context_match_threshold"]
+    scan_context_lidar_height_m: float = DEFAULTS["scan_context_lidar_height_m"]
     # recompute the loop-overlap pressure every this-many-th scan (0 = never)
-    pressure_check_frequency: int = 5
+    pressure_check_frequency: int = DEFAULTS["pressure_check_frequency"]
     # display-only soft_pressure is 50% at this log10 loop hazard, log-compressed to 0% soft_pressure_decades below
-    soft_pressure_half_log10_hazard: float = -0.5
-    soft_pressure_decades: float = 100.0
+    soft_pressure_half_log10_hazard: float = DEFAULTS["soft_pressure_half_log10_hazard"]
+    soft_pressure_decades: float = DEFAULTS["soft_pressure_decades"]
     # reduced pose graph for long runs: a keyframe past the frontier rides an older pass's keyframe within place_radius_m
-    graph_simplify: bool = True
-    graph_simplify_frontier_keyframes: int = 1000
+    graph_simplify: bool = DEFAULTS["graph_simplify"]
+    graph_simplify_frontier_keyframes: int = DEFAULTS["graph_simplify_frontier_keyframes"]
     # a keyframe revisits a place only if the kept keyframe there is at least this many keyframes older
-    graph_simplify_pass_gap_keyframes: int = 200
-    graph_simplify_place_radius_m: float = 1.0
-    graph_simplify_localized_keyframes: int = 50
-    graph_simplify_closures_per_pair: int = 1
+    graph_simplify_pass_gap_keyframes: int = DEFAULTS["graph_simplify_pass_gap_keyframes"]
+    graph_simplify_place_radius_m: float = DEFAULTS["graph_simplify_place_radius_m"]
+    graph_simplify_localized_keyframes: int = DEFAULTS["graph_simplify_localized_keyframes"]
+    graph_simplify_closures_per_pair: int = DEFAULTS["graph_simplify_closures_per_pair"]
     # one sd of how far a removed keyframe's frozen offset may be off: edges and closures through one carry this much more variance
-    graph_simplify_offset_sd_m: float = 0.05
-    graph_simplify_offset_sd_rad: float = 0.005
+    graph_simplify_offset_sd_m: float = DEFAULTS["graph_simplify_offset_sd_m"]
+    graph_simplify_offset_sd_rad: float = DEFAULTS["graph_simplify_offset_sd_rad"]
     # odometry folds between consecutive kept keyframes (else it follows the nodes removed keyframes ride)
-    graph_simplify_chain_odometry: bool = True
+    graph_simplify_chain_odometry: bool = DEFAULTS["graph_simplify_chain_odometry"]
     # past this much folded odometry (m) the walk rides the current place's node instead
-    graph_simplify_chain_fold_max_m: float = 30.0
+    graph_simplify_chain_fold_max_m: float = DEFAULTS["graph_simplify_chain_fold_max_m"]
 
     # k in the yank gate: confidence must clear 1 - exp(-z^2/2k^2), z = yank in robust std devs of yanks so far
-    closure_yank_gate_width: float = 1.0
+    closure_yank_gate_width: float = DEFAULTS["closure_yank_gate_width"]
     # max ratio of true drift to the stated odometry error estimate, averaged over by the yank gate (1 = trust it)
-    closure_yank_drift_range: float = 100.0
+    closure_yank_drift_range: float = DEFAULTS["closure_yank_drift_range"]
     # skip an extension candidate a full stack of scans could not carry
-    closure_extension_skip_unreachable: bool = True
+    closure_extension_skip_unreachable: bool = DEFAULTS["closure_extension_skip_unreachable"]
     # evidence / required (yank units): <= barely_fail reject, >= barely_pass accept, else extend (fail < 1 < pass)
-    barely_fail_uncertainty_range: float = 0.05
-    barely_pass_uncertainty_range: float = 3.0
+    barely_fail_uncertainty_range: float = DEFAULTS["barely_fail_uncertainty_range"]
+    barely_pass_uncertainty_range: float = DEFAULTS["barely_pass_uncertainty_range"]
     # uncertainty range narrows over extension steps, slowed by 1 / (1 - pressure)^this
-    decisive_pressure_rate: float = 1.0
+    decisive_pressure_rate: float = DEFAULTS["decisive_pressure_rate"]
     # odometry distance between an extension's source clouds, as a fraction of mean scan reach
-    extension_cloud_spacing: float = 0.25
+    extension_cloud_spacing: float = DEFAULTS["extension_cloud_spacing"]
     # extension score = median cloud ratio x exp(this (1 - min(d, 5)^2)) per step, d = step disagreement (0 = median)
-    compounding_agreement_sensitivity: float = 1.5
+    compounding_agreement_sensitivity: float = DEFAULTS["compounding_agreement_sensitivity"]
     # adopt a solve only while heat <= threshold; adopting adds its largest move's yank above floor; decay per keyframe
-    graph_change_heat_enabled: bool = True
-    graph_change_heat_threshold: float = 30.0
-    graph_change_heat_floor: float = 20.0
-    graph_change_heat_decay: float = 0.995
+    graph_change_heat_enabled: bool = DEFAULTS["graph_change_heat_enabled"]
+    graph_change_heat_threshold: float = DEFAULTS["graph_change_heat_threshold"]
+    graph_change_heat_floor: float = DEFAULTS["graph_change_heat_floor"]
+    graph_change_heat_decay: float = DEFAULTS["graph_change_heat_decay"]
     # seed a solve from the accepted graph (when it fits) and optionally from the last adopted GNC verdicts
-    solve_seed_from_accepted: bool = True
-    solve_seed_gnc_verdicts: bool = False
+    solve_seed_from_accepted: bool = DEFAULTS["solve_seed_from_accepted"]
+    solve_seed_gnc_verdicts: bool = DEFAULTS["solve_seed_gnc_verdicts"]
     # solver fast path: a recent closure is applied at once by local least squares until the GNC solve supersedes it
-    solver_fast_path_enabled: bool = False
-    solver_fast_path_max_keyframes: int = 1000
+    solver_fast_path_enabled: bool = DEFAULTS["solver_fast_path_enabled"]
+    solver_fast_path_max_keyframes: int = DEFAULTS["solver_fast_path_max_keyframes"]
     # each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate
-    solver_fast_path_max_lm_steps: int = 10
+    solver_fast_path_max_lm_steps: int = DEFAULTS["solver_fast_path_max_lm_steps"]
     # closure search pipeline: SC buffer (most similar first) -> fast-match workers -> verification buffer -> workers
-    fast_match_workers: int = 2
-    sc_buffer_size: int = 4
-    verification_workers: int = 2
-    verification_buffer_slots: int = 2
+    fast_match_workers: int = DEFAULTS["fast_match_workers"]
+    sc_buffer_size: int = DEFAULTS["sc_buffer_size"]
+    verification_workers: int = DEFAULTS["verification_workers"]
+    verification_buffer_slots: int = DEFAULTS["verification_buffer_slots"]
     # recent speed = median over the newest this many distinct-pose steps
-    solve_speed_window_poses: int = 500
+    solve_speed_window_poses: int = DEFAULTS["solve_speed_window_poses"]
     # write each ICP-scored candidate to <dir>/<source>_<target>.icp ("" = off)
-    closure_icp_dump_dir: str = ""
+    closure_icp_dump_dir: str = DEFAULTS["closure_icp_dump_dir"]
     # re-check a weak match on the last 2, 4, 8, ... (up to this many) keyframes (0 = off)
-    closure_extended_icp_max_keyframes: int = 16
+    closure_extended_icp_max_keyframes: int = DEFAULTS["closure_extended_icp_max_keyframes"]
     # closure evidence = per-point likelihood ratio, instead of scan-context x ICP x degeneracy
-    closure_likelihood_confidence: bool = True
+    closure_likelihood_confidence: bool = DEFAULTS["closure_likelihood_confidence"]
     # after a rejection, try the next scan-context match (up to 1 + floor(sqrt(min(ceil(1/(1-pressure)), top_k-1))))
-    closure_alternative_places: bool = True
+    closure_alternative_places: bool = DEFAULTS["closure_alternative_places"]
     # with closure_likelihood_confidence: ignore source points no target scan saw
-    closure_likelihood_visibility: bool = True
+    closure_likelihood_visibility: bool = DEFAULTS["closure_likelihood_visibility"]
     # learn the odometry noise scale from kept closures (max likelihood)
-    learned_odometry_error_estimate_from_closures: bool = True
+    learned_odometry_error_estimate_from_closures: bool = DEFAULTS["learned_odometry_error_estimate_from_closures"]
     # noise learner reads only pairwise-consistent (PCM core) kept closures
-    odometry_error_estimate_evidence_core: bool = True
+    odometry_error_estimate_evidence_core: bool = DEFAULTS["odometry_error_estimate_evidence_core"]
     # "scan_context": place recognition proposes closures; "inputs_only": only landmarks / world positions (plus landmark-seeded ICP)
-    closure_sources: Literal["scan_context", "inputs_only"] = "scan_context"
+    closure_sources: Literal["scan_context", "inputs_only"] = DEFAULTS["closure_sources"]
     # with inputs_only: run that landmark-seeded ICP closure (false = landmarks and world positions alone)
-    landmark_closure_icp: bool = True
+    landmark_closure_icp: bool = DEFAULTS["landmark_closure_icp"]
     # 2D: odometry and every factor count only as x, y, yaw; the solve holds z, roll and pitch at 0
-    planar_pose_graph: bool = False
+    planar_pose_graph: bool = DEFAULTS["planar_pose_graph"]
     # landmark warm start: first solve with odometry xy variances times this (<= 1 = off) so a re-sighting can pull a loop shut
-    landmark_warm_start_xy_variance_scale: float = 1000.0
+    landmark_warm_start_xy_variance_scale: float = DEFAULTS["landmark_warm_start_xy_variance_scale"]
     # ...then xy stiffens stage by stage (scale divided by this each time) so every stage's LM converges
-    landmark_warm_start_xy_variance_ladder: float = 10.0
+    landmark_warm_start_xy_variance_ladder: float = DEFAULTS["landmark_warm_start_xy_variance_ladder"]
     # closure-verification ICP: iteration cap and correspondence gate (m)
-    closure_icp_max_iterations: int = 50
-    closure_icp_max_correspondence_m: float = 10.0
+    closure_icp_max_iterations: int = DEFAULTS["closure_icp_max_iterations"]
+    closure_icp_max_correspondence_m: float = DEFAULTS["closure_icp_max_correspondence_m"]
 
     # GNC: var_scale loosens closure variance while deciding; inlier_probability sets the chi-squared cutoff
-    closure_gnc_var_scale: float = 10.0
-    closure_gnc_inlier_probability: float = 0.95
+    closure_gnc_var_scale: float = DEFAULTS["closure_gnc_var_scale"]
+    closure_gnc_inlier_probability: float = DEFAULTS["closure_gnc_inlier_probability"]
     # Huber threshold on kept closures' whitened residuals in the final solve (0 = plain least squares)
-    closure_robust_huber_k: float = 1.345
+    closure_robust_huber_k: float = DEFAULTS["closure_robust_huber_k"]
 
     # reject closures the graph is already surer of than ICP
-    closure_uninformative_gate: bool = True
-    # odometry drift std dev per sqrt(m travelled) / sqrt(rad turned); None = MID360_ODOMETRY_ERROR_ESTIMATE
+    closure_uninformative_gate: bool = DEFAULTS["closure_uninformative_gate"]
+    # odometry drift std dev per sqrt(m travelled) / sqrt(rad turned); None = lidar_range's Mid-360 calibration
     odometry_error_estimate_xy_per_sqrt_m: float | None = None
     odometry_error_estimate_xy_per_sqrt_rad: float | None = None
     odometry_error_estimate_z_per_sqrt_m: float | None = None
@@ -234,10 +206,10 @@ class PGOConfig(NativeModuleConfig):
     odometry_error_estimate_tilt_per_sqrt_rad: float | None = None
     # scale the odometry error estimate by lidar range (L1..Mid-360); None = on only if no estimate field is given
     odometry_error_estimate_from_lidar_range: bool | None = None
-    # LidarRangeConfig overrides (window_scans, decay_half_life_updates, ...); empty = calibrated defaults
-    lidar_range: dict[str, Any] = Field(default_factory=dict)
+    # LidarRangeConfig: window, blends per window, and the Go2 L1 and Mid-360 range calibrations; keys not given keep the defaults
+    lidar_range: dict[str, Any] = Field(default_factory=lambda: dict(DEFAULTS["lidar_range"]))
     # loops' worth of evidence the stated estimate counts as in the learner (0 = closures alone, inf = never learn)
-    learned_odometry_error_estimate_stiffness: float = 10.0
+    learned_odometry_error_estimate_stiffness: float = DEFAULTS["learned_odometry_error_estimate_stiffness"]
 
     # depth of each scan queue: waiting for tf drops the oldest, waiting for the solver keeps only the newest (<= 0 = unbounded)
     max_scan_queue: int = 5
@@ -245,15 +217,18 @@ class PGOConfig(NativeModuleConfig):
     worker_threads: int = 0
 
     @model_validator(mode="after")
-    def _odometry_error_estimate(self) -> PGOConfig:
-        given = {name: getattr(self, name) for name in MID360_ODOMETRY_ERROR_ESTIMATE}
+    def _fill_defaults(self) -> PGOConfig:
+        self.deterministic_config = {**DEFAULTS["deterministic_config"], **self.deterministic_config}
+        self.lidar_range = {**DEFAULTS["lidar_range"], **self.lidar_range}
+        given = {name: getattr(self, name) for name in ODOMETRY_ERROR_ESTIMATE_FIELDS}
         if self.odometry_error_estimate_from_lidar_range is None:
             self.odometry_error_estimate_from_lidar_range = all(
                 value is None for value in given.values()
             )
-        for name, value in given.items():
+        mid360 = DEFAULTS["lidar_range"]["mid360_odometry_error_estimate"]
+        for index, (name, value) in enumerate(given.items()):
             if value is None:
-                setattr(self, name, MID360_ODOMETRY_ERROR_ESTIMATE[name])
+                setattr(self, name, mid360[index // 2][index % 2])
         return self
 
 

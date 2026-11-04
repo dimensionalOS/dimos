@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `GscPgo`: keyframe gating, the closure search and its gates, and the pose graph (odometry + gated closures),
-//! re-solved on a background thread when new closures arrive. Keyframe ids are indices; `mat3` is row-major f64.
+//! `GscPgo`: keyframe gating, the closure search and its gates, and the pose graph (odometry + gated closures), re-solved on a background thread when new closures arrive. Keyframe ids are indices; `mat3` is row-major f64.
 
 use std::sync::Arc;
 
@@ -99,8 +98,7 @@ impl CommittedClosure {
 }
 
 /// Per-search loop-closure diagnostics: each gate's metric and the outcome, so an offline eval sees where/why closures pass.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "native", derive(serde::Serialize))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ClosureCandidateDiag {
     /// "accepted", "outranked", "stale", "verification_dropped", or the rejecting gate's name (e.g. "icp_reject", "uninformative").
     pub outcome: &'static str,
@@ -319,8 +317,7 @@ pub enum ClosureEdgeState {
     GateRejected = 1,
     /// Passed every gate; waits for GNC to vote it into the graph.
     Committed = 2,
-    // 3 was a single GNC solve's weight, no longer sent
-    /// GNC voted it into the graph.
+    /// GNC voted it into the graph (3, a single GNC solve's weight, is retired).
     Accepted = 4,
     /// GNC voted it out of the graph (never in, or taken back out).
     Rejected = 5,
@@ -367,13 +364,11 @@ impl ClosureEdgeEvent {
     }
 }
 
-/// One LET kind's overshoots: over the run, and since the last warning (`Config::overshoot_warning_interval_s`).
+/// One LET kind's jobs and overshoots since the last warning (`Config::overshoot_warning_interval_s`).
 #[derive(Default)]
 pub(crate) struct OvershootTally {
-    pub(crate) jobs: usize,
-    pub(crate) overshoots: usize,
-    jobs_since_warning: usize,
-    overshoots_since_warning: usize,
+    jobs: usize,
+    overshoots: usize,
 }
 
 impl GscPgo {
@@ -381,12 +376,10 @@ impl GscPgo {
     pub(crate) fn note_overshoot(&mut self, kind: &'static str, overshoot: bool) {
         let tally = self.overshoot_tally.entry(kind).or_default();
         tally.jobs += 1;
-        tally.jobs_since_warning += 1;
         if !overshoot {
             return;
         }
         tally.overshoots += 1;
-        tally.overshoots_since_warning += 1;
         let now = self.newest_scan_time();
         let due = self
             .last_overshoot_warning
@@ -398,65 +391,41 @@ impl GscPgo {
         let counts: Vec<String> = self
             .overshoot_tally
             .iter_mut()
-            .filter(|(_, tally)| tally.jobs_since_warning > 0)
+            .filter(|(_, tally)| tally.jobs > 0)
             .map(|(kind, tally)| {
-                let line = format!(
-                    "{kind} {} of {}",
-                    tally.overshoots_since_warning, tally.jobs_since_warning
-                );
-                tally.jobs_since_warning = 0;
-                tally.overshoots_since_warning = 0;
+                let line = format!("{kind} {} of {}", tally.overshoots, tally.jobs);
+                *tally = OvershootTally::default();
                 line
             })
             .collect();
-        eprintln!(
-            "gsc_pgo: WARNING: jobs ran past their deterministic_config estimates (overshoots since the last warning: {}); this machine is slower than the config's, so a replay waits for them and a live run lands them late; a fast-mode run prints a deterministic_config that fits it",
+        tracing::warn!(
+            "jobs ran past their deterministic_config estimates (overshoots since the last warning: {}); this machine is slower than the config's, so a replay waits for them and a live run lands them late; a fast-mode run logs a deterministic_config that fits it",
             counts.join(", ")
         );
-    }
-    /// Per LET kind, its jobs and overshoots over the run (a report only).
-    pub fn overshoot_report(&self) -> Vec<(&'static str, usize, usize)> {
-        self.overshoot_tally
-            .iter()
-            .map(|(&kind, tally)| (kind, tally.jobs, tally.overshoots))
-            .collect()
     }
 }
 
 /// `Config::mode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "native",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "lowercase")
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Mode {
     Fast,
     Deterministic,
 }
 
 /// `Config::closure_sources`: where loop closures come from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "native",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(rename_all = "snake_case")
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ClosureSources {
     /// Scan-context place recognition (else the nearest past keyframe by position), each match verified by ICP.
     ScanContext,
-    /// No place recognition: the external inputs (landmark sightings, world positions) close loops; a landmark seen again on a
-    /// later visit seeds an ICP closure between the two sighting keyframes (`landmark_closure_icp`) so the clouds line up.
+    /// No place recognition: the external inputs (landmark sightings, world positions) close loops; a landmark seen again on a later visit seeds an ICP closure between the two sighting keyframes (`landmark_closure_icp`) so the clouds line up.
     InputsOnly,
 }
 
 /// Deterministic-mode job estimates in scans (a job holds `ceil(estimate)`, at least one); defaults are the R1 Jetson fit.
-#[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "native",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(default, deny_unknown_fields)
-)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeterministicConfig {
     /// Fast match (search up to the extension): fixed, per keyframe (scan-context lookup; none for a retry), per point, per source point.
     pub fast_match_scans_fixed_overhead: f64,
@@ -489,37 +458,6 @@ pub struct DeterministicConfig {
     pub fast_path_scans_per_keyframe: f64,
 }
 
-impl Default for DeterministicConfig {
-    fn default() -> DeterministicConfig {
-        // R1 Jetson fit (gsc_stable_0.0.3 fast mode, MLS + raytracer load), max over nine maps; solve powers from the Mac fit
-        DeterministicConfig {
-            fast_match_scans_fixed_overhead: 1.3885433563125162,
-            fast_match_scans_per_keyframe: 1.448251991030438e-07,
-            fast_match_scans_per_point: 7.970467536600849e-05,
-            fast_match_scans_per_source_point: 0.00019838511484150277,
-            verification_scans_fixed_overhead: 5.036066465159226,
-            verification_scans_per_round: 0.7489339387672495,
-            verification_scans_per_round_point: 6.563647896724165e-05,
-            solve_scans_scale: 9.097483642429608e-05,
-            solve_keyframe_power: 2.017,
-            solve_closure_power: -0.215,
-            solve_rejected_power: 0.558,
-            // closure-free solves: the Mac fit at zero closures (3.585e-5 n^1.651) times the closure model's 18.4x margin
-            solve_closure_free_scans_scale: 6.606e-4,
-            solve_closure_free_keyframe_power: 1.651,
-            debounce_scans_per_keyframe: 6.093487031356368e-06,
-            merge_scans_per_keyframe: 3.0032671115943386e-07,
-            pressure_scans_fixed_overhead: 0.0007777038336858567,
-            pressure_scans_per_keyframe: 8.708997476399469e-06,
-            pressure_scans_per_closure: 1.2578234731596874e-05,
-            // fast path: a loaded Mac's fast-mode p99 (gir1_pointlio, 1000-keyframe window) x4, the Jetson's slowdown on solve-like jobs
-            fast_path_scans_fixed_overhead: 0.42,
-            fast_path_scans_per_window_keyframe: 1.7e-3,
-            fast_path_scans_per_keyframe: 8.4e-5,
-        }
-    }
-}
-
 impl Config {
     /// Whether every LET job is held to its estimate (`Mode::Deterministic`).
     pub fn deterministic(&self) -> bool {
@@ -527,13 +465,9 @@ impl Config {
     }
 }
 
-/// Tunable configuration for the PGO core.
-#[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "native",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(default)
-)]
+/// Tunable configuration for the PGO core; its defaults are `defaults.json`, which module.py reads too.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// `deterministic` (default): every LET job is held to its estimate so replays match on any machine; `fast`: no holds, prints a fitted config.
     pub mode: Mode,
@@ -588,8 +522,7 @@ pub struct Config {
     pub graph_change_heat_decay: f64,
     /// Seed a solve from the accepted graph when it already fits every closure GNC would weigh; otherwise from the odometry.
     pub solve_seed_from_accepted: bool,
-    /// Solver fast path (`fast_path`): a new closure whose older end is within `solver_fast_path_max_keyframes` of the newest
-    /// keyframe is applied at once by a local least squares (no GNC) over those keyframes; the GNC solve covering it supersedes.
+    /// Solver fast path (`fast_path`): a new closure whose older end is within `solver_fast_path_max_keyframes` of the newest keyframe is applied at once by a local least squares (no GNC) over those keyframes; the GNC solve covering it supersedes.
     pub solver_fast_path_enabled: bool,
     pub solver_fast_path_max_keyframes: usize,
     /// Each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate.
@@ -667,8 +600,7 @@ pub struct Config {
     pub graph_simplify_localized_keyframes: usize,
     /// Closures per node pair that go to the solve (the rest keep their last verdict); 0 = all.
     pub graph_simplify_closures_per_pair: usize,
-    /// How far a removed keyframe's frozen offset from its node may be off (m, rad, one sd): an edge reaching a node through
-    /// one carries this much more variance per such end, so the adopted graph it was read from is not taken as exact.
+    /// How far a removed keyframe's frozen offset from its node may be off (m, rad, one sd): an edge reaching a node through one carries this much more variance per such end, so the adopted graph it was read from is not taken as exact.
     pub graph_simplify_offset_sd_m: f64,
     pub graph_simplify_offset_sd_rad: f64,
     /// Odometry folds between consecutive kept keyframes (true), or follows the nodes removed keyframes ride (false).
@@ -679,11 +611,9 @@ pub struct Config {
     pub closure_sources: ClosureSources,
     /// With `inputs_only`: a landmark re-seen on a later visit proposes an ICP closure between its two sighting keyframes.
     pub landmark_closure_icp: bool,
-    /// 2D: odometry is taken as x, y, yaw (z, roll, pitch dropped, the cloud levelled), closures, sightings and world positions
-    /// are measured in that level frame, and the solve holds every keyframe's z, roll and pitch at 0 (no z or tilt drift).
+    /// 2D: odometry is taken as x, y, yaw (z, roll, pitch dropped, the cloud levelled), closures, sightings and world positions are measured in that level frame, and the solve holds every keyframe's z, roll and pitch at 0 (no z or tilt drift).
     pub planar_pose_graph: bool,
-    /// A solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off): a long
-    /// loop's re-sighting is otherwise out of reach of a solve from the drifted odometry, and GNC drops it as an outlier.
+    /// A solve with landmark sightings starts from one with the odometry's xy variances times this (<= 1 = off): a long loop's re-sighting is otherwise out of reach of a solve from the drifted odometry, and GNC drops it as an outlier.
     pub landmark_warm_start_xy_variance_scale: f64,
     /// ...then a solve per stage, each from the last with that scale divided by this, down to the stated variances.
     pub landmark_warm_start_xy_variance_ladder: f64,
@@ -695,8 +625,7 @@ impl Config {
         (clouds.max(1) as f64 * (1.0 + self.closure_target_extra_fraction.max(0.0))).ceil() as usize
             + self.closure_target_extra_keyframes
     }
-    /// An error naming the first setting out of its allowed range, if any.
-    // the negated comparisons reject NaN too
+    /// An error naming the first setting out of its allowed range, if any (the negated comparisons reject NaN too).
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn validate(&self) -> Result<(), String> {
         if self.odometry_error_estimate_from_lidar_range {
@@ -806,98 +735,19 @@ impl Config {
 }
 
 impl Default for Config {
+    /// `defaults.json`, with the stated odometry error estimate the Mid-360's (`lidar_range.mid360_odometry_error_estimate`).
     fn default() -> Config {
-        Config {
-            mode: Mode::Deterministic,
-            deterministic_config: DeterministicConfig::default(),
-            overshoot_warning_interval_s: 10.0,
-            keyframe_min_rotation_degrees: 10.0,
-            keyframe_min_distance_meters: 0.5,
-            closure_search_radius: 3.0,
-            closure_icp_inlier_distance_m: 0.3872983346207417,
-            closure_icp_max_fitness_m: 0.3872983346207417,
-            closure_icp_point_to_plane: true,
-            closure_icp_target_resolution_m: 0.15,
-            closure_icp_early_stop: true,
-            drop_reseen_points: true,
-            auto_aggregate_cloud_size: 2000,
-            closure_target_extra_fraction: 0.3,
-            closure_target_extra_keyframes: 3,
-            submap_resolution: 0.1,
-            closure_min_occupancy: 80,
-            closure_min_degeneracy: 0.05,
-            closure_yank_gate_width: 1.0,
-            closure_yank_drift_range: 100.0,
-            closure_extension_skip_unreachable: true,
-            barely_fail_uncertainty_range: 0.05,
-            barely_pass_uncertainty_range: 3.0,
-            decisive_pressure_rate: 1.0,
-            extension_cloud_spacing: 0.25,
-            compounding_agreement_sensitivity: 1.5,
-            graph_change_heat_enabled: true,
-            graph_change_heat_threshold: 30.0,
-            graph_change_heat_floor: 20.0,
-            graph_change_heat_decay: 0.995,
-            solve_seed_from_accepted: true,
-            solve_seed_gnc_verdicts: false,
-            solver_fast_path_enabled: false,
-            solver_fast_path_max_keyframes: 1000,
-            solver_fast_path_max_lm_steps: 10,
-            fast_match_workers: 2,
-            sc_buffer_size: 4,
-            verification_workers: 2,
-            verification_buffer_slots: 2,
-            solve_speed_window_poses: 500,
-            closure_icp_dump_dir: String::new(),
-            closure_extended_icp_max_keyframes: 16,
-            closure_robust_huber_k: 1.345,
-            closure_icp_max_iterations: 50,
-            closure_icp_max_correspondence_m: 10.0,
-            closure_gnc_var_scale: 10.0,
-            closure_gnc_inlier_probability: 0.95,
-            closure_uninformative_gate: true,
-            odometry_error_estimate_xy_per_sqrt_m: 3.91e-4,
-            odometry_error_estimate_xy_per_sqrt_rad: 6.35e-3,
-            odometry_error_estimate_z_per_sqrt_m: 6.42e-4,
-            odometry_error_estimate_z_per_sqrt_rad: 3.86e-3,
-            odometry_error_estimate_yaw_per_sqrt_m: 1e-6,
-            odometry_error_estimate_yaw_per_sqrt_rad: 8.66e-3,
-            odometry_error_estimate_tilt_per_sqrt_m: 6.91e-4,
-            odometry_error_estimate_tilt_per_sqrt_rad: 3.3e-3,
-            odometry_error_estimate_from_lidar_range: true,
-            lidar_range: crate::lidar_range::LidarRangeConfig::default(),
-            learned_odometry_error_estimate_stiffness: 10.0,
-            scan_context_num_rings: 20,
-            scan_context_num_sectors: 60,
-            scan_context_max_range_m: 0.0,
-            scan_context_top_k: 10,
-            scan_context_match_threshold: 0.4,
-            scan_context_lidar_height_m: 2.0,
-            closure_likelihood_confidence: true,
-            closure_alternative_places: true,
-            closure_alternative_places_min_pressure: 0.8,
-            closure_likelihood_visibility: true,
-            learned_odometry_error_estimate_from_closures: true,
-            odometry_error_estimate_evidence_core: true,
-            pressure_check_frequency: 5,
-            soft_pressure_half_log10_hazard: -0.5,
-            soft_pressure_decades: 100.0,
-            graph_simplify: true,
-            graph_simplify_frontier_keyframes: 1000,
-            graph_simplify_pass_gap_keyframes: 200,
-            graph_simplify_place_radius_m: 1.0,
-            graph_simplify_localized_keyframes: 50,
-            graph_simplify_closures_per_pair: 1,
-            graph_simplify_offset_sd_m: 0.05,
-            graph_simplify_offset_sd_rad: 0.005,
-            graph_simplify_chain_odometry: true,
-            graph_simplify_chain_fold_max_m: 30.0,
-            closure_sources: ClosureSources::ScanContext,
-            landmark_closure_icp: true,
-            planar_pose_graph: false,
-            landmark_warm_start_xy_variance_scale: 1000.0,
-            landmark_warm_start_xy_variance_ladder: 10.0,
+        let mut defaults: serde_json::Value =
+            serde_json::from_str(include_str!("../defaults.json")).expect("defaults.json parses");
+        let mid360 = defaults["lidar_range"]["mid360_odometry_error_estimate"].clone();
+        for (source_index, source) in ["xy", "z", "yaw", "tilt"].iter().enumerate() {
+            for (unit_index, unit) in ["m", "rad"].iter().enumerate() {
+                defaults[format!("odometry_error_estimate_{source}_per_sqrt_{unit}")] =
+                    mid360[source_index][unit_index].clone();
+            }
         }
+        defaults["odometry_error_estimate_from_lidar_range"] = true.into();
+        serde_json::from_value(defaults).expect("defaults.json is a Config")
     }
 }
 
@@ -930,8 +780,7 @@ pub struct GscPgo {
     /// Landmark sightings (`add_landmark_factor`), how many were dispatched, and the newest solve's landmarks (id, map rotation, position).
     pub(crate) landmark_sightings: Vec<LandmarkSightingRecord>,
     pub(crate) landmark_sightings_dispatched: usize,
-    /// Each superseding sighting id's index in `landmark_sightings` (`replace_landmark_factor`), and whether one was
-    /// replaced since the newest solve started.
+    /// Each superseding sighting id's index in `landmark_sightings` (`replace_landmark_factor`), and whether one was replaced since the newest solve started.
     pub(crate) landmark_sighting_index: std::collections::HashMap<u64, usize>,
     pub(crate) landmark_sighting_replaced: bool,
     pub(crate) landmarks: Vec<(u64, Mat3, Vec3)>,
@@ -952,7 +801,7 @@ pub struct GscPgo {
     pub(crate) debounce_waiting: Option<crate::pose_graph_solving::FinishedSolve>,
     pub(crate) merge_job:
         Option<crate::adoption_schedule::AdoptionJob<crate::adoption_schedule::Merged>>,
-    pub(crate) merge_waiting: Option<MergeWaiting>,
+    pub(crate) merge_waiting: Option<crate::pose_graph_solving::FinishedSolve>,
     pub(crate) adoption_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) merge_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) adoption_inline: bool,
@@ -960,8 +809,7 @@ pub struct GscPgo {
     pub(crate) adopted_since_update: bool,
     /// Newest `solve_speed_window_poses` + 1 distinct odometry poses (time, odometry-frame position), for `recent_speed`.
     pub(crate) recent_motion: std::collections::VecDeque<(f64, Vec3)>,
-    /// Solves that overshot their estimate, and the newest scan's recorded time.
-    pub(crate) solve_overshoots: usize,
+    /// The newest scan's recorded time.
     pub(crate) scan_time: f64,
     /// Newest advancing scan time and count of scans whose stamp advanced (LET holds count these; repeated stamps span no time).
     pub(crate) newest_advancing_time: Option<f64>,
@@ -969,7 +817,7 @@ pub struct GscPgo {
     pub(crate) first_advancing_time: Option<f64>,
     /// Each landed job's kind and measured / estimated scans, for `runtime_profile`; never read by a decision.
     pub(crate) job_ratios: Vec<(&'static str, f64)>,
-    /// Per LET kind, its jobs and overshoots (over the run and since the last warning), and the data time of that warning.
+    /// Per LET kind, its jobs and overshoots since the last warning, and the data time of that warning.
     pub(crate) overshoot_tally: std::collections::BTreeMap<&'static str, OvershootTally>,
     pub(crate) last_overshoot_warning: Option<f64>,
     /// Dispatched, unlanded closure searches in order, the next order number, advancing-scan times since the oldest's dispatch, the pool.
@@ -979,13 +827,11 @@ pub struct GscPgo {
     pub(crate) search_scan_times: std::collections::VecDeque<f64>,
     pub(crate) search_scan_base: usize,
     pub(crate) search_pool: Option<crate::closure_search_schedule::SearchPool>,
-    /// Two-stage search: candidates awaiting fast match (with arrival numbers), matches awaiting verification, its pool, drop/overshoot counts.
+    /// Two-stage search: candidates awaiting fast match (with arrival numbers), matches awaiting verification, its pool.
     pub(crate) sc_buffer: Vec<(ClosureProposal, u64)>,
     pub(crate) sc_arrivals: u64,
     pub(crate) verification_buffer: Vec<(Box<PendingExtension>, u64)>,
     pub(crate) verification_pool: Option<crate::closure_search_schedule::SearchPool>,
-    pub(crate) verification_overshoots: usize,
-    pub(crate) closure_search_overshoots: usize,
     /// Scans offered to `add_key_pose`.
     pub(crate) scans_seen: usize,
     /// The running lidar range estimate (`odometry_error_estimate_from_lidar_range`).
@@ -1000,7 +846,6 @@ pub struct GscPgo {
     pub(crate) adopted_solves: u64,
     pub(crate) pressure_requested: bool,
     pub(crate) pressure_pool: Option<crate::closure_search_schedule::SearchPool>,
-    pub(crate) pressure_overshoots: usize,
     pub(crate) pressure_late: bool,
     /// Sum and count of the keyframes' scan reaches (95th-percentile planar range), the sensor range loop_overlap uses.
     pub(crate) keyframe_reach: (f64, usize),
@@ -1030,7 +875,6 @@ pub struct GscPgo {
     pub(crate) fast_path_job: Option<crate::fast_path::FastPathJob>,
     pub(crate) fast_path_pool: Option<crate::closure_search_schedule::SearchPool>,
     pub(crate) fast_path_reflected: usize,
-    pub(crate) fast_path_overshoots: usize,
     pub(crate) fast_path_records: Vec<crate::fast_path::FastPathRecord>,
     /// Per committed closure, when it was committed, first reflected by the fast path, and judged by an adopted GNC solve.
     pub(crate) closure_latency: Vec<crate::fast_path::ClosureLatency>,
@@ -1078,8 +922,7 @@ pub(crate) struct PlacedSighting {
     pub(crate) covariance: Mat3,
 }
 
-/// One landmark's sightings so far: its first visit's best (nearest) sighting, that visit's newest keyframe and whether it ended,
-/// and the newest keyframe a closure was proposed from.
+/// One landmark's sightings so far: its first visit's best (nearest) sighting, that visit's newest keyframe and whether it ended, and the newest keyframe a closure was proposed from.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LandmarkVisits {
     pub(crate) first_visit_best: PlacedSighting,
@@ -1122,16 +965,13 @@ pub struct ClosureSearch {
     pub(crate) icp_cache: Option<Arc<crate::icp_cache::IcpCache>>,
     /// Each keyframe's voxelized scan and range image, built once and shared by every closure search.
     pub(crate) keyframe_clouds: Arc<crate::proportional_confidence::KeyframeClouds>,
-    /// Seconds spent writing debug dumps (`closure_icp_dump_dir`), taken out of the stage timings.
-    pub(crate) debug_io_s: std::cell::Cell<f64>,
-    /// Every debug dump's seconds in this search (`closure_icp_dump_dir`), left out of `TimingStats::search_s`.
+    /// Every debug dump's seconds in this search (`closure_icp_dump_dir`), left out of the stage timings.
     pub(crate) dump_s: Arc<std::sync::Mutex<f64>>,
     /// The keyframes' mean scan reach (m), which spaces an extension's separate source clouds.
     pub(crate) mean_reach: f64,
     /// Where the search reports each extension round's start and end.
     pub(crate) progress: Option<Arc<crate::closure_search_schedule::SearchProgress>>,
-    /// A landmark-seeded search (`inputs_only`): the covariance (m², map frame) of the seed the two sightings imply, which the yank
-    /// is then measured from instead of the current graph.
+    /// A landmark-seeded search (`inputs_only`): the covariance (m², map frame) of the seed the two sightings imply, which the yank is then measured from instead of the current graph.
     pub(crate) landmark_seed_covariance: Option<Mat3>,
 }
 
@@ -1168,11 +1008,6 @@ impl ClosureSearchResult {
 
 /// A landmark sighting (`add_landmark_factor`): time, landmark id, rotation, position and 6x6 information in the body frame.
 pub(crate) type LandmarkSightingRecord = (f64, u64, Mat3, Vec3, [[f64; 6]; 6]);
-/// A finished solve waiting for the merge, with what its debounce measured.
-pub(crate) type MergeWaiting = (
-    crate::pose_graph_solving::FinishedSolve,
-    Option<(f64, f64, f64)>,
-);
 /// A search's place-recognition inputs for a retry: ring-key distances, the top-k matches under the threshold, and the next alternative.
 type RetryInputs = (Vec<(f32, usize)>, Vec<(f32, usize, i32)>, usize);
 
@@ -1239,7 +1074,10 @@ impl PendingExtension {
                 base,
             )
         };
-        let t0 = std::time::Instant::now();
+        let (extended_started, dumped_before) = (
+            std::time::Instant::now(),
+            *search.dump_s.lock().expect("dump seconds"),
+        );
         let extended = search.extended_icp(
             cur_idx,
             target_idx,
@@ -1249,7 +1087,8 @@ impl PendingExtension {
             &mut required,
             &memo_alignment,
         );
-        timing.extended_icp_s += t0.elapsed().as_secs_f64() - search.debug_io_s.take();
+        timing.extended_icp_s += extended_started.elapsed().as_secs_f64()
+            - (*search.dump_s.lock().expect("dump seconds") - dumped_before);
         let Some(extended) = extended else {
             return rejected(diag, "yank_confidence_reject", timing);
         };
@@ -1664,8 +1503,7 @@ impl ClosureSearch {
         let measured = |rotation: &Mat3, translation: &Vec3| self.measured(rotation, translation);
         let (rotation_offset, translation_offset) = measured(&icp.rotation, &icp.translation);
 
-        // graph yank: how far this constraint pulls the source from the current graph's relative pose (large = likely false closure);
-        // a landmark-seeded search measures it from the pose the landmark implies, at that seed's covariance
+        // graph yank: how far this constraint pulls the source from the current graph's relative pose (large = likely false closure); a landmark-seeded search measures it from the pose the landmark implies, at that seed's covariance
         let (current_relative_rotation, current_relative_translation) =
             match self.landmark_seed_covariance {
                 Some(covariance) => {
@@ -2241,8 +2079,7 @@ impl GscPgo {
         };
         self.offer_proposal(proposal);
     }
-    /// `inputs_only`: place the sightings up to the newest keyframe; a landmark seen on a later visit than its first proposes a
-    /// closure from that sighting's keyframe onto the first visit's nearest sighting, at most one per target submap span per landmark.
+    /// `inputs_only`: place the sightings up to the newest keyframe; a landmark seen on a later visit than its first proposes a closure from that sighting's keyframe onto the first visit's nearest sighting, at most one per target submap span per landmark.
     fn propose_from_landmarks(&mut self) {
         let Some(newest_time) = self.key_poses.last().map(|k| k.time) else {
             return;
@@ -2447,7 +2284,6 @@ impl GscPgo {
             tries: tries + 1,
             icp_cache: self.icp_cache.clone(),
             keyframe_clouds: self.keyframe_clouds.clone(),
-            debug_io_s: std::cell::Cell::new(0.0),
             dump_s: Arc::new(std::sync::Mutex::new(0.0)),
             progress: None,
             mean_reach: if self.keyframe_reach.1 > 0 {
@@ -2562,7 +2398,7 @@ impl GscPgo {
                 let auto_range = similarity_discovery::auto_max_range(cloud);
                 if auto_range > 0.0 {
                     self.scan_context_config.max_range_m = auto_range;
-                    eprintln!(
+                    tracing::info!(
                         "scan-context: auto ring range = {auto_range:.2} m (from cloud extent)"
                     );
                 }

@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native PGO module (`dimos_module`): scans wait until tf covers their stamp, are posed (odom -> body) and put in the
-//! body frame from tf, and a worker thread feeds them to GscPgo oldest-first and publishes the corrected odometry, tf,
-//! graph records and debug_log.
+//! Native PGO module (`dimos_module`): scans wait until tf covers their stamp, are posed (odom -> body) and put in the body frame from tf, and a worker thread feeds them to GscPgo oldest-first and publishes the corrected odometry, tf, graph records and debug_log.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -172,8 +169,7 @@ struct WaitingScan {
     points: dimos_gsc_pgo::pointcloud::PointCloud,
 }
 
-/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::replace_landmark_factor` when it has a
-/// sighting id, else `add_landmark_factor`).
+/// A landmark sighting in the body frame, waiting for the worker (`GscPgo::replace_landmark_factor` when it has a sighting id, else `add_landmark_factor`).
 struct LandmarkFix {
     sighting: Option<u64>,
     ts: f64,
@@ -211,6 +207,8 @@ struct SharedState {
     cloud_buffer: VecDeque<CloudWithPose>,
     /// A background solve finished and waits to be adopted.
     solve_finished: bool,
+    /// The module is stopping: the worker drains and returns.
+    stopping: bool,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
@@ -234,8 +232,7 @@ const ANY_TIME_S: f64 = 1e9;
 /// How long a scan's wait for tf goes before tf warns that it is still missing (the wait then carries on).
 const TF_WAIT_WARN_S: u64 = 10;
 
-/// The tf queries a scan needs: `parent -> child` from the sample nearest `ts`, or from the nearest sample within
-/// `tolerance` of `ts`; and the stamp of the path's stalest newest sample (asked silently, as it misses while waiting).
+/// The tf queries a scan needs: `parent -> child` from the sample nearest `ts`, or from the nearest sample within `tolerance` of `ts`; and the stamp of the path's stalest newest sample (asked silently, as it misses while waiting).
 trait TfLookup {
     fn newest(&self, parent: &str, child: &str) -> Option<f64>;
     fn transform(
@@ -249,7 +246,7 @@ trait TfLookup {
 
 impl TfLookup for Tf {
     fn newest(&self, parent: &str, child: &str) -> Option<f64> {
-        self.get_latest(parent, child).map(|t| t.ts)
+        self.get_latest(parent, child).map(|transform| transform.ts)
     }
     fn transform(
         &self,
@@ -263,9 +260,12 @@ impl TfLookup for Tf {
             Some(tolerance) => lookup.tolerance(tolerance),
             None => lookup,
         };
-        lookup
-            .get()
-            .map(|t| Isometry3::from_parts(Translation3::from(t.translation()), t.rotation()))
+        lookup.get().map(|transform| {
+            Isometry3::from_parts(
+                Translation3::from(transform.translation()),
+                transform.rotation(),
+            )
+        })
     }
 }
 
@@ -279,8 +279,7 @@ enum ScanMatch {
     Ready(CloudWithPose),
 }
 
-/// Pose a scan from tf (`odom_frame -> body_frame`) and put its points in `body_frame` (`body_frame -> frame_id`),
-/// each from the samples nearest the scan's stamp once every edge has a sample on both sides of it.
+/// Pose a scan from tf (`odom_frame -> body_frame`) and put its points in `body_frame` (`body_frame -> frame_id`), each from the samples nearest the scan's stamp once every edge has a sample on both sides of it.
 fn match_scan(
     tf: &impl TfLookup,
     scan: &WaitingScan,
@@ -314,16 +313,16 @@ fn match_scan(
     let points = scan
         .points
         .iter()
-        .map(|p| {
-            let q = mount * dimos_module::nalgebra::Point3::new(p[0], p[1], p[2]);
-            [q.x, q.y, q.z]
+        .map(|point| {
+            let moved = mount * dimos_module::nalgebra::Point3::new(point[0], point[1], point[2]);
+            [moved.x, moved.y, moved.z]
         })
         .collect();
-    let r = pose.rotation.to_rotation_matrix();
-    let t = pose.translation.vector;
+    let rotation = pose.rotation.to_rotation_matrix();
+    let translation = pose.translation.vector;
     let mut pose = PoseWithTime::new(
-        std::array::from_fn(|i| std::array::from_fn(|j| r[(i, j)])),
-        [t.x, t.y, t.z],
+        std::array::from_fn(|i| std::array::from_fn(|j| rotation[(i, j)])),
+        [translation.x, translation.y, translation.z],
     );
     let sec = scan.ts.floor();
     pose.set_time(sec as i32, ((scan.ts - sec) * 1e9) as u32);
@@ -429,8 +428,7 @@ struct GscPgoModule {
     #[input(decode = Odometry::decode, handler = on_coordinate_factor)]
     coordinate_factor: Input<Odometry>,
 
-    // Landmark sighting: frame_id = sensor, to_id = name, a repeated constraint_instance_id replaces its sighting;
-    // non-positive variance or zero quaternion = unknown.
+    // Landmark sighting: frame_id = sensor, to_id = name, a repeated constraint_instance_id replaces its sighting; non-positive variance or zero quaternion = unknown.
     #[input(decode = LocationConstraint::decode, handler = on_landmark_factor)]
     landmark_factor: Input<LocationConstraint>,
 
@@ -467,14 +465,12 @@ struct GscPgoModule {
 }
 
 struct WorkerHandle {
-    stop: Arc<AtomicBool>,
     thread: std::thread::JoinHandle<()>,
     tf_matcher: tokio::task::JoinHandle<()>,
 }
 
 impl GscPgoModule {
     async fn spawn_worker(&mut self) {
-        let stop = Arc::new(AtomicBool::new(false));
         let worker = Worker {
             state: Arc::clone(&self.state),
             config: self.config.clone(),
@@ -484,8 +480,7 @@ impl GscPgoModule {
             closure_edges: self.closure_edges.clone(),
             debug_log: self.debug_log.clone(),
             tf: self.tf.clone(),
-            rt: tokio::runtime::Handle::current(),
-            stop: Arc::clone(&stop),
+            runtime: tokio::runtime::Handle::current(),
             wake: Arc::clone(&self.wake),
         };
         let thread = std::thread::Builder::new()
@@ -499,23 +494,14 @@ impl GscPgoModule {
             Arc::clone(&self.wake),
             self.config.clone(),
         ));
-        self.worker = Some(WorkerHandle {
-            stop,
-            thread,
-            tf_matcher,
-        });
+        self.worker = Some(WorkerHandle { thread, tf_matcher });
         info!("PGO native module started");
     }
 
     async fn stop_worker(&mut self) {
-        if let Some(WorkerHandle {
-            stop,
-            thread,
-            tf_matcher,
-        }) = self.worker.take()
-        {
+        if let Some(WorkerHandle { thread, tf_matcher }) = self.worker.take() {
             tf_matcher.abort();
-            stop.store(true, Ordering::Relaxed);
+            self.state.lock().expect("state").stopping = true;
             self.wake.notify_all();
             let _ = tokio::task::spawn_blocking(move || thread.join()).await;
         }
@@ -529,20 +515,17 @@ impl GscPgoModule {
             [0.0; 3]
         } else {
             // no mount tf: drop rather than bias the map
-            let Some(t) = self.tf.lookup(body, mount).at(ts).get() else {
+            let Some(mount_transform) = self.tf.lookup(body, mount).at(ts).get() else {
                 return;
             };
-            let v = t.translation();
-            [v.x, v.y, v.z]
+            let offset = mount_transform.translation();
+            [offset.x, offset.y, offset.z]
         };
-        let c = &msg.pose.covariance;
-        let covariance = [
-            [c[0], c[1], c[2]],
-            [c[6], c[7], c[8]],
-            [c[12], c[13], c[14]],
-        ];
-        let p = &msg.pose.pose.position;
-        let position = [p.x, p.y, p.z];
+        let pose_covariance = &msg.pose.covariance;
+        let covariance: Mat3 =
+            std::array::from_fn(|i| std::array::from_fn(|j| pose_covariance[6 * i + j]));
+        let measured = &msg.pose.pose.position;
+        let position = [measured.x, measured.y, measured.z];
         if !position
             .iter()
             .chain(covariance.iter().flatten())
@@ -568,43 +551,45 @@ impl GscPgoModule {
         let ts = msg.ts;
         let sensor = &msg.frame_id;
         let body = &self.config.body_frame;
-        let p = msg.position;
         let [qx, qy, qz, qw] = msg.orientation_xyzw;
-        let c = &msg.covariance;
+        let message_covariance = &msg.covariance;
         // the covariance is already (rotation, position), as the pose graph wants its information, zero where unknown
         let mut information: [[f64; 6]; 6] =
             dimos_gsc_pgo::landmarks::known_inverse(&std::array::from_fn(|i| {
-                std::array::from_fn(|j| c[6 * i + j])
+                std::array::from_fn(|j| message_covariance[6 * i + j])
             }));
         let norm = (qw * qw + qx * qx + qy * qy + qz * qz).sqrt();
         let seen: Mat3 = if norm > 0.0 {
             mat3::mat_from_quat(&[qw / norm, qx / norm, qy / norm, qz / norm])
         } else {
             for (i, row) in information.iter_mut().enumerate() {
-                for (j, v) in row.iter_mut().enumerate() {
+                for (j, entry) in row.iter_mut().enumerate() {
                     if i < 3 || j < 3 {
-                        *v = 0.0;
+                        *entry = 0.0;
                     }
                 }
             }
             mat3::identity()
         };
         let mut mount = mat3::identity();
-        let (mut rotation, mut position) = (seen, p);
+        let (mut rotation, mut position) = (seen, msg.position);
         if !sensor.is_empty() && sensor != body {
             // no mount tf: drop rather than bias the map
-            let Some(t) = self.tf.lookup(body, sensor).at(ts).get() else {
+            let Some(mount_transform) = self.tf.lookup(body, sensor).at(ts).get() else {
                 return;
             };
-            let r = t.rotation().to_rotation_matrix();
-            mount = std::array::from_fn(|i| std::array::from_fn(|j| r[(i, j)]));
-            let v = t.translation();
+            let mount_rotation = mount_transform.rotation().to_rotation_matrix();
+            mount = std::array::from_fn(|i| std::array::from_fn(|j| mount_rotation[(i, j)]));
+            let offset = mount_transform.translation();
             rotation = mat3::mat_mul(&mount, &seen);
-            position = mat3::add(&mat3::mat_vec(&mount, &position), &[v.x, v.y, v.z]);
+            position = mat3::add(
+                &mat3::mat_vec(&mount, &position),
+                &[offset.x, offset.y, offset.z],
+            );
         }
-        // the residual in the pose graph's terms is A times the message's, A = diag(seen^T, mount), so I <- A I A^T
+        // the residual in the pose graph's terms is to_graph times the message's, to_graph = diag(seen^T, mount), so I <- A I A^T
         let seen_t = mat3::transpose(&seen);
-        let a = |i: usize, k: usize| match (i < 3, k < 3) {
+        let to_graph = |i: usize, k: usize| match (i < 3, k < 3) {
             (true, true) => seen_t[i][k],
             (false, false) => mount[i - 3][k - 3],
             _ => 0.0,
@@ -613,7 +598,7 @@ impl GscPgoModule {
             std::array::from_fn(|j| {
                 (0..6)
                     .flat_map(|k| (0..6).map(move |l| (k, l)))
-                    .map(|(k, l)| a(i, k) * information[k][l] * a(j, l))
+                    .map(|(k, l)| to_graph(i, k) * information[k][l] * to_graph(j, l))
                     .sum()
             })
         });
@@ -647,8 +632,8 @@ impl GscPgoModule {
         let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
         let points = match extract_xyz(&msg) {
             Ok(points) => points,
-            Err(e) => {
-                error!(error = %e, "lidar PointCloud2 parse failed; dropped");
+            Err(error) => {
+                error!(error = %error, "lidar PointCloud2 parse failed; dropped");
                 return;
             }
         };
@@ -691,7 +676,7 @@ struct Publish {
     ts: f64,
 }
 
-/// (newest pending snapshot, stop), with its wakeup.
+/// (newest pending snapshot, stopping), with its wakeup.
 type PendingPublish = Arc<(Mutex<(Option<Publish>, bool)>, Condvar)>;
 
 /// Publishes the O(map) graph records off the scan thread; a newer snapshot replaces an unsent one.
@@ -702,17 +687,17 @@ struct GraphPublisher {
 impl GraphPublisher {
     fn spawn(worker: &Worker, frame_id: String) -> GraphPublisher {
         let pending: PendingPublish = Arc::default();
-        let (shared, stop) = (Arc::clone(&pending), Arc::clone(&worker.stop));
+        let shared = Arc::clone(&pending);
         let (pose_graph, loop_closure_event) =
             (worker.pose_graph.clone(), worker.loop_closure_event.clone());
-        let (rt, dump_path) = (worker.rt.clone(), worker.config.dump_path.clone());
+        let (runtime, dump_path) = (worker.runtime.clone(), worker.config.dump_path.clone());
         std::thread::Builder::new()
             .name("gsc-publish".into())
             .spawn(move || {
                 let mut heard = HeardPoses::default();
                 let publish = |out: &dyn Fn() -> Result<(), String>, what: &str| {
-                    if let Err(e) = out() {
-                        error!(error = %e, "{what} failed to publish");
+                    if let Err(error) = out() {
+                        error!(error = %error, "{what} failed to publish");
                     }
                 };
                 loop {
@@ -720,13 +705,7 @@ impl GraphPublisher {
                         let (lock, ready) = &*shared;
                         let mut state = lock.lock().expect("publisher");
                         while state.0.is_none() && !state.1 {
-                            let (guard, _) = ready
-                                .wait_timeout(state, Duration::from_secs(1))
-                                .expect("publisher");
-                            state = guard;
-                            if stop.load(Ordering::Relaxed) && state.0.is_none() {
-                                return;
-                            }
+                            state = ready.wait(state).expect("publisher");
                         }
                         match state.0.take() {
                             Some(next) => next,
@@ -743,8 +722,9 @@ impl GraphPublisher {
                         let records = build_loop_closure_records(changes, ts, &frame_id);
                         publish(
                             &|| {
-                                rt.block_on(loop_closure_event.publish(&records))
-                                    .map_err(|e| e.to_string())
+                                runtime
+                                    .block_on(loop_closure_event.publish(&records))
+                                    .map_err(|error| error.to_string())
                             },
                             "loop_closure_event",
                         );
@@ -756,22 +736,23 @@ impl GraphPublisher {
                                 .and_then(|mut file| {
                                     append_pose_changes(&mut file, ts, &records.data)
                                 });
-                            if let Err(e) = appended {
-                                warn!(error = %e, "Failed to dump the loop closure.");
+                            if let Err(error) = appended {
+                                warn!(error = %error, "Failed to dump the loop closure.");
                             }
                         }
                     }
                     let records = build_pose_graph_records(&keys, ts, &frame_id);
                     publish(
                         &|| {
-                            rt.block_on(pose_graph.publish(&records))
-                                .map_err(|e| e.to_string())
+                            runtime
+                                .block_on(pose_graph.publish(&records))
+                                .map_err(|error| error.to_string())
                         },
                         "pose_graph",
                     );
                     if !dump_path.is_empty() {
-                        if let Err(e) = write_keyframes(dump_path.as_ref(), &keys) {
-                            warn!(error = %e, "Failed to dump the keyframes.");
+                        if let Err(error) = write_keyframes(dump_path.as_ref(), &keys) {
+                            warn!(error = %error, "Failed to dump the keyframes.");
                         }
                     }
                 }
@@ -812,25 +793,24 @@ struct Worker {
     loop_closure_event: Output<PointCloud2>,
     closure_edges: Output<PointCloud2>,
     debug_log: Output<std_msgs::String>,
-    rt: tokio::runtime::Handle,
-    stop: Arc<AtomicBool>,
+    runtime: tokio::runtime::Handle,
     wake: Arc<Condvar>,
 }
 
 impl Worker {
     fn publish<T>(&self, out: &Output<T>, msg: &T, what: &str) {
-        if let Err(e) = self.rt.block_on(out.publish(msg)) {
-            error!(error = %e, "{what} failed to publish");
+        if let Err(error) = self.runtime.block_on(out.publish(msg)) {
+            error!(error = %error, "{what} failed to publish");
         }
     }
 
     fn run(self) {
-        if let Err(e) = rayon::ThreadPoolBuilder::new()
+        if let Err(error) = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.worker_threads)
             .thread_name(|i| format!("gsc-worker-{i}"))
             .build_global()
         {
-            warn!(error = %e, "could not cap the worker threads");
+            warn!(error = %error, "could not cap the worker threads");
         }
         let mut pgo = GscPgo::new(self.config.pgo());
         let (state, wake) = (Arc::clone(&self.state), Arc::clone(&self.wake));
@@ -847,16 +827,13 @@ impl Worker {
             .map_or(0.0, |d| d.as_secs_f64());
         self.publish_tf(&mat3::identity(), &[0.0; 3], now, &frame_id, &odom_frame);
 
-        // backstop in case a notify is missed
-        let wake_timeout = Duration::from_secs(1);
-
         let publisher = GraphPublisher::spawn(&self, frame_id.clone());
         // progress already sent on debug_log / closure_edges
         let mut pressure_sent = 0usize;
         let mut closures_logged = 0usize;
         let mut edges_sent = 0usize;
 
-        while !self.stop.load(Ordering::Relaxed) {
+        loop {
             // adopt a finished solve even without scans
             let solve_finished =
                 std::mem::take(&mut self.state.lock().expect("state").solve_finished);
@@ -912,17 +889,21 @@ impl Worker {
             self.log_closures(&pgo, &mut closures_logged);
             let cloud_with_pose = {
                 let mut state = self.state.lock().expect("state");
+                if state.stopping {
+                    break;
+                }
                 state.cloud_buffer.pop_front()
             };
             let Some(cloud_with_pose) = cloud_with_pose else {
-                // idle: re-check under the lock to avoid a lost wakeup, then wait
+                // idle: re-check under the lock so a notify between the checks is not lost, then wait
                 let state = self.state.lock().expect("state");
                 if state.cloud_buffer.is_empty()
                     && !state.solve_finished
                     && state.world_fixes.is_empty()
                     && state.landmark_factors.is_empty()
+                    && !state.stopping
                 {
-                    let _ = self.wake.wait_timeout(state, wake_timeout);
+                    drop(self.wake.wait(state).expect("state"));
                 }
                 continue;
             };
@@ -982,7 +963,6 @@ impl Worker {
             );
         }
         pgo.finish();
-        pgo.overshoot_report();
         let last_time = last_keyframe_time(&pgo);
         self.log_odometry_drift(&pgo, last_time);
     }
@@ -1013,7 +993,10 @@ impl Worker {
             self.log_odometry_drift(pgo, ts);
         }
         let closures = pgo.committed_closures();
-        let judged = closures.iter().filter(|c| !c.gnc_weight.is_nan()).count();
+        let judged = closures
+            .iter()
+            .filter(|closure| !closure.gnc_weight.is_nan())
+            .count();
         let kept = closures.iter().filter(|closure| closure.is_kept()).count();
         self.log(
             "solve",
@@ -1052,18 +1035,10 @@ impl Worker {
                 );
                 fields.insert(format!("{source}_measured"), measured[k].into());
             }
-            // plus the suggested deterministic_config and each LET's measured/estimated ratio (diagnostics)
+            // plus a deterministic_config fitted to this machine (the overshoot warning points here)
             if let Ok(suggested) = serde_json::to_value(pgo.suggested_deterministic_config()) {
                 fields.insert("suggested_deterministic_config".into(), suggested);
             }
-            let mut ratios = serde_json::Map::new();
-            for (name, ratio, jobs, _) in pgo.runtime_profile() {
-                ratios.insert(
-                    name.into(),
-                    serde_json::json!({ "measured_over_estimated_p99": ratio, "jobs": jobs }),
-                );
-            }
-            fields.insert("let_measured".into(), serde_json::Value::Object(ratios));
             self.log("odometry_drift", ts, serde_json::Value::Object(fields));
         }
     }
@@ -1119,11 +1094,11 @@ impl Worker {
                 Matrix3::from_fn(|i, j| rotation[i][j]),
             )),
         );
-        if let Err(e) = self
-            .rt
+        if let Err(error) = self
+            .runtime
             .block_on(self.tf.publish(&[Transform::new(parent, child, ts, iso)]))
         {
-            error!(error = %e, "tf failed to publish");
+            error!(error = %error, "tf failed to publish");
         }
     }
 }

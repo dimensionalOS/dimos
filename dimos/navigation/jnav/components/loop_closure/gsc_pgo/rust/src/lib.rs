@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Lidar keyframe loop closure; stages: `gsc_pgo` (keyframes, threads), `uniqueness`, `similarity_discovery`,
-//! `connection_fit` (ICP), `proportional_confidence` (extended ICP), `big_picture_fit` (GNC solve).
+//! Lidar keyframe loop closure; stages: `gsc_pgo` (keyframes, threads), `uniqueness`, `similarity_discovery`, `connection_fit` (ICP), `proportional_confidence` (extended ICP), `big_picture_fit` (GNC solve).
 
 pub mod adoption_schedule;
 pub mod big_picture_fit;

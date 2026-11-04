@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Cache of every cloud computation a closure search makes, keyed by (source, target, what), so a replay can rerun the
-//! downstream pipeline without clouds; replay computes and counts as misses any entry the recording lacks.
+//! Cache of every cloud computation a closure search makes, keyed by (source, target, what), so a replay can rerun the downstream pipeline without clouds; replay computes and counts as misses any entry the recording lacks.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -18,8 +18,8 @@
 use std::thread::JoinHandle;
 
 use crate::big_picture_fit::{
-    closure_edges, odometry_edges, solve, solve_log_path, solve_with_priors, LandmarkSighting,
-    PositionPrior, Solution, SolveConfig,
+    closure_edges, odometry_edges, solve, solve_with_priors, LandmarkSighting, PositionPrior,
+    Solution, SolveConfig,
 };
 use crate::gsc_pgo::{ClosureEdgeState, GscPgo};
 use crate::mat3::{self, Mat3, Vec3};
@@ -31,17 +31,6 @@ pub(crate) struct Solving {
     pub(crate) handle: JoinHandle<(Solution, f64, Vec<u64>)>,
     pub(crate) keyframes: usize,
     pub(crate) schedule: SolveSchedule,
-    /// What the solve was handed, only when `GSC_SOLVE_LOG` is set.
-    pub(crate) dispatched: Option<SolveDispatch>,
-}
-
-/// A solve's inputs for the solve log.
-pub(crate) struct SolveDispatch {
-    keyframe_time: f64,
-    wall_time: f64,
-    /// Closures in this solve, and in the solve before it (the rest are new to this one).
-    closures: usize,
-    closures_before: usize,
 }
 
 /// When a solve was dispatched, its estimated cost and when it was seen finished (scans).
@@ -54,45 +43,11 @@ pub(crate) struct SolveSchedule {
     finished_scan: Option<usize>,
     dispatch_time: f64,
     pub(crate) due_time: Option<f64>,
-    /// It took longer than the data time its estimate spanned (live, it would have been adopted late).
-    overshoot: bool,
 }
 
 impl SolveSchedule {
     pub(crate) fn due_scan(&self) -> usize {
         self.dispatch_scan + self.estimate_scans
-    }
-}
-
-fn wall_time() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(f64::NAN, |d| d.as_secs_f64())
-}
-
-/// FNV-1a over the first `count` closures' indices and ends, to diff a live solve's input against an offline one.
-fn closures_hash(count: usize, closures: &crate::store::Closures) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for (index, closure) in closures.iter().enumerate().take(count) {
-        for value in [
-            index as u64,
-            closure.source_id as u64,
-            closure.target_id as u64,
-        ] {
-            for byte in value.to_le_bytes() {
-                hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3);
-            }
-        }
-    }
-    hash
-}
-
-/// A float as JSON (NaN and infinities as null).
-fn json_number(value: f64) -> String {
-    if value.is_finite() {
-        format!("{value}")
-    } else {
-        "null".into()
     }
 }
 
@@ -508,7 +463,6 @@ impl GscPgo {
         });
         self.simplify.last_solve = (m, closures.len());
         let solved = self.solved.clone();
-        let closures_before = self.closures_dispatched;
         let handle = std::thread::Builder::new()
             .name("gsc-pose-graph".into())
             .spawn(move || {
@@ -550,12 +504,6 @@ impl GscPgo {
         self.landmark_sightings_dispatched = self.landmark_sightings.len();
         self.landmark_sighting_replaced = false;
         self.evidence_solve_due = false;
-        let dispatched = solve_log_path().map(|_| SolveDispatch {
-            keyframe_time: self.key_poses.fixed(n - 1).time,
-            wall_time: wall_time(),
-            closures: self.closures_dispatched,
-            closures_before,
-        });
         self.solving = Some(Solving {
             handle,
             keyframes: n,
@@ -566,9 +514,7 @@ impl GscPgo {
                 finished_scan: None,
                 dispatch_time: self.scan_time,
                 due_time: None,
-                overshoot: false,
             },
-            dispatched,
         });
     }
     /// Wait for the running solve and adopt it (poses, ride correction, closure verdicts). Returns whether there was one.
@@ -578,53 +524,22 @@ impl GscPgo {
         };
         let (solution, seconds, landmark_ids) =
             solving.handle.join().expect("pose graph solve panicked");
-        // a waited-for solve finished at the waiting scan; one slower than its estimate's data span overshot
-        let schedule = SolveSchedule {
-            finished_scan: Some(solving.schedule.finished_scan.unwrap_or(self.scans_seen)),
-            overshoot: solving
-                .schedule
-                .due_time
-                .is_some_and(|due| seconds > due - solving.schedule.dispatch_time),
-            ..solving.schedule
-        };
-        self.note_overshoot("solve", schedule.overshoot);
-        if schedule.overshoot {
-            self.solve_overshoots += 1;
-            eprintln!(
-                "gsc_pgo: SOLVE OVERSHOOT #{}: the solve over {} keyframes took {seconds:.2}s, past the {:.2}s of data its estimate of {} scans spanned",
-                self.solve_overshoots,
-                solving.keyframes,
-                schedule.due_time.unwrap_or(f64::NAN) - schedule.dispatch_time,
-                schedule.estimate_scans
-            );
-        }
+        // one slower than its estimate's data span overshot
+        let overshoot = solving
+            .schedule
+            .due_time
+            .is_some_and(|due| seconds > due - solving.schedule.dispatch_time);
+        self.note_overshoot("solve", overshoot);
         self.timing.solve_s += seconds;
         self.record_job_ratio("solve", seconds, solving.schedule.estimate_raw_scans);
         // an unconverged solve keeps the previous map (cost is no test: a real loop can raise it a hundredfold)
-        let previous = self.graph_error;
         if !solution.converged {
-            let reason = "lm_not_converged";
-            if let Some(dispatched) = &solving.dispatched {
-                self.log_rejected_solve(
-                    solving.keyframes,
-                    dispatched,
-                    &schedule,
-                    &solution,
-                    reason,
-                    previous,
-                    seconds,
-                );
-            }
             return false;
         }
         let finished = FinishedSolve {
             solution,
-            seconds,
             landmark_ids,
             keyframes: solving.keyframes,
-            schedule,
-            dispatched: solving.dispatched,
-            arrived_keyframes: self.key_poses.len(),
         };
         // the debounce and the merge are their own jobs (`adoption_schedule`), except at the end of the data
         if !self.adoption_inline {
@@ -632,7 +547,7 @@ impl GscPgo {
             return false;
         }
         if !self.config.graph_change_heat_enabled {
-            return self.adopt_solution(finished, None, None);
+            return self.adopt_solution(finished, None);
         }
         let cost = graph_change_cost_on(
             &self.key_poses,
@@ -642,21 +557,16 @@ impl GscPgo {
         );
         self.debounced(finished, cost, true)
     }
-    /// Adopt a finished solve; `heat` = graph change heat before, its cost, after (for the solve log). Returns true.
+    /// Adopt a finished solve. Returns true.
     pub(crate) fn adopt_solution(
         &mut self,
         finished: FinishedSolve,
-        heat: Option<(f64, f64, f64)>,
         prepared: Option<crate::adoption_schedule::MergePrepared>,
     ) -> bool {
         let FinishedSolve {
             mut solution,
-            seconds,
             landmark_ids,
             keyframes,
-            schedule,
-            dispatched,
-            arrived_keyframes,
             ..
         } = finished;
         self.graph_version += 1;
@@ -672,25 +582,6 @@ impl GscPgo {
             self.world_alignment = solution.world_alignment.clone();
         }
         let n = keyframes;
-        // the largest move any keyframe makes from the previous map to this solve's (only when logging)
-        let largest_move = dispatched.as_ref().map(|_| {
-            (0..n)
-                .zip(&solution.positions)
-                .map(|(k, position)| mat3::norm(&mat3::sub(position, &self.key_poses.position(k))))
-                .enumerate()
-                .fold(
-                    (0, 0.0),
-                    |best, (k, d)| if d > best.1 { (k, d) } else { best },
-                )
-        });
-        let previous_kept: Vec<bool> = if dispatched.is_some() {
-            self.committed_closures
-                .iter()
-                .map(|c| c.is_kept())
-                .collect()
-        } else {
-            Vec::new()
-        };
         // moved, not copied: the solve's covariances are not read after this
         self.solved_relative_covariance = Some((
             n - 1,
@@ -749,21 +640,6 @@ impl GscPgo {
             }
         }
         self.graph_error = solution.error;
-        if let (Some(dispatched), Some((largest_move_keyframe, largest_move))) =
-            (&dispatched, largest_move)
-        {
-            self.log_solve(
-                n,
-                dispatched,
-                &schedule,
-                &solution,
-                &previous_kept,
-                largest_move_keyframe,
-                largest_move,
-                seconds,
-                &heat_fields(arrived_keyframes, heat),
-            );
-        }
         // the solve's closure weights swapped in (its thread built them): a closure committed while it ran stays unjudged
         let evidence = solution.odometry_error_estimate_evidence;
         self.fast_path_superseded(&solution.closure_weights);
@@ -794,153 +670,19 @@ impl GscPgo {
         }
         true
     }
-    /// One `GSC_SOLVE_LOG` line for an adopted solve (`solve_log_path`).
-    #[allow(clippy::too_many_arguments)]
-    fn log_solve(
-        &self,
-        n: usize,
-        dispatched: &SolveDispatch,
-        schedule: &SolveSchedule,
-        solution: &Solution,
-        previous_kept: &[bool],
-        largest_move_keyframe: usize,
-        largest_move: f64,
-        seconds: f64,
-        heat: &str,
-    ) {
-        use std::fmt::Write as _;
-        let Some(trace) = &solution.trace else {
-            return;
-        };
-        let weights = &trace.gnc_weights;
-        // final GNC weights in [0, 1e-4), [1e-4, .25), [.25, .5), [.5, .75), [.75, 1 - 1e-4), [1 - 1e-4, 1]
-        let mut histogram = [0usize; 6];
-        for &w in weights {
-            let bin = [1e-4, 0.25, 0.5, 0.75, 1.0 - 1e-4]
-                .iter()
-                .take_while(|&&edge| w >= edge)
-                .count();
-            histogram[bin] += 1;
-        }
-        // closures new to this solve, or kept before and rejected now (or the reverse)
-        let mut changed = String::new();
-        for (index, &weight) in weights.iter().enumerate() {
-            let was = previous_kept.get(index).copied();
-            let kept = solution.closure_weights[index] > 0.5;
-            let new = index >= dispatched.closures_before;
-            if new || was != Some(kept) {
-                let closure = self.committed_closures.get(index);
-                let _ = write!(
-                    changed,
-                    "{}{{\"index\":{index},\"source\":{},\"target\":{},\"weight\":{},\"kept\":{kept},\"was\":\"{}\"}}",
-                    if changed.is_empty() { "" } else { "," },
-                    closure.source_id,
-                    closure.target_id,
-                    json_number(weight),
-                    if new { "new" } else if was == Some(true) { "kept" } else { "rejected" },
-                );
-            }
-        }
-        let line = format!(
-            "{{{}{heat},\"weight_histogram\":{:?},\"largest_move_m\":{},\"largest_move_keyframe\":{largest_move_keyframe},\"changed\":[{changed}]}}\n",
-            self.solve_fields(n, dispatched, schedule, solution, seconds),
-            histogram,
-            json_number(largest_move),
-        );
-        append_solve_log(&line);
-    }
-    /// A `GSC_SOLVE_LOG` line for a solve not adopted (LM did not converge), with why and the previous final cost.
-    #[allow(clippy::too_many_arguments)]
-    fn log_rejected_solve(
-        &self,
-        n: usize,
-        dispatched: &SolveDispatch,
-        schedule: &SolveSchedule,
-        solution: &Solution,
-        reason: &str,
-        previous_error: f64,
-        seconds: f64,
-    ) {
-        let line = format!(
-            "{{\"rejected_solve\":\"{reason}\",{},\"error\":{},\"previous_error\":{}}}\n",
-            self.solve_fields(n, dispatched, schedule, solution, seconds),
-            json_number(solution.error),
-            json_number(previous_error),
-        );
-        append_solve_log(&line);
-    }
-    /// The fields every solve log line has: dispatch/finish times, schedule in scans, closures and the GNC's path.
-    fn solve_fields(
-        &self,
-        n: usize,
-        dispatched: &SolveDispatch,
-        schedule: &SolveSchedule,
-        solution: &Solution,
-        seconds: f64,
-    ) -> String {
-        let kept = solution
-            .closure_weights
-            .iter()
-            .filter(|&&w| w > 0.5)
-            .count();
-        let trace = solution.trace.as_ref();
-        format!(
-            "\"dispatch_keyframes\":{},\"dispatch_time\":{},\"dispatch_wall\":{},\"adopt_keyframes\":{},\"adopt_time\":{},\"adopt_wall\":{},\"solve_s\":{},\"estimate_scans\":{},\"estimate_data_s\":{},\"dispatch_scan\":{},\"finished_scan\":{},\"adopted_scan\":{},\"overshoot\":{},\"closures\":{},\"closures_new\":{},\"closures_hash\":\"{:016x}\",\"kept\":{kept},\"converged\":{},\"gnc_iterations\":{},\"gnc_mu\":{},\"gnc_stop\":\"{}\",\"initial_cost\":[{}],\"final_cost\":[{}]",
-            n,
-            json_number(dispatched.keyframe_time),
-            json_number(dispatched.wall_time),
-            self.key_poses.len(),
-            json_number(self.key_poses.last().map_or(f64::NAN, |k| k.time)),
-            json_number(wall_time()),
-            json_number(seconds),
-            schedule.estimate_scans,
-            json_number(schedule.due_time.map_or(f64::NAN, |due| due - schedule.dispatch_time)),
-            schedule.dispatch_scan,
-            schedule.finished_scan.map_or("null".into(), |scan| scan.to_string()),
-            self.scans_seen,
-            schedule.overshoot,
-            dispatched.closures,
-            dispatched.closures - dispatched.closures_before.min(dispatched.closures),
-            closures_hash(dispatched.closures, &self.committed_closures),
-            solution.converged,
-            trace.map_or(0, |t| t.gnc_iterations),
-            json_number(trace.map_or(f64::NAN, |t| t.gnc_mu)),
-            trace.map_or("", |t| t.gnc_stop),
-            trace.map_or([f64::NAN; 3], |t| t.initial_cost).map(json_number).join(","),
-            trace.map_or([f64::NAN; 3], |t| t.final_cost).map(json_number).join(","),
-        )
-    }
 }
 
-/// A finished solve's result and what it was dispatched over, waiting to be adopted (`graph_change_heat_enabled`).
+/// A finished solve's result, waiting to be adopted (`graph_change_heat_enabled`).
 pub(crate) struct FinishedSolve {
     pub(crate) solution: Solution,
-    seconds: f64,
     landmark_ids: Vec<u64>,
     pub(crate) keyframes: usize,
-    schedule: SolveSchedule,
-    dispatched: Option<SolveDispatch>,
-    /// The keyframe count when it finished.
-    arrived_keyframes: usize,
 }
 
 impl FinishedSolve {
     /// The solved poses (rotations, positions), for `graph_change_cost_on`.
     pub(crate) fn poses(&self) -> (&[Mat3], &[Vec3]) {
         (&self.solution.rotations, &self.solution.positions)
-    }
-}
-
-/// The solve log's graph change heat fields: when it finished, heat before, its cost, heat after (none with the heat off).
-fn heat_fields(arrived_keyframes: usize, heat: Option<(f64, f64, f64)>) -> String {
-    match heat {
-        Some((before, cost, after)) => format!(
-            ",\"arrived_keyframes\":{arrived_keyframes},\"heat_before\":{},\"heat_cost\":{},\"heat_after\":{}",
-            json_number(before),
-            json_number(cost),
-            json_number(after)
-        ),
-        None => String::new(),
     }
 }
 
@@ -971,47 +713,21 @@ impl GscPgo {
         };
         self.heat = heat + cost;
         self.heat_keyframes = keyframes;
-        let heat = Some((heat, cost, self.heat));
         if self.adoption_inline {
-            return self.adopt_solution(waiting, heat, None);
+            return self.adopt_solution(waiting, None);
         }
-        self.offer_merge(waiting, heat);
+        self.offer_merge(waiting);
         false
     }
     /// A debounced solve and its heat cost: adopted now if the heat allows, else held as the newest waiting one.
     pub(crate) fn debounced(&mut self, finished: FinishedSolve, cost: f64, inline: bool) -> bool {
         let arrived = self.key_poses.len();
         let heat = self.heat_at(arrived);
-        if let Some((older, _)) = self.pending_solve.replace((finished, cost)) {
-            self.log_heat_event("superseded", &older, heat);
-        }
+        self.pending_solve = Some((finished, cost));
         if heat <= self.config.graph_change_heat_threshold {
             return self.adopt_pending_solve(arrived, heat) && inline;
         }
-        if let Some((waiting, _)) = &self.pending_solve {
-            self.log_heat_event("held", waiting, heat);
-        }
         false
-    }
-    /// A `GSC_SOLVE_LOG` line for a solve the graph change heat held or superseded, with the heat then.
-    pub(crate) fn log_heat_event(&self, event: &str, finished: &FinishedSolve, heat: f64) {
-        let Some(dispatched) = &finished.dispatched else {
-            return;
-        };
-        let line = format!(
-            "{{\"{event}_solve\":true,{},\"arrived_keyframes\":{},\"heat\":{},\"heat_threshold\":{}}}\n",
-            self.solve_fields(
-                finished.keyframes,
-                dispatched,
-                &finished.schedule,
-                &finished.solution,
-                finished.seconds
-            ),
-            finished.arrived_keyframes,
-            json_number(heat),
-            json_number(self.config.graph_change_heat_threshold),
-        );
-        append_solve_log(&line);
     }
 }
 
@@ -1031,21 +747,6 @@ fn curbed_yank(z: f64, drift_range: f64) -> f64 {
         most + terms.iter().map(|t| (t - most).exp()).sum::<f64>().ln()
     };
     log_sum(0.0) - log_sum(z)
-}
-
-/// Append one line to the `GSC_SOLVE_LOG` file.
-fn append_solve_log(line: &str) {
-    let Some(path) = solve_log_path() else {
-        return;
-    };
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        use std::io::Write;
-        let _ = file.write_all(line.as_bytes());
-    }
 }
 
 /// Graph change heat scan state: odometry travel/turn so far, previous odometry pose, largest move so far (odometry sds).

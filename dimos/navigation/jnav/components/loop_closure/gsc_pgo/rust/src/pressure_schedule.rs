@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Loop-overlap pressure as a logical-execution-time job: one worker, one pending request (newest replaces it); a
-//! result lands at dispatch + estimate, and readers see the newest landed value.
+//! Loop-overlap pressure as a logical-execution-time job: one worker, one pending request (newest replaces it); a result lands at dispatch + estimate, and readers see the newest landed value.
 
 use crate::closure_search_schedule::SearchPool;
 use crate::gsc_pgo::GscPgo;
@@ -23,14 +22,12 @@ use std::sync::Arc;
 /// A pressure job's outcome: the pressure (None before a sensor range) and its seconds.
 type PressureSlot = crate::adoption_schedule::JobSlot<(Option<LoopOverlap>, f64)>;
 
-/// A dispatched pressure job: advancing scans and data time at dispatch, estimate (raw scans), graph size read.
+/// A dispatched pressure job: advancing scans and data time at dispatch, estimate (raw scans).
 pub struct PressureJob {
     slot: Arc<PressureSlot>,
     dispatch_scan: usize,
     dispatch_time: f64,
     estimate_raw_scans: f64,
-    keyframes: usize,
-    closures: usize,
 }
 
 impl PressureJob {
@@ -75,8 +72,6 @@ impl GscPgo {
             dispatch_scan: self.advancing_scans,
             dispatch_time: self.newest_scan_time(),
             estimate_raw_scans,
-            keyframes,
-            closures,
         });
     }
     /// Land the job once its hold has passed (one still running then lands late, as an overshoot).
@@ -107,17 +102,6 @@ impl GscPgo {
         let overshoot =
             deterministic && (seconds > spanned || std::mem::take(&mut self.pressure_late));
         self.note_overshoot("pressure", overshoot);
-        if overshoot {
-            self.pressure_overshoots += 1;
-            eprintln!(
-                "gsc_pgo: PRESSURE OVERSHOOT #{}: over {} keyframes and {} closures it took {seconds:.4}s, past the {spanned:.4}s of data its estimate of {:.4} vs ({} scans) spanned",
-                self.pressure_overshoots,
-                job.keyframes,
-                job.closures,
-                job.estimate_raw_scans,
-                job.estimate_scans(),
-            );
-        }
         self.record_job_ratio("pressure", seconds, job.estimate_raw_scans);
         if let Some(overlap) = overlap {
             self.pressure = Some((self.scans_seen, overlap));

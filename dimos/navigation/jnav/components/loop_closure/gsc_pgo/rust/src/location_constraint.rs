@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `jnav.LocationConstraint` (dimos/navigation/jnav/msgs/LocationConstraint.py), the landmark sighting GSC takes: its
-//! hand-packed big-endian wire format, decoded.
+//! `jnav.LocationConstraint` (dimos/navigation/jnav/msgs/LocationConstraint.py), the landmark sighting GSC takes: its hand-packed big-endian wire format, decoded.
 
 use std::io;
 
-/// A sighting of location `to_id` from `frame_id`; a later one with the same non-empty `constraint_instance_id`
-/// replaces it. `covariance` is 6x6 row-major in (rotation, position) order; a non-positive variance is unknown.
+/// A sighting of location `to_id` from `frame_id`; a later one with the same non-empty `constraint_instance_id` replaces it. `covariance` is 6x6 row-major in (rotation, position) order; a non-positive variance is unknown.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocationConstraint {
     pub ts: f64,
