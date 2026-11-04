@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import type { Channel, MsgType, StreamRef } from "../../protocol/streams.ts";
-import type { ModuleInstance } from "../../protocol/runtime/module.ts";
-import { epochMs } from "../../protocol/time.ts";
-import { ratesOf, rateLevel } from "./rates.ts";
-import { systemGroups } from "./cards.ts";
+import type { Channel, MsgType, StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
+import type { ModuleInstance } from "#dimos/agents/shared/protocol/runtime/module.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { ratesOf, rateLevel } from "#dimos/agents/shared/view-models/streams/rates.ts";
+import { systemGroups } from "#dimos/agents/shared/view-models/streams/cards.ts";
 import { test } from "node:test";
 
 const NOW = epochMs(1_760_700_000_000);

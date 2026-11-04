@@ -146,6 +146,12 @@ class TickLoop:
         self._tick_thread: threading.Thread | None = None
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
+        self._joint_positions: dict[str, float] = {}
+
+    @property
+    def joint_positions(self) -> dict[str, float]:
+        """Copy the latest tick snapshot; the stored dictionary is only replaced."""
+        return self._joint_positions.copy()
 
     @property
     def tick_count(self) -> int:
@@ -333,6 +339,7 @@ class TickLoop:
         results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []
 
         with self._task_lock:
+            self._joint_positions = state.joints.joint_positions.copy()
             for task in self._tasks.values():
                 if not task.is_active():
                     continue

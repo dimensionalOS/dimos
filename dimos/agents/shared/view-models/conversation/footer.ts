@@ -1,11 +1,11 @@
-import type { Accounts } from "../../protocol/auth.ts";
+import type { Accounts } from "#dimos/agents/shared/protocol/auth.ts";
 import type { AgentState, InboxState, LiveState, ModelRef, UsageState } from "@earendil-works/pi-durable";
-import type { Level } from "../levels.ts";
+import type { Level } from "#dimos/agents/shared/view-models/levels.ts";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { Transcript, TranscriptItem } from "../../protocol/conversation/state.ts";
-import type { Settings } from "../../protocol/settings.ts";
-import { isRunning } from "./timeline.ts";
-import { queuedRows } from "./queue.ts";
+import type { Transcript, TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
+import type { Settings } from "#dimos/agents/shared/protocol/settings.ts";
+import { isRunning } from "#dimos/agents/shared/view-models/conversation/timeline.ts";
+import { queuedRows } from "#dimos/agents/shared/view-models/conversation/queue.ts";
 
 /** Requirement 7 as data: the conversation's model, its queue, cost and context left. */
 export type Footer = {

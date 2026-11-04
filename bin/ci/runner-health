@@ -34,7 +34,7 @@ API = "https://api.github.com"
 PAGE = 100  # The API's maximum.
 BRANCH = "main"
 # The workflows with jobs on self-hosted runners.
-WORKFLOWS = ("ci.yml", "docker-build.yml")
+WORKFLOWS = ("ci.yml", "e2e.yml", "docker-build.yml")
 # Fewer jobs than this and "every job failed" is one unlucky run, not a runner.
 MIN_JOBS = 3
 # One-sided Fisher exact test against the other runners with the same labels.

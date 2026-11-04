@@ -1,13 +1,13 @@
-import type { Camera, Cloud } from "../../../shared/render/points.ts";
-import type { RenderedView } from "../../../shared/protocol/media.ts";
-import type { ViewPanel } from "./base.ts";
-import { StatusLine, accent, amber, muted } from "../style.ts";
-import { TerminalImage } from "../lib/terminal-image.ts";
+import type { Camera, Cloud } from "#dimos/agents/shared/render/points.ts";
+import type { RenderedView } from "#dimos/agents/shared/protocol/media.ts";
+import type { ViewPanel } from "#dimos/agents/frontends/tui/views/base.ts";
+import { StatusLine, accent, amber, muted } from "#dimos/agents/frontends/tui/style.ts";
+import { TerminalImage } from "#dimos/agents/frontends/tui/lib/terminal-image.ts";
 import { Text, getCapabilities, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { basename } from "node:path";
-import { clean } from "../../../shared/view-models/text.ts";
-import { fitCamera, paintCloud, parseCloud, projectPoint } from "../../../shared/render/points.ts";
-import { readVerified } from "../../../shared/render/files.ts";
+import { clean } from "#dimos/agents/shared/view-models/text.ts";
+import { fitCamera, paintCloud, parseCloud, projectPoint } from "#dimos/agents/shared/render/points.ts";
+import { readVerified } from "#dimos/agents/shared/render/files.ts";
 
 type PointsView = Extract<RenderedView, { readonly kind: "points" }>;
 

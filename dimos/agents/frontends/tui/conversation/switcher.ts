@@ -1,11 +1,11 @@
 import type { Component } from "@earendil-works/pi-tui";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { Role } from "../../../sdk/state.ts";
-import type { SwitcherRow } from "../../../shared/view-models/gateway/switcher.ts";
+import type { Role } from "#dimos/agents/sdk/state.ts";
+import type { SwitcherRow } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
 import { SelectList, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { accent, muted } from "../style.ts";
+import { accent, muted } from "#dimos/agents/frontends/tui/style.ts";
 import { getSelectListTheme } from "@earendil-works/pi-coding-agent";
-import { switcherLine } from "../../../shared/view-models/gateway/switcher.ts";
+import { switcherLine } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
 
 const ROWS_SHOWN = 12;
 

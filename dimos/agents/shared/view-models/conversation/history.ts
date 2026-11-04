@@ -1,6 +1,6 @@
 import type { EntryId } from "@earendil-works/pi-durable";
-import type { ImageAddress } from "../../protocol/conversation/images.ts";
-import type { Transcript, TranscriptItem } from "../../protocol/conversation/state.ts";
+import type { ImageAddress } from "#dimos/agents/shared/protocol/conversation/images.ts";
+import type { Transcript, TranscriptItem } from "#dimos/agents/shared/protocol/conversation/state.ts";
 
 /** A message Esc-then-arrows can select, and what can be done with it. */
 export type Selectable = {

@@ -4,6 +4,10 @@
 
 The agent has two parts. The gateway is one Node process that hosts every conversation and keeps running when no terminal is attached and when dimOS restarts. HarnessRuntime is a dimOS module that the gateway loads into each running system and reaches through McpServer.
 
+For API details, see the [Python runtime](/docs/usage/agent/runtime.md), [agent harness](/docs/usage/agent/harness.md),
+[gateway](/docs/usage/agent/gateway.md), [client SDK](/docs/usage/agent/sdk.md), and [CLI](/docs/usage/agent/cli.md) guides.
+The [agent development guide](/docs/development/agent/index.md) covers the architecture and contributor documentation.
+
 ## Set up and start the agent
 
 You need a dimOS checkout with its `.venv`, which `bash scripts/install.sh --mode dev --project-dir .` creates, and Node.js 24 or 26 first on `PATH`. The agent runs from the checkout. A dimOS installed from a wheel does not include it.
@@ -66,7 +70,9 @@ Ctrl+O opens the conversation switcher. Every conversation is listed with its st
 
 With nothing running and an empty editor, Esc selects a message. The arrows move between your messages and the agent's answers, and the chat scrolls to the selected one. On a message of yours, `e` puts its text in the editor; Enter then sends the edited text and the message's images into a fork of the conversation that continues from before that message, and the terminal attaches to the fork. On any message, `u` summarizes the conversation up to it into a new fork, and `f` summarizes from it. If you switch to another conversation before the fork is ready, the terminal stays where you are and names the fork. The original conversation stays as it was.
 
-A long-running tool call that allows it, such as `bash`, shows `Ctrl+B background` while it runs. Ctrl+B moves the call to the background: the card shows that it moved, the turn goes on, and the call's result comes back later as a notice in the chat.
+A long-running tool call that allows it, such as `bash`, shows `Ctrl+B or /background moves this call to the background` while it runs. Ctrl+B moves the call to the background: the card shows that it moved, the turn goes on, and the call's result comes back later as a notice in the chat.
+
+While calls run in the background, one line under the editor shows the newest with its command, how long it has run and its newest output line, and how many more there are. With an empty editor, Down opens the list there and selects a call. Enter shows its output full screen as it grows, `x` stops it, and Esc returns to the editor. A stopped call's output so far comes back as a notice. The agent can also start a call in the background itself, with the call's `run_in_background` argument, and list, read and stop these calls with its `background` tool.
 
 `/menu` opens the main menu full screen. Its Jobs tab shows every job as a lane over the last and next 12 hours, with a mark per run by outcome and a circle per upcoming due time; `r` runs the selected job now and `d` deletes it.
 
@@ -79,6 +85,7 @@ A long-running tool call that allows it, such as `bash`, shows `Ctrl+B backgroun
 | Esc (sidebar) | Return to chat |
 | Ctrl+O | Open the conversation switcher |
 | Ctrl+B | Send the running tool call to the background |
+| Down | With an empty editor, select a call in the background (then ↑/↓, Enter for its output, `x` to stop it, Esc to return) |
 | Esc | While running, stop the run. With an empty editor, select a message (then ↑/↓, `e`, `u`, `f`) |
 | Up | With an empty editor, bring your queued messages back for editing |
 | Ctrl-C | Clear the editor. With an empty editor, detach; the conversation keeps running |

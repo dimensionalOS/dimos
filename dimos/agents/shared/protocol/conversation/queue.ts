@@ -1,4 +1,4 @@
-import type { DimosInput } from "./input.ts";
+import type { DimosInput } from "#dimos/agents/shared/protocol/conversation/input.ts";
 import type { InboxItem } from "@earendil-works/pi-durable";
 
 /** What `withdraw` and `abort` hand back: the user's queued text, in queue order, for the editor. */

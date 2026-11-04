@@ -1,8 +1,8 @@
 import type { Context } from "@earendil-works/chord/context";
-import type { DimosConnection } from "../dimos/connection.ts";
-import type { EventDrafts } from "./message.ts";
-import type { HarnessEvent } from "../../shared/protocol/runtime/event.ts";
-import type { InputGate } from "../inputs/gate.ts";
+import type { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
+import type { EventDrafts } from "#dimos/agents/harness/events/message.ts";
+import type { HarnessEvent } from "#dimos/agents/shared/protocol/runtime/event.ts";
+import type { InputGate } from "#dimos/agents/harness/inputs/gate.ts";
 
 type EventIntakeOptions = {
   readonly connection: Pick<DimosConnection, "onEvent">;

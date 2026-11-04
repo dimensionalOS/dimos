@@ -52,6 +52,7 @@ def _path_colored(msg: NavPath, color: tuple[int, int, int]) -> Archetype:
 def _resolved_urdf() -> Path:
     """The model written out with package:// resolved, which the rerun urdf loader cannot do."""
     loaded = alfred_model().load()
+    assert loaded.source_path is not None, "Alfred's model must have a URDF source"
     path = loaded.source_path.parent / ".resolved" / loaded.source_path.name
     path.parent.mkdir(exist_ok=True)
     path.write_text(loaded.xml)
