@@ -150,7 +150,7 @@ teleop_task = teleop_ik_task(
         },
         "joint_command_filter_cutoff_hz": 5.0,
         "max_command_tracking_error_deg": 10.0,
-        "feedback_limit_tolerance": 1e-3,
+        "feedback_limit_tolerance": 0.05,
         "command_limit_margin": 1e-4,
     },
 )
@@ -163,7 +163,7 @@ teleop_task = teleop_ik_task(
 | `joint_velocity_limits_rad_s` | Optional per-joint caps keyed by coordinator joint name; each overrides the default cap |
 | `joint_command_filter_cutoff_hz` | First-order command low-pass cutoff; defaults to 5 Hz, or set `None` to disable |
 | `max_command_tracking_error_deg` | Maximum distance between the generated command trajectory and measured hardware state |
-| `feedback_limit_tolerance` | Permits small sensor error beyond a URDF position limit |
+| `feedback_limit_tolerance` | How far (rad) a measured joint may sit past a URDF position limit; such a joint is steered back inside instead of rejected |
 | `command_limit_margin` | Keeps generated commands inside finite URDF position limits |
 
 Start hardware tests with conservative velocity caps. Use the scalar as the

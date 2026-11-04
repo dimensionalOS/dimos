@@ -57,6 +57,10 @@ def _load_opencv_first() -> None:
         pass
 
 
+class NoMatchingModuleError(LookupError):
+    """No deployed module implements the requested Spec."""
+
+
 class Dimos:
     def __init__(self, **config_overrides: Any) -> None:
         _load_opencv_first()
@@ -210,7 +214,8 @@ class Dimos:
                 detail = f" for instance {instance_name!r}" if instance_name is not None else ""
                 if unavailable:
                     detail += f"; cannot inspect module classes for {sorted(unavailable)}"
-                raise LookupError(
+                error_type = LookupError if unavailable else NoMatchingModuleError
+                raise error_type(
                     f"No deployed module matches {spec_class.__name__} RPC signatures{detail}"
                 )
             if len(matches) != 1:

@@ -29,7 +29,7 @@ from numpy.typing import NDArray
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.navigation.bench.driver import TERMINAL_FILE
+from dimos.navigation.bench.driver import ROBOT_FILE, TERMINAL_FILE
 from dimos.navigation.bench.runner import (
     RECORDING_FILE,
     REPLAY_FILE,
@@ -38,9 +38,8 @@ from dimos.navigation.bench.runner import (
     selects,
 )
 from dimos.navigation.bench.suite import Manifest
-from dimos.simulation.go2_legged.robot import BASE_QUAT
-from dimos.simulation.go2_sim.world import build_model, open_viewer
 from dimos.simulation.scenes.procedural import Scene
+from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, open_viewer, scene_model
 
 
 @dataclass(frozen=True)
@@ -87,10 +86,10 @@ def frames(recording: Path) -> list[Frame]:
 class Puppet:
     """The scene's model posed from frames, with physics left out."""
 
-    def __init__(self, scene: Scene) -> None:
-        self.model = build_model(scene)
+    def __init__(self, scene: Scene, robot: Path) -> None:
+        self.model = scene_model(scene, load_display_spec(robot))
         self.data = mujoco.MjData(self.model)
-        self._trunk = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base")
+        self._trunk = int(self.model.jnt_bodyid[0])
         self._qpos_adr = {
             mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, j): int(
                 self.model.jnt_qposadr[j]
@@ -101,7 +100,7 @@ class Puppet:
 
     def pose(self, frame: Frame) -> None:
         self.data.qpos[0:3] = frame.position
-        self.data.qpos[BASE_QUAT] = frame.quaternion
+        self.data.qpos[ROOT_QUAT] = frame.quaternion
         for name, angle in frame.joints.items():
             self.data.qpos[self._qpos_adr[name]] = angle
         mujoco.mj_forward(self.model, self.data)
@@ -157,7 +156,12 @@ def open_rerun(replay: Path) -> subprocess.Popen[bytes]:
 
 def play(episode_dir: Path, speed: float = 1.0, loop: bool = True, rerun: bool = True) -> None:
     """Move the recorded body through the episode's scene, with its replay open in Rerun."""
-    puppet = Puppet(episode_scene(episode_dir))
+    robot = episode_dir / ROBOT_FILE
+    if not robot.exists():
+        raise FileNotFoundError(
+            f"{episode_dir} has no {ROBOT_FILE} to draw. Open its {REPLAY_FILE} in Rerun instead."
+        )
+    puppet = Puppet(episode_scene(episode_dir), robot)
     recorded = frames(episode_dir / RECORDING_FILE)
     puppet.pose(recorded[0])
     replay = episode_dir / REPLAY_FILE
