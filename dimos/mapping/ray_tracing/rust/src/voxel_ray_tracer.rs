@@ -841,12 +841,26 @@ pub fn emit_points(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, bounds, live, true)
+    emit_points_impl(map, voxel_size, bounds, live, true, false)
 }
 
 /// Every healthy voxel plus this frame's live voxels, with no support gate.
 pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, None, live, false)
+    emit_points_impl(map, voxel_size, None, live, false, false)
+}
+
+/// Floats per emitted surface voxel: the center, then its plane's normal and offset.
+pub const SURFACE_STRIDE: usize = 7;
+
+/// `emit_points` (`emit_points_ungated` without `gated`) with each voxel's plane after its center, NaN when it has none or is covered.
+pub fn emit_surfaces(
+    map: &VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+    gated: bool,
+) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, bounds, live, gated, true)
 }
 
 fn emit_points_impl(
@@ -855,24 +869,38 @@ fn emit_points_impl(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
     gated: bool,
+    planes: bool,
 ) -> Vec<f32> {
+    let stride = if planes { SURFACE_STRIDE } else { 3 };
+    let emittable = |support| !gated || voxel_supported(support, map.support_min);
     let mut out = scan_chunks(
         map,
         voxel_size,
         bounds,
-        3,
-        3 * live.len(),
-        |hv, _, chunk_inside, part| {
-            if gated && !voxel_supported(hv.support, map.support_min) {
+        stride,
+        stride * live.len(),
+        |hv, chunk, chunk_inside, part| {
+            if !emittable(hv.support) {
                 return;
             }
             let (x, y, z) = voxel_center(hv.key, voxel_size);
-            if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
-                part.extend_from_slice(&[x, y, z]);
+            if !(chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z))) {
+                return;
+            }
+            part.extend_from_slice(&[x, y, z]);
+            if planes {
+                // A covered voxel, one with an emittable healthy voxel right above it, has no plane.
+                let plane = chunk
+                    .surface(&hv)
+                    .filter(|_| !map.voxels.healthy_above(chunk, &hv).is_some_and(emittable));
+                part.extend_from_slice(&plane.map_or([f32::NAN; 4], |p| {
+                    [p.normal.x, p.normal.y, p.normal.z, p.offset]
+                }));
             }
         },
     );
 
+    // This frame's hits not yet healthy carry no plane until they settle.
     for &key in live.iter() {
         if map.voxels.is_healthy(&key) {
             continue;
@@ -882,54 +910,8 @@ fn emit_points_impl(
             continue;
         }
         out.extend_from_slice(&[x, y, z]);
-    }
-    out
-}
-
-/// Floats per emitted surface voxel: the center, then the plane's normal and
-/// offset, NaN where the voxel has no plane or is covered.
-pub const SURFACE_STRIDE: usize = 7;
-
-/// `emit_points` (or `emit_points_ungated` without `gated`) with each voxel's
-/// surface plane after its center, SURFACE_STRIDE floats a voxel. A covered
-/// voxel, one with an emittable healthy voxel right above it, in bounds or
-/// not, gets NaN.
-pub fn emit_surfaces(
-    map: &VoxelMap,
-    voxel_size: f32,
-    bounds: Option<&LocalBounds>,
-    live: &AHashSet<VoxelKey>,
-    gated: bool,
-) -> Vec<f32> {
-    let emittable = |support| !gated || voxel_supported(support, map.support_min);
-    let mut out = scan_chunks(
-        map,
-        voxel_size,
-        bounds,
-        SURFACE_STRIDE,
-        SURFACE_STRIDE * live.len(),
-        |hv, chunk, chunk_inside, part| {
-            if !emittable(hv.support) {
-                return;
-            }
-            let (x, y, z) = voxel_center(hv.key, voxel_size);
-            if !(chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z))) {
-                return;
-            }
-            let plane = chunk
-                .surface(&hv)
-                .filter(|_| !map.voxels.healthy_above(chunk, &hv).is_some_and(emittable));
-            let [nx, ny, nz, offset] = plane.map_or([f32::NAN; 4], |p| {
-                [p.normal.x, p.normal.y, p.normal.z, p.offset]
-            });
-            part.extend_from_slice(&[x, y, z, nx, ny, nz, offset]);
-        },
-    );
-    // This frame's hits not yet healthy carry no plane until they settle.
-    for &key in live.iter() {
-        let (x, y, z) = voxel_center(key, voxel_size);
-        if !map.voxels.is_healthy(&key) && bounds.is_none_or(|b| b.contains(x, y, z)) {
-            out.extend_from_slice(&[x, y, z, f32::NAN, f32::NAN, f32::NAN, f32::NAN]);
+        if planes {
+            out.extend_from_slice(&[f32::NAN; 4]);
         }
     }
     out
