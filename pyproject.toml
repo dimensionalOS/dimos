@@ -749,7 +749,8 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+# Keep the offline localization CLI's existing exclusion explicit; tool_* is not a test convention.
+exclude = '^dimos/models/Detic(/|$)|.*/test_.|^dimos/perception/localize/tools/tool_localize\.py$|.*/conftest.py*'
 
 [[tool.mypy.overrides]]
 module = [

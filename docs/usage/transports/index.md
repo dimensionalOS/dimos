@@ -98,16 +98,6 @@ When the factory builds transports from the global switch, it applies defaults (
 * `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
 * Everything else: zenoh defaults (reliable, drop under congestion).
 
-## Benchmarks
-
-Quick view on performance of our pubsub backends:
-
-```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
-```
-
-![Benchmark results](../assets/pubsub_benchmark.png)
-
 ## Abstraction layers
 
 <details>
@@ -485,19 +475,9 @@ class MyCborPubSub(CborEncoderMixin, Memory):
     pass
 ```
 
-## Testing and benchmarks
-
-### Spec tests
+## Testing
 
 See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid tests your new backend should pass.
-
-### Benchmarks
-
-Add your backend to benchmarks to compare in context:
-
-```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
-```
 
 ## Available transports
 

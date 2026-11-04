@@ -121,4 +121,3 @@ bytes_topic_values = [
 
 - `dimos/protocol/pubsub/test_spec.py` - Basic pubsub operations
 - `dimos/protocol/pubsub/test_subscribe_all.py` - Pattern subscriptions
-- `dimos/protocol/pubsub/benchmark/testdata.py` - Benchmark cases
