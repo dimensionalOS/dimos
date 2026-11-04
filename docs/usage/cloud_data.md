@@ -24,6 +24,7 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 - Recordings carry a manifest: the stream list from `_streams` plus the blueprint name parsed from the `<stamp>-<blueprint>` run directory. `dimos data ls` shows both.
 - Discovery modes (no argument, `--since`) skip files modified within the last `upload_quiet_s` seconds (default 30) so a store that is still being written is not shipped mid-run. Naming a path or `latest` is explicit intent and uploads immediately.
 - Compression stages next to the source file (not `/tmp`), with a free-space check first; point `staging_dir` at a bigger partition if needed.
+- Each successful upload prints a `console:` link to it (production and staging APIs only).
 
 ## Pulls
 

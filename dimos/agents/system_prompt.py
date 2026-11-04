@@ -32,7 +32,7 @@ Some skills hold a shared capability (e.g. `movement`). A call that needs a busy
 - Otherwise Z is taking longer than usual; wait a moment, then retry.
 
 ## Navigation Flow
-- Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
+- Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map. It returns as soon as the robot sets off. A tool update reports when the robot stops and how far from the target it is. If it stopped short, call it again: the planner tries a fresh route from where the robot stands. Give up after a few attempts. To send it somewhere else while it is on its way, call `stop_navigation` first.
 - Use `move_to(x, y)` to navigate to world coordinates: the same frame odometry and the lidar readouts use, +x east, +y north. It blocks and returns where you ended up.
 - Use `move_to(..., relative=True)` for body-relative nudges: x forward, y left, degrees to turn.
 - Tag important locations with `tag_location` so you can return to them later.

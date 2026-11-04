@@ -74,12 +74,16 @@ JOINT_NAMES = tuple(
     f"{leg}_{part}_joint" for leg in ("FR", "FL", "RR", "RL") for part in ("hip", "thigh", "calf")
 )
 
+# The fixed frame the Go2's odometry, mapping and planning share.
+WORLD_FRAME = "world"
+
 voxel_size = 0.08
 wall_clearance_m = 0.1
 planner_viz_hz = 2.0
 viz_sweep_cells = 1
 
 ray_tracing_config = RayTracingVoxelMapConfig(
+    world_frame=WORLD_FRAME,
     voxel_size=voxel_size,
     global_emit_every=50,
     viz_emit_every=5,
@@ -87,6 +91,7 @@ ray_tracing_config = RayTracingVoxelMapConfig(
 )
 
 mls_planner_config = MLSPlannerNativeConfig(
+    world_frame=WORLD_FRAME,
     voxel_size=voxel_size,
     robot_height=ROBOT_HEIGHT,
     start_z_offset_m=BASE_LINK_HEIGHT,

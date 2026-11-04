@@ -155,10 +155,15 @@ trajectory is preempted, and a trajectory sent during the hold is accepted
 and then aborted by preemption on the next tick, so the arm stays put.
 Stopping a running policy is the policy's job, not the coordinator's.
 `get_status` answers with an `OperatorHoldStatus` (on, route, reason, start
-time, unheld joints); the task also hands the same status to whatever
-`set_status_publisher()` was given, once a second while on and once more on
-acknowledge. After acknowledge nothing resumes by itself: the next task to
-command a joint takes it.
+time, unheld joints, e-stop latched); the task also hands the same status to
+whatever `set_status_publisher()` was given, once a second while on, on every
+e-stop change and once more on acknowledge. After acknowledge nothing resumes
+by itself: the next task to command a joint takes it.
+
+The coordinator's `set_estop(True)` turns the hold on (route `failsafe`,
+reason `e-stop`). While stopped the hold commands nothing; after
+`set_estop(False)` it holds each joint where it is then, until acknowledged;
+acknowledge is refused while the e-stop is latched.
 
 ## Control Modes
 
@@ -300,7 +305,7 @@ Connection modules (`Go2WebRtc`, `G1WholeBodyConnection`) publish the
 Choose by what the consumer is, not by how many robots the deployment has.
 
 Consumers that capture or model whatever is present read the aggregate:
-`CollectionRecorder`, `WorldBeliefRecorder`, `ManipulationModule`.
+`CollectionModule`, `WorldBeliefRecorder`, `ManipulationModule`.
 
 Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
 reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.

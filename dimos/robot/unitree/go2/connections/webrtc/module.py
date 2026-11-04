@@ -44,6 +44,7 @@ from dimos.robot.unitree.go2.config import (
     CAMERA_OFFSET,
     CMD_VEL_TIMEOUT,
     JOINT_NAMES,
+    WORLD_FRAME,
     front_camera_info,
 )
 from dimos.spec.perception import Camera, Pointcloud
@@ -113,7 +114,7 @@ class Go2WebRtcConfig(NativeModuleConfig):
     aes_128_key: str | None = Field(default=None, repr=False)
     obstacle_avoidance: bool = True
     # TF parent frame of the internal odometry (odom_frame_id -> base_link).
-    odom_frame_id: str = "world"
+    odom_frame_id: str = WORLD_FRAME
     # Turn off where another module owns the base_link edge. The odom port keeps publishing either way.
     publish_tf: bool = True
     # The L1 map re-expressed in base_link at the latest pose, so a ray tracer casts from the robot.

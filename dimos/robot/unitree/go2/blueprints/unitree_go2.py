@@ -50,6 +50,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.robot.unitree.go2.config import (
     CAMERA_OFFSET,
+    WORLD_FRAME,
     go2_model,
     mls_planner_config,
     ray_tracing_config,
@@ -60,22 +61,12 @@ from dimos.robot.unitree.go2.rerun import rerun_config
 from dimos.robot.urdf_manager_native.native import UrdfManagerNative
 from dimos.visualization.vis_module import vis_module
 
-WORLD_FRAME = "world"
-
 _navigation = autoconnect(
     UrdfManagerNative.blueprint(model=go2_model()).remappings(
         [(UrdfManagerNative, "coordinator_joint_state", "joint_state")]
     ),
-    RayTracingVoxelMap.blueprint(
-        **ray_tracing_config.model_copy(update={"world_frame": WORLD_FRAME}).model_dump(
-            exclude_unset=True
-        )
-    ),
-    MLSPlannerNative.blueprint(
-        **mls_planner_config.model_copy(update={"world_frame": WORLD_FRAME}).model_dump(
-            exclude_unset=True
-        )
-    ).remappings(
+    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
+    MLSPlannerNative.blueprint(**mls_planner_config.model_dump(exclude_unset=True)).remappings(
         [
             (MLSPlannerNative, "global_map", "global_map_unused"),
             (MLSPlannerNative, "path", "planner_path"),
@@ -168,9 +159,7 @@ def _connection() -> Blueprint:
         sim: Blueprint = Go2WebRtcSim.blueprint()
         return sim
     # the L1 map cast from base_link, not world's origin, so the ray tracer carves from the robot
-    return Go2WebRtc.blueprint(
-        odom_frame_id=WORLD_FRAME, lidar_in_base_link=True, obstacle_avoidance=False
-    )
+    return Go2WebRtc.blueprint(lidar_in_base_link=True, obstacle_avoidance=False)
 
 
 unitree_go2 = autoconnect(

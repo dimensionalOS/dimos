@@ -15,16 +15,19 @@
 from collections.abc import Callable
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from dimos.core.coordination.python_worker import Actor
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import In, Out, RemoteOut
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.unitree.type.odometry import Odometry
 
 
@@ -140,9 +143,6 @@ class RXPYSubscriber(SubscriberBase):
 
 class SpyLCMTransport(LCMTransport):
     active_subscribers: int = 0
-
-    def __reduce__(self):
-        return (SpyLCMTransport, (self.topic.topic, self.topic.lcm_type))
 
     def __init__(self, topic: str, type: type, **kwargs) -> None:
         super().__init__(topic, type, **kwargs)
@@ -295,3 +295,17 @@ def test_out_publish_reaches_subscribers_after_one_unsubscribes_mid_publish() ->
     out.publish(2)
 
     assert received == [1, 2]
+
+
+def test_module_stream_crosses_processes_as_a_remote_handle() -> None:
+    owner = SimpleNamespace(ref=Actor(None, None, worker_id=1, module_id=2))
+    out = Out(Odometry, "odom", owner=owner)
+    remote = decode(encode(out))
+    assert type(remote) is RemoteOut
+    assert remote.type is Odometry and remote.name == "odom"
+    assert (remote.owner._worker_id, remote.owner._module_id) == (1, 2)
+    assert remote.transport is None
+
+    # encode() turns whatever a hook raises into a TypeError that names the path.
+    with pytest.raises(TypeError, match=r"In at value: .*owner ref"):
+        encode(In(Odometry, "odom"))

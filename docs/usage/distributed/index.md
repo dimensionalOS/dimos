@@ -4,9 +4,9 @@ Run one blueprint across several machines: the robot's drivers on its Jetson, a 
 
 ## WARNING: dimos host is essentially remote code execution
 
-Dimos RPC is pickle for now, and a fragment is a pickled blueprint. Anyone who can reach a
-Host's router can make it run any code they like, as the user the Host runs as. There is no
-authentication or encryption yet.
+Dimos RPC sends classes and functions by import path, and a fragment is an encoded blueprint.
+Anyone who can reach a Host's router can make it import and run any installed code, as the user
+the Host runs as. There is no authentication or encryption yet.
 
 - A Host listens only on its own machine until you open it with `listen=`.
 - Open it only on networks you trust: ideally a VPN such as Tailscale

@@ -25,8 +25,8 @@ from dimos_lcm.std_msgs import String as LCMString
 
 from dimos.types.timestamped import Timestamped
 
-Part = Literal["trunk", "lidar", "leg", "foot"]
-Kind = Literal["floor", "wall", "ceiling", "clutter"]
+Part = str
+Kind = Literal["floor", "wall", "clutter"]
 
 
 @dataclass(frozen=True, order=True)
