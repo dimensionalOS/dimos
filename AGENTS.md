@@ -199,9 +199,9 @@ Shared runtime config. Values cascade: defaults → blueprint → JSON config �
 ### Transports
 
 - **ZenohTransport**: Default. Typed messages with LCM encoding over Zenoh.
-- **pZenohTransport**: Pickled Zenoh — use for complex Python objects.
+- **pZenohTransport**: CBOR-encoded Zenoh for Python values without an LCM form.
 - **LCMTransport**: Opt-in legacy backend. Multicast UDP.
-- **pLCMTransport**: Pickled LCM — use for complex Python objects.
+- **pLCMTransport**: CBOR-encoded LCM for Python values without an LCM form.
 - **ROSTransport**: ROS topic bridge — interop with ROS nodes (`dimos/core/transport.py`).
 - **DDSTransport**: DDS pub/sub. `DDS_AVAILABLE` reports whether cyclonedds is installed, and cyclonedds is imported only when a `DDSTransport` is constructed. Install with `uv sync --extra dds --inexact` (`dimos/protocol/pubsub/impl/ddspubsub.py`).
 
@@ -348,7 +348,7 @@ uv run pytest dimos/core/coordination/test_blueprints.py -v
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes the `self_hosted` marker, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
+`uv run pytest` excludes the `self_hosted` marker, and never collects `tool_*.py` files. CI runs `self_hosted`-marked tests on the self-hosted runner only. End-to-end tests (`dimos/e2e_tests/`, markers `web_browser` and `self_hosted_large`) run once a day in the `e2e` workflow, not per PR. See `docs/development/testing.md`.
 
 ---
 
@@ -381,7 +381,7 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 
 ## Git Workflow
 
-- **Branch names are `<who>/<type>/<topic>`**, e.g. `paul/feat/add-3d-map`. `who` is any identifier that makes the owner clear. `type` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`, `style`, `revert`. Prefer lowercase and hyphens. A pre-commit hook enforces this, locally and in CI.
+- **Branch names are `<who>/<type>/<topic>`**, e.g. `paul/feat/add-3d-map`. `who` is any identifier that makes the owner clear. `type` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`, `style`, `revert`. Prefer lowercase and hyphens. A pre-commit hook enforces this locally and in CI; CI skips this hook for PRs from forks.
 - **PRs target `main`** — `main` is the unstable development branch. Work and PR off of `main`. Never push to `main` directly.
 - **Don't force-push** unless after a rebase with conflicts
 - **Minimize pushes** — every push triggers CI (~1 hour on self-hosted runners). Batch commits locally, push once.

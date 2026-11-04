@@ -39,6 +39,7 @@ from dimos.control.task import (
     JointCommandOutput,
     JointStateSnapshot,
     ResourceClaim,
+    SensorStateSnapshot,
 )
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
+    from dimos.control.connection_source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.whole_body.spec import IMUState
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -75,7 +77,8 @@ class TickLoop:
     3. ARBITRATE: Per-joint conflict resolution (highest priority wins)
     4. NOTIFY: Send preemption notifications to affected tasks
     5. ROUTE: Convert joint-centric commands to hardware-centric
-    6. WRITE: Send commands to hardware
+    6. WRITE: Send commands to hardware, and a complete command to every
+       robot behind a connection module
     7. PUBLISH: Output aggregated JointState, plus one stream per robot
 
     Args:
@@ -92,6 +95,10 @@ class TickLoop:
         frame_pose_hz: Maximum rate for publish_tf_callback
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
+        connections: Robots driven through connection modules, by name. Guarded
+            by hardware_lock; their joints are in joint_to_hardware too.
+        connection_command_callback: Called once per tick for each robot in
+            ``connections`` that has reported, with (name, command by key)
     """
 
     def __init__(
@@ -109,9 +116,18 @@ class TickLoop:
         frame_id: str = "coordinator",
         log_ticks: bool = False,
         publish_command_callback: Callable[[JointState], None] | None = None,
+        connections: dict[str, ConnectionSource] | None = None,
+        connection_command_callback: Callable[[str, dict[str, float]], None] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
+        self._connections: dict[str, ConnectionSource] = (
+            connections if connections is not None else {}
+        )
+        self._connection_command_callback = connection_command_callback
+        # Robots already told off for never reporting, so each is told off once.
+        self._silence_logged: set[str] = set()
+        self._started_at = time.monotonic()
         self._hardware_lock = hardware_lock
         self._tasks = tasks
         self._task_lock = task_lock
@@ -196,7 +212,13 @@ class TickLoop:
 
         joint_states, per_hardware = self._read_all_hardware()
         imu_states = self._read_all_imu()
-        state = CoordinatorState(joints=joint_states, imu=imu_states, t_now=t_now, dt=dt)
+        state = CoordinatorState(
+            joints=joint_states,
+            imu=imu_states,
+            t_now=t_now,
+            dt=dt,
+            sensors=self._read_all_sensors(),
+        )
 
         commands = self._compute_all_tasks(state)
 
@@ -207,6 +229,8 @@ class TickLoop:
         hw_commands = self._route_to_hardware(joint_commands)
 
         self._write_all_hardware(hw_commands)
+
+        self._write_all_connections(hw_commands)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -253,6 +277,13 @@ class TickLoop:
                         per_hardware[hw.hardware_id] = state
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
+            # Read whether or not a robot can be commanded: one whose readings
+            # stopped keeps its last joints in the state.
+            for source in self._connections.values():
+                joints = source.read_joints()
+                joint_positions.update(joints.joint_positions)
+                joint_velocities.update(joints.joint_velocities)
+                joint_efforts.update(joints.joint_efforts)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
@@ -286,6 +317,14 @@ class TickLoop:
                 except Exception as e:
                     logger.error(f"Failed to read IMU from {hw_id}: {e}")
         return out
+
+    def _read_all_sensors(self) -> SensorStateSnapshot:
+        """Collect the latest sensor readings from every connection."""
+        readings: dict[str, dict[str, float]] = {}
+        with self._hardware_lock:
+            for source in self._connections.values():
+                readings.update(source.read_sensors())
+        return SensorStateSnapshot(readings=readings)
 
     def _compute_all_tasks(
         self, state: CoordinatorState
@@ -472,6 +511,55 @@ class TickLoop:
                 )
             except Exception:
                 logger.exception("Failed to publish joint commands")
+
+    def _write_all_connections(
+        self,
+        hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+    ) -> None:
+        """Send every robot behind a connection module its complete command.
+
+        Every robot that has reported gets one, every tick, whether or not a
+        task drives it, so its connection module's deadman never fires while
+        the coordinator runs. One whose readings are stale gets none.
+        """
+        publish = self._connection_command_callback
+        if publish is None:
+            return
+        now = time.monotonic()
+        with self._hardware_lock:
+            for name, source in self._connections.items():
+                if not source.ready_for_control(now):
+                    self._note_silence(name, source, now)
+                    continue
+                winners: dict[str, float] = {}
+                mode: ControlMode | None = None
+                if name in hw_commands:
+                    winners, mode = hw_commands[name]
+                try:
+                    publish(name, source.command(winners, mode))
+                except Exception as e:
+                    logger.error(f"Failed to send a command to {name}: {e}")
+
+    def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:
+        """Log once that a robot has never reported, naming its silent ports and the likely cause.
+
+        Nothing is logged until ten reading timeouts after start, nor for a
+        robot that reported and then went quiet: its connection module's
+        deadman halts it.
+        """
+        if name in self._silence_logged or now - self._started_at < 10 * source.reading_timeout_s:
+            return
+        silent = source.unreported()
+        if not silent:
+            return
+        self._silence_logged.add(name)
+        ports = ", ".join(f"{name}_{kind}" for kind in silent)
+        theirs = ", ".join(silent)
+        onto = "it" if len(silent) == 1 else "them"
+        logger.error(
+            f"robot {name!r} has not reported on {ports}; is the connection module's {theirs} "
+            f"remapped onto {onto}?"
+        )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
         """Publish aggregated JointState for external consumers."""

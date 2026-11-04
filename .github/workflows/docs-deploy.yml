@@ -9,6 +9,8 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
       - "misc/mkdocs/**"
       - "README.md"
       - "assets/readme/**"

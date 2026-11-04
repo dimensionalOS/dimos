@@ -25,9 +25,9 @@ from dimos.core.coordination.blueprint_config.parser import (
     BlueprintConfigParser,
     split_run_arguments,
 )
-from dimos.core.coordination.blueprints import TransportSpec, autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Stream, Transport
+from dimos.core.stream import Stream, Transport, TransportSpec
 
 
 class NestedConfig(BaseModel):

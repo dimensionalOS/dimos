@@ -14,9 +14,9 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import copy
 import errno
 import os
-import pickle
 import threading
 import time
 from unittest.mock import MagicMock, create_autospec, patch
@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 from lcm import LCM
 import pytest
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.service.lcmservice import (
     _DEFAULT_LCM_URL,
@@ -396,50 +397,22 @@ class TestLCMService:
             time.sleep(0.1)
             assert service._thread is None
 
-    def test_getstate_excludes_unpicklable_attrs(self) -> None:
+    def test_codec_round_trip_and_deepcopy_rebuild_an_unstarted_service(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            state = service.__getstate__()
-
-            assert "l" not in state
-            assert "_stop_event" not in state
-            assert "_thread" not in state
-            assert "_l_lock" not in state
-
-    def test_unpickling_reinitializes_runtime_attrs(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            new_service = pickle.loads(pickle.dumps(service))
-
-            assert new_service.l is None
-            assert isinstance(new_service._stop_event, threading.Event)
-            assert new_service._thread is None
-            # threading.Lock is a factory function, not a type
-            # Just check that the lock exists and has acquire/release methods
-            assert hasattr(new_service._l_lock, "acquire")
-            assert hasattr(new_service._l_lock, "release")
-
-    def test_start_reinitializes_lcm_after_unpickling(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            new_service = pickle.loads(pickle.dumps(service))
-
-            # Start should reinitialize LCM
-            new_service.start()
-
-            # LCM should be created again
-            assert mock_lcm_class.call_count == 2
-
-            new_service.stop()
+            mock_lcm_class.return_value = create_autospec(LCM, spec_set=True, instance=True)
+            service = LCMService(url="udpm://239.255.76.68:7799?ttl=1", ttl=1)
+            service.start()
+            try:
+                assert "lcm" not in service.cbor_encode()
+                for clone in (decode(encode(service)), copy.deepcopy(service)):
+                    assert type(clone) is LCMService
+                    assert clone.config == service.config
+                    assert clone._thread is None
+                    clone.stop()
+                # The service plus one native instance per clone.
+                assert mock_lcm_class.call_count == 3
+            finally:
+                service.stop()
 
     def test_stop_cleans_up_lcm_instance(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:

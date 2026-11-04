@@ -12,18 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Onboard trajectory controllers: the pursuit laws with no python in the tick. `laws/hinted` is what the
-//! follower runs, `laws/seed` the frozen A/B baseline. Every law is a stateless port of its `control/laws/*.py`
-//! twin, held to 1e-9 by `control/test_rust_parity.py` (python op order, first-min argmin, IEEE-remainder angles).
+//! Onboard trajectory controller: the stateless hinted pursuit law, plus the native module behind the module feature.
 
 pub mod emb;
-pub mod laws;
+pub mod hinted;
 
-// The path dialect and its geometry are the planner's: it encodes what these laws decode.
-pub use dimos_local_planner::{clearance, geom, stamps};
+// The path dialect and its geometry are the planner's: it encodes what this law decodes.
+pub use dimos_local_planner::{geom, stamps};
 
 #[cfg(feature = "module")]
 pub mod module;
-
-#[cfg(feature = "python")]
-mod python;

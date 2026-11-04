@@ -27,9 +27,6 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
-    RoboPlanPointCloudSelfFilter,
-)
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.robot.assets.model import RobotModel
@@ -38,6 +35,7 @@ from dimos.robot.manipulators.common.topics import (
     COORDINATOR_FRAME_ID,
     EEF_TWIST_TASK_NAME,
 )
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 
 class TeleopBinding(TypedDict):
@@ -215,7 +213,9 @@ def manipulation_mapping(
         world_frame: Fixed frame the map is built and published in.
     """
     return autoconnect(
-        RoboPlanPointCloudSelfFilter.blueprint(
+        UrdfManagerPointClearing.blueprint(
+            # ManipulationModule already publishes the arm's frames.
+            publish_joint_tf=False,
             model=self_filter_model,
             state_tolerance_s=0.1,
             # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms

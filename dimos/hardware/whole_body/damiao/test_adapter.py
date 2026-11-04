@@ -354,6 +354,23 @@ def test_make_can_bus_linux_uses_configured_interface(
     socketcan.assert_called_once_with("can8")
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_make_can_bus_serial_device_uses_damiao_serial_bridge(
+    dual_robot: FakeRobot,
+    mocker: MockerFixture,
+    platform: str,
+) -> None:
+    dm_serial = mocker.patch.object(can_motor_control, "DmSerialBus", create=True)
+    mocker.patch.object(adapter_module.sys, "platform", platform)
+    adapter = DualAdapter(
+        dual_robot,
+        runtime_config=DamiaoRuntimeConfig(bus_devices={"left": "/dev/ttyACM0"}),
+    )
+
+    assert adapter._make_can_bus("left") is dm_serial.return_value
+    dm_serial.assert_called_once_with("/dev/ttyACM0")
+
+
 def test_init_rehydrates_serialized_runtime_config(dual_robot: FakeRobot) -> None:
     adapter = DualAdapter(
         dual_robot,
@@ -1015,3 +1032,17 @@ def test_read_motor_states_inactive_adapter_pumps_feedback(
 
     assert dual_robot.refresh_count == refreshes_before + 2
     assert dual_robot.tick_count == ticks_before + 2
+
+
+def test_activate_checks_arm_limits_before_enabling_gripper(
+    dual_robot: FakeRobot,
+    gravity_adapter_factory: Callable[..., GravityDualAdapter],
+) -> None:
+    adapter = gravity_adapter_factory(model=FakePinModel(), gravity_comp=False)
+    assert adapter.connect()
+    cast("FakeArm", dual_robot["left_arm"]).position_values[0] = -1.1
+
+    assert not adapter.activate()
+    assert dual_robot.enable_count == 0
+    assert dual_robot.disable_count >= 1
+    assert adapter._feedback_fault is not None

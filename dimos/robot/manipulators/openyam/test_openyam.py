@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+from typing import Any, get_origin, get_type_hints
 
 import pytest
 
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.core.stream import In
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
@@ -188,6 +190,25 @@ def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
         joints in (OPENYAM_ARM_JOINTS, [OPENYAM_GRIPPER_JOINT], OPENYAM_JOINTS)
         for joints in claimed_joints
     )
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        keyboard_teleop_openyam,
+        keyboard_teleop_openyam_planner,
+        teleop_webxr_openyam,
+    ],
+)
+def test_openyam_task_bindings_have_coordinator_inputs(blueprint: Blueprint) -> None:
+    atom = next(
+        atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    annotations = get_type_hints(atom.module)
+    for task in atom.kwargs["tasks"]:
+        for binding in control_task_registry.bindings_for(task.type).consumes:
+            port = task.stream_bind.get(binding.stream, binding.stream)
+            assert get_origin(annotations.get(port)) is In, (task.name, port)
 
 
 def test_keyboard_teleop_gripper_control_is_independent() -> None:
