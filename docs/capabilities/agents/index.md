@@ -85,10 +85,7 @@ class MySkillContainer(Module):
 | `follow_person(query)` | `PersonFollowSkillContainer` | Visual servoing to follow a described person |
 | `stop_following()` | `PersonFollowSkillContainer` | Stop person following |
 | `speak(text)` | `SpeakSkill` | Text-to-speech through robot speakers |
-| `where_am_i()` | `GoogleMapsSkillContainer` | Current street/area from GPS |
-| `get_gps_position_for_queries(queries)` | `GoogleMapsSkillContainer` | Look up GPS coordinates |
 | `set_gps_travel_points(points)` | `GpsNavSkillContainer` | Navigate via GPS waypoints |
-| `map_query(query_sentence)` | `OsmSkill` | Search OpenStreetMap with VLM |
 
 ## MCP
 

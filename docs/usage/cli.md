@@ -118,7 +118,7 @@ dimos run my-robot-stack.go2
 dimos run unitree-go2 my-robot-stack.keyboard-teleop
 
 # Disable specific modules
-dimos run unitree-go2-agentic --disable OsmSkill WebInput
+dimos run unitree-go2-agentic --disable WebInput
 ```
 
 External blueprint names are always fully qualified as

@@ -922,15 +922,9 @@ robots:
         demo-skill:
           title: Skill demo
           description: 'An agent with a calculator skill: the smallest skill example.'
-        demo-google-maps-skill:
-          title: Google Maps skill demo
-          description: An agent on a pretend robot with a Google Maps skill.
         demo-gps-nav:
           title: GPS navigation demo
           description: An agent on a pretend robot with GPS navigation skills.
-        demo-osm:
-          title: OpenStreetMap skill demo
-          description: An agent on a pretend robot with an OpenStreetMap skill.
         teleop-phone:
           title: Phone driving
           description: 'Drive from a phone''s touch controls: publishes cmd_vel for any robot.'

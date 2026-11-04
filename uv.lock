@@ -1965,7 +1965,6 @@ all = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "gdown" },
-    { name = "googlemaps" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
@@ -2171,7 +2170,6 @@ mapping = [
 ]
 misc = [
     { name = "gdown" },
-    { name = "googlemaps" },
     { name = "ipykernel" },
     { name = "portal" },
     { name = "tensorboard" },
@@ -2369,7 +2367,6 @@ lint = [
     { name = "dimos-cdrgen" },
     { name = "einops" },
     { name = "gdown" },
-    { name = "googlemaps" },
     { name = "hydra-core" },
     { name = "ipython", version = "8.38.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "ipython", version = "9.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2413,7 +2410,6 @@ project-deps = [
     { name = "dimos", extra = ["visualization", "web", "webrtc"] },
     { name = "einops" },
     { name = "gdown" },
-    { name = "googlemaps" },
     { name = "hydra-core" },
     { name = "langchain" },
     { name = "langchain-core" },
@@ -2445,7 +2441,6 @@ tests = [
     { name = "dimos-cdrgen" },
     { name = "einops" },
     { name = "gdown" },
-    { name = "googlemaps" },
     { name = "hydra-core" },
     { name = "langchain" },
     { name = "langchain-core" },
@@ -2504,7 +2499,6 @@ tests-self-hosted = [
     { name = "dimos-cdrgen" },
     { name = "einops" },
     { name = "gdown" },
-    { name = "googlemaps" },
     { name = "hydra-core" },
     { name = "langchain" },
     { name = "langchain-core" },
@@ -2595,7 +2589,6 @@ requires-dist = [
     { name = "filelock", specifier = ">=3.20,<4" },
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "gitpython", specifier = ">=3.1.45" },
-    { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64' and extra == 'mapping') or (python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
     { name = "httpx", marker = "extra == 'agents'", specifier = ">=0.28" },
@@ -2732,7 +2725,6 @@ lint = [
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
-    { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
     { name = "ipython" },
     { name = "langchain", specifier = "==1.2.3" },
@@ -2775,7 +2767,6 @@ project-deps = [
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
-    { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
     { name = "langchain", specifier = "==1.2.3" },
     { name = "langchain-core", specifier = "==1.3.3" },
@@ -2808,7 +2799,6 @@ tests = [
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
-    { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
     { name = "langchain", specifier = "==1.2.3" },
     { name = "langchain-core", specifier = "==1.3.3" },
@@ -2869,7 +2859,6 @@ tests-self-hosted = [
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "gdown", specifier = "==6.0.0" },
-    { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
     { name = "langchain", specifier = "==1.2.3" },
     { name = "langchain-core", specifier = "==1.3.3" },
@@ -3729,15 +3718,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/b5/c8/f439cffde755cffa4
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/c8/e2645aa8ed02fd4c7a2f59d68783b65b1f3cbdfe39a6308e156509d1fee8/googleapis_common_protos-1.75.0-py3-none-any.whl", hash = "sha256:961ed60399c457ceb0ee8f285a84c870aabc9c6a832b9d37bb281b5bebde43ed", size = 300631, upload-time = "2026-05-07T08:03:30.345Z" },
 ]
-
-[[package]]
-name = "googlemaps"
-version = "4.10.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fe/26/bca4d737a9acea25e94c19940a780bbf0be64a691f7caf3a68467d3a5838/googlemaps-4.10.0.tar.gz", hash = "sha256:3055fcbb1aa262a9159b589b5e6af762b10e80634ae11c59495bd44867e47d88", size = 33056, upload-time = "2023-01-26T16:45:02.501Z" }
 
 [[package]]
 name = "greenlet"
