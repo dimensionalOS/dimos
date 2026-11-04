@@ -39,17 +39,37 @@ def test_model_owner_resolves_mounts_once_for_later_consumers(tmp_path):
     )
     manager = UrdfManager(models={"robot": configured})
     try:
-        models = manager.resolved_models()
-        world = SceneConfig((Instance("robot"),)).resolve(models)
+        contribution = manager.robot_models()
+        senders = (("urdf_manager", contribution), ("unrelated", {"other_config": True}))
+        world = SceneConfig((Instance("robot"),)).resolve(senders)
         # A reader receives the resolved text, not a path it must reload.
         source.write_text('<robot name="changed"><link name="different"/></robot>')
         resolved = world.instances[0].description
-        assert resolved.xml == models["robot"].xml
+        assert resolved.xml == contribution["robot_models"]["robot"].xml
         assert resolved.root_link == "robot/base"
         assert resolved.joints[0].child_link == "robot/camera"
-        assert world.revision == SceneConfig((Instance("robot"),)).resolve(models).revision
+        assert world.revision == SceneConfig((Instance("robot"),)).resolve(senders).revision
         with pytest.raises(ValueError, match="conflicting model"):
             conflicting = RobotModel.from_file(source).with_prefix("different/")
-            replace(world, instances=(Instance("robot", conflicting),)).resolve(models)
+            replace(world, instances=(Instance("robot", conflicting),)).resolve(senders)
     finally:
         manager.dispose()
+
+
+def test_shared_models_combine_multiple_providers_and_reject_duplicate_ids(world):
+    first, second = world.instances[:2]
+    senders = (
+        ("first_manager", {"robot_models": {first.id: first.description}}),
+        ("second_manager", {"robot_models": {second.id: second.description}}),
+    )
+    requested = SceneConfig((Instance(first.id), Instance(second.id)))
+    resolved = requested.resolve(senders)
+    assert resolved.instances[0].description.xml == first.description.xml
+    assert resolved.instances[1].description.xml == second.description.xml
+    with pytest.raises(ValueError, match=f"duplicate shared model {first.id}"):
+        requested.resolve((*senders, ("duplicate_manager", senders[0][1])))
+
+
+def test_missing_shared_model_fails_during_configuration():
+    with pytest.raises(ValueError, match="model missing has not been resolved"):
+        SceneConfig((Instance("missing"),)).resolve(())

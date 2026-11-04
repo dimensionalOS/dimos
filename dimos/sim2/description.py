@@ -20,10 +20,9 @@ from dataclasses import asdict, dataclass, replace
 from functools import cached_property
 import hashlib
 import json
-from typing import Protocol
 
+from dimos.core.shared_config import ConfigSenders
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
-from dimos.spec.utils import Spec
 
 
 @dataclass(frozen=True)
@@ -52,16 +51,24 @@ class Instance:
         return self.model.load() if isinstance(self.model, RobotModel) else self.model
 
 
-class ModelSourceSpec(Spec, Protocol):
-    def resolved_models(self) -> dict[str, LoadedRobotModel]: ...
-
-
 @dataclass(frozen=True)
 class SceneConfig:
     instances: tuple[Instance, ...]
     gravity_world: tuple[float, float, float] = (0.0, 0.0, -9.81)
 
-    def resolve(self, models: dict[str, LoadedRobotModel]) -> SceneConfig:
+    def resolve(self, config_senders: ConfigSenders) -> SceneConfig:
+        """Bind instance IDs to shared models before any consumer builds or starts."""
+        models: dict[str, LoadedRobotModel] = {}
+        for sender, config in config_senders:
+            contribution = config.get("robot_models", {})
+            if not isinstance(contribution, dict):
+                raise TypeError(f"{sender}: robot_models must be a mapping")
+            for name, model in contribution.items():
+                if not isinstance(name, str) or not isinstance(model, LoadedRobotModel):
+                    raise TypeError(f"{sender}: robot_models must map IDs to LoadedRobotModel")
+                if name in models:
+                    raise ValueError(f"duplicate shared model {name} from {sender}")
+                models[name] = model
         instances = []
         for instance in self.instances:
             model = models.get(instance.id)

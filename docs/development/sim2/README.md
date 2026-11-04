@@ -32,10 +32,29 @@ sim2/
 ```
 
 The existing `robot/assets/RobotModel` defines source geometry, names and fixed
-mounts. `UrdfManager.resolved_models()` resolves it once; it also serves the model
-and publishes its TF tree. A blueprint passes the **same SceneConfig** to physics
-and geometry sensors; each binds it to those resolved descriptions. Sensor settings
-are passed to their own modules. No camera or lidar appears in SceneConfig.
+mounts. `UrdfManager` materializes it once, serves the model and publishes its TF
+tree. Its `@shared_config(SharedConfigModule)` method delivers `robot_models`
+through [#4937](https://github.com/dimensionalOS/dimos/pull/4937). The coordinator
+delivers configuration after deployment and before build. SimModule and the
+camera/lidar modules implement `config_receive()` to bind their **same SceneConfig**
+to these descriptions. No model-discovery RPC or startup-order dependency remains.
+Unrelated configuration is ignored; duplicate model IDs and missing required models
+fail during configuration. Sensor settings stay in their own modules.
+
+```text
+deploy all modules
+  UrdfManager.robot_models()                 # already materialized descriptions
+  coordinator delivers to SharedConfigModule receivers
+    SimModule.config_receive(senders)        # resolves self.config.scene
+    camera/lidar.config_receive(senders)     # resolves the same model IDs
+build all modules
+start all modules                           # physics/render/raycast resources open
+```
+
+The provider does not depend on another shared-config delivery. This is fixed
+startup configuration; adding a provider later does not rebuild existing worlds.
+The core PR includes #4937 as a dependency and targets main to keep unrelated main
+changes out of review. Merge #4937 first; its framework diff then leaves this PR.
 
 ```mermaid
 flowchart LR
@@ -57,7 +76,7 @@ flowchart LR
 
 ## Calls and ports
 
-`SimModule.start()` resolves the scene and creates `Simulation(backend, scene,
+`SimModule.config_receive()` resolves the scene before build. `start()` creates `Simulation(backend, scene,
 timing)`. Its owner thread calls `backend.load()`, then repeatedly processes
 commands, exports due truth samples, and calls `backend.step()`. Only this owner
 touches native dynamics. Separate publication threads carry queued messages;
