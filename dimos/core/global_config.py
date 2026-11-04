@@ -43,6 +43,8 @@ class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
     simulation: str = ""
+    # Robot blueprints that carry agent skills (MCP server and its tools) add them only with this on.
+    agentic: bool = False
     replay: bool = False
     replay_db: str = "go2_short"
     record: Literal["", "sqlite", "mcap"] = ""

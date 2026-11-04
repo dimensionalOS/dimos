@@ -13,13 +13,14 @@
 # limitations under the License.
 
 """The Go2 navigating: its URDF, a connection, the ray-traced voxel map, MLS planning, Ivan's local planner,
-premap relocalization, and the viewer.
+premap relocalization, the viewer, and with ``--agentic`` the agent skills (modules/agentic.py).
 
     ROBOT_IP=<ip> dimos run unitree-go2                 # the real robot over WebRTC
     dimos run unitree-go2 --simulation mujoco           # dim-go2-sim's MuJoCo Go2 behind the same ports
     dimos run unitree-go2 --replay.db <x.db>            # a recording (.db or dimos .mcap) in the robot's place
 
 Relocalization stays off until it has a premap: ``--localmaprelocalization.map-file <map>``.
+With ``--agentic``, an LLM drives the skills when the run adds ``mcp-client``.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ from dimos.robot.unitree.go2.config import (
     ray_tracing_config,
 )
 from dimos.robot.unitree.go2.connections.webrtc import Go2WebRtc
+from dimos.robot.unitree.go2.modules.agentic import agentic
 from dimos.robot.unitree.go2.rerun import rerun_config
 from dimos.robot.urdf_manager_native.native import UrdfManagerNative
 from dimos.visualization.vis_module import vis_module
@@ -179,4 +181,5 @@ unitree_go2 = autoconnect(
         [(Replay, "lidar", "recorded_lidar"), (Replay, "odom", "recorded_odom")]
     ),
     Go2RecordingTf.blueprint(),
-).global_config(n_workers=12, robot_model="unitree_go2")
+    *([agentic()] if global_config.agentic else []),
+).global_config(n_workers=16, robot_model="unitree_go2")
