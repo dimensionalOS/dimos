@@ -28,7 +28,7 @@ def test_path_replanning(
         "--agentic",
         "run",
         "unitree-go2",
-        "--go2dimsim.scene=empty",
+        "--go2webrtcsim.scene=empty",
         simulator="dimsim",
     )
     wait_for_system_ready(timeout=300.0)

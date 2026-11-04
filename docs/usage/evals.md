@@ -401,7 +401,7 @@ robot. `Sim` is its simulator branch: use `DimSimEnvironment` for DimSim,
 `HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
 `HardwareEnvironment` runs a real robot (see Hardware below).
 
-`DimSimEnvironment` sets `GO2DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run
+`DimSimEnvironment` sets `GO2WEBRTCSIM__SCENE` and launches `dimos --simulation dimsim --record run
 <blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and

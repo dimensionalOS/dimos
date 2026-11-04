@@ -46,6 +46,8 @@ class Go2Navigation(Module):
     # MovementManager's type for it
     stop_movement: Out[LcmBool]
     goal_reached: In[Bool]
+    # the follower's arrival, retyped for NavigationSkillContainer, which reads dimos_lcm's Bool
+    skill_goal_reached: Out[LcmBool]
 
     _state: NavigationState = NavigationState.IDLE
     _reached: bool = False
@@ -56,6 +58,7 @@ class Go2Navigation(Module):
         self.register_disposable(self.goal_reached.observable().subscribe(self._on_goal_reached))  # type: ignore[no-untyped-call]
 
     def _on_goal_reached(self, msg: Bool) -> None:
+        self.skill_goal_reached.publish(LcmBool(data=msg.data))
         if msg.data and self._state == NavigationState.FOLLOWING_PATH:
             self._reached = True
             self._state = NavigationState.IDLE
@@ -110,7 +113,9 @@ def agentic() -> Blueprint:
         McpServer.blueprint(),
         McpClient.blueprint(),
         Go2Navigation.blueprint(),
-        NavigationSkillContainer.blueprint(),
+        NavigationSkillContainer.blueprint().remappings(
+            [(NavigationSkillContainer, "goal_reached", "skill_goal_reached")]
+        ),
         ObserveSkill.blueprint(),
         PersonFollowSkillContainer.blueprint(camera_info=front_camera_info()),
         UnitreeSkillContainer.blueprint(),

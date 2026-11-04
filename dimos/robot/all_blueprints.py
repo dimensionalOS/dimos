@@ -220,7 +220,6 @@ all_modules = {
     "g1-whole-body-connection": "dimos.robot.unitree.g1.wholebody_connection.G1WholeBodyConnection",
     "go2-audio-bridge-module": "dimos.teleop.hosted.go2_audio_bridge.Go2AudioBridgeModule",
     "go2-command-module": "dimos.teleop.hosted.go2_command.Go2CommandModule",
-    "go2-dim-sim": "dimos.robot.unitree.dimsim_connection.Go2DimSim",
     "go2-navigation": "dimos.robot.unitree.go2.modules.agentic.Go2Navigation",
     "go2-teleop-module": "dimos.teleop.webxr.extensions.Go2TeleopModule",
     "go2-web-rtc": "dimos.robot.unitree.go2.connections.webrtc.module.Go2WebRtc",

@@ -14,7 +14,7 @@
 
 """Draft answer-only QA for the static DimSim apartment.
 
-    DIMOS_TRANSPORT=lcm VIEWER=none GO2DIMSIM__HEADLESS=true \
+    DIMOS_TRANSPORT=lcm VIEWER=none GO2WEBRTCSIM__HEADLESS=true \
         dimos evals run dimos.evals.suites.dimsim_apartment_qa \
         --agent dimos.evals.agents.pi
 

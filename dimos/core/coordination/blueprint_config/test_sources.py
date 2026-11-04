@@ -121,7 +121,7 @@ def test_removed_credentials_and_device_addresses_require_migration(
     [
         ("NERF_SPEED", "REPLANNINGASTARPLANNER__NERF_SPEED"),
         ("ROBOT_ID", "RELAYBRIDGEMODULE__ROBOT_ID"),
-        ("DIMSIM_PORT", "GO2DIMSIM__PORT"),
+        ("DIMSIM_PORT", "GO2WEBRTCSIM__PORT"),
         ("rerun_open", "RERUNBRIDGEMODULE__RERUN_OPEN"),
     ],
 )

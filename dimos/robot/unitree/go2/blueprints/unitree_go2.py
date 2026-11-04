@@ -86,16 +86,12 @@ class Replay(ReplayNative):
 
 
 def _connection() -> Blueprint:
-    """dim-go2-sim's Go2 with --simulation, else the real robot (idle without a robot IP)."""
-    if global_config.simulation == "dimsim":
-        from dimos.robot.unitree.dimsim_connection import Go2DimSim
-
-        return Go2DimSim.blueprint()
+    """The sim (DimSim's or dim-go2-sim's, see webrtc_sim.py) with --simulation, else the real robot (idle without a robot IP)."""
     if global_config.simulation:
         try:
             from dimos.robot.unitree.go2.connections.webrtc_sim import Go2WebRtcSim
         except ImportError as error:
-            reason = f"--simulation needs dim-go2-sim ({error}): uv sync --extra sim"
+            reason = f"--simulation {global_config.simulation} can't load its sim ({error}): uv sync --extra sim"
             return autoconnect().requirements(lambda: reason)
         sim: Blueprint = Go2WebRtcSim.blueprint()
         return sim
