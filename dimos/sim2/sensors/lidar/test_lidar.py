@@ -31,21 +31,18 @@ def lidar(world):
     module.dispose()
 
 
-def test_scan_uses_timed_geometry_history_and_rejects_gap(simulation, lidar):
+def test_scan_uses_timed_geometry_history_and_rejects_gap(poses, lidar):
     scans = []
-    for _ in range(51):
-        sample = lidar.measure(simulation.inspect()[0])
+    for tick in range(51):
+        sample = lidar.measure(poses(tick * 2_000_000))
         if sample is not None:
             scans.append(sample)
-        simulation.advance()
     assert len(scans) == 1
     cloud = scans[0]
     assert cloud.sample_header.time_ns == 0
-    assert cloud.sample_header.clock_id == simulation.clock_id
+    assert cloud.sample_header.clock_id == "test"
     assert len(cloud) > 30
     assert np.ptp(cloud.offset_times_u32()) > 80_000_000
-    simulation.advance(100)
-    assert lidar.measure(simulation.inspect()[0]) is None
-    simulation.reset()
-    assert lidar.measure(simulation.inspect()[0]) is None
+    assert lidar.measure(poses(300_000_000)) is None
+    assert lidar.measure(poses(0, epoch=1)) is None
     assert lidar.statistics()["gaps"] >= 2

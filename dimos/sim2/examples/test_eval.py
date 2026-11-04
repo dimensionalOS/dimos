@@ -16,11 +16,15 @@
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+import uuid
 
+from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.control_msgs import JointCommand, JointTarget
 import numpy as np
+import pytest
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment, EnvironmentConfig
@@ -28,8 +32,14 @@ from dimos.evals.runner import EvalRunner
 from dimos.evals.types import EvalCase, Outcome, RunningEnvironment, Trajectory
 from dimos.sim2.description import SceneConfig
 from dimos.sim2.geometry.poses import poses_by_id
+from dimos.sim2.module import ControllerConfig, SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.physics.simulation import Simulation, SimulationConfig
+from dimos.utils.testing.waiting import wait_until
+
+if TYPE_CHECKING:
+    from dimos.core.rpc_client import ModuleProxy
+
+pytestmark = pytest.mark.native_e2e
 
 
 class PushEvalConfig(EnvironmentConfig):
@@ -42,17 +52,26 @@ class PushEnvironment(Environment):
     def __init__(self, world: SceneConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._world = world
-        self._runtime: Simulation | None = None
+        self._sim: ModuleProxy | None = None
         self._rows: list[list[float]] = []
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         if modules:
-            raise ValueError(
-                "offline fixture evaluation accepts a scripted subject, no added modules"
-            )
-        self._runtime = Simulation(MujocoBackend(), self._world, SimulationConfig())
-        self._runtime.load()
-        self._resources.callback(self._runtime.backend.close)
+            raise ValueError("this evaluation uses a scripted subject and its simulation blueprint")
+        blueprint = SimModule.blueprint(
+            scene=self._world,
+            backend=MujocoBackend,
+            controllers=(ControllerConfig("eval", 100_000_000, ("left/slide_x",)),),
+            pace_to_wall_time=False,
+        ).global_config(
+            viewer="none",
+            transport="zenoh",
+            n_workers=1,
+            zenoh_domain="sim2-eval-" + uuid.uuid4().hex,
+        )
+        deployment = ModuleCoordinator.build(blueprint)
+        self._resources.callback(deployment.stop)
+        self._sim = deployment.get_instance(SimModule)
         self._rows.clear()
         self._last_x = 0.0
         self._resources.callback(self._record)
@@ -62,23 +81,33 @@ class PushEnvironment(Environment):
 
     def act(self, x: float) -> None:
         """Public robot action, then advance 100 ms. Does not return private scene truth."""
-        if self._runtime is None:
+        if self._sim is None:
             raise RuntimeError("environment not started")
         self._last_x = x
-        sim = self._runtime
+        sim = self._sim
+        sample = sim.inspect()[0].header
+        end_ns = sample.time_ns + 100_000_000
         sim.submit(
             JointCommand(
-                header=sim.header("eval"),
-                based_on_time_ns=sim.time_ns,
-                apply_at_ns=sim.time_ns,
-                valid_until_ns=sim.time_ns + 200_000_000,
+                header=SampleHeader(
+                    clock_id=sample.clock_id,
+                    epoch=sample.epoch,
+                    time_ns=sample.time_ns,
+                    source_id="eval",
+                    sequence=sample.sequence,
+                ),
+                based_on_time_ns=sample.time_ns,
+                apply_at_ns=sample.time_ns,
+                valid_until_ns=end_ns,
                 targets_length=1,
                 targets=[JointTarget(joint_id="left/slide_x", position=x, kp=200, kd=20)],
             )
         )
-        self._runtime.advance(50)
-        pose = poses_by_id(sim.inspect()[0])["box"].position
-        self._rows.append([sim.time_ns / 1e9, pose.x, pose.y, pose.z])
+        # SimModule advances to the next controller boundary, then waits for this subject.
+        wait_until(lambda: sim.status()["time_ns"] == end_ns, timeout=5)
+        snapshot = sim.inspect()[0]
+        pose = poses_by_id(snapshot)["box"].position
+        self._rows.append([snapshot.header.time_ns / 1e9, pose.x, pose.y, pose.z])
 
     def settle(self, budget_s: float) -> None:
         if budget_s <= 0:
@@ -89,7 +118,7 @@ class PushEnvironment(Environment):
     def _record(self) -> None:
         self.config.oracle_path.parent.mkdir(parents=True, exist_ok=True)
         np.savez(self.config.oracle_path, box=np.asarray(self._rows))
-        self._runtime = None
+        self._sim = None
 
 
 def box_in_goal(outcome: Outcome) -> float:
@@ -124,7 +153,9 @@ class ScriptedPusher(EvalSubject):
         return trajectory.build("answer")
 
 
-def test_actual_physical_outcome_grades_push_and_noop_differently(tmp_path, world):
+def test_actual_physical_outcome_grades_push_and_noop_differently(tmp_path, world, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     scores = []
     for name, push in (("push", True), ("do_nothing", False)):
         environment = PushEnvironment(world, oracle_path=tmp_path / name / "oracle.npz")

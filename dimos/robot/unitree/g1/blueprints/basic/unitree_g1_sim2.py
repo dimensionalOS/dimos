@@ -33,7 +33,6 @@ from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.physics.simulation import SimulationConfig
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.module import SimCameraModule
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
@@ -98,9 +97,9 @@ unitree_g1_sim2 = autoconnect(
     SimModule.blueprint(
         scene=SCENE,
         backend=MujocoBackend,
-        timing=SimulationConfig(
-            controllers=(CONTROL,), motion_frames=(IMU.frame_id,), joint_ids=JOINTS
-        ),
+        controllers=(CONTROL,),
+        motion_frames=(IMU.frame_id,),
+        joint_ids=JOINTS,
     ),
     SimImuModule.blueprint(sensor=IMU),
     SimJointEncoderModule.blueprint(sensor=ENCODERS),

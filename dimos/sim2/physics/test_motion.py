@@ -12,21 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.common_msgs import SampleHeader
 import mujoco
 import numpy as np
 import pytest
 
-from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.physics.simulation import Simulation, SimulationConfig
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
-
-
-@pytest.fixture
-def simulation(world):
-    sim = Simulation(MujocoBackend(), world, SimulationConfig())
-    sim.load()
-    yield sim
-    sim.backend.close()
 
 
 @pytest.fixture
@@ -36,25 +27,24 @@ def imu():
     module.dispose()
 
 
-def test_stationary_motion_is_kinematic_and_imu_adds_specific_force(simulation, imu):
-    motion = simulation.backend.read_motion("left/imu")
-    motion.header = simulation.header("truth", "left/imu")
+def test_stationary_motion_is_kinematic_and_imu_adds_specific_force(backend, imu):
+    motion = backend.read_motion("left/imu")
+    motion.header = SampleHeader(clock_id="test", frame_id="left/imu")
     assert motion.linear_acceleration_world == pytest.approx([0, 0, 0], abs=1e-9)
     sample = imu.measure(motion)
     assert sample is not None
     assert sample.linear_acceleration.z == pytest.approx(9.81)
-    assert simulation.backend.model.nsensor == 0
+    assert backend.model.nsensor == 0
 
 
-def test_free_fall_motion_contains_gravity(simulation):
-    simulation.place("box", (0, 0, 2, 0, 0, 0, 1))
-    motion = simulation.backend.read_motion("box")
+def test_free_fall_motion_contains_gravity(backend):
+    backend.place("box", (0, 0, 2, 0, 0, 0, 1))
+    motion = backend.read_motion("box")
     assert motion.linear_acceleration_world == pytest.approx([0, 0, -9.81], abs=1e-8)
     assert np.linalg.norm(motion.linear_acceleration_world) > 9
 
 
-def test_offset_frame_acceleration_includes_rotation(simulation):
-    backend = simulation.backend
+def test_offset_frame_acceleration_includes_rotation(backend):
     joint = backend.model.joint("door/hinge")
     dof = joint.dofadr[0]
     backend.data.qvel[dof] = 2

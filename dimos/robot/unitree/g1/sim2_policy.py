@@ -42,7 +42,7 @@ from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.sim2.physics.simulation import ControllerConfig
+from dimos.sim2.module import ControllerConfig
 from dimos.utils.data import LfsPath
 
 JOINTS = tuple(n + "_joint" for n in make_humanoid_joints("g1"))

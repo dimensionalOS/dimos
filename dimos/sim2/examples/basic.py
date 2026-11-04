@@ -23,7 +23,6 @@ from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.physics.simulation import SimulationConfig
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.module import SimCameraModule
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
@@ -54,7 +53,8 @@ sim2_basic = autoconnect(
     SimModule.blueprint(
         scene=SCENE,
         backend=MujocoBackend,
-        timing=SimulationConfig(motion_frames=("imu",), joint_ids=("tool_joint",)),
+        motion_frames=("imu",),
+        joint_ids=("tool_joint",),
     ),
     SimImuModule.blueprint(sensor=ImuConfig("imu", orientation="ideal")),
     SimJointEncoderModule.blueprint(sensor=EncoderConfig(("tool_joint",))),

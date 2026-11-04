@@ -10,10 +10,9 @@ sensor model's output, acquired at a specified time; it is not physical truth.
 ```
 sim2/
   description.py              SceneConfig, Instance, Drive; no sensor configuration
-  module.py                   SimModule: DimOS lifecycle, queues and typed ports
+  module.py                   SimModule: lifecycle, clock, commands, stepping, reset, ports
   physics/
     interface.py              PhysicsBackend protocol (no MuJoCo types)
-    simulation.py             Simulation: clock, steps, command validation/expiry/reset
     mujoco.py                 Native dynamics and physical truth queries
   geometry/
     mujoco.py                 Shared model-to-native geometry compiler
@@ -58,7 +57,7 @@ Its framework changes are reviewed in #4937; the G1 example is stacked on core.
 
 ```mermaid
 flowchart LR
-    U["UrdfManager: resolved geometry + mounts"] --> P["SimModule / Simulation / PhysicsBackend"]
+    U["UrdfManager: resolved geometry + mounts"] --> P["SimModule → PhysicsBackend"]
     U --> C["SimCameraModule / renderer"]
     U --> L["SimLidarModule / raycaster"]
     P -->|BodyPoses| C
@@ -76,11 +75,19 @@ flowchart LR
 
 ## Calls and ports
 
-`SimModule.config_receive()` resolves the scene before build. `start()` creates `Simulation(backend, scene,
-timing)`. Its owner thread calls `backend.load()`, then repeatedly processes
-commands, exports due truth samples, and calls `backend.step()`. Only this owner
-touches native dynamics. Separate publication threads carry queued messages;
-rendering and raycasting happen in separate sensor workers.
+`SimModule.__init__()` creates the selected backend and its private queues.
+`config_receive()` resolves the scene before build. `start()` launches the module's
+physics thread: `_run()` calls `_load()`, then `_process_operations()`,
+`_apply_commands()`, `_sample_truth()` and `_step()`. `_step()` calls
+`backend.step()` and advances the clock. Controller waits happen in `_run()`.
+Only that thread touches native dynamics. Separate publication threads carry
+queued messages; rendering and raycasting happen in separate sensor workers.
+
+There is no standalone `Simulation` or `Runtime` object. `SimConfig` directly
+contains physics/export rates, controller settings and the scene. The module's
+RPC handlers enqueue inspection/reset/placement requests and wait for their result;
+the physics thread executes them between steps. Tests of these behaviors deploy
+DimOS blueprints. Backend tests exercise native physics directly.
 
 ```python
 # PhysicsBackend methods; concrete payloads are generated dimos-lcm types.
@@ -153,6 +160,26 @@ The G1/GR00T example and real asset/policy acceptance test are in the second PR.
 The core imports no G1 code and changes no control coordinator. MuJoCo is the
 implemented backend; a second backend has not been validated. The native camera
 and raycaster are selectable adapters, not a claim of cross-engine fidelity.
+
+### Execution consolidation verified 2026-11-03
+
+`Simulation` and `SimulationConfig` are removed; execution and configuration now
+belong to `SimModule` and `SimConfig`. No replacement execution layer was added.
+Backend/sensor component checks: 20 passed. Deployed DimOS module/evaluation
+checks: 8 passed, covering controller deadlines, exact control boundaries, stream
+sample timestamps, command expiry, clock/epoch rejection, atomic placement,
+sensor reset/recovery, and physical push/no-op grading.
+
+```sh
+pytest dimos/sim2 -m 'not native_e2e' --import-mode=importlib -q
+pytest dimos/sim2/test_module.py dimos/sim2/examples/test_eval.py \
+  --import-mode=importlib -o addopts='' -q
+```
+
+The evaluation builds an ordinary SimModule blueprint. Each command releases one
+100 ms controller interval; the module waits at the next boundary. The evaluator
+then reads the physical result through `inspect()`. There is no test-only clock,
+manual stepping API or alternative execution object.
 
 ### G1 acceptance blueprint (second PR)
 
