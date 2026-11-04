@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -374,28 +375,23 @@ class MeshModule(Module):
 MESH_ENTITY = "world/mesh"
 
 
+@dataclass
 class MeshColours:
     """Rerun entries for each mesh chunk, turbo by height over the mesh's own range.
 
     Once the range moves ``recolour_m``, every chunk is recoloured (colours only).
     ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
+    A dataclass so it crosses into the bridge's worker as blueprint config.
     """
 
-    keyed_by_seq = True
+    alpha: float = 0.4
+    z_range: tuple[float, float] | None = None
+    recolour_m: float = 0.5
+    static: bool = True
+    _heights: dict[Key, np.ndarray] = field(default_factory=dict, init=False)
+    _range: tuple[float, float] | None = field(default=None, init=False)
 
-    def __init__(
-        self,
-        alpha: float = 0.4,
-        z_range: tuple[float, float] | None = None,
-        recolour_m: float = 0.5,
-        static: bool = True,
-    ) -> None:
-        self.alpha = alpha
-        self.z_range = z_range
-        self.recolour_m = recolour_m
-        self.static = static
-        self._heights: dict[Key, np.ndarray] = {}
-        self._range: tuple[float, float] | None = None
+    keyed_by_seq = True
 
     def __call__(self, msg: TriangleMesh) -> list[RerunEntry]:
         out = [RerunEntry(_chunk_path(msg.key), msg.to_rerun(), self.static)]

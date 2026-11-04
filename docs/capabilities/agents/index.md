@@ -1,5 +1,9 @@
 # Agents
 
+To run the on-robot agent, see [The on-robot agent](/docs/usage/agent.md).
+To integrate with a running system, see the [Python agent runtime](/docs/usage/agent/runtime.md) and
+[client SDK](/docs/usage/agent/sdk.md). The sections below cover the native `McpClient` agent and module skills.
+
 LLM agents run as native dimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture
