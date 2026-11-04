@@ -51,7 +51,7 @@ def test_portless_class_gets_ports_and_filter_from_config(recording: str) -> Non
     }
     module = replay_native("")(db=recording, topics="odom")
     try:
-        assert sorted(module.outputs) == ["odom"]
+        assert sorted(module.outputs) == ["odom", "replay_complete"]
     finally:
         module.stop()
 
@@ -59,7 +59,7 @@ def test_portless_class_gets_ports_and_filter_from_config(recording: str) -> Non
 def test_stdin_config_names_the_ports_and_fills_unset_window(recording: str) -> None:
     module = replay_native(recording)(db=recording, speed=2.0)
     try:
-        module.config.ports = sorted(module.outputs)
+        module.config.ports = sorted(n for n in module.outputs if n != "replay_complete")
         config = module.config.to_config_dict()
     finally:
         module.stop()
@@ -68,7 +68,6 @@ def test_stdin_config_names_the_ports_and_fills_unset_window(recording: str) -> 
         "speed": 2.0,
         "loop": False,
         "exit_on_complete": False,
-        "shutdown_pid": 0,
         "seek": 0.0,
         "duration": 0.0,
         "loop_gap": pytest.approx(0.05),
@@ -86,7 +85,7 @@ def test_without_a_db_start_is_a_no_op_that_keeps_static_ports() -> None:
     module = StaticReplay()
     try:
         module.start()
-        assert sorted(module.outputs) == ["odom", "wheel_odom"]
+        assert sorted(module.outputs) == ["odom", "replay_complete", "wheel_odom"]
         assert module._process is None
     finally:
         module.stop()
@@ -96,7 +95,7 @@ def test_static_ports_sit_beside_the_recordings_streams(recording: str) -> None:
     # A declared port the recording lacks (wheel_odom) stays; the binary leaves it silent.
     module = StaticReplay(db=recording)
     try:
-        assert sorted(module.outputs) == ["goal", "odom", "wheel_odom"]
+        assert sorted(module.outputs) == ["goal", "odom", "replay_complete", "wheel_odom"]
         assert module.outputs["odom"].type is PoseStamped
     finally:
         module.stop()
