@@ -12,67 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dynamics contract: commands accepted by an in-process physics owner."""
+"""Engine-independent dynamics. Only Simulation calls this interface."""
 
-from dataclasses import dataclass
 from typing import Protocol
 
-from dimos.sim2.state import Frame, Layout
+from dimos_lcm.control_msgs import BodyWrench, JointTarget
+from dimos_lcm.sensor_msgs import JointState
+from dimos_lcm.sim_msgs import BodyMotion, BodyPose
 
-
-@dataclass(frozen=True)
-class JointEfforts:
-    epoch: int
-    joints: tuple[str, ...]
-    efforts: tuple[float, ...]
-    ttl: float = 0.25
-
-
-@dataclass(frozen=True)
-class JointTargets:
-    epoch: int
-    joints: tuple[str, ...]
-    positions: tuple[float, ...]
-    ttl: float = 0.25  # simulation seconds; expiration holds measured position
-    # Empty fields use zero velocity/feedforward and the world's Drive gains.
-    # effort = kp*(position-q) + kd*(velocity-dq) + feedforward, at each physics step.
-    velocities: tuple[float, ...] = ()
-    kp: tuple[float, ...] = ()
-    kd: tuple[float, ...] = ()
-    feedforward: tuple[float, ...] = ()
-    tick: int | None = None  # the feedback tick answered by a paced controller
-
-
-@dataclass(frozen=True)
-class Wrench:
-    epoch: int
-    body: str
-    force: tuple[float, float, float]
-    torque: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    point: tuple[float, float, float] | None = None  # world point; None = link origin
-    duration: float = 0.1  # simulation seconds, not a persistent external force
+from dimos.sim2.description import SceneConfig
 
 
 class PhysicsBackend(Protocol):
-    """One in-process dynamics owner. The caller serializes these operations.
+    body_ids: tuple[str, ...]
+    joint_ids: tuple[str, ...]
+    driven_joint_ids: tuple[str, ...]
+    root_ids: tuple[str, ...]
 
-    Position servos and direct joint effort are the actuation capabilities of v1.
-    A future backend must satisfy the behavior tests, not just these signatures.
-    """
-
-    layout: Layout
-    dt: float
-
-    def targets(self, command: JointTargets) -> None:
-        """Validate every entry before changing any drive, then latch targets."""
-        ...
-
-    def efforts(self, command: JointEfforts) -> None: ...
-    def hold(self, joints: tuple[str, ...]) -> None: ...
-    def validate_wrench(self, wrench: Wrench) -> None: ...
-    def step(self, wrenches: tuple[Wrench, ...]) -> None: ...
-    def snapshot(self, epoch: int, tick: int) -> Frame: ...
+    def load(self, scene: SceneConfig, dt_ns: int) -> None: ...
+    def read_body_poses(self) -> list[BodyPose]: ...
+    def read_joints(self, joint_ids: tuple[str, ...]) -> JointState: ...
+    def read_motion(self, frame_id: str) -> BodyMotion: ...
+    def set_joint_targets(self, targets: list[JointTarget]) -> None: ...
+    def hold(self, joint_ids: tuple[str, ...]) -> None: ...
+    def validate_wrench(self, wrench: BodyWrench) -> None: ...
+    def step(self, wrenches: tuple[BodyWrench, ...]) -> None: ...
     def reset(self) -> None: ...
-    def place(self, body: str, pose: tuple[float, ...]) -> None:
-        """Privileged scene edit: free root only, zero its velocity; not robot control."""
-        ...
+    def place(self, body_id: str, pose: tuple[float, ...]) -> None: ...
+    def close(self) -> None: ...

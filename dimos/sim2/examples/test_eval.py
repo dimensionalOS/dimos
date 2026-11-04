@@ -18,6 +18,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from dimos_lcm.control_msgs import JointCommand, JointTarget
 import numpy as np
 
 from dimos.evals.agents.base import EvalSubject
@@ -25,10 +26,10 @@ from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.runner import EvalRunner
 from dimos.evals.types import EvalCase, Outcome, RunningEnvironment, Trajectory
-from dimos.sim2.description import World
-from dimos.sim2.physics.interface import JointTargets
+from dimos.sim2.description import SceneConfig
+from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.physics.runtime import Runtime
+from dimos.sim2.physics.simulation import Simulation, SimulationConfig
 
 
 class PushEvalConfig(EnvironmentConfig):
@@ -38,10 +39,10 @@ class PushEvalConfig(EnvironmentConfig):
 class PushEnvironment(Environment):
     config: PushEvalConfig
 
-    def __init__(self, world: World, **kwargs: Any) -> None:
+    def __init__(self, world: SceneConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._world = world
-        self._runtime: Runtime | None = None
+        self._runtime: Simulation | None = None
         self._rows: list[list[float]] = []
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
@@ -49,8 +50,9 @@ class PushEnvironment(Environment):
             raise ValueError(
                 "offline fixture evaluation accepts a scripted subject, no added modules"
             )
-        self._runtime = Runtime(MujocoBackend(self._world))
-        self._box = self._runtime.backend.layout.bodies.index("box")
+        self._runtime = Simulation(MujocoBackend(), self._world, SimulationConfig())
+        self._runtime.load()
+        self._resources.callback(self._runtime.backend.close)
         self._rows.clear()
         self._last_x = 0.0
         self._resources.callback(self._record)
@@ -63,10 +65,20 @@ class PushEnvironment(Environment):
         if self._runtime is None:
             raise RuntimeError("environment not started")
         self._last_x = x
-        self._runtime.submit(JointTargets(self._runtime.epoch, ("left/slide_x",), (x,)))
+        sim = self._runtime
+        sim.submit(
+            JointCommand(
+                header=sim.header("eval"),
+                based_on_time_ns=sim.time_ns,
+                apply_at_ns=sim.time_ns,
+                valid_until_ns=sim.time_ns + 200_000_000,
+                targets_length=1,
+                targets=[JointTarget(joint_id="left/slide_x", position=x, kp=200, kd=20)],
+            )
+        )
         self._runtime.advance(50)
-        state = self._runtime.snapshot()
-        self._rows.append([state.sim_time, *state.poses[self._box, :3]])
+        pose = poses_by_id(sim.inspect()[0])["box"].position
+        self._rows.append([sim.time_ns / 1e9, pose.x, pose.y, pose.z])
 
     def settle(self, budget_s: float) -> None:
         if budget_s <= 0:

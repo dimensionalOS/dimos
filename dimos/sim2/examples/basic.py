@@ -20,11 +20,18 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.description import Camera, Drive, Imu, Instance, Lidar, World
+from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.physics.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
-from dimos.sim2.sensors.module import SimSensorModule
-from dimos.sim2.sensors.mujoco import MujocoSensors
+from dimos.sim2.physics.simulation import SimulationConfig
+from dimos.sim2.sensors.camera.config import CameraConfig
+from dimos.sim2.sensors.camera.module import SimCameraModule
+from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
+from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
+from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
+from dimos.sim2.sensors.lidar.config import LidarConfig
+from dimos.sim2.sensors.lidar.module import SimLidarModule
+from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 
 _source = RobotModel.from_file(DIMOS_PROJECT_ROOT / "assets/sim2_basic/scene.urdf")
 _pusher = (
@@ -35,18 +42,22 @@ _pusher = (
     .with_fixed_frame("lidar", "tool", xyz=(0, 0, 0.12))
     .with_fixed_frame("imu", "tool")
 )
-WORLD = World(
+SCENE = SceneConfig(
     instances=(
         Instance("pusher", _pusher, drives=(Drive("tool_joint"),)),
         Instance("box", _source.with_subtree_rooted_at("box"), xyz=(0.1, 0, 0.075), floating=True),
     ),
-    sensors=(Camera("camera", hz=15), Lidar("lidar", rays=720, packets=10), Imu("imu")),
 )
 
 sim2_basic = autoconnect(
-    SimModule.blueprint(world=WORLD, backend=MujocoBackend),
-    SimSensorModule.blueprint(reader=MujocoSensors, camera="camera", lidar="lidar"),
-    UrdfManager.blueprint(models={i.id: i.model for i in WORLD.instances}).remappings(
-        [("urdfmanager", "coordinator_joint_state", "joint_state")]
+    UrdfManager.blueprint(models={i.id: i.model for i in SCENE.instances}),
+    SimModule.blueprint(
+        scene=SCENE,
+        backend=MujocoBackend,
+        timing=SimulationConfig(motion_frames=("imu",), joint_ids=("tool_joint",)),
     ),
-).global_config(viewer="none", transport="zenoh", n_workers=4)
+    SimImuModule.blueprint(sensor=ImuConfig("imu", orientation="ideal")),
+    SimJointEncoderModule.blueprint(sensor=EncoderConfig(("tool_joint",))),
+    SimCameraModule.blueprint(scene=SCENE, sensor=CameraConfig("camera"), renderer=MujocoRenderer),
+    SimLidarModule.blueprint(scene=SCENE, sensor=LidarConfig("lidar"), raycaster=MujocoRaycaster),
+).global_config(viewer="none", transport="zenoh", n_workers=5)

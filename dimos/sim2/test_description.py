@@ -19,13 +19,12 @@ import pytest
 
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.sim2.description import Instance, World
+from dimos.sim2.description import Instance, SceneConfig
 
 
-def test_cli_configuration_roundtrip_keeps_sensor_profiles_and_model_variants(world):
-    adapter = TypeAdapter(World)
+def test_cli_configuration_roundtrip_keeps_physical_model_variants(world):
+    adapter = TypeAdapter(SceneConfig)
     restored = adapter.validate_python(adapter.dump_python(world))
-    assert [type(s) for s in restored.sensors] == [type(s) for s in world.sensors]
     assert restored.revision == world.revision
     assert restored.instances[0].model.load().root_link == "left/base_link"
 
@@ -41,14 +40,14 @@ def test_model_owner_resolves_mounts_once_for_later_consumers(tmp_path):
     manager = UrdfManager(models={"robot": configured})
     try:
         models = manager.resolved_models()
-        world = World((Instance("robot"),)).resolve(models)
+        world = SceneConfig((Instance("robot"),)).resolve(models)
         # A reader receives the resolved text, not a path it must reload.
         source.write_text('<robot name="changed"><link name="different"/></robot>')
         resolved = world.instances[0].description
         assert resolved.xml == models["robot"].xml
         assert resolved.root_link == "robot/base"
         assert resolved.joints[0].child_link == "robot/camera"
-        assert world.revision == World((Instance("robot"),)).resolve(models).revision
+        assert world.revision == SceneConfig((Instance("robot"),)).resolve(models).revision
         with pytest.raises(ValueError, match="conflicting model"):
             conflicting = RobotModel.from_file(source).with_prefix("different/")
             replace(world, instances=(Instance("robot", conflicting),)).resolve(models)

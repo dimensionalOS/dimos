@@ -24,10 +24,13 @@ import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from dimos_lcm.control_msgs import JointCommand, JointTarget
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.description import Camera, Drive, Imu, Instance, Lidar, World
+from dimos.sim2.description import Drive, Instance, SceneConfig
+from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.physics.simulation import Simulation, SimulationConfig
 
 
 def _box_link(
@@ -94,7 +97,7 @@ def _door_urdf() -> ET.Element:
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> World:
+def world(tmp_path: Path) -> SceneConfig:
     pusher_path, door_path, box_path = (
         tmp_path / name for name in ("pusher.urdf", "door.urdf", "box.urdf")
     )
@@ -122,7 +125,7 @@ def world(tmp_path: Path) -> World:
         )
         for name, y in (("left", 0.0), ("right", 1.2))
     )
-    return World(
+    return SceneConfig(
         (
             *robots,
             Instance(
@@ -133,13 +136,38 @@ def world(tmp_path: Path) -> World:
             ),
             Instance(
                 "door",
-                RobotModel.from_file(door_path).with_prefix("door/"),
+                RobotModel.from_file(door_path)
+                .with_fixed_frame("imu", "panel", xyz=(0.225, 0, 0.15))
+                .with_prefix("door/"),
                 xyz=(0.6, 0.4, 0),
             ),
         ),
-        tuple(
-            profile(f"{name}/{profile.kind}")
-            for name in ("left", "right")
-            for profile in (Camera, Lidar, Imu)
-        ),
     )
+
+
+@pytest.fixture
+def simulation(world):
+    sim = Simulation(MujocoBackend(), world, SimulationConfig())
+    sim.load()
+    yield sim
+    sim.backend.close()
+
+
+@pytest.fixture
+def command():
+    def make(
+        sim, names=("left/slide_x",), positions=(0.2,), ttl=2.0, kp=200.0, kd=20.0, effort=0.0
+    ):
+        return JointCommand(
+            header=sim.header("test"),
+            based_on_time_ns=sim.time_ns,
+            apply_at_ns=sim.time_ns,
+            valid_until_ns=sim.time_ns + round(ttl * 1e9),
+            targets_length=len(names),
+            targets=[
+                JointTarget(joint_id=n, position=q, velocity=0, kp=kp, kd=kd, feedforward=effort)
+                for n, q in zip(names, positions, strict=True)
+            ],
+        )
+
+    return make
