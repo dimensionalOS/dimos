@@ -1,12 +1,12 @@
-import { connect } from "../../sdk/main.ts";
-import { unixSocket } from "../../sdk/node.ts";
-import { refusalOfFailure } from "../../sdk/failures.ts";
-import { GatewayContract } from "../../shared/protocol/gateway/contract.ts";
+import { connect } from "#dimos/agents/sdk/main.ts";
+import { unixSocket } from "#dimos/agents/sdk/node.ts";
+import { refusalOfFailure } from "#dimos/agents/sdk/failures.ts";
+import { GatewayContract } from "#dimos/agents/shared/protocol/gateway/contract.ts";
 import type { Ref } from "@earendil-works/chord";
-import type { EpochMs } from "../../shared/protocol/time.ts";
-import { switcherLine, switcherRows } from "../../shared/view-models/gateway/switcher.ts";
-import { refusalText } from "../../shared/view-models/outcome.ts";
-import type { Command } from "./base.ts";
+import type { EpochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { switcherLine, switcherRows } from "#dimos/agents/shared/view-models/gateway/switcher.ts";
+import { refusalText } from "#dimos/agents/shared/view-models/outcome.ts";
+import type { Command } from "#dimos/agents/cli/commands/base.ts";
 
 /** `dimos agent conversations`: the switcher's rows, newest roots first with their forks under them. */
 export const runConversations: Command = async ({ paths, startGateway }) => {

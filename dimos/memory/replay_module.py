@@ -187,8 +187,8 @@ def _port_names(topics: str, types: dict[str, type]) -> list[str]:
 def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type[ReplayModule]:
     """Build a :class:`ReplayModule` subclass with an ``Out`` per stream in *dataset*.
 
-    Assign the result to *name* at module level: deploying to a worker pickles the
-    class by that path. An empty *dataset* yields a port-less class.
+    Assign the result to *name* at module level: deploying to a worker sends the
+    class by that import path. An empty *dataset* yields a port-less class.
     """
     ports: dict[str, Any] = {}
     if dataset:

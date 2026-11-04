@@ -1,4 +1,4 @@
-import type { DimosInstall } from "./dimos/install.ts";
+import type { DimosInstall } from "#dimos/agents/harness/dimos/install.ts";
 import type { EnvTarget } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { delimiter, dirname } from "node:path";

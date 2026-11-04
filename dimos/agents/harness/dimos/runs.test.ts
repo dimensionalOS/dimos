@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import type { DimosRun } from "../../shared/protocol/runtime/runs.ts";
-import { RunWatcher } from "./runs.ts";
+import type { DimosRun } from "#dimos/agents/shared/protocol/runtime/runs.ts";
+import { RunWatcher } from "#dimos/agents/harness/dimos/runs.ts";
 import { join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";

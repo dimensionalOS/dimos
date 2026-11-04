@@ -1,9 +1,9 @@
-import type { ActionRecord } from "../../shared/view-models/actions.ts";
-import type { Outcome, Refusal } from "../../shared/protocol/outcome.ts";
-import { Status } from "../../shared/protocol/status.ts";
-import { epochMs } from "../../shared/protocol/time.ts";
-import { refusalOfFailure } from "../../sdk/failures.ts";
-import { refused } from "../../shared/protocol/outcome.ts";
+import type { ActionRecord } from "#dimos/agents/shared/view-models/actions.ts";
+import type { Outcome, Refusal } from "#dimos/agents/shared/protocol/outcome.ts";
+import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
+import { refusalOfFailure } from "#dimos/agents/sdk/failures.ts";
+import { refused } from "#dimos/agents/shared/protocol/outcome.ts";
 
 type Context = Partial<Pick<ActionRecord, "action" | "conversation" | "sending">>;
 

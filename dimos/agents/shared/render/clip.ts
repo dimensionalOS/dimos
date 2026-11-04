@@ -1,16 +1,16 @@
 import sharp from "sharp";
-import type { Cloud } from "./points.ts";
-import type { FileRef, RenderedView, Sha256 } from "../protocol/media.ts";
-import type { ImageKind } from "./lib/model-image.ts";
-import type { Renderer } from "./base.ts";
+import type { Cloud } from "#dimos/agents/shared/render/points.ts";
+import type { FileRef, RenderedView, Sha256 } from "#dimos/agents/shared/protocol/media.ts";
+import type { ImageKind } from "#dimos/agents/shared/render/lib/model-image.ts";
+import type { Renderer } from "#dimos/agents/shared/render/base.ts";
 import { Compile } from "typebox/compile";
-import { Sha256Schema } from "../protocol/media.ts";
+import { Sha256Schema } from "#dimos/agents/shared/protocol/media.ts";
 import { Type } from "typebox";
 import { dirname, resolve } from "node:path";
-import { firstProblem } from "./lib/schema.ts";
-import { fitCamera, paintCloud, parseCloud } from "./points.ts";
-import { kindOf, modelImage } from "./lib/model-image.ts";
-import { readSource } from "./lib/artifacts.ts";
+import { firstProblem } from "#dimos/agents/shared/render/lib/schema.ts";
+import { fitCamera, paintCloud, parseCloud } from "#dimos/agents/shared/render/points.ts";
+import { kindOf, modelImage } from "#dimos/agents/shared/render/lib/model-image.ts";
+import { readSource } from "#dimos/agents/shared/render/lib/artifacts.ts";
 
 /** A frame index: `{type: "points" | "image", timeOrigin?, source?, frames: [{path, timestamp, sha256?}]}`, paths relative to the index. */
 type FrameIndex = {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import type { RenderProgress } from "./types.ts";
-import { FileRenderer } from "./render.ts";
+import type { RenderProgress } from "#dimos/agents/shared/render/types.ts";
+import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -86,6 +86,7 @@ test("image clips keep colors, timestamps and hashes; the model gets one contact
     `  t = 1.110 s: ${view.clip.frames[1].png.path}`,
     `  t = 1.260 s: ${view.clip.frames[2].png.path}`,
     `  GIF: ${view.clip.gif.path}`,
+    `Preview: ${view.sheet.path}`,
   ]);
   for (const [i, frame] of frames.entries()) assert.deepEqual(await readFile(join(dir, frame.path)), originals[i]);
 });

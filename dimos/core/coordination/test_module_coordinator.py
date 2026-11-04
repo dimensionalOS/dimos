@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 import importlib
-import pickle
 import sys
 import threading
 from types import MappingProxyType
@@ -40,6 +39,7 @@ from dimos.core.coordination.module_coordinator import (
     _deploy_all_modules,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
+    resolve_module_refs,
     stream_name_types,
     verify_no_name_conflicts,
 )
@@ -54,6 +54,7 @@ from dimos.core.transport_factory import transport_topic
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -132,6 +133,9 @@ class NestedConfiguredTransport(PubSubTransport[bytes]):
     ) -> None:
         super().__init__(topic)
         self._config = config or self._config_cls(**config_kwargs)
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"topic": self.topic, "config": self._config}
 
     def start(self) -> None:
         pass
@@ -1184,11 +1188,12 @@ def test_deploy_two_instances_of_same_class(dynamic_coordinator) -> None:
     assert descriptors["robot0/namedmodule"].class_name == "NamedModule"
 
 
-def test_rpc_client_pickle_preserves_remote_name(dynamic_coordinator) -> None:
-    """Proxies pickled into workers (set_module_ref) must keep the instance RPC name."""
+def test_rpc_client_roundtrip_preserves_remote_name(dynamic_coordinator) -> None:
+    """Proxies sent into workers (set_module_ref) must keep the instance RPC name."""
     proxy = dynamic_coordinator.deploy(NamedModule, instance_name="robot0/namedmodule")
-    restored = pickle.loads(pickle.dumps(proxy))
+    restored = decode(encode(proxy))
     try:
+        assert restored.actor_instance is None
         assert restored.remote_name == "robot0/namedmodule"
         assert restored.whoami() == "robot0/namedmodule"
     finally:
@@ -1337,3 +1342,23 @@ def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     looper.join(timeout=5)
     assert not looper.is_alive()
     assert stopped.is_set()
+
+
+class PlainPingSpec(Spec, Protocol):
+    def ping(self) -> str: ...
+
+
+class PlainPingProvider(Module):
+    def ping(self) -> str:  # satisfies the spec structurally, but a proxy cannot call it
+        return "pong"
+
+
+class PlainPingConsumer(Module):
+    _provider: PlainPingSpec
+
+
+def test_spec_provider_without_rpc_fails_to_resolve() -> None:
+    blueprint = autoconnect(PlainPingProvider.blueprint(), PlainPingConsumer.blueprint())
+
+    with pytest.raises(Exception, match="PlainPingProvider has ping without @rpc"):
+        resolve_module_refs(blueprint)

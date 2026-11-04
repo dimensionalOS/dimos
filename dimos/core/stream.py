@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import enum
 from typing import (
     TYPE_CHECKING,
@@ -37,7 +38,7 @@ import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from reactivex.observable import Observable
 
@@ -108,6 +109,47 @@ class Transport(Resource, ObservableMixin[T]):
     def publish(self, msg: T) -> None:
         self.broadcast(None, msg)
 
+    @classmethod
+    def spec(cls, *args: Any, **kwargs: Any) -> TransportSpec:
+        """Defer construction: capture ctor args for the coordinator to build later."""
+        return TransportSpec(cls, args, kwargs)
+
+
+@dataclass(frozen=True)
+class TransportSpec:
+    """Deferred transport construction: a transport class plus its ctor args.
+
+    Blueprint authors declare transports via ``Cls.spec(...)`` so nothing is
+    constructed at blueprint-definition time. The coordinator materializes
+    specs at build time, once CLI/env/config overrides have resolved. A live
+    transport is described the same way (``TransportSpec.of``) when stream
+    metadata crosses a process boundary, so listing streams opens no sockets.
+    """
+
+    cls: type[Transport[Any]]
+    args: tuple[Any, ...] = ()
+    kwargs: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def of(cls, transport: Transport[Any]) -> TransportSpec:
+        """The spec that rebuilds ``transport``: its class plus the kwargs ``cbor_encode()`` reports."""
+        encode = getattr(type(transport), "cbor_encode", None)
+        if encode is None:
+            raise TypeError(
+                f"{type(transport).__name__} has no cbor_encode(), so it cannot be "
+                "described to another process"
+            )
+        return cls(type(transport), kwargs=encode(transport))
+
+    @property
+    def config_cls(self) -> type[BaseModel] | None:
+        # Set by transports that expose a pydantic config override surface
+        return self.cls._config_cls
+
+    def build(self, config: BaseModel | None = None) -> Transport[Any]:
+        extra = {"config": config} if config is not None else {}
+        return self.cls(*self.args, **self.kwargs, **extra)
+
 
 class Stream(Generic[T]):
     _transport: Transport[T] | None
@@ -175,18 +217,12 @@ class Out(Stream[T], ObservableMixin[T]):
     def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        if self.owner is None or not hasattr(self.owner, "ref"):
-            raise ValueError("Cannot serialise Out without an owner ref")
-        return (
-            RemoteOut,
-            (
-                self.type,
-                self.name,
-                self.owner.ref,
-                self._transport,
-            ),
-        )
+    def cbor_encode(self) -> dict[str, Any]:
+        return _remote_payload(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteOut[Any]:
+        return RemoteOut(**data)
 
     def publish(self, msg: T) -> None:
         if hasattr(self, "_transport") and self._transport is not None:
@@ -205,10 +241,34 @@ class Out(Stream[T], ObservableMixin[T]):
         return unsubscribe
 
 
+def _remote_payload(stream: Stream[Any]) -> dict[str, Any]:
+    """A module-side stream as seen from another process: a handle on the owner's Actor."""
+    if stream.owner is None or not hasattr(stream.owner, "ref"):
+        raise ValueError(f"Cannot serialise {type(stream).__name__} without an owner ref")
+    return {
+        "type": stream.type,
+        "name": stream.name,
+        "owner": stream.owner.ref,
+        "transport": stream._transport,
+    }
+
+
 class RemoteStream(Stream[T]):
     @property
     def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "name": self.name,
+            "owner": self.owner,
+            "transport": self._transport,
+        }
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteStream[Any]:
+        return cls(**data)
 
     # this won't work but nvm
     @property
@@ -250,10 +310,12 @@ class IO(Stream[T], ObservableMixin[T]):
     def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        if self.owner is None or not hasattr(self.owner, "ref"):
-            raise ValueError("Cannot serialise IO without an owner ref")
-        return (RemoteIO, (self.type, self.name, self.owner.ref, self._transport))
+    def cbor_encode(self) -> dict[str, Any]:
+        return _remote_payload(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteIO[Any]:
+        return RemoteIO(**data)
 
     def publish(self, msg: T) -> None:
         self._transport.broadcast(self, msg)
@@ -286,10 +348,12 @@ class In(Stream[T], ObservableMixin[T]):
 
         return (mystr + " ◀─").ljust(60, "─") + f" {self.connection}"
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        if self.owner is None or not hasattr(self.owner, "ref"):
-            raise ValueError("Cannot serialise Out without an owner ref")
-        return (RemoteIn, (self.type, self.name, self.owner.ref, self._transport))
+    def cbor_encode(self) -> dict[str, Any]:
+        return _remote_payload(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> RemoteIn[Any]:
+        return RemoteIn(**data)
 
     @property
     def transport(self) -> Transport[T]:
