@@ -24,4 +24,5 @@ mod planner;
 mod region_viz;
 mod smoother;
 mod surfaces;
+mod terrain;
 pub mod voxel;

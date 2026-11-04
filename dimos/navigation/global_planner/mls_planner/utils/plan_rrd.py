@@ -46,6 +46,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
+from dimos.navigation.global_planner.mls_planner.transformer import planner_points
 from dimos.navigation.global_planner.mls_planner.viz import graph_edges, graph_nodes, surface_points
 from dimos.navigation.global_planner.viz import (
     PATH_COLOR,
@@ -441,7 +442,7 @@ def _process_frame(
 
     bounds = ray_obs.tags["region_bounds"]
     ox, oy, radius, z_min, z_max = bounds
-    pts = ray_obs.data.points_f32()
+    pts = planner_points(ray_obs.data)
     rr.set_time(TIMELINE, timestamp=ray_obs.ts)
 
     ref_timing: dict[str, float] = {}

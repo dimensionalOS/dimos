@@ -18,8 +18,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
-use dimos_mls_planner::voxel::{surface_point_xyz, VoxelKey};
+use dimos_mls_planner::mls_planner::{Config, MapPoint, Planner, RegionBounds};
+use dimos_mls_planner::voxel::surface_point_xyz;
 
 #[pyclass]
 pub struct MLSPlanner {
@@ -27,27 +27,29 @@ pub struct MLSPlanner {
     planner: Planner,
 }
 
-/// Extract a (N, 3) float32 numpy array into xyz tuples, dropping any row with
-/// a non-finite coordinate.
-fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<(f32, f32, f32)>> {
-    let points: PyReadonlyArray2<'_, f32> = points
-        .extract()
-        .map_err(|_| PyValueError::new_err("points must be a (N, 3) float32 numpy array"))?;
+/// Rows of xyz, or the tracer's (N, 7) xyz plus plane, as float32, dropping non-finite coordinates; xyz rows get no plane.
+fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<MapPoint>> {
+    let points: PyReadonlyArray2<'_, f32> = points.extract().map_err(|_| {
+        PyValueError::new_err("points must be a (N, 3) or (N, 7) float32 numpy array")
+    })?;
     let shape = points.shape();
-    if shape[1] != 3 {
+    if shape[1] != 3 && shape[1] != 7 {
         return Err(PyValueError::new_err(format!(
-            "points must be (N, 3) float32, got shape {:?}",
+            "points must be (N, 3) or (N, 7) float32, got shape {:?}",
             shape
         )));
     }
     let arr = points.as_array();
-    let n = shape[0];
-    Ok((0..n)
-        .filter_map(|i| {
-            let x = arr[[i, 0]];
-            let y = arr[[i, 1]];
-            let z = arr[[i, 2]];
-            (x.is_finite() && y.is_finite() && z.is_finite()).then_some((x, y, z))
+    Ok(arr
+        .rows()
+        .into_iter()
+        .filter_map(|row| {
+            let (x, y, z) = (row[0], row[1], row[2]);
+            let plane = match row.len() {
+                7 => [row[3], row[4], row[5], row[6]],
+                _ => [f32::NAN; 4],
+            };
+            (x.is_finite() && y.is_finite() && z.is_finite()).then_some(((x, y, z), plane))
         })
         .collect())
 }
@@ -67,6 +69,8 @@ impl MLSPlanner {
         wall_buffer_m = 0.75,
         wall_buffer_weight = 100.0,
         step_threshold_m = 0.16,
+        max_surface_slope_deg = 45.0,
+        plane_noise_m = 0.01,
         step_penalty_weight = 4.0,
         worker_threads = 4,
     ))]
@@ -80,6 +84,8 @@ impl MLSPlanner {
         wall_buffer_m: f32,
         wall_buffer_weight: f32,
         step_threshold_m: f32,
+        max_surface_slope_deg: f32,
+        plane_noise_m: f32,
         step_penalty_weight: f32,
         worker_threads: u32,
     ) -> PyResult<Self> {
@@ -97,6 +103,8 @@ impl MLSPlanner {
             wall_buffer_m,
             wall_buffer_weight,
             step_threshold_m,
+            max_surface_slope_deg,
+            plane_noise_m,
             step_penalty_weight,
             // Unused here. Only the binary's replan loop reads goal_tolerance.
             goal_tolerance: 1.0,
@@ -178,11 +186,11 @@ impl MLSPlanner {
 
     fn surface_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let voxel_size = self.config.voxel_size;
-        let surface: Vec<VoxelKey> = self.planner.surface().collect();
+        let surface = self.planner.surface_clearance();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(surface.len() * 3);
-            for (ix, iy, iz) in surface {
-                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+            for ((ix, iy, iz), z, _) in surface {
+                let (x, y, _) = surface_point_xyz(ix, iy, iz, voxel_size);
                 out.push(x);
                 out.push(y);
                 out.push(z);
@@ -202,8 +210,8 @@ impl MLSPlanner {
         let cells = self.planner.surface_clearance();
         let values: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(cells.len() * 4);
-            for ((ix, iy, iz), clearance) in cells {
-                let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
+            for ((ix, iy, iz), z, clearance) in cells {
+                let (x, y, _) = surface_point_xyz(ix, iy, iz, voxel_size);
                 out.push(x);
                 out.push(y);
                 out.push(z);
@@ -309,7 +317,7 @@ impl MLSPlanner {
         format!(
             "MLSPlanner(voxel_size={}, surface_cells={}, nodes={}, edges={})",
             self.config.voxel_size,
-            self.planner.surface().count(),
+            graph.cells.ids().count(),
             graph.nodes.len(),
             graph.node_edges.len(),
         )

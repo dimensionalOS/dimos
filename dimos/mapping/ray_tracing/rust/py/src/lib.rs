@@ -20,7 +20,7 @@ use validator::Validate;
 
 use dimos_voxel_ray_tracing::mapper::{Mapper, Pose};
 use dimos_voxel_ray_tracing::voxel_ray_tracer::{
-    partition_seed, Config, LocalBounds, SeedPartition,
+    partition_seed, Config, LocalBounds, SeedPartition, SURFACE_STRIDE,
 };
 
 fn extract_tuples(arr: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<(f32, f32, f32)>> {
@@ -77,6 +77,13 @@ fn flat_to_array(py: Python<'_>, points: Vec<f32>) -> Bound<'_, PyArray2<f32>> {
         .into_pyarray(py)
 }
 
+fn surfaces_to_array(py: Python<'_>, surfaces: Vec<f32>) -> Bound<'_, PyArray2<f32>> {
+    let m = surfaces.len() / SURFACE_STRIDE;
+    Array2::from_shape_vec((m, SURFACE_STRIDE), surfaces)
+        .expect("SURFACE_STRIDE elements pushed per voxel")
+        .into_pyarray(py)
+}
+
 #[pyclass]
 pub struct VoxelRayMapper {
     mapper: Mapper,
@@ -85,7 +92,7 @@ pub struct VoxelRayMapper {
 }
 
 /// One region of a seed as the map now holds it: the cylinder covering its
-/// chunks and the support-gated (M, 3) float32 points inside.
+/// chunks and the support-gated voxels inside, (M, 7) float32 as local_surfaces emits them.
 #[pyclass(frozen, get_all)]
 pub struct SeededRegion {
     center: (f32, f32),
@@ -110,6 +117,7 @@ impl VoxelRayMapper {
         max_health = 5,
         graze_cos = 0.7,
         graze_recent_frames = u32::MAX,
+        thin_surfaces = true,
         support_min = 4,
         region_percentile = 95.0,
         worker_threads = 4,
@@ -128,6 +136,7 @@ impl VoxelRayMapper {
         max_health: i32,
         graze_cos: f32,
         graze_recent_frames: u32,
+        thin_surfaces: bool,
         support_min: i32,
         region_percentile: f32,
         worker_threads: u32,
@@ -150,6 +159,7 @@ impl VoxelRayMapper {
             max_health,
             graze_cos,
             graze_recent_frames,
+            thin_surfaces,
             support_min,
             emit_every,
             global_emit_every: 1,
@@ -274,7 +284,7 @@ impl VoxelRayMapper {
             for tile in &region.tiles {
                 mapper.seed_tile(tile);
             }
-            mapper.local_points(&region.cylinder.bounds())
+            mapper.local_surfaces(&region.cylinder.bounds())
         });
         let c = region.cylinder;
         Some(SeededRegion {
@@ -282,7 +292,7 @@ impl VoxelRayMapper {
             radius: c.radius,
             z_min: c.z_min,
             z_max: c.z_max,
-            points: flat_to_array(py, points).unbind(),
+            points: surfaces_to_array(py, points).unbind(),
         })
     }
 
@@ -338,6 +348,26 @@ impl VoxelRayMapper {
         let mapper = &self.mapper;
         let points = py.allow_threads(|| mapper.local_points(&bounds));
         flat_to_array(py, points)
+    }
+
+    /// local_map with each voxel's plane: (M, 7) float32 rows of center, unit normal, offset; NaN without one.
+    fn local_surfaces<'py>(
+        &self,
+        py: Python<'py>,
+        origin: (f32, f32, f32),
+        radius: f32,
+        z_min: f32,
+        z_max: f32,
+    ) -> Bound<'py, PyArray2<f32>> {
+        let bounds = LocalBounds {
+            origin_x: origin.0,
+            origin_y: origin.1,
+            r_xy_max_sq: radius * radius,
+            z_min,
+            z_max,
+        };
+        let mapper = &self.mapper;
+        surfaces_to_array(py, py.allow_threads(|| mapper.local_surfaces(&bounds)))
     }
 
     /// Fine-cell centers inside the cylinder as (M, 3) float32.

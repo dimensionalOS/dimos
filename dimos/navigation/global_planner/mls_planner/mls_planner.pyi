@@ -30,11 +30,17 @@ class MLSPlanner:
         wall_buffer_m: float = 0.75,
         wall_buffer_weight: float = 100.0,
         step_threshold_m: float = 0.16,
+        max_surface_slope_deg: float = 45.0,
+        plane_noise_m: float = 0.01,
         step_penalty_weight: float = 4.0,
         worker_threads: int = 4,
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:
-        """Voxelize the map and rebuild surfaces, nodes, and edges. Shape (N, 3) float32."""
+        """Voxelize the map and rebuild surfaces, nodes, and edges.
+
+        Points are (N, 3) float32 voxel centers, or (N, 7) with each voxel's
+        plane as VoxelRayMapper.local_surfaces emits it.
+        """
         ...
 
     def update_region(
@@ -48,7 +54,8 @@ class MLSPlanner:
     ) -> None:
         """Replace the cylindrical region with a local map slice and rebuild.
 
-        Points are (N, 3) float32. z_max is capped at sensor_z + max_overhead_m.
+        Points are (N, 3) or (N, 7) as for update_global_map. z_max is capped at
+        sensor_z + max_overhead_m.
         """
         ...
 
@@ -62,12 +69,13 @@ class MLSPlanner:
     ) -> None:
         """Apply one region of a seeded map through the region pipeline.
 
-        Points are (N, 3) float32. The z band is the premap's own, uncapped.
+        Points are (N, 3) or (N, 7) as for update_global_map. The z band is the
+        premap's own, uncapped.
         """
         ...
 
     def surface_map(self) -> NDArray[np.float32]:
-        """Standable surface cells as (M, 3) float32 centers."""
+        """Standable surface cells as (M, 3) float32 column centers at their surface height."""
         ...
 
     def surface_clearance_map(self) -> NDArray[np.float32]:

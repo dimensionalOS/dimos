@@ -118,8 +118,19 @@ impl ColumnIz {
         }
     }
 
-    pub fn clear(&mut self) {
-        self.tiles.clear();
+    /// How many voxels the columns hold.
+    pub fn voxel_count(&self) -> usize {
+        self.tiles.values().map(|tile| tile.voxels).sum()
+    }
+
+    /// Every voxel, in no particular order.
+    pub fn keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
+        self.tiles.iter().flat_map(|(&tile, held)| {
+            held.columns.iter().enumerate().flat_map(move |(slot, zs)| {
+                let (ix, iy) = column_of(tile, slot);
+                zs.iter().map(move |&iz| (ix, iy, iz))
+            })
+        })
     }
 
     /// Rebuild from a set of voxels.
@@ -281,12 +292,13 @@ impl ColumnMask {
     }
 }
 
-/// The heights a repair's edits added or removed per column, sorted, and the
-/// columns that gained their first voxel or lost their last.
+/// Per column, the sorted heights a repair added, removed, or retuned, and the columns that gained or lost their only voxel.
 #[derive(Default)]
 pub struct VoxelEdits {
     pub changed: Vec<((i32, i32), Vec<i32>)>,
     pub flipped: Vec<(i32, i32)>,
+    /// Kept voxels whose plane moved, so the surface height they give moved.
+    pub retuned: Vec<VoxelKey>,
 }
 
 impl VoxelEdits {
@@ -320,8 +332,10 @@ pub struct ColumnBuckets {
 
 /// The columns of TILE_EDGE consecutive rows of a bbox.
 struct Band {
-    starts: Vec<usize>,
-    lens: Vec<usize>,
+    /// Where each column's z values start in `zs`.
+    starts: Vec<u32>,
+    /// How many distinct z values each column holds from its start.
+    lens: Vec<u32>,
     zs: Vec<i32>,
 }
 
@@ -387,23 +401,27 @@ impl Band {
     fn new(keys: &[VoxelKey], x0: i32, y0: i32, width: usize, rows: usize) -> Self {
         let n = width * rows;
         let index = |&(ix, iy, _): &VoxelKey| (iy - y0) as usize * width + (ix - x0) as usize;
-        let mut starts = vec![0usize; n + 1];
+        // Counting sort: running column ends, which placing walks back down to starts.
+        let mut starts = vec![0u32; n];
         for k in keys {
-            starts[index(k) + 1] += 1;
+            starts[index(k)] += 1;
         }
-        for i in 0..n {
-            starts[i + 1] += starts[i];
+        let mut total = 0;
+        for count in starts.iter_mut() {
+            total += *count;
+            *count = total;
         }
-        let mut fill = starts.clone();
         let mut zs = vec![0i32; keys.len()];
-        for k in keys {
-            let i = index(k);
-            zs[fill[i]] = k.2;
-            fill[i] += 1;
+        for k in keys.iter().rev() {
+            let slot = &mut starts[index(k)];
+            *slot -= 1;
+            zs[*slot as usize] = k.2;
         }
-        let mut lens = vec![0usize; n];
+        let mut lens = vec![0u32; n];
         for i in 0..n {
-            let col = &mut zs[starts[i]..starts[i + 1]];
+            let start = starts[i] as usize;
+            let end = starts.get(i + 1).map_or(keys.len(), |&next| next as usize);
+            let col = &mut zs[start..end];
             col.sort_unstable();
             let mut kept = 0;
             for j in 0..col.len() {
@@ -412,14 +430,15 @@ impl Band {
                     kept += 1;
                 }
             }
-            lens[i] = kept;
+            lens[i] = kept as u32;
         }
         Self { starts, lens, zs }
     }
 
     fn column(&self, x: usize, row: usize, width: usize) -> &[i32] {
         let i = row * width + x;
-        &self.zs[self.starts[i]..self.starts[i] + self.lens[i]]
+        let start = self.starts[i] as usize;
+        &self.zs[start..start + self.lens[i] as usize]
     }
 }
 

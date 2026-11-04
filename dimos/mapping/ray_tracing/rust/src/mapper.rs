@@ -20,8 +20,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
-    global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
-    Cylinder, FrameHits, LocalBounds, VoxelMap,
+    emit_surfaces, global_normal_fits, global_normals, seed_points, seed_tile, update_map,
+    ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -192,6 +192,19 @@ impl Mapper {
             .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
     }
 
+    /// `global_points` with each voxel's plane, SURFACE_STRIDE floats per voxel.
+    pub fn global_surfaces(&self) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_surfaces(
+                &self.map,
+                self.config.voxel_size,
+                None,
+                &self.live.coarse,
+                false,
+            )
+        })
+    }
+
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
     /// flat triples.
     pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
@@ -201,6 +214,19 @@ impl Mapper {
                 self.config.voxel_size,
                 Some(bounds),
                 &self.live.coarse,
+            )
+        })
+    }
+
+    /// `local_points` with each voxel's plane, SURFACE_STRIDE floats per voxel.
+    pub fn local_surfaces(&self, bounds: &LocalBounds) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_surfaces(
+                &self.map,
+                self.config.voxel_size,
+                Some(bounds),
+                &self.live.coarse,
+                true,
             )
         })
     }
@@ -282,6 +308,7 @@ mod tests {
             max_health: 1,
             graze_cos: 0.5,
             graze_recent_frames: u32::MAX,
+            thin_surfaces: false,
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,

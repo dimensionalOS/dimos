@@ -136,7 +136,7 @@ def test_seed_regions_land_nearest_first_and_gate_support() -> None:
     assert first is not None
     assert first.center == (44.0, 44.0), "the origin's region lands first"
     assert first.z_min < 0.5 < first.z_max
-    assert first.points.shape == (0, 3), "an isolated voxel has no support"
+    assert first.points.shape == (0, 7), "an isolated voxel has no support"
 
     second = mapper.seed_next_region()
     assert second is not None
@@ -146,7 +146,7 @@ def test_seed_regions_land_nearest_first_and_gate_support() -> None:
     )
     assert second.points.dtype == np.float32
     corners = {(0.5, 0.5), (0.5, 4.5), (4.5, 0.5), (4.5, 4.5)}
-    landed = {(float(x), float(y)) for x, y, _ in second.points}
+    landed = {(float(x), float(y)) for x, y, *_ in second.points}
     assert len(second.points) == 21, "the corners have three neighbors, under the gate of four"
     assert landed == {(x, y) for x in coords for y in coords} - corners
     assert mapper.seed_next_region() is None

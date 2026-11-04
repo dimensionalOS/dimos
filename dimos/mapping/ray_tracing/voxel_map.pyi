@@ -18,7 +18,8 @@ from numpy.typing import NDArray
 class SeededRegion:
     """One region of a seed as the map now holds it.
 
-    The cylinder covering its chunks and the support-gated (M, 3) float32 points inside.
+    The cylinder covering its chunks and the support-gated voxels inside, (M, 7)
+    float32 as `local_surfaces` emits them.
     """
 
     center: tuple[float, float]
@@ -43,6 +44,7 @@ class VoxelRayMapper:
         max_health: int = 5,
         graze_cos: float = 0.7,
         graze_recent_frames: int = 4294967295,
+        thin_surfaces: bool = True,
         support_min: int = 4,
         region_percentile: float = 95.0,
         worker_threads: int = 4,
@@ -138,6 +140,18 @@ class VoxelRayMapper:
         z_max: float,
     ) -> NDArray[np.float32]:
         """Return healthy voxels inside the cylinder around origin as (M, 3) float32."""
+        ...
+
+    def local_surfaces(
+        self,
+        origin: tuple[float, float, float],
+        radius: float,
+        z_min: float,
+        z_max: float,
+    ) -> NDArray[np.float32]:
+        """local_map with each voxel's plane as (M, 7) float32 rows: the voxel
+        center, the plane's unit normal, and its offset from the center along
+        it. NaN where the voxel has no plane or one sits right above it."""
         ...
 
     def local_map_fine(

@@ -37,6 +37,17 @@ const EIGEN_NULL_TOL: f64 = 1e-18;
 /// Largest eigenvalue below this is a degenerate fit with no plane.
 const EIGEN_DEGENERATE: f32 = 1e-12;
 
+/// A fitted surface, its points p satisfying `normal · (p - center) = offset` with an up-facing unit normal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Plane {
+    pub normal: Vector3<f32>,
+    pub offset: f32,
+    /// RMS distance of the fit's points from the plane.
+    pub spread: f32,
+    /// Whether the fit's points pin the plane down, so its spread is evidence: more than three, not along one line.
+    pub determined: bool,
+}
+
 /// A voxel's cached pooled fit. Stale until a clearing ray needs it.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum NormalFit {
@@ -44,16 +55,18 @@ pub(super) enum NormalFit {
     Fitted(Option<Vector3<f32>>),
 }
 
-/// The surface normal of a covariance, or None unless it is clearly planar.
-#[cfg(test)]
-pub(super) fn fit_normal(cov: Matrix3<f32>) -> Option<(Vector3<f32>, f32)> {
-    classify(&sym3_eigen(&cov))
-}
-
-/// Eigenvalues of a symmetric 3x3, ascending, and the eigenvector of the smallest.
+/// A symmetric 3x3's ascending eigenvalues, the smallest's eigenvector, and the rows whose null space is the largest's.
 struct Sym3Eigen {
     values: [f32; 3],
     smallest: Vector3<f32>,
+    largest_rows: [[f64; 3]; 3],
+}
+
+impl Sym3Eigen {
+    /// The eigenvector of the largest eigenvalue, x when every direction is one.
+    fn largest(&self) -> Vector3<f32> {
+        null_vector(self.largest_rows).unwrap_or_else(Vector3::x)
+    }
 }
 
 /// Closed-form eigendecomposition of a symmetric 3x3, computed in f64. An
@@ -71,6 +84,7 @@ fn sym3_eigen(m: &Matrix3<f32>) -> Sym3Eigen {
         return Sym3Eigen {
             values: [q as f32; 3],
             smallest: Vector3::z(),
+            largest_rows: [[0.0; 3]; 3],
         };
     }
     let p = (spread / 6.0).sqrt();
@@ -87,6 +101,7 @@ fn sym3_eigen(m: &Matrix3<f32>) -> Sym3Eigen {
         smallest: null_vector(rows(smallest))
             .or_else(|| null_vector(rows(largest)).map(any_perpendicular))
             .unwrap_or_else(Vector3::z),
+        largest_rows: rows(largest),
     }
 }
 
@@ -131,24 +146,59 @@ fn any_perpendicular(v: Vector3<f32>) -> Vector3<f32> {
     v.cross(&axis).normalize()
 }
 
-/// fit_normal on an already-computed eigendecomposition. Pairs the normal
-/// with the smallest eigenvalue, the fit's out-of-plane variance.
-fn classify(eig: &Sym3Eigen) -> Option<(Vector3<f32>, f32)> {
+/// How a covariance's points spread, by its dominant dimensionality.
+#[derive(PartialEq)]
+enum Shape {
+    /// All points at one spot.
+    Degenerate,
+    /// Along one line, such as a lone scan line.
+    Linear,
+    /// Over a plane.
+    Planar,
+    /// Through a volume.
+    Scattered,
+}
+
+fn shape(eig: &Sym3Eigen) -> Shape {
     let e2 = eig.values[2].max(0.0);
     if e2 < EIGEN_DEGENERATE {
-        return None;
+        return Shape::Degenerate;
     }
-    let e0 = eig.values[0].max(0.0);
-    let l0 = e0.sqrt();
+    let l0 = eig.values[0].max(0.0).sqrt();
     let l1 = eig.values[1].max(0.0).sqrt();
     let l2 = e2.sqrt();
     let linearity = (l2 - l1) / l2;
     let planarity = (l1 - l0) / l2;
     let scattering = l0 / l2;
-    if planarity < linearity || planarity < scattering {
-        return None;
+    if planarity >= linearity && planarity >= scattering {
+        Shape::Planar
+    } else if linearity > scattering {
+        Shape::Linear
+    } else {
+        Shape::Scattered
     }
-    Some((eig.smallest, e0))
+}
+
+/// A decomposition's surface normal and its out-of-plane variance (smallest eigenvalue), None unless clearly planar.
+fn classify(eig: &Sym3Eigen) -> Option<(Vector3<f32>, f32)> {
+    (shape(eig) == Shape::Planar).then(|| (eig.smallest, eig.values[0].max(0.0)))
+}
+
+/// The most level plane through points of this covariance (its own, through its line, else level), and whether the points pinned it.
+pub(super) fn surface_normal(cov: &Matrix3<f32>) -> (Vector3<f32>, bool) {
+    let eig = sym3_eigen(cov);
+    match shape(&eig) {
+        Shape::Planar => (eig.smallest, true),
+        Shape::Linear => {
+            let line = eig.largest();
+            let normal = (Vector3::z() - line * line.z)
+                .try_normalize(f32::EPSILON)
+                .unwrap_or_else(|| any_perpendicular(line));
+            (normal, false)
+        }
+        Shape::Scattered => (Vector3::z(), true),
+        Shape::Degenerate => (Vector3::z(), false),
+    }
 }
 
 /// Moments of one neighbor voxel: count, sum, sum of outer products, centroid.

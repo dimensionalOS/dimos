@@ -24,7 +24,7 @@ fn test_rng(mut state: u64) -> impl FnMut() -> u64 + Copy {
     }
 }
 
-fn basic_config() -> Config {
+pub(super) fn basic_config() -> Config {
     Config {
         voxel_size: 1.0,
         fine_divisor: 0,
@@ -37,6 +37,7 @@ fn basic_config() -> Config {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -148,6 +149,7 @@ fn find_misses_along_ray_hits_correct_voxels() {
         graze_cos: 0.5,
         map_frame: 0,
         graze_recent_frames: u32::MAX,
+        thin_cell: None,
         fine_divisor: None,
     };
     let mut walk = RayWalk::default();
@@ -358,6 +360,7 @@ fn ground_clipping_single_ray() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -518,6 +521,7 @@ fn stair_clipping_ray_fan() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -604,6 +608,7 @@ fn landing_floor_ray_fan() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -678,6 +683,7 @@ fn landing_grazed_from_below() {
         max_health: 1,
         graze_cos,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -772,25 +778,32 @@ fn planar_patch_yields_vertical_normal() {
             v.observe(Vector3::new(x, y, 0.0));
         }
     }
-    let (n, _) = v
-        .self_normal()
-        .expect("a flat 2d patch must yield a normal");
+    let n = v
+        .surface_plane(None, 0.1)
+        .expect("a flat 2d patch must yield a plane")
+        .normal;
     assert!(n[2].abs() > 0.99, "expected ~vertical normal, got {n:?}");
 }
 
+/// A lone scan line's plane is the most level one through it: level for a level line, upright for an upright one.
 #[test]
-fn line_like_patch_has_no_normal() {
-    // A scan-line is not planar, so it gets no normal.
-    let mut v = Voxel::default();
+fn a_scan_line_turns_its_plane_as_level_as_it_allows() {
+    let mut level = Voxel::default();
+    let mut upright = Voxel::default();
     for j in 0..20 {
-        let y = 0.08 * (j as f32 / 19.0 - 0.5);
-        let z = 0.003 * ((j % 3) - 1) as f32;
-        v.observe(Vector3::new(0.0, y, z));
+        let t = 0.08 * (j as f32 / 19.0 - 0.5);
+        let jitter = 0.003 * ((j % 3) - 1) as f32;
+        level.observe(Vector3::new(0.0, t, jitter));
+        upright.observe(Vector3::new(jitter, 0.0, t));
     }
-    assert!(
-        v.self_normal().is_none(),
-        "a scan-line has no trustworthy normal"
-    );
+    let level = level
+        .surface_plane(None, 0.1)
+        .expect("20 points place a plane");
+    assert!(level.normal.z > 0.99, "{:?}", level.normal);
+    let upright = upright
+        .surface_plane(None, 0.1)
+        .expect("20 points place a plane");
+    assert!(upright.normal.z.abs() < 0.05, "{:?}", upright.normal);
 }
 
 /// A grazing ray spares a planar floor, with no dependence on how recently it
@@ -821,6 +834,7 @@ fn grazing_ray_spares_planar_floor() {
         max_health: 1,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
@@ -1354,6 +1368,7 @@ fn milestone_gated_normals_match_full_refit() {
         grace_depth: 0.2,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -1480,6 +1495,7 @@ fn new_voxel_is_fit_before_grazing_ray() {
         grace_depth: 0.2,
         graze_cos: 0.5,
         graze_recent_frames: u32::MAX,
+        thin_surfaces: false,
         ..basic_config()
     };
     let ds = voxel_size / 3.0;
@@ -2078,4 +2094,136 @@ fn regions_group_chunks_by_center_and_never_split_a_chunk() {
     assert_eq!(region_of((3, 0, 0), 0.16, 4.0), (1, 0));
     // A grid finer than a chunk widens to the chunk.
     assert_eq!(region_of((5, -1, 0), 0.5, 1.0), (5, -1));
+}
+
+/// A healthy map of the points, voxels created as their first point lands, with planes fit.
+pub(super) fn map_of_points(points: &[(f32, f32, f32)], voxel_size: f32) -> VoxelMap {
+    let mut map = VoxelMap::with_support_min(0);
+    for &p in points {
+        let key = world_to_voxel(p.0, p.1, p.2, 1.0 / voxel_size);
+        if !map.voxels.contains_key(&key) {
+            map.voxels.insert(key, Voxel::with_health(1), 0);
+        }
+        map.accumulate(p, voxel_size, None);
+    }
+    let keys: AHashSet<VoxelKey> = map.voxels.keys().collect();
+    refit_surfaces(&mut map, &keys, &[], voxel_size);
+    map
+}
+
+/// A 50 cm square of floor rising `slope` along x from `z0`, sampled every cm.
+fn tilted_floor(z0: f32, slope: f32) -> Vec<(f32, f32, f32)> {
+    (0..50)
+        .flat_map(|i| (0..50).map(move |j| (i, j)))
+        .map(|(i, j)| {
+            let (x, y) = (0.005 + 0.01 * i as f32, 0.005 + 0.01 * j as f32);
+            (x, y, z0 + slope * x)
+        })
+        .collect()
+}
+
+/// A tilted floor voxel's plane faces up, tilts with the floor, and reads its height at the column center.
+#[test]
+fn surface_plane_carries_the_floor_height_and_slope() {
+    let voxel_size = 0.1;
+    let slope = 0.2;
+    let map = map_of_points(&tilted_floor(0.03, slope), voxel_size);
+    for ix in 0..5 {
+        let x = (ix as f32 + 0.5) * voxel_size;
+        let floor_z = 0.03 + slope * x;
+        let key = (ix, 2, (floor_z / voxel_size).floor() as i32);
+        let plane = map.voxels[&key]
+            .surface_plane(None, 0.1)
+            .expect("a floor voxel is planar");
+        let want = Vector3::new(-slope, 0.0, 1.0).normalize();
+        assert!(
+            plane.normal.dot(&want) > 0.999,
+            "{key:?}: {:?}",
+            plane.normal
+        );
+        let center_z = (key.2 as f32 + 0.5) * voxel_size;
+        let height = center_z + plane.offset / plane.normal.z;
+        assert!(
+            (height - floor_z).abs() < 1e-3,
+            "{key:?}: {height} vs {floor_z}"
+        );
+    }
+}
+
+/// At a step's edge the tread voxel's published plane reads the tread, not the riser beside it.
+#[test]
+fn surface_plane_reads_a_tread_beside_its_riser() {
+    let voxel_size = 0.1;
+    let tread_z = 0.15;
+    // A tread for x >= 0.2, the riser face just below its edge, the floor at 0.
+    let mut points: Vec<(f32, f32, f32)> = (0..50)
+        .flat_map(|i| (0..30).map(move |j| (0.005 + 0.01 * i as f32, 0.005 + 0.01 * j as f32)))
+        .map(|(x, y)| (x, y, if x >= 0.2 { tread_z } else { 0.0 }))
+        .collect();
+    points.extend(
+        (0..30)
+            .flat_map(|j| (1..15).map(move |k| (0.195, 0.005 + 0.01 * j as f32, 0.01 * k as f32))),
+    );
+    let map = map_of_points(&points, voxel_size);
+    let tread = map.voxels.surface(&(2, 1, 1)).expect("the tread is planar");
+    let height = 1.5 * voxel_size + tread.offset / tread.normal.z;
+    assert!(tread.normal.z > 0.999, "{:?}", tread.normal);
+    assert!((height - tread_z).abs() < 1e-3, "{height}");
+}
+
+/// A floor on a voxel boundary: the upper voxel pools the lower's points and publishes it level at its height.
+#[test]
+fn a_floor_split_across_a_voxel_boundary_pools_into_one_plane() {
+    let voxel_size = 0.1;
+    let floor_z = 0.1;
+    let points: Vec<(f32, f32, f32)> = tilted_floor(floor_z, 0.0)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (x, y, z))| (x, y, z + if i % 2 == 0 { 0.002 } else { -0.002 }))
+        .collect();
+    let map = map_of_points(&points, voxel_size);
+    for key in [(1, 1, 1), (3, 2, 1)] {
+        let plane = map
+            .voxels
+            .surface(&key)
+            .expect("the pooled floor is planar");
+        let height = 1.5 * voxel_size + plane.offset / plane.normal.z;
+        assert!(plane.normal.z > 0.999, "{key:?}: {:?}", plane.normal);
+        assert!((height - floor_z).abs() < 1e-3, "{key:?}: {height}");
+    }
+}
+
+/// Every emitted voxel carries its plane after its center, NaN when covered by an emitted voxel right above.
+#[test]
+fn emitted_surfaces_carry_planes_except_under_cover() {
+    let voxel_size = 0.1;
+    let mut points = tilted_floor(0.01, 0.0);
+    points.push((0.25, 0.25, 0.15));
+    let map = map_of_points(&points, voxel_size);
+    let bounds = Cylinder {
+        cx: 0.25,
+        cy: 0.25,
+        radius: 1.0,
+        z_min: -1.0,
+        z_max: 1.0,
+    }
+    .bounds();
+    let out = emit_surfaces(&map, voxel_size, Some(&bounds), &AHashSet::new(), true);
+    let rows = out.as_chunks::<SURFACE_STRIDE>().0;
+    assert_eq!(rows.len(), map.voxels.len());
+    for row in rows {
+        let key = world_to_voxel(row[0], row[1], row[2], 1.0 / voxel_size);
+        if key == (2, 2, 0) {
+            assert!(
+                row[3..].iter().all(|v| v.is_nan()),
+                "covered {key:?}: {row:?}"
+            );
+        } else if key.2 == 0 {
+            assert!(row[5] > 0.999, "floor {key:?} faces up: {row:?}");
+            assert!(
+                (row[6] / row[5] + 0.04).abs() < 1e-3,
+                "floor {key:?} height: {row:?}"
+            );
+        }
+    }
 }

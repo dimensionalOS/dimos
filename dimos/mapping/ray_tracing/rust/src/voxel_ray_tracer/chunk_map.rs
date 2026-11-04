@@ -17,7 +17,7 @@
 
 use ahash::AHashMap;
 
-use super::{Voxel, VoxelHealth, VoxelKey};
+use super::{Plane, Voxel, VoxelHealth, VoxelKey};
 
 pub type ChunkKey = (i32, i32, i32);
 
@@ -141,6 +141,8 @@ struct Chunk {
     healthy: Mask,
     /// Healthy-neighbor count per voxel, packed like `voxels`.
     support: Vec<u8>,
+    /// Surface plane per voxel, packed like `voxels` and apart from them so scans skip the voxels.
+    surfaces: Vec<Option<Plane>>,
     voxels: Vec<Voxel>,
 }
 
@@ -175,9 +177,17 @@ pub struct HealthyVoxel<'a> {
     pub key: VoxelKey,
     pub support: u8,
     pub voxel: &'a Voxel,
+    slot: usize,
+    index: usize,
 }
 
 impl<'a> ChunkRef<'a> {
+    /// The surface plane of one of this chunk's healthy voxels.
+    #[inline]
+    pub fn surface(&self, hv: &HealthyVoxel) -> Option<Plane> {
+        self.chunk.surfaces[hv.index]
+    }
+
     pub fn healthy_len(&self) -> usize {
         self.chunk.healthy.count()
     }
@@ -202,6 +212,8 @@ impl<'a> ChunkRef<'a> {
                 key: key_of(key, slot),
                 support: chunk.support[i],
                 voxel: &chunk.voxels[i],
+                slot,
+                index: i,
             })
     }
 }
@@ -269,11 +281,13 @@ impl ChunkMap {
         chunk.healthy.set(slot, voxel.health > 0);
         if chunk.occupied.get(slot) {
             chunk.support[i] = support;
+            chunk.surfaces[i] = None;
             return Some(std::mem::replace(&mut chunk.voxels[i], voxel));
         }
         chunk.occupied.set(slot, true);
         chunk.voxels.insert(i, voxel);
         chunk.support.insert(i, support);
+        chunk.surfaces.insert(i, None);
         self.len += 1;
         None
     }
@@ -295,11 +309,47 @@ impl ChunkMap {
         Some((was, voxel.health))
     }
 
+    /// The surface plane of the voxel at `key`, None when it has none or is absent.
+    #[cfg(test)]
+    pub fn surface(&self, key: &VoxelKey) -> Option<Plane> {
+        let chunk = self.chunks.get(&chunk_of(*key))?;
+        chunk.surfaces[chunk.index(slot_of(*key))?]
+    }
+
+    /// Set the surface plane of the voxel at `key`, if present.
+    pub fn set_surface(&mut self, key: &VoxelKey, plane: Option<Plane>) {
+        if let Some(chunk) = self.chunks.get_mut(&chunk_of(*key)) {
+            if let Some(i) = chunk.index(slot_of(*key)) {
+                chunk.surfaces[i] = plane;
+            }
+        }
+    }
+
     /// Healthy-neighbor count of the voxel at `key`.
     #[cfg(test)]
     pub fn support(&self, key: &VoxelKey) -> Option<u8> {
         let chunk = self.chunks.get(&chunk_of(*key))?;
         chunk.index(slot_of(*key)).map(|i| chunk.support[i])
+    }
+
+    /// The support of the healthy voxel right above `hv` of chunk `near`, probing only into the next chunk up.
+    #[inline]
+    pub fn healthy_above(&self, near: ChunkRef, hv: &HealthyVoxel) -> Option<u8> {
+        if hv.slot as i32 & LOCAL_MASK != LOCAL_MASK {
+            // z is a slot's lowest field, so the voxel above is the next slot and the next index.
+            return near
+                .chunk
+                .healthy
+                .get(hv.slot + 1)
+                .then(|| near.chunk.support[hv.index + 1]);
+        }
+        let above = (hv.key.0, hv.key.1, hv.key.2 + 1);
+        let chunk = self.chunks.get(&chunk_of(above))?;
+        let slot = slot_of(above);
+        chunk
+            .healthy
+            .get(slot)
+            .then(|| chunk.support[chunk.occupied.rank(slot)])
     }
 
     pub fn healthy_len(&self) -> usize {
@@ -315,6 +365,7 @@ impl ChunkMap {
         chunk.occupied.set(slot, false);
         chunk.healthy.set(slot, false);
         chunk.support.remove(i);
+        chunk.surfaces.remove(i);
         let voxel = chunk.voxels.remove(i);
         if chunk.voxels.is_empty() {
             self.chunks.remove(&ck);
@@ -467,14 +518,17 @@ impl<'a> ChunkCursor<'a> {
         }
     }
 
+    /// The voxel at `key` with its surface plane.
     #[inline]
-    pub fn get(&mut self, key: VoxelKey) -> Option<&'a Voxel> {
+    pub fn get(&mut self, key: VoxelKey) -> Option<(&'a Voxel, Option<Plane>)> {
         let ck = chunk_of(key);
         if self.key != Some(ck) {
             self.key = Some(ck);
             self.chunk = self.map.chunks.get(&ck);
         }
-        self.chunk?.get(key)
+        let chunk = self.chunk?;
+        let i = chunk.index(slot_of(key))?;
+        Some((&chunk.voxels[i], chunk.surfaces[i]))
     }
 }
 
@@ -674,7 +728,7 @@ mod tests {
         for x in -20..20 {
             let key = (x, 1, -1);
             assert_eq!(
-                cursor.get(key).map(|v| v.health),
+                cursor.get(key).map(|(v, _)| v.health),
                 map.get(&key).map(|v| v.health)
             );
         }

@@ -22,14 +22,16 @@ mod chunk_map;
 mod normals;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod thin_surface_tests;
 
 use chunk_map::{chunk_of, ChunkCursor, ChunkRef, HealthyVoxel};
 pub use chunk_map::{ChunkKey, ChunkMap, CHUNK_EDGE};
 
-#[cfg(test)]
-use normals::fit_normal;
+pub use normals::Plane;
 use normals::{
-    mark_stale, pooled_normal, resolve_deferred, should_spare, NormalFit, NORMAL_MIN_POINTS,
+    mark_stale, pooled_normal, resolve_deferred, should_spare, surface_normal, NormalFit,
+    NORMAL_MIN_POINTS,
 };
 
 pub type VoxelKey = (i32, i32, i32);
@@ -93,6 +95,8 @@ pub struct Config {
     pub graze_cos: f32,
     /// Spare a grazing miss only on a voxel hit within this many frames, so a surface nothing sees any more clears; u32::MAX spares always.
     pub graze_recent_frames: u32,
+    /// A voxel whose plane fits its points, and its own points' mean, within a fine cell is a thin surface, which a ray clears only by crossing that plane. Off without fine cells.
+    pub thin_surfaces: bool,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
     /// emits all. Higher drops isolated returns. The global map is unfiltered.
     #[validate(range(min = 0))]
@@ -487,15 +491,30 @@ impl Voxel {
         }
     }
 
-    /// Fit a normal from this voxel's own points alone, ignoring neighbors.
-    #[cfg(test)]
-    fn self_normal(&self) -> Option<(Vector3<f32>, f32)> {
-        if self.num_pts < NORMAL_MIN_POINTS {
+    /// The most level plane through this voxel's points and the one below's, which a surface on their shared face splits.
+    fn surface_plane(&self, below: Option<&Voxel>, voxel_size: f32) -> Option<Plane> {
+        let (mut n, mut sum, mut m2) = (self.num_pts as f32, self.sum, self.m2);
+        if let Some(b) = below {
+            // Shift the lower voxel's center-relative moments up to this center.
+            let d = Vector3::new(0.0, 0.0, -voxel_size);
+            let nb = b.num_pts as f32;
+            n += nb;
+            sum += b.sum + d * nb;
+            m2 += b.m2 + b.sum * d.transpose() + d * b.sum.transpose() + d * d.transpose() * nb;
+        }
+        if n < NORMAL_MIN_POINTS as f32 {
             return None;
         }
-        let n = self.num_pts as f32;
-        let mean = self.sum / n;
-        fit_normal(self.m2 / n - mean * mean.transpose())
+        let mean = sum / n;
+        let cov = m2 / n - mean * mean.transpose();
+        let (normal, chosen) = surface_normal(&cov);
+        let up = if normal.z < 0.0 { -normal } else { normal };
+        Some(Plane {
+            normal: up,
+            offset: up.dot(&mean),
+            spread: up.dot(&(cov * up)).max(0.0).sqrt(),
+            determined: chosen && n > NORMAL_MIN_POINTS as f32,
+        })
     }
 }
 
@@ -729,8 +748,8 @@ fn chunks_in_bounds<'a>(
 }
 
 /// Scan `chunks` in parallel, one output buffer per rayon split, and flatten
-/// the buffers in chunk order. `scan` appends a chunk's points to the buffer.
-fn par_scan_chunks<F>(chunks: &[ChunkRef], extra_points: usize, scan: F) -> Vec<f32>
+/// the buffers in chunk order. `scan` appends a chunk's floats to the buffer.
+fn par_scan_chunks<F>(chunks: &[ChunkRef], extra_floats: usize, scan: F) -> Vec<f32>
 where
     F: Fn(ChunkRef, &mut Vec<f32>) + Sync,
 {
@@ -742,7 +761,7 @@ where
         })
         .collect();
     let total: usize = parts.iter().map(Vec::len).sum();
-    let mut out = Vec::with_capacity(total + 3 * extra_points);
+    let mut out = Vec::with_capacity(total + extra_floats);
     for part in parts {
         out.extend(part);
     }
@@ -754,18 +773,18 @@ fn voxel_supported(support: u8, support_min: i32) -> bool {
 }
 
 /// Scan the healthy voxels of every chunk overlapping `bounds` (all chunks
-/// when `None`) in parallel. `emit` gets each voxel and whether its whole
-/// chunk is inside the cylinder.
+/// when `None`) in parallel. `emit` gets each voxel, its chunk, and whether
+/// the whole chunk is inside the cylinder.
 fn scan_chunks<F>(
     map: &VoxelMap,
     voxel_size: f32,
     bounds: Option<&LocalBounds>,
-    points_per_voxel: usize,
-    extra_points: usize,
+    floats_per_voxel: usize,
+    extra_floats: usize,
     emit: F,
 ) -> Vec<f32>
 where
-    F: Fn(HealthyVoxel, bool, &mut Vec<f32>) + Sync,
+    F: Fn(HealthyVoxel, ChunkRef, bool, &mut Vec<f32>) + Sync,
 {
     let chunk_edge = CHUNK_EDGE as f32 * voxel_size;
     let chunks: Vec<ChunkRef> = match bounds {
@@ -776,7 +795,7 @@ where
             .filter(|c| c.healthy_len() > 0)
             .collect(),
     };
-    par_scan_chunks(&chunks, extra_points, |chunk, part| {
+    par_scan_chunks(&chunks, extra_floats, |chunk, part| {
         let chunk_inside = match bounds {
             Some(b) => {
                 let (min, max) = cell_box(chunk.key, chunk_edge);
@@ -787,9 +806,9 @@ where
             }
             None => true,
         };
-        part.reserve(3 * points_per_voxel * chunk.healthy_len());
+        part.reserve(floats_per_voxel * chunk.healthy_len());
         for hv in chunk.healthy() {
-            emit(hv, chunk_inside, part);
+            emit(hv, chunk, chunk_inside, part);
         }
     })
 }
@@ -821,12 +840,26 @@ pub fn emit_points(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, bounds, live, true)
+    emit_points_impl(map, voxel_size, bounds, live, true, false)
 }
 
 /// Every healthy voxel plus this frame's live voxels, with no support gate.
 pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, None, live, false)
+    emit_points_impl(map, voxel_size, None, live, false, false)
+}
+
+/// Floats per emitted surface voxel: the center, then its plane's normal and offset.
+pub const SURFACE_STRIDE: usize = 7;
+
+/// `emit_points` (`emit_points_ungated` without `gated`) with each voxel's plane after its center, NaN when it has none or is covered.
+pub fn emit_surfaces(
+    map: &VoxelMap,
+    voxel_size: f32,
+    bounds: Option<&LocalBounds>,
+    live: &AHashSet<VoxelKey>,
+    gated: bool,
+) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, bounds, live, gated, true)
 }
 
 fn emit_points_impl(
@@ -835,24 +868,38 @@ fn emit_points_impl(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
     gated: bool,
+    planes: bool,
 ) -> Vec<f32> {
+    let stride = if planes { SURFACE_STRIDE } else { 3 };
+    let emittable = |support| !gated || voxel_supported(support, map.support_min);
     let mut out = scan_chunks(
         map,
         voxel_size,
         bounds,
-        1,
-        live.len(),
-        |hv, chunk_inside, part| {
-            if gated && !voxel_supported(hv.support, map.support_min) {
+        stride,
+        stride * live.len(),
+        |hv, chunk, chunk_inside, part| {
+            if !emittable(hv.support) {
                 return;
             }
             let (x, y, z) = voxel_center(hv.key, voxel_size);
-            if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
-                part.extend_from_slice(&[x, y, z]);
+            if !(chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z))) {
+                return;
+            }
+            part.extend_from_slice(&[x, y, z]);
+            if planes {
+                // A covered voxel, one with an emittable healthy voxel right above it, has no plane.
+                let plane = chunk
+                    .surface(&hv)
+                    .filter(|_| !map.voxels.healthy_above(chunk, &hv).is_some_and(emittable));
+                part.extend_from_slice(&plane.map_or([f32::NAN; 4], |p| {
+                    [p.normal.x, p.normal.y, p.normal.z, p.offset]
+                }));
             }
         },
     );
 
+    // This frame's hits not yet healthy carry no plane until they settle.
     for &key in live.iter() {
         if map.voxels.is_healthy(&key) {
             continue;
@@ -862,6 +909,9 @@ fn emit_points_impl(
             continue;
         }
         out.extend_from_slice(&[x, y, z]);
+        if planes {
+            out.extend_from_slice(&[f32::NAN; 4]);
+        }
     }
     out
 }
@@ -884,9 +934,9 @@ pub fn emit_points_fine(
         map,
         voxel_size,
         bounds,
-        4,
-        live_fine.len(),
-        |hv, chunk_inside, part| {
+        3 * 4,
+        3 * live_fine.len(),
+        |hv, _, chunk_inside, part| {
             if !voxel_supported(hv.support, map.support_min) {
                 return;
             }
@@ -987,6 +1037,10 @@ pub fn update_map(
         graze_cos: cfg.graze_cos,
         map_frame: map.frame,
         graze_recent_frames: cfg.graze_recent_frames,
+        thin_cell: cfg
+            .fine_layer()
+            .filter(|_| cfg.thin_surfaces)
+            .map(|(_, cell)| cell),
         fine_divisor: fine,
     };
     let step = cfg.ray_subsample as usize;
@@ -1041,10 +1095,46 @@ pub fn update_map(
     }
 
     mark_stale(map, &changed, &removed);
+    refit_surfaces(map, &changed, &removed, cfg.voxel_size);
 
     FrameHits {
         coarse: hits,
         fine: fine_live,
+    }
+}
+
+/// Refit the plane of each voxel whose moments, or its lower neighbor's, hit a refit milestone, `changed`, or sit above a removal.
+fn refit_surfaces(
+    map: &mut VoxelMap,
+    changed: &AHashSet<VoxelKey>,
+    removed: &[VoxelKey],
+    voxel_size: f32,
+) {
+    let above = |&(x, y, z): &VoxelKey| (x, y, z + 1);
+    // Each voxel once: a changed one, or the one above a changed or removed voxel unless changed itself.
+    let dirty: Vec<VoxelKey> = changed
+        .iter()
+        .copied()
+        .chain(
+            changed
+                .iter()
+                .chain(removed)
+                .map(above)
+                .filter(|k| !changed.contains(k)),
+        )
+        .collect();
+    let fits: Vec<(VoxelKey, Option<Plane>)> = dirty
+        .par_iter()
+        .filter_map(|&key @ (x, y, z)| {
+            let voxel = map.voxels.get(&key)?;
+            Some((
+                key,
+                voxel.surface_plane(map.voxels.get(&(x, y, z - 1)), voxel_size),
+            ))
+        })
+        .collect();
+    for (key, plane) in fits {
+        map.voxels.set_surface(&key, plane);
     }
 }
 
@@ -1220,6 +1310,7 @@ pub fn seed_tile(
         map.accumulate((x, y, z), cfg.voxel_size, fine);
     }
     mark_stale(map, &created, &[]);
+    refit_surfaces(map, &created, &[], cfg.voxel_size);
     created
 }
 
@@ -1347,6 +1438,8 @@ struct RayFrame<'a> {
     /// This frame's number, and how recent a hit keeps a voxel's grazing protection.
     map_frame: u32,
     graze_recent_frames: u32,
+    /// The fine cell size when thin surfaces are on: how close a fit must be to make one.
+    thin_cell: Option<f32>,
     fine_divisor: Option<i32>,
 }
 
@@ -1372,6 +1465,7 @@ fn find_misses_along_ray(
         graze_cos,
         map_frame,
         graze_recent_frames,
+        thin_cell,
         fine_divisor,
     } = *frame;
     if origin_voxel == endpoint {
@@ -1484,9 +1578,28 @@ fn find_misses_along_ray(
             continue;
         }
 
-        if let Some(c) = cursor.get((x, y, z)) {
+        if let Some((c, surface)) = cursor.get((x, y, z)) {
             if hits.contains(&(x, y, z)) {
                 continue;
+            }
+            let t_exit = tx.min(ty).min(tz);
+            // The fit must be tight, and this voxel's own points must lie on it, not only those below.
+            let thin = thin_cell.and_then(|cell| {
+                surface.filter(|p| {
+                    p.spread < cell
+                        && p.determined
+                        && (p.normal.dot(&(c.sum / c.num_pts as f32)) - p.offset).abs() < cell
+                })
+            });
+            // A ray that stays on one side of a thin surface passes beside it, not through it.
+            if let Some(plane) = thin {
+                let side = |t: f32| {
+                    let p = Vector3::new(ox + t * dx - cx, oy + t * dy - cy, oz + t * dz - cz);
+                    plane.normal.dot(&p) - plane.offset
+                };
+                if side(t_enter) * side(t_exit) > 0.0 {
+                    continue;
+                }
             }
             // A ray through unobserved fine cells contradicts nothing.
             if let Some(divisor) = fine_divisor {
@@ -1495,7 +1608,7 @@ fn find_misses_along_ray(
                         origin,
                         (dx, dy, dz),
                         t_enter,
-                        tx.min(ty).min(tz),
+                        t_exit,
                         (x, y, z),
                         divisor,
                         voxel_size,
@@ -1507,6 +1620,11 @@ fn find_misses_along_ray(
             }
             // Nothing has seen this voxel lately: no surface there to protect from a grazing ray.
             if map_frame.wrapping_sub(c.last_hit) > graze_recent_frames {
+                walk.misses.insert((x, y, z));
+                continue;
+            }
+            // A ray through a thin surface's plane sees through it, at any angle.
+            if thin.is_some() {
                 walk.misses.insert((x, y, z));
                 continue;
             }
