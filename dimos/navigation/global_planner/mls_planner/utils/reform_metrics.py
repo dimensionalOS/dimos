@@ -252,8 +252,8 @@ def rebuild(db: Path, keyframes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             latest = int(np.searchsorted(odom_ts, obs.ts, side="right")) - 1
             if len(points) == 0 or latest < 0:
                 continue
-            # As live: NormalizeGo2Lidar takes the go2's odom-frame cloud into base_link by the
-            # latest odom, the ray tracer places it again by the odom nearest the cloud stamp.
+            # As the live path did before GscPGO read tf (NormalizeGo2Lidar, now gone): the go2's odom-frame
+            # cloud into base_link by the latest odom, the ray tracer places it again by the odom nearest the cloud stamp.
             nearest = min(
                 (i for i in (latest, latest + 1) if i < len(odom)),
                 key=lambda i: abs(odom_ts[i] - obs.ts),
@@ -497,8 +497,8 @@ def lockstep(
             latest = int(np.searchsorted(odom_ts, obs.ts, side="right")) - 1
             if len(points) == 0 or latest < 0:
                 continue
-            # As live: NormalizeGo2Lidar takes the go2's odom-frame cloud into base_link by the
-            # latest odom, the ray tracer places it again by the odom nearest the cloud stamp.
+            # As the live path did before GscPGO read tf (NormalizeGo2Lidar, now gone): the go2's odom-frame
+            # cloud into base_link by the latest odom, the ray tracer places it again by the odom nearest the cloud stamp.
             nearest = min(
                 (i for i in (latest, latest + 1) if i < len(odom)),
                 key=lambda i: abs(odom_ts[i] - obs.ts),
