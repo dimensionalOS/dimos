@@ -35,8 +35,9 @@ from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
-from dimos.simulation.sensors.mid360.lidar import OcclusionMap, SimMid360
-from dimos.simulation.sensors.mid360.pattern import POINT_RATE, Mid360Pattern
+from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
+from dimos.simulation.sensors.mid360.lidar import sim_mid360
+from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.utils.data import get_data
 
 
@@ -70,12 +71,10 @@ class LivoxSim(Module):
         description = self._simulation.describe()
         site = sensor_frame(description, self.frame_id)
         view = open_view(description)
-        root = get_data("go2_sim")
-        sensor = SimMid360(
+        sensor = sim_mid360(
             view.raycaster(self.config.geom_groups),
-            Mid360Pattern.load(root / "mid360_pattern.npz"),
             self.config.seed,
-            OcclusionMap.load(root / "go2_mid360_occlusion.npz")
+            OcclusionMap.load(get_data("go2_sim") / "go2_mid360_occlusion.npz")
             if self.config.go2_occlusion
             else None,
         )
@@ -83,7 +82,7 @@ class LivoxSim(Module):
         self._reading = asyncio.create_task(self._read_imu(open_view(description), site))
         yield
 
-    async def _scan(self, view: WorldView, sensor: SimMid360, site: str) -> None:
+    async def _scan(self, view: WorldView, sensor: SimLidar, site: str) -> None:
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
         # Scans and IMU readings pace on sim time, so both keep their rates per sim second at any speed.
         async for _ in self._world.ticks(self.config.rate_hz):
