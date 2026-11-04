@@ -70,7 +70,6 @@ exclude = [
     "mapping/google_maps/fixtures/**",
     "web/command-center-extension/**",
     "web/websocket_vis/node_modules/**",
-    "hardware/sensors/lidar/fastlio2/cpp/**",
 ]
 
 [project]

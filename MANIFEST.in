@@ -16,8 +16,6 @@ include dimos/robot/galaxea/r1pro/vendor_setup.sh
 recursive-exclude dimos/agents/fixtures *
 recursive-exclude dimos/agents/mcp/fixtures *
 recursive-exclude dimos/mapping/google_maps/fixtures *
-# Native (C++/nix) build tree — built separately, mid360.json is not Python data.
-recursive-exclude dimos/hardware/sensors/lidar/fastlio2/cpp *.json
 
 # The on-robot agent's Node package runs from a checkout, never from the package.
 prune dimos/agents/node_modules
