@@ -459,7 +459,8 @@ class _Route:
                     if sample is None or self._variants.get(variant.name) is not variant:
                         continue
                     variant.pending.discard(key)
-                    variant.next_due[key] = now + variant.period
+                    # Anchored to the schedule like the mailbox gate (see TopicMailbox.take).
+                    variant.next_due[key] = max(now - variant.period, (due or now) + variant.period)
                     await self._encode_one(variant, sample)
                 finally:
                     self._transforms.slots.release()
