@@ -22,6 +22,12 @@ env:
   # Disable default package installs. Each job should explicitly install a group.
   UV_NO_SYNC: "1"
 
+# Hosted jobs restore caches on every event but save them only from main. A
+# cache entry saved on a PR's merge ref can be restored by that PR alone, so a
+# per-PR save is a private copy; at ~8 GB of them per run the repository's
+# 10 GB cache pool was recycled on every run, evicting main's entries and the
+# Cachix publish markers with them. uv caches are pruned (`uv cache prune --ci`)
+# so they hold only wheels built from source: ~13 MB instead of 4.4 GB.
 jobs:
   commit-messages:
     name: No AI co-authors
@@ -308,6 +314,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Check declared dependencies
@@ -376,6 +383,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependency for pyaudio
         run: |
           sudo apt-get update
@@ -424,6 +432,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install project system dependencies
         env:
           SYSTEM_PACKAGES: ${{ toJSON(matrix.system_packages) }}
@@ -459,7 +468,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Restore cargo build cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -470,6 +479,10 @@ jobs:
           restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependency for pyaudio (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -485,6 +498,16 @@ jobs:
       # Tested here, not in the tests jobs, so those start without waiting for this build.
       - name: Test the extensions
         run: uv run python bin/pyo3-extensions --test
+      - name: Save cargo build cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/pyo3
+          key: pyo3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
   md-babel:
     timeout-minutes: 15
@@ -506,6 +529,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
@@ -696,6 +720,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
           python-version: ${{ matrix.pyver }}
       - name: Extract Deno version
         id: deno-version
@@ -1123,6 +1148,8 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
+          prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependencies
         run: uv sync --group tests --frozen
         env:
