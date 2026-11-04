@@ -36,9 +36,9 @@ def test_camera_renders_recorded_body_poses_without_physics_state(backend, poses
     assert rgb.std() > 5
     assert depth.shape == (240, 320) and np.isfinite(depth).all()
     assert renderer.geometry.model.nq == renderer.geometry.model.nv == 0
-    backend.set_joint_targets([JointTarget(joint_id="left/slide_x", position=0.2, kp=200, kd=20)])
+    backend.apply_action([JointTarget(joint_id="left/slide_x", position=0.2, kp=200, kd=20)], [])
     for _ in range(300):
-        backend.step(())
+        backend.step()
     moved = poses()
     renderer.set_poses(moved)
     after, _ = renderer.render(poses_by_id(moved)["left/camera"])

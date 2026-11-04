@@ -15,6 +15,7 @@
 from queue import Queue
 
 import cbor2
+from dimos_lcm.control_msgs import CborCommand
 from dimos_lcm.sim_msgs import CborExtension, WorldState
 import pytest
 
@@ -168,3 +169,124 @@ def test_complete_state_replaces_extensions_and_keeps_one_acquisition(make_sim, 
     joints = second.joint_truth
     q = joints.position[joints.name.index("left/slide_x")]
     assert poses_by_id(second)["left/carriage"].position.x == pytest.approx(-0.4 + q)
+
+
+class CommandMujocoBackend(MujocoBackend):
+    """A real physics backend with one test-only CBOR operation and observed property."""
+
+    def reset(self):
+        super().reset()
+        self.count = 0
+
+    def apply_action(self, joint_targets, cbor_commands):
+        increments = []
+        for command in cbor_commands:
+            if (command.entity_id, command.key, command.schema) != (
+                "world",
+                "increment",
+                "example.increment.v1",
+            ):
+                raise ValueError("unsupported test operation")
+            value = cbor2.loads(bytes(command.value))
+            if type(value) is not int:
+                raise ValueError("increment requires an integer")
+            increments.append(value)
+        # Both CBOR semantics and joint targets must validate before any effect.
+        super().apply_action(joint_targets, [])
+        self.count += sum(increments)
+
+    def read_extensions(self):
+        value = cbor2.dumps(self.count)
+        return [
+            CborExtension(
+                entity_id="world",
+                key="count",
+                schema="example.count.v1",
+                value_length=len(value),
+                value=value,
+            )
+        ]
+
+
+@pytest.fixture
+def cbor_action(command):
+    def make(header, *, with_joints=False):
+        action = command(header)
+        if not with_joints:
+            action.joint_targets = []
+            action.joint_targets_length = 0
+        value = cbor2.dumps(1)
+        action.cbor_commands = [
+            CborCommand(
+                entity_id="world",
+                key="increment",
+                schema="example.increment.v1",
+                value_length=len(value),
+                value=value,
+            )
+        ]
+        action.cbor_commands_length = 1
+        return action
+
+    return make
+
+
+def test_cbor_stream_executes_once_and_cannot_release_motor_boundary(
+    make_sim, command, cbor_action
+):
+    sim, actions = make_sim(
+        backend_type=CommandMujocoBackend,
+        with_actions=True,
+        controllers=(ControllerConfig("test", 20_000_000, ("left/slide_x",)),),
+    )
+    first = sim.inspect()
+    action = cbor_action(first.header)
+    actions.publish(action)
+    wait_until(lambda: cbor2.loads(bytes(sim.inspect().extensions[0].value)) == 1, timeout=3)
+    actions.publish(action)
+    wait_until(lambda: sim.status()["rejected_commands"] == 1, timeout=3)
+    held = sim.inspect()
+    assert held.header.time_ns == 0
+    assert cbor2.loads(bytes(held.extensions[0].value)) == 1
+    motors = command(held.header)
+    motors.header.sequence += 1
+    actions.publish(motors)
+    wait_until(lambda: sim.status()["time_ns"] == 20_000_000, timeout=3)
+    assert sim.status()["error"] == ""
+    assert cbor2.loads(bytes(sim.reset().extensions[0].value)) == 0
+
+
+@pytest.mark.parametrize("invalid", ["schema", "joint", "bytes", "empty", "expired"])
+def test_invalid_action_has_no_partial_effect(make_sim, cbor_action, invalid):
+    sim = make_sim(
+        backend_type=CommandMujocoBackend,
+        controllers=(ControllerConfig("test", 20_000_000, ("left/slide_x",)),),
+    )
+    action = cbor_action(sim.inspect().header, with_joints=True)
+    if invalid == "schema":
+        action.cbor_commands[0].schema = "unknown.v1"
+    elif invalid == "joint":
+        action.joint_targets[0].position = 999
+    elif invalid == "bytes":
+        action.cbor_commands[0].value = b"\x01\x02"
+        action.cbor_commands[0].value_length = 2
+    elif invalid == "empty":
+        action.joint_targets = action.cbor_commands = []
+        action.joint_targets_length = action.cbor_commands_length = 0
+    else:
+        action.valid_until_ns = 0
+    sim.submit(action)
+    wait_until(lambda: sim.status()["rejected_commands"] == 1, timeout=3)
+    rejected = sim.inspect()
+    assert rejected.header.time_ns == 0
+    assert cbor2.loads(bytes(rejected.extensions[0].value)) == 0
+    # Rejection consumes no sequence and changes no motor settings: a valid
+    # replacement at the same boundary is accepted and advances physics.
+    accepted = cbor_action(rejected.header, with_joints=True)
+    accepted.joint_targets[0].position = 0
+    sim.submit(accepted)
+    wait_until(lambda: sim.status()["time_ns"] == 20_000_000, timeout=3)
+    after = sim.inspect()
+    assert cbor2.loads(bytes(after.extensions[0].value)) == 1
+    joints = after.joint_truth
+    assert joints.position[joints.name.index("left/slide_x")] == pytest.approx(0)
