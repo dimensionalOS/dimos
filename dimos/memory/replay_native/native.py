@@ -75,8 +75,8 @@ class ReplayNativeConfig(NativeModuleConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
-        # The binary takes a file path, and 0 for "from the first message" / "to the end".
-        config["db"] = str(resolve_dataset(self.db)) if self.db else ""
+        # The binary takes an absolute file path (it runs in its crate's directory), and 0 for "from the first message" / "to the end".
+        config["db"] = str(resolve_dataset(self.db).resolve()) if self.db else ""
         config["seek"] = self.seek or 0.0
         config["duration"] = self.duration or 0.0
         return config
