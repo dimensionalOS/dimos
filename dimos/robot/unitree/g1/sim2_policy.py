@@ -35,13 +35,13 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTaskConfig,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
+from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.sim2.description import ModelSourceSpec
 from dimos.sim2.physics.simulation import ControllerConfig
 from dimos.utils.data import LfsPath
 
@@ -66,9 +66,8 @@ class G1PolicyConfig(ModuleConfig):
     joint_source: str = "g1/encoders"
 
 
-class G1PolicyModule(Module):
+class G1PolicyModule(SharedConfigModule):
     config: G1PolicyConfig
-    _models: ModelSourceSpec
     imu: In[Imu]
     joint_state: In[JointState]
     cmd_vel: In[Twist]
@@ -88,12 +87,18 @@ class G1PolicyModule(Module):
         self._arm_targets = np.array(POLICY.default_positions_29[15:])
         self.inferences = 0
 
-    @rpc
-    def start(self) -> None:
-        models = self._models.resolved_models()
-        joints = {j.name: j for model in models.values() for j in model.joints}
+    def config_receive(self, config_senders: ConfigSenders) -> None:
+        joints = {
+            joint.name: joint
+            for _, config in config_senders
+            for model in config.get("robot_models", {}).values()
+            for joint in model.joints
+        }
         self._lower = np.array([joints[n].lower for n in JOINTS], dtype=float)
         self._upper = np.array([joints[n].upper for n in JOINTS], dtype=float)
+
+    @rpc
+    def start(self) -> None:
         self._task.start()
         super().start()
 
