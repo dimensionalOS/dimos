@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A synthetic arm and wrist camera for the hand-eye tests, as one ``rig`` fixture.
+"""A synthetic arm with a wrist camera (``rig``) or a fixed camera watching a plate in its
+gripper (``fixed_rig``) for the hand-eye tests.
 
 The arm's six "joints" are the flange's position and roll-pitch-yaw in the base. The camera
 renders the ChArUco board by warping the board's own image through the true camera pose, so
@@ -77,18 +78,37 @@ class SyntheticArm:
 
 
 class SyntheticCamera:
-    def __init__(self, arm: SyntheticArm) -> None:
+    """Renders ``board`` as seen from the camera: on the flange at ``X_true`` watching a board at
+    ``T_base_board``, or fixed in the base at ``X_true`` watching a plate at ``T_flange_board``."""
+
+    def __init__(
+        self,
+        arm: SyntheticArm,
+        board: BoardSpec = _BOARD,
+        X_true: NDArray[np.float64] = _X_TRUE,
+        T_base_board: NDArray[np.float64] = _T_BASE_BOARD,
+        T_flange_board: NDArray[np.float64] | None = None,
+    ) -> None:
         self.arm = arm
-        board = charuco_board(_BOARD)
-        w, h = _BOARD.squares_x * _BOARD.square_m, _BOARD.squares_y * _BOARD.square_m
-        self._board_px = board.generateImage((int(w * _PX_PER_M), int(h * _PX_PER_M)), marginSize=0)
+        self._X = X_true
+        self._T_base_board = T_base_board
+        self._T_flange_board = T_flange_board
+        board_obj = charuco_board(board)
+        w, h = board.squares_x * board.square_m, board.squares_y * board.square_m
+        self._board_px = board_obj.generateImage(
+            (int(w * _PX_PER_M), int(h * _PX_PER_M)), marginSize=0
+        )
         # OpenCV's board frame: origin at the image's top-left corner, x right, y down the image.
         self._board_to_px = np.array(
             [[_PX_PER_M, 0.0, 0.0], [0.0, _PX_PER_M, 0.0], [0.0, 0.0, 1.0]]
         )
 
     def render(self) -> NDArray[np.uint8]:
-        T_cam_board = T_inv(self.arm.get_flange_pose() @ _X_TRUE) @ _T_BASE_BOARD
+        flange = self.arm.get_flange_pose()
+        if self._T_flange_board is None:
+            T_cam_board = T_inv(flange @ self._X) @ self._T_base_board
+        else:
+            T_cam_board = T_inv(self._X) @ flange @ self._T_flange_board
         Rm, t = T_cam_board[:3, :3], T_cam_board[:3, 3]
         H = _K @ np.column_stack([Rm[:, 0], Rm[:, 1], t]) @ np.linalg.inv(self._board_to_px)
         gray = cv2.warpPerspective(
@@ -120,3 +140,32 @@ class SyntheticRig:
 def rig() -> SyntheticRig:
     arm = SyntheticArm(q=np.asarray(_HOME, dtype=float))
     return SyntheticRig(arm=arm, camera=SyntheticCamera(arm))
+
+
+# The fixed camera: 0.6 m to the arm's right at the plate's height, looking along +y at the
+# arm, image right along +x, image down along -z.
+_PLATE = BoardSpec(squares_x=5, squares_y=4, square_m=0.030, marker_m=0.0225, ids_from=100)
+_X_FIXED = rt_to_T(
+    np.column_stack([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]]),
+    np.array([0.45, -0.6, 0.2]),
+)
+# The plate in the fingers: its face normal along the flange's -y (toward the camera at the
+# home pose), its long side along the flange x, centred 0.2 m along the tool axis.
+_T_FLANGE_PLATE = rt_to_T(
+    np.column_stack([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]]),
+    np.array([-0.075, 0.0, 0.14]),
+)
+_HOME_FIXED = [0.45, 0.0, 0.3, np.pi, 0.0, 0.0]
+
+
+@pytest.fixture
+def fixed_rig() -> SyntheticRig:
+    arm = SyntheticArm(q=np.asarray(_HOME_FIXED, dtype=float))
+    camera = SyntheticCamera(arm, board=_PLATE, X_true=_X_FIXED, T_flange_board=_T_FLANGE_PLATE)
+    return SyntheticRig(
+        arm=arm,
+        camera=camera,
+        board=_PLATE,
+        home=list(_HOME_FIXED),
+        X_true=_X_FIXED.copy(),
+    )

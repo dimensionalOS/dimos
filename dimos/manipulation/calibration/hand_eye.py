@@ -601,7 +601,8 @@ def solve_hand_eye(
     tried = moved = unsolved = 0
     while tried < max_poses and robot.clock() <= max_seconds - 5:
         q = centre + amp * rng.uniform(-1.0, 1.0, 6) * STEP_RANGE
-        q[5] += WRIST_ROLLS_RAD[tried % len(WRIST_ROLLS_RAD)]
+        if not eye_to_hand:  # a plate in the fingers would turn its face from a fixed camera
+            q[5] += WRIST_ROLLS_RAD[tried % len(WRIST_ROLLS_RAD)]
         tried += 1
         if not robot.move_to_joints([float(v) for v in q]):
             amp = max(amp * AMP_SHRINK, AMP_MIN)

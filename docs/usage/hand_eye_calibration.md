@@ -83,3 +83,13 @@ Run it three times. The three mounts should agree within 0.5 mm.
 ## Test without an arm
 
 `dimos run xarm6-handeye-calibrate-sim` is the same stack over a MuJoCo bench with the board on the table; `calibrate()` from `dimos shell` then runs the same code path. The simulated camera's true pose is on tf as `link6` to `wrist_camera_color_optical_frame`, so the result can be checked against it.
+
+## A fixed camera: the chest run
+
+`xarm6-handeye-calibrate-chest` is the mirror run. The printed gripper plate (5 by 4 ChArUco, 30 mm squares, 22.5 mm markers, ids from 100; `gripper_plate_A4.pdf`, glued flat on a stiff backing) is held in the closed fingers and a RealSense on a post beside the bench watches it. The result is the camera's pose in the arm's base, written as `xarm6_chest_camera`.
+
+Site inputs, on top of the arm address and the camera serial: where the lens is and where it looks, base frame, from a tape measure (base centre to the lens, positive y to the arm's left as seen from behind it), as `--handeyecalibrationmodule.nominal-translation "[x, y, z]"`. The rotation is taken from the default look-at (the middle of the workspace); if the camera looks elsewhere, give `--handeyecalibrationmodule.nominal-rotation-xyzw` from the same convention as the wrist run (OpenCV optical axes: z along the view, x image right, y image down). The verdict allows the solve 0.30 m from the stated position, so a tape measure is enough. The run keeps every part of the arm 0.15 m from the stated lens position (`camera_keepout_m`).
+
+The home pose holds the plate out in front of the arm with its face toward a camera on the arm's right; a camera on the left needs `--handeyecalibrationmodule.home-joints` mirrored (joint 1 and joint 6 negated). Check once on the camera's live view that the whole plate is in frame at the home pose before approving the first move.
+
+`dimos run xarm6-handeye-calibrate-chest-sim` runs the same stack over a bench with the plate in the gripper and the camera on a post, where the camera's true pose is known.

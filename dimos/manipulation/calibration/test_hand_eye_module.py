@@ -128,6 +128,57 @@ def planner(rig: Any) -> FakePlanner:
 
 
 @pytest.fixture
+def fixed_module(
+    fixed_rig: Any, tmp_path, monkeypatch
+) -> Iterator[tuple[HandEyeCalibrationModule, FakePlanner, threading.Event]]:
+    """The module over the fixed-camera rig: a plate in the gripper, the camera in the base."""
+    monkeypatch.setattr(store, "HAND_EYE_DIR", tmp_path)
+    planner = FakePlanner(fixed_rig.arm)
+    instance = HandEyeCalibrationModule(
+        name="test_chest",
+        camera_frame="base",
+        nominal_translation=tuple(fixed_rig.X_true[:3, 3] + np.array([0.03, -0.02, 0.04])),
+        nominal_rotation_xyzw=tuple(R.from_matrix(fixed_rig.X_true[:3, :3]).as_quat()),
+        nominal_tolerance_m=0.15,
+        nominal_tolerance_deg=10.0,
+        board={
+            "squares_x": 5,
+            "squares_y": 4,
+            "square_m": 0.030,
+            "marker_m": 0.0225,
+            "ids_from": 100,
+        },
+        home_joints=fixed_rig.home,
+        joint_limits_rad=fixed_rig.limits,
+        max_poses=16,
+        approve_first_moves=0,
+    )
+    instance._manipulation = planner
+    instance._obstacles = MagicMock()
+    instance._obstacles.add_obstacle.return_value = "keepout-id"
+    instance._tf = FakeTf(fixed_rig.arm)
+    instance._on_info(
+        CameraInfo(
+            height=fixed_rig.height, width=fixed_rig.width, D=[0.0] * 5, K=list(fixed_rig.K.ravel())
+        )
+    )
+    stop = threading.Event()
+
+    def publish() -> None:
+        while not stop.is_set():
+            ts = time.time()
+            instance._on_image(Image(data=fixed_rig.camera.render(), format=ImageFormat.RGB, ts=ts))
+            time.sleep(FRAME_PERIOD_S)
+
+    thread = threading.Thread(target=publish, name="SyntheticFixedFrames", daemon=True)
+    thread.start()
+    yield instance, planner, stop
+    stop.set()
+    thread.join(timeout=2.0)
+    instance.stop()
+
+
+@pytest.fixture
 def module(
     rig: Any, planner: FakePlanner, tmp_path, monkeypatch
 ) -> Iterator[HandEyeCalibrationModule]:
@@ -316,3 +367,24 @@ def test_a_planner_exception_is_a_refused_target_and_no_frames_is_a_failed_verdi
 
     assert report["passed"] is False
     assert report["reason"] == "no fresh colour frame after the move"
+
+
+def test_a_fixed_camera_run_keeps_the_arm_out_of_the_camera_and_writes_a_base_mount(
+    fixed_module: tuple[HandEyeCalibrationModule, FakePlanner, threading.Event], fixed_rig: Any
+) -> None:
+    module, planner, _ = fixed_module
+
+    report = module.calibrate()
+
+    assert report["passed"], report["reason"]
+    name, pose, shape, dims = module._obstacles.add_obstacle.call_args.args
+    assert (name, shape, dims) == ("hand_eye_camera_keepout", "sphere", [0.15])
+    assert np.allclose(
+        [pose.position.x, pose.position.y, pose.position.z],
+        fixed_rig.X_true[:3, 3] + [0.03, -0.02, 0.04],
+    )
+    module._obstacles.remove_obstacle.assert_called_once_with("keepout-id")
+    assert report["optical"]["frame_id"] == "world"
+    assert report["mount"]["child_frame_id"] == "camera_link"
+    assert np.allclose(report["optical"]["translation_m"], fixed_rig.X_true[:3, 3], atol=0.002)
+    assert len(planner.executed) == report["poses_moved"]

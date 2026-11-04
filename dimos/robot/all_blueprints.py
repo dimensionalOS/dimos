@@ -200,6 +200,8 @@ all_blueprints = {
     "xarm6-grasp": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp",
     "xarm6-grasp-graspgenx": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp_graspgenx",
     "xarm6-handeye-calibrate": "dimos.robot.manipulators.xarm.blueprints.calibration:xarm6_handeye_calibrate",
+    "xarm6-handeye-calibrate-chest": "dimos.robot.manipulators.xarm.blueprints.calibration:xarm6_handeye_calibrate_chest",
+    "xarm6-handeye-calibrate-chest-sim": "dimos.robot.manipulators.xarm.blueprints.calibration:xarm6_handeye_calibrate_chest_sim",
     "xarm6-handeye-calibrate-sim": "dimos.robot.manipulators.xarm.blueprints.calibration:xarm6_handeye_calibrate_sim",
     "xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm6_planner_coordinator",
     "xarm6-teleop": "dimos.robot.manipulators.xarm.blueprints.teleop:xarm6_teleop",

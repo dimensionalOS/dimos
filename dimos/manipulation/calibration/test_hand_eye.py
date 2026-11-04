@@ -133,3 +133,20 @@ def test_the_standoff_target_pays_back_both_directions_and_sweeps_on_target() ->
     assert too_far is not None and STANDOFF_MIN_M <= too_far < PROBE_M
     assert on_target_odd == PROBE_M + DEPTH_SWEEP_M
     assert on_target_even == PROBE_M - DEPTH_SWEEP_M
+
+
+def test_solves_a_fixed_camera_from_a_plate_in_the_gripper(fixed_rig: Any) -> None:
+    nominal = CameraNominal(
+        "base", fixed_rig.X_true + np.diag([0.0, 0.0, 0.0, 0.0]), tol_mm=150.0, tol_deg=10.0
+    )
+    nominal.T[:3, 3] += np.array([0.03, -0.02, 0.04])  # a tape-measure prior
+
+    result = solve_hand_eye(
+        fixed_rig.arm, fixed_rig.camera, fixed_rig.board, nominal, fixed_rig.home, 20, 300.0
+    )
+
+    assert result.passed, result.reason
+    assert result.frame == "base"
+    probe = np.array([0.0, 0.0, PROBE_M, 1.0])
+    err = np.linalg.norm((result.T @ probe)[:3] - (fixed_rig.X_true @ probe)[:3]) * 1000
+    assert err < 1.0, err
