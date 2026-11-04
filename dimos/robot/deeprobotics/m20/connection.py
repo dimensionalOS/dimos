@@ -16,12 +16,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 import json
 import socket
 import struct
 from threading import Condition, Event, RLock, Thread
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -39,6 +40,8 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
+
+T = TypeVar("T")
 
 MOTION_STAND = 1
 MOTION_SIT = 4
@@ -63,6 +66,10 @@ _BASIC_SERVER_MODE_COMMAND = 5
 _BASIC_SERVER_HEARTBEAT_TYPE = 100
 _BASIC_SERVER_HEARTBEAT_COMMAND = 100
 _BASIC_SERVER_HEARTBEAT_PERIOD_S = 0.5
+
+
+class _StoppingError(Exception):
+    """The module started stopping during a standup or gait switch."""
 
 
 class M20ConnectionConfig(ModuleConfig):
@@ -116,6 +123,9 @@ class M20Connection(Module):
         self._navigation_terrain: NavigationTerrain = "stairs"
         self._basic_server_message_ids = SequentialIds()
         self._heartbeat_stop = Event()
+        self._stopping = Event()
+        self._heartbeat_thread: Thread | None = None
+        self._auto_stand_thread: Thread | None = None
 
     @rpc
     def start(self) -> None:
@@ -124,24 +134,39 @@ class M20Connection(Module):
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+        self._stopping.clear()
         self._heartbeat_stop.clear()
-        Thread(target=self._heartbeat, name="m20-heartbeat", daemon=True).start()
+        self._heartbeat_thread = Thread(target=self._heartbeat, name="m20-heartbeat", daemon=True)
+        self._heartbeat_thread.start()
         if self.config.auto_stand:
-            Thread(target=self._auto_stand, name="m20-auto-stand", daemon=True).start()
+            self._auto_stand_thread = Thread(
+                target=self._auto_stand, name="m20-auto-stand", daemon=True
+            )
+            self._auto_stand_thread.start()
 
     def _auto_stand(self) -> None:
-        if not self.standup():
+        if not self.standup() and not self._stopping.is_set():
             logger.error("M20 did not stand up on start")
 
     @rpc
     def stop(self) -> None:
+        with self._state_condition:
+            self._stopping.set()
+            self._state_condition.notify_all()
         if self.config.auto_stand:
             self.liedown()
-            if not self._wait_for_motion_state(MOTION_SIT, self.config.sit_timeout_s):
+            with self._state_condition:
+                sat = self._state_condition.wait_for(
+                    lambda: self._motion_state == MOTION_SIT, timeout=self.config.sit_timeout_s
+                )
+            if not sat:
                 logger.warning("M20 did not confirm Sit before stopping")
         else:
             self.stop_movement()
         self._heartbeat_stop.set()
+        for thread in (self._auto_stand_thread, self._heartbeat_thread):
+            if thread is not None:
+                thread.join(timeout=self.config.basic_server_timeout_s)
         super().stop()
 
     @rpc
@@ -165,6 +190,13 @@ class M20Connection(Module):
     @rpc
     def standup(self) -> bool:
         """Bring the M20 to a command-enabled, navigation-ready standing state."""
+        try:
+            return self._stand_up()
+        except _StoppingError:
+            logger.info("M20 standup cancelled because the module is stopping")
+            return False
+
+    def _stand_up(self) -> bool:
         if not self._enter_navigation_mode():
             logger.error("M20 basic_server rejected the navigation usage mode")
             return False
@@ -216,7 +248,10 @@ class M20Connection(Module):
                 return True
 
         self.stop_movement()
-        switched = self._set_gait_and_wait(gait)
+        try:
+            switched = self._set_gait_and_wait(gait)
+        except _StoppingError:
+            return False
         if switched:
             with self._lock:
                 self._navigation_terrain = terrain
@@ -250,19 +285,25 @@ class M20Connection(Module):
         if motion_state == MOTION_RL_CONTROL:
             return True
         if motion_state != MOTION_STAND:
-            self.motion_state_cmd.publish(Int32(MOTION_STAND))
+            self._command(self.motion_state_cmd, Int32(MOTION_STAND))
             if not self._wait_for_motion_state(MOTION_STAND, self.config.stand_timeout_s):
                 logger.error("M20 did not confirm Stand before the transition timeout")
                 return False
-        self.motion_state_cmd.publish(Int32(MOTION_RL_CONTROL))
+        self._command(self.motion_state_cmd, Int32(MOTION_RL_CONTROL))
         if not self._wait_for_motion_state(MOTION_RL_CONTROL, self.config.rl_control_timeout_s):
             logger.error("M20 did not confirm RL Control after standing")
             return False
         return True
 
     def _set_gait_and_wait(self, gait: int) -> bool:
-        self.gait_cmd.publish(UInt32(gait))
+        self._command(self.gait_cmd, UInt32(gait))
         return self._wait_for_gait_state(gait, self.config.gait_timeout_s)
+
+    def _command(self, stream: Out[T], msg: T) -> None:
+        with self._lock:
+            if self._stopping.is_set():
+                raise _StoppingError
+            stream.publish(msg)
 
     def _enter_navigation_mode(self) -> bool:
         response = self._basic_server_request(
@@ -364,20 +405,22 @@ class M20Connection(Module):
         return message_id, header + payload
 
     def _wait_for_motion_state(self, expected: int, timeout_s: float) -> bool:
-        with self._state_condition:
-            return self._state_condition.wait_for(
-                lambda: self._motion_state == expected, timeout=timeout_s
-            )
+        return self._wait_unless_stopping(lambda: self._motion_state == expected, timeout_s)
 
     def _wait_for_gait_state(self, expected: int, timeout_s: float) -> bool:
-        with self._state_condition:
-            return self._state_condition.wait_for(
-                lambda: self._gait_state == expected, timeout=timeout_s
-            )
+        return self._wait_unless_stopping(lambda: self._gait_state == expected, timeout_s)
 
     def _wait_for_control_readiness(self, timeout_s: float) -> bool:
+        return self._wait_unless_stopping(lambda: self._command_ready, timeout_s)
+
+    def _wait_unless_stopping(self, ready: Callable[[], bool], timeout_s: float) -> bool:
         with self._state_condition:
-            return self._state_condition.wait_for(lambda: self._command_ready, timeout=timeout_s)
+            self._state_condition.wait_for(
+                lambda: self._stopping.is_set() or ready(), timeout=timeout_s
+            )
+            if self._stopping.is_set():
+                raise _StoppingError
+            return ready()
 
 
 def _recv_exact(connection: socket.socket, size: int) -> bytes:
