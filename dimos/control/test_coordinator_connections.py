@@ -464,6 +464,79 @@ def test_a_twist_command_reaches_a_connection_robots_base(rig: Callable[..., Rig
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, -0.1)
 
 
+def test_every_base_axis_carries_a_non_zero_speed(rig: Callable[..., Rig]) -> None:
+    """vx, vy and wz each reach the base unchanged — none is dropped or
+    rerouted to another axis."""
+    r = rig()
+    task = base_velocity_task()
+    r.coordinator.add_task(task, task_type="velocity")
+    r.report_base()
+
+    task.set_velocities([0.4, -0.2, 0.7], t_now=time.perf_counter())
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, -0.2, 0.7)
+
+    # The same three axes, coming in over the public twist bus this time.
+    r.coordinator._make_stream_cb("twist_command")(
+        Twist(linear=Vector3(-0.1, 0.3, 0.0), angular=Vector3(0.0, 0.0, 0.5))
+    )
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (-0.1, 0.3, 0.5)
+
+
+def base_task(name: str, priority: int, timeout: float = 0.2) -> JointVelocityTask:
+    """A started velocity task on the fake base's axes at ``priority``."""
+    task = JointVelocityTask(
+        name, JointVelocityTaskConfig(GO2_BASE_AXES, priority=priority, timeout=timeout)
+    )
+    task.start()
+    return task
+
+
+def test_two_tasks_arbitrate_the_base_by_priority(rig: Callable[..., Rig]) -> None:
+    """The higher-priority task wins the base axes; when it stops, the lower
+    one drives them again."""
+    r = rig()
+    low = base_task("low", priority=5)
+    high = base_task("high", priority=10)
+    r.coordinator.add_task(low)
+    r.coordinator.add_task(high)
+    r.report_base()
+
+    now = time.perf_counter()
+    low.set_velocities([0.1, 0.0, 0.0], t_now=now)
+    high.set_velocities([0.4, 0.0, -0.2], t_now=now)
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, -0.2)
+
+    high.stop()
+    low.set_velocities([0.1, 0.0, 0.0], t_now=time.perf_counter())
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.1, 0.0, 0.0)
+
+
+def test_a_base_is_zeroed_when_its_velocity_task_times_out(rig: Callable[..., Rig]) -> None:
+    """A velocity task's stream going quiet zeroes every base axis — the
+    connection base gets the same zero_on_timeout safety as an adapter base."""
+    r = rig()
+    task = base_task("vel_base", priority=10, timeout=0.05)
+    r.coordinator.add_task(task)
+    r.report_base()
+
+    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
+    r.tick()
+    assert r.twists_sent()[-1].linear.x == 0.4
+
+    time.sleep(0.1)
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+
 def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
     rig: Callable[..., Rig],
 ) -> None:
