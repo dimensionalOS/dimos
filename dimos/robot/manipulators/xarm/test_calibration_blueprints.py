@@ -62,3 +62,23 @@ def test_calibration_fields_override_from_the_command_line() -> None:
     assert config["dry_run"] is True
     assert list(config["home_joints"]) == XARM6_CALIBRATION_HOME
     assert config["optical_frame"] == "wrist_camera_color_optical_frame"
+
+
+def test_the_bench_is_a_table_box_and_the_view_is_on_by_default() -> None:
+    parsed = BlueprintConfigParser(xarm6_handeye_calibrate).parse(
+        [
+            "--xarmconnection.ip",
+            "192.168.1.2",
+            "--realsensecamera.serial-number",
+            "1",
+            "--handeyecalibrationmodule.table-top-z",
+            "0.08",
+        ],
+        environ={},
+    )
+
+    config = parsed.module_configs["handeyecalibrationmodule"]
+    assert config["table_top_z"] == 0.08
+    assert tuple(config["table_x_m"]) == (0.1, 1.0)
+    assert parsed.module_configs["manipulationmodule"]["visualization"] == {"backend": "viser"}
+    assert parsed.module_configs["manipulationmodule"].get("floor_z") is None

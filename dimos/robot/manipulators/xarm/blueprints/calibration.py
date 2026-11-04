@@ -38,8 +38,14 @@ from dimos.robot.manipulators.xarm.config import (
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
 
-# Tool pointing down about 0.4 m over a board 0.45 m in front of the base.
-XARM6_CALIBRATION_HOME = [0.0, -0.247, -0.909, 0.0, 1.156, -1.571]
+# Tool pointing down about 0.4 m over a board 0.45 m in front of the base; the wrist at zero
+# keeps the camera cable untwisted (the board fits the view either way round).
+XARM6_CALIBRATION_HOME = [0.0, -0.247, -0.909, 0.0, 1.156, 0.0]
+# The bench the arm shares with the board, as the planner box the module adds for the run: a
+# table top level with the base plate reaching from just past the base to 1 m out. Set
+# table_top_z and table_x_m on the command line to the measured bench.
+XARM6_BENCH_TOP_Z = 0.0
+XARM6_BENCH_X_M = (0.1, 1.0)
 
 # The wrist RealSense on the xArm6 kit mount: colour optical centre 87 mm off the flange axis,
 # 20 mm forward of the flange face, tilted 15 degrees inward, looking along the tool.
@@ -60,7 +66,8 @@ def _xarm6_calibration_model() -> RobotModelConfig:
 
 
 xarm6_handeye_calibrate = autoconnect(
-    planner(model=_xarm6_calibration_model(), floor_z=0.0),
+    # the viser view shows each plan before the operator approves it
+    planner(model=_xarm6_calibration_model(), visualization={"backend": "viser"}),
     xarm_coordinator("xarm6"),
     RealSenseCamera.blueprint(),
     HandEyeCalibrationModule.blueprint(
@@ -69,6 +76,8 @@ xarm6_handeye_calibrate = autoconnect(
         nominal_rotation_xyzw=XARM6_WRIST_CAMERA_NOMINAL_XYZW,
         home_joints=XARM6_CALIBRATION_HOME,
         joint_limits_rad=XARM6_JOINT_LIMITS,
+        table_top_z=XARM6_BENCH_TOP_Z,
+        table_x_m=XARM6_BENCH_X_M,
     ),
 ).remappings(XARM_REMAPS)
 
@@ -85,7 +94,7 @@ _sim_hardware = make_xarm_hardware(
 )
 
 xarm6_handeye_calibrate_sim = autoconnect(
-    planner(model=_xarm6_calibration_model(), floor_z=0.0),
+    planner(model=_xarm6_calibration_model()),
     coordinator(
         hardware=[_sim_hardware],
         tasks=[
@@ -114,6 +123,9 @@ xarm6_handeye_calibrate_sim = autoconnect(
         joint_limits_rad=XARM6_JOINT_LIMITS,
         optical_frame="wrist_camera_color_optical_frame",
         camera_link_frame="wrist_camera_link",
+        # the bench twin's table top, between x 0.15 and 0.85
+        table_top_z=0.13,
+        table_x_m=(0.15, 0.85),
         approve_first_moves=0,
         # the simulated arm creeps onto its target for seconds after the planner reports done
         settle_timeout_s=30.0,
