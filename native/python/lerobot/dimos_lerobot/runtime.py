@@ -20,7 +20,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from threading import Condition, Event, RLock, Thread, current_thread
 import time
-from typing import Any
+from typing import Any, cast
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
@@ -37,6 +37,7 @@ import torch
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
+    TrajectoryCancellationResult,
     TrajectoryExecutionStatus,
 )
 from dimos.core.core import rpc
@@ -436,8 +437,10 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 actions = bounded_actions
                 if self._stop_event.is_set():
                     break
-                result = self._control.execute_trajectory(
-                    self._trajectory(state, actions),
+                result = self._control.task_invoke(
+                    JOINT_TRAJECTORY_TASK_NAME,
+                    "execute",
+                    {"trajectory": self._trajectory(state, actions)},
                 )
                 if result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH:
                     self._wait_for_newer_joint_state(state_ts)
@@ -527,7 +530,10 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     def _cancel_trajectory(self) -> str | None:
         try:
-            result = self._control.cancel_trajectory()
+            result = cast(
+                "TrajectoryCancellationResult",
+                self._control.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "cancel", {}),
+            )
         except Exception as exc:
             logger.exception(
                 "Failed to cancel policy trajectory",

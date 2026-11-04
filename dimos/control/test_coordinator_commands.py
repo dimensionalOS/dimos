@@ -166,11 +166,9 @@ class TestTaskInvoke:
         assert isinstance(result, float)
         assert task.t_now_seen == result
 
-    def test_unknown_task_warns_and_returns_none(self, coordinator, mocker):
-        warn = mocker.patch.object(coord_mod.logger, "warning")
-
-        assert coordinator.task_invoke("nope", "execute", {}) is None
-        assert warn.called
+    def test_unknown_task_raises(self, coordinator):
+        with pytest.raises(KeyError, match="nope"):
+            coordinator.task_invoke("nope", "execute", {})
 
     def test_unknown_method_raises(self, coordinator):
         task = CommandRecordingTask("traj_arm")
