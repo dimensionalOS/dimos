@@ -120,6 +120,12 @@ impl GscPgo {
             return false;
         }
         let moved = self.land_fast_path(false);
+        // the published graph takes keyframes made since the correction landed
+        if let Some((solved, rotation, translation)) = &self.fast_path_overlay {
+            let mut published = self.key_poses.clone();
+            published.adopt(solved.clone(), *rotation, *translation);
+            self.fast_path_published = Some(published);
+        }
         if self.fast_path_job.is_none() {
             self.dispatch_fast_path();
         }
@@ -128,6 +134,8 @@ impl GscPgo {
     /// An adopted GNC solve replaced every pose: the graph reflects only judged closures; stamp latencies and records.
     pub(crate) fn fast_path_superseded(&mut self, kept: &[f64]) {
         self.fast_path_reflected = 0;
+        self.fast_path_overlay = None;
+        self.fast_path_published = None;
         let now = (self.scans_seen, self.newest_scan_time());
         for (latency, &weight) in self.closure_latency.iter_mut().zip(kept) {
             if latency.gnc.is_none() {
@@ -343,7 +351,7 @@ impl GscPgo {
                 false
             }
             solved => {
-                if self.config.graph_change_heat_enabled {
+                if self.config.graph_change_heat_enabled && self.config.solver_fast_path_feeds_graph {
                     self.heat = heat + result.cost;
                     self.heat_keyframes = self.key_poses.len();
                 }
@@ -366,15 +374,21 @@ impl GscPgo {
         adopted
     }
     /// Swap in the fast path's first `n` poses; newer keyframes ride its newest one's correction (as `adopt_solution`).
+    /// Published only (`solver_fast_path_feeds_graph` off), the graph search and GNC read is untouched until GNC lands.
     fn adopt_fast_path(&mut self, solved: SolvedPoses, n: usize) {
         let newest = self.key_poses.fixed(n - 1);
-        self.rotation_offset = mat3::mat_mul(&solved.rotations[n - 1], &mat3::transpose(&newest.rotation_local));
-        self.translation_offset = mat3::sub(
-            &solved.positions[n - 1],
-            &mat3::mat_vec(&self.rotation_offset, &newest.translation_local),
-        );
-        self.key_poses
-            .adopt(Arc::new(solved), self.rotation_offset, self.translation_offset);
+        let rotation = mat3::mat_mul(&solved.rotations[n - 1], &mat3::transpose(&newest.rotation_local));
+        let translation = mat3::sub(&solved.positions[n - 1], &mat3::mat_vec(&rotation, &newest.translation_local));
+        let solved = Arc::new(solved);
+        if !self.config.solver_fast_path_feeds_graph {
+            let mut published = self.key_poses.clone();
+            published.adopt(solved.clone(), rotation, translation);
+            self.fast_path_overlay = Some((solved, rotation, translation));
+            self.fast_path_published = Some(published);
+            return;
+        }
+        (self.rotation_offset, self.translation_offset) = (rotation, translation);
+        self.key_poses.adopt(solved, rotation, translation);
         self.graph_version += 1;
     }
 }

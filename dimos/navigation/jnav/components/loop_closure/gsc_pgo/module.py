@@ -186,6 +186,8 @@ class PGOConfig(NativeModuleConfig):
     solver_fast_path_max_keyframes: int = 1000
     # each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate
     solver_fast_path_max_lm_steps: int = 10
+    # its correction also becomes the graph closure search and GNC read (re-seeding GNC cost gir2_l1/gir1_l1 loops), else only published
+    solver_fast_path_feeds_graph: bool = False
     # closure search pipeline: SC buffer (most similar first) -> fast-match workers -> verification buffer -> workers
     fast_match_workers: int = 2
     sc_buffer_size: int = 4

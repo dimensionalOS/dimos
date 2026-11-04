@@ -52,9 +52,15 @@ fn error(pgo: &GscPgo, range: std::ops::Range<usize>) -> f64 {
 
 /// Drive the loop, close it newest -> 0, then hold still; returns the graph each scan's `update` left.
 fn run(fast_path: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
+    run_feeding(fast_path, false, drift)
+}
+
+/// `run`, with the fast path's correction also fed to the graph GNC and the search read (`feeds_graph`).
+fn run_feeding(fast_path: bool, feeds_graph: bool, drift: f64) -> (GscPgo, Vec<(bool, f64)>) {
     let mut config = Config {
         mode: Mode::Deterministic,
         solver_fast_path_enabled: fast_path,
+        solver_fast_path_feeds_graph: feeds_graph,
         odometry_error_estimate_from_lidar_range: false,
         graph_change_heat_enabled: false,
         // keyframes without clouds
@@ -132,4 +138,19 @@ fn the_fast_path_leaves_a_closure_gnc_would_weigh_to_gnc() {
     assert_eq!(with.committed_closures().weight(0), 0.0, "GNC rejected the closure");
     assert!(fast.iter().all(|&(_, error)| (error - slow[0].1).abs() < 1e-6), "the loop was never bent");
     assert!(largest_difference(&with, &without) < 1e-6);
+}
+
+#[test]
+fn a_published_only_fast_path_leaves_the_graph_gnc_solves_on_untouched() {
+    let (without, slow) = run(false, 0.1);
+    let (with, fast) = run(true, 0.1);
+    let (fed, fed_trace) = run_feeding(true, true, 0.1);
+    let before_gnc = slow.iter().take_while(|(unjudged, _)| *unjudged).count();
+    // published the same correction as when fed back, before GNC lands
+    assert_eq!(fast[before_gnc - 1].1, fed_trace[before_gnc - 1].1);
+    assert!(fast[before_gnc - 1].1 < slow[before_gnc - 1].1);
+    // GNC solved from the graph the fast path never touched: bit for bit the graph without the fast path
+    assert_eq!(largest_difference(&with, &without), 0.0);
+    // fed back, GNC started from the fast path's poses and landed slightly elsewhere
+    assert!(largest_difference(&fed, &without) < 1e-3);
 }

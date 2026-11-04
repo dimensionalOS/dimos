@@ -583,6 +583,9 @@ pub struct Config {
     pub solver_fast_path_max_keyframes: usize,
     /// Each of its Levenberg-Marquardt passes gives up (declines) after this many steps, bounding its cost estimate.
     pub solver_fast_path_max_lm_steps: usize,
+    /// Its correction also becomes the graph closure search and GNC read (true), or is only published until GNC lands (false):
+    /// fed back, its approximate poses re-seed GNC and move the search, which cost gir2_l1 and gir1_l1 loops.
+    pub solver_fast_path_feeds_graph: bool,
     /// GNC starts from the newest adopted solve's verdicts (rejected closures start out).
     pub solve_seed_gnc_verdicts: bool,
     /// Search pipeline (`closure_search_schedule`): candidate buffer -> fast-match workers; uncertain matches -> verification buffer -> workers.
@@ -795,6 +798,7 @@ impl Default for Config {
             solver_fast_path_enabled: false,
             solver_fast_path_max_keyframes: 1000,
             solver_fast_path_max_lm_steps: 10,
+            solver_fast_path_feeds_graph: false,
             fast_match_workers: 2,
             sc_buffer_size: 4,
             verification_workers: 2,
@@ -997,6 +1001,9 @@ pub struct GscPgo {
     pub(crate) fast_path_reflected: usize,
     pub(crate) fast_path_overshoots: usize,
     pub(crate) fast_path_records: Vec<crate::fast_path::FastPathRecord>,
+    /// Published-only fast path correction (`solver_fast_path_feeds_graph` off): its poses and ride, and the graph with them.
+    pub(crate) fast_path_overlay: Option<(Arc<crate::store::SolvedPoses>, Mat3, Vec3)>,
+    pub(crate) fast_path_published: Option<KeyFrames>,
     /// Per committed closure, when it was committed, first reflected by the fast path, and judged by an adopted GNC solve.
     pub(crate) closure_latency: Vec<crate::fast_path::ClosureLatency>,
 }
@@ -2131,14 +2138,15 @@ impl GscPgo {
     pub fn pressure(&self) -> Option<(usize, crate::loop_overlap::LoopOverlap)> {
         self.pressure
     }
+    /// The published keyframes: the graph, or with a published-only fast path correction swapped in.
     pub fn key_poses(&self) -> &KeyFrames {
-        &self.key_poses
+        self.fast_path_published.as_ref().unwrap_or(&self.key_poses)
     }
     pub fn rotation_offset(&self) -> Mat3 {
-        self.rotation_offset
+        self.fast_path_overlay.as_ref().map_or(self.rotation_offset, |overlay| overlay.1)
     }
     pub fn translation_offset(&self) -> Vec3 {
-        self.translation_offset
+        self.fast_path_overlay.as_ref().map_or(self.translation_offset, |overlay| overlay.2)
     }
     /// Whether a closure was committed since the last `update`.
     pub fn has_closure(&self) -> bool {

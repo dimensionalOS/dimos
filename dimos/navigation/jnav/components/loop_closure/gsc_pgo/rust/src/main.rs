@@ -103,6 +103,7 @@ config! {
     solver_fast_path_enabled: bool,
     solver_fast_path_max_keyframes: usize,
     solver_fast_path_max_lm_steps: usize,
+    solver_fast_path_feeds_graph: bool,
     fast_match_workers: usize,
     sc_buffer_size: usize,
     verification_workers: usize,
