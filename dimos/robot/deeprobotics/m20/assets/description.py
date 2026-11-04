@@ -76,7 +76,15 @@ def _sparse_checkout(url: str, ref: str, sparse_paths: tuple[str, ...]) -> Path:
         try:
             repo = Repo.init(temp_path)
             repo.create_remote("origin", url)
-            repo.git.sparse_checkout("set", "--no-cone", *sparse_paths)
+            # Plain config rather than `git sparse-checkout`/`clone --filter`, which GOS's git 2.25 lacks.
+            with repo.config_writer() as config:
+                config.set_value("core", "sparseCheckout", "true")
+                config.set_value("extensions", "partialClone", "origin")
+                config.set_value('remote "origin"', "promisor", "true")
+            (temp_path / ".git" / "info").mkdir(parents=True, exist_ok=True)
+            (temp_path / ".git" / "info" / "sparse-checkout").write_text(
+                "".join(f"/{path.strip('/')}/\n" for path in sparse_paths)
+            )
             # Only the pinned commit, then only the blobs under the sparse paths.
             repo.git.fetch("--depth", "1", "--filter=blob:none", "origin", ref)
             repo.git.checkout("--detach", "FETCH_HEAD")
