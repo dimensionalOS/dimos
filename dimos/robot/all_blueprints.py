@@ -365,7 +365,7 @@ all_modules = {
     "sim-imu-module": "dimos.sim2.sensors.imu.module.SimImuModule",
     "sim-joint-encoder-module": "dimos.sim2.sensors.encoder.module.SimJointEncoderModule",
     "sim-lidar-module": "dimos.sim2.sensors.lidar.module.SimLidarModule",
-    "sim-module": "dimos.sim2.physics.module.SimModule",
+    "sim-module": "dimos.sim2.module.SimModule",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",
