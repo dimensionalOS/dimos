@@ -1059,27 +1059,35 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 mod tests {
     use super::*;
 
-    /// The tracer's local_map cloud reads back with every plane it carried.
+    /// A cloud of centers and planes, laid out as the tracer's local_map, reads back with every plane.
     #[test]
     fn a_tracer_cloud_extracts_with_its_planes() {
-        let surfaces = [
-            0.5,
-            1.5,
-            2.5,
-            0.0,
-            0.6,
-            0.8,
-            -0.01,
-            3.5,
-            4.5,
-            5.5,
-            f32::NAN,
-            f32::NAN,
-            f32::NAN,
-            f32::NAN,
+        let rows = [
+            [0.5, 1.5, 2.5, 0.0, 0.6, 0.8, -0.01],
+            [3.5, 4.5, 5.5, f32::NAN, f32::NAN, f32::NAN, f32::NAN],
         ];
-        let cloud =
-            dimos_voxel_ray_tracing::module::surfaces_to_cloud(&surfaces, "map", Time::default());
+        let names = ["x", "y", "z"].into_iter().chain(PLANE_FIELDS);
+        let cloud = PointCloud2 {
+            height: 1,
+            width: rows.len() as i32,
+            fields: names
+                .enumerate()
+                .map(|(i, name)| PointField {
+                    name: name.into(),
+                    offset: 4 * i as i32,
+                    datatype: PointField::FLOAT32 as u8,
+                    count: 1,
+                })
+                .collect(),
+            point_step: 28,
+            row_step: 28 * rows.len() as i32,
+            data: rows
+                .iter()
+                .flatten()
+                .flat_map(|v| v.to_le_bytes())
+                .collect(),
+            ..Default::default()
+        };
         let points = extract_points(&cloud).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(points[0], ((0.5, 1.5, 2.5), [0.0, 0.6, 0.8, -0.01]));
         assert_eq!(points[1].0, (3.5, 4.5, 5.5));

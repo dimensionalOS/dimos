@@ -48,10 +48,6 @@ validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
 smallvec = "1"
 
-[dev-dependencies]
-# A test reads the ray tracer's own cloud of planes, as the module receives it.
-dimos-voxel-ray-tracing = { path = "../../../../mapping/ray_tracing/rust" }
-
 [workspace]
 members = ["py"]
 

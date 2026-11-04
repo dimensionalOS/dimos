@@ -97,12 +97,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d62b7694a562cdf5a74227903507c56ab2cc8bdd1f781ed5cb4cf9c9f810bfc"
 
 [[package]]
-name = "arrayvec"
-version = "0.7.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
-
-[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -601,7 +595,6 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "dimos-module",
- "dimos-voxel-ray-tracing",
  "lcm-msgs",
  "rayon",
  "serde",
@@ -652,22 +645,6 @@ dependencies = [
  "quote",
  "syn 3.0.5",
  "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "dimos-voxel-ray-tracing"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "arrayvec",
- "dimos-module",
- "lcm-msgs",
- "nalgebra",
- "rayon",
- "serde",
- "tokio",
- "tracing",
- "validator",
 ]
 
 [[package]]
