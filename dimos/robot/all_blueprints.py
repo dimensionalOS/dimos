@@ -73,6 +73,7 @@ all_blueprints = {
     "dual-makermods-metal-planner-coordinator": "dimos.robot.manipulators.dual_makermods_metal.blueprints.basic:dual_makermods_metal_planner_coordinator",
     "dual-openyam-planner-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic:dual_openyam_planner_coordinator",
     "dual-xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner_coordinator",
+    "go2-sim-nav-episode": "dimos.navigation.bench.blueprints:go2_sim_nav_episode",
     "habitat-nav": "dimos.simulation.habitat.blueprints:habitat_nav",
     "habitat-raycaster": "dimos.simulation.habitat.blueprints:habitat_raycaster",
     "habitat-teleop": "dimos.simulation.habitat.blueprints:habitat_teleop",
