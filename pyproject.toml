@@ -79,7 +79,6 @@ exclude = [
     "web/dimos_interface/src/**",
     "web/dimos_interface/public/**",
     "web/dimos_interface/node_modules/**",
-    "hardware/sensors/lidar/fastlio2/cpp/**",
 ]
 
 [project]
