@@ -54,6 +54,8 @@ class GripperControlTaskConfig:
     joint_names: list[str]
     priority: int = 10
     hold_duration: float = 0.0
+    require_feedback: bool = False
+    accept_broadcast: bool = True
 
 
 class GripperControlTask(BaseControlTask):
@@ -113,8 +115,11 @@ class GripperControlTask(BaseControlTask):
         }
 
         with self._lock:
-            if measured:
-                self._measured = measured
+            self._measured = measured
+            if self._config.require_feedback and len(measured) != len(self._joint_names):
+                self._target = None
+                self._stamp_pending = False
+                return None
             if self._estopped or self._target is None:
                 return None
             if self._stamp_pending:
@@ -194,6 +199,8 @@ class GripperControlTask(BaseControlTask):
 
     def on_gripper_command(self, msg: Float32, t_now: float) -> bool:
         """Apply one normalized opening to every joint owned by the task."""
+        if not self._config.accept_broadcast:
+            return False
         return self.set_normalized([float(msg.data)] * len(self._joint_names), t_now)
 
     def _validate_values(
@@ -240,6 +247,8 @@ class GripperControlTaskParams(BaseConfig):
     """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
+    require_feedback: bool = False
+    accept_broadcast: bool = True
 
 
 def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
@@ -293,6 +302,8 @@ def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
             joint_names=list(cfg.joint_names),
             priority=cfg.priority,
             hold_duration=params.hold_duration,
+            require_feedback=params.require_feedback,
+            accept_broadcast=params.accept_broadcast,
         ),
         limits=_resolve_limits(cfg, hardware),
     )

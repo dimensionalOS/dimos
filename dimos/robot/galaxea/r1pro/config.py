@@ -127,6 +127,7 @@ def make_r1pro_model_config() -> RobotModelConfig:
         joint_names=list(R1PRO_UPPER_BODY_PLANNING_JOINTS),
         base_link="base_link",
         planning_groups=list(_R1PRO_UPPER_BODY_PLANNING_GROUPS),
+        gripper_hardware_ids={"left_arm": "r1pro_left", "right_arm": "r1pro_right"},
         auto_convert_meshes=True,
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
         home_joints=[0.0] * len(R1PRO_UPPER_BODY_PLANNING_JOINTS),

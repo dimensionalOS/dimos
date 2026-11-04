@@ -56,6 +56,7 @@ EXPECTED_NAMES = {
         "galaxea_a1z",
         "mock",
         "piper",
+        "r1pro_gripper",
         "sim_mujoco",
         "xarm",
     },

@@ -65,3 +65,63 @@ is free and our Mid-360 driver competes with the vendor's for the sensor.
 The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
 `R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
 `--mid360.host_ip` override them).
+
+
+## Manipulation grippers
+
+`r1pro-manipulation` uses standard coordinator hardware components and gripper
+control tasks for the left and right jaws. Arm/torso planning remains 18 DOF;
+the two gripper joints are controlled separately from arm trajectories.
+
+Use Python 3.10 for ROS Humble. With ROS and the vendor workspace sourced in the
+same ROS domain as the existing vendor stack, and that stack
+already running, start the manipulation blueprint:
+
+```bash
+# Initializes real control interfaces; clear the workspace and have physical E-stop ready.
+# Never run this alongside another R1 control chain.
+dimos run r1pro-manipulation --viewer none \
+  --r1proconnection.boot-vendor-stack false \
+  --disable head-left-camera --disable head-right-camera \
+  --r1proconnection.enable-wrist-color false \
+  --r1proconnection.enable-wrist-depth false \
+  --manipulationmodule.default-speed-scale 0.05
+```
+
+Use `dimos shell` from another terminal with the same environment and runtime
+state directory. Read capabilities and measured openings before commanding:
+
+```python
+m = app.ManipulationModule
+m.list_planning_groups()
+m.get_state().groups["left_arm"].gripper_position
+m.get_state().groups["right_arm"].gripper_position
+```
+
+With empty jaws and hands clear, execute each motion command separately and
+observe the selected jaw before continuing:
+
+```python
+m.set_gripper_position(0.9, planning_group="left_arm")
+m.get_state().groups["left_arm"].gripper_position
+# After confirming arrival and that the other jaw stayed still:
+m.set_gripper_position(1.0, planning_group="left_arm")
+```
+
+Opening is normalized: 0 closed, 1 open. Use `right_arm` for the other jaw;
+`torso` and an omitted group are rejected. Command acceptance is not proof of
+arrival or successful grasping. Native vendor position targets are 0–100 mm;
+measured openings are not clipped, including small excursions outside travel.
+
+The adapters do not publish jaw targets on connect/activate/disconnect or while
+the tasks are idle. Missing/stale feedback, required arm/torso fault reports,
+reported faults and conflicting target endpoints inhibit output. Invalidated
+feedback must be observed by the control read tick before old intent can be
+used again; the task drops that intent and requires a new command. Unscoped
+broadcast gripper commands are disabled for this dual-jaw blueprint.
+
+Dedicated gripper fault status is unknown until the vendor supplies it. There
+is no verified grip-force measurement or vendor cancel operation. Software stop
+prevents subsequent commands but cannot cancel a target already accepted by the
+vendor controller; use the physical E-stop for unexpected motion. Do not treat
+this blueprint as a completed perception or automatic pick-and-place stack.
