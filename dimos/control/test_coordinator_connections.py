@@ -532,9 +532,15 @@ def test_a_base_is_zeroed_when_its_velocity_task_times_out(rig: Callable[..., Ri
     assert r.twists_sent()[-1].linear.x == 0.4
 
     time.sleep(0.1)
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+    # The winner expiry may be observed by a later tick than the sleep
+    # boundary (slow/loaded runners), so keep ticking until the zeroed
+    # command shows up instead of asserting on one fixed tick.
+    def zeroed() -> bool:
+        twist = r.twists_sent()[-1]
+        return (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+    assert r.tick_until(zeroed)
 
 
 def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
