@@ -5,6 +5,10 @@ the default world and native path planner.
 
 For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
 
+For demonstration collection, dataset preparation, training, and compatible
+checkpoint rollout, see [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md).
+Start with the OpenYAM hand-teaching tutorial or choose a guide for your task.
+
 ## Quick Start
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
