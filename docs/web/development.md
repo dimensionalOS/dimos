@@ -12,7 +12,7 @@ The web code is one Deno workspace under `web/` with four packages, plus the Pyt
 | `dimos/web/cockpit.py`, `dimos/web/codecs.py`, `dimos/web/lcm_codec.py` | the Python authoring API and the codec registry |
 | `dimos/web/relay_bridge/` | the bridge module, the Python mirrors of the protocol and the manifest, the WebTransport client, the local relay process, and the fixture generators |
 
-`dimos/web/` also holds two older web servers that have nothing to do with this stack: `websocket_vis/` (the socket.io visualizer on port 7779) and `dimos_interface/` with `robot_web_interface.py` (the FastAPI page on port 5555 used by `WebInput` and the phone and WebXR teleops).
+`dimos/web/` also holds two older web servers that have nothing to do with this stack: `websocket_vis/` (the socket.io visualizer on port 7779) and `fastapi_server.py` with `robot_web_interface.py` (the FastAPI page on port 5555 used by `WebInput` and the phone and WebXR teleops).
 
 ## Tasks
 
