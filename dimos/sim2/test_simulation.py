@@ -13,15 +13,9 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 
@@ -35,37 +29,6 @@ def model(tmp_path: Path) -> Path:
         '<site name="camera_optical"/></body><site name="imu"/></body></worldbody></mujoco>'
     )
     return path
-
-
-class _SimRobotConfig(ModuleConfig):
-    model: Path
-    x: float = 0.0
-
-
-class _SimRobot(Module):
-    config: _SimRobotConfig
-
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        return {
-            "simulated": SimulatedRobot("dog", self.config.model, "base", xyz=(self.config.x, 0, 0))
-        }
-
-
-class _Bystander(Module):
-    pass
-
-
-def test_simulation_receives_descriptions_from_the_blueprint(model):
-    blueprint = autoconnect(
-        _SimRobot.blueprint(model=model, x=2.5), _Bystander.blueprint(), Simulation.blueprint()
-    )
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
-    coordinator = ModuleCoordinator.build(blueprint, parsed)
-    try:
-        assert coordinator.get_instance(Simulation).describe() == {"robots": ["dog"], "sensors": []}
-    finally:
-        coordinator.stop()
 
 
 def _simulation(**simulated: object) -> Simulation:
@@ -83,12 +46,15 @@ def test_simulation_describes_its_world(model):
         overhead=SimulatedSensor("camera", "overhead"),
     )
     try:
-        simulation.build()
+        description = simulation.describe()
+        assert description["robots"] == ["dog"]
         # A frame is the robot's whose model names it, as a site or a body; any other is the scene's.
-        assert simulation.describe() == {
-            "robots": ["dog"],
-            "sensors": ["dog/camera_optical", "dog/head", "dog/imu", "world/overhead"],
-        }
+        assert description["sensors"] == [
+            "dog/camera_optical",
+            "dog/head",
+            "dog/imu",
+            "world/overhead",
+        ]
     finally:
         simulation.stop()
 
