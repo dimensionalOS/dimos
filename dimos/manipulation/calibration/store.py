@@ -64,8 +64,10 @@ def save_hand_eye(
     confidence: dict[str, float],
     passed: bool,
 ) -> Path:
-    """Write the result; returns the file written."""
-    path = hand_eye_path(name)
+    """Write the result; returns the file written. A run that did not pass is written beside
+    the passed file, under ``<name>_failed``, so an aborted or failed run never overwrites a
+    calibration that passed."""
+    path = hand_eye_path(name if passed else f"{name}_failed")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
