@@ -72,6 +72,7 @@ EXPECTED_NAMES = {
         "makermods_metal",
         "openarm_damiao",
         "openyam_damiao",
+        "seeed_b601_dm",
         "sim_mujoco_g1",
         "transport_lcm",
         "transport_ros",

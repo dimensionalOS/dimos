@@ -50,7 +50,7 @@ def test_records_request_response_pair(tmp_path: Path, mocker: MockerFixture) ->
         client.post(
             "https://api.test/v1/chat/completions",
             json={"ping": 1},
-            headers={"authorization": "Bearer secret", "x-run": "7"},
+            headers={"authorization": "Bearer secret", "x-goog-api-key": "secret", "x-run": "7"},
         )
 
     request = _read(request_path(tmp_path, 0))
@@ -59,6 +59,7 @@ def test_records_request_response_pair(tmp_path: Path, mocker: MockerFixture) ->
     assert request["url"] == "https://api.test/v1/chat/completions"
     assert request["body"] == {"ping": 1}
     assert "authorization" not in request["headers"]
+    assert "x-goog-api-key" not in request["headers"]
     assert request["headers"]["x-run"] == "7"
 
     response = _read(response_path(tmp_path, 0))

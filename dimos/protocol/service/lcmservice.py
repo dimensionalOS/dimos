@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 import copy
 import os
 import platform
+import selectors
 import threading
 import traceback
 from typing import Any, ClassVar
@@ -69,7 +70,7 @@ class LCMService(Service):
     l: lcm_mod.LCM | None
     _stop_event: threading.Event
     _startup_complete: threading.Event
-    _l_lock: threading.Lock
+    _l_lock: threading.RLock
     _pending_unsubs: list[lcm_mod.LCMSubscription]
     _thread: threading.Thread | None
 
@@ -82,7 +83,8 @@ class LCMService(Service):
         else:
             self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
-        self._l_lock = threading.Lock()
+        # Re-entrant: a dispatch callback on the loop thread may subscribe.
+        self._l_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._pending_unsubs = []
         self._startup_complete = threading.Event()
@@ -150,9 +152,18 @@ class LCMService(Service):
         self._pending_unsubs.append(subscription)
 
     def _lcm_loop(self) -> None:
-        """LCM message handling loop."""
+        """LCM message handling loop.
+
+        Dispatches under _l_lock, which subscribe() takes for its native
+        call, but waits for traffic outside it: a waiter loses every handoff
+        to a loop that re-acquires the lock the moment it releases it.
+        """
         primed = False
+        selector = selectors.DefaultSelector()
         try:
+            with self._l_lock:
+                if self.l is not None:
+                    selector.register(self.l.fileno(), selectors.EVENT_READ)
             while not self._stop_event.is_set():
                 try:
                     with self._l_lock:
@@ -160,7 +171,11 @@ class LCMService(Service):
                             break
                         while self._pending_unsubs:
                             self.l.unsubscribe(self._pending_unsubs.pop())
-                        self.l.handle_timeout(_LCM_LOOP_TIMEOUT)
+                    if selector.select(_LCM_LOOP_TIMEOUT / 1000):
+                        with self._l_lock:
+                            if self.l is None:
+                                break
+                            self.l.handle_timeout(0)
                 except Exception as e:
                     stack_trace = traceback.format_exc()
                     print(f"Error in LCM handling: {e}\n{stack_trace}")
@@ -170,6 +185,7 @@ class LCMService(Service):
                     primed = True
                     self._startup_complete.set()
         finally:
+            selector.close()
             # A callback may request stop while handle_timeout holds _l_lock.
             # Only release the native instance after dispatch has unwound.
             self._release_lcm()
