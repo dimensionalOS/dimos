@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 import warnings
 
 from mcap.writer import Writer
@@ -21,11 +23,13 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.memory.cli.app import mem_app
-from dimos.memory.cli.dataset import open_dataset
+from dimos.memory.cli.dataset import open_dataset, open_store
 from dimos.memory.replay_module import stream_types_of
 from dimos.memory.store.mcap import McapStore
 from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
+from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
 from dimos.robot.unitree.go2.dds.store import Go2McapStore
 
 
@@ -115,3 +119,98 @@ def test_mixed_native_channel_is_not_overridden_by_go2_preset(tmp_path):
         decoded = store.stream("utlidar_imu").first().data
         assert isinstance(decoded, Imu)
         assert decoded.lcm_encode() == value.lcm_encode()
+
+
+@pytest.mark.parametrize("profile", ["dimos", "ros2"])
+@pytest.mark.parametrize("opener", [open_dataset, open_store])
+def test_mixed_recording_preserves_legacy_json_types(tmp_path, profile, opener):
+    path = tmp_path / "mixed-events.mcap"
+    value = Imu(ts=12.5, frame_id="native_imu")
+    expected_telemetry = Telemetry(
+        type="telemetry",
+        battery=0.785,
+        body_h=0.3,
+        current_a=1.0,
+        imu_hz=100.0,
+        lidar=True,
+        lidar_hz=10.0,
+        lowstate_hz=50.0,
+        mode=0,
+        obstacle=False,
+        odom_hz=50.0,
+        points_per_s=1000.0,
+        rage=False,
+        recording={"active": False},
+        rss_mb=128.0,
+        sportmode_hz=50.0,
+        vel=[0.0, 0.0],
+        yaw=0.0,
+    )
+    with path.open("wb") as output:
+        writer = Writer(output)
+        writer.start(profile=profile)
+        native = writer.register_channel(
+            topic="imu",
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={"dimos.payload_type": "dimos.msgs.sensor_msgs.Imu.Imu"},
+        )
+        writer.add_message(channel_id=native, log_time=1, publish_time=1, data=value.lcm_encode())
+        for topic, payload in [
+            ("telemetry", json.dumps(asdict(expected_telemetry)).encode()),
+            ("control_log", b'{"type":"velocity_input","lx":0.5}'),
+        ]:
+            channel = writer.register_channel(topic=topic, message_encoding="json", schema_id=0)
+            writer.add_message(
+                channel_id=channel,
+                log_time=20_000_000_000,
+                publish_time=12_500_000_000,
+                data=payload,
+            )
+        writer.finish()
+
+    with opener(path) as store:
+        imu = store.streams.imu.first().data
+        assert isinstance(imu, Imu)
+        assert imu.lcm_encode() == value.lcm_encode()
+        telemetry = store.streams.telemetry.first()
+        assert isinstance(telemetry.data, Telemetry)
+        assert telemetry.data == expected_telemetry
+        assert telemetry.data.battery == 0.785
+        assert telemetry.ts == 20.0
+        control = store.streams.control_log.first()
+        assert isinstance(control.data, ControlEvent)
+        assert control.data.lx == 0.5
+        assert control.ts == 20.0
+
+
+@pytest.mark.parametrize("topic", ["telemetry", "control_log"])
+@pytest.mark.parametrize(
+    ("encoding", "metadata", "expected_type"),
+    [
+        ("json", {"dimos.payload_type": "dimos.msgs.std_msgs.String.String"}, String),
+        ("json", {"dimos.payload_type": "unknown.Payload"}, bytes),
+        ("custom", {}, bytes),
+    ],
+)
+def test_legacy_json_selection_respects_encoding_and_metadata(
+    tmp_path, topic, encoding, metadata, expected_type
+):
+    path = tmp_path / "not-legacy.mcap"
+    payload = b'{"event":"ready"}'
+    with path.open("wb") as output:
+        writer = Writer(output)
+        writer.start(profile="dimos")
+        channel = writer.register_channel(
+            topic=topic, message_encoding=encoding, schema_id=0, metadata=metadata
+        )
+        writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=payload)
+        writer.finish()
+
+    with open_dataset(path) as store:
+        decoded = store.stream(topic).first().data
+        assert isinstance(decoded, expected_type)
+        if expected_type is String:
+            assert decoded.data == payload.decode()
+        else:
+            assert decoded == payload

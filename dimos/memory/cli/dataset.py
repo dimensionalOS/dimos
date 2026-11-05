@@ -55,8 +55,7 @@ def open_store(path: str | Path) -> Store:
                     )
                 )
                 or (
-                    reader.get_header().profile != "dimos"
-                    and channel.message_encoding == "json"
+                    channel.message_encoding == "json"
                     and channel.topic in {"telemetry", "control_log"}
                     and "dimos.payload_type" not in channel.metadata
                 )
