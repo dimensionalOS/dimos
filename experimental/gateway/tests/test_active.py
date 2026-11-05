@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -28,6 +29,7 @@ import pytest
 
 from dimos.core.run_registry import RunEntry
 from experimental.gateway import launches, shared_config
+from experimental.gateway.routes import active as active_routes
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -373,3 +375,17 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     )
     client.post("/active/launch", json={"blueprint": "demo"})
     until(output_has(client, "gossip false"))
+
+
+def test_a_registered_module_whose_scan_import_failed_is_still_launchable() -> None:
+    cache = {
+        "finished_at": "now",
+        "fingerprint": "fp",
+        "results": {},
+        "modules": {},
+        "errors": ["module:slow: timed out"],
+        "names": {"blueprints": ["demo"], "modules": ["cam", "slow"]},
+    }
+    scanner = SimpleNamespace(cache=lambda: cache, current_fingerprint=lambda: "fp")
+    state = SimpleNamespace(listed=[{"name": "demo"}], scanner=scanner)
+    assert active_routes.known_names(state) == {"demo", "cam", "slow"}  # type: ignore[arg-type]
