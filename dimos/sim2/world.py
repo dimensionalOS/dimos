@@ -26,6 +26,11 @@ from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, Vector, 
 
 # Sites only mark a pose; keep them invisible and negligible.
 _SITE_SIZE = (0.001, 0.001, 0.001)
+_IMU_SENSORS = {
+    "gyro": mujoco.mjtSensor.mjSENS_GYRO,
+    "accelerometer": mujoco.mjtSensor.mjSENS_ACCELEROMETER,
+    "orientation": mujoco.mjtSensor.mjSENS_FRAMEQUAT,
+}
 
 
 def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel:
@@ -81,6 +86,11 @@ def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str
         )
     elif site is None or prefix:
         body.add_site(name=name, size=_SITE_SIZE, rgba=(0, 0, 0, 0), pos=pos, quat=quat)
+    if sensor.kind == "imu":
+        for suffix, kind in _IMU_SENSORS.items():
+            spec.add_sensor(
+                name=f"{name}/{suffix}", type=kind, objtype=mujoco.mjtObj.mjOBJ_SITE, objname=name
+            )
 
 
 def _quaternion(rpy: Vector) -> NDArray[np.float64]:
