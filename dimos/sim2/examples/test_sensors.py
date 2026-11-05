@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import ExitStack
 from dataclasses import replace
+from queue import Queue
 import uuid
 
 import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
@@ -41,13 +44,16 @@ def deployed_world(world, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     # Consumers know instance IDs, placements and drives; only the manager has models.
-    scene = replace(world, instances=tuple(replace(i, model=None) for i in world.instances))
+    scene = replace(
+        world,
+        gravity_world=(0.0, 0.0, -1.62),
+        instances=tuple(replace(i, model=None) for i in world.instances),
+    )
     blueprint = autoconnect(
         UrdfManager.blueprint(models={i.id: i.model for i in world.instances}),
         SimModule.blueprint(
             scene=scene,
             backend=MujocoBackend,
-            motion_frames=("left/imu",),
             joint_ids=("left/slide_x",),
         ),
         SimImuModule.blueprint(sensor=ImuConfig("left/imu")),
@@ -78,6 +84,14 @@ def test_separate_sensor_modules_run_reset_and_recover(deployed_world, command):
     lidar = deployed_world.get_instance(SimLidarModule)
     wait_until(lambda: camera.statistics()["acquisitions"] >= 2, timeout=20)
     wait_until(lambda: lidar.statistics()["acquisitions"] >= 2, timeout=20)
+    # The deployed IMU receives non-Earth gravity through shared config, not WorldState.
+    samples = Queue()
+    transport = deployed_world.transports[("imu", Imu)]
+    with ExitStack() as cleanup:
+        cleanup.callback(transport.stop)
+        cleanup.callback(transport.subscribe(samples.put))
+        sample = samples.get(timeout=5)
+    assert sample.linear_acceleration.z == pytest.approx(1.62, abs=1e-8)
     before = sim.inspect()
     h = before.header
     sim.submit(command(h, positions=(0.65,)))
