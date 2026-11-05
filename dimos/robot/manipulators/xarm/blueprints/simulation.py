@@ -46,6 +46,7 @@ _xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_xarm7_sim_model,
         planning_timeout=10.0,
         visualization={"backend": "viser"},

@@ -78,7 +78,7 @@ is absent from WorldState. The IMU does not default to Earth gravity.
 `_apply_commands()`, `_sample_truth()` and `_step()`; `_inspect()` constructs a
 complete snapshot between physics steps. Only the owner accesses native dynamics.
 
-```python
+```text
 # PhysicsBackend; all reads return detached records owned by the caller.
 load(scene: SceneConfig, dt_ns: int) -> None
 read_bodies() -> list[BodyState]
@@ -98,7 +98,7 @@ is a denser motion export than F's selected-frame list; no speedup is claimed.
 
 MuJoCo exports no optional observation properties by default. A backend can return
 current properties from `read_cbor_observations()` without changing the module or sensors.
-The deployed extension test exercises this path over real DimOS transport.
+The deployed extension test exercises this path over real dimOS transport.
 
 Input: `actions: ActionCommand`.
 Output: `observations: WorldState`.

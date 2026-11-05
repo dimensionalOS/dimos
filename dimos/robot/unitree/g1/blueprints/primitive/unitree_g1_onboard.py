@@ -18,16 +18,18 @@ from __future__ import annotations
 import os
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import unitree_g1_vis
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 
 # Underscore-prefixed: a shared sub-blueprint, not a runnable blueprint of its own.
 _unitree_g1_onboard = autoconnect(
-    FastLio2.blueprint(
+    mid360_for_pointlio(
         host_ip=os.getenv("LIDAR_HOST_IP", "192.168.123.164"),
         lidar_ip=os.getenv("LIDAR_IP", "192.168.123.120"),
     ),
+    PointLio.blueprint(),
     G1HighLevelDdsSdk.blueprint(),
     unitree_g1_vis,
 ).global_config(n_workers=12, robot_model="unitree_g1")

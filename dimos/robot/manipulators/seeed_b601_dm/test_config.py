@@ -26,7 +26,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecut
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
-from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -120,7 +120,9 @@ def test_planner_coordinator_drives_arm_and_gripper() -> None:
     assert tasks["trajectory"].joint_names == list(B601_DM_ARM_JOINTS)
     assert tasks["gripper"].name == "b601_dm_gripper"
     assert tasks["gripper"].joint_names == ["arm/gripper"]
-    assert planner_atom.kwargs["model"].gripper_hardware_id == "b601_dm"
+    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(planner_atom.name))
+    assert config.gripper_tasks == {"manipulator": tasks["gripper"].name}
 
 
 def test_model_plans_arm_joints_to_the_tool_link() -> None:
@@ -129,7 +131,6 @@ def test_model_plans_arm_joints_to_the_tool_link() -> None:
     assert model.joint_names == list(B601_DM_ARM_JOINTS)
     group = model.planning_groups[0]
     assert (group.base_link, group.tip_link) == ("base_link", "end_link")
-    assert model.gripper_hardware_id == "b601_dm"
 
 
 @pytest.mark.self_hosted
