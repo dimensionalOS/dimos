@@ -159,7 +159,7 @@ class MultipartBackend:
                     **create,
                     "skipped": True,
                     "preview": self._preview(create["upload_id"], path, Path(tmp))
-                    if manifest
+                    if kind_of(path) == "recording"
                     else None,
                 }
             uid = create["upload_id"]
@@ -200,19 +200,23 @@ class MultipartBackend:
                 **done,
                 "upload_id": uid,
                 "skipped": False,
-                "preview": self._preview(uid, path, Path(tmp)) if manifest else None,
+                "preview": self._preview(uid, path, Path(tmp))
+                if kind_of(path) == "recording"
+                else None,
             }
 
     def _preview(self, upload_id: str, path: Path, tmp: Path) -> str:
         """The console's spatial preview, built here while the recording is at hand.
-        Built from a copy: the store opens read-write (WAL), and the user's recording
-        must stay byte-identical to what was uploaded. Best effort: the upload stands
-        without it."""
+        A .db is built from a copy: the store opens read-write (WAL), and the user's
+        recording must stay byte-identical to what was uploaded; an .mcap opens
+        read-only. Best effort: the upload stands without it."""
         try:
-            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
-            shutil.copyfile(path, copy)
+            source, clip = path, tmp / "timelapse.mp4"
+            if path.suffix != ".mcap":
+                source = tmp / "preview.db"
+                shutil.copyfile(path, source)
             note = ""
-            with open_store(copy) as store:
+            with open_store(source) as store:
                 doc = preview.build(store)
                 try:  # the preview stands without its clip
                     video = preview.timelapse(store, clip) if doc is not None else None
