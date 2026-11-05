@@ -201,7 +201,6 @@ def pytest_configure(config):
         "native_e2e: native module e2e (builds rust); "
         "runs in the CI rust job and the macOS self-hosted-tests job",
     )
-    config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line(
         "markers", "skipif_no_typesafe: skip when TYPESAFENAVIGATIONAGENT__API_KEY is not set"
     )
@@ -292,7 +291,6 @@ def retry_until():
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
-        "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_typesafe": (
             not os.getenv("TYPESAFENAVIGATIONAGENT__API_KEY"),
             "TYPESAFENAVIGATIONAGENT__API_KEY not set",

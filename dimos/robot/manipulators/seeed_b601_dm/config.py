@@ -126,6 +126,5 @@ def b601_dm_model_config(
             )
         ],
         auto_convert_meshes=True,
-        gripper_hardware_id=B601_DM_HARDWARE_ID,
         home_joints=list(home_joints or [0.0] * B601_DM_DOF),
     )
