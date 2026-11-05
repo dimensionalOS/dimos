@@ -17,6 +17,12 @@ import numpy as np
 import pytest
 
 
+def test_placing_a_body_preserves_physics_time(backend):
+    backend.step()
+    backend.place("box", (0, 0, 2, 0, 0, 0, 1))
+    assert backend.data.time == pytest.approx(0.002)
+
+
 def test_free_fall_motion_contains_gravity(backend):
     backend.place("box", (0, 0, 2, 0, 0, 0, 1))
     motion = next(b for b in backend.read_bodies() if b.body_id == "box")
