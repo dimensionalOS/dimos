@@ -39,9 +39,12 @@ from dimos.robot.deeprobotics.m20.connection import (
     CHARGE_IDLE,
     CHARGE_ON_DOCK,
     DOCK_CHARGING,
+    GAIT_BASIC,
     GAIT_STAIR_AGILE,
     MOTION_RL_CONTROL,
     MOTION_SIT,
+    MOTION_STAND,
+    USAGE_MODE_NAVIGATION,
     M20Connection,
     dock_verdict,
 )
@@ -77,6 +80,7 @@ class FakeBasicServer:
 
     def __init__(self) -> None:
         self.charge = CHARGE_IDLE
+        self.usage_mode = USAGE_MODE_NAVIGATION
         self.errors: list[int] = []
         self.received: list[dict[str, Any]] = []
         self.raw: list[bytes] = []
@@ -116,7 +120,16 @@ class FakeBasicServer:
                 b"garbage",
                 _BASIC_SERVER_MAGIC + b"\0" * 12 + b"{not json",
                 self._report(4, {"MotionStatus": {"Height": 0.5}}),
-                self._report(6, {"BasicStatus": {"MotionState": 17, "Charge": self.charge}}),
+                self._report(
+                    6,
+                    {
+                        "BasicStatus": {
+                            "MotionState": 17,
+                            "Charge": self.charge,
+                            "ControlUsageMode": self.usage_mode,
+                        }
+                    },
+                ),
                 self._report(3, {"ErrorList": [{"errorCode": []}]}),
                 self._report(3, {"ErrorList": [{"errorCode": c} for c in [0, *self.errors]]}),
             ):
@@ -232,7 +245,11 @@ def test_reports_update_the_status_past_malformed_frames(
 
     server.errors = [0x8506]
     _wait_until(lambda: connection._charge_error == 0x8506)
-    assert connection.charge_status() == "charging, last error 0x8506 no current from the dock"
+    assert connection.charge_status() == "charging, error 0x8506 no current from the dock"
+
+    server.errors = []
+    _wait_until(lambda: connection._charge_error is None)
+    assert connection.charge_status() == "charging"
 
 
 def test_charge_status_is_unknown_when_reports_go_stale(
@@ -418,6 +435,24 @@ def test_undock_cancels_a_running_dock(connection: M20Connection, server: FakeBa
     assert "Off the dock and ready to navigate." in updates
 
 
+def test_stop_movement_cancels_a_running_dock(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+    _wait_until(lambda: server.charge_commands() == [1])
+    server.charge = CHARGE_ENTERING
+    _wait_for_status(connection, CHARGE_ENTERING)
+
+    connection.stop_movement()
+    _wait_until(lambda: server.charge_commands() == [1, 0])
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: connection._charge_task is None)
+    assert "Off the dock and ready to navigate." in _updates(connection)
+    connection.cmd_vel.publish.assert_not_called()  # type: ignore[attr-defined]
+
+
 def test_undock_refuses_when_not_on_the_dock(
     connection: M20Connection, server: FakeBasicServer
 ) -> None:
@@ -499,7 +534,7 @@ def test_auto_stand_stands_when_idle(connection: M20Connection, server: FakeBasi
     assert server.charge_commands() == []
 
 
-def test_auto_stand_does_not_stand_without_status(
+def test_auto_stand_stands_without_status(
     server: FakeBasicServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     server.reporting = False
@@ -512,7 +547,7 @@ def test_auto_stand_does_not_stand_without_status(
     finally:
         module.stop()
 
-    module._stand.assert_not_called()  # type: ignore[attr-defined]
+    module._stand.assert_called_once()  # type: ignore[attr-defined]
 
 
 def test_heartbeat_sends_a_type_100_apdu_to_the_udp_port(
@@ -563,22 +598,57 @@ def test_stop_only_zeroes_velocity_without_auto_stand(
 def test_a_stop_during_standup_leaves_sit_as_the_last_posture_command(
     started: Callable[..., M20Connection],
 ) -> None:
-    switching, release = Event(), Event()
+    conn = started({"_enter_navigation_mode": lambda: True}, auto_stand=True, sit_timeout_s=0.1)
+    sent = conn.motion_state_cmd.transport.sent
+    _wait_until(lambda: [msg.data for msg in sent] == [MOTION_STAND])
+    conn.stop()
+    assert [msg.data for msg in sent] == [MOTION_STAND, MOTION_SIT]
+    assert not conn._auto_stand_thread.is_alive()
 
-    def slow_mode_switch() -> bool:
-        switching.set()
-        release.wait(2.0)
+
+class FakeRobot:
+    """Answers posture and gait commands, and resets the gait to Basic `late_resets` times after a stand."""
+
+    def __init__(self, conn: M20Connection, late_resets: int) -> None:
+        self.conn = conn
+        self.late_resets = late_resets
+        self.gaits: list[int] = []
+        self.modes = 0
+        conn.motion_state_cmd.publish.side_effect = lambda msg: conn._on_motion_state(msg)  # type: ignore[attr-defined]
+        conn.gait_cmd.publish.side_effect = self._gait  # type: ignore[attr-defined]
+
+    def mode(self) -> bool:
+        self.modes += 1
         return True
 
-    conn = started({"_enter_navigation_mode": slow_mode_switch}, auto_stand=True, sit_timeout_s=0.1)
-    sent = conn.motion_state_cmd.transport.sent
-    sit_sent = Event()
-    conn.motion_state_cmd.transport.subscribe(lambda msg: sit_sent.set())
-    assert switching.wait(2.0)
-    stopper = Thread(target=conn.stop)
-    stopper.start()
-    assert sit_sent.wait(2.0)
-    release.set()
-    stopper.join(5.0)
-    assert [msg.data for msg in sent] == [MOTION_SIT]
-    assert not conn._auto_stand_thread.is_alive()
+    def _gait(self, msg: UInt32) -> None:
+        self.gaits.append(msg.data)
+        self.conn._on_gait_state(msg)
+        if msg.data != GAIT_BASIC and self.late_resets > 0:
+            self.late_resets -= 1
+            Thread(target=self._reset, daemon=True).start()
+
+    def _reset(self) -> None:
+        time.sleep(0.05)
+        self.conn._on_gait_state(UInt32(GAIT_BASIC))
+
+
+@pytest.mark.parametrize("late_resets,stood", [(0, True), (2, True), (3, False)])
+def test_stand_resends_navigation_after_the_late_gait_reset(
+    connection: M20Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    late_resets: int,
+    stood: bool,
+) -> None:
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._VENDOR_GAIT_WAIT_S", 0.3)
+    connection.config.gait_timeout_s = 0.3
+    connection.config.control_ready_timeout_s = 0.1
+    connection._command_ready = True
+    connection._motion_state = MOTION_SIT
+    robot = FakeRobot(connection, late_resets)
+    connection._enter_navigation_mode = robot.mode  # type: ignore[method-assign]
+
+    assert M20Connection._stand(connection) is stood
+
+    assert robot.modes == min(late_resets + 1, 3)
+    assert robot.gaits == [GAIT_BASIC, GAIT_STAIR_AGILE] * robot.modes

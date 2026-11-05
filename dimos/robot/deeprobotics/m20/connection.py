@@ -41,6 +41,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -77,6 +78,8 @@ _BASIC_SERVER_BASIC_STATUS_COMMAND = 6
 _BASIC_SERVER_CHARGE_TYPE = 2
 _BASIC_SERVER_CHARGE_COMMAND = 24
 _BASIC_SERVER_POLL_S = 0.25
+# basic_server's own wait for a gait change (its "waitForGaitChange timeout" log line).
+_VENDOR_GAIT_WAIT_S = 3.0
 
 CHARGE_COMMAND_STOP = 0
 CHARGE_COMMAND_START = 1
@@ -124,6 +127,8 @@ class M20ConnectionConfig(ModuleConfig):
     stand_timeout_s: float = Field(default=12.0, gt=0.0)
     rl_control_timeout_s: float = Field(default=5.0, gt=0.0)
     gait_timeout_s: float = Field(default=5.0, gt=0.0)
+    # After a stand basic_server took two of its gait waits to settle.
+    navigation_mode_attempts: int = Field(default=3, ge=1)
     control_ready_timeout_s: float = Field(default=15.0, gt=0.0)
     basic_server_host: str = "10.21.31.103"
     basic_server_tcp_port: int = Field(default=30001, ge=1, le=65535)
@@ -131,7 +136,6 @@ class M20ConnectionConfig(ModuleConfig):
     basic_server_timeout_s: float = Field(default=3.0, gt=0.0)
     sit_timeout_s: float = Field(default=3.0, gt=0.0)
     auto_stand: bool = False
-    world_frame: str = "map"
     dock_settle_s: float = Field(default=1.0, ge=0.0)
     dock_start_timeout_s: float = Field(default=5.0, gt=0.0)
     dock_timeout_s: float = Field(default=150.0, gt=0.0)
@@ -209,6 +213,7 @@ class M20Connection(Module):
         self._charge_status: int | None = None
         self._charge_status_time = 0.0
         self._charge_error: int | None = None
+        self._usage_mode: int | None = None
         self._charge_task: ChargeTask | None = None
         self._charge_thread: Thread | None = None
 
@@ -229,9 +234,11 @@ class M20Connection(Module):
 
     def _auto_stand(self) -> None:
         if not self._wait_for_charge_status(_CHARGE_STATUS_WAIT_S):
-            if not self._stopping.is_set():
-                logger.error("M20 reported no charge status, so it will not stand up")
-            return
+            if self._stopping.is_set():
+                return
+            logger.warning(
+                "M20 reported no charge status, so it stands up without knowing it is off the dock"
+            )
         if self._charge_busy():
             logger.info("M20 is on the dock, so it will leave before standing up")
             self.undock()
@@ -277,10 +284,20 @@ class M20Connection(Module):
 
     @rpc
     def stop_movement(self) -> None:
-        """Publish an immediate zero velocity without disabling future commands."""
-        if self._refuse_while_charging("stop_movement"):
-            return
-        self.cmd_vel.publish(Twist.zero())
+        """Publish an immediate zero velocity without disabling future commands.
+
+        Velocity would fight the vendor's own docking, so a dock in progress is
+        cancelled instead, and the robot backs off the dock and stands.
+        """
+        with self._lock:
+            docking = self._charge_task == "dock" or self._fresh_charge_status() == CHARGE_ENTERING
+        if docking:
+            logger.info("M20 stop_movement cancels docking")
+            self.undock()
+        elif self._charge_busy():
+            logger.info("M20 stop_movement left the robot to the vendor's dock control")
+        else:
+            self.cmd_vel.publish(Twist.zero())
 
     @rpc
     def standup(self) -> bool:
@@ -294,22 +311,46 @@ class M20Connection(Module):
             return False
 
     def _stand(self) -> bool:
-        if not self._enter_navigation_mode():
-            logger.error("M20 basic_server rejected the navigation usage mode")
-            return False
+        with self._lock:
+            was_walking = self._motion_state == MOTION_RL_CONTROL
         if not self._ensure_rl_control():
             return False
-
-        # Switching usage mode resets the gait to Basic. Confirm that reset,
-        # then select the documented autonomous-navigation gait.
-        if not self._set_gait_and_wait(GAIT_BASIC):
-            logger.error("M20 did not confirm the Basic gait")
-            return False
+        attempts = self.config.navigation_mode_attempts
         with self._lock:
             terrain = self._navigation_terrain
-        if not self._set_gait_and_wait(_NAVIGATION_GAITS[terrain]):
-            logger.error("M20 did not confirm the agile %s navigation gait", terrain)
-            return False
+        gait = _NAVIGATION_GAITS[terrain]
+
+        def navigating() -> bool:
+            return self._usage_mode in (None, USAGE_MODE_NAVIGATION)
+
+        if not was_walking:
+            # Standing up makes basic_server reset the usage mode and gait itself, and a mode sent before that lands is lost.
+            self._wait_for_gait_state(GAIT_BASIC, _VENDOR_GAIT_WAIT_S * attempts)
+
+        # Right after a stand basic_server is still finishing its own gait change; a usage mode sent then is
+        # answered OK but never applied, so the mode and gait are watched for one such wait and sent again if they fell back.
+        for attempt in range(1, attempts + 1):
+            if not self._enter_navigation_mode():
+                logger.error("M20 basic_server rejected the navigation usage mode")
+                return False
+            # A report from before the switch can still show the old mode.
+            self._wait_unless_stopping(navigating, _VENDOR_GAIT_WAIT_S)
+            # Switching usage mode resets the gait to Basic. Confirm that reset,
+            # then select the documented autonomous-navigation gait.
+            if not self._set_gait_and_wait(GAIT_BASIC):
+                logger.error("M20 did not confirm the Basic gait")
+                return False
+            if not self._set_gait_and_wait(gait):
+                logger.error("M20 did not confirm the agile %s navigation gait", terrain)
+                return False
+            if self._holds(lambda: self._gait_state == gait and navigating(), _VENDOR_GAIT_WAIT_S):
+                break
+            if attempt == attempts:
+                logger.error(
+                    "M20 dropped navigation mode %d times right after accepting it", attempts
+                )
+                return False
+            logger.warning("M20 dropped navigation mode, sending it again")
         if not self._wait_for_control_readiness(self.config.control_ready_timeout_s):
             logger.error("M20 robot control path did not become ready")
             return False
@@ -382,9 +423,7 @@ class M20Connection(Module):
             self.stop_tool("dock")
             return f"Not docking: {refusal}."
 
-        self.goal.publish(
-            PointStamped(math.nan, math.nan, math.nan, frame_id=self.config.world_frame)
-        )
+        self.goal.publish(PointStamped(math.nan, math.nan, math.nan, frame_id=WORLD_FRAME))
         self._charge_thread = Thread(target=self._run_dock, name="m20-dock", daemon=True)
         self._charge_thread.start()
         return "Docking. A tool update reports each stage and the result."
@@ -421,12 +460,12 @@ class M20Connection(Module):
 
     @skill
     def charge_status(self) -> str:
-        """Report the robot's charging state and its last charging error, if any."""
+        """Report the robot's charging state and the charging error it reports now, if any."""
         with self._lock:
             status = self._fresh_charge_status()
             error = self._charge_error
         label = "unknown" if status is None else _CHARGE_LABELS.get(status, "unknown")
-        return f"{label}, last error {_charge_error_text(error)}" if error is not None else label
+        return f"{label}, error {_charge_error_text(error)}" if error is not None else label
 
     def _dock_refusal(self) -> str | None:
         status = self._fresh_charge_status()
@@ -472,6 +511,8 @@ class M20Connection(Module):
         started = time.monotonic()
         entered = False
         reported: int | None = None
+        # The robot can clear its error as it gives up, so keep the last one seen for the verdict.
+        error: int | None = None
         while True:
             with self._state_condition:
                 self._state_condition.wait(timeout=_BASIC_SERVER_POLL_S)
@@ -480,7 +521,7 @@ class M20Connection(Module):
                 if self._link_stop.is_set():
                     return "Stopped watching docking, module stopping."
                 status = self._fresh_charge_status()
-                error = self._charge_error
+                error = self._charge_error or error
 
             if status is None:
                 self._send_charge_command(CHARGE_COMMAND_STOP)
@@ -785,20 +826,31 @@ class M20Connection(Module):
         command = device.get("Command")
         if command == _BASIC_SERVER_BASIC_STATUS_COMMAND:
             basic_status = items.get("BasicStatus")
-            charge = basic_status.get("Charge") if isinstance(basic_status, dict) else None
-            if isinstance(charge, int):
-                with self._state_condition:
+            if not isinstance(basic_status, dict):
+                return
+            charge = basic_status.get("Charge")
+            usage_mode = basic_status.get("ControlUsageMode")
+            with self._state_condition:
+                if isinstance(charge, int):
                     self._charge_status = charge
                     self._charge_status_time = time.monotonic()
-                    self._state_condition.notify_all()
+                if isinstance(usage_mode, int):
+                    self._usage_mode = usage_mode
+                self._state_condition.notify_all()
         elif command == _BASIC_SERVER_ERROR_LIST_COMMAND:
             error_list = items.get("ErrorList")
-            for error in error_list if isinstance(error_list, list) else []:
-                code = error.get("errorCode") if isinstance(error, dict) else None
-                if isinstance(code, int) and code in _CHARGE_ERROR_NAMES:
-                    with self._state_condition:
-                        self._charge_error = code
-                        self._state_condition.notify_all()
+            if not isinstance(error_list, list):
+                return
+            codes = [
+                error.get("errorCode") if isinstance(error, dict) else None for error in error_list
+            ]
+            charge_errors = [
+                code for code in codes if isinstance(code, int) and code in _CHARGE_ERROR_NAMES
+            ]
+            with self._state_condition:
+                # The list is every active error, so a charge error the robot no longer reports has cleared.
+                self._charge_error = charge_errors[-1] if charge_errors else None
+                self._state_condition.notify_all()
 
     def _encode_basic_server_apdu(
         self, message_type: int, command: int, items: dict[str, Any]
@@ -835,6 +887,16 @@ class M20Connection(Module):
 
     def _wait_for_control_readiness(self, timeout_s: float) -> bool:
         return self._wait_unless_stopping(lambda: self._command_ready, timeout_s)
+
+    def _holds(self, ready: Callable[[], bool], seconds: float) -> bool:
+        """Watch for `seconds` and return False as soon as `ready` stops being true."""
+        with self._state_condition:
+            self._state_condition.wait_for(
+                lambda: self._stopping.is_set() or not ready(), timeout=seconds
+            )
+            if self._stopping.is_set():
+                raise _StoppingError
+            return ready()
 
     def _wait_unless_stopping(self, ready: Callable[[], bool], timeout_s: float) -> bool:
         with self._state_condition:
