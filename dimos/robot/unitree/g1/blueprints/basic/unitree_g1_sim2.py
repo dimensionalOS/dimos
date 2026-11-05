@@ -148,6 +148,7 @@ def _g1_sim2(*, pointlio: bool = False) -> Blueprint:
             device="CPU:0",
             carve_columns=False,
             block_count=100_000,
+            emit_every=5,
             frame_id="odom" if pointlio else "world",
         ).remappings(
             [(VoxelGridMapper, "lidar", "pointcloud" if pointlio else "filtered_pointcloud")]
