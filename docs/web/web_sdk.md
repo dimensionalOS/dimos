@@ -133,6 +133,9 @@ Name the source with `connect({ url, token, topicSource })`, or leave `topicSour
 | `handle.status()` / `handle.onStatus(callback)` | Reports `connecting`, `ready`, `interrupted`, `rejected`, or `closed`, with a structured error when applicable. `onStatus` returns a listener cleanup function. |
 | `handle.update(options)` | Changes the settings of this handle and resolves with the settings in force. A changed `source`, `delivery` or `profile` reopens only this handle; other consumers of the old route keep theirs. |
 | `handle.settings()` | The settings in force: the profile values until the relay acknowledges the subscription. |
+| `handle.onSettings(callback)` | Runs when settings are acknowledged, including automatic adaptation; returns a listener cleanup function. |
+| `handle.stats()` | Latest two-second delivery window, or `null` before a window is available. See [Adapting to a slow link](#adapting-to-a-slow-link). |
+| `session.topics.setAdaptation(enabled)` | Enables adaptation (the default), or lifts all caps within one cooldown and stops the controller. |
 | `handle.close()` | Releases this handle. The source subscription ends after its last consumer leaves. |
 | `session.topics.onReconnect(callback)` | Runs after available subscriptions recover; sources that are not connected do not block it. Refetch authoritative HTTP state here after an interrupted event stream. |
 | `session.topics.sources()` / `onSources(callback)` | Lists the connected sources with their generation, the provider's read/write capabilities, supported profiles and `profileOptions`, the settings each profile takes with their ranges and defaults. A source that disconnects leaves the list. |
@@ -147,8 +150,12 @@ Subscription options are the identity, `source`, `delivery` and `profile`, and t
 | `maxHz` | all | Latest sampling rate, per viewer, in (0, 1000]. Reliable event streams ignore it. On `video.h264.v1` a different rate is a different encoder. |
 | `maxResolution` | `image.jpeg.*`, `video.h264.v1` | `[w, h]` box the picture is fitted into, 16 to 4096 a side. |
 | `quality` | `image.jpeg.*` | JPEG quality, 1 to 100. |
+| `maxBitrate` | `video.h264.v1` | Encoder target in bit/s, at least 100,000, capped at the normalized resolution class: 1,000,000 at 360p, 2,500,000 at 720p, 4,500,000 at 1080p. |
 | `keepEvery` | `cloud.q16.*` | One point in N after the finite filter, 1 to 64. |
 | `fields` | `cloud.q16.*` | The optional buffers to encode, a subset of `["intensity", "color"]`. |
+| `adapt` | client only | Defaults to on for latest media and video, off for raw. `false` opts out; `true` opts raw latest into rate adaptation. Also accepts `{ priority, keep }`. Reliable routes never adapt. |
+| `priority` | client only | Integer 1 (highest) through 7 (lowest), default 4. Lower-priority stalled handles degrade first; higher-priority degraded handles recover first. |
+| `keep` | client only | `"rate"` (default) reduces detail before rate; `"quality"` reduces rate first. Top-level `priority` and `keep` override values inside `adapt`. |
 
 The profile is the default and the ceiling of every setting: a larger size, quality or rate comes back clamped to the profile value, and a smaller `keepEvery` comes back raised to it. An omitted or `undefined` key keeps its requested value; `null` resets it to the profile value. For example, `maxHz: null` restores the advertised profile rate, or the protocol default of 1000 Hz for raw topics. `update()` resolves with the normalized settings, so `maxResolution: [3000, 3000]` on `image.jpeg.low.v1` resolves with `[640, 360]`, and `settings()` reports the same values at any time.
 
@@ -188,9 +195,30 @@ Select an advertised fixed profile with latest delivery. The provider gates the 
 | `cloud.q16.balanced.v1` | Quantized positions, all valid points, at most 20 Hz |
 | `cloud.q16.full.v1` | Quantized positions, all valid points, at most 30 Hz |
 
-Clouds expose `Float32Array` positions and optional float intensity/RGB buffers, source count, acquisition header and quantization error. Depth is numeric data, not color JPEG. The profiles are ceilings: the [settings](#raw-topics) lower the size, quality, stride or buffers of one subscription without reopening it, and the sample metadata (`w`, `h`, `quality`, `keepEvery`, `intensity`, `color`) reports the values in force. Adaptive bandwidth is not provided.
+Clouds expose `Float32Array` positions and optional float intensity/RGB buffers, source count, acquisition header and quantization error. Depth is numeric data, not color JPEG. The profiles are ceilings: the [settings](#raw-topics) lower the size, quality, stride or buffers of one subscription without reopening it, and the sample metadata (`w`, `h`, `quality`, `keepEvery`, `intensity`, `color`) reports the values in force.
 
 For explicit `pZenohTransport` reads, `projectCbor(sample.payload)` returns either `{ kind: "value", value }` or `{ kind: "opaque", bytes, reason }`. JSON-like values, tuples and simple dataclass fields have a bounded data-only projection. A dataclass name is inert metadata; unknown Python tags remain opaque. The existing LCM decoder and Desktop's `/msgs.js` wrappers remain available for known schemas and typed publishing.
+
+### Adapting to a slow link
+
+One SDK controller reduces the requested detail or rate when measured congestion persists, then restores it one rung at a time. It ticks every 500 ms while the page is visible and clears measurement windows while hidden. It uses the relay's per-viewer congestion-abort counter, arrival age above the smallest age in the last 30 seconds, and direct video's receiver statistics. The age baseline absorbs clock offset and base latency. Older relays without the counter still supply the age signal.
+
+Two consecutive stalled ticks trigger one step down. A tick stalls when median age excess exceeds 200 ms, or video reports over 2% packet loss, freezes for over 20% of the measured interval, bytes without decoded frames, or an incoming bitrate estimate below 80% of the target. A pong that brings congestion aborts covers a total stall; pings remain three seconds apart. Idle sources and a source rate below the subscription ceiling do not trigger adaptation. Firefox can operate using loss and decode counters without freeze or bitrate-estimate fields.
+
+Among stalled eligible handles, the controller chooses lowest priority first, then the largest delivered byte rate. Abort-only stalls consider every adaptive handle. A change starts a two-second cooldown for data or four seconds for video. After ten clean seconds, the highest-priority degraded handle takes one step up and the clean clock restarts. At most one automatic change starts per tick.
+
+| Profile | Detail rungs, then rate rungs with `keep: "rate"` | Floors |
+|---|---|---|
+| JPEG | Quality ×0.75, ×0.5; resolution ×0.5, ×0.25; rate ×0.5, ×0.25, 1 Hz | Quality 30, width 160 px, 1 Hz |
+| Cloud | `keepEvery` ×2, ×4, ×8; remove color, then intensity; rate ×0.5, ×0.25, 1 Hz | `keepEvery` at most 64, 1 Hz |
+| Depth or opted-in raw | Rate ×0.5, ×0.25, 1 Hz | 1 Hz |
+| Direct video | Bitrate ×0.6, ×0.35; resolution down through 720p and 360p; rate 15, 10, 5 Hz with proportional bitrate | 360p, 200 kbit/s, 5 Hz |
+
+Fractions are relative to the normalized page request; smaller page requests remain ceilings even below these floors. `keep: "quality"` moves rate rungs first. The controller keeps its cap separate from your request. An `update()` while capped merges into your request, resolves with the capped settings, and fires `onSettings`. Joining consumers inherit a shared group's cap. Lifting a cap restores your value, or the profile default for a setting you omitted. A refused automatic update, such as `variant_limit`, leaves the handle ready, records the error, and retries after its cooldown.
+
+Call `session.topics.setAdaptation(false)` to restore page requests within one cooldown and stop automatic changes. Pass `adapt: false` on individual subscriptions to opt them out. The controller does not estimate a bandwidth budget, change transport congestion control, or diagnose browser decode pressure. It cannot guarantee that a link carries even the floors; measured limitations are recorded in [the adaptation benchmark](/docs/web/benchmarks/topic-adaptation.md).
+
+`handle.stats()` returns `{ deliveredHz, ageMs: { p50, p95 }, aborted, rung, adapted }` over the last two seconds. `ageMs` is age excess over the rolling baseline, not synchronized source-to-display latency. `aborted` is this viewer's congestion-abort delta in the window; `rung` is `{ name, index }` or `null` at the request. `rejected` records the most recent failed automatic update until one succeeds. Direct video adds `video: { lossFraction, freezeMs, bitrate, fps }`; `bitrate` is received bit/s. Direct RTP has no topic ingress timestamps, so its `ageMs` remains zero. `session.rttMs()` reports the lowest RTT of the last four matched pongs, or `null` before the first. Stats windows clear on hide, disconnect, and a change to the adaptation switch.
 
 ### Continuous controls
 
@@ -414,10 +442,13 @@ await video.update({ maxResolution: [1280, 720] });
 | `status()` / `onStatus(cb)` | `connecting`, `ready`, `interrupted`, `rejected` or `closed`, with a `TopicError`. Codes: `rtc_unavailable` (the source offers no video, the browser offers no compatible H.264, or the provider is at its peer or encoder limit), `rtc_failed` (ICE, the answer timeout, a failed connection; the message says which, `no_direct_path` when no candidate pair connects, also 15 s after the answer), `encoder_failed`. |
 | `mode()` | `rtc` once media plays on the track, `jpeg` on the fallback, `none` otherwise. |
 | `track()` / `receiver()` | The current `MediaStreamTrack` and its `RTCRtpReceiver` (for `jitterBufferTarget` and `getStats()`). |
-| `settings()` / `update(options)` | As on a subscription: `maxHz` and `maxResolution` (at most 1920×1080, 30 Hz). `profile` cannot change. Either setting moves the viewer to another encoder, so the handle offers again and `onTrack` fires with a new track. The JPEG fallback keeps the source and settings in force. |
+| `settings()` / `update(options)` | As on a subscription: `maxHz`, `maxResolution` (at most 1920×1080, 30 Hz), and `maxBitrate`. `profile` cannot change. A sole viewer's encoder reconfigures in place; shared variants re-offer. The JPEG fallback keeps the source and compatible settings in force. |
+| `onSettings(cb)` / `stats()` | Acknowledged settings changes and the two-second delivery window, including direct-video receiver counters. |
 | `close()` | Ends the peer and the subscription. |
 
-A peer that fails is offered again after 1 second, then after 2. The third failure in a row with no media played is final. Each `video()` handle has its own relay route and peer. Two handles on one camera at the same `maxHz` and `maxResolution` cost the provider one encode and two packetizations, and different settings cost one encode each, so share the track on the page instead.
+`maxBitrate` is the encoder target after normalization: a request for 10,000,000 bit/s at 1280×720 acknowledges 2,500,000. Other profiles reject this option. When only one subscription holds a video variant, and it is no longer the route's opening variant, changing bitrate, resolution or rate rebuilds its encoder at the next frame boundary. The next frame is an IDR with monotonic timestamps, the peer and track stay in place, and `onTrack` does not fire again. A variant shared with another current or pending viewer follows the existing move and re-offer path, including its media gap.
+
+A peer that fails is offered again after 1 second, then after 2. The third failure in a row with no media played is final. Each `video()` handle has its own relay route and peer. Two handles on one camera at the same rate, size and bitrate cost the provider one encode and two packetizations, and different settings cost one encode each, so share the track on the page instead.
 
 ## Publishing to the robot
 
@@ -469,6 +500,8 @@ try {
 | `subscribe(ch, cb)` | Registers a UI-tick callback and asks the relay for the channel in one step. Allowed before a robot or manifest exists. Once a manifest is adopted, a missing or non-rx channel raises an `unknown_channel` session error and stays desired for a later manifest. Returns an unsubscribe function. |
 | `publish(ch, value, { clientTs? })` | Publishes one JSON value on a `publish="shared"` tx channel. Resolves with `{ ch, relayTs, bridgeTs }` (seconds since the epoch) once the bridge published it. See [Publishing](#publishing). |
 | `close()` | Closes the transport, drops every subscription and rejects pending publishes. |
+| `rttMs()` | Lowest RTT in milliseconds among the last four matched pongs, or `null` before a measurement. Clears on reconnect. |
+| `topics.setAdaptation(enabled)` | Controls the topic adaptation controller; see [Adapting to a slow link](#adapting-to-a-slow-link) for options and `onSettings` / `stats`. |
 
 `SessionStatus` has `transport` (the phase below), `robots` (every robot on the relay, `{ id, name, model }`), `watchedRobot`, `manifest`, `manifestUnsupported` (the robot's manifest version is newer than the SDK), `epoch` (bumps whenever the manifest changes) and `lastError` (`{ code, message, ch? }` with code `invalid_manifest`, `unknown_channel`, `rtc_failed` or `relay_error`).
 
