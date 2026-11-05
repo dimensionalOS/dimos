@@ -25,13 +25,11 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
-    RoboPlanPointCloudSelfFilter,
-)
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.spec.utils import spec_structural_compliance
 
 
@@ -52,7 +50,7 @@ def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> 
     planner_map = topics[ManipulationModule, "voxel_map"]
 
     assert (
-        topics[RoboPlanPointCloudSelfFilter, "filtered_pointcloud"]
+        topics[UrdfManagerPointClearing, "filtered_pointcloud"]
         == topics[RayTracingVoxelMap, "lidar"]
     )
     assert topics[RayTracingVoxelMap, "global_map"] == topics[PointCloudBoxFilter, "cloud"]

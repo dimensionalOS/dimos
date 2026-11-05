@@ -22,7 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -32,12 +32,29 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
+# Least gap (metres) kept between the fingertips and what the object stands on,
+# and between the palm and the object's top.
+_CLEARANCE = 0.005
+
+
+class HeuristicGraspModuleConfig(ModuleConfig):
+    # Where the gripper's parts sit along its approach, measured from the tool tip,
+    # metres. Left unset, the tool tip itself goes to the object's mid-height.
+    # The closed finger pads' centre, behind the tool tip.
+    pad_behind_tcp: float = 0.0
+    # The farthest the fingertips reach past the tool tip while closing.
+    fingertip_reach: float | None = None
+    # The nearest part other than the fingers (the palm), behind the tool tip.
+    palm_behind_tcp: float | None = None
+
 
 class HeuristicGraspModule(Module, GraspGenSpec):
     """Generate one top-down parallel-jaw grasp from a gravity-aligned point cloud.
 
     The input frame's XY plane must be horizontal and its -Z axis must point down.
     """
+
+    config: HeuristicGraspModuleConfig
 
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
@@ -55,13 +72,32 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         center_xy = np.median(xy, axis=0)
         low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
         pose = Pose(
-            Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0)),
+            Vector3(float(center_xy[0]), float(center_xy[1]), self._tip_height(low_z, high_z)),
             Quaternion.from_euler(Vector3(-math.pi, 0.0, self._narrow_axis_yaw(xy))),
         )
         return GraspCandidateArray(
             Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
             [GraspCandidate(pose, score=1.0)],
         )
+
+    def _tip_height(self, low_z: float, high_z: float) -> float:
+        """Tool tip height (metres) that puts the closed pads at the object's mid-height.
+
+        Raised if needed so the fingertips stay above the object's low end (what it
+        stands on) and the palm above its high end.
+
+        Args:
+            low_z: Height of the object's low end, metres.
+            high_z: Height of the object's high end, metres.
+        """
+        config = self.config
+        # Straight down: the pads and palm sit above the tool tip, the fingertips below.
+        heights = [float(low_z + high_z) / 2.0 - config.pad_behind_tcp]
+        if config.fingertip_reach is not None:
+            heights.append(float(low_z) + _CLEARANCE + config.fingertip_reach)
+        if config.palm_behind_tcp is not None:
+            heights.append(float(high_z) + _CLEARANCE - config.palm_behind_tcp)
+        return max(heights)
 
     @staticmethod
     def _narrow_axis_yaw(xy: NDArray[np.float32]) -> float:

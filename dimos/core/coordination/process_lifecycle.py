@@ -133,13 +133,18 @@ def spawn_watchdog(
     return proc
 
 
+def is_pid_alive(pid: int) -> bool:
+    """Check for a running process without reaping another owner's child."""
+    try:
+        # Signal 0 also succeeds for zombies. They have exited, even if their
+        # parent has not collected the status yet.
+        return psutil.Process(pid).status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return True
+
+
 def wait_for_pid_exit(pid: int, poll_interval: float = 0.5) -> None:
-    while True:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return
-        except PermissionError:
-            # Process exists under a different UID — still alive from our POV.
-            pass
+    while is_pid_alive(pid):
         time.sleep(poll_interval)

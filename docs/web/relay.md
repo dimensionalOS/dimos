@@ -86,9 +86,9 @@ Then open `http://localhost:7780/` for the cockpit. Things to know:
 - Restart the relay whenever you like. The bridge and the page reconnect on their own.
 - A bridge killed without a clean close keeps its robot id registered until the relay's 30 s idle timeout. Restarting it inside that window waits the conflict out.
 - `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
-- A second robot on the same relay needs its own `--relaybridgemodule.robot-id`. A synthetic one for testing: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
+- A second robot on the same relay needs its own `--robot-id`. A synthetic one for testing: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
 - With several robots on the relay the cockpit lists them. Pick one to watch it, and `switch robot` in the header reopens the list.
-- Another machine needs TLS and the auth file (below), and `--relaybridgemodule.relay-ca` on the robot for a private CA.
+- Another machine needs TLS and the auth file (below), and `--relay-ca` on the robot for a private CA.
 
 ## HTTP routes
 
@@ -105,7 +105,7 @@ Served JavaScript modules (`.js`, `.mjs`) get wildcard CORS as well, so a page o
 
 `--cert fullchain.pem --key privkey.pem` turns on real TLS. HTTPS (TCP) and QUIC (UDP) share `--port`, clients verify the certificate normally, `/api/info` carries no hash, and the WebTransport address is derived from the host the client dialed. There is no reverse proxy option: an HTTP proxy cannot carry QUIC. The files are read at startup, so a renewal means a restart.
 
-A robot that must trust a private CA (mkcert on a LAN) passes it with `--relaybridgemodule.relay-ca`. Browsers are pickier: Firefox needs a preference flipped to run QUIC through a private root, and Chromium refuses it by default (its `--webtransport-developer-mode` switch turns the check off). The [hosting guide](/docs/web/relay_hosting.md) has both.
+A robot that must trust a private CA (mkcert on a LAN) passes it with `--relay-ca`. Browsers are pickier: Firefox needs a preference flipped to run QUIC through a private root, and Chromium refuses it by default (its `--webtransport-developer-mode` switch turns the check off). The [hosting guide](/docs/web/relay_hosting.md) has both.
 
 ## Auth file
 
@@ -118,7 +118,7 @@ A robot that must trust a private CA (mkcert on a LAN) passes it with `--relaybr
 }
 ```
 
-A robot sends its key when it connects (`RELAYBRIDGEMODULE__RELAY_KEY` in its environment or `.env`, bound to its `--relaybridgemodule.robot-id`). A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, so hand tokens out like passwords.
+A robot sends its key when it connects (`--relay-key`, bound to its `--robot-id`). The [Bridge](/docs/web/bridge.md#robot-side-options) page has the environment form. A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, so hand tokens out like passwords.
 
 A wrong or missing secret fails with `auth_failed`, and that is terminal: neither client retries. The relay compares secrets in constant time, never logs one, and reports a malformed file by entry name. Edits to the file need a restart. With auth on, `/api/stats` wants the viewer token as a bearer and the log names viewers (`viewer 1 authenticated as paul`).
 

@@ -51,11 +51,11 @@ def make_dashboard(
     [
         ("web", {}, True, 200),
         ("both", {}, True, 200),
-        ("native", {}, False, 307),
-        ("none", {}, False, 307),
-        (None, {}, False, 307),
+        ("native", {}, False, 404),
+        ("none", {}, False, 404),
+        (None, {}, False, 404),
         ("web", {"open_browser": False}, False, 200),
-        ("both", {"show_rerun_dashboard": False}, True, 307),
+        ("both", {"show_rerun_dashboard": False}, True, 404),
         (None, {"open_browser": True, "show_rerun_dashboard": True}, True, 200),
     ],
 )

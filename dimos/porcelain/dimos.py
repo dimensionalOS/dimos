@@ -57,6 +57,10 @@ def _load_opencv_first() -> None:
         pass
 
 
+class NoMatchingModuleError(LookupError):
+    """No deployed module implements the requested Spec."""
+
+
 class Dimos:
     def __init__(self, **config_overrides: Any) -> None:
         _load_opencv_first()
@@ -73,7 +77,7 @@ class Dimos:
         Args:
             target: One of:
                 - A string name from the blueprint/module registry
-                  (e.g. `"unitree-go2-basic"` or `"camera-module"`).
+                  (e.g. `"unitree-go2-basic"` or `"webcam-module"`).
                 - A `Blueprint` object.
                 - A `Module` class (calls `.blueprint()` automatically).
 
@@ -82,7 +86,7 @@ class Dimos:
 
         On a connected Dimos, `target` is sent to the daemon: strings and
         registered module classes take a name-based fast path, while Module
-        classes and Blueprint objects are pickled and unpickled on the daemon.
+        classes and Blueprint objects are encoded and rebuilt on the daemon.
         """
         with self._lock:
             if self._stopped:
@@ -210,7 +214,8 @@ class Dimos:
                 detail = f" for instance {instance_name!r}" if instance_name is not None else ""
                 if unavailable:
                     detail += f"; cannot inspect module classes for {sorted(unavailable)}"
-                raise LookupError(
+                error_type = LookupError if unavailable else NoMatchingModuleError
+                raise error_type(
                     f"No deployed module matches {spec_class.__name__} RPC signatures{detail}"
                 )
             if len(matches) != 1:

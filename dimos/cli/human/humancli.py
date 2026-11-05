@@ -43,6 +43,7 @@ from textual.strip import Strip
 from textual.widgets import Input, RichLog, Static
 
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.cli import theme
 from dimos.core.transport_factory import apply_transport_arg, make_transport
 from dimos.utils.generic import truncate_display_string
@@ -424,6 +425,11 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                 self._reply_target = name
                 if text:
                     self.call_from_thread(self._tool_panels.update, name, text, "tool", timestamp)
+                return
+            # A tool's artefact (an image fed to the model as a user turn) is a
+            # tool result, not typed input.
+            if TOOL_ORIGIN_KEY in msg.additional_kwargs:
+                self.call_from_thread(self._write_tool_result, timestamp, content, None)
                 return
             self._reply_target = None
             self.call_from_thread(self._add_message, timestamp, "human", content, theme.HUMAN)
