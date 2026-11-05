@@ -53,7 +53,6 @@ sim2_basic = autoconnect(
     SimModule.blueprint(
         scene=SCENE,
         backend=MujocoBackend,
-        motion_frames=("imu",),
         joint_ids=("tool_joint",),
     ),
     SimImuModule.blueprint(sensor=ImuConfig("imu", orientation="ideal")),

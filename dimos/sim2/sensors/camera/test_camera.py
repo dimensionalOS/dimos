@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.control_msgs import JointTarget
+from dimos_lcm.control_msgs import JointCommand
 import numpy as np
 import pytest
 
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
+
+# Requires an offscreen OpenGL context on the graphics-capable runner.
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture
@@ -36,7 +39,7 @@ def test_camera_renders_recorded_body_poses_without_physics_state(backend, poses
     assert rgb.std() > 5
     assert depth.shape == (240, 320) and np.isfinite(depth).all()
     assert renderer.geometry.model.nq == renderer.geometry.model.nv == 0
-    backend.apply_action([JointTarget(joint_id="left/slide_x", position=0.2, kp=200, kd=20)], [])
+    backend.apply_action([JointCommand(joint_id="left/slide_x", position=0.2, kp=200, kd=20)], [])
     for _ in range(300):
         backend.step()
     moved = poses()

@@ -1,4 +1,4 @@
-# sim2: complete physical state and independent sensors
+# sim2 Option G: body state, actions and independent sensors
 
 SimModule owns time, stepping, reset and command validity. PhysicsBackend implements
 engine operations. There is no separate Runtime/Simulation execution layer.
@@ -17,7 +17,7 @@ ActionCommand --> SimModule --> observations: WorldState --> sensor modules
 sim2/
   module.py                  execution, complete samples, commands and RPCs
   description.py             model instances, placement, gravity and drives
-  extensions.py              CBOR property/command envelope validation
+  cbor.py                    CBOR observation/command envelope validation
   physics/interface.py       PhysicsBackend protocol
   physics/mujoco.py          native dynamics and physical queries
   geometry/mujoco.py          shared model compilation
@@ -38,33 +38,39 @@ The generated `dimos_lcm.sim_msgs.WorldState` is one complete acquisition:
 ```text
 header: SampleHeader
 model_revision: string
-body_poses: BodyPose[]       # all described rigid bodies, including stationary ones
-body_motion: BodyMotion[]   # configured frame origins, world-axis motion
-joint_truth: JointTruth     # configured scalar joints; empty selection exports all
-extensions: CborExtension[] # all currently reported optional properties
+bodies: BodyState[]              # every described rigid body/frame
+joint_truth: JointState          # configured scalar joints; empty selection exports all
+cbor_observations: CborObservation[] # all currently reported optional properties
 ```
 
-`BodyMotion` and `JointTruth` are nested records, not independently published
-messages. Their values share the outer header. A snapshot replaces its predecessor;
+`BodyState` and the existing `sensor_msgs.JointState` are nested in this
+message. `joint_truth.header` equals the outer header; its effort is actuator-applied
+joint torque/force, excluding gravity and contact contributions. Each BodyState contains `body_id`, `pose: Pose`, `twist: Twist` and
+`acceleration: Accel`. Pose maps body to world. Linear/angular velocity and
+linear/angular acceleration are at the body-frame origin, expressed in world axes. There is one record
+per body, including fixed sensor mounts. No overlapping pose/motion lists. Their values share the outer header. A snapshot replaces its predecessor;
 omission never means to retain an old extension value. The sample is physical
 truth, not a sensor measurement or native solver checkpoint. Every sensor consumes
 `observations: In[WorldState]` and produces its ordinary measurement message.
 
-`CborExtension` contains `entity_id: string`, `key: string`, `schema: string`, and
-`value: byte[]`. IDs are resolved body/joint names or `world`. The schema identifies
-a versioned payload contract. Each value contains one CBOR item; `(entity_id,key)`
+`CborObservation` contains `entity_id: string`, `key: string`, and
+`value: byte[]`. IDs are resolved body/joint names or `world`. The key identifies
+the property and its agreed payload format. Each value contains one CBOR item; `(entity_id,key)`
 is unique. Unknown optional extensions may be ignored. Required consumers must
-check their schema. Typed physics and control fields remain outside CBOR.
+check their key, payload and availability. Typed physics and control fields remain outside CBOR.
 
 See the companion dimos-lcm draft for exact array-count fields and generated
-bindings. Sensor/TF SampleHeader encoding is unchanged by Option F.
+bindings. Sensor/TF SampleHeader encoding is unchanged by Option G.
 
 ## Calls and ports
 
 `config_receive()` resolves SceneConfig against models delivered by UrdfManager's
 `@shared_config(SharedConfigModule)` provider from #4937, before build/start. Models
 are materialized once; simulation and geometry consumers use the same descriptions.
-Sensor settings stay in their sensor modules.
+Sensor settings stay in their sensor modules. SimModule.gravity() contributes
+SceneConfig.gravity_world using the same shared-config mechanism; the IMU receives
+exactly one simulator's gravity before startup. Gravity is fixed for the run and
+is absent from WorldState. The IMU does not default to Earth gravity.
 
 `start()` opens the physics owner thread and one publisher thread. The owner calls
 `_apply_commands()`, `_sample_truth()` and `_step()`; `_inspect()` constructs a
@@ -73,11 +79,10 @@ complete snapshot between physics steps. Only the owner accesses native dynamics
 ```python
 # PhysicsBackend; all reads return detached records owned by the caller.
 load(scene: SceneConfig, dt_ns: int) -> None
-read_body_poses() -> list[BodyPose]
-read_motion(frame_id: str) -> BodyMotion
-read_joints(joint_ids: tuple[str, ...]) -> JointTruth
-read_extensions() -> list[CborExtension]
-apply_action(joint_targets: list[JointTarget], cbor_commands: list[CborCommand]) -> None
+read_bodies() -> list[BodyState]
+read_joints(joint_ids: tuple[str, ...]) -> JointState
+read_cbor_observations() -> list[CborObservation]
+apply_action(joint_commands: list[JointCommand], cbor_commands: list[CborCommand]) -> None
 step() -> None
 hold(joint_ids: tuple[str, ...]) -> None
 reset() -> None
@@ -85,8 +90,12 @@ place(body_id: str, pose: tuple[float, ...]) -> None
 close() -> None
 ```
 
-MuJoCo exports no optional extension properties by default. A backend can return
-current properties from `read_extensions()` without changing the module or sensors.
+MuJoCo's read_bodies() computes shared constraint-aware accelerations once per
+acquisition, then exports pose, velocity and acceleration for every body. This
+is a denser motion export than F's selected-frame list; no speedup is claimed.
+
+MuJoCo exports no optional observation properties by default. A backend can return
+current properties from `read_cbor_observations()` without changing the module or sensors.
 The deployed extension test exercises this path over real DimOS transport.
 
 Input: `actions: ActionCommand`.
@@ -98,7 +107,7 @@ on the owner thread between steps. No manual-step API or standalone executor.
 ## Actions
 
 `ActionCommand` contains one `SampleHeader`, `based_on_time_ns`, `apply_at_ns`,
-`valid_until_ns`, `joint_targets: JointTarget[]` and `cbor_commands: CborCommand[]`
+`valid_until_ns`, `joint_commands: JointCommand[]` and `cbor_commands: CborCommand[]`
 (with matching array counts). One or both arrays must be nonempty. Each joint
 target carries `joint_id`, `position`, `velocity`, `kp`, `kd` and `feedforward`.
 
@@ -108,9 +117,9 @@ before mutation; unsupported operations reject the entire action. Accepted sourc
 sequence pairs are not executed twice. Joint targets persist until expiry, then
 hold the current position. A CBOR-only operation never releases a motor boundary.
 
-`CborCommand` contains `entity_id`, `key`, `schema`, `value_length`, `value`.
-IDs and byte rules match CborExtension, but commands request operations: unknown
-keys/schemas **reject**, rather than being ignored. The schema specifies effects
+`CborCommand` contains `entity_id`, `key`, `value_length`, `value`.
+IDs and byte rules match CborObservation, but commands request operations: unknown
+keys and invalid payloads **reject**, rather than being ignored. The operation specifies effects
 and lifetime; execution is once at acceptance. Expiry does not undo CBOR effects.
 MuJoCo implements joint targets and rejects all CBOR commands. A test backend
 extends real MuJoCo with a small counter operation to verify transport, atomic
@@ -153,12 +162,17 @@ pytest dimos/sim2 -m 'not native_e2e' --import-mode=importlib -o addopts='' -q
 pytest dimos/sim2/test_module.py dimos/sim2/examples --import-mode=importlib -o addopts='' -q
 ```
 
-The final integration slice provides [G1 GR00T beside a desk](https://github.com/dimensionalOS/dimos/blob/pim/feat/sim2-e-g1/docs/development/sim2/g1.md), with camera,
+The final integration slice provides [G1 GR00T beside a desk](/docs/platforms/humanoid/g1/index.md), with camera,
 lidar, IMU and encoders. MuJoCo is the validated backend. Native renderer/raycaster
 adapters are selectable; another physics backend and cross-renderer fidelity have
 not been validated. The core imports no robot-specific policy or coordinator code.
 
 ## Review stack
+
+The stack implements Option G: one `BodyState` per body, `JointCommand` records,
+and CBOR commands/observations without a schema field. The LCM dependency is pinned
+to the matching draft commit until a package release is available. JointCommand
+uses the six-field PD/feedforward definition, not the upstream ROS wire layout.
 
 [The nine draft PRs](https://github.com/dimensionalOS/dimos/stack/5042) build on
 [shared configuration #4937](https://github.com/dimensionalOS/dimos/pull/4937).
@@ -178,5 +192,5 @@ owns the schemas and generated codecs.
 | [#5041](https://github.com/dimensionalOS/dimos/pull/5041) | G1 GR00T integration |
 
 Each PR targets the preceding branch so its diff shows only its capability.
-The final tree implements Option F: complete observations and one action input. The previous broad drafts #4982/#4983 are
+The stack publishes complete observations and accepts one action input. The previous broad drafts #4982/#4983 are
 closed with their review history preserved.

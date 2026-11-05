@@ -141,8 +141,8 @@ class UrdfManager(Module):
         period = round(1e9 / self.config.joint_tf_hz)
         self._next_sim_tf_ns = (h.time_ns // period + 1) * period
         poses = {}
-        for body in sample.body_poses:
-            p, q = body.pose_world.position, body.pose_world.orientation
+        for body in sample.bodies:
+            p, q = body.pose.position, body.pose.orientation
             matrix = np.eye(4)
             matrix[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
             matrix[:3, 3] = [p.x, p.y, p.z]

@@ -26,8 +26,8 @@ def pose_array(pose: Pose) -> NDArray[np.float64]:
 
 
 def poses_by_id(sample: WorldState) -> dict[str, Pose]:
-    result = {p.body_id: p.pose_world for p in sample.body_poses}
-    if len(result) != len(sample.body_poses) or sample.body_poses_length != len(result):
+    result = {p.body_id: p.pose for p in sample.bodies}
+    if len(result) != len(sample.bodies) or sample.bodies_length != len(result):
         raise ValueError("complete body poses require unique IDs and matching count")
     for pose in result.values():
         values = pose_array(pose)

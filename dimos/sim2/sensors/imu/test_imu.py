@@ -13,17 +13,20 @@
 # limitations under the License.
 
 from dimos_lcm.common_msgs import SampleHeader
+from dimos_lcm.geometry_msgs import Quaternion
 import pytest
+from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
 
 
 @pytest.fixture
-def imu():
+def imu(world):
     module = SimImuModule(
         sensor=ImuConfig("left/imu", gyro_bias=(0.1, 0.2, 0.3), accel_std=0.02, seed=4)
     )
+    module.config_receive((("sim", {"sim_gravity_world": world.gravity_world}),))
     yield module
     module.dispose()
 
@@ -47,22 +50,45 @@ def test_noise_is_acquired_once_and_metadata_survives_codec(poses, imu):
 
 def test_wrong_frame_cannot_feed_imu(poses, imu):
     truth = poses()
-    truth.body_motion[0].frame_id = "right/imu"
-    with pytest.raises(ValueError, match="lacks configured IMU motion"):
+    next(b for b in truth.bodies if b.body_id == "left/imu").body_id = "other/imu"
+    with pytest.raises(ValueError, match="lacks configured IMU body"):
         imu.measure(truth)
 
 
 @pytest.fixture
-def ideal_imu():
+def ideal_imu(world):
     module = SimImuModule(sensor=ImuConfig(frame_id="left/imu", orientation="ideal"))
+    module.config_receive((("sim", {"sim_gravity_world": world.gravity_world}),))
     yield module
     module.dispose()
 
 
 def test_stationary_motion_is_kinematic_and_imu_adds_specific_force(backend, poses, ideal_imu):
-    motion = backend.read_motion("left/imu")
-    assert motion.linear_acceleration_world == pytest.approx([0, 0, 0], abs=1e-9)
+    body = next(b for b in backend.read_bodies() if b.body_id == "left/imu")
+    a = body.acceleration.linear
+    assert [a.x, a.y, a.z] == pytest.approx([0, 0, 0], abs=1e-9)
     sample = ideal_imu.measure(poses())
     assert sample is not None
     assert sample.linear_acceleration.z == pytest.approx(9.81)
     assert backend.model.nsensor == 0
+
+
+@pytest.mark.parametrize("gravity", [(0.0, 0.0, -1.62), (0.0, 0.0, 0.0)])
+def test_configured_gravity_is_rotated_into_sensor_axes(poses, ideal_imu, gravity):
+    ideal_imu.config_receive((("sim", {"sim_gravity_world": gravity}),))
+    truth = poses()
+    body = next(b for b in truth.bodies if b.body_id == "left/imu")
+    body.pose.orientation = Quaternion(*Rotation.from_euler("y", 90, degrees=True).as_quat())
+    measured = ideal_imu.measure(truth)
+    assert measured is not None
+    a = measured.linear_acceleration
+    assert [a.x, a.y, a.z] == pytest.approx([gravity[2], 0, 0], abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    "senders",
+    [(), (("one", {"sim_gravity_world": (0, 0, -1)}), ("two", {"sim_gravity_world": (0, 0, -2)}))],
+)
+def test_missing_or_ambiguous_gravity_fails_configuration(ideal_imu, senders):
+    with pytest.raises(ValueError, match="exactly one simulation"):
+        ideal_imu.config_receive(senders)
