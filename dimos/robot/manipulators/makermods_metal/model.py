@@ -18,7 +18,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.makermods_metal.config import (
     METAL_ARM_JOINTS,
-    METAL_HARDWARE_ID,
     METAL_MODEL,
 )
 
@@ -39,6 +38,5 @@ def make_metal_model_config() -> RobotModelConfig:
                 tip_link="gripper_base",
             )
         ],
-        gripper_hardware_id=METAL_HARDWARE_ID,
         auto_convert_meshes=True,
     )

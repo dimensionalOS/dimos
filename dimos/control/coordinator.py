@@ -383,7 +383,9 @@ class ControlCoordinator(Module):
         """Create a control task from config via the task registry."""
         from dimos.control.tasks.registry import control_task_registry
 
-        return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+        return control_task_registry.create(
+            cfg.type, cfg, hardware=self._hardware, model=self.config.model
+        )
 
     def _frame_pose_port(self) -> Out[TFMessage]:
         port = getattr(self, "tf", None)
