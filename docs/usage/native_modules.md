@@ -226,7 +226,7 @@ The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects ov
 
 `run_with_transport` reads `DIMOS_TRANSPORT`, which the coordinator sets from the global `transport` setting, and opens LCM or zenoh. The zenoh side is built on [zenoh-c](https://github.com/eclipse-zenoh/zenoh-c) and [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp), reads the same `session` and `qos` blocks the Rust SDK reads, and waits for the dialed endpoints to link before the module starts, so a C++ module behaves like a Rust one on either transport.
 
-A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp`](/dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp) is a real driver example.
+A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/).
 
 ## Examples
 
@@ -296,9 +296,8 @@ external binary, pass absolute resource paths or use a launcher script if the
 program needs a different working directory. Passing `cwd` raises a migration error.
 Data downloads and IsolatedPython behavior are unchanged.
 
-Nix-based modules still require Nix and their normal build dependencies.
-FastLIO2 requires Nix 2.26 or newer for relative flake inputs. This change does
-not establish additional platform or hardware support.
+Nix-based modules still require Nix and their normal build dependencies. This
+change does not establish additional platform or hardware support.
 
 ## Auto Building
 

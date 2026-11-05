@@ -109,7 +109,7 @@ assert obj._disposables.is_disposed
 ## Print statements
 
 - **Unit tests**: no prints. Use assertions.
-- **`tool_*.py` files** (integration/exploration tools): prints are fine for progress and inspection output.
+- **Standalone demos and developer CLIs**: prints are fine for progress and inspection output.
 
 ## Avoid unnecessary sleeps
 
