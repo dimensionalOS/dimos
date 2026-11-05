@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.core import rpc
@@ -53,8 +54,13 @@ class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
         self, grid: VoxelGrid, last_obs: Observation[PointCloud2], count: int
     ) -> Observation[PointCloud2]:
         # pose=None: the global map is in world frame, per-observation pose is meaningless
+        cloud = grid.get_global_pointcloud2()
+        if last_obs.data.sample_header is not None:
+            header = copy(last_obs.data.sample_header)
+            header.source_id = "global_map"
+            cloud.with_sample_header(header)
         return last_obs.derive(
-            data=grid.get_global_pointcloud2(),
+            data=cloud,
             pose=None,
             tags={**last_obs.tags, "frame_count": count},
         )
@@ -66,8 +72,18 @@ class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
         try:
             last_obs: Observation[PointCloud2] | None = None
             count = 0
+            clock_epoch: tuple[str, int] | None = None
 
             for obs in upstream:
+                header = obs.data.sample_header
+                identity = (header.clock_id, header.epoch) if header is not None else ("unix", 0)
+                if clock_epoch is not None and identity != clock_epoch:
+                    if identity[0] == clock_epoch[0] and identity[1] < clock_epoch[1]:
+                        continue
+                    grid.dispose()
+                    grid = VoxelGrid(**self._grid_kwargs)
+                    count = 0
+                clock_epoch = identity
                 grid.add_frame(obs.data)
                 last_obs = obs
                 count += 1
@@ -100,7 +116,8 @@ class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
 
     def pipeline(self, stream: Stream[PointCloud2]) -> Stream[PointCloud2]:
         cfg = self.config.model_dump(
-            include=set(VoxelGridMapperConfig.model_fields) - set(ModuleConfig.model_fields)
+            include=(set(VoxelGridMapperConfig.model_fields) - set(ModuleConfig.model_fields))
+            | {"frame_id"}
         )
         return stream.transform(VoxelMapTransformer(**cfg))
 

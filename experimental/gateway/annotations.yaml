@@ -251,7 +251,11 @@ robots:
           recommended_config: []
         unitree-g1-sim2:
           title: G1 GR00T in sim2
-          description: A G1 beside a desk with independent camera, lidar, IMU and joint encoders.
+          description: A G1 beside a desk with independent sensors and a truth-registered global map.
+          recommended_config: []
+        unitree-g1-sim2-pointlio:
+          title: G1 sim2 with Point-LIO
+          description: The same G1 with a global map estimated from raw Mid360 lidar and IMU.
           recommended_config: []
         unitree-g1-sim:
           title: G1 perception in simulation
