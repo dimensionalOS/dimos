@@ -131,6 +131,12 @@ class PiAdapterConfig(ModelAgentConfig):
         "Answer the question from the files and tools listed below and nothing else."
     )
 
+    # Replaces system_prompt when the case drives a live robot.
+    robot_prompt: str = (
+        "Carry out the task on the live robot, using the files and tools listed below and "
+        "nothing else."
+    )
+
     # Extra guidance appended after system_prompt.
     instructions: str = ""
 
@@ -252,7 +258,13 @@ class PiAdapter(EvalSubject):
             files = dict(env.artifacts)
             if env.streams:
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
-        parts = [self.config.system_prompt, self.config.instructions]
+            if env.python_guide is not None:
+                guide = run_dir / "DIMOS.md"
+                shutil.copyfile(env.python_guide, guide)
+                files["robot"] = guide
+        live = bool(env.mcp_url or env.python_guide or env.raw_endpoint)
+        parts = [self.config.robot_prompt if live else self.config.system_prompt]
+        parts.append(self.config.instructions)
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
         if self.config.no_dimos:
             parts.append(NO_DIMOS_GUIDANCE)
@@ -264,7 +276,14 @@ class PiAdapter(EvalSubject):
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
-        if env.mcp_url and not self.config.no_dimos:
+        if env.python_guide is not None and not self.config.no_dimos:
+            if self.config.builtin_guidance:
+                parts.append(
+                    "dimOS is already running and drives the robot. Control it from Python "
+                    "scripts as DIMOS.md describes, connecting with Dimos.connect(); do not "
+                    "start another runtime."
+                )
+        elif env.mcp_url and not self.config.no_dimos:
             if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"

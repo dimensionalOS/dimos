@@ -143,10 +143,16 @@ class DimosAgentAdapter(PiAdapter):
 
     def _prepare_case(self, env: RunningEnvironment, run_dir: Path) -> str:
         # The agent reaches the robot through its own tools and prompt, not an MCP tool listing.
-        return super()._prepare_case(replace(env, mcp_url=""), run_dir)
+        prompt = super()._prepare_case(replace(env, mcp_url=""), run_dir)
+        if env.mcp_url and env.python_guide is None:
+            # Without the listing the case looks robot-free; it still drives a live robot.
+            prompt = prompt.replace(self.config.system_prompt, self.config.robot_prompt, 1)
+            (run_dir / "system-prompt.txt").write_text(prompt)
+        return prompt
 
     def _configure(self, env: RunningEnvironment, paths: RunPaths, proxy_url: str) -> None:
-        # Without a robot, a port nothing serves keeps the gateway off any other DimOS on this host.
+        # Without the case's McpServer, a port nothing serves keeps the gateway off any other
+        # DimOS on this host; on a robot the agent loads its own McpServer there.
         mcp = urlsplit(env.mcp_url or f"http://127.0.0.1:{_unserved_port()}/mcp")
         self._mcp_env = {"MCPSERVER__HOST": str(mcp.hostname), "MCPSERVER__PORT": str(mcp.port)}
         provider: dict[str, JsonValue] = {"baseUrl": proxy_url, "apiKey": "$DIMOS_EVAL_API_KEY"}
