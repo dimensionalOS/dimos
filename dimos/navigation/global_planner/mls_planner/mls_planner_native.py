@@ -112,6 +112,8 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     seed_map: In[PointCloud2]
     seed_bounds: In[PoseStamped]
     goal: In[PoseStamped]
+    # A route to drive through in one go, under its header stamp as the goal id.
+    waypoints: In[Path]
     tf: In[TFMessage]
 
     path: Out[Path]

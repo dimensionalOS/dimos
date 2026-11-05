@@ -259,6 +259,10 @@ pub struct MlsPlanner {
     #[input(decode = PoseStamped::decode, handler = on_goal)]
     goal: Input<PoseStamped>,
 
+    // A route of waypoints to drive through in one go, under the stamp as its goal id.
+    #[input(decode = Path::decode, handler = on_waypoints)]
+    waypoints: Input<Path>,
+
     #[tf]
     tf: Tf,
 
@@ -425,35 +429,48 @@ impl MlsPlanner {
         self.wake.notify_one();
     }
 
-    /// Set or cancel the active goal, then wake the worker. A goal this
-    /// displaces is reported preempted under its own id.
+    /// Set the active goal as a route of one, or cancel it on a non-finite position.
     async fn on_goal(&mut self, msg: PoseStamped) {
-        let yaw = match goal_yaw(&msg.pose.orientation) {
-            Ok(yaw) => yaw,
+        let cancel = goal_position(&msg.pose.position).is_none();
+        if cancel && goal_yaw(&msg.pose.orientation).is_ok() {
+            if let Some(held) = self.set_active_goal(None) {
+                self.preempt(held.id, PREEMPT_CANCELED).await;
+            }
+            self.wake_replan();
+            return;
+        }
+        let stamp = msg.header.stamp.clone();
+        self.set_route(stamp, &[msg]).await;
+    }
+
+    async fn on_waypoints(&mut self, msg: Path) {
+        self.set_route(msg.header.stamp, &msg.poses).await;
+    }
+
+    /// Make the poses the active route under the stamp as its id, then wake the
+    /// worker. A goal this displaces is reported preempted under its own id.
+    async fn set_route(&mut self, stamp: Time, poses: &[PoseStamped]) {
+        let (waypoints, yaw) = match route_of(poses) {
+            Ok(route) => route,
             Err(why) => {
                 warn!(why, "Ignored a goal");
                 return;
             }
         };
-        match goal_position(&msg.pose.position) {
-            Some(position) => {
-                let id = self.next_goal_id(&msg.header.stamp);
-                let held = self.held_goal_id();
-                // A goal sent again keeps its id, so it is not preempted.
-                if let Some(held) = held.filter(|held| !held.same_stamp(&id)) {
-                    self.preempt(held, PREEMPT_REPLACED).await;
-                }
-                self.status()
-                    .report(Report::new(id, GoalStatus::PENDING, "planning"))
-                    .await;
-                self.set_active_goal(Some(Route::new(id, vec![position], yaw)));
-            }
-            None => {
-                if let Some(held) = self.set_active_goal(None) {
-                    self.preempt(held.id, PREEMPT_CANCELED).await;
-                }
-            }
+        let id = self.next_goal_id(&stamp);
+        let held = self.held_goal_id();
+        // A goal sent again keeps its id, so it is not preempted.
+        if let Some(held) = held.filter(|held| !held.same_stamp(&id)) {
+            self.preempt(held, PREEMPT_REPLACED).await;
         }
+        self.status()
+            .report(Report::new(id, GoalStatus::PENDING, "planning"))
+            .await;
+        self.set_active_goal(Some(Route::new(id, waypoints, yaw)));
+        self.wake_replan();
+    }
+
+    fn wake_replan(&self) {
         self.goal_changed.store(true, Ordering::SeqCst);
         self.wake.notify_one();
     }
@@ -500,6 +517,17 @@ fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> b
 fn goal_position(p: &Point) -> Option<Xyz> {
     let goal = (p.x as f32, p.y as f32, p.z as f32);
     (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
+}
+
+/// The waypoints the poses give, with the last one's heading. Only the last
+/// pose's orientation counts.
+fn route_of(poses: &[PoseStamped]) -> Result<(Vec<Xyz>, Option<f32>), &'static str> {
+    let last = poses.last().ok_or("no waypoints")?;
+    let waypoints = poses
+        .iter()
+        .map(|p| goal_position(&p.pose.position).ok_or("non-finite waypoint"))
+        .collect::<Result<Vec<Xyz>, _>>()?;
+    Ok((waypoints, goal_yaw(&last.pose.orientation)?))
 }
 
 /// The goal heading: None for the all-zero quaternion, else its yaw. A quaternion
@@ -1989,6 +2017,39 @@ mod tests {
         let next = goal_at(2, (5.1, 0.0, 0.0));
         assert!(progress.arrive(next.id));
         assert_eq!(progress.followed, None);
+    }
+
+    #[test]
+    fn a_route_is_its_finite_waypoints_with_the_last_heading_or_rejected() {
+        let at = |x: f64, orientation: Quaternion| PoseStamped {
+            pose: Pose {
+                position: point(x, 0.0, 0.0),
+                orientation,
+            },
+            ..Default::default()
+        };
+        let none = || Quaternion::default();
+        let half = std::f64::consts::FRAC_PI_4;
+        let left = || Quaternion {
+            z: half.sin(),
+            w: half.cos(),
+            ..Default::default()
+        };
+        let (waypoints, yaw) = route_of(&[at(1.0, left()), at(2.0, left())]).unwrap();
+        assert_eq!(waypoints, vec![(1.0, 0.0, 0.0), (2.0, 0.0, 0.0)]);
+        assert!((yaw.unwrap() - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert_eq!(
+            route_of(&[at(1.0, left()), at(2.0, none())]).unwrap().1,
+            None
+        );
+        assert!(route_of(&[]).is_err());
+        assert!(route_of(&[at(f64::NAN, none()), at(2.0, none())]).is_err());
+        let bad = Quaternion {
+            z: 0.5,
+            w: 0.5,
+            ..Default::default()
+        };
+        assert!(route_of(&[at(1.0, none()), at(2.0, bad)]).is_err());
     }
 
     #[test]
