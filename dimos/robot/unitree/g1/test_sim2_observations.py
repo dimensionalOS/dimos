@@ -32,13 +32,12 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import (
-    JOINTS,
     LIDAR,
     MODELS,
     SCENE,
     unitree_g1_sim2,
 )
-from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
+from dimos.robot.unitree.g1.sim2_policy import JOINTS, G1PolicyModule
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend

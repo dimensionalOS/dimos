@@ -144,7 +144,7 @@ class LocalModel(Resource, Configurable):
     def _ensure_cuda_initialized(self) -> None:
         """Initialize CUDA context to prevent cuBLAS allocation failures.
 
-        Some models (CLIP, TorchReID) fail if they are the first to use CUDA.
+        Some models (like CLIP) fail if they are the first to use CUDA.
         Call this before model loading if needed.
         """
         if self.config.device.startswith("cuda") and torch.cuda.is_available():

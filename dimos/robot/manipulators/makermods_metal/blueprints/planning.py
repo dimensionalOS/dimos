@@ -22,6 +22,7 @@ from dimos.robot.manipulators.makermods_metal.model import make_metal_model_conf
 makermods_metal_planner_coordinator = autoconnect(
     coordinator_makermods_metal,
     ManipulationModule.blueprint(
+        gripper_tasks={"arm": "metal_gripper"},
         model=make_metal_model_config(),
         visualization={"backend": "viser"},
         default_speed_scale=0.2,

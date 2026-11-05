@@ -201,9 +201,11 @@ robots:
         go2-sim:
           title: 'Go2 in simulation (keyboard)'
           description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
+          recommended_config: []
         go2-sim-nav:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+          recommended_config: []
         go2-sim-nav-episode:
           title: 'Go2 in simulation (nav-bench episode)'
           description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
@@ -382,7 +384,7 @@ robots:
       blueprints:
         deeprobotics-m20-kronknav-control:
           title: M20 3D navigation
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning and holonomic control.'
+          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
           recommended_config:
           - module: m20connection
             field: basic_server_host
@@ -460,14 +462,14 @@ robots:
             placeholder: 192.168.1.185
             required: false
             when: {simulation: ''}
-        xarm7-keyboard-teleop:
-          title: xArm7 keyboard driving (XArmConnection)
-          description: Move a real xArm7's end with this computer's keyboard, through XArmConnection.
+        xarm7-teleop:
+          title: xArm7 teleop
+          description: Move a real xArm7's end and its gripper from the Desktop Manipulation app, through XArmConnection.
           recommended_config:
           - {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
-        xarm6-keyboard-teleop:
-          title: xArm6 keyboard driving (XArmConnection)
-          description: Move a real xArm6's end with this computer's keyboard, through XArmConnection.
+        xarm6-teleop:
+          title: xArm6 teleop
+          description: Move a real xArm6's end and its gripper from the Desktop Manipulation app, through XArmConnection.
           recommended_config:
           - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
         xarm-perception-sim-agent:
@@ -826,10 +828,6 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/assembly, dimos/hardware/sensors]
       blueprints:
-        mid360-fastlio:
-          title: Mid-360 SLAM (FAST-LIO)
-          description: Live SLAM from a Livox Mid-360 lidar.
-          starter: 20
         real-sense-camera-vis:
           title: RealSense viewer
           description: A RealSense's color, depth and RGBD cloud in Rerun.
@@ -841,12 +839,6 @@ robots:
         mid360:
           title: Mid-360 lidar
           description: A Livox Mid-360's point cloud and IMU.
-        mid360-fastlio-voxels:
-          title: Mid-360 FAST-LIO + voxel map
-          description: FAST-LIO SLAM feeding a voxel grid map.
-        mid360-fastlio-voxels-native:
-          title: Mid-360 FAST-LIO voxels (native)
-          description: FAST-LIO with its own native voxel map.
         mid360-pointlio:
           title: Mid-360 SLAM (Point-LIO)
           description: Live Point-LIO SLAM from a Livox Mid-360.
@@ -862,9 +854,6 @@ robots:
         demo-mid360-pcap-replay:
           title: Mid-360 pcap replay
           description: Replays a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap) through the live driver.
-        demo-virtual-mid360-fastlio:
-          title: Virtual Mid-360 + FAST-LIO
-          description: FAST-LIO fed by a virtual Mid-360 replaying a capture.
         demo-virtual-mid360-pointlio:
           title: Virtual Mid-360 + Point-LIO
           description: Point-LIO fed by a virtual Mid-360 replaying a capture.
