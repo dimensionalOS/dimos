@@ -20,7 +20,7 @@ from dimos_lcm.sim_msgs import CborObservation, WorldState
 import pytest
 
 from dimos.sim2.geometry.poses import poses_by_id
-from dimos.sim2.module import ControllerConfig
+from dimos.sim2.module import ControllerConfig, SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.utils.testing.waiting import wait_until
 
@@ -291,3 +291,44 @@ def test_invalid_action_has_no_partial_effect(make_sim, cbor_action, invalid):
     assert cbor2.loads(bytes(after.cbor_observations[0].value)) == 1
     joints = after.joint_truth
     assert joints.position[joints.name.index("left/slide_x")] == pytest.approx(0)
+
+
+@pytest.mark.parametrize("reply_delay", [0.008, 0.080])
+def test_controller_reply_time_is_inside_the_wall_clock_budget(world, command, mocker, reply_delay):
+    # An exact virtual wall clock makes the pacing assertion independent of host load.
+    clock = mocker.patch("dimos.sim2.module.time")
+    clock.monotonic.return_value = 0.0
+    sim = SimModule(
+        scene=world,
+        backend=MujocoBackend,
+        controllers=(ControllerConfig("test", 20_000_000, ("left/slide_x",)),),
+    )
+    reply_at = {}
+    answered = set()
+
+    def wait(seconds):
+        now = clock.monotonic.return_value + seconds
+        clock.monotonic.return_value = now
+        sample = sim._last_state
+        if sample is not None and sample.header.time_ns % 20_000_000 == 0:
+            stamp = sample.header.time_ns
+            due = reply_at.setdefault(stamp, now + reply_delay)
+            if stamp not in answered and now >= due:
+                sim.submit(command(sample.header))
+                answered.add(stamp)
+        if sim.status()["time_ns"] >= 100_000_000:
+            sim._done.set()
+        return sim._done.is_set()
+
+    mocker.patch.object(sim._done, "wait", side_effect=wait)
+    try:
+        sim._run()
+        assert sim.status()["error"] == ""
+        assert sim.status()["time_ns"] == 100_000_000
+        # Short replies consume existing slack. Long replies slow the run; no
+        # missing command is skipped to pretend the clock kept up.
+        expected = 0.1 if reply_delay < 0.02 else 5 * (reply_delay + 0.02)
+        assert clock.monotonic.return_value == pytest.approx(expected, abs=0.015)
+        assert len(answered) == 5
+    finally:
+        sim.dispose()
