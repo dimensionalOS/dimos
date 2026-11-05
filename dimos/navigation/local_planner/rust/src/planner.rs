@@ -1076,13 +1076,7 @@ fn lattice_axes(w: &World) -> (Vec<f64>, Vec<f64>) {
 /// or its end when none fits.
 fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Option<(f64, f64)> {
     let end = *approach.last()?;
-    let walk = fps.id(emb, Some(0.0));
-    let margin = cl.margin;
-    let fits = |cl: &mut Clear, x: f64, y: f64| {
-        let (i, j) = cl.cell_of(x, y);
-        (0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
-    };
-    if fits(cl, end[0], end[1]) {
+    if body_fits(cl, fps, emb, end[0], end[1]) {
         return Some((end[0], end[1]));
     }
     for pair in approach.windows(2).rev() {
@@ -1092,12 +1086,48 @@ fn pull_back(cl: &mut Clear, fps: &Fps, emb: &Emb, approach: &[[f64; 2]]) -> Opt
         for q in (0..n).rev() {
             let t = q as f64 / n as f64;
             let (x, y) = (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]));
-            if fits(cl, x, y) {
+            if body_fits(cl, fps, emb, x, y) {
                 return Some((x, y));
             }
         }
     }
     Some((end[0], end[1]))
+}
+
+/// Whether the walking body fits at the point on some heading.
+fn body_fits(cl: &mut Clear, fps: &Fps, emb: &Emb, x: f64, y: f64) -> bool {
+    let walk = fps.id(emb, Some(0.0));
+    let margin = cl.margin;
+    let (i, j) = cl.cell_of(x, y);
+    (0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
+}
+
+/// Whether the route comes within `tol` of the point, measured to its segments.
+fn passes_within(states: &[[f64; 3]], point: (f64, f64), tol: f64) -> bool {
+    let d2_to = |a: &[f64; 3], b: &[f64; 3]| {
+        let (abx, aby) = (b[0] - a[0], b[1] - a[1]);
+        let (apx, apy) = (point.0 - a[0], point.1 - a[1]);
+        let denom = abx * abx + aby * aby;
+        let t = if denom == 0.0 {
+            0.0
+        } else {
+            ((apx * abx + apy * aby) / denom).clamp(0.0, 1.0)
+        };
+        (apx - t * abx).powi(2) + (apy - t * aby).powi(2)
+    };
+    match states {
+        [] => false,
+        [only] => d2_to(only, only) <= tol * tol,
+        _ => states.windows(2).any(|w| d2_to(&w[0], &w[1]) <= tol * tol),
+    }
+}
+
+/// The second leg appended to the first, without the state they share.
+fn joined(first: &[[f64; 3]], second: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+    let shared = first.last().is_some() && first.last() == second.first();
+    let mut out = first.to_vec();
+    out.extend(second.into_iter().skip(usize::from(shared)));
+    out
 }
 
 /// `se2_search` on a clearance table the caller owns (a pure memo, so shareable).
@@ -1891,6 +1921,7 @@ pub fn plan(
         pose,
         &[[goal.0, goal.1]],
         None,
+        None,
         emb,
         resolution,
         incumbent,
@@ -1928,13 +1959,16 @@ pub fn step_reach(emb: &Emb) -> f64 {
 /// The goal is pulled back along `approach`, the route from the robot to the carrot, to where
 /// the body fits. With `goal_yaw` the route ends on that exact pose when the standing body
 /// fits it and a route reaches it, else the goal is planned position-only. The flag says
-/// which.
+/// which. `via` is an index on `approach` the route must pass through: the search runs to
+/// it and on from there, and a kept route is kept only if it still passes it. A via point
+/// the body cannot stand on is the carrot, pulled back, with nothing searched past it.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_explored(
     points: &[[f64; 2]],
     terrain: &Terrain,
     pose: (f64, f64, f64),
     approach: &[[f64; 2]],
+    via: Option<usize>,
     goal_yaw: Option<f64>,
     emb: &Emb,
     resolution: f64,
@@ -1948,28 +1982,55 @@ pub fn plan_explored(
     let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
     let mut w = build_world_explored(points, terrain, step_reach(emb), pose, approach, cap);
     let margin = emb.precision;
+    let via = via.filter(|&k| k + 1 < approach.len());
+    let incumbent = incumbent.filter(|inc| {
+        via.is_none_or(|k| {
+            let v = (approach[k][0], approach[k][1]);
+            passes_within(&trim_to_pose(inc, pose), v, resolution)
+        })
+    });
     // World from {pose, approach, cloud}, never the incumbent. One clearance table for both.
     let (fresh, held, honored) = {
         let (gx, gy) = lattice_axes(&w);
         let mut cl = Clear::new(&mut w, &fps, margin, gx, gy, emb.governor());
+        let (head, approach, goal_yaw) = match via {
+            None => (Some(Vec::new()), approach, goal_yaw),
+            Some(k) if !body_fits(&mut cl, &fps, emb, approach[k][0], approach[k][1]) => {
+                (Some(Vec::new()), &approach[..=k], None)
+            }
+            Some(k) => {
+                let v = (approach[k][0], approach[k][1]);
+                let head = se2_search_in(&mut cl, &fps, pose, v, None, emb, margin);
+                (head, &approach[k..], goal_yaw)
+            }
+        };
+        let start = head
+            .as_ref()
+            .and_then(|h| h.last())
+            .map_or(pose, |s| (s[0], s[1], s[2]));
+        let attempt = |cl: &mut Clear, goal: (f64, f64), yaw: Option<f64>| {
+            let fresh = head.as_ref().and_then(|head| {
+                let leg = se2_search_in(cl, &fps, start, goal, yaw, emb, margin)?;
+                Some(joined(head, leg))
+            });
+            let held =
+                incumbent.and_then(|inc| committed(cl, &fps, emb, inc, pose, goal, yaw, margin));
+            (fresh, held)
+        };
         let exact = goal_yaw.and_then(|yaw| {
             let end = approach.last()?;
             let fits = pose_clear(cl.w, fps.stand(), end[0], end[1], yaw) > margin;
             fits.then_some(((end[0], end[1]), yaw))
         });
         let with_heading = exact.and_then(|(goal, yaw)| {
-            let fresh = se2_search_in(&mut cl, &fps, pose, goal, Some(yaw), emb, margin);
-            let held = incumbent
-                .and_then(|inc| committed(&mut cl, &fps, emb, inc, pose, goal, Some(yaw), margin));
+            let (fresh, held) = attempt(&mut cl, goal, Some(yaw));
             (fresh.is_some() || held.is_some()).then_some((fresh, held))
         });
         match with_heading {
             Some((fresh, held)) => (fresh, held, true),
             None => {
                 let goal = pull_back(&mut cl, &fps, emb, approach)?;
-                let fresh = se2_search_in(&mut cl, &fps, pose, goal, None, emb, margin);
-                let held = incumbent
-                    .and_then(|inc| committed(&mut cl, &fps, emb, inc, pose, goal, None, margin));
+                let (fresh, held) = attempt(&mut cl, goal, None);
                 (fresh, held, false)
             }
         }
@@ -2032,6 +2093,7 @@ mod tests {
                 (0.0, 0.0, 0.0),
                 &[[4.0, 0.0]],
                 None,
+                None,
                 &emb,
                 0.1,
                 None,
@@ -2053,6 +2115,7 @@ mod tests {
             &dark,
             (0.0, 0.0, 0.0),
             &[[4.0, 0.0]],
+            None,
             None,
             &emb,
             0.1,
@@ -2090,6 +2153,7 @@ mod tests {
                 &terrain,
                 (0.0, 0.0, 0.0),
                 &[[4.0, 0.0]],
+                None,
                 None,
                 &emb,
                 0.1,
@@ -2383,6 +2447,7 @@ mod tests {
             (0.0, 0.0, 0.0),
             approach,
             None,
+            None,
             &Emb::fixture(),
             0.1,
             None,
@@ -2402,6 +2467,7 @@ mod tests {
             &Terrain::default(),
             pose,
             &[goal],
+            None,
             yaw,
             &Emb::fixture(),
             0.1,
@@ -2558,6 +2624,63 @@ mod tests {
     fn an_approach_the_body_fits_nowhere_on_is_refused() {
         let pts = slot_x(1.3, 1.7, -0.25);
         assert!(plan_along(&pts, &[[1.5, 0.5], [1.5, 1.0], [1.5, 1.5]]).is_none());
+    }
+
+    fn plan_via(
+        pts: &[[f64; 2]],
+        approach: &[[f64; 2]],
+        via: Option<usize>,
+        yaw: Option<f64>,
+        incumbent: Option<&[[f64; 3]]>,
+    ) -> Option<(Vec<[f64; 3]>, bool)> {
+        plan_explored(
+            pts,
+            &Terrain::default(),
+            (0.0, 0.0, 0.0),
+            approach,
+            via,
+            yaw,
+            &Emb::fixture(),
+            0.1,
+            incumbent,
+            COMMIT_MARGIN,
+        )
+    }
+
+    const SQUARE: [[f64; 2]; 3] = [[0.0, 0.0], [3.0, 0.0], [3.0, 3.0]];
+
+    #[test]
+    fn a_via_point_is_passed_through_and_run_past() {
+        let corner = (3.0, 0.0);
+        let (cut, _) = plan_via(&[], &SQUARE, None, None, None).expect("a route");
+        assert!(!passes_within(&cut, corner, 1.0), "{cut:?}");
+        let (through, honored) =
+            plan_via(&[], &SQUARE, Some(1), Some(FRAC_PI_2), None).expect("a route");
+        assert!(passes_within(&through, corner, 0.1), "{through:?}");
+        assert!(honored);
+        assert_ends_at(&through, [3.0, 3.0, FRAC_PI_2]);
+    }
+
+    #[test]
+    fn a_kept_route_that_cuts_the_via_point_is_replaced() {
+        let (cut, _) = plan_via(&[], &SQUARE, None, None, None).expect("a route");
+        let (kept, _) = plan_via(&[], &SQUARE, None, None, Some(&cut)).expect("a route");
+        assert_eq!(kept, cut);
+        let (through, _) = plan_via(&[], &SQUARE, Some(1), None, Some(&cut)).expect("a route");
+        assert!(passes_within(&through, (3.0, 0.0), 0.1), "{through:?}");
+    }
+
+    #[test]
+    fn a_via_point_the_body_cannot_stand_on_is_the_carrot_pulled_back() {
+        let pts = wall_x(2.0, None);
+        let approach = [[0.0, 0.0], [1.85, 0.0], [0.0, 2.0]];
+        let (free, _) = plan_via(&pts, &approach, None, None, None).expect("a route");
+        let end = end_xy(&free);
+        assert!(end[0].abs() < 0.1 && (end[1] - 2.0).abs() < 0.1, "{end:?}");
+        let (states, honored) =
+            plan_via(&pts, &approach, Some(1), None, None).expect("pulled back");
+        assert_near(end_xy(&states), [1.68, 0.0]);
+        assert!(!honored);
     }
 
     /// The governor price stays in [1.0, max_speed / min_speed].

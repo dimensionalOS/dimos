@@ -99,6 +99,8 @@ struct Shared {
     global_xy: Option<Vec<[f64; 2]>>,
     /// The route's goal heading, when its last pose carries one.
     global_yaw: Option<f64>,
+    /// The indices on the route of the waypoints to pass through.
+    global_via: Vec<usize>,
 }
 
 #[derive(Module)]
@@ -167,10 +169,18 @@ impl LocalPlanner {
             .map(|p| [p.pose.position.x, p.pose.position.y])
             .collect();
         let yaw = msg::heading_of(&msg);
+        let via = msg::waypoints_of(&msg);
         let mut s = self.shared.lock().expect("shared mutex");
         s.global_xy = (!xy.is_empty()).then_some(xy);
         s.global_yaw = yaw;
+        s.global_via = via;
     }
+}
+
+/// The first flagged route point on the approach short of its end, as an index on it.
+pub fn via_on(approach: &[[f64; 2]], route: &[[f64; 2]], flagged: &[usize]) -> Option<usize> {
+    let last = approach.len().checked_sub(1)?;
+    (0..last).find(|&k| flagged.iter().any(|&f| route.get(f) == Some(&approach[k])))
 }
 
 /// The route from the waypoint closest to the robot to the carrot, which is its last
@@ -215,25 +225,28 @@ pub fn heading_at_carrot(
     heading.filter(|_| approach.last() == route.last())
 }
 
-/// Has an input the plan depends on moved? The route enters only through the
-/// carrot and its heading, so that is what is compared.
-pub fn replan_due(
-    gate: bool,
-    planned: Option<(u64, (f64, f64), Option<f64>)>,
-    cloud_seq: u64,
-    carrot: (f64, f64),
-    heading: Option<f64>,
-    carrot_m: f64,
-) -> bool {
+/// What a plan is made from. The route enters only through the carrot, its
+/// heading and the via point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Planned {
+    pub cloud_seq: u64,
+    pub carrot: (f64, f64),
+    pub heading: Option<f64>,
+    pub via: Option<(f64, f64)>,
+}
+
+/// Has an input the plan depends on moved since the published plan was made?
+pub fn replan_due(gate: bool, planned: Option<Planned>, now: Planned, carrot_m: f64) -> bool {
     if !gate {
         return true;
     }
     match planned {
         None => true,
-        Some((seq, was, had)) => {
-            seq != cloud_seq
-                || had != heading
-                || (was.0 - carrot.0).hypot(was.1 - carrot.1) > carrot_m
+        Some(was) => {
+            was.cloud_seq != now.cloud_seq
+                || was.heading != now.heading
+                || was.via != now.via
+                || (was.carrot.0 - now.carrot.0).hypot(was.carrot.1 - now.carrot.1) > carrot_m
         }
     }
 }
@@ -301,6 +314,7 @@ pub fn plan_once(
     points: &[[f32; 3]],
     pose: (f64, f64, f64),
     approach: &[[f64; 2]],
+    via: Option<usize>,
     heading: Option<f64>,
     ground: &Plane,
     incumbent: Option<&[[f64; 3]]>,
@@ -322,6 +336,7 @@ pub fn plan_once(
         &terrain,
         pose,
         approach,
+        via,
         heading,
         emb,
         config.resolution,
@@ -386,6 +401,7 @@ struct Snapshot {
     age_s: Option<f64>,
     route: Option<Vec<[f64; 2]>>,
     heading: Option<f64>,
+    via: Vec<usize>,
 }
 
 impl Worker {
@@ -398,8 +414,7 @@ impl Worker {
         let mut gate = StaleGate::default();
         let mut watch = PoseWatch::new(self.config.max_map_age_s);
         let mut points: Option<(u64, Arc<Vec<[f32; 3]>>)> = None;
-        // The (cloud, carrot, heading) the published plan was made from.
-        let mut planned: Option<(u64, (f64, f64), Option<f64>)> = None;
+        let mut planned: Option<Planned> = None;
         // The published plan; the search keeps it unless a fresh one earns the switch.
         let mut incumbent: Option<Vec<[f64; 3]>> = None;
         let mut published = false;
@@ -469,21 +484,27 @@ impl Worker {
                     let end = approach[approach.len() - 1];
                     let goal = (end[0], end[1]);
                     let heading = heading_at_carrot(&route, &approach, snap.heading);
+                    let via = via_on(&approach, &route, &snap.via);
+                    let now = Planned {
+                        cloud_seq: snap.cloud_seq,
+                        carrot: goal,
+                        heading,
+                        via: via.map(|k| (approach[k][0], approach[k][1])),
+                    };
                     if !replan_due(
                         self.config.replan_on_change,
                         planned,
-                        snap.cloud_seq,
-                        goal,
-                        heading,
+                        now,
                         self.config.replan_carrot_m,
                     ) {
                         continue;
                     }
                     // A carrot that jumped or a heading that changed is a different task;
                     // the held route is the old one's.
-                    if planned.is_some_and(|(_, was, had)| {
-                        had != heading
-                            || (was.0 - goal.0).hypot(was.1 - goal.1) > self.config.reset_carrot_m
+                    if planned.is_some_and(|was| {
+                        was.heading != heading
+                            || (was.carrot.0 - goal.0).hypot(was.carrot.1 - goal.1)
+                                > self.config.reset_carrot_m
                     }) {
                         incumbent = None;
                     }
@@ -501,6 +522,7 @@ impl Worker {
                             &pts,
                             pose,
                             &approach,
+                            via,
                             heading,
                             &ground.plane,
                             incumbent.as_deref(),
@@ -511,7 +533,7 @@ impl Worker {
                         let floor =
                             msg::build_cloud(&support, &self.config.world_frame, msg::now_secs());
                         msg::publish(&self.ground_support, &floor).await;
-                        planned = Some((snap.cloud_seq, goal, heading));
+                        planned = Some(now);
                         incumbent = Some(msg::path_states(&produced));
                         published = true;
                         msg::publish(&self.path, &produced).await;
@@ -530,6 +552,7 @@ impl Worker {
             age_s: s.cloud_at.map(|t| now.duration_since(t).as_secs_f64()),
             route: s.global_xy.clone(),
             heading: s.global_yaw,
+            via: s.global_via.clone(),
         }
     }
 
@@ -755,6 +778,7 @@ mod tests {
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
             None,
+            None,
             &Plane::flat(0.0),
             None,
         );
@@ -785,6 +809,7 @@ mod tests {
             &[],
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
+            None,
             Some(FRAC_PI_2),
             &Plane::flat(0.0),
             None,
@@ -812,6 +837,7 @@ mod tests {
             &wall,
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
+            None,
             Some(0.0),
             &Plane::flat(0.0),
             None,
@@ -848,6 +874,7 @@ mod tests {
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
             None,
+            None,
             &Plane::flat(0.0),
             None,
         );
@@ -858,6 +885,7 @@ mod tests {
             &gap(0.45),
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
+            None,
             None,
             &Plane::flat(0.0),
             None,
@@ -893,6 +921,7 @@ mod tests {
             (0.0, 0.0, 0.0),
             &[[4.0, 0.0]],
             None,
+            None,
             &Plane::flat(0.0),
             None,
         );
@@ -921,6 +950,7 @@ mod tests {
             &lifted,
             (0.0, 0.0, 0.0),
             &[[4.0, 0.0]],
+            None,
             None,
             &Plane::flat(0.0),
             None,
@@ -967,6 +997,7 @@ mod tests {
             (0.0, 0.0, 0.0),
             &[[4.0, 0.0]],
             None,
+            None,
             &Plane::flat(-0.28),
             None,
         );
@@ -990,6 +1021,7 @@ mod tests {
                 &wall,
                 (0.0, 0.0, 0.0),
                 &[[3.0, 0.0]],
+                None,
                 None,
                 &Plane::flat(0.0),
                 None,
@@ -1048,6 +1080,7 @@ mod tests {
             (0.0, 0.0, 0.0),
             &[[4.0, 0.0]],
             None,
+            None,
             &Plane::flat(-0.28),
             None,
         );
@@ -1079,6 +1112,7 @@ mod tests {
             &low_object((1.4, 1.64), (-0.12, 0.12)),
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
+            None,
             None,
             &Plane::flat(0.0),
             None,
@@ -1113,6 +1147,7 @@ mod tests {
             &world,
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
+            None,
             None,
             &Plane::flat(0.0),
             None,
@@ -1166,6 +1201,7 @@ mod tests {
             (0.0, 0.0, 0.0),
             &[[3.0, 0.0]],
             None,
+            None,
             &ground.plane,
             None,
         );
@@ -1183,75 +1219,76 @@ mod tests {
 
     const CARROT_M: f64 = 0.2;
 
+    fn made(cloud_seq: u64, carrot: (f64, f64), heading: Option<f64>) -> Planned {
+        Planned {
+            cloud_seq,
+            carrot,
+            heading,
+            via: None,
+        }
+    }
+
     #[test]
     fn a_tick_with_nothing_new_does_not_replan() {
-        assert!(!replan_due(
-            true,
-            Some((7, (2.0, 0.0), None)),
-            7,
-            (2.0, 0.0),
-            None,
-            CARROT_M
-        ));
+        let was = made(7, (2.0, 0.0), None);
+        assert!(!replan_due(true, Some(was), was, CARROT_M));
     }
 
     #[test]
     fn a_new_map_or_a_moved_carrot_replans() {
+        let was = made(7, (2.0, 0.0), None);
         assert!(replan_due(
             true,
-            Some((7, (2.0, 0.0), None)),
-            8,
-            (2.0, 0.0),
-            None,
+            Some(was),
+            made(8, (2.0, 0.0), None),
             CARROT_M
         ));
         assert!(replan_due(
             true,
-            Some((7, (2.0, 0.0), None)),
-            7,
-            (2.3, 0.0),
-            None,
+            Some(was),
+            made(7, (2.3, 0.0), None),
             CARROT_M
         ));
     }
 
     #[test]
     fn a_republished_route_moves_the_carrot_by_nothing_and_is_not_a_replan() {
+        let was = made(7, (2.0, 0.0), None);
         assert!(!replan_due(
             true,
-            Some((7, (2.0, 0.0), None)),
-            7,
-            (2.02, -0.01),
-            None,
+            Some(was),
+            made(7, (2.02, -0.01), None),
             CARROT_M
         ));
     }
 
     #[test]
     fn the_first_tick_replans_because_nothing_was_planned_yet() {
-        assert!(replan_due(true, None, 0, (0.0, 0.0), None, CARROT_M));
+        assert!(replan_due(true, None, made(0, (0.0, 0.0), None), CARROT_M));
     }
 
     #[test]
-    fn a_changed_heading_replans() {
-        let planned = Some((7, (2.0, 0.0), Some(1.0)));
-        assert!(!replan_due(
+    fn a_changed_heading_or_via_point_replans() {
+        let was = made(7, (2.0, 0.0), Some(1.0));
+        assert!(!replan_due(true, Some(was), was, CARROT_M));
+        assert!(replan_due(
             true,
-            planned,
-            7,
-            (2.0, 0.0),
-            Some(1.0),
+            Some(was),
+            made(7, (2.0, 0.0), Some(1.5)),
             CARROT_M
         ));
         assert!(replan_due(
             true,
-            planned,
-            7,
-            (2.0, 0.0),
-            Some(1.5),
+            Some(was),
+            made(7, (2.0, 0.0), None),
             CARROT_M
         ));
-        assert!(replan_due(true, planned, 7, (2.0, 0.0), None, CARROT_M));
+        let via = Planned {
+            via: Some((1.0, 0.0)),
+            ..was
+        };
+        assert!(replan_due(true, Some(was), via, CARROT_M));
+        assert!(!replan_due(true, Some(via), via, CARROT_M));
     }
 
     #[test]
@@ -1266,13 +1303,20 @@ mod tests {
 
     #[test]
     fn an_ungated_planner_replans_on_every_tick() {
-        assert!(replan_due(
-            false,
-            Some((7, (2.0, 0.0), None)),
-            7,
-            (2.0, 0.0),
-            None,
-            CARROT_M
-        ));
+        let was = made(7, (2.0, 0.0), None);
+        assert!(replan_due(false, Some(was), was, CARROT_M));
+    }
+
+    #[test]
+    fn the_via_point_is_the_first_flagged_route_point_on_the_approach_short_of_its_end() {
+        let r = route(&[(0.0, 0.0), (2.0, 0.0), (2.0, 4.0), (5.0, 4.0)]);
+        let approach = approach_along(&r, (0.1, 0.0), 5.0).unwrap();
+        assert_eq!(approach, vec![[0.0, 0.0], [2.0, 0.0], [2.0, 3.0]]);
+        assert_eq!(via_on(&approach, &r, &[1, 2]), Some(1));
+        assert_eq!(via_on(&approach, &r, &[0, 1]), Some(0));
+        assert_eq!(via_on(&approach, &r, &[2]), None);
+        let short = approach_along(&r, (0.1, 0.0), 2.0).unwrap();
+        assert_eq!(short, vec![[0.0, 0.0], [2.0, 0.0]]);
+        assert_eq!(via_on(&short, &r, &[1]), None);
     }
 }

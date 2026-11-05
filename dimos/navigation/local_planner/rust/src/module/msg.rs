@@ -29,6 +29,19 @@ pub type State = [f64; 3];
 /// `header.seq` of a path whose last pose's yaw is the goal heading.
 pub const HEADING_GOAL_SEQ: i32 = 1;
 
+/// `header.seq` of a path pose that is a route waypoint to pass through.
+pub const WAYPOINT_SEQ: i32 = 2;
+
+/// The indices of the poses flagged as route waypoints.
+pub fn waypoints_of(path: &Path) -> Vec<usize> {
+    path.poses
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.header.seq == WAYPOINT_SEQ)
+        .map(|(k, _)| k)
+        .collect()
+}
+
 /// The goal heading a path carries, if its last pose's yaw is one.
 pub fn heading_of(path: &Path) -> Option<f64> {
     if path.header.seq != HEADING_GOAL_SEQ {
@@ -248,6 +261,15 @@ mod tests {
                 assert!((a[k] - b[k]).abs() < 1e-12);
             }
         }
+    }
+
+    #[test]
+    fn the_flagged_poses_are_the_waypoints() {
+        let states = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let mut path = build_path(&states, &[], 5.0, "odom", 0.0);
+        assert_eq!(waypoints_of(&path), Vec::<usize>::new());
+        path.poses[1].header.seq = WAYPOINT_SEQ;
+        assert_eq!(waypoints_of(&path), vec![1]);
     }
 
     #[test]
