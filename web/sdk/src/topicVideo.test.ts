@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Msg, TopicSubMsg } from "@dimos/shared";
-import { FakePeerConnection } from "./rtc.test.ts";
+import { FakePeerConnection } from "./testing/fakePeerConnection.ts";
 import { TopicClient, type TopicSample, type TopicStatus } from "./topics.ts";
 import {
   RTC_ANSWER_TIMEOUT_MS,
+  RTC_CONNECT_TIMEOUT_MS,
+  RTC_MAX_FAILURES,
   RTC_RETRY_MS,
   type TopicVideoOptions,
   VIDEO_FALLBACK_PROFILE,
@@ -133,6 +135,10 @@ describe("direct topic video", () => {
     expect(h.tracks).toEqual([track]);
     expect(video.track()).toBe(track);
     expect(video.receiver()).toBe(pc.transceivers[0].receiver);
+    // A track only says the answer applied: it plays once the first packet arrives.
+    expect(video.mode()).toBe("none");
+    expect(video.status().phase).toBe("connecting");
+    pc.media();
     expect(video.mode()).toBe("rtc");
     await expect(video.ready()).resolves.toBeUndefined();
     expect(video.settings()).toEqual({ maxHz: 30, maxResolution: [1920, 1080] });
@@ -183,6 +189,94 @@ describe("direct topic video", () => {
     expect(h.tracks).toEqual([]);
   });
 
+  it("keeps the failure budget until media plays, so failures after a track reach the fallback", async () => {
+    vi.useFakeTimers();
+    const h = setup();
+    const video = h.video({ fallback: "jpeg" });
+    h.sources();
+    const ref = h.ready();
+    for (let attempt = 0; attempt < RTC_MAX_FAILURES; attempt++) {
+      await flush();
+      h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "a" });
+      await flush();
+      const pc = h.pcs[attempt];
+      pc.track(); // browsers fire this on the answer, before ICE connects
+      expect(video.mode()).toBe("none");
+      expect(video.status().phase).not.toBe("ready");
+      pc.connection("failed");
+      if (attempt < RTC_RETRY_MS.length) await vi.advanceTimersByTimeAsync(RTC_RETRY_MS[attempt]);
+    }
+    expect(h.offers()).toHaveLength(RTC_MAX_FAILURES);
+    expect(video.mode()).toBe("jpeg");
+    expect(h.subs().at(-1)).toMatchObject({ profile: VIDEO_FALLBACK_PROFILE });
+    expect(video.status()).toMatchObject({
+      phase: "connecting",
+      error: { code: "rtc_failed", message: "no_direct_path" },
+    });
+  });
+
+  it("fails a peer that never connects after its answer, waits on an idle camera, and resets the budget on media", async () => {
+    vi.useFakeTimers();
+    const h = setup();
+    const video = h.video();
+    h.sources();
+    const ref = h.ready();
+    await flush();
+    h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "a" });
+    await flush();
+    await vi.advanceTimersByTimeAsync(RTC_CONNECT_TIMEOUT_MS - 1);
+    expect(video.status().phase).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(video.status()).toMatchObject({
+      phase: "interrupted",
+      error: { code: "rtc_failed", message: "no_direct_path" },
+    });
+    expect(h.pcs[0].closed).toBe(1);
+    await vi.advanceTimersByTimeAsync(RTC_RETRY_MS[0]);
+    expect(h.offers()).toHaveLength(2);
+    // Connected with nothing to play is a quiet camera, not a failure.
+    h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "b" });
+    await flush();
+    const pc = h.pcs[1];
+    const track = pc.track();
+    pc.connection("connected");
+    await vi.advanceTimersByTimeAsync(10 * RTC_CONNECT_TIMEOUT_MS);
+    expect(pc.closed).toBe(0);
+    expect(h.offers()).toHaveLength(2);
+    expect(video.mode()).toBe("none");
+    expect(video.track()).toBe(track);
+    pc.media();
+    expect(video.mode()).toBe("rtc");
+    expect(video.status().phase).toBe("ready");
+    // A peer that played starts over: the next failure waits the first delay again.
+    pc.connection("failed");
+    expect(video.status().phase).toBe("interrupted");
+    await vi.advanceTimersByTimeAsync(RTC_RETRY_MS[0]);
+    expect(h.offers()).toHaveLength(3);
+  });
+
+  it("does not offer on the fallback route when the rejection lands during a backoff", async () => {
+    vi.useFakeTimers();
+    const h = setup();
+    const video = h.video({ fallback: "jpeg" });
+    h.sources();
+    const ref = h.ready();
+    await flush();
+    await vi.advanceTimersByTimeAsync(RTC_ANSWER_TIMEOUT_MS);
+    expect(video.status().phase).toBe("interrupted");
+    h.client.onMessage({
+      t: "topic_error",
+      id: ref.id,
+      code: "unsupported_profile",
+      message: "unsupported profile",
+      outcome: "rejected",
+    });
+    expect(video.mode()).toBe("jpeg");
+    h.ready("@t:v3");
+    await vi.advanceTimersByTimeAsync(RTC_RETRY_MS[0]);
+    expect(h.offers()).toHaveLength(1);
+  });
+
   it("ends the track on disconnect and offers again on the new route, replacing it", async () => {
     const h = setup();
     const video = h.video();
@@ -191,6 +285,7 @@ describe("direct topic video", () => {
     await flush();
     h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "a" });
     const first = h.pcs[0].track();
+    h.pcs[0].media();
     expect(video.mode()).toBe("rtc");
     h.client.disconnected();
     expect(h.tracks).toEqual([first, null]);
@@ -204,6 +299,7 @@ describe("direct topic video", () => {
     expect(h.offers().at(-1)).toMatchObject({ ...again, sdp: h.pcs[1].offerSdp });
     h.client.onMessage({ t: "topic_rtc_answer", ...again, sdp: "b" });
     const second = h.pcs[1].track();
+    h.pcs[1].media();
     expect(h.tracks).toEqual([first, null, second]);
     await expect(video.ready()).resolves.toBeUndefined();
     expect(video.track()).toBe(second);
@@ -241,6 +337,7 @@ describe("direct topic video", () => {
     expect(video.status().phase).toBe("connecting");
     h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "b" });
     const second = h.pcs[1].track();
+    h.pcs[1].media();
     expect(h.tracks).toEqual([first, null, second]);
     expect(video.mode()).toBe("rtc");
     expect(video.settings()).toEqual({ maxHz: 30, maxResolution: [640, 360] });
@@ -303,6 +400,120 @@ describe("direct topic video", () => {
     });
     expect(samples.map((s) => s.encoding)).toEqual(["image/jpeg"]);
     expect(h.tracks).toEqual([]);
+  });
+
+  it("falls back when the camera has no variant left for this handle's settings", () => {
+    const h = setup();
+    const video = h.video({ fallback: "jpeg", maxHz: 7 });
+    h.sources();
+    h.client.onMessage({
+      t: "topic_error",
+      id: h.subs()[0].id,
+      code: "variant_limit",
+      message: "variant limit",
+      outcome: "rejected",
+    });
+    expect(video.mode()).toBe("jpeg");
+    expect(video.status().error).toMatchObject({
+      code: "rtc_unavailable",
+      message: "variant_limit",
+    });
+    expect(h.subs().at(-1)).toMatchObject({ profile: VIDEO_FALLBACK_PROFILE, maxHz: 7 });
+  });
+
+  it("falls back with the settings in force, leaving out a rejected change", async () => {
+    const h = setup();
+    const video = h.video({ fallback: "jpeg", maxHz: 30 });
+    h.sources();
+    const ref = h.ready();
+    await flush();
+    const applied = video.update({ maxHz: 5, maxResolution: [640, 360] });
+    h.client.onMessage({
+      t: "topic_applied",
+      id: ref.id,
+      revision: 1,
+      settings: { maxHz: 5, maxResolution: [640, 360] },
+    });
+    await applied;
+    const refused = video.update({ maxHz: 7 });
+    h.client.onMessage({
+      t: "topic_error",
+      id: ref.id,
+      revision: 2,
+      code: "variant_limit",
+      message: "variant limit",
+      outcome: "rejected",
+    });
+    await expect(refused).rejects.toMatchObject({ code: "variant_limit" });
+    h.client.onMessage({ t: "topic_rtc_close", ...ref, reason: "rtc_limit" });
+    expect(video.mode()).toBe("jpeg");
+    expect(h.subs().at(-1)).toMatchObject({
+      source: "workspace",
+      profile: VIDEO_FALLBACK_PROFILE,
+      delivery: "latest",
+      maxHz: 5,
+      settings: { maxResolution: [640, 360] },
+    });
+  });
+
+  it("a source change ends the old peer, and the fallback keeps the new source", async () => {
+    const h = setup();
+    h.sources();
+    const info = {
+      gen: 1,
+      read: true,
+      write: false,
+      profiles: [VIDEO_PROFILE, VIDEO_FALLBACK_PROFILE],
+    };
+    h.client.onMessage({
+      t: "topic_sources",
+      v: 1,
+      sources: [
+        { source: "a", profileOptions: PROFILE_OPTIONS as never, ...info },
+        { source: "b", profileOptions: PROFILE_OPTIONS as never, ...info },
+      ],
+    });
+    const video = h.video({ fallback: "jpeg", source: "a", maxHz: 30 });
+    expect(h.subs().at(-1)).toMatchObject({ source: "a", maxHz: 30 });
+    const ready = (route: string) => {
+      const { id } = h.subs().at(-1)!;
+      h.client.onMessage({
+        t: "topic_ready",
+        id,
+        source: h.subs().at(-1)!.source,
+        route,
+        gen: 1,
+        settings: { maxHz: 5 },
+      });
+      return { id, route, gen: 1 };
+    };
+    const first = ready("@t:v1");
+    await flush();
+    h.client.onMessage({ t: "topic_rtc_answer", ...first, sdp: "a" });
+    h.pcs[0].track();
+    h.pcs[0].media();
+    const moved = video.update({ source: "b", maxHz: 5, maxResolution: [640, 360] });
+    expect(h.pcs[0].closed).toBe(1);
+    expect(video.track()).toBeNull();
+    expect(video.mode()).toBe("none");
+    expect(video.status().phase).toBe("connecting");
+    expect(h.subs().at(-1)).toMatchObject({
+      source: "b",
+      profile: VIDEO_PROFILE,
+      maxHz: 5,
+      settings: { maxResolution: [640, 360] },
+    });
+    const second = ready("@t:v2");
+    await moved;
+    await flush();
+    expect(h.offers().at(-1)).toMatchObject(second);
+    h.client.onMessage({ t: "topic_rtc_close", ...second, reason: "rtc_limit" });
+    expect(h.subs().at(-1)).toMatchObject({
+      source: "b",
+      profile: VIDEO_FALLBACK_PROFILE,
+      maxHz: 5,
+      settings: { maxResolution: [640, 360] },
+    });
   });
 
   it("falls back after rtc_limit from the provider and closes cleanly", async () => {

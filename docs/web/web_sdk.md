@@ -144,7 +144,7 @@ Subscription options are the identity, `source`, `delivery` and `profile`, and t
 
 | Setting | Profiles | Meaning |
 |---|---|---|
-| `maxHz` | all | Latest sampling rate, per viewer, in (0, 1000]. Reliable event streams ignore it. |
+| `maxHz` | all | Latest sampling rate, per viewer, in (0, 1000]. Reliable event streams ignore it. On `video.h264.v1` a different rate is a different encoder. |
 | `maxResolution` | `image.jpeg.*`, `video.h264.v1` | `[w, h]` box the picture is fitted into, 16 to 4096 a side. |
 | `quality` | `image.jpeg.*` | JPEG quality, 1 to 100. |
 | `keepEvery` | `cloud.q16.*` | One point in N after the finite filter, 1 to 64. |
@@ -395,7 +395,7 @@ The cockpit's video panel does exactly this. The relay's `/api/info` says whethe
 
 ### Direct video for topics
 
-A topic provider with video enabled ([Raw topics](/docs/web/relay.md#raw-topics)) advertises `video.h264.v1`. `session.topics.video()` subscribes to a camera key with that profile and opens a WebRTC connection straight to the provider, signaled through the relay: the provider encodes each frame once in software H.264 for every viewer of the same settings, the browser decodes in hardware, and no media rides the relay. No Cloudflare account or internet is needed, but the browser must reach the provider's UDP ports (host candidates only, no STUN or TURN).
+A topic provider with video enabled ([Raw topics](/docs/web/relay.md#raw-topics)) advertises `video.h264.v1`. `session.topics.video()` subscribes to a camera key with that profile and opens a WebRTC connection straight to the provider, signaled through the relay: the provider encodes each frame once in software H.264 for every viewer of the same settings, rate included, the browser decodes in hardware, and no media rides the relay. No Cloudflare account or internet is needed, but the browser must reach the provider's UDP ports (host candidates only, no STUN or TURN).
 
 ```js
 const video = session.topics.video("camera/color", { maxHz: 30 }, (track) => {
@@ -406,18 +406,18 @@ console.log(video.mode()); // "rtc"
 await video.update({ maxResolution: [1280, 720] });
 ```
 
-`onTrack` fires with the track when it arrives, again with a new track after a reconnect or a settings change that moved the viewer to another encoder, and with `null` when the track ends. Pass `fallback: "jpeg"` to open `image.jpeg.balanced.v1` instead when direct video is unavailable or has failed for good; the handle then reports `mode()` `jpeg`, keeps the reason in `status().error`, and delivers the JPEG samples to `options.onSample`.
+`onTrack` fires with the track when it arrives, which can be before any media does, again with a new track after a reconnect or a settings change that moved the viewer to another encoder, and with `null` when the track ends. Pass `fallback: "jpeg"` to open `image.jpeg.balanced.v1` instead when direct video is unavailable or has failed for good; the handle then reports `mode()` `jpeg`, keeps the reason in `status().error`, and delivers the JPEG samples to `options.onSample`.
 
 | Member | What it does |
 |---|---|
-| `ready()` | Resolves once a track plays (or the JPEG fallback is ready). |
-| `status()` / `onStatus(cb)` | `connecting`, `ready`, `interrupted`, `rejected` or `closed`, with a `TopicError`. Codes: `rtc_unavailable` (the source offers no video, or the provider is at its peer or encoder limit), `rtc_failed` (ICE, the answer timeout, a failed connection; the message says which, `no_direct_path` when no candidate pair connects), `encoder_failed`. |
-| `mode()` | `rtc` while a track is live, `jpeg` on the fallback, `none` otherwise. |
-| `track()` / `receiver()` | The live `MediaStreamTrack` and its `RTCRtpReceiver` (for `jitterBufferTarget` and `getStats()`). |
-| `settings()` / `update(options)` | As on a subscription: `maxHz` and `maxResolution` (at most 1920×1080, 30 Hz). `profile` cannot change. |
+| `ready()` | Resolves once the first packet of a track arrives (or the JPEG fallback is ready). It stays pending on a camera that publishes nothing. |
+| `status()` / `onStatus(cb)` | `connecting`, `ready`, `interrupted`, `rejected` or `closed`, with a `TopicError`. Codes: `rtc_unavailable` (the source offers no video, the browser offers no compatible H.264, or the provider is at its peer or encoder limit), `rtc_failed` (ICE, the answer timeout, a failed connection; the message says which, `no_direct_path` when no candidate pair connects, also 15 s after the answer), `encoder_failed`. |
+| `mode()` | `rtc` once media plays on the track, `jpeg` on the fallback, `none` otherwise. |
+| `track()` / `receiver()` | The current `MediaStreamTrack` and its `RTCRtpReceiver` (for `jitterBufferTarget` and `getStats()`). |
+| `settings()` / `update(options)` | As on a subscription: `maxHz` and `maxResolution` (at most 1920×1080, 30 Hz). `profile` cannot change. Either setting moves the viewer to another encoder, so the handle offers again and `onTrack` fires with a new track. The JPEG fallback keeps the source and settings in force. |
 | `close()` | Ends the peer and the subscription. |
 
-A peer that fails is offered again after 1, 2 and 4 seconds; the third failure is final. Each `video()` handle has its own relay route and peer; two handles on one camera cost the provider one encode and two packetizations, so share the track on the page instead.
+A peer that fails is offered again after 1 second, then after 2. The third failure in a row with no media played is final. Each `video()` handle has its own relay route and peer. Two handles on one camera at the same `maxHz` and `maxResolution` cost the provider one encode and two packetizations, and different settings cost one encode each, so share the track on the page instead.
 
 ## Publishing to the robot
 
