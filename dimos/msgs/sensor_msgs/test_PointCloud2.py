@@ -81,6 +81,15 @@ def test_lcm_round_trip_without_timestamp() -> None:
     np.testing.assert_array_equal(decoded.as_numpy()[0], points)
 
 
+@pytest.mark.parametrize("count", [0, 1])
+def test_lcm_round_trip_preserves_subsecond_timestamp(count):
+    cloud = PointCloud2.from_numpy(
+        np.zeros((count, 3), dtype=np.float32), frame_id="sensor", timestamp=0.125
+    )
+    decoded = PointCloud2.lcm_decode(cloud.lcm_encode())
+    assert decoded.ts == 0.125
+
+
 def test_lcm_intensity_round_trip() -> None:
     """Test that intensity values survive an lcm_encode → lcm_decode round trip."""
     points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
@@ -191,8 +200,7 @@ def test_lcm_decode_maps_ros_time_and_ring() -> None:
     kinds = {"<f4": PointField.FLOAT32, "<u2": PointField.UINT16}
     msg = LCMPointCloud2()
     msg.header.frame_id = "utlidar_lidar"
-    msg.header.clock_id = "unix"
-    msg.header.time_ns = 100_000_000_000
+    msg.header.stamp.sec = 100
     msg.height, msg.width, msg.point_step = 1, 3, 24
     msg.row_step = 72
     msg.fields = [
