@@ -94,7 +94,7 @@ def _live(name: str, cones: Sequence[tuple[float, float]]) -> EvalCase:
         id=f"habitat_cones_{name}_live",
         inputs=f"{_TASK} Drive the robot through the house to look for them.",
         environment=ConeHabitatEnvironment(
-            blueprint=["habitat-nav", "mcp-server", "observe-skill", "point-nav-skill-container"],
+            blueprint=["habitat-nav", "mcp-server", "observe-skill"],
             scene_dataset_config=str(
                 DIMOS_PROJECT_ROOT
                 / "target/habitat/data/hssd-hab/hssd-hab.scene_dataset_config.json"

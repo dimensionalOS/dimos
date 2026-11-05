@@ -99,6 +99,5 @@ def make_openyam_model_config(
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
-        gripper_hardware_id=OPENYAM_HARDWARE_ID,
         home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
     )
