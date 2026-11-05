@@ -23,7 +23,7 @@ import yaml
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
-from experimental.gateway import annotations as annotation_file, constants, launches
+from experimental.gateway import annotations as annotation_file, catalog, constants, launches
 from experimental.gateway.__main__ import serve
 from experimental.gateway.state import API_VERSION, ApiError, State
 
@@ -108,6 +108,17 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
     assert info["python"]
     assert info["paths"]["dimosDir"] == str(checkout)
     assert info["server"]["zenohNamespace"] == "ns"
+
+
+def test_config_answers_the_shared_settings_the_gateway_reads(
+    client: TestClient, home: Path
+) -> None:
+    (home / "dimos_home").mkdir(parents=True, exist_ok=True)
+    (home / "dimos_home" / "config.yaml").write_text("recordings:\n  dir: /tmp/elsewhere\n")
+    assert client.get("/config").json() == {
+        "path": str(home / "dimos_home" / "config.yaml"),
+        "recordingsDir": "/tmp/elsewhere",
+    }
 
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
@@ -242,6 +253,52 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
             for setting in settings:
                 if "global" in setting:
                     assert setting["global"] in GlobalConfig.model_fields
+
+
+def test_modules_name_described_abilities() -> None:
+    abilities, modules = annotation_file.load_abilities()
+    for ability_id, ability in abilities.items():
+        assert ability.get("label") and ability.get("description"), (
+            f"ability {ability_id} needs both"
+        )
+    for module, given in modules.items():
+        assert given and set(given) <= set(abilities), f"module {module}: {given}"
+
+
+def test_a_checkout_without_abilities_gets_the_gateways(tmp_path: Path) -> None:
+    gateway_dir = tmp_path / "experimental" / "gateway"
+    gateway_dir.mkdir(parents=True)
+    (gateway_dir / "annotations.yaml").write_text("robots:\n  types: {}\n  robots: {}\n")
+    notes = catalog.notes_for(tmp_path, [])
+    assert notes["abilities"] == annotation_file.load_abilities()[0] and notes["module_abilities"]
+
+
+def test_a_blueprint_has_the_abilities_of_the_modules_it_runs() -> None:
+    notes = {
+        "robots": {},
+        "abilities": {"mapping": {}, "loop-closure": {}, "arm-control": {}},
+        "module_abilities": {"pgo-voxel-mapper": ["loop-closure", "mapping"]},
+    }
+    cache = {
+        "results": {
+            "go2-map": {
+                "name": "go2-map",
+                "modules": [
+                    {"module": "pgo-voxel-mapper", "class": "x.Pgo"},
+                    {"module": "cost-mapper", "class": "x.Cost"},
+                ],
+            }
+        },
+        "modules": {
+            "pgo": {"name": "pgo-voxel-mapper", "class": "x.Pgo", "rpcs": []},
+            "cost": {"name": "cost-mapper", "class": "x.Cost", "rpcs": []},
+        },
+    }
+    found = catalog.blueprints([{"name": "go2-map"}], cache, notes)
+    # in the order annotations.yaml lists abilities
+    assert found[0]["abilities"] == ["mapping", "loop-closure"]
+    by_name = {module["name"]: module["abilities"] for module in catalog.modules(cache, notes)}
+    assert by_name == {"pgo-voxel-mapper": ["loop-closure", "mapping"], "cost-mapper": []}
 
 
 def test_every_registered_blueprint_is_annotated() -> None:

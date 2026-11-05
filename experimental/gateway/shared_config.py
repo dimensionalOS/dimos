@@ -37,7 +37,6 @@ class SharedConfig:
     recordings_dir: str | None
     zenoh_namespace: str | None
     zenoh_connect: str | None
-    zenoh_gossip: bool | None
 
 
 def _app_env() -> dict[str, Any]:
@@ -81,5 +80,4 @@ def shared_config() -> SharedConfig:
         recordings_dir=pick("recordingsDir", "recordings", "dir"),
         zenoh_namespace=pick("zenohNamespace", "zenoh", "namespace"),
         zenoh_connect=pick("zenohConnect", "zenoh", "connect"),
-        zenoh_gossip=pick(None, "zenoh", "gossip"),
     )

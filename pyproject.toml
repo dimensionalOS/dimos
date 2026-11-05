@@ -51,7 +51,7 @@ exclude = [
     "robot/galaxea/r1pro/vendor_setup.sh",
 ]
 
-"experimental.gateway" = ["annotations.yaml"]
+"experimental.gateway" = ["annotations.yaml", "assets/**/*"]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures,

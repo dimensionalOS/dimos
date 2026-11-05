@@ -20,14 +20,17 @@ from typing import Literal
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
+    blueprint_modules,
     rpcs,
     run_child,
     spec_topic,
@@ -40,6 +43,41 @@ def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
         spec_topic(ZenohTransport.spec(ZenohTopic("dimos/head_left_color", Twist)))
         == "/head_left_color"
     )
+
+
+class LeftCamera(Module):
+    jpeg_out: Out[Twist]
+
+
+class RightCamera(Module):
+    jpeg_out: Out[Twist]
+
+
+def test_remapped_streams_show_their_wired_topic() -> None:
+    blueprint = (
+        autoconnect(LeftCamera.blueprint(), RightCamera.blueprint())
+        .remappings(
+            [
+                (LeftCamera, "jpeg_out", "head_left_color"),
+                (RightCamera, "jpeg_out", "head_right_color"),
+            ]
+        )
+        .transports(
+            {
+                ("head_left_color", Twist): ZenohTransport.spec(
+                    ZenohTopic("dimos/head_left_color", Twist)
+                )
+            }
+        )
+    )
+    streams = {
+        (module["name"], stream["name"]): stream
+        for module in blueprint_modules(blueprint, {})
+        for stream in module["streams"]
+    }
+    left = streams["leftcamera", "jpeg_out"]
+    assert (left["wire"], left["topic"]) == ("head_left_color", "/head_left_color")
+    assert streams["rightcamera", "jpeg_out"]["topic"] == "/head_right_color"
 
 
 class Dog(Module):
@@ -99,3 +137,23 @@ def test_another_checkout_is_introspected_with_this_file_and_its_own_dimos(tmp_p
     )
     with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
         asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"], python=sys.executable))
+
+
+def test_a_checkout_with_an_older_gateway_of_its_own_is_introspected_with_this_one(
+    tmp_path: Path,
+) -> None:
+    # Desktop runs a pinned copy of the gateway against the user's checkout, which may hold an older gateway (an
+    # untracked experimental/gateway/ on a dev branch): neither its introspect.py nor its helpers may be the ones run
+    robot = tmp_path / "dimos" / "robot"
+    robot.mkdir(parents=True)
+    (tmp_path / "dimos" / "__init__.py").write_text("")
+    (robot / "__init__.py").write_text("")
+    (robot / "get_all_blueprints.py").write_text(
+        "def get_by_name(name):\n    raise LookupError(f'{name} from the branch checkout')\n"
+    )
+    old = tmp_path / "experimental" / "gateway"
+    old.mkdir(parents=True)
+    for helper in ("introspect.py", "constants.py", "launches.py", "store.py"):
+        (old / helper).write_text("raise SystemExit('the checkout\\'s own older gateway ran')\n")
+    with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
+        asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"]))

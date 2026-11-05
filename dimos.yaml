@@ -1,4 +1,5 @@
 # What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
+spec-version: v1.4 # "@desktop-gateway" paths are relative to /gateways/desktop/
 name: dimos
 version: "0.0.14"
 install: |
@@ -11,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 8.0.0
+    version: 8.3.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -21,14 +22,21 @@ provides:
       get:
         description: >-
           Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway
-          tag, its python, its checkout, runs, log and recordings directories, and this process
+          tag, its python, its checkout, runs, log and recordings directories, and this process (with its own code's directory,
+          commit and tag: a copy apart from the checkout it serves when Desktop runs one)
+    /config:
+      get:
+        description: >-
+          The shared config.yaml's settings as this gateway reads them (its path, the recordings directory): the one
+          answer to re-read after a `config` event on zenoh, so nothing has to read the file on a hot path
     /server/stop:
       post:
         summary: Stop this gateway (a running blueprint keeps running)
     /catalog:
       get:
         description: >-
-          Every blueprint, module, RPC and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
+          Every blueprint, module, RPC and robot from the last scan (cached on disk), and the abilities (relocalization,
+          loop closure, arm control, …) its modules and blueprints list by id, with how stale it is (scan: finished_at,
           age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)
     /catalog/blueprints:
       get:
@@ -307,5 +315,46 @@ provides:
     /docs/search:
       get:
         summary: Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)
+    /blueprint_view:
+      get:
+        summary: The blueprint view page (?name=, view=, run=); Desktop's Details shows it
+    /blueprint_view/{file}:
+      get:
+        summary: The blueprint view's assets
+        parameters:
+          - name: file
+            in: path
+            required: true
+            schema:
+              type: string
+    /source:
+      get:
+        summary: A source file the blueprint view links to (?file=)
+    /msgs.js:
+      get:
+        summary: The LCM message decoders for the browser
+    /cloud/login/page:
+      get:
+        summary: The cloud login page apps embed
+# What the gateway's own pages (the blueprint view) call outside it.
+uses:
+  "@desktop-gateway":
+    - GET /topics/rates
+    # dimos-react's zenoh connection, for the launch events
+    - GET /management/gateways/zenoh
+  # Desktop's built-in Launcher: the config it saves for every launch, and launching with it
+  "@launcher":
+    - GET config/global
+    - PUT config/global
+    - GET config/blueprints/{name}
+    - PUT config/blueprints/{name}
+    - POST launch
+    - POST relaunch
+# Run in the copy of this tag Desktop keeps for itself (~/.dimos/desktop/dimos-gateway), apart from the user's checkout:
+# `setup:` makes the copy's own .venv with only what the gateway imports (dimos's base dependencies and the web extra,
+# not dimos itself nor the heavy extras), and `start:` serves DIMOS_DIR, the user's checkout, whose blueprints, venv and
+# runs it introspects and launches in child processes. A dev branch there can't break the gateway Desktop talks to.
+setup: |
+  uv sync --frozen --no-install-project --no-default-groups --extra web
 start: |
-  .venv/bin/python -m experimental.gateway --detach
+  .venv/bin/python -m experimental.gateway --detach ${DIMOS_DIR:+--dimos-dir "$DIMOS_DIR"}

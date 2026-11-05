@@ -60,6 +60,16 @@ async def find_blueprint(state: State, name: str) -> dict[str, Any]:
     return found
 
 
+async def check_blueprint(state: State, name: str) -> None:
+    """find_blueprint's 404 without building every blueprint's catalog entry (notes_for alone is ~1.5 s on the M20)."""
+    check_name(name)
+    if (
+        not await has_locally(state, name)
+        and await asyncio.to_thread(running_source, state, name) is None
+    ):
+        raise ApiError(404, f"no blueprint {name}")
+
+
 async def has_locally(state: State, name: str) -> bool:
     return any(entry["name"] == name for entry in await listed(state))
 
@@ -104,7 +114,7 @@ async def everything(
         catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
     )
     cache = state.scanner.cache()
-    blueprints, modules = catalog.blueprints(entries, cache, notes), catalog.modules(cache)
+    blueprints, modules = catalog.blueprints(entries, cache, notes), catalog.modules(cache, notes)
     if blueprint is not None:
         blueprints = [entry for entry in blueprints if entry["name"] == blueprint]
         names = {name for entry in blueprints for name in entry["modules"]}
@@ -120,6 +130,7 @@ async def everything(
         "rpcs": [rpc_record for rpc_record in catalog.rpcs(cache) if rpc_record["module"] in kept],
         "robots": catalog.robot_list(notes),
         "types": notes.get("types", {}),
+        "abilities": notes.get("abilities", {}),
         "errors": catalog.errors(cache),
         "scan": await scan(state),
     }
@@ -137,7 +148,7 @@ async def scan_all(
 async def scan_blueprint(
     state: GatewayState, name: str, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
 ) -> dict[str, Any]:
-    await find_blueprint(state, name)
+    await check_blueprint(state, name)
     return {"job": state.scanner.start_one(name, timeout).id}
 
 
@@ -166,7 +177,7 @@ async def blueprint(state: GatewayState, name: str, fields: str | None = None) -
     openapi_extra={"x-slow": True},
 )
 async def blueprint_config(state: GatewayState, name: str) -> Any:
-    await find_blueprint(state, name)
+    await check_blueprint(state, name)
     found = await from_run_checkout(state, ["config", name], await has_locally(state, name))
     found.pop("checkout")
     found.pop("checkoutError")
@@ -217,8 +228,13 @@ async def global_config() -> dict[str, Any]:
 
 @router.get("/modules", response_model=responses.ModuleList)
 async def modules(state: GatewayState, fields: str | None = None) -> dict[str, Any]:
+    entries = await listed(state)
+    notes = await asyncio.to_thread(
+        catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
+    )
     return picked(
-        {"modules": catalog.modules(state.scanner.cache()), "scan": await scan(state)}, fields
+        {"modules": catalog.modules(state.scanner.cache(), notes), "scan": await scan(state)},
+        fields,
     )
 
 

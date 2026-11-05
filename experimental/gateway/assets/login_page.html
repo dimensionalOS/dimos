@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Dimensional cloud login</title>
+        <!-- Desktop's skins' tokens: the page is at /dimos-gateway/cloud/login/page there, so this is /theme.css -->
+        <link rel="stylesheet" href="../../../theme.css">
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                padding: 16px;
+                background: var(--bg, Canvas);
+                color: var(--fg, CanvasText);
+                font: 14px/1.45 var(--sans, system-ui, sans-serif);
+            }
+            .panel {
+                border: 1px solid var(--border, GrayText);
+                background: var(--surface, Canvas);
+                border-radius: var(--radius, 0);
+                padding: 16px;
+                max-width: 420px;
+            }
+            h1 {
+                margin: 0 0 4px;
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                color: var(--muted-fg, GrayText);
+            }
+            p { margin: 8px 0; }
+            .code {
+                font: 600 28px/1.2 var(--mono, ui-monospace, monospace);
+                letter-spacing: 0.12em;
+                margin: 12px 0;
+                user-select: all;
+            }
+            button, a.button {
+                display: inline-block;
+                font: inherit;
+                font-weight: 500;
+                padding: 8px 14px;
+                border-radius: var(--radius, 0);
+                cursor: pointer;
+                text-decoration: none;
+                border: 1px solid var(--primary, LinkText);
+                background: var(--primary, LinkText);
+                color: var(--primary-fg, Canvas);
+            }
+            button.quiet { background: transparent; color: var(--fg, CanvasText); border-color: var(--border, GrayText); }
+            .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+            .dim { color: var(--muted-fg, GrayText); font-size: 12px; }
+            .bad { color: var(--danger, CanvasText); }
+            .good { color: var(--ok, CanvasText); }
+            [hidden] { display: none !important; }
+        </style>
+    </head>
+    <body>
+        <div class="panel">
+            <h1>Dimensional cloud</h1>
+            <div id="checking"><p class="dim">Checking the login…</p></div>
+            <div id="in" hidden>
+                <p class="good">Logged in as <b id="email"></b>.</p>
+                <div class="row"><button class="quiet" id="logout">Log out</button></div>
+            </div>
+            <div id="out" hidden>
+                <p>Uploading needs a Dimensional cloud login.</p>
+                <div class="row"><button id="start">Log in</button></div>
+            </div>
+            <div id="pending" hidden>
+                <p>Open the Dimensional console, sign in, and approve this code:</p>
+                <div class="code" id="code"></div>
+                <div class="row">
+                    <a class="button" id="open" target="_blank" rel="noopener">Open the console</a>
+                    <button class="quiet" id="cancel">Cancel</button>
+                </div>
+                <p class="dim">
+                    Any signed-in browser works (a phone too): <span id="url"></span>. Waiting for the approval…
+                    <span id="left"></span>
+                </p>
+            </div>
+            <p id="error" class="bad" hidden></p>
+        </div>
+        <script>
+            // a plain page without dim-app's zenoh client, so it can't hear cloud-login events: it asks GET /cloud/account instead
+            const LOGIN_POLL_MS = 1500
+            const LIGHT_SKIN = "research"
+            const DARK_SKIN = "portal"
+
+            const byId = (id) => document.getElementById(id)
+            const savedSkin = (() => {
+                try {
+                    return localStorage.getItem("portal.theme")
+                } catch {
+                    return null
+                }
+            })()
+            const theme = new URLSearchParams(location.search).get("theme")
+            // Desktop's saved skin (an app shares Desktop's origin), else ?theme=light|dark picks a light or dark one
+            document.documentElement.dataset.skin = savedSkin || (theme === "light" ? LIGHT_SKIN : DARK_SKIN)
+
+            const base = location.pathname.replace(/\/login\/page\/?$/, "")
+            let poll = null
+
+            const show = (which) => ["checking", "in", "out", "pending"].forEach((id) => (byId(id).hidden = id !== which))
+            const fail = (message) => {
+                byId("error").textContent = message
+                byId("error").hidden = !message
+            }
+            const failWith = (error) => fail(String(error.message || error))
+            const tell = (state, email) =>
+                window.parent !== window &&
+                window.parent.postMessage({ type: "dimos-cloud-login", state, email: email || null }, location.origin)
+            const loggedIn = (email, state) => {
+                byId("email").textContent = email || "(unknown)"
+                show("in")
+                tell(state, email)
+            }
+
+            async function call(method, path) {
+                const response = await fetch(base + path, { method })
+                const body = await response.json().catch(() => ({}))
+                if (!response.ok) {
+                    throw new Error(body.error || `${method} ${path}: ${response.status}`)
+                }
+                return body
+            }
+
+            function stopWatching() {
+                clearInterval(poll)
+                poll = null
+            }
+
+            function showAccount(account) {
+                fail(account.error || "")
+                if (account.loggedIn) {
+                    loggedIn(account.email, "loggedIn")
+                } else {
+                    show("out")
+                    tell("loggedOut")
+                }
+            }
+
+            /** Shows a login attempt; true while it's still waiting for approval. */
+            function showLogin(login) {
+                if (login.state === "starting" || login.state === "pending") {
+                    show("pending")
+                    byId("code").textContent = login.code || ""
+                    byId("url").textContent = login.url || ""
+                    byId("open").href = login.urlComplete || login.url || "#"
+                    const seconds = login.expiresAt ? Math.max(0, Math.round((login.expiresAt - Date.now()) / 1000)) : null
+                    const minutesSeconds = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+                    byId("left").textContent = seconds == null ? "" : `(code expires in ${minutesSeconds})`
+                    return true
+                }
+                stopWatching()
+                if (login.state === "approved") {
+                    fail("")
+                    loggedIn(login.email, "approved")
+                } else if (["denied", "expired", "failed"].includes(login.state)) {
+                    show("out")
+                    fail(login.state === "failed" ? login.error || "The login failed." : `The login was ${login.state}. Try again.`)
+                    tell(login.state)
+                }
+                return false
+            }
+
+            /** Shows the account, or the login in progress; true while that login waits for approval. */
+            function showAccountOrLogin(account) {
+                const watching = poll !== null
+                const login = account.login || { state: "idle" }
+                // a login's end is news only to a page that watched it; a fresh page shows the account
+                if (["starting", "pending"].includes(login.state) || (watching && login.state !== "idle")) {
+                    return showLogin(login)
+                }
+                stopWatching()
+                showAccount(account)
+                return false
+            }
+
+            function watch() {
+                if (poll === null) {
+                    poll = setInterval(() => call("GET", "/account").then(showAccountOrLogin, failWith), LOGIN_POLL_MS)
+                }
+            }
+
+            async function check(fresh) {
+                try {
+                    const account = await call("GET", fresh ? "/account?fresh=1" : "/account")
+                    if (showAccountOrLogin(account)) {
+                        watch()
+                    }
+                } catch (error) {
+                    show("out")
+                    failWith(error)
+                }
+            }
+
+            byId("start").onclick = async () => {
+                fail("")
+                byId("start").disabled = true
+                try {
+                    if (showLogin(await call("POST", "/login"))) {
+                        watch()
+                    }
+                } catch (error) {
+                    failWith(error)
+                } finally {
+                    byId("start").disabled = false
+                }
+            }
+            byId("cancel").onclick = async () => {
+                stopWatching()
+                await call("DELETE", "/login").catch(() => {})
+                show("out")
+                tell("cancelled")
+            }
+            // DELETE /cloud/login cancels a pending login, else logs out
+            byId("logout").onclick = async () => {
+                await call("DELETE", "/login").catch(failWith)
+                check(true)
+            }
+
+            check(false)
+        </script>
+    </body>
+</html>
