@@ -21,7 +21,7 @@ startup time balloons from <2s to >5s, which is a terrible UX.
 import os
 import subprocess
 import sys
-import time
+import threading
 
 # CI runners are slower — give generous headroom but still catch gross regressions.
 HELP_TIMEOUT_SECONDS = 8
@@ -63,18 +63,35 @@ def test_cli_import_does_not_pull_ipython() -> None:
 
 
 def test_help_startup_time() -> None:
-    """`dimos --help` must finish in under {HELP_TIMEOUT_SECONDS}s."""
-    start = time.monotonic()
-    result = subprocess.run(
+    """`dimos --help` must need under {HELP_TIMEOUT_SECONDS}s of CPU time.
+
+    CPU time rather than wall-clock: `--help` is ~0.8s of pure import work, but
+    on a CI runner with every xdist worker spawning module processes the child
+    gets starved and its wall-clock stretches past 8s (12.8s seen on macOS) while
+    its CPU time stays within ~20% of idle. Heavy imports show up in CPU time.
+    """
+    with subprocess.Popen(
         [sys.executable, "-m", "dimos.cli.dimos", "--help"],
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
-        timeout=HELP_TIMEOUT_SECONDS + 5,  # hard kill safety margin
-    )
-    elapsed = time.monotonic() - start
-    assert result.returncode == 0, f"dimos --help failed:\n{result.stderr}"
-    assert elapsed < HELP_TIMEOUT_SECONDS, (
-        f"dimos --help took {elapsed:.1f}s (limit: {HELP_TIMEOUT_SECONDS}s). "
+    ) as proc:
+        assert proc.stdout is not None
+        # Wall-clock safety net for a hung child only; it never decides pass/fail.
+        killer = threading.Timer(60, proc.kill)
+        killer.start()
+        try:
+            output = proc.stdout.read()  # EOF once the child has exited
+        finally:
+            killer.cancel()
+        # wait4 reaps the child and hands back its resource usage, which
+        # Popen.wait() would discard.
+        _, status, usage = os.wait4(proc.pid, 0)
+        proc.returncode = os.waitstatus_to_exitcode(status)
+    cpu_seconds = usage.ru_utime + usage.ru_stime
+    assert proc.returncode == 0, f"dimos --help failed:\n{output}"
+    assert cpu_seconds < HELP_TIMEOUT_SECONDS, (
+        f"dimos --help used {cpu_seconds:.1f}s of CPU (limit: {HELP_TIMEOUT_SECONDS}s). "
         f"Check for heavy imports in the CLI entrypoint or GlobalConfig."
     )
 
