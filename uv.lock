@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.13"
 resolution-markers = [
     "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
@@ -1857,7 +1857,6 @@ wheels = [
 name = "dimos"
 version = "0.0.15"
 source = { editable = "." }
-default-groups = ["tests"]
 dependencies = [
     { name = "annotation-protocol" },
     { name = "attrs" },
@@ -1953,7 +1952,7 @@ all = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "googlemaps" },
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2152,7 +2151,7 @@ manipulation = [
     { name = "yourdfpy" },
 ]
 mapping = [
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
 ]
 misc = [
     { name = "googlemaps" },
@@ -2216,7 +2215,7 @@ unitree = [
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2262,7 +2261,7 @@ unitree-dds = [
     { name = "einops" },
     { name = "fastapi" },
     { name = "faster-whisper" },
-    { name = "gtsam-extended", marker = "python_full_version >= '3.11' or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64') or (python_full_version >= '3.11' and sys_platform != 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin')" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -2524,9 +2523,6 @@ tests-self-hosted = [
     { name = "xacro" },
 ]
 
-[package.group-requires-python]
-docs = ">=3.11"
-
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
@@ -2555,7 +2551,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=b10072eb4fbf4370ed15df7068266807f2d899c6" },
+    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=e63ced404498e82e77963ab81649204054e80473" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
@@ -2568,7 +2564,7 @@ requires-dist = [
     { name = "filelock", specifier = ">=3.20,<4" },
     { name = "gitpython", specifier = ">=3.1.45" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
-    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
+    { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64' and extra == 'mapping') or (python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
     { name = "httpx", marker = "extra == 'agents'", specifier = ">=0.28" },
     { name = "huggingface-hub", marker = "extra == 'perception'", specifier = ">=0.36" },
@@ -2897,7 +2893,7 @@ wheels = [
 [[package]]
 name = "dimos-lcm"
 version = "0.1.7"
-source = { git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=b10072eb4fbf4370ed15df7068266807f2d899c6#b10072eb4fbf4370ed15df7068266807f2d899c6" }
+source = { git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=e63ced404498e82e77963ab81649204054e80473#e63ced404498e82e77963ab81649204054e80473" }
 dependencies = [
     { name = "foxglove-websocket" },
     { name = "lcm" },
