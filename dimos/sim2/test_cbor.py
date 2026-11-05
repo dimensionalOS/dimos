@@ -13,28 +13,27 @@
 # limitations under the License.
 
 import cbor2
-from dimos_lcm.sim_msgs import CborExtension
+from dimos_lcm.sim_msgs import CborObservation
 import pytest
 
-from dimos.sim2.extensions import validate_cbor_entries
+from dimos.sim2.cbor import validate_cbor_entries
 
 
 @pytest.fixture
 def prop():
     value = cbor2.dumps({"temperature_c": 21.5})
-    return CborExtension(
+    return CborObservation(
         entity_id="box",
         key="thermal",
-        schema="example.thermal.v1",
         value_length=len(value),
         value=value,
     )
 
 
-def test_optional_payload_keeps_its_schema_and_value(prop):
+def test_optional_payload_keeps_its_key_and_value(prop):
     validate_cbor_entries([prop], {"box"})
-    decoded = CborExtension.lcm_decode(prop.lcm_encode())
-    assert decoded.schema == "example.thermal.v1"
+    decoded = CborObservation.lcm_decode(prop.lcm_encode())
+    assert decoded.key == "thermal"
     assert cbor2.loads(bytes(decoded.value)) == {"temperature_c": 21.5}
 
 
@@ -42,13 +41,13 @@ def test_optional_payload_keeps_its_schema_and_value(prop):
     "field,value,error",
     [
         ("entity_id", "missing", "known entity"),
-        ("schema", "", "schema"),
+        ("key", "", "property key"),
         ("value_length", 999, "byte count"),
         ("value", b"\xff", "invalid CBOR"),
         ("value", b"\x01\x02", "exactly one"),
     ],
 )
-def test_invalid_extension_is_rejected(prop, field, value, error):
+def test_invalid_cbor_entry_is_rejected(prop, field, value, error):
     setattr(prop, field, value)
     if field == "value":
         prop.value_length = len(value)
