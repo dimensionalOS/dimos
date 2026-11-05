@@ -102,7 +102,7 @@ classifiers = [
 dependencies = [
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
-    "dimos-lcm>=0.1.6",
+    "dimos-lcm>=0.1.7",
     "lcm>=1.5.3", # the `lcm` module itself (protocol/service/lcmservice.py)
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
@@ -571,6 +571,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+# Option G message contract; replace the draft Git pin with a release before merge.
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "e63ced404498e82e77963ab81649204054e80473" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [

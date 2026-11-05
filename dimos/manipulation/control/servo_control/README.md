@@ -202,7 +202,7 @@ class ArmDriverSpec(Protocol):
     # Required topics
     joint_state: Out[JointState]
     robot_state: Out[RobotState]
-    joint_position_command: In[JointCommand]
+    joint_position_command: In[JointCommand]  # dimos_lcm.control_msgs; interface_name="position"
 ```
 
 **Any driver implementing this protocol works with the controller!**
@@ -275,7 +275,7 @@ def is_converged() -> bool
 
 | Topic | Type | Description |
 |-------|------|-------------|
-| `joint_position_command` | `JointCommand` | Target joint angles (to driver) |
+| `joint_position_command` | `control_msgs.JointCommand` | Named joint angles, `interface_name="position"` (to driver) |
 | `cartesian_velocity` | `Twist` | Debug: Cartesian velocity commands |
 | `current_pose` | `PoseStamped` | Current TCP pose (for feedback and monitoring) |
 
