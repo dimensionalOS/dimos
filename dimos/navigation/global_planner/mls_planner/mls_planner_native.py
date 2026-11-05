@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import threading
+from typing import Any
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
@@ -34,9 +35,6 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
-
-# Seconds a go_to waits for the robot pose to show up on tf.
-POSE_WAIT_S = 0.5
 
 
 def reports_goal(msg: GoalStatus, goal: PointStamped) -> bool:
@@ -87,6 +85,11 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
+    # Seconds a go_to waits for the robot pose to show up on tf.
+    pose_wait_s: float = 0.5
+
+    def to_config_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in super().to_config_dict().items() if k != "pose_wait_s"}
 
 
 class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
@@ -164,7 +167,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             x: target x in meters, world frame.
             y: target y in meters, world frame.
         """
-        pose = self._pose(wait_s=POSE_WAIT_S)
+        pose = self._pose(wait_s=self.config.pose_wait_s)
         # Close the old go_to's stream first so start_tool opens a new one for this call.
         self._finish("Replaced by another goal", cancel=pose is None)
         # Opened before any return so the movement claim always has a stream to release it.
