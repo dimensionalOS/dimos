@@ -157,6 +157,7 @@ test("notice drafts preserve ownership, exported images, data, and suppression c
   assert.deepEqual(draft.source, { kind: "event", event });
   assert.equal(draft.images.length, 1);
   assert.equal(draft.render?.views[0]?.kind, "image");
+  assert.match(draft.text, /Preview: /);
   assert.match(draft.text, /beacon: beat/);
   assert.match(draft.text, /Data: \{"n":1\}/);
   assert.match(draft.text, /3 earlier notices/);
