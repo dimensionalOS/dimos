@@ -99,8 +99,23 @@ class PushEnvironment(Environment):
                 based_on_time_ns=sample.time_ns,
                 apply_at_ns=sample.time_ns,
                 valid_until_ns=end_ns,
-                joint_commands_length=1,
-                joint_commands=[JointCommand(joint_id="left/slide_x", position=x, kp=200, kd=20)],
+                joint_commands_length=5,
+                joint_commands=[
+                    JointCommand(
+                        joint_names_length=1,
+                        joint_names=["left/slide_x"],
+                        interface_name=interface,
+                        values_length=1,
+                        values=[value],
+                    )
+                    for interface, value in (
+                        ("position", x),
+                        ("velocity", 0),
+                        ("kp", 200),
+                        ("kd", 20),
+                        ("effort", 0),
+                    )
+                ],
             )
         )
         # SimModule advances to the next controller boundary, then waits for this subject.
