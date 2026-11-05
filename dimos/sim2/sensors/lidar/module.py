@@ -29,7 +29,7 @@ from dimos.sim2.description import SceneConfig
 from dimos.sim2.geometry.poses import pose_array, poses_by_id
 from dimos.sim2.sensors.lidar.config import LidarConfig, Raycaster
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
-from dimos.sim2.sensors.sampling import Acquisition, measurement_header
+from dimos.sim2.sensors.sampling import Acquisition
 
 
 class LidarModuleConfig(PoseSensorConfig):
@@ -124,8 +124,6 @@ class SimLidarModule(_PoseSensorModule):
             channels.append(lines[indices[keep]])
         # Each raw point is in the sensor axes at its own firing time. No
         # simulator pose is used to deskew these estimator inputs.
-        header = measurement_header(sample.header, c.source_id, c.frame_id)
-        header.time_ns = start
         offsets_out = np.concatenate(times).astype(np.uint32)
         raw = PointCloud2.from_numpy(
             np.concatenate(raw_points).astype(np.float32),
@@ -134,14 +132,13 @@ class SimLidarModule(_PoseSensorModule):
             offset_times=offsets_out,
             lines=np.concatenate(channels),
             tags=np.zeros(len(offsets_out), dtype=np.uint8),
-        ).with_sample_header(header)
-        world_header = measurement_header(header, c.source_id, "world")
+        )
         world = PointCloud2.from_numpy(
             np.concatenate(world_points).astype(np.float32),
             frame_id="world",
             timestamp=start / 1e9,
             offset_times=offsets_out,
-        ).with_sample_header(world_header)
+        )
         return raw, world
 
     def acquire(self, sample: WorldState, *, latest: bool = True) -> None:
