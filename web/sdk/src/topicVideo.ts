@@ -12,6 +12,7 @@ import {
   type TopicRtcCloseMsg,
   type TopicSettings,
 } from "@dimos/shared";
+import type { TopicStats } from "./topicAdapt.ts";
 import type { PeerConnectionLike } from "./rtc.ts";
 import {
   TopicError,
@@ -53,6 +54,8 @@ export interface TopicVideo {
   /** The receiver behind the track, for jitterBufferTarget and stats. */
   receiver(): RTCRtpReceiver | null;
   settings(): TopicSettings;
+  onSettings(callback: (settings: TopicSettings) => void): () => void;
+  stats(): TopicStats | null;
   update(options: TopicOptions): Promise<TopicSettings>;
   close(): void;
 }
@@ -74,6 +77,7 @@ export interface VideoHost {
   ): TopicSubscription;
   /** The relay route an inner subscription is ready on, or null. */
   routeOf(handle: TopicSubscription): VideoRouteRef | null;
+  receiver(handle: TopicSubscription, receiver: () => RTCRtpReceiver | null): void;
   /** Route incoming topic_rtc_* messages for subscription `id` to `sink`. */
   bind(id: string, sink: (msg: TopicRtcSignal) => void): void;
   unbind(id: string): void;
@@ -102,6 +106,8 @@ interface Peer {
 export class TopicVideoHandle implements TopicVideo {
   #inner: TopicSubscription;
   #unlisten: () => void = noop;
+  #unsettings: () => void = noop;
+  #settingsListeners = new Set<(settings: TopicSettings) => void>();
   #peer: Peer | null = null;
   #track: MediaStreamTrack | null = null;
   #receiver: RTCRtpReceiver | null = null;
@@ -134,6 +140,17 @@ export class TopicVideoHandle implements TopicVideo {
    * status is handled: a subscription the client refuses on the spot reports
    * `rejected` synchronously, and that may already switch to the fallback. */
   #listen(inner: TopicSubscription): void {
+    this.host.receiver(inner, () => this.receiver());
+    this.#unsettings();
+    this.#unsettings = inner.onSettings((settings) => {
+      for (const callback of this.#settingsListeners) {
+        try {
+          callback(settings);
+        } catch (error) {
+          console.error("topic video callback failed", error);
+        }
+      }
+    });
     let armed = false;
     this.#unlisten = inner.onStatus((status) => {
       if (armed) this.#innerStatus(status);
@@ -165,11 +182,18 @@ export class TopicVideoHandle implements TopicVideo {
   settings(): TopicSettings {
     return this.#inner.settings();
   }
+  onSettings(callback: (settings: TopicSettings) => void): () => void {
+    this.#settingsListeners.add(callback);
+    return () => this.#settingsListeners.delete(callback);
+  }
+  stats(): TopicStats | null {
+    return this.#inner.stats();
+  }
   update(options: TopicOptions): Promise<TopicSettings> {
     if (options.profile !== undefined) {
       return Promise.reject(new TopicError("unsupported_option", "rejected"));
     }
-    // A changed encoder closes the peer with settings_changed; the handle offers again.
+    // A sole viewer keeps its track; a shared variant move asks for a new offer.
     return this.#inner.update(options);
   }
   close(): void {
@@ -178,7 +202,10 @@ export class TopicVideoHandle implements TopicVideo {
     if (this.#retry !== null) clearTimeout(this.#retry);
     this.#retry = null;
     this.#dropPeer();
+    this.#unlisten();
+    this.#unsettings();
     this.#inner.close();
+    this.#settingsListeners.clear();
     this.#transition({ phase: "closed" });
     this.#listeners.clear();
   }
@@ -369,7 +396,7 @@ export class TopicVideoHandle implements TopicVideo {
     if (this.options.fallback === "jpeg" && direct) {
       // Not the options the handle opened with: a successful update() holds, and
       // the relay clamps the rest to the JPEG profile.
-      const request = this.host.requestOf(this.#inner);
+      const { maxBitrate: _maxBitrate, ...request } = this.host.requestOf(this.#inner);
       this.#unlisten();
       this.#inner.close();
       this.#mode = "jpeg";

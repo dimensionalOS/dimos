@@ -23,6 +23,7 @@ export class FakePeerConnection implements PeerConnectionLike {
   readonly added: { kind: string; init?: { direction?: string } }[] = [];
   readonly remoteCandidates: ({ candidate: string; sdpMid: string | null } | null)[] = [];
   closed = 0;
+  stats: Record<string, unknown>[] = [];
   offerSdp = "v=0\r\noffer\r\n";
   answerSdp = "v=0\r\nanswer\r\n";
   /** Fired by setLocalDescription(offer): the gathering events to emit. */
@@ -35,6 +36,10 @@ export class FakePeerConnection implements PeerConnectionLike {
     const transceiver = {
       mid: null,
       receiver: {
+        getStats: () =>
+          Promise.resolve(
+            new Map(this.stats.map((v, i) => [String(i), v])) as unknown as RTCStatsReport,
+          ),
         track: new FakeTrack(`track-${this.transceivers.length}`) as unknown as MediaStreamTrack,
       },
     };

@@ -101,6 +101,8 @@ export interface PublishOptions {
 }
 
 export interface Session {
+  /** Lowest round-trip time of the last four liveness pongs. */
+  rttMs(): number | null;
   readonly topics: Topics;
   readonly status: StatusStore;
   readonly store: ChannelStore;
@@ -255,6 +257,10 @@ export const EMPTY_MANIFEST: Manifest = {
 };
 
 class SessionImpl implements Session {
+  #rtts: number[] = [];
+  rttMs(): number | null {
+    return this.#rtts.length ? Math.min(...this.#rtts) : null;
+  }
   readonly topics: TopicClient;
   readonly status = new StatusStore();
   readonly store = new ChannelStore();
@@ -801,6 +807,8 @@ class SessionImpl implements Session {
 
     // After hello on the same ordered stream, so the relay is greeted by the
     // time it reads the first ping.
+    this.#rtts = [];
+    const pingTimes = new Map<number, number>();
     let pingN = 0;
     let unanswered = 0;
     const pinger = setInterval(() => {
@@ -810,7 +818,9 @@ class SessionImpl implements Session {
         return;
       }
       unanswered += 1;
-      void send({ t: "ping", n: ++pingN, ts: Date.now() / 1000 }).catch(() => {});
+      pingTimes.set(++pingN, Date.now());
+      if (pingTimes.size > PING_MISSES) pingTimes.delete(pingTimes.keys().next().value!);
+      void send({ t: "ping", n: pingN, ts: Date.now() / 1000 }).catch(() => {});
     }, this.#pingIntervalMs);
 
     const reader = control.readable.getReader();
@@ -832,10 +842,18 @@ class SessionImpl implements Session {
               this.transport.sessionReady();
               this.status.update({ lastError: null });
               break;
-            case "pong":
+            case "pong": {
               unanswered = 0;
+              const sent = pingTimes.get(msg.n);
+              if (sent !== undefined) {
+                pingTimes.delete(msg.n);
+                this.#rtts.push(Math.max(0, Date.now() - sent));
+                this.#rtts = this.#rtts.slice(-4);
+                this.topics.pong(msg.aborted);
+              }
               if (this.#closed && msg.n === Number.MAX_SAFE_INTEGER) this.#closePong?.();
               break;
+            }
             case "robots":
               this.#applyWatchTarget(msg.robots);
               break;
