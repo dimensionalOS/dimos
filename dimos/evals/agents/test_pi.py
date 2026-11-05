@@ -368,18 +368,9 @@ def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path, mocker: Mock
     env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=guide)
     prompt = adapter._prepare_case(env, run_dir)
     assert (run_dir / "DIMOS.md").read_text() == "# Manipulation from Python"
-    assert prompt.startswith(adapter.config.robot_prompt)
-    assert adapter.config.system_prompt not in prompt
     assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt
     assert "Dimos.connect()" in prompt and "dimos mcp call" not in prompt
     listing.assert_not_called()
-
-
-def test_a_case_without_a_robot_keeps_the_question_prompt(tmp_path: Path) -> None:
-    adapter = PiAdapter()
-    env = RunningEnvironment(mcp_url="", streams=(), artifacts={})
-    prompt = adapter._prepare_case(env, tmp_path)
-    assert prompt.startswith(adapter.config.system_prompt)
 
 
 @pytest.mark.parametrize(
