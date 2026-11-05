@@ -38,11 +38,32 @@ def test_scan_uses_timed_geometry_history_and_rejects_gap(poses, lidar):
         if sample is not None:
             scans.append(sample)
     assert len(scans) == 1
-    cloud = scans[0]
+    cloud, world_cloud = scans[0]
     assert cloud.sample_header.time_ns == 0
     assert cloud.sample_header.clock_id == "test"
     assert len(cloud) > 30
+    assert cloud.frame_id == "left/lidar"
+    assert world_cloud.frame_id == "world"
+    assert len(world_cloud) == len(cloud)
     assert np.ptp(cloud.offset_times_u32()) > 80_000_000
     assert lidar.measure(poses(300_000_000)) is None
     assert lidar.measure(poses(0, epoch=1)) is None
     assert lidar.statistics()["gaps"] >= 2
+
+
+def test_raw_scan_retains_motion_while_world_hits_use_each_firing_pose(poses, lidar):
+    for tick in range(51):
+        sample = poses(tick * 2_000_000)
+        for body in sample.bodies:
+            if body.body_id == "left/lidar":
+                body.pose.position.x += tick * 0.002
+        scan = lidar.measure(sample)
+    assert scan is not None
+    raw, world = scan
+    origins = world.points_f32() - raw.points_f32()
+    assert np.ptp(origins[:, 0]) > 0.06
+    np.testing.assert_allclose(origins[:, 2], 0.20, atol=1e-5)
+    decoded = type(raw).lcm_decode(raw.lcm_encode())
+    np.testing.assert_array_equal(decoded.offset_times_u32(), raw.offset_times_u32())
+    np.testing.assert_array_equal(decoded.lines_u8(), raw.lines_u8())
+    assert decoded.frame_id == "left/lidar"

@@ -109,7 +109,7 @@ class Mid360Scan:
 
     def rays(
         self, start_ns: int, duration_ns: int
-    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64], NDArray[np.uint8]]:
         if self.downsample < 1 or start_ns < 0 or duration_ns <= 0:
             raise ValueError("positive downsample/duration and nonnegative start required")
         first = start_ns // 5000
@@ -119,11 +119,48 @@ class Mid360Scan:
         indices = (
             np.arange(0, count, CHANNELS * self.downsample)[:, None] + np.arange(CHANNELS)
         ).ravel()
-        return _load_pattern(str(self.calibration)).directions(first, count)[
-            indices
-        ], indices * 5000
+        return (
+            _load_pattern(str(self.calibration)).directions(first, count)[indices],
+            indices * 5000,
+            ((first + indices) % CHANNELS).astype(np.uint8),
+        )
 
 
 @lru_cache(maxsize=4)
 def _load_pattern(path: str) -> Mid360Pattern:
     return Mid360Pattern.load(path)
+
+
+@dataclass(frozen=True)
+class Mid360Returns:
+    """Andrew's #4441 range/incidence approximation, retained from the earlier sim2.
+
+    This is not the measured G1 firing calibration or a material reflectivity
+    model. A robot-specific occlusion mask must not be applied to another mount.
+    """
+
+    noise_floor_m: float = 0.0034
+    noise_per_m: float = 0.00073
+    incidence_exponent: float = 0.78
+    dropout: bool = True
+
+    def measure(
+        self,
+        ranges: NDArray[np.float64],
+        cos_incidence: NDArray[np.float64],
+        rng: np.random.Generator,
+    ) -> NDArray[np.float64]:
+        cosine = np.clip(np.abs(cos_incidence), 0.0, 1.0)
+        keep = np.isfinite(ranges) & (ranges >= 0)
+        if self.dropout:
+            probability = np.interp(
+                np.rad2deg(np.arccos(cosine)),
+                (0, 78, 79.5, 82.5, 85, 88, 90),
+                (1, 1, 0.76, 0.5, 0.22, 0.08, 0),
+            )
+            keep &= rng.random(len(ranges)) < probability
+        sigma = np.hypot(self.noise_floor_m, self.noise_per_m * ranges) / (
+            np.maximum(cosine, 0.05) ** self.incidence_exponent
+        )
+        measured = ranges + rng.standard_normal(len(ranges)) * sigma
+        return np.where(keep, measured, -1.0)
