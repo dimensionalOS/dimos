@@ -16,12 +16,11 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 import json
 from pathlib import Path
 import sys
 import threading
-import time
 from typing import Any
 
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
@@ -1448,15 +1447,29 @@ async def video_viewer(
             await viewer.close()
 
 
-def publish_camera(source: zenoh.Session, key: str, count: int, hz: float = 30) -> threading.Thread:
+@contextmanager
+def publish_camera(
+    source: zenoh.Session, key: str, count: int, hz: float = 30
+) -> Iterator[threading.Thread]:
+    """Publish up to ``count`` synthetic frames at ``hz`` from a thread that
+    stops with the block, so a failing test never leaves it putting into a
+    closing session."""
+    stop = threading.Event()
+
     def run() -> None:
         for seq in range(count):
+            if stop.is_set():
+                return
             source.put(key, camera_frame(seq))
-            time.sleep(1 / hz)
+            stop.wait(1 / hz)
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    return thread
+    try:
+        yield thread
+    finally:
+        stop.set()
+        thread.join(5)
 
 
 async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
@@ -1476,9 +1489,8 @@ async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
             assert provider._video is not None
             assert provider._video.encoders() == 1
             assert len(provider._video.peers) == 2
-            publisher = publish_camera(session, "sensor/video", 60)
-            frames = await asyncio.gather(first.frames(10), second.frames(10))
-            publisher.join(5)
+            with publish_camera(session, "sensor/video", 60):
+                frames = await asyncio.gather(first.frames(10), second.frames(10))
             for received in frames:
                 assert {(frame.width, frame.height) for frame in received} == {(320, 240)}
                 # A viewer starts from an IDR: the first picture decodes whole.
@@ -1506,9 +1518,8 @@ async def test_direct_video_viewers_receive_the_rate_each_requested(relay: Relay
             await fast.offer()
             assert provider._video is not None
             assert provider._video.encoders() == 2
-            publisher = publish_camera(session, "sensor/rates", 120)
-            slow_frames, fast_frames = await asyncio.gather(slow.frames(8), fast.frames(30))
-            publisher.join(5)
+            with publish_camera(session, "sensor/rates", 120):
+                slow_frames, fast_frames = await asyncio.gather(slow.frames(8), fast.frames(30))
             assert 3.5 <= rate(slow_frames) <= 6.5
             assert rate(fast_frames) >= 15
 
@@ -1522,20 +1533,20 @@ async def test_direct_video_last_viewer_closing_releases_the_encoder_within_a_se
     with local_session() as session:
         async with provider_connection(relay, session, video=True) as provider:
             assert provider._video is not None
-            async with video_viewer(relay, "sensor/leaving") as viewer:
-                await viewer.offer()
-                publisher = publish_camera(session, "sensor/leaving", 150)
-                await viewer.frames(5)
-                assert provider._video.encoders() == 1
-            # The viewer connection is gone: the relay closes the route and the peer.
-            async with timeout(1):
-                while provider._video.encoders() or provider._video.peers or provider._routes:
-                    await asyncio.sleep(0.02)
-            assert not provider._video._routes
-            settled = encode.call_count
-            await asyncio.sleep(0.3)
-            assert encode.call_count == settled
-            publisher.join(10)
+            with publish_camera(session, "sensor/leaving", 150):
+                async with video_viewer(relay, "sensor/leaving") as viewer:
+                    await viewer.offer()
+                    await viewer.frames(5)
+                    assert provider._video.encoders() == 1
+                # The viewer connection is gone: the relay closes the route and
+                # the peer, and the frames still arriving encode nothing.
+                async with timeout(1):
+                    while provider._video.encoders() or provider._video.peers or provider._routes:
+                        await asyncio.sleep(0.02)
+                assert not provider._video._routes
+                settled = encode.call_count
+                await asyncio.sleep(0.3)
+                assert encode.call_count == settled
 
 
 async def test_direct_video_provider_shutdown_ends_the_track(relay: RelayReadyInfo) -> None:
@@ -1544,9 +1555,8 @@ async def test_direct_video_provider_shutdown_ends_the_track(relay: RelayReadyIn
         await provider.enter_async_context(provider_connection(relay, session, video=True))
         async with video_viewer(relay, "sensor/ending") as viewer:
             await viewer.offer()
-            publisher = publish_camera(session, "sensor/ending", 30)
-            await viewer.frames(3)
-            publisher.join(5)
+            with publish_camera(session, "sensor/ending", 30):
+                await viewer.frames(3)
             ended: asyncio.Future[str] = asyncio.get_running_loop().create_future()
 
             @viewer.pc.on("connectionstatechange")  # type: ignore[untyped-decorator]

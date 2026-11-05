@@ -295,16 +295,18 @@ async def test_overflowing_peer_drops_its_queue_and_waits_for_the_next_idr(
     assert encoder.frames == PEER_QUEUE + 2
 
 
-async def test_slow_encode_is_dropped_and_followed_by_a_keyframe(
+async def test_slow_encode_is_dropped_and_followed_by_a_keyframe_despite_the_force_window(
     harness: Harness, mocker: MockerFixture
 ) -> None:
-    mocker.patch.object(topic_video, "KEYFRAME_FORCE_S", 0.0)
+    # The production force window stays on: the first frame opened the codec
+    # as an IDR a moment ago, so a window-bound request would leave the next
+    # frames referencing the dropped one.
     pc = await harness.offer("r1")
     pc.connect()
     track = pc.transceivers[0].track
     encoder = harness.video.peers["r1"].encoder
     await harness.encode(1)
-    await track.recv()
+    assert (await track.recv()).is_keyframe
     original = SharedEncoder.encode
 
     def slow(self: SharedEncoder, payload: bytes) -> list[av.Packet]:
@@ -316,9 +318,12 @@ async def test_slow_encode_is_dropped_and_followed_by_a_keyframe(
     await harness.encode(2)
     assert encoder.dropped == 1
     assert len(track._queue) == 0
+    assert track.waiting_idr
     mocker.patch.object(SharedEncoder, "encode", original)
     await harness.encode(3)
+    assert len(track._queue) == 1
     assert (await track.recv()).is_keyframe
+    assert encoder.keyframes == 2
 
 
 async def test_repeated_failures_rebuild_the_encoder_then_end_its_peers(
