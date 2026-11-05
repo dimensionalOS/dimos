@@ -154,8 +154,7 @@ Viser on one machine. The leader ports you pass select the sides: one port
 drives one arm and the other arm holds, both ports drive both arms.
 
 ```bash
-dimos run teleop-openarm-mini \
-  -o openarmminiteleopmodule.port_left=<left-feetech-port>
+dimos run teleop-openarm-mini --port-left <left-feetech-port>
 ```
 
 Teleop defaults to the standard Feetech serial baudrate of `1000000`. Override
@@ -186,8 +185,8 @@ are supplied. Bring the CAN interfaces up first with `dimos hardware can setup
 
 ```bash
 dimos run teleop-openarm-mini \
-  -o openarmminiteleopmodule.port_left=<left-feetech-port> \
-  -o openarmminiteleopmodule.port_right=<right-feetech-port> \
+  --port-left <left-feetech-port> \
+  --port-right <right-feetech-port> \
   --controlcoordinator.left-can-port can1 \
   --controlcoordinator.right-can-port can2
 ```
@@ -221,8 +220,8 @@ dimos run teleop-openarm-mini-follower --left-can-port can1 --right-can-port can
 
 # operator laptop: the leaders (one port drives one arm, two ports both)
 dimos run teleop-openarm-mini-leader --robot-ip <robot-ip> \
-  -o openarmminiteleopmodule.port_left=<left-feetech-port> \
-  -o openarmminiteleopmodule.port_right=<right-feetech-port>
+  --port-left <left-feetech-port> \
+  --port-right <right-feetech-port>
 ```
 
 Start the router before the follower; a follower started earlier does not
