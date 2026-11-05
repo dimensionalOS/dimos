@@ -22,13 +22,13 @@ MediaRecorder container variance, so Chromium's webm is not enough);
 holding the chat composer's mic records real audio, ships it as chunked
 publishes, and the test asserts the reassembled byte stream (one sid,
 contiguous seqs, empty final frame) lands on the module's port AND survives
-the real ffmpeg decode into the 16-kHz PCM the Whisper pipeline assumes.
+the real PyAV decode into the 16-kHz PCM the Whisper pipeline assumes.
 VoiceInput/Whisper stay out of scope: chunk delivery and decodability are
 the wire contract under test; transcription wiring is pytest-covered.
 
 Marked web_browser: excluded from the default suite (needs the
-`browser-tests` dependency group, Playwright browsers, built web dists, and
-the ffmpeg binary). Locally:
+`browser-tests` dependency group, Playwright browsers and built web dists).
+Locally:
 `uv run --group browser-tests pytest -m web_browser dimos/e2e_tests/test_voice_browser.py`.
 """
 
@@ -122,7 +122,7 @@ def test_hold_to_talk_ships_a_decodable_recording(
     assert chunks[0].mime.startswith("audio/")
     audio = b"".join(chunk.data for chunk in chunks)
     assert len(audio) > 1_000  # ~3 s of compressed audio, not an empty shell
-    # Whatever container this engine produced, the owned ffmpeg decode turns
+    # Whatever container this engine produced, the owned PyAV decode turns
     # it into the PCM shape the Whisper pipeline assumes.
     event = decode_audio_bytes(audio)
     assert event is not None and event.sample_rate == 16_000

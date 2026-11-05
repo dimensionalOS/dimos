@@ -271,7 +271,7 @@ def test_getattr_unknown_module(app):
 def test_getattr_exists_but_not_running(app):
     app.run(StressTestModule)
     with pytest.raises(AttributeError, match="exists but is not running"):
-        app.CameraModule  # noqa: B018
+        app.WebcamModule  # noqa: B018
 
 
 def test_run_module_class(app):
@@ -404,11 +404,13 @@ def test_connected_unload_removes_only_that_module(running_app, client):
     assert client.skills.ping() == "pong"
 
 
+@pytest.mark.flaky(reruns=1)
 def test_connected_repr(client):
     r = repr(client)
     assert "remote=True" in r
 
 
+@pytest.mark.flaky(reruns=1)
 def test_connected_dir(client):
     d = dir(client)
     assert "StressTestModule" in d

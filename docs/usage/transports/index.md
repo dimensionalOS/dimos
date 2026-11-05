@@ -88,7 +88,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
 
 blueprint = blueprint.transports(
-    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+    {("image", WebcamModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
 )
 ```
 
@@ -100,13 +100,19 @@ When the factory builds transports from the global switch, it applies defaults (
 
 ## Benchmarks
 
-Quick view on performance of our pubsub backends:
+Run the pubsub benchmarks directly:
 
 ```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
+uv run python -m dimos.protocol.pubsub.benchmarks.throughput
 ```
 
-![Benchmark results](../assets/pubsub_benchmark.png)
+See the [benchmark guide](/dimos/protocol/pubsub/benchmarks/README.md) for backend selection,
+image compression comparisons, and blueprint replay measurements.
+
+These historical results include the retired SHM backend. Current results depend on the
+machine, payload size, transport settings, and installed backends.
+
+![Historical pubsub benchmark results](../assets/pubsub_benchmark.png)
 
 ## Abstraction layers
 
@@ -173,7 +179,7 @@ ros = nav.transports(
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
-The runnable example below uses a tiny synthetic image publisher instead of `CameraModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
+The runnable example below uses a tiny synthetic image publisher instead of `WebcamModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
 
 ```python ansi=false
 import time
@@ -337,7 +343,7 @@ print(inspect.getsource(PubSub.subscribe))
         ...
 ```
 
-Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
+Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/usage/lcm.md) types. We also have CBOR-encoded transports for Python values without an LCM form.
 
 ### LCM (UDP multicast)
 
@@ -445,7 +451,7 @@ Transports often need to serialize messages before sending and deserialize after
 
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
-| `PickleEncoderMixin` | Python pickle   | Any Python object, Python-only     |
+| `CborEncoderMixin`   | CBOR            | Python values with their types kept (tuples, numpy, enums, dataclasses, messages); what RPC uses |
 | `LCMEncoderMixin`    | LCM binary      | Cross-language (C/C++/Python/Go/…) |
 | `JpegEncoderMixin`   | JPEG compressed | Image data, reduces bandwidth      |
 
@@ -478,26 +484,20 @@ class MyJsonPubSub(JsonEncoderMixin, Memory):
 Swap serialization by changing the mixin:
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.encoders import PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
 
-class MyPicklePubSub(PickleEncoderMixin, Memory):
+class MyCborPubSub(CborEncoderMixin, Memory):
     pass
 ```
 
-## Testing and benchmarks
-
-### Spec tests
+## Testing
 
 See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid tests your new backend should pass.
 
-### Benchmarks
-
-Add your backend to benchmarks to compare in context:
-
-```sh skip
-python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
-```
+Add performance comparisons to the cases in
+[`benchmarks/cases.py`](/dimos/protocol/pubsub/benchmarks/cases.py) and run the standalone
+commands in the [benchmark guide](/dimos/protocol/pubsub/benchmarks/README.md).
 
 ## Available transports
 

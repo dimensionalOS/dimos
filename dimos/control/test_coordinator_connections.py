@@ -26,6 +26,7 @@ worker processes.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -40,7 +41,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
 from dimos.control.contract.convert import motor_joints, pose_from_values, twist_to_values
 from dimos.control.contract.limits import BASE_NAME
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -67,6 +68,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.testing.waiting import wait_until
 
 #: The fake arm's joints as the coordinator names them: "mock/joint1" and so on.
@@ -379,6 +381,43 @@ def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., 
     assert task.last_state.joints.get_position("mock/joint2") == 0.0
 
 
+def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_its_model(
+    rig: Callable[..., Rig], tmp_path: Path
+) -> None:
+    # One arm joint, and a gripper open at 0 rad and closed at 0.85 rad, as the
+    # xArm Gripper's drive_joint is.
+    urdf = tmp_path / "arm_with_gripper.urdf"
+    urdf.write_text(
+        '<robot name="arm"><link name="base"/><link name="link1"/><link name="knuckle"/>'
+        '<joint name="mock/joint1" type="revolute"><parent link="base"/><child link="link1"/>'
+        '<limit lower="-3.1" upper="3.1" velocity="3" effort="50"/></joint>'
+        '<joint name="mock/drive_joint" type="revolute"><parent link="link1"/>'
+        '<child link="knuckle"/><limit lower="0" upper="0.85" velocity="2" effort="50"/></joint>'
+        "</robot>"
+    )
+    gripper = TaskConfig(
+        name="gripper",
+        type="gripper",
+        joint_names=["mock/drive_joint"],
+        params={"open_at": "lower"},
+    )
+    r = rig(ArmCoordinator, model=RobotModel.from_file(urdf), tasks=[gripper])
+
+    r.report(
+        "mock_joint_state",
+        JointState(name=["mock/joint1", "mock/drive_joint"], position=[0.0, 0.2]),
+    )
+    r.tick()
+    assert r.coordinator.task_invoke("gripper", "get_normalized") == pytest.approx([1 - 0.2 / 0.85])
+
+    r.coordinator.task_invoke("gripper", "set_normalized", {"values": [1.0]})
+    r.tick()
+    r.coordinator.task_invoke("gripper", "set_normalized", {"values": [0.0]})
+    r.tick()
+    # Held where it reads until told, then open, then closed.
+    assert r.positions_sent() == [[0.0, 0.2], [0.0, 0.0], [0.0, 0.85]]
+
+
 def test_a_robot_whose_readings_stop_is_held_where_it_is_when_they_come_back(
     rig: Callable[..., Rig],
 ) -> None:
@@ -573,10 +612,21 @@ TARGET = [0.2, -0.1, 0.3, 0.0, 0.1, -0.2, 0.25]
 
 
 @pytest.fixture
-def system() -> Iterator[ModuleCoordinator]:
-    """FakeArm and FakeBase behind a coordinator with a trajectory task, built with no viewer."""
+def system(request: pytest.FixtureRequest) -> Iterator[ModuleCoordinator]:
+    """FakeArm and FakeBase behind a coordinator with a trajectory task, built with no viewer.
+
+    A coordinator that goes ``reading_timeout_s`` without a reading stops
+    commanding the robot, so a test machine that freezes that long can leave
+    the arm short of TARGET. The default here outlasts such a freeze; a test
+    that needs a silence noticed passes a shorter one, in seconds, with
+    ``indirect=True``.
+    """
     blueprint = autoconnect(
-        Robots.blueprint(model=MOCK_MODEL, tasks=[joint_trajectory_task(MOCK_JOINTS)]),
+        Robots.blueprint(
+            model=MOCK_MODEL,
+            tasks=[joint_trajectory_task(MOCK_JOINTS)],
+            reading_timeout_s=getattr(request, "param", 10.0),
+        ),
         FakeArm.blueprint(),
         FakeBase.blueprint(),
     ).remappings(
@@ -631,6 +681,9 @@ def test_a_trajectory_reaches_the_fake_arm_and_the_base_is_told_to_stand_still(
     assert base.last_error is None
 
 
+# Only a silence longer than the reading timeout makes the coordinator forget
+# where it held the arm, so the restart has to outlast it.
+@pytest.mark.parametrize("system", [0.2], indirect=True)
 def test_a_restarted_connection_module_is_held_where_it_now_is(system: ModuleCoordinator) -> None:
     drive_to_target(system)
 

@@ -78,6 +78,10 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_contact_margin: float = Field(default=0.005, gt=0.0)
     # Nothing may come within about this distance (metres) of another scene point.
     grasp_obstacle_margin: float = Field(default=0.003, gt=0.0)
+    # When no grasp passes the check where it is, slide the grasps up to this
+    # far (metres) along their approach and try the nearest depth where any
+    # passes. 0 is off.
+    grasp_depth_search: float = Field(default=0.0, ge=0.0)
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -280,6 +284,7 @@ class PickAndPlaceModule(Module):
                 self.config.grasp_contact_margin,
                 self.config.grasp_obstacle_margin,
                 JointState(name=list(joints), position=list(joints.values())),
+                self.config.grasp_depth_search,
             )
         except Exception as exc:
             logger.warning("Grasp contact check failed; keeping every grasp", error=str(exc))

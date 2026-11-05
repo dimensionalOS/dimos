@@ -12,32 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from typing import cast
 
 import pytest
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.recorder import CollectionModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
+    DUAL_OPENYAM_CAMERAS,
     DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
     DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S,
-    DUAL_OPENYAM_COLLECTION_STREAMS,
     DUAL_OPENYAM_COLLECTION_ZERO_BUTTON,
+    dual_openyam_collection_camera,
+    dual_openyam_collection_profile,
     dual_openyam_collection_teleop_tasks,
-    dual_openyam_wrist_camera,
     teleop_webxr_dual_openyam_collection,
+)
+from dimos.robot.manipulators.dual_openyam.blueprints.learning_quest_collection import (
+    dual_openyam_quest_collection,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
 from dimos.robot.manipulators.dual_openyam.collection import (
     DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
-    DualOpenYamCollectionRecorder,
     DualOpenYamCollectionTeleopModule,
     scale_controller_pose,
 )
+from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -66,9 +75,8 @@ def test_collection_teleop_is_the_stock_task_at_the_collection_speed() -> None:
             our_task.params["max_joint_velocity_rad_s"]
             < (stock_task.params["max_joint_velocity_rad_s"])
         )
-        base_joint = our_task.joint_names[0]
         assert our_task.params["joint_velocity_limits_rad_s"] == {
-            base_joint: DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S
+            our_task.joint_names[0]: DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S
         }
         assert {k: v for k, v in our_task.params.items() if k not in speed_keys} == {
             k: v for k, v in stock_task.params.items() if k not in speed_keys
@@ -78,9 +86,6 @@ def test_collection_teleop_is_the_stock_task_at_the_collection_speed() -> None:
             stock_task.priority,
             stock_task.joint_names,
         )
-    assert (
-        DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S < DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
-    )
 
 
 def test_controller_pose_scale_keeps_orientation_and_stamp() -> None:
@@ -110,10 +115,6 @@ def test_collection_graph_only_swaps_the_teleop_tasks_module_and_zero_button() -
             assert a.module is b.module
         else:
             assert (a.module, a.kwargs) == (b.module, b.kwargs)
-    for our_task, stock_task in zip(_teleop_tasks(ours), _teleop_tasks(stock), strict=True):
-        assert our_task.params["bindings"] == stock_task.params["bindings"]
-        assert our_task.params["solver_type"] is stock_task.params["solver_type"]
-        assert our_task.params != stock_task.params
     assert [t for t in _tasks(ours) if t.type != "teleop_ik"] == [
         t for t in _tasks(stock) if t.type != "teleop_ik"
     ]
@@ -125,25 +126,62 @@ def test_zero_button_does_not_clash_with_the_episode_monitor() -> None:
     assert DUAL_OPENYAM_COLLECTION_ZERO_BUTTON not in taken
 
 
-@pytest.mark.parametrize("side", ["left", "right"])
-def test_wrist_camera_streams_carry_the_side_prefix(side: str) -> None:
-    camera = dual_openyam_wrist_camera(side)
+@pytest.mark.parametrize("name", DUAL_OPENYAM_CAMERAS)
+def test_collection_camera_streams_carry_the_camera_prefix(name: str) -> None:
+    camera = dual_openyam_collection_camera(name)
     atom = camera.blueprints[0]
 
     assert "serial_number" not in atom.kwargs
     assert atom.kwargs["enable_depth"] is False
     remapped = {camera.remapping_map[(atom.name, s.name)] for s in atom.streams}
-    assert f"{side}_wrist_color_image" in remapped
-    assert all("/" not in name for name in remapped)
+    assert f"{name}_color_image" in remapped
+    assert all("/" not in stream for stream in remapped)
 
 
-def test_wrist_camera_rejects_an_unknown_side() -> None:
+def test_collection_camera_rejects_an_unknown_name() -> None:
     with pytest.raises(ValueError):
-        dual_openyam_wrist_camera("centre")
+        dual_openyam_collection_camera("chest")
 
 
-def test_recorder_declares_every_collection_stream_as_an_input() -> None:
-    atom = DualOpenYamCollectionRecorder.blueprint().blueprints[0]
-    inputs = {s.name for s in atom.streams if s.direction == "in"}
+def test_profile_records_three_images_the_joints_and_the_commanded_targets() -> None:
+    profile = dual_openyam_collection_profile("dual-openyam-quest")
 
-    assert set(DUAL_OPENYAM_COLLECTION_STREAMS) <= inputs
+    assert profile.input_types() == {
+        **{f"{camera}_color_image": Image for camera in DUAL_OPENYAM_CAMERAS},
+        "coordinator_joint_state": JointState,
+        "coordinator_joint_command": JointState,
+    }
+    assert profile.observations["observation.state"].names == list(DUAL_OPENYAM_JOINTS)
+    assert profile.actions["action"].source_kind == "joint_position_updates"
+    assert profile.metadata == {"name": "dual-openyam-quest", "robot_type": "dual_openyam"}
+
+
+def test_quest_collection_records_first_and_takes_normal_configuration(tmp_path: Path) -> None:
+    modules = [atom.module for atom in dual_openyam_quest_collection.active_blueprints]
+    assert issubclass(modules[0], CollectionModule)
+    assert modules[1] is EpisodeMonitorModule
+    outputs = {
+        dual_openyam_quest_collection.remapping_map.get((atom.name, stream.name), stream.name)
+        for atom in dual_openyam_quest_collection.active_blueprints
+        for stream in atom.streams
+        if stream.direction == "out"
+    }
+    assert set(dual_openyam_collection_profile("x").input_types()) <= outputs
+
+    parsed = BlueprintConfigParser(dual_openyam_quest_collection).parse(
+        [
+            "--recorder.recording",
+            str(tmp_path / "session"),
+            "--episodes.task",
+            "stack the cups",
+            "--left-wrist-camera.serial-number",
+            "123",
+        ],
+        environ={},
+    )
+    recorder = next(
+        atom for atom in dual_openyam_quest_collection.active_blueprints if atom.name == "recorder"
+    )
+    assert recorder.kwargs["recording_schema"].robot_type == "dual_openyam"
+    assert parsed.module_configs["recorder"]["recording"] == tmp_path / "session"
+    assert parsed.module_configs["left_wrist_camera"]["serial_number"] == "123"

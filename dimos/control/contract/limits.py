@@ -117,9 +117,14 @@ def movable_joints(model: RobotModel) -> tuple[JointDescription, ...]:
     """The joints of a robot model that can be driven, in the model's order.
 
     A revolute, continuous or prismatic joint moves; a fixed, floating or
-    planar one is left out.
+    planar one is left out, and so is a ``mimic`` joint in the URDF, such as a
+    gripper finger that follows its drive.
     """
-    return tuple(joint for joint in model.load().joints if joint.type in MOVABLE_JOINT_TYPES)
+    return tuple(
+        joint
+        for joint in model.load().joints
+        if joint.type in MOVABLE_JOINT_TYPES and joint.mimic is None
+    )
 
 
 def model_limit(joint: JointDescription, interface: Interface) -> Limits:

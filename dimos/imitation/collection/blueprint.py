@@ -12,38 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recording blueprints.
-
-`CollectionRecorder` (a memory Recorder) captures the obs/action/status
-streams to a SQLite session DB during the run and flushes it durably on
-shutdown. DataPrep reads that DB afterwards.
-"""
+"""Profile-based Rust recording for the xArm and Piper teleop blueprints."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+from typing import Literal, cast
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.control.coordinator import ControlCoordinator
+from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
-    DUAL_OPENYAM_COLLECTION_STREAMS,
-    dual_openyam_wrist_camera,
-    teleop_webxr_dual_openyam_collection,
+from dimos.hardware.sensors.camera.realsense.camera import (
+    RealSenseCamera,
+    RealSenseCameraConfig,
 )
-from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollectionRecorder
+from dimos.hardware.sensors.camera.spec import CameraConfig
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.profile import CollectionProfile
+from dimos.imitation.collection.recorder import collect
+from dimos.imitation.dataprep.schema import FeatureSpec
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
 )
 
 
-def _session_db(robot: str) -> str:
-    """Timestamped session DB path under RECORDINGS_DIR, namespaced by robot."""
-    return str(RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S}.db")
+class _CollectionRealSenseConfig(RealSenseCameraConfig):
+    """Capture dimensions must match the shipped collection profile."""
+
+    width: Literal[848] = 848
+    height: Literal[480] = 480
+
+
+class _CollectionRealSenseCamera(RealSenseCamera):
+    config: _CollectionRealSenseConfig
 
 
 def _camera_if_real() -> tuple[Blueprint, ...]:
@@ -52,59 +59,61 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
     real camera would be redundant (and fail with no device connected)."""
     if global_config.simulation:
         return ()
-    return (RealSenseCamera.blueprint(enable_pointcloud=False),)
-
-
-# teleop_buttons / color_image / coordinator_joint_state / status are left to
-# autoconnect — each name is unique across the composed blueprint, so it
-# resolves to a stable /<name> topic shared by producer and recorder. The
-# recorder captures whatever joints are present, so the coordinator's aggregate
-# stream is its intended input (see dimos/control/README.md).
-# These generic teleoperation labels should be customized for a specific
-# training task when composing a collection blueprint.
-learning_collect_webxr_xarm7 = autoconnect(
-    CollectionRecorder.blueprint(
-        db_path=_session_db("xarm7"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(task="Teleoperate the xArm"),
-    teleop_webxr_xarm7,
-    *_camera_if_real(),
-)
-
-
-learning_collect_webxr_piper = autoconnect(
-    CollectionRecorder.blueprint(
-        db_path=_session_db("piper"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(task="Teleoperate the Piper"),
-    teleop_webxr_piper,
-    *_camera_if_real(),
-)
-
-
-def _dual_openyam_cameras_if_real() -> tuple[Blueprint, ...]:
-    """Overhead plus both wrist cameras; none in --simulation."""
-    if global_config.simulation:
-        return ()
     return (
-        # The D405 has no 848x480 at 15 fps mode.
-        RealSenseCamera.blueprint(width=640, fps=30),
-        dual_openyam_wrist_camera("left"),
-        dual_openyam_wrist_camera("right"),
+        _CollectionRealSenseCamera.blueprint(
+            instance_name="RealSenseCamera", enable_pointcloud=False
+        ),
     )
 
 
-learning_collect_webxr_dual_openyam = autoconnect(
-    DualOpenYamCollectionRecorder.blueprint(
-        db_path=_session_db("dual_openyam"),
-        poseless_streams=DUAL_OPENYAM_COLLECTION_STREAMS,
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(task="Teleoperate the dual OpenYAM"),
-    teleop_webxr_dual_openyam_collection,
-    *_dual_openyam_cameras_if_real(),
+def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple[Blueprint, ...]:
+    producers = autoconnect(teleop, *_camera_if_real())
+    coordinator = next(
+        atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    joints = [joint for hardware in coordinator.kwargs["hardware"] for joint in hardware.joints]
+    camera = next(
+        atom
+        for atom in producers.active_blueprints
+        if any(
+            stream.name == "color_image" and stream.direction == "out" for stream in atom.streams
+        )
+    )
+    camera_config = cast("CameraConfig", module_config_cls(camera)(**camera.kwargs))
+    state = FeatureSpec(
+        stream="coordinator_joint_state",
+        message_type=JointState,
+        field="position",
+        dtype="float32",
+        shape=(len(joints),),
+        names=joints,
+    )
+    profile = CollectionProfile(
+        metadata={"name": f"{robot}-webxr", "robot_type": robot},
+        observations={
+            "camera": FeatureSpec(
+                stream="color_image",
+                message_type=Image,
+                field="data",
+                dtype="video",
+                shape=(camera_config.height, camera_config.width, 3),
+                names=["height", "width", "channels"],
+            ),
+            "state": state,
+        },
+        actions={"action": state.model_copy(deep=True)},
+    )
+    directory: Path = RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S_%f}"
+    return (
+        collect(profile=profile, recording=directory, format="sqlite"),
+        EpisodeMonitorModule.blueprint(task=task),
+        producers,
+    )
+
+
+learning_collect_webxr_xarm7 = autoconnect(
+    *_collection_components("xarm7", teleop_webxr_xarm7, task="Teleoperate the xArm")
+)
+learning_collect_webxr_piper = autoconnect(
+    *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")
 )

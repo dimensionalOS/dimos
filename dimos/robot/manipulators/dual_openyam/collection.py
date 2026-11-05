@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Modules for dual OpenYAM data collection: the scaled teleop and the recorders."""
+"""The scaled WebXR teleop module for dual OpenYAM data collection."""
 
-from dimos.core.stream import In
-from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.webxr.controller_types import Buttons, Hand
+from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 # ArmTeleopConfig has no position scale (TwistTeleopConfig has linear_scale); a field there
@@ -46,16 +41,3 @@ class DualOpenYamCollectionTeleopModule(ArmTeleopModule):
         if pose is None:
             return None
         return scale_controller_pose(pose, DUAL_OPENYAM_COLLECTION_MOTION_SCALE)
-
-
-class DualOpenYamCollectionRecorder(CollectionRecorder):
-    """The collection streams plus commands, wrist views and buttons."""
-
-    coordinator_joint_command: In[JointState]
-    left_wrist_color_image: In[Image]
-    right_wrist_color_image: In[Image]
-    left_cartesian_command: In[PoseStamped]
-    right_cartesian_command: In[PoseStamped]
-    left_gripper_command: In[Float32]
-    right_gripper_command: In[Float32]
-    teleop_buttons: In[Buttons]
