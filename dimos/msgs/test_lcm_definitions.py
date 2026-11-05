@@ -36,13 +36,15 @@ KNOWN = {
     "sensor_msgs.ImuInfo",
     # leshy, https://github.com/dimensionalOS/dimos/pull/4497
     "shape_msgs.TriangleMesh",
+    # https://github.com/dimensionalOS/dimos/pull/4502; predates the generated sim_msgs package.
+    "sim_msgs.Contacts",
 }
 
 
 def test_dimos_lcm_packages_hold_only_dimos_lcm_messages() -> None:
     missing = set()
     for path in MSGS.glob("*/*.py"):
-        if path.name.startswith(("test_", "tool_", "_")):
+        if path.name.startswith(("test_", "_")):
             continue
         package, name = path.parent.name, path.stem
         if importlib.util.find_spec(f"dimos_lcm.{package}") is None:

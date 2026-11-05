@@ -81,6 +81,7 @@ keyboard_teleop_openyam = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "openyam_gripper"},
         model=_openyam_model,
         visualization={"backend": "viser"},
     ),
@@ -147,6 +148,7 @@ teleop_webxr_openyam = autoconnect(
         tasks=openyam_quest_tasks(),
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=OPENYAM_QUEST_MODEL,
         kinematics=OPENYAM_QUEST_KINEMATICS,
         visualization={"backend": "viser"},
@@ -161,7 +163,7 @@ _openyam_keyboard_planner_hw = openyam_hardware()
 
 keyboard_teleop_openyam_planner = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    planner(model=_openyam_model),
+    planner(model=_openyam_model, gripper_tasks={"manipulator": "openyam_gripper"}),
     coordinator(
         hardware=[_openyam_keyboard_planner_hw],
         tasks=[
