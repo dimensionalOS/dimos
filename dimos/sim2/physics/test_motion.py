@@ -19,19 +19,42 @@ import pytest
 
 def test_free_fall_motion_contains_gravity(backend):
     backend.place("box", (0, 0, 2, 0, 0, 0, 1))
-    motion = backend.read_motion("box")
-    assert motion.linear_acceleration_world == pytest.approx([0, 0, -9.81], abs=1e-8)
-    assert np.linalg.norm(motion.linear_acceleration_world) > 9
+    motion = next(b for b in backend.read_bodies() if b.body_id == "box")
+    assert [
+        motion.acceleration.linear.x,
+        motion.acceleration.linear.y,
+        motion.acceleration.linear.z,
+    ] == pytest.approx([0, 0, -9.81], abs=1e-8)
+    assert (
+        np.linalg.norm(
+            [
+                motion.acceleration.linear.x,
+                motion.acceleration.linear.y,
+                motion.acceleration.linear.z,
+            ]
+        )
+        > 9
+    )
 
 
 def test_offset_frame_acceleration_includes_rotation(backend):
     joint = backend.model.joint("door/hinge")
     dof = joint.dofadr[0]
     backend.data.qvel[dof] = 2
+    backend.data.qfrc_applied[dof] = 1
     mujoco.mj_forward(backend.model, backend.data)
     angular_acceleration = backend.data.qacc[dof]
-    motion = backend.read_motion("door/imu")
-    assert motion.angular_velocity_world == pytest.approx([0, 0, 2])
-    assert motion.linear_acceleration_world == pytest.approx(
-        [-4 * 0.225, angular_acceleration * 0.225, 0], abs=1e-8
-    )
+    motion = next(b for b in backend.read_bodies() if b.body_id == "door/imu")
+    assert [
+        motion.twist.angular.x,
+        motion.twist.angular.y,
+        motion.twist.angular.z,
+    ] == pytest.approx([0, 0, 2])
+    assert [
+        motion.acceleration.linear.x,
+        motion.acceleration.linear.y,
+        motion.acceleration.linear.z,
+    ] == pytest.approx([-4 * 0.225, angular_acceleration * 0.225, 0], abs=1e-8)
+
+    alpha = motion.acceleration.angular
+    assert [alpha.x, alpha.y, alpha.z] == pytest.approx([0, 0, angular_acceleration], abs=1e-8)
