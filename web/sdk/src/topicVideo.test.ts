@@ -35,7 +35,10 @@ describe("direct topic video", () => {
     for (const item of owned.splice(0)) item.close();
     vi.useRealTimers();
   });
-  function setup(profiles: string[] = ["raw", VIDEO_PROFILE, VIDEO_FALLBACK_PROFILE]) {
+  function setup(
+    profiles: string[] = ["raw", VIDEO_PROFILE, VIDEO_FALLBACK_PROFILE],
+    profileOptions: Record<string, unknown> = PROFILE_OPTIONS,
+  ) {
     const pcs: FakePeerConnection[] = [];
     const client = new TopicClient("workspace", () => {
       const pc = new FakePeerConnection();
@@ -56,7 +59,7 @@ describe("direct topic video", () => {
           read: true,
           write: false,
           profiles,
-          profileOptions: PROFILE_OPTIONS as never,
+          profileOptions: profileOptions as never,
         }],
       });
     const subs = () => sent.filter((m): m is TopicSubMsg => m.t === "topic_sub");
@@ -344,50 +347,48 @@ describe("direct topic video", () => {
   });
 
   it("reports rtc_unavailable for a source without the profile, and falls back to JPEG only when asked", async () => {
-    const h = setup(["raw", VIDEO_FALLBACK_PROFILE]);
+    // A provider without video advertises neither the profile nor its settings.
+    const { [VIDEO_PROFILE]: _video, ...jpegOnly } = PROFILE_OPTIONS;
+    const h = setup(["raw", VIDEO_FALLBACK_PROFILE], jpegOnly);
     const plain = h.video();
     h.sources();
-    const [sub] = h.subs();
-    h.client.onMessage({
-      t: "topic_error",
-      id: sub.id,
-      code: "unsupported_profile",
-      message: "unsupported profile",
-      outcome: "rejected",
-    });
+    // Refused before any topic_sub, as the relay would refuse it.
+    expect(h.subs()).toEqual([]);
     expect(plain.status()).toMatchObject({ phase: "rejected", error: { code: "rtc_unavailable" } });
     expect(plain.mode()).toBe("none");
     await expect(plain.ready()).rejects.toMatchObject({ code: "rtc_unavailable" });
     expect(h.offers()).toEqual([]);
 
     const samples: TopicSample[] = [];
-    const fallback = h.video({ fallback: "jpeg", onSample: (sample) => samples.push(sample) });
-    const videoSub = h.subs()[1];
-    h.client.onMessage({
-      t: "topic_error",
-      id: videoSub.id,
-      code: "unsupported_profile",
-      message: "unsupported profile",
-      outcome: "rejected",
+    // A picture size must not fail the settings check first: the missing
+    // profile has no ranges, and that reason would not reach the fallback.
+    const fallback = h.video({
+      maxResolution: [640, 360],
+      fallback: "jpeg",
+      onSample: (sample) => samples.push(sample),
     });
     expect(fallback.mode()).toBe("jpeg");
-    expect(h.subs()).toHaveLength(3);
-    expect(h.subs()[2]).toMatchObject({ profile: VIDEO_FALLBACK_PROFILE, delivery: "latest" });
+    expect(h.subs()).toHaveLength(1);
+    expect(h.subs()[0]).toMatchObject({
+      profile: VIDEO_FALLBACK_PROFILE,
+      delivery: "latest",
+      settings: { maxResolution: [640, 360] },
+    });
     expect(fallback.status()).toMatchObject({
       phase: "connecting",
       error: { code: "rtc_unavailable" },
     });
     h.client.onMessage({
       t: "topic_ready",
-      id: h.subs()[2].id,
+      id: h.subs()[0].id,
       source: "workspace",
       route: "@t:v3",
       gen: 1,
-      settings: { maxHz: 30, maxResolution: [1280, 720], quality: 75 },
+      settings: { maxHz: 30, maxResolution: [640, 360], quality: 75 },
     });
     await expect(fallback.ready()).resolves.toBeUndefined();
     expect(fallback.status()).toMatchObject({ phase: "ready", error: { code: "rtc_unavailable" } });
-    expect(fallback.settings()).toEqual({ maxHz: 30, maxResolution: [1280, 720], quality: 75 });
+    expect(fallback.settings()).toEqual({ maxHz: 30, maxResolution: [640, 360], quality: 75 });
     h.client.ingest({
       header: {
         ch: "@t:v3",
@@ -513,6 +514,55 @@ describe("direct topic video", () => {
       profile: VIDEO_FALLBACK_PROFILE,
       maxHz: 5,
       settings: { maxResolution: [640, 360] },
+    });
+  });
+
+  it("a fallback keeps the source it was picked on when another source joins meanwhile", async () => {
+    const client = new TopicClient(undefined, () => new FakePeerConnection());
+    owned.push(client);
+    const sent: Msg[] = [];
+    client.connected((m) => sent.push(m), vi.fn());
+    const announce = (names: string[]) =>
+      client.onMessage({
+        t: "topic_sources",
+        v: 1,
+        sources: names.map((source) => ({
+          source,
+          gen: 1,
+          read: true,
+          write: false,
+          profiles: ["raw", VIDEO_PROFILE, VIDEO_FALLBACK_PROFILE],
+          profileOptions: PROFILE_OPTIONS as never,
+        })),
+      });
+    announce(["cam-a"]);
+    const video = client.video("sensor/cam", { fallback: "jpeg" }, vi.fn());
+    owned.push(video);
+    const subs = () => sent.filter((m): m is TopicSubMsg => m.t === "topic_sub");
+    expect(subs()[0].source).toBe("cam-a");
+    client.onMessage({
+      t: "topic_ready",
+      id: subs()[0].id,
+      source: "cam-a",
+      route: "@t:v1",
+      gen: 1,
+      settings: { maxHz: 30, maxResolution: [1920, 1080] },
+    });
+    await flush();
+    announce(["cam-a", "cam-b"]);
+    client.onMessage({
+      t: "topic_rtc_close",
+      id: subs()[0].id,
+      route: "@t:v1",
+      gen: 1,
+      reason: "rtc_limit",
+    });
+    expect(video.mode()).toBe("jpeg");
+    expect(subs()).toHaveLength(2);
+    expect(subs()[1]).toMatchObject({ source: "cam-a", profile: VIDEO_FALLBACK_PROFILE });
+    expect(video.status()).toMatchObject({
+      phase: "connecting",
+      error: { code: "rtc_unavailable" },
     });
   });
 
