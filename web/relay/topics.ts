@@ -691,6 +691,30 @@ export class TopicRegistry {
       sub.state.reply({ t: "topic_applied", id: sub.spec.id, revision, settings });
       return;
     }
+    // A sole viewer can keep its RTP peer and track while its encoder emits
+    // a new SPS/PPS and IDR. Never mutate a variant another viewer targets.
+    const current = sub.variant;
+    const sole = isVideo(group.spec.profile) && current !== null &&
+      current !== group.opening &&
+      ![...group.subs].some((other) =>
+        other !== sub && (other.variant === current || other.target?.variant === current)
+      );
+    if (sole && current.key !== variantKey(settings, group.spec.profile)) {
+      const previous = sub.target?.variant;
+      current.settings = { ...settings };
+      current.key = variantKey(settings, group.spec.profile);
+      current.ready = false;
+      sub.target = {
+        variant: current,
+        revision,
+        requested,
+        settings,
+        deadline: this.now() + REQUEST_TIMEOUT_MS,
+      };
+      if (previous !== current) this.#idle(group, previous);
+      this.#announceVariant(group, current);
+      return;
+    }
     const found = this.#variantFor(group, settings);
     if (found === null) {
       reject("variant_limit");
@@ -875,6 +899,11 @@ export class TopicRegistry {
       if (group?.source.peer !== peer || group.source.gen !== msg.gen) return;
       const variant = group.variants?.get(msg.variant);
       if (variant === undefined) return; // a late acknowledgement of a retired variant
+      if (
+        isVideo(group.spec.profile) && variant.key !== variantKey(msg.settings, group.spec.profile)
+      ) {
+        return; // an older in-place configuration completed after its successor
+      }
       variant.ready = true;
       // Before topic_opened, viewers wait for the route itself.
       if (!group.opened) return;

@@ -141,6 +141,7 @@ class TopicSettingsRequest(_TopicModel):
     maxHz: Annotated[TopicRate | None, BeforeValidator(_reject_none)] = None
     maxResolution: Annotated[TopicSize | None, BeforeValidator(_reject_none)] = None
     quality: Annotated[TopicCount | None, BeforeValidator(_reject_none)] = None
+    maxBitrate: Annotated[TopicCount | None, BeforeValidator(_reject_none)] = None
     keepEvery: Annotated[TopicCount | None, BeforeValidator(_reject_none)] = None
     fields: Annotated[
         Annotated[TopicNames, Field(max_length=8)] | None, BeforeValidator(_reject_none)
@@ -160,6 +161,7 @@ class TopicOptions(_TopicModel):
     maxHz: TopicRate | None = None
     maxResolution: TopicSize | None = None
     quality: TopicCount | None = None
+    maxBitrate: TopicCount | None = None
     keepEvery: TopicCount | None = None
     fields: Annotated[TopicNames, Field(max_length=8)] | None = None
 

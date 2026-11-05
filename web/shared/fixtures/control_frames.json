@@ -153,6 +153,28 @@
                 "default": 60
               }
             },
+            "video.h264.v1": {
+              "maxHz": {
+                "kind": "number",
+                "max": 1000,
+                "default": 30
+              },
+              "maxResolution": {
+                "kind": "size",
+                "min": 16,
+                "max": 4096,
+                "default": [
+                  1920,
+                  1080
+                ]
+              },
+              "maxBitrate": {
+                "kind": "int",
+                "min": 100000,
+                "max": 4500000,
+                "default": 4500000
+              }
+            },
             "cloud.q16.low.v1": {
               "maxHz": {
                 "kind": "number",
@@ -180,7 +202,7 @@
           }
         }
       },
-      "b64": "vwIAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InJvYm90IiwidG9waWNTb3VyY2UiOiJ3b3Jrc3BhY2UiLCJ0b3BpY3NWZXJzaW9uIjoxLCJ0b3BpY0NhcGFiaWxpdGllcyI6eyJyZWFkIjp0cnVlLCJ3cml0ZSI6ZmFsc2UsInByb2ZpbGVzIjpbInJhdyIsImltYWdlLmpwZWcubG93LnYxIiwiY2xvdWQucTE2Lmxvdy52MSJdLCJndWFyZGVkUHVibGlzaGVycyI6ZmFsc2UsInByb2ZpbGVPcHRpb25zIjp7InJhdyI6eyJtYXhIeiI6eyJraW5kIjoibnVtYmVyIiwibWF4IjoxMDAwLCJkZWZhdWx0IjoxMDAwfX0sImltYWdlLmpwZWcubG93LnYxIjp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjMwfSwibWF4UmVzb2x1dGlvbiI6eyJraW5kIjoic2l6ZSIsIm1pbiI6MTYsIm1heCI6NDA5NiwiZGVmYXVsdCI6WzY0MCwzNjBdfSwicXVhbGl0eSI6eyJraW5kIjoiaW50IiwibWluIjoxLCJtYXgiOjEwMCwiZGVmYXVsdCI6NjB9fSwiY2xvdWQucTE2Lmxvdy52MSI6eyJtYXhIeiI6eyJraW5kIjoibnVtYmVyIiwibWF4IjoxMDAwLCJkZWZhdWx0Ijo1fSwia2VlcEV2ZXJ5Ijp7ImtpbmQiOiJpbnQiLCJtaW4iOjEsIm1heCI6NjQsImRlZmF1bHQiOjR9LCJmaWVsZHMiOnsia2luZCI6ImVudW0iLCJ2YWx1ZXMiOlsiaW50ZW5zaXR5IiwiY29sb3IiXSwiZGVmYXVsdCI6WyJpbnRlbnNpdHkiLCJjb2xvciJdfX19fX0="
+      "b64": "lgMAAHsidCI6ImhlbGxvIiwidiI6OCwicm9sZSI6InJvYm90IiwidG9waWNTb3VyY2UiOiJ3b3Jrc3BhY2UiLCJ0b3BpY3NWZXJzaW9uIjoxLCJ0b3BpY0NhcGFiaWxpdGllcyI6eyJyZWFkIjp0cnVlLCJ3cml0ZSI6ZmFsc2UsInByb2ZpbGVzIjpbInJhdyIsImltYWdlLmpwZWcubG93LnYxIiwiY2xvdWQucTE2Lmxvdy52MSJdLCJndWFyZGVkUHVibGlzaGVycyI6ZmFsc2UsInByb2ZpbGVPcHRpb25zIjp7InJhdyI6eyJtYXhIeiI6eyJraW5kIjoibnVtYmVyIiwibWF4IjoxMDAwLCJkZWZhdWx0IjoxMDAwfX0sImltYWdlLmpwZWcubG93LnYxIjp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjMwfSwibWF4UmVzb2x1dGlvbiI6eyJraW5kIjoic2l6ZSIsIm1pbiI6MTYsIm1heCI6NDA5NiwiZGVmYXVsdCI6WzY0MCwzNjBdfSwicXVhbGl0eSI6eyJraW5kIjoiaW50IiwibWluIjoxLCJtYXgiOjEwMCwiZGVmYXVsdCI6NjB9fSwidmlkZW8uaDI2NC52MSI6eyJtYXhIeiI6eyJraW5kIjoibnVtYmVyIiwibWF4IjoxMDAwLCJkZWZhdWx0IjozMH0sIm1heFJlc29sdXRpb24iOnsia2luZCI6InNpemUiLCJtaW4iOjE2LCJtYXgiOjQwOTYsImRlZmF1bHQiOlsxOTIwLDEwODBdfSwibWF4Qml0cmF0ZSI6eyJraW5kIjoiaW50IiwibWluIjoxMDAwMDAsIm1heCI6NDUwMDAwMCwiZGVmYXVsdCI6NDUwMDAwMH19LCJjbG91ZC5xMTYubG93LnYxIjp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjV9LCJrZWVwRXZlcnkiOnsia2luZCI6ImludCIsIm1pbiI6MSwibWF4Ijo2NCwiZGVmYXVsdCI6NH0sImZpZWxkcyI6eyJraW5kIjoiZW51bSIsInZhbHVlcyI6WyJpbnRlbnNpdHkiLCJjb2xvciJdLCJkZWZhdWx0IjpbImludGVuc2l0eSIsImNvbG9yIl19fX19fQ=="
     },
     {
       "name": "topic_sources",
@@ -249,6 +271,28 @@
                   "default": 60
                 }
               },
+              "video.h264.v1": {
+                "maxHz": {
+                  "kind": "number",
+                  "max": 1000,
+                  "default": 30
+                },
+                "maxResolution": {
+                  "kind": "size",
+                  "min": 16,
+                  "max": 4096,
+                  "default": [
+                    1920,
+                    1080
+                  ]
+                },
+                "maxBitrate": {
+                  "kind": "int",
+                  "min": 100000,
+                  "max": 4500000,
+                  "default": 4500000
+                }
+              },
               "cloud.q16.low.v1": {
                 "maxHz": {
                   "kind": "number",
@@ -277,7 +321,7 @@
           }
         ]
       },
-      "b64": "oQIAAHsidCI6InRvcGljX3NvdXJjZXMiLCJ2IjoxLCJzb3VyY2VzIjpbeyJzb3VyY2UiOiJ3b3Jrc3BhY2UiLCJnZW4iOjMsInJlYWQiOnRydWUsIndyaXRlIjpmYWxzZSwicHJvZmlsZXMiOlsicmF3IiwiaW1hZ2UuanBlZy5sb3cudjEiLCJjbG91ZC5xMTYubG93LnYxIl0sImd1YXJkZWRQdWJsaXNoZXJzIjpmYWxzZSwicHJvZmlsZU9wdGlvbnMiOnsicmF3Ijp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjEwMDB9fSwiaW1hZ2UuanBlZy5sb3cudjEiOnsibWF4SHoiOnsia2luZCI6Im51bWJlciIsIm1heCI6MTAwMCwiZGVmYXVsdCI6MzB9LCJtYXhSZXNvbHV0aW9uIjp7ImtpbmQiOiJzaXplIiwibWluIjoxNiwibWF4Ijo0MDk2LCJkZWZhdWx0IjpbNjQwLDM2MF19LCJxdWFsaXR5Ijp7ImtpbmQiOiJpbnQiLCJtaW4iOjEsIm1heCI6MTAwLCJkZWZhdWx0Ijo2MH19LCJjbG91ZC5xMTYubG93LnYxIjp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjV9LCJrZWVwRXZlcnkiOnsia2luZCI6ImludCIsIm1pbiI6MSwibWF4Ijo2NCwiZGVmYXVsdCI6NH0sImZpZWxkcyI6eyJraW5kIjoiZW51bSIsInZhbHVlcyI6WyJpbnRlbnNpdHkiLCJjb2xvciJdLCJkZWZhdWx0IjpbImludGVuc2l0eSIsImNvbG9yIl19fX19XX0="
+      "b64": "eAMAAHsidCI6InRvcGljX3NvdXJjZXMiLCJ2IjoxLCJzb3VyY2VzIjpbeyJzb3VyY2UiOiJ3b3Jrc3BhY2UiLCJnZW4iOjMsInJlYWQiOnRydWUsIndyaXRlIjpmYWxzZSwicHJvZmlsZXMiOlsicmF3IiwiaW1hZ2UuanBlZy5sb3cudjEiLCJjbG91ZC5xMTYubG93LnYxIl0sImd1YXJkZWRQdWJsaXNoZXJzIjpmYWxzZSwicHJvZmlsZU9wdGlvbnMiOnsicmF3Ijp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjEwMDB9fSwiaW1hZ2UuanBlZy5sb3cudjEiOnsibWF4SHoiOnsia2luZCI6Im51bWJlciIsIm1heCI6MTAwMCwiZGVmYXVsdCI6MzB9LCJtYXhSZXNvbHV0aW9uIjp7ImtpbmQiOiJzaXplIiwibWluIjoxNiwibWF4Ijo0MDk2LCJkZWZhdWx0IjpbNjQwLDM2MF19LCJxdWFsaXR5Ijp7ImtpbmQiOiJpbnQiLCJtaW4iOjEsIm1heCI6MTAwLCJkZWZhdWx0Ijo2MH19LCJ2aWRlby5oMjY0LnYxIjp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjMwfSwibWF4UmVzb2x1dGlvbiI6eyJraW5kIjoic2l6ZSIsIm1pbiI6MTYsIm1heCI6NDA5NiwiZGVmYXVsdCI6WzE5MjAsMTA4MF19LCJtYXhCaXRyYXRlIjp7ImtpbmQiOiJpbnQiLCJtaW4iOjEwMDAwMCwibWF4Ijo0NTAwMDAwLCJkZWZhdWx0Ijo0NTAwMDAwfX0sImNsb3VkLnExNi5sb3cudjEiOnsibWF4SHoiOnsia2luZCI6Im51bWJlciIsIm1heCI6MTAwMCwiZGVmYXVsdCI6NX0sImtlZXBFdmVyeSI6eyJraW5kIjoiaW50IiwibWluIjoxLCJtYXgiOjY0LCJkZWZhdWx0Ijo0fSwiZmllbGRzIjp7ImtpbmQiOiJlbnVtIiwidmFsdWVzIjpbImludGVuc2l0eSIsImNvbG9yIl0sImRlZmF1bHQiOlsiaW50ZW5zaXR5IiwiY29sb3IiXX19fX1dfQ=="
     },
     {
       "name": "topic_sub",
@@ -757,6 +801,35 @@
         "ts": 1752576000.5
       },
       "b64": "JAAAAHsidCI6InBvbmciLCJuIjo3LCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "topic_bitrate_update",
+      "message": {
+        "t": "topic_update",
+        "id": "cam",
+        "revision": 1,
+        "options": {
+          "maxBitrate": 10000000
+        }
+      },
+      "b64": "TgAAAHsidCI6InRvcGljX3VwZGF0ZSIsImlkIjoiY2FtIiwicmV2aXNpb24iOjEsIm9wdGlvbnMiOnsibWF4Qml0cmF0ZSI6MTAwMDAwMDB9fQ=="
+    },
+    {
+      "name": "topic_bitrate_applied",
+      "message": {
+        "t": "topic_applied",
+        "id": "cam",
+        "revision": 1,
+        "settings": {
+          "maxHz": 30,
+          "maxResolution": [
+            1280,
+            720
+          ],
+          "maxBitrate": 2500000
+        }
+      },
+      "b64": "dQAAAHsidCI6InRvcGljX2FwcGxpZWQiLCJpZCI6ImNhbSIsInJldmlzaW9uIjoxLCJzZXR0aW5ncyI6eyJtYXhIeiI6MzAsIm1heFJlc29sdXRpb24iOlsxMjgwLDcyMF0sIm1heEJpdHJhdGUiOjI1MDAwMDB9fQ=="
     },
     {
       "name": "pong_aborted",

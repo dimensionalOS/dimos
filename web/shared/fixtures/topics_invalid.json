@@ -482,7 +482,7 @@
         "id": "c1",
         "revision": 2,
         "options": {
-          "maxBitrate": 1
+          "bandwidth": 1
         }
       }
     },
@@ -494,6 +494,50 @@
         "revision": 2,
         "options": {
           "keepEvery": -1
+        }
+      }
+    },
+    {
+      "name": "fractional_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": 100000.5
+        }
+      }
+    },
+    {
+      "name": "negative_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": -1
+        }
+      }
+    },
+    {
+      "name": "unsafe_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": 9007199254740992
+        }
+      }
+    },
+    {
+      "name": "boolean_bitrate",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": true
         }
       }
     },

@@ -312,7 +312,7 @@ class _Route:
         self._changed.set()
 
     def set_variant(self, name: str, requested: dict[str, Any]) -> dict[str, Any]:
-        """Open a variant, or change the rate of an open one; returns its settings."""
+        """Open a variant, or reconfigure video/rate in place; returns its settings."""
         settings = normalize_settings(self.spec.profile, requested)
         existing = self._variants.get(name)
         if existing is None:
@@ -322,7 +322,9 @@ class _Route:
             return settings
         video = self._video is not None
         if _encode_key(existing.settings, video=video) != _encode_key(settings, video=video):
-            raise ValueError("variant_settings_changed")
+            if self._video is None:
+                raise ValueError("variant_settings_changed")
+            self._video.reconfigure(name, settings)
         # A rate change keeps each key's last encode time, as the mailbox does.
         period = 1 / float(settings["maxHz"])
         existing.next_due = {

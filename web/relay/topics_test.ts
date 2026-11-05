@@ -1348,6 +1348,7 @@ const VIDEO_OPTIONS: Record<string, OptionRanges> = {
   "video.h264.v1": {
     maxHz: { kind: "number", max: 1000, default: 30 },
     maxResolution: { kind: "size", min: 16, max: 4096, default: [1920, 1080] },
+    maxBitrate: { kind: "int", min: 100000, max: 4500000, default: 4500000 },
   },
 };
 function videoSetup() {
@@ -1378,7 +1379,7 @@ function videoSetup() {
 
 Deno.test("a video offer reaches the provider with a private id, its route and variant, and replies map back", () => {
   const h = videoSetup();
-  assertEquals(h.ready.settings, { maxHz: 30, maxResolution: [1920, 1080] });
+  assertEquals(h.ready.settings, { maxHz: 30, maxResolution: [1920, 1080], maxBitrate: 4500000 });
   h.offer();
   const [upstream] = h.forwarded();
   assertNotEquals(upstream.id, "cam");
@@ -1391,7 +1392,7 @@ Deno.test("a video offer reaches the provider with a private id, its route and v
     variant: "v1",
   });
   const peer = { id: upstream.id, route: h.open.route, gen: h.open.gen };
-  h.fromProvider({ t: "topic_rtc_answer", ...peer, sdp: "answer" });
+  h.fromProvider({ ...peer, t: "topic_rtc_answer", sdp: "answer" });
   h.fromProvider({ t: "topic_rtc_candidate", ...peer, candidate: "candidate:1 host", mid: "0" });
   h.registry.onViewerMsg(h.v, {
     t: "topic_rtc_candidate",
@@ -1616,6 +1617,7 @@ Deno.test("an unanswered video offer times out on both sides and the 65th candid
 
 Deno.test("a settings change to another encoder closes the peer with settings_changed and the new offer names the new variant", async () => {
   const h = videoSetup();
+  h.subscribe("shared", undefined, { profile: "video.h264.v1" });
   h.activate(h.v);
   h.offer();
   const [first] = h.forwarded();
@@ -1648,7 +1650,7 @@ Deno.test("a settings change to another encoder closes the peer with settings_ch
       t: "topic_applied",
       id: "cam",
       revision: 1,
-      settings: { maxHz: 30, maxResolution: [640, 360] },
+      settings: { maxHz: 30, maxResolution: [640, 360], maxBitrate: 1000000 },
     },
   ]);
   h.offer();
@@ -1663,7 +1665,7 @@ Deno.test("a settings change to another encoder closes the peer with settings_ch
 Deno.test("a video rate is part of the encoder: viewers at one rate share it, another rate gets its own", () => {
   const h = videoSetup();
   const profile = "video.h264.v1";
-  const full: TopicSettings = { maxHz: 30, maxResolution: [1920, 1080] };
+  const full: TopicSettings = { maxHz: 30, maxResolution: [1920, 1080], maxBitrate: 4500000 };
   const slow = h.subscribe("slow", undefined, { profile, maxHz: 5 });
   assertEquals(h.variants().map((m) => [m.variant, m.settings]), [["v2", { ...full, maxHz: 5 }]]);
   h.variantReady();
@@ -1676,6 +1678,7 @@ Deno.test("a video rate is part of the encoder: viewers at one rate share it, an
   h.registry.viewerClosed(slower);
   assertEquals(h.variants().length, 1);
   // A rate change moves the viewer to another encoder, like any other setting.
+  h.subscribe("shared", undefined, { profile });
   h.offer();
   const [first] = h.forwarded();
   h.fromProvider({
@@ -1732,4 +1735,64 @@ Deno.test("topic load is per negotiated viewer and congestion resets exclude hea
     egress.dispose();
   }
   assertEquals(budget.aborted, 2);
+});
+
+Deno.test("a sole video viewer reconfigures its variant without replacing its peer", () => {
+  const h = videoSetup();
+  try {
+    h.offer();
+    const [peer] = h.forwarded();
+    h.fromProvider({ ...peer, t: "topic_rtc_answer", sdp: "answer" });
+    for (
+      const [index, options] of ([{ maxBitrate: 2000000 }, {
+        maxResolution: [640, 360],
+      }] satisfies TopicSettingsUpdate[]).entries()
+    ) {
+      h.update(h.v, index + 1, options);
+      assertEquals(h.variants().at(-1)?.variant, "v1");
+      assertEquals(h.v.messages.filter((m) => m.t === "topic_applied").length, index);
+      h.variantReady();
+      assertEquals(h.v.messages.at(-1)?.t, "topic_applied");
+    }
+    assertEquals(h.rtc().map((m) => m.t), ["topic_rtc_answer"]);
+    assertEquals(h.forwarded().length, 1);
+    assertEquals(h.provider.messages.filter((m) => m.t === "topic_rtc_close"), []);
+  } finally {
+    h.close();
+  }
+});
+
+Deno.test("a video variant still opening cannot change in place", () => {
+  const h = mediaSetup(VIDEO_OPTIONS, ["video.h264.v1"]);
+  try {
+    const viewer = h.subscribe("cam", undefined, { profile: "video.h264.v1" });
+    h.update(viewer, 1, { maxResolution: [640, 360] });
+    assertEquals(h.variants().at(-1)?.variant, "v2");
+    h.opened();
+    assertEquals(viewer.ready(), []);
+    h.variantReady();
+    assertEquals(viewer.ready()[0].settings?.maxResolution, [640, 360]);
+  } finally {
+    h.close();
+  }
+});
+
+Deno.test("a stale in-place video acknowledgement cannot apply a newer configuration", () => {
+  const h = videoSetup();
+  try {
+    h.update(h.v, 1, { maxBitrate: 2000000 });
+    const first = h.variants().at(-1)!;
+    h.update(h.v, 2, { maxBitrate: 1000000 });
+    h.fromProvider({ ...first, t: "topic_variant_ready" });
+    assertEquals(h.v.messages.filter((m) => m.t === "topic_applied"), []);
+    h.variantReady();
+    assertEquals(h.v.messages.at(-1), {
+      t: "topic_applied",
+      id: "cam",
+      revision: 2,
+      settings: { maxHz: 30, maxResolution: [1920, 1080], maxBitrate: 1000000 },
+    });
+  } finally {
+    h.close();
+  }
 });

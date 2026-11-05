@@ -512,3 +512,37 @@ async def test_closing_routes_returns_the_registry_to_empty(harness: Harness) ->
         assert not harness.video.peers
         assert not harness.video._routes
     assert {close.reason for close in harness.closes()} == {"route_closed"}
+
+
+async def test_reconfigure_keeps_the_peer_and_emits_an_idr_with_monotonic_pts(harness):
+    pc = await harness.offer("r1")
+    pc.connect()
+    route = harness.video._routes["@t:p1"]
+    track = pc.transceivers[0].track
+    await harness.encode(1)
+    first = await track.recv()
+    await harness.encode(2)  # queued old settings must not follow the acknowledgement
+    encoder = route.encoders["v1"]
+    route.reconfigure(
+        "v1",
+        normalize_settings(
+            PROFILE,
+            {
+                "maxResolution": [32, 32],
+                "maxHz": 15,
+                "maxBitrate": 200_000,
+            },
+        ),
+    )
+    await harness.encode(3)
+    second = await track.recv()
+    assert second.is_keyframe
+    assert second.pts > first.pts
+    decoder = av.CodecContext.create("h264", "r")
+    decoded = decoder.decode(second)
+    assert (decoded[0].width, decoded[0].height) == (32, 24)
+    assert encoder.max_bitrate == 200_000
+    assert encoder._codec.bit_rate == 200_000
+    assert pc.transceivers[0].track is track
+    assert len(harness.answers()) == 1
+    assert harness.closes() == []

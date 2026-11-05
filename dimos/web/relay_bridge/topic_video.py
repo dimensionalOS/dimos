@@ -41,6 +41,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 import fractions
+from threading import Lock
 import time
 from typing import Any
 
@@ -165,6 +166,11 @@ class PacketTrack(MediaStreamTrack):
         self.sent += 1
         return self._queue.popleft()
 
+    def wait_for_keyframe(self) -> None:
+        """Discard queued frames from an encoder configuration being replaced."""
+        self._queue.clear()
+        self.waiting_idr = True
+
     def stop(self) -> None:
         super().stop()
         self._wake.set()
@@ -178,6 +184,10 @@ class SharedEncoder:
         self.codec_name = codec_name
         self.box: list[int] = list(settings["maxResolution"])
         self.max_hz = float(settings["maxHz"])
+        self.max_bitrate = int(settings.get("maxBitrate", video_bitrate(*self.box)))
+        self._configuration_lock = Lock()
+        self._pending_settings: dict[str, Any] | None = None
+        self.revision = 0
         self.peers: dict[str, Peer] = {}
         self._codec: av.VideoCodecContext | None = None
         self._size: tuple[int, int] | None = None
@@ -207,13 +217,28 @@ class SharedEncoder:
         self._codec = None
         self._size = None
 
+    def reconfigure(self, settings: Mapping[str, Any]) -> None:
+        """Apply at the next encode boundary, never mutate an in-flight codec."""
+        with self._configuration_lock:
+            self._pending_settings = dict(settings)
+            self.revision += 1
+
+    def _apply_settings(self) -> None:
+        with self._configuration_lock:
+            settings, self._pending_settings = self._pending_settings, None
+        if settings is not None:
+            self.box = list(settings["maxResolution"])
+            self.max_hz = float(settings["maxHz"])
+            self.max_bitrate = int(settings["maxBitrate"])
+            self.reset()
+
     def _open(self, width: int, height: int) -> av.VideoCodecContext:
         codec = av.CodecContext.create(self.codec_name, "w")
         assert isinstance(codec, av.VideoCodecContext)
         codec.width = width
         codec.height = height
         codec.pix_fmt = "yuv420p"
-        codec.bit_rate = video_bitrate(width, height)
+        codec.bit_rate = self.max_bitrate
         codec.time_base = VIDEO_TIME_BASE
         codec.framerate = fractions.Fraction(self.max_hz).limit_denominator(1000)
         codec.gop_size = max(1, round(SAFETY_KEYFRAME_S * self.max_hz))
@@ -234,6 +259,7 @@ class SharedEncoder:
 
     def encode(self, payload: bytes) -> list[av.Packet]:
         """Decode an Image/CompressedImage sample and encode it; worker thread."""
+        self._apply_settings()
         image, _ = decode_color(payload)
         try:
             width, height = fit_box(image.width, image.height, self.box)
@@ -288,11 +314,19 @@ class VideoRoute:
         self.route = route
         self.encoders: dict[str, SharedEncoder] = {}
 
+    def reconfigure(self, variant: str, settings: Mapping[str, Any]) -> None:
+        encoder = self.encoders.get(variant)
+        if encoder is not None:
+            encoder.reconfigure(settings)
+            for peer in encoder.peers.values():
+                peer.track.wait_for_keyframe()
+
     async def encode(self, variant: str, payload: bytes) -> None:
         """Encode once for every connected peer of ``variant``; permit held."""
         encoder = self.encoders.get(variant)
         if encoder is None or not any(peer.connected for peer in encoder.peers.values()):
             return
+        revision = encoder.revision
         started = time.monotonic()
         try:
             packets = await self._video.transforms.run(encoder.encode, payload)
@@ -305,6 +339,8 @@ class VideoRoute:
                 logger.warning("video encoder rebuilt", route=self.route, error=str(error))
                 encoder.reset()
             return
+        if encoder.revision != revision:
+            return  # the next encode applies the acknowledged configuration
         encoder.failures = 0
         if time.monotonic() - started > encoder.deadline:
             # The frame is stale, and later frames reference it: the next one
