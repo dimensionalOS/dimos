@@ -325,6 +325,11 @@ class SimModule(SharedConfigModule):
         try:
             self._load()
             deadline = time.monotonic()
+            # Inference/transport belongs inside the control-period wall budget.
+            # Allow bounded catch-up after a reply, never an unlimited burst.
+            catchup_s = (
+                max((c.period_ns for c in self.config.controllers), default=self.config.dt_ns) / 1e9
+            )
             while not self._done.is_set():
                 self._process_operations()
                 if self.status()["status"] == "fault":
@@ -359,7 +364,6 @@ class SimModule(SharedConfigModule):
                         ):
                             self._observations.put_nowait(self._last_state)
                         self._last_repeat = now
-                    deadline = now
                     self._done.wait(0.001)
                     continue
                 if self._waiting_since is not None:
@@ -370,7 +374,7 @@ class SimModule(SharedConfigModule):
                 if self.config.pace_to_wall_time:
                     deadline += self.config.dt_ns / 1e9
                     delay = deadline - time.monotonic()
-                    if delay < -self.config.dt_ns / 1e9:
+                    if delay < -catchup_s:
                         with self._status_lock:
                             self._status["late_steps"] += 1
                         deadline = time.monotonic()
