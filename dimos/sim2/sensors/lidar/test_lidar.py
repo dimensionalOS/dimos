@@ -39,8 +39,7 @@ def test_scan_uses_timed_geometry_history_and_rejects_gap(poses, lidar):
             scans.append(sample)
     assert len(scans) == 1
     cloud, world_cloud = scans[0]
-    assert cloud.sample_header.time_ns == 0
-    assert cloud.sample_header.clock_id == "test"
+    assert cloud.ts == 0
     assert len(cloud) > 30
     assert cloud.frame_id == "left/lidar"
     assert world_cloud.frame_id == "world"

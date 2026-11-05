@@ -29,7 +29,6 @@ from dimos.sim2.description import SceneConfig
 @dataclass(frozen=True)
 class CameraConfig:
     frame_id: str
-    source_id: str = "camera"
     hz: float = 15
     width: int = 320
     height: int = 240

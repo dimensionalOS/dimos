@@ -29,6 +29,7 @@ import xml.etree.ElementTree as ET
 from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.control_msgs import ActionCommand, JointCommand
 from dimos_lcm.sim_msgs import WorldState
+from dimos_lcm.std_msgs import Header, Time
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -172,7 +173,8 @@ def poses(backend, world):
             frame_id="world",
         )
         joints = backend.read_joints(backend.joint_ids)
-        joints.header = header
+        sec, nsec = divmod(time_ns, 1_000_000_000)
+        joints.header = Header(stamp=Time(sec=sec, nsec=nsec))
         return WorldState(
             header=header,
             model_revision=world.revision,

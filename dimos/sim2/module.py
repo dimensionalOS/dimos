@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DimOS simulation module: clock, commands, stepping, reset and physical truth."""
+"""DimOS simulation module: time, commands, stepping and physical truth."""
 
 from collections.abc import Callable
 from concurrent.futures import Future
@@ -27,6 +27,7 @@ import uuid
 from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.control_msgs import ActionCommand
 from dimos_lcm.sim_msgs import WorldState
+from dimos_lcm.std_msgs import Header, Time
 
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
@@ -98,9 +99,12 @@ class SimModule(SharedConfigModule):
         self.config.scene = self.config.scene.resolve(config_senders)
 
     @shared_config(SharedConfigModule)
-    def gravity(self) -> dict[str, Any]:
-        """Deliver the scene's fixed gravity to sensors before any module starts."""
-        return {"sim_gravity_world": self.config.scene.gravity_world}
+    def simulation_config(self) -> dict[str, Any]:
+        """Deliver run identity and fixed gravity before any module starts."""
+        return {
+            "sim_clock_id": self._clock_id,
+            "sim_gravity_world": self.config.scene.gravity_world,
+        }
 
     @rpc
     def start(self) -> None:
@@ -128,10 +132,6 @@ class SimModule(SharedConfigModule):
     @rpc
     def inspect(self) -> WorldState:
         return cast("WorldState", self._request("inspect"))
-
-    @rpc
-    def reset(self) -> WorldState:
-        return cast("WorldState", self._request("reset"))
 
     @rpc
     def place(self, body_id: str, pose: tuple[float, ...]) -> WorldState:
@@ -206,7 +206,8 @@ class SimModule(SharedConfigModule):
             cbor_observations, {"world", *self._backend.body_ids, *self._backend.joint_ids}
         )
         header = self._header("sim/observations", "world")
-        joints.header = header
+        sec, nsec = divmod(self._time_ns, 1_000_000_000)
+        joints.header = Header(stamp=Time(sec=sec, nsec=nsec))
         return WorldState(
             header=header,
             model_revision=self.config.scene.revision,
@@ -365,20 +366,6 @@ class SimModule(SharedConfigModule):
             self._done.set()
             self._backend.close()
 
-    def _invalidate(self) -> None:
-        self._epoch += 1
-        self._time_ns = 0
-        self._answered.clear()
-        self._expires.clear()
-        self._sequences.clear()
-        self._pending.clear()
-        self._next_sample_ns = 0
-        self._waiting_since = None
-        self._ever_controlled = False
-        self._last_state = None
-        self._backend.hold(self._backend.driven_joint_ids)
-        self._set_status(status="running", error="")
-
     def _request(self, operation: str, *args: Any) -> Any:
         if self._done.is_set():
             raise RuntimeError("simulation stopped")
@@ -392,12 +379,8 @@ class SimModule(SharedConfigModule):
         except Empty:
             return
         try:
-            if operation == "reset":
-                self._backend.reset()
-                self._invalidate()
-            elif operation == "place":
+            if operation == "place":
                 self._backend.place(*args)
-                self._invalidate()
             elif operation != "inspect":
                 raise ValueError("unknown simulation operation")
             future.set_result(self._inspect())

@@ -1,6 +1,6 @@
 # sim2 Option G: body state, actions and independent sensors
 
-SimModule owns time, stepping, reset and command validity. PhysicsBackend implements
+SimModule owns time, stepping and command validity. PhysicsBackend implements
 engine operations. There is no separate Runtime/Simulation execution layer.
 
 ```text
@@ -43,7 +43,8 @@ cbor_observations: CborObservation[] # all currently reported optional propertie
 ```
 
 `BodyState` and the existing `sensor_msgs.JointState` are nested in this
-message. `joint_truth.header` equals the outer header; its effort is actuator-applied
+message. `joint_truth.header` is the standard `std_msgs.Header` with the same acquisition
+time as the outer header; its effort is actuator-applied
 joint torque/force, excluding gravity and contact contributions. Each BodyState contains `body_id`, `pose: Pose`, `twist: Twist` and
 `acceleration: Accel`. Pose maps body to world. Linear/angular velocity and
 linear/angular acceleration are at the body-frame origin, expressed in world axes. There is one record
@@ -59,15 +60,17 @@ is unique. Unknown optional extensions may be ignored. Required consumers must
 check their key, payload and availability. Typed physics and control fields remain outside CBOR.
 
 See the companion dimos-lcm draft for exact array-count fields and generated
-bindings. Sensor/TF SampleHeader encoding is unchanged by Option G.
+bindings. Sensor and TF messages retain their existing std_msgs.Header wire formats.
+SampleHeader is used only by the Sim2 WorldState and ActionCommand contracts.
 
 ## Calls and ports
 
 `config_receive()` resolves SceneConfig against models delivered by UrdfManager's
 `@shared_config(SharedConfigModule)` provider from #4937, before build/start. Models
 are materialized once; simulation and geometry consumers use the same descriptions.
-Sensor settings stay in their sensor modules. SimModule.gravity() contributes
-SceneConfig.gravity_world using the same shared-config mechanism; the IMU receives
+Sensor settings stay in their sensor modules. SimModule.simulation_config() contributes
+the run clock ID and SceneConfig.gravity_world using the same shared-config
+mechanism; the demonstration controller receives the clock ID, and the IMU receives
 exactly one simulator's gravity before startup. Gravity is fixed for the run and
 is absent from WorldState. The IMU does not default to Earth gravity.
 
@@ -99,7 +102,7 @@ The deployed extension test exercises this path over real DimOS transport.
 
 Input: `actions: ActionCommand`.
 Output: `observations: WorldState`.
-RPCs: `inspect()`, `reset()` and `place(body_id, pose)` each return WorldState;
+RPCs: `inspect()` and `place(body_id, pose)` each return WorldState;
 `submit(command)` and `status()` handle commands/diagnostics. RPC requests execute
 on the owner thread between steps. No manual-step API or standalone executor.
 
@@ -126,9 +129,14 @@ rejection and duplicate handling. No registry or wrench input is introduced.
 
 ## Timing and sensors
 
-SampleHeader identifies the clock, reset epoch, acquisition time in nanoseconds,
-source, sequence and spatial frame. Reset/placement increments epoch and returns
-simulation time to zero. Receivers must not join samples across clocks/epochs.
+SampleHeader identifies the run clock, acquisition time in nanoseconds, source,
+sequence and spatial frame; epoch is zero for this restart-based implementation.
+A fresh episode uses `dimos restart`: a new clock ID, time zero and fresh sensor,
+controller and mapper state. There is no in-place SimModule.reset() RPC. Placement
+is an in-run state edit: it does not rewind time, clear maps or start an episode.
+Sensor and TF stamps use seconds/nanoseconds in this simulation clock. The G1
+demonstration joins IMU and encoder readings by timestamp; its run identity arrives
+once before start through shared_config.
 
 Physics defaults to 2 ms, complete observations to 500 Hz. Sensors retain their own
 acquisition rates in simulation time. A rate not integral in physics steps samples
