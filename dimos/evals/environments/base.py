@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from dimos.evals.agents.base import EvalSubject
     from dimos.evals.types import RunningEnvironment
 
@@ -44,7 +46,7 @@ class Environment(Configurable, ABC):
 
     @property
     def has_robot(self) -> bool:
-        """Whether this environment supplies an MCP server without agent modules."""
+        """Whether this environment supplies a live robot without agent modules."""
         return False
 
     @property
@@ -55,6 +57,11 @@ class Environment(Configurable, ABC):
     @property
     def raw_guide(self) -> str | None:
         """ROBOT.md template describing the raw topics, when provides_raw_robot."""
+        return None
+
+    @property
+    def python_guide(self) -> Path | None:
+        """DIMOS.md source when agents drive the robot through the Python API, not MCP."""
         return None
 
     def preflight(self, agent: EvalSubject) -> None:

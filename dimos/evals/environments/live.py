@@ -35,7 +35,7 @@ from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ENDPOINT
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.environments.lib.launch import (
-    default_mcp_url,
+    attached_mcp_url,
     launched_run,
     validate_blueprints,
     wait_connectable,
@@ -101,6 +101,10 @@ class LiveEnvironment(Environment):
     def raw_guide(self) -> str | None:
         return self.config.raw_guide
 
+    @property
+    def python_guide(self) -> Path | None:
+        return self.config.python_guide
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._recording: Store | None = None
@@ -125,6 +129,8 @@ class LiveEnvironment(Environment):
         return cast("PoseStamped", recording.streams.odom.last().data)
 
     def preflight(self, agent: EvalSubject) -> None:
+        if self.config.python_guide is not None and not self.config.python_guide.is_file():
+            raise RuntimeError(f"python_guide {self.config.python_guide} does not exist")
         if self.config.attach:
             if agent.config.modules:
                 raise RuntimeError(
@@ -136,8 +142,6 @@ class LiveEnvironment(Environment):
             except TimeoutError as e:
                 raise RuntimeError("attach needs a running dimos") from e
             return
-        if self.config.python_guide is not None and not self.config.python_guide.is_file():
-            raise RuntimeError(f"python_guide {self.config.python_guide} does not exist")
         validate_blueprints((*self.config.blueprint, *agent.config.modules, *self.config.disable))
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
@@ -168,7 +172,7 @@ class LiveEnvironment(Environment):
             wait_connectable(deadline, proc.process)
         else:
             wait_connectable(time.monotonic() + self.config.launch_timeout_s)
-            mcp_url = default_mcp_url() if _has_mcp() else ""
+            mcp_url = attached_mcp_url()
         if mcp_url:
             self._wait_mcp(mcp_url, proc, deadline)
         self._mcp_url = mcp_url or None
@@ -282,12 +286,6 @@ class LiveEnvironment(Environment):
         finally:
             self._recording = None
             self._mcp_url = None
-
-
-def _has_mcp() -> bool:
-    """Whether the newest running dimos, the one an attach drives, serves MCP."""
-    runs = list_runs(alive_only=True)
-    return bool(runs) and runs[-1].mcp_url is not None
 
 
 def _free_port() -> int:

@@ -18,15 +18,16 @@ from collections.abc import Sequence
 import subprocess
 import time
 
-from dimos.agents.mcp.mcp_adapter import McpAdapter
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.run_registry import RunEntry, list_runs
 
 _REGISTRY_POLL_S = 0.5
 
 
-def default_mcp_url() -> str:
-    """The MCP endpoint of the newest running dimos, for attaching to one."""
-    return McpAdapter.from_run_entry().url
+def attached_mcp_url() -> str:
+    """The MCP endpoint of the newest running dimos, the one an attach drives; "" without one."""
+    runs = list_runs(alive_only=True)  # oldest first: run IDs start with a timestamp
+    return (runs[-1].mcp_url or "") if runs else ""
 
 
 def launched_run(process: subprocess.Popen[bytes], deadline: float) -> RunEntry:
@@ -57,15 +58,13 @@ def launched_mcp_url(process: subprocess.Popen[bytes], deadline: float) -> str:
 
 
 def wait_connectable(deadline: float, process: subprocess.Popen[bytes] | None = None) -> None:
-    """Wait until a ``Dimos.connect()`` client reaches the coordinator, as an agent's would.
+    """Wait until the coordinator answers the ping a ``Dimos.connect()`` client starts with.
 
     The coordinator answers only after every module has started.
     """
-    from dimos.porcelain.dimos import Dimos
-
     while True:
         try:
-            Dimos.connect(timeout=max(1.0, min(5.0, deadline - time.monotonic()))).stop()
+            CoordinatorRPC.connect(timeout=max(1.0, min(5.0, deadline - time.monotonic()))).stop()
             return
         except TimeoutError:
             if process is not None and process.poll() is not None:
@@ -74,7 +73,7 @@ def wait_connectable(deadline: float, process: subprocess.Popen[bytes] | None = 
                 ) from None
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    "no dimos coordinator answered Dimos.connect() before the launch deadline"
+                    "no dimos coordinator answered before the launch deadline"
                 ) from None
 
 

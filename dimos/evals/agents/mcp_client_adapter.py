@@ -101,6 +101,11 @@ class McpClientAdapter(EvalSubject):
                 f"McpClientAdapter needs a running McpClient; {type(environment).__name__} "
                 "has no robot and this agent adds no modules"
             )
+        if environment.python_guide is not None and "mcp-server" not in self.config.modules:
+            raise RuntimeError(
+                f"McpClientAdapter needs an McpServer; {type(environment).__name__} drives the "
+                "robot through the Python API, so add mcp-server to this agent's modules"
+            )
 
     def run(
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
