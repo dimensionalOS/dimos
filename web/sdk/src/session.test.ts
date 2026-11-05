@@ -239,7 +239,7 @@ describe("Session over a fake WebTransport", () => {
     const relay = new FakeRelayEnd();
     relay.answerPings = false;
     const handle = connect({ pingIntervalMs: 1000 }, {
-      fetchInfo: async () => INFO,
+      fetchInfo: () => Promise.resolve(INFO),
       createWebTransport: () => relay.wt,
     });
     handles.push(handle);
