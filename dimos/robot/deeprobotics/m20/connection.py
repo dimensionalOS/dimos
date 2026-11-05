@@ -844,9 +844,10 @@ class M20Connection(Module):
             codes = [
                 error.get("errorCode") if isinstance(error, dict) else None for error in error_list
             ]
-            charge_errors = [
-                code for code in codes if isinstance(code, int) and code in _CHARGE_ERROR_NAMES
-            ]
+            # A malformed list can't say an error cleared.
+            if not all(isinstance(code, int) for code in codes):
+                return
+            charge_errors = [code for code in codes if code in _CHARGE_ERROR_NAMES]
             with self._state_condition:
                 # The list is every active error, so a charge error the robot no longer reports has cleared.
                 self._charge_error = charge_errors[-1] if charge_errors else None
