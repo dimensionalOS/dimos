@@ -62,6 +62,7 @@ STEP_RANGE = np.array([0.25, 0.15, 0.15, 0.5, 0.35, 0.05])
 # rolls left 7 mm of offset inside a real arm's pose scatter (xArm6, 2026-11-03, two runs 4 mm
 # apart and 7 mm from a ruler), 60 degree rolls do not. Consecutive steps stay under the 1.2 rad cap.
 WRIST_ROLLS_RAD = (1.05, 0.0, -1.05, 0.0)
+LIMIT_MARGIN_RAD = 0.1
 AMP_CEIL = {
     False: 1.0,
     True: 0.5,
@@ -590,7 +591,12 @@ def solve_hand_eye(
     amp = ceil
     # the draw is kept a full swing clear of the joint limits so it stays symmetric about its centre
     lim = np.asarray(robot.joint_limits(), dtype=float)
-    bounds = (lim[:, 0] + ceil * STEP_RANGE, lim[:, 1] - ceil * STEP_RANGE)
+    # ... and a margin clear of the limit itself: the xArm planner refuses a start within
+    # about 0.04 rad of a one-turn joint limit (joint 6 at -3.11 rad on hardware)
+    bounds = (
+        lim[:, 0] + ceil * STEP_RANGE + LIMIT_MARGIN_RAD,
+        lim[:, 1] - ceil * STEP_RANGE - LIMIT_MARGIN_RAD,
+    )
     centre: FloatArray = np.clip(home.copy(), *bounds)
     anchor = centre.copy()
     step_cap = DEPTH_STEP_M
