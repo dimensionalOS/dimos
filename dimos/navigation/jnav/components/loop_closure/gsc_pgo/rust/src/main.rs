@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native PGO module (`dimos_module`): scans wait until tf covers their stamp, are posed (odom -> body) and put in the body frame from tf, and a worker thread feeds them to GscPgo oldest-first and publishes the corrected odometry, tf, graph records and debug_log.
+//! Native PGO module (`dimos_module`): scans wait until tf covers their stamp, are posed (odom -> body) and put in the body frame from tf, and a worker thread feeds them to GscPgo oldest-first and publishes the corrected odometry, graph records and debug_log; each scan puts the newest map -> odom correction on tf at its stamp as it arrives.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
@@ -209,6 +209,8 @@ struct SharedState {
     solve_finished: bool,
     /// The module is stopping: the worker drains and returns.
     stopping: bool,
+    /// The newest map -> odom correction (None = identity), put on tf at each scan's stamp as the scan arrives.
+    correction: Option<Isometry3<f64>>,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
@@ -627,9 +629,24 @@ impl GscPgoModule {
         self.wake.notify_one();
     }
 
-    /// Queue a scan until tf covers its stamp (`match_scans_to_tf`).
+    /// Put the newest correction on tf at the scan's stamp, so map-frame users never wait on the worker, then queue the scan until tf covers its stamp (`match_scans_to_tf`).
     async fn on_cloud(&mut self, msg: PointCloud2) {
         let ts = msg.header.stamp.sec as f64 + msg.header.stamp.nsec as f64 / 1e9;
+        let correction = self
+            .state
+            .lock()
+            .expect("state")
+            .correction
+            .unwrap_or_else(Isometry3::identity);
+        let transform = Transform::new(
+            &self.config.map_frame,
+            &self.config.odom_frame,
+            ts,
+            correction,
+        );
+        if let Err(error) = self.tf.publish(&[transform]).await {
+            error!(error = %error, "tf failed to publish");
+        }
         let points = match extract_xyz(&msg) {
             Ok(points) => points,
             Err(error) => {
@@ -841,6 +858,7 @@ impl Worker {
                 let last_time = last_keyframe_time(&pgo);
                 publisher.send(&pgo, false, last_time);
                 self.log_solve(&pgo, last_time);
+                self.adopt_correction(&pgo);
             }
             // fixes and sightings join as they arrive; one alone starts a solve
             let (fixes, sightings) = {
@@ -883,6 +901,7 @@ impl Worker {
                     let last_time = last_keyframe_time(&pgo);
                     publisher.send(&pgo, false, last_time);
                     self.log_solve(&pgo, last_time);
+                    self.adopt_correction(&pgo);
                 }
             }
             self.publish_closure_edges(&pgo, &mut edges_sent, &frame_id);
@@ -928,7 +947,6 @@ impl Worker {
                     cur_time,
                     &frame_id,
                     &body_frame,
-                    &odom_frame,
                 );
                 continue;
             }
@@ -946,7 +964,6 @@ impl Worker {
                 cur_time,
                 &frame_id,
                 &body_frame,
-                &odom_frame,
             );
 
             let scan_queue = self.state.lock().expect("state").cloud_buffer.len();
@@ -1061,7 +1078,6 @@ impl Worker {
         ts: f64,
         frame_id: &str,
         body_frame: &str,
-        odom_frame: &str,
     ) {
         let corrected_rotation = mat3::mat_mul(&pgo.rotation_offset(), &pose.rotation);
         let corrected_translation = mat3::add(
@@ -1076,24 +1092,18 @@ impl Worker {
             body_frame,
         );
         self.publish(&self.corrected_odometry, &corrected, "corrected_odometry");
+        self.adopt_correction(pgo);
+    }
 
-        self.publish_tf(
-            &pgo.rotation_offset(),
-            &pgo.translation_offset(),
-            ts,
-            frame_id,
-            odom_frame,
-        );
+    /// Make the pose graph's map -> odom correction the one each arriving scan is stamped with.
+    fn adopt_correction(&self, pgo: &GscPgo) {
+        let correction = correction_isometry(&pgo.rotation_offset(), &pgo.translation_offset());
+        self.state.lock().expect("state").correction = Some(correction);
     }
 
     /// The map -> odometry correction on tf.
     fn publish_tf(&self, rotation: &Mat3, translation: &Vec3, ts: f64, parent: &str, child: &str) {
-        let iso = Isometry3::from_parts(
-            Translation3::new(translation[0], translation[1], translation[2]),
-            UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(
-                Matrix3::from_fn(|i, j| rotation[i][j]),
-            )),
-        );
+        let iso = correction_isometry(rotation, translation);
         if let Err(error) = self
             .runtime
             .block_on(self.tf.publish(&[Transform::new(parent, child, ts, iso)]))
@@ -1101,6 +1111,15 @@ impl Worker {
             error!(error = %error, "tf failed to publish");
         }
     }
+}
+
+fn correction_isometry(rotation: &Mat3, translation: &Vec3) -> Isometry3<f64> {
+    Isometry3::from_parts(
+        Translation3::new(translation[0], translation[1], translation[2]),
+        UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(Matrix3::from_fn(
+            |i, j| rotation[i][j],
+        ))),
+    )
 }
 
 #[tokio::main]
