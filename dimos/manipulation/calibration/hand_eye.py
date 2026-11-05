@@ -603,6 +603,8 @@ def solve_hand_eye(
         q = centre + amp * rng.uniform(-1.0, 1.0, 6) * STEP_RANGE
         if not eye_to_hand:  # a plate in the fingers would turn its face from a fixed camera
             q[5] += WRIST_ROLLS_RAD[tried % len(WRIST_ROLLS_RAD)]
+        # a draw that lands on a joint limit is an invalid goal to the planner
+        q = np.clip(q, *bounds)
         tried += 1
         if not robot.move_to_joints([float(v) for v in q]):
             amp = max(amp * AMP_SHRINK, AMP_MIN)

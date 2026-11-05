@@ -27,6 +27,7 @@ around a fixed camera, registered with the planner as an obstacle for the run.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 import json
 import math
@@ -427,6 +428,10 @@ class HandEyeCalibrationModule(Module):
             record["outcome"] = "refused_plan"
             record["message"] = str(error)
             logger.warning("Planner refused the target", message=str(error))
+            # a planner exception leaves the manipulation module in PLANNING, where it
+            # refuses every later target; reset() returns it to IDLE
+            with contextlib.suppress(Exception):
+                self._manipulation.reset()
             return False
         if not plan.succeeded or plan.plan is None:
             run.refused += 1
