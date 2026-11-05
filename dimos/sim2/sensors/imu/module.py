@@ -19,9 +19,11 @@ from typing import Any, Literal
 
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
+from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -46,7 +48,7 @@ class ImuModuleConfig(ModuleConfig):
     sensor: ImuConfig
 
 
-class SimImuModule(Module):
+class SimImuModule(SharedConfigModule):
     config: ImuModuleConfig
     observations: In[WorldState]
     imu: Out[Imu]
@@ -55,6 +57,7 @@ class SimImuModule(Module):
         super().__init__(**kwargs)
         self._sampling = Acquisition(self.config.sensor.hz)
         self._last: Imu | None = None
+        self._gravity_world: NDArray[np.float64] | None = None
         c = self.config.sensor
         if (
             min(c.gyro_std, c.accel_std, c.seed) < 0
@@ -62,19 +65,34 @@ class SimImuModule(Module):
         ):
             raise ValueError("invalid IMU noise/calibration")
 
+    def config_receive(self, config_senders: ConfigSenders) -> None:
+        values = [c["sim_gravity_world"] for _, c in config_senders if "sim_gravity_world" in c]
+        if len(values) != 1:
+            raise ValueError("IMU requires gravity from exactly one simulation")
+        gravity = np.asarray(values[0], dtype=float)
+        if gravity.shape != (3,) or not np.isfinite(gravity).all():
+            raise ValueError("simulation gravity must be a finite 3-vector")
+        self._gravity_world = gravity
+
     def measure(self, truth: WorldState) -> Imu | None:
         c = self.config.sensor
-        motion = next((m for m in truth.body_motion if m.frame_id == c.frame_id), None)
-        if motion is None:
-            raise ValueError(f"WorldState lacks configured IMU motion: {c.frame_id}")
+        if self._gravity_world is None:
+            raise ValueError("IMU requires shared simulation gravity before acquisition")
+        body = next((b for b in truth.bodies if b.body_id == c.frame_id), None)
+        if body is None:
+            raise ValueError(f"WorldState lacks configured IMU body: {c.frame_id}")
         if self._last is not None and same_acquisition(truth.header, self._last.sample_header):
             return self._last
         if not self._sampling.due(truth.header):
             return None
-        q = motion.pose_world.orientation
+        q = body.pose.orientation
         rotation = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
-        gyro = rotation.T @ motion.angular_velocity_world
-        accel = rotation.T @ (np.asarray(motion.linear_acceleration_world) - motion.gravity_world)
+        angular = body.twist.angular
+        acceleration = body.acceleration.linear
+        gyro = rotation.T @ [angular.x, angular.y, angular.z]
+        accel = rotation.T @ (
+            np.asarray([acceleration.x, acceleration.y, acceleration.z]) - self._gravity_world
+        )
         rng = np.random.default_rng([c.seed, truth.header.epoch, truth.header.time_ns])
         gyro += np.asarray(c.gyro_bias) + rng.normal(0, c.gyro_std, 3)
         accel += np.asarray(c.accel_bias) + rng.normal(0, c.accel_std, 3)
