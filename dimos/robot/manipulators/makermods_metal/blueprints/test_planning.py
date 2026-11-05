@@ -40,8 +40,11 @@ def test_planner_and_coordinator_share_arm_joints_and_state_topic() -> None:
     assert config.model.joint_names == list(METAL_ARM_JOINTS)
     assert config.model.planning_groups[0].joint_names == METAL_ARM_JOINTS
     assert config.model.planning_groups[0].tip_link == "gripper_base"
-    assert config.model.gripper_hardware_id == "metal"
+    assert config.gripper_tasks == {"arm": "metal_gripper"}
     tasks = MetalCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name)).tasks
+    assert config.gripper_tasks["arm"] == next(
+        task.name for task in tasks if task.type == "gripper"
+    )
     trajectory = next(task for task in tasks if task.type == "trajectory")
     assert trajectory.joint_names == config.model.joint_names
     for atom in (planner, coordinator):

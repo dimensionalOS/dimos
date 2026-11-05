@@ -14,33 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Generic
 
-from dimos.protocol.pubsub.spec import MsgT, PubSub, TopicT
+from rich.console import Console
+from rich.table import Table
+
 from dimos.utils.colors import HEAT_GRADIENT_ANSI256
-from dimos.utils.human import human_bytes, human_duration, human_number
-
-MsgGen = Callable[[int], tuple[TopicT, MsgT]]
-
-PubSubContext = Callable[[], AbstractContextManager[PubSub[TopicT, MsgT]]]
-
-
-@dataclass
-class Case(Generic[TopicT, MsgT]):
-    pubsub_context: PubSubContext[TopicT, MsgT]
-    msg_gen: MsgGen[TopicT, MsgT]
-
-    def __iter__(self) -> Iterator[PubSubContext[TopicT, MsgT] | MsgGen[TopicT, MsgT]]:
-        return iter((self.pubsub_context, self.msg_gen))
-
-    def __len__(self) -> int:
-        return 2
-
-
-TestData = Sequence[Case[Any, Any]]
+from dimos.utils.human import human_bytes, human_duration
 
 
 @dataclass
@@ -93,9 +74,6 @@ class BenchmarkResults:
     def print_summary(self) -> None:
         if not self.results:
             return
-
-        from rich.console import Console
-        from rich.table import Table
 
         console = Console()
 
@@ -199,7 +177,7 @@ class BenchmarkResults:
     def print_heatmap(self) -> None:
         """Print msgs/sec heatmap."""
 
-        self._print_heatmap("Msgs/sec", lambda r: r.throughput_msgs, human_number)
+        self._print_heatmap("Msgs/sec", lambda r: r.throughput_msgs, _human_number)
 
     def print_bandwidth_heatmap(self) -> None:
         """Print bandwidth heatmap."""
@@ -236,3 +214,12 @@ class BenchmarkResults:
             return f"{v:.1f}%"
 
         self._print_heatmap("Loss %", lambda r: r.loss_pct, fmt, high_is_good=False)
+
+
+def _human_number(value: float, decimals: int = 1) -> str:
+    """Format benchmark rates with SI suffixes."""
+    for unit in ("", "k", "M", "G", "T"):
+        if abs(value) < 1000:
+            return f"{value:.{decimals}f}{unit}" if unit else f"{value:.0f}"
+        value /= 1000
+    return f"{value:.{decimals}f}P"
