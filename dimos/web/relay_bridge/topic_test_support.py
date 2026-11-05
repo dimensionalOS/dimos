@@ -116,7 +116,7 @@ def camera_frame(seq: int, width: int = 320, height: int = 240) -> bytes:
     message.is_bigendian, message.step = False, width * 3
     message.data = picture.tobytes()
     message.data_length = len(message.data)
-    return message.lcm_encode()
+    return bytes(message.lcm_encode())
 
 
 @contextmanager
