@@ -210,3 +210,27 @@ owns the schemas and generated codecs.
 Each PR targets the preceding branch so its diff shows only its capability.
 The stack publishes complete observations and accepts one action input. The previous broad drafts #4982/#4983 are
 closed with their review history preserved.
+
+## Shared-code boundary
+
+The stack adds no mapping or localization implementation. `dimos/mapping`,
+Point-LIO, `UrdfManagerPointClearing` and `RoboPlanBodyFilter` match the #4937 base.
+The G1 demo may compose the existing mapper as a world-frame preview consumer;
+it does not include the earlier estimated-map or robot-filtering integration.
+
+The shared files that still change have these specific roles:
+
+| File or group | Reason within Option G |
+| --- | --- |
+| `robot/assets/model.py` | Resolve fixed mounts and namespace one model shared by physics, sensors and TF; normalize frame values after CLI config parsing. |
+| `robot/urdf_manager.py` | Deliver named models through #4937 and publish their ordinary TF tree from WorldState. |
+| `msgs/sensor_msgs/Image.py`, `PointCloud2.py` | Preserve valid subsecond acquisition stamps in existing decoders; schemas are unchanged. An all-zero cloud stamp still means unspecified. |
+| G1 URDF and its existing mount publisher | Define the native Mid360 orientation once in the model instead of adding its roll separately in hardware TF. |
+| Existing GR00T task | Accept an explicit IMU reading without requiring a hardware adapter in the demonstration host. |
+| Blueprint registry and gateway annotations | Expose the normal `dimos run` / Desktop launch entries. |
+| MuJoCo stubs and dependency metadata | Type the backend calls and install the Option G message and CBOR dependencies. |
+
+The first PR's remaining sensor edits are decoder behavior, not a new header or
+transport. The standard Image decoder preserves zero; PointCloud2 retains its
+existing unspecified-zero convention. Consumers must not assume every timestamp
+has Unix-epoch meaning.
