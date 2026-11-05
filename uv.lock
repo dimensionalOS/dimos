@@ -2582,7 +2582,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=be68cdc6cf8eda0f9df45df186d05d28e59e577b" },
+    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=225f7df4f4cc71f0d22e13272b082f08e4f800f9" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = "==1.45.0" },
@@ -2939,7 +2939,7 @@ wheels = [
 [[package]]
 name = "dimos-lcm"
 version = "0.1.7"
-source = { git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=be68cdc6cf8eda0f9df45df186d05d28e59e577b#be68cdc6cf8eda0f9df45df186d05d28e59e577b" }
+source = { git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=225f7df4f4cc71f0d22e13272b082f08e4f800f9#225f7df4f4cc71f0d22e13272b082f08e4f800f9" }
 dependencies = [
     { name = "foxglove-websocket" },
     { name = "lcm" },
