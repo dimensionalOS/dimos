@@ -16,23 +16,20 @@
 
 Model ledger: vendor G1 URDF, metres/radians, X forward/Y left/Z up.
 Pelvis IMU and native Mid360 axes use the existing URDF links. Camera is an
-explicit prototype optical frame: X right/Y down/Z forward. The independent
-Mid360 IMU is deliberately colocated with the laser for the simulated device.
+explicit prototype optical frame: X right/Y down/Z forward.
 """
 
-from dataclasses import replace
 from functools import partial
 import math
 from pathlib import Path
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.sim2_policy import CONTROL, JOINTS, POLICY, G1PolicyModule
-from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
@@ -84,7 +81,6 @@ SCENE = SceneConfig(
 )
 
 IMU = ImuConfig("g1/imu_in_pelvis", orientation="ideal")
-MID360_IMU = ImuConfig("g1/mid360_link")
 ENCODERS = EncoderConfig(JOINTS, hz=50)
 CAMERA = CameraConfig("g1/camera")
 LIDAR = LidarConfig(
@@ -99,66 +95,25 @@ LIDAR = LidarConfig(
 )
 
 
-def _g1_sim2(*, pointlio: bool = False) -> Blueprint:
-    localization = (
-        (
-            PointLio.blueprint(
-                sensor_frame_id="g1/mid360_link",
-                # The simulated device IMU is colocated with the laser.
-                extrinsic_t=[0.0, 0.0, 0.0],
-            ).remappings([(PointLio, "lidar_raw", "filtered_pointcloud")]),
-        )
-        if pointlio
-        else ()
-    )
-    return autoconnect(
-        UrdfManagerPointClearing.blueprint(
-            models=MODELS,
-            padding_m=0.05,
-            filter_geometry="visual",
-            external_pose_frames={"g1": "g1/mid360_link"} if pointlio else {},
-        ).remappings(
-            [(UrdfManagerPointClearing, "pointcloud", "lidar_raw" if pointlio else "pointcloud")]
-        ),
-        SimModule.blueprint(
-            scene=SCENE,
-            backend=MujocoBackend,
-            observation_hz=200,
-            controllers=(CONTROL,),
-            joint_ids=JOINTS,
-        ),
-        SimImuModule.blueprint(sensor=IMU),
-        SimImuModule.blueprint(instance_name="mid360_imu", sensor=MID360_IMU).remappings(
-            [("mid360_imu", "imu", "imu_raw")]
-        ),
-        SimJointEncoderModule.blueprint(sensor=ENCODERS),
-        SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=MujocoRenderer),
-        SimLidarModule.blueprint(
-            scene=SCENE,
-            sensor=replace(LIDAR, publish_truth=not pointlio),
-            raycaster=MujocoRaycaster,
-        ).remappings(
-            [
-                (SimLidarModule, "lidar", "lidar_raw"),
-                (SimLidarModule, "pointcloud", "truth_pointcloud" if pointlio else "pointcloud"),
-            ]
-        ),
-        VoxelGridMapper.blueprint(
-            device="CPU:0",
-            carve_columns=False,
-            block_count=100_000,
-            emit_every=5,
-            frame_id="odom" if pointlio else "world",
-        ).remappings(
-            [(VoxelGridMapper, "lidar", "pointcloud" if pointlio else "filtered_pointcloud")]
-        ),
-        G1PolicyModule.blueprint(),
-        *localization,
-    )
-
-
-# Keep mapping/TF/filter work off the IMU, encoder and policy worker loops.
-unitree_g1_sim2 = _g1_sim2().global_config(viewer="none", transport="zenoh", n_workers=9)
-unitree_g1_sim2_pointlio = _g1_sim2(pointlio=True).global_config(
-    viewer="none", transport="zenoh", n_workers=10
-)
+# The mapper is an unchanged downstream consumer of truth-registered scans.
+# Robot returns remain in the scans and can accumulate in this preview map.
+unitree_g1_sim2 = autoconnect(
+    UrdfManager.blueprint(models=MODELS),
+    SimModule.blueprint(
+        scene=SCENE,
+        backend=MujocoBackend,
+        observation_hz=200,
+        controllers=(CONTROL,),
+        joint_ids=JOINTS,
+    ),
+    SimImuModule.blueprint(sensor=IMU),
+    SimJointEncoderModule.blueprint(sensor=ENCODERS),
+    SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=MujocoRenderer),
+    SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster).remappings(
+        [(SimLidarModule, "lidar", "lidar_raw")]
+    ),
+    VoxelGridMapper.blueprint(
+        device="CPU:0", carve_columns=False, block_count=100_000, emit_every=5
+    ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
+    G1PolicyModule.blueprint(),
+).global_config(viewer="none", transport="zenoh", n_workers=8)

@@ -23,19 +23,18 @@ python = "dimos.hardware.sensors.lidar.pointlio.module:PointLio"
 [package.metadata.dimos.module.pointlio.inputs]
 lidar_raw = "sensor_msgs.PointCloud2"
 imu_raw = "sensor_msgs.Imu"
+tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.pointlio.outputs]
 lidar = "sensor_msgs.PointCloud2"
 odometry = "nav_msgs.Odometry"
-pointcloud = "sensor_msgs.PointCloud2"
-tf = "tf2_msgs.TFMessage"
 
 [dependencies]
 livox-wire = { git = "https://github.com/dimensionalOS/livox-wire", rev = "441c4a16dbe2adb0683ece976cc800c6d7fbc790" }
 # Direct dependencies of the copied livox wire/pipeline/pcap modules. See src/lib.rs.
 pointlio-core = { git = "https://github.com/dimensionalOS/dimos-module-pointlio.git", rev = "22a5403f827d030b248ae473c2808b5d405b3d55" }
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "225f7df4f4cc71f0d22e13272b082f08e4f800f9" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

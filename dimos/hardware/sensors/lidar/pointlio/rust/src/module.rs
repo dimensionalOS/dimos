@@ -14,18 +14,16 @@
 
 //! Point-LIO native module: PointCloud2 + Imu in, odometry + body cloud + tf out.
 
-use dimos_module::{native_config, Input, Module, Output};
+use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion};
+use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
 
 /// The driver publishes linear acceleration in m/s^2; Point-LIO wants it in g.
 const GRAVITY_MS2: f64 = 9.80665;
-use lcm_msgs::common_msgs::SampleHeader;
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseWithCovariance, Twist, TwistWithCovariance};
 use lcm_msgs::geometry_msgs::{Quaternion as QuatMsg, Vector3};
-use lcm_msgs::geometry_msgs::{Transform, TransformStamped};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use lcm_msgs::tf2_msgs::TFMessage;
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -128,14 +126,11 @@ pub struct PointLioModule {
     #[output(encode = PointCloud2::encode)]
     lidar: Output<PointCloud2>,
 
-    #[output(encode = PointCloud2::encode)]
-    pointcloud: Output<PointCloud2>,
-
     #[output(encode = Odometry::encode)]
     odometry: Output<Odometry>,
 
-    #[output(encode = TFMessage::encode)]
-    tf: Output<TFMessage>,
+    #[tf]
+    tf: Tf,
 
     #[config]
     config: Config,
@@ -145,9 +140,6 @@ pub struct PointLioModule {
     lio: Option<PointLio>,
     last_cloud_ts: Option<f64>,
     last_odom_ts: Option<f64>,
-    acquisition: Option<SampleHeader>,
-    last_imu_ns: Option<i64>,
-    last_lidar_ns: Option<i64>,
 }
 
 impl PointLioModule {
@@ -164,13 +156,7 @@ impl PointLioModule {
     }
 
     async fn handle_imu_raw(&mut self, msg: Imu) {
-        if !self.accept_epoch(&msg.header)
-            || self.last_imu_ns.is_some_and(|t| msg.header.time_ns <= t)
-        {
-            return;
-        }
-        self.last_imu_ns = Some(msg.header.time_ns);
-        let ts = msg.header.time_ns as f64 * 1e-9;
+        let ts = stamp_secs(&msg.header.stamp);
         let g = &msg.angular_velocity;
         let a = &msg.linear_acceleration;
         self.lio.as_mut().expect("setup ran").feed_imu(
@@ -182,11 +168,6 @@ impl PointLioModule {
     }
 
     async fn handle_lidar_raw(&mut self, msg: PointCloud2) {
-        if !self.accept_epoch(&msg.header)
-            || self.last_lidar_ns.is_some_and(|t| msg.header.time_ns <= t)
-        {
-            return;
-        }
         let points = match livox_points(&msg) {
             Ok(points) => points,
             Err(err) => {
@@ -194,35 +175,12 @@ impl PointLioModule {
                 return;
             }
         };
-        self.last_lidar_ns = Some(msg.header.time_ns);
-        let start_ns = msg.header.time_ns as u64;
+        let start_ns = stamp_ns(&msg.header.stamp);
         self.lio
             .as_mut()
             .expect("setup ran")
             .feed_lidar(start_ns, &points);
         self.drain().await;
-    }
-
-    fn accept_epoch(&mut self, header: &SampleHeader) -> bool {
-        if header.time_ns < 0 {
-            return false;
-        }
-        if let Some(previous) = &self.acquisition {
-            if header.clock_id != previous.clock_id || header.epoch < previous.epoch {
-                return false;
-            }
-            if header.epoch > previous.epoch {
-                self.lio = Some(PointLio::new(
-                    &self.config.core().expect("validated at launch"),
-                ));
-                self.last_cloud_ts = None;
-                self.last_odom_ts = None;
-                self.last_imu_ns = None;
-                self.last_lidar_ns = None;
-            }
-        }
-        self.acquisition = Some(header.clone());
-        true
     }
 
     /// Replay drain rule: `process()` until the lidar buffer stops shrinking.
@@ -247,42 +205,25 @@ impl PointLioModule {
         if due(&mut self.last_odom_ts, o.ts, self.config.odom_freq) {
             let msg = odometry_message(&self.config, &o);
             let _ = self.odometry.publish(&msg).await;
-            let p = &msg.pose.pose;
-            let t = TransformStamped {
-                header: sample_header(
-                    self.acquisition.as_ref().unwrap(),
-                    &self.config.world_frame(),
-                    o.ts,
-                ),
-                child_frame_id: self.config.sensor_frame(),
-                transform: Transform {
-                    translation: Vector3 {
-                        x: p.position.x,
-                        y: p.position.y,
-                        z: p.position.z,
-                    },
-                    rotation: p.orientation.clone(),
-                },
-            };
-            let _ = self
-                .tf
-                .publish(&TFMessage {
-                    transforms: vec![t],
-                })
-                .await;
+            let iso = Isometry3::from_parts(
+                Translation3::new(o.pos[0], o.pos[1], o.pos[2]),
+                UnitQuaternion::from_quaternion(Quaternion::new(
+                    o.quat[3], o.quat[0], o.quat[1], o.quat[2],
+                )),
+            );
+            let t = Transform::new(
+                self.config.world_frame(),
+                self.config.sensor_frame(),
+                o.ts,
+                iso,
+            );
+            let _ = self.tf.publish(&[t]).await;
         }
         if due(&mut self.last_cloud_ts, o.ts, self.config.pointcloud_freq) {
             let cloud = lio.body_cloud();
             if !cloud.is_empty() {
-                let h = self.acquisition.as_ref().unwrap();
-                let msg =
-                    cloud_message(sample_header(h, &self.config.sensor_frame(), o.ts), &cloud);
+                let msg = cloud_message(&self.config.sensor_frame(), o.ts, &cloud);
                 let _ = self.lidar.publish(&msg).await;
-                let registered = cloud_message(
-                    sample_header(h, &self.config.world_frame(), o.ts),
-                    &lio.world_cloud(),
-                );
-                let _ = self.pointcloud.publish(&registered).await;
             }
         }
     }
@@ -297,13 +238,12 @@ fn due(last: &mut Option<f64>, ts: f64, hz: f64) -> bool {
     true
 }
 
-fn sample_header(input: &SampleHeader, frame: &str, ts: f64) -> SampleHeader {
-    SampleHeader {
-        frame_id: frame.into(),
-        source_id: "pointlio".into(),
-        time_ns: (ts * 1e9).round() as i64,
-        ..input.clone()
-    }
+fn stamp_secs(t: &Time) -> f64 {
+    f64::from(t.sec) + f64::from(t.nsec) * 1e-9
+}
+
+fn stamp_ns(t: &Time) -> u64 {
+    t.sec as u64 * 1_000_000_000 + t.nsec as u64
 }
 
 fn header(frame_id: &str, ts: f64) -> Header {
@@ -326,7 +266,6 @@ struct Layout {
     offset_time: usize,
     intensity: Option<usize>,
     tag: Option<usize>,
-    line: Option<usize>,
 }
 
 fn layout(cloud: &PointCloud2) -> Result<Layout, String> {
@@ -365,7 +304,6 @@ fn layout(cloud: &PointCloud2) -> Result<Layout, String> {
         offset_time: need("offset_time", PointField::UINT32)?,
         intensity: find("intensity", PointField::FLOAT32)?,
         tag: find("tag", PointField::UINT8)?,
-        line: find("line", PointField::UINT8)?,
     })
 }
 
@@ -394,7 +332,7 @@ fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>, String> {
                 .intensity
                 .map_or(0, |off| (f32_at(p, off) * 255.0).round() as u16),
             tag: l.tag.map_or(0, |off| p[off]),
-            line: l.line.map_or(0, |off| u16::from(p[off])),
+            line: 0,
             offset_time: u64::from(u32_at(p, l.offset_time)),
         })
         .collect())
@@ -452,7 +390,7 @@ fn odometry_message(cfg: &Config, o: &pointlio_core::Odom) -> Odometry {
 }
 
 /// Body cloud as xyzi.
-fn cloud_message(header: SampleHeader, cloud: &[PointXYZI]) -> PointCloud2 {
+fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
     const STEP: usize = 16;
     let mut data = Vec::with_capacity(cloud.len() * STEP);
     for p in cloud {
@@ -472,7 +410,7 @@ fn cloud_message(header: SampleHeader, cloud: &[PointXYZI]) -> PointCloud2 {
         .collect();
     let n = cloud.len() as i32;
     PointCloud2 {
-        header,
+        header: header(frame_id, ts),
         height: 1,
         width: n,
         fields,
@@ -499,7 +437,7 @@ mod tests {
 
     fn cloud(fields: Vec<PointField>, step: usize, data: Vec<u8>) -> PointCloud2 {
         PointCloud2 {
-            header: sample_header(&SampleHeader::default(), "lidar_link", 1.5),
+            header: header("lidar_link", 1.5),
             height: 1,
             width: (data.len() / step) as i32,
             fields,
@@ -519,7 +457,7 @@ mod tests {
             data.extend_from_slice(&v.to_le_bytes());
         }
         data.extend_from_slice(&42u32.to_le_bytes());
-        data.extend_from_slice(&[7u8, 3]);
+        data.extend_from_slice(&[7u8, 0]);
         let c = cloud(
             vec![
                 field("x", 0, PointField::FLOAT32),
@@ -538,9 +476,8 @@ mod tests {
         assert_eq!((pts[0].x, pts[0].y, pts[0].z), (1.0, 2.0, 3.0));
         assert_eq!(pts[0].reflectivity, 128);
         assert_eq!(pts[0].tag, 7);
-        assert_eq!(pts[0].line, 3);
         assert_eq!(pts[0].offset_time, 42);
-        assert_eq!(c.header.time_ns, 1_500_000_000);
+        assert_eq!(stamp_ns(&c.header.stamp), 1_500_000_000);
     }
 
     #[test]

@@ -138,7 +138,6 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     imu_raw: In[Imu]
 
     lidar: Out[PointCloud2]
-    pointcloud: Out[PointCloud2]  # Estimator-registered points in frame_id.
     odometry: Out[Odometry]
     tf: Out[TFMessage]
 
