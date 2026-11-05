@@ -19,7 +19,7 @@ from typing import Any, cast
 
 import pytest
 
-from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.mapping.relocalization.named_locations import load_locations, location_frame
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -44,14 +44,14 @@ FIX = Transform(
 
 @pytest.fixture
 def make(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """A RelocalizationModule on an in-process tf, recording what it publishes."""
-    built: list[RelocalizationModule] = []
+    """A PremapModule on an in-process tf, recording what it publishes."""
+    built: list[PremapModule] = []
 
     def build(
         **config: Any,
-    ) -> tuple[RelocalizationModule, list[InteractiveMarkerUpdate]]:
+    ) -> tuple[PremapModule, list[InteractiveMarkerUpdate]]:
         config.setdefault("save_locations_to", str(tmp_path / "named_locations.db"))
-        module = RelocalizationModule(**config)
+        module = PremapModule(**config)
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         snapshots: list[InteractiveMarkerUpdate] = []
         monkeypatch.setattr(module.named_locations, "publish", snapshots.append)
@@ -65,7 +65,7 @@ def make(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         module.dispose()
 
 
-def begin(module: RelocalizationModule) -> None:
+def begin(module: PremapModule) -> None:
     """What start() does for named locations once its ports are bound."""
     module.open_locations()
     if module.config.new_map:
@@ -92,7 +92,7 @@ def listing(
     )
 
 
-def publish(module: RelocalizationModule, poses: dict[str, PoseStamped]) -> None:
+def publish(module: PremapModule, poses: dict[str, PoseStamped]) -> None:
     """A viewer that is up to date edits the module's current list."""
     asyncio.run(module.handle_named_locations(listing(poses, module.locations_snapshot())))
 

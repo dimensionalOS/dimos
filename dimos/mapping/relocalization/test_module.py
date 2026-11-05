@@ -21,7 +21,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In
 from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization
-from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.module import PremapModule
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -32,7 +32,7 @@ def module():
     """Build a real module (and dispose it); `cls, **config` picks the class."""
     built = []
 
-    def build(cls=RelocalizationModule, **config):
+    def build(cls=PremapModule, **config):
         m = cls(**config)
         built.append(m)
         return m
@@ -189,7 +189,7 @@ def test_from_matrix_inverse_matches_linalg_inv():
 
 
 def test_dual_strategy_merges_ports():
-    class FakeImpl(RelocalizationModule):
+    class FakeImpl(PremapModule):
         detections: In[Detection3DArray]
 
     class Dual(LidarWindowRelocalization, FakeImpl):

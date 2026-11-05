@@ -19,7 +19,7 @@ The base loads ``map_file`` into ``self.premap`` (the last ``map_stream`` cloud 
 ``world -> map`` fixes on ``tf`` and the premap on ``loaded_map`` once a fix lands.
 An implementation reads ``self.premap`` after ``super().start()`` (``None`` when
 no map is configured), picks its inputs, decides when a fix is good enough, and
-hands it to :meth:`RelocalizationModule.submit`. See ``lidar/module.py``.
+hands it to :meth:`PremapModule.submit`. See ``lidar/module.py``.
 
 Named locations live here too, kept in the ``map`` frame so every new fix moves them
 with the old map. Each is also a tf frame under ``map``. Wire contract:
@@ -148,7 +148,7 @@ class Config(ModuleConfig):
     locations_stream: str = "named_locations"
 
 
-class RelocalizationModule(Module):
+class PremapModule(Module):
     config: Config
     tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
