@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import math
 import threading
-from typing import NamedTuple
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
@@ -46,13 +45,6 @@ POSE_WAIT_S = 0.5
 def reports_goal(msg: GoalStatus, route: Path) -> bool:
     """Whether a nav_status report is about this route, which its stamp says."""
     return [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] == route.ros_timestamp()
-
-
-class Underway(NamedTuple):
-    """The route a skill sent and the skill, which names its tool stream."""
-
-    route: Path
-    tool: str
 
 
 def waypoint(w: dict[str, float]) -> tuple[float, float]:
@@ -118,7 +110,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
 
     Feed either global_map, which rebuilds fully per message, or the local_map
     plus region_bounds pair from RayTracingVoxelMap for incremental updates.
-    The agent drives it through go_to, go_through and stop_navigation.
+    The agent drives it through go_to and stop_navigation.
     """
 
     config: MLSPlannerNativeConfig
@@ -141,7 +133,8 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     nodes: Out[PointCloud2]
     node_edges: Out[LineSegments3D]
 
-    _goal: Underway | None = None
+    _goal: Path | None = None
+    """The route of the go_to under way."""
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -163,7 +156,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     def _on_nav_status(self, msg: GoalStatus) -> None:
         with self._goal_lock:
             goal = self._goal
-        if goal is None or not reports_goal(msg, goal.route) or holds_goal(msg.status):
+        if goal is None or not reports_goal(msg, goal) or holds_goal(msg.status):
             return
         if msg.status == GoalStatus.SUCCEEDED:
             outcome = "Reached the target"
@@ -179,28 +172,12 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         )
 
     @skill(uses=[CAP_MOVEMENT], lifecycle="background")
-    async def go_to(self, x: float, y: float, degrees: float | None = None) -> str:
-        """Start driving to a point in the world frame and return immediately.
+    async def go_to(self, waypoints: list[dict[str, float]], degrees: float | None = None) -> str:
+        """Start driving through the waypoints in order and return immediately.
 
-        Replaces any goal under way. A tool update reports where the robot is and how far
-        from the point when it stops, which can be short of it.
-
-        Args:
-            x: target x in meters, world frame.
-            y: target y in meters, world frame.
-            degrees: heading to face there, world frame, 0 = +x and 90 = +y. Omit for any.
-        """
-        return self._send("go_to", [(x, y)], degrees)
-
-    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
-    async def go_through(
-        self, waypoints: list[dict[str, float]], degrees: float | None = None
-    ) -> str:
-        """Drive through the waypoints in order without stopping, and return immediately.
-
-        Replaces any goal under way. The robot passes within reach of every waypoint and stops
-        at the last one. A tool update reports where the robot is and how far from the last
-        waypoint when it stops, which can be short of it.
+        One waypoint is a plain goal. With more, the robot passes through each without stopping
+        and stops at the last. Replaces any goal under way. A tool update reports where the
+        robot is and how far from the last waypoint when it stops, which can be short of it.
 
         Args:
             waypoints: points in the world frame, in order, each {"x": meters, "y": meters}.
@@ -208,17 +185,14 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         """
         points = [waypoint(w) for w in waypoints]
         if not points:
-            raise ValueError("go_through needs at least one waypoint")
-        return self._send("go_through", points, degrees)
-
-    def _send(self, tool: str, points: list[tuple[float, float]], degrees: float | None) -> str:
+            raise ValueError("go_to needs at least one waypoint")
         pose = self._pose(wait_s=POSE_WAIT_S)
-        # Close the old goal's stream first so start_tool opens a new one for this call.
+        # Close the old go_to's stream first so start_tool opens a new one for this call.
         self._finish("Replaced by another goal", cancel=pose is None)
         # Opened before any return so the movement claim always has a stream to release it.
-        self.start_tool(tool)
+        self.start_tool("go_to")
         if pose is None:
-            self.stop_tool(tool)
+            self.stop_tool("go_to")
             return f"No goal sent: no {self.config.world_frame} -> {self.config.base_frame} on tf."
 
         # The planner picks the surface nearest each point's z, so send the floor height under the robot.
@@ -231,18 +205,18 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             poses[-1] = PoseStamped(frame_id=frame, position=[x, y, floor_z], orientation=facing)
         route = Path(frame_id=frame, poses=poses)
         with self._goal_lock:
-            self._goal = Underway(route, tool)
+            self._goal = route
         self.waypoints.transport.publish(route)
         return "Navigating. A tool update reports the robot's position when it stops."
 
-    def _finish(self, outcome: str, *, cancel: bool = True, ended: Underway | None = None) -> None:
+    def _finish(self, outcome: str, *, cancel: bool = True, ended: Path | None = None) -> None:
         with self._goal_lock:
             if ended is not None and self._goal is not ended:
                 return
             goal, self._goal = self._goal, None
         if goal is None:
             return
-        target = goal.route.poses[-1]
+        target = goal.poses[-1]
         pose = self._pose()
         if pose is None:
             where = "robot position unknown"
@@ -252,8 +226,8 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             if not target.orientation.is_zero():
                 off = math.degrees(abs(angle_diff(target.yaw, pose.yaw)))
                 where += f", {off:.0f} degrees off its heading"
-        self.tool_update(goal.tool, f"{outcome}; {where}.")
-        self.stop_tool(goal.tool)
+        self.tool_update("go_to", f"{outcome}; {where}.")
+        self.stop_tool("go_to")
         if cancel:
             self._cancel()
 

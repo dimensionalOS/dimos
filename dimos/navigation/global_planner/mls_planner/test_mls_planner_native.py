@@ -31,7 +31,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNative,
-    Underway,
     reports_goal,
 )
 from dimos.navigation.spec import position_goal
@@ -43,7 +42,11 @@ def _route(*points: tuple[float, float], ts: float = 1000.25) -> Path:
     return Path(ts=ts, frame_id="odom", poses=[position_goal(x, y, 0.0, "odom") for x, y in points])
 
 
-_GOAL = Underway(_route((1.0, 0.0)), "go_to")
+_GOAL = _route((1.0, 0.0))
+
+
+def _at(*points: tuple[float, float]) -> list[dict[str, float]]:
+    return [{"x": x, "y": y} for x, y in points]
 
 
 class _Recorder(Transport[T], Generic[T]):
@@ -81,8 +84,8 @@ class _Rig(NamedTuple):
     def updates(self) -> list[str]:
         return [call.args[1] for call in self.tool_update.call_args_list]
 
-    def tool_calls(self) -> list[tuple[str, str]]:
-        return [(name, call_args[0]) for name, call_args, _ in self.tools.mock_calls]
+    def tool_calls(self) -> list[str]:
+        return [name for name, _, _ in self.tools.mock_calls]
 
 
 def _result(called: Awaitable[str]) -> str:
@@ -113,11 +116,7 @@ def rig(mocker: MockerFixture) -> Generator[_Rig, None, None]:
 
 
 def test_the_planner_exposes_the_navigation_skills(rig: _Rig) -> None:
-    assert {s.func_name for s in rig.module.get_skills()} == {
-        "go_to",
-        "go_through",
-        "stop_navigation",
-    }
+    assert {s.func_name for s in rig.module.get_skills()} == {"go_to", "stop_navigation"}
 
 
 @pytest.mark.parametrize(
@@ -138,7 +137,7 @@ def test_a_report_that_ends_the_goal_ends_the_go_to(
     rig: _Rig, status: int, text: str, outcome: str
 ) -> None:
     rig.module._goal = _GOAL
-    rig.module._on_nav_status(_report(_GOAL.route, status, text))
+    rig.module._on_nav_status(_report(_GOAL, status, text))
 
     assert rig.updates() == [f"{outcome}; robot position unknown."]
     assert rig.module._goal is None
@@ -149,7 +148,7 @@ def test_a_report_that_ends_the_goal_ends_the_go_to(
 @pytest.mark.parametrize(
     "report",
     [
-        pytest.param(_report(_GOAL.route, GoalStatus.ACTIVE, "following the path"), id="held"),
+        pytest.param(_report(_GOAL, GoalStatus.ACTIVE, "following the path"), id="held"),
         pytest.param(_report(Path(ts=900.0), GoalStatus.SUCCEEDED), id="other goal"),
     ],
 )
@@ -162,7 +161,7 @@ def test_a_report_that_does_not_end_the_goal_is_ignored(rig: _Rig, report: GoalS
 
 
 def test_a_report_for_a_go_to_already_replaced_leaves_the_new_one_alone(rig: _Rig) -> None:
-    newer = Underway(_route((2.0, 0.0), ts=1001.0), "go_to")
+    newer = _route((2.0, 0.0), ts=1001.0)
     rig.module._goal = newer
 
     rig.module._finish("Reached the target", cancel=False, ended=_GOAL)
@@ -174,10 +173,10 @@ def test_a_report_for_a_go_to_already_replaced_leaves_the_new_one_alone(rig: _Ri
 def test_go_to_sends_the_point_at_the_height_of_the_floor_under_the_robot(rig: _Rig) -> None:
     rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 1.5))
 
-    _result(rig.module.go_to(4.0, 2.0))
+    _result(rig.module.go_to(_at((4.0, 2.0))))
 
     (route,) = rig.routes
-    assert rig.module._goal == Underway(route, "go_to")
+    assert rig.module._goal is route
     (point,) = route.poses
     assert (point.x, point.y, point.z) == pytest.approx((4.0, 2.0, 1.2))
     assert route.frame_id == "odom"
@@ -188,7 +187,7 @@ def test_go_to_sends_the_point_at_the_height_of_the_floor_under_the_robot(rig: _
 def test_go_to_with_degrees_sends_the_heading(rig: _Rig, degrees: float) -> None:
     rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 1.5))
 
-    _result(rig.module.go_to(4.0, 2.0, degrees=degrees))
+    _result(rig.module.go_to(_at((4.0, 2.0)), degrees=degrees))
 
     (route,) = rig.routes
     (goal,) = route.poses
@@ -198,7 +197,7 @@ def test_go_to_with_degrees_sends_the_heading(rig: _Rig, degrees: float) -> None
 
 def test_a_heading_goal_reports_how_far_off_the_heading_it_stopped(rig: _Rig) -> None:
     rig.pose.return_value = PoseStamped(position=(1.0, 3.0, 0.0))
-    _result(rig.module.go_to(1.0, 3.0, degrees=90.0))
+    _result(rig.module.go_to(_at((1.0, 3.0)), degrees=90.0))
 
     assert _result(rig.module.stop_navigation()) == "Stopped."
 
@@ -208,7 +207,7 @@ def test_a_heading_goal_reports_how_far_off_the_heading_it_stopped(rig: _Rig) ->
 
 
 def test_go_to_sends_nothing_without_a_pose(rig: _Rig) -> None:
-    assert _result(rig.module.go_to(4.0, 2.0)).startswith("No goal sent")
+    assert _result(rig.module.go_to(_at((4.0, 2.0)))).startswith("No goal sent")
     assert rig.routes == []
 
 
@@ -216,13 +215,13 @@ def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:
     rig.module._goal = _GOAL
     rig.pose.return_value = PoseStamped(position=(1.0, 0.0, 0.3))
 
-    _result(rig.module.go_to(4.0, 2.0))
+    _result(rig.module.go_to(_at((4.0, 2.0))))
 
     assert rig.updates() == [
         "Replaced by another goal; robot at (1.00, 0.00), 0.00 m from the target."
     ]
     # The old stream closes before the new one opens, so each go_to has its own.
-    assert rig.tool_calls() == [("stop_tool", "go_to"), ("start_tool", "go_to")]
+    assert rig.tool_calls() == ["stop_tool", "start_tool"]
     (route,) = rig.routes
     (point,) = route.poses
     assert (point.x, point.y) == (4.0, 2.0)
@@ -232,7 +231,7 @@ def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:
 def test_a_go_to_without_a_pose_cancels_the_one_under_way(rig: _Rig) -> None:
     rig.module._goal = _GOAL
 
-    assert _result(rig.module.go_to(4.0, 2.0)).startswith("No goal sent")
+    assert _result(rig.module.go_to(_at((4.0, 2.0)))).startswith("No goal sent")
     (cancel,) = rig.sent
     assert math.isnan(cancel.x)
     assert rig.module._goal is None
@@ -256,30 +255,26 @@ def test_stop_navigation_cancels_a_goal_that_did_not_come_from_go_to(rig: _Rig) 
     assert rig.updates() == []
 
 
-_SQUARE = [{"x": 2.0, "y": 0.0}, {"x": 4.0, "y": 0.0}, {"x": 4.0, "y": 2.0}]
+_SQUARE = _at((2.0, 0.0), (4.0, 0.0), (4.0, 2.0))
 
 
-def test_go_through_sends_every_waypoint_at_the_floor_with_the_heading_on_the_last(
-    rig: _Rig,
-) -> None:
+def test_go_to_sends_every_waypoint_at_the_floor_with_the_heading_on_the_last(rig: _Rig) -> None:
     rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 1.5))
 
-    _result(rig.module.go_through(_SQUARE, degrees=90.0))
+    _result(rig.module.go_to(_SQUARE, degrees=90.0))
 
     (route,) = rig.routes
-    assert rig.module._goal == Underway(route, "go_through")
-    assert route.frame_id == "odom"
+    assert rig.module._goal is route
     assert [(p.x, p.y, p.z) for p in route.poses] == pytest.approx(
         [(2.0, 0.0, 1.2), (4.0, 0.0, 1.2), (4.0, 2.0, 1.2)]
     )
     assert [p.orientation.is_zero() for p in route.poses] == [True, True, False]
     assert route.poses[-1].yaw == pytest.approx(math.radians(90.0))
-    assert rig.tool_calls() == [("start_tool", "go_through")]
 
 
-def test_a_report_on_the_route_stamp_ends_the_go_through(rig: _Rig) -> None:
+def test_a_report_on_the_route_stamp_ends_the_go_to_against_its_last_waypoint(rig: _Rig) -> None:
     rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 0.3))
-    _result(rig.module.go_through(_SQUARE))
+    _result(rig.module.go_to(_SQUARE))
     (route,) = rig.routes
     rig.pose.return_value = PoseStamped(position=(4.0, 1.0, 0.3))
 
@@ -288,39 +283,17 @@ def test_a_report_on_the_route_stamp_ends_the_go_through(rig: _Rig) -> None:
     assert rig.updates() == [
         "Failed: no progress, waypoint 3 of 3; robot at (4.00, 1.00), 1.00 m from the target."
     ]
-    assert rig.tool_calls()[-1] == ("stop_tool", "go_through")
+    assert rig.tool_calls() == ["start_tool", "stop_tool"]
     assert rig.module._goal is None
 
 
-def test_go_to_and_go_through_replace_each_other(rig: _Rig) -> None:
+def test_stop_navigation_reports_the_distance_to_the_last_waypoint(rig: _Rig) -> None:
     rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 0.3))
-
-    _result(rig.module.go_through(_SQUARE))
-    _result(rig.module.go_to(1.0, 0.0))
-    _result(rig.module.go_through(_SQUARE))
-
-    assert rig.updates() == [
-        "Replaced by another goal; robot at (0.00, 0.00), 4.47 m from the target.",
-        "Replaced by another goal; robot at (0.00, 0.00), 1.00 m from the target.",
-    ]
-    assert rig.tool_calls() == [
-        ("start_tool", "go_through"),
-        ("stop_tool", "go_through"),
-        ("start_tool", "go_to"),
-        ("stop_tool", "go_to"),
-        ("start_tool", "go_through"),
-    ]
-    assert len(rig.routes) == 3
-
-
-def test_stop_navigation_ends_the_go_through(rig: _Rig) -> None:
-    rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 0.3))
-    _result(rig.module.go_through(_SQUARE))
+    _result(rig.module.go_to(_SQUARE))
 
     assert _result(rig.module.stop_navigation()) == "Stopped."
 
     assert rig.updates() == ["Canceled; robot at (0.00, 0.00), 4.47 m from the target."]
-    assert rig.tool_calls()[-1] == ("stop_tool", "go_through")
     (cancel,) = rig.sent
     assert math.isnan(cancel.x)
 
@@ -334,13 +307,13 @@ def test_stop_navigation_ends_the_go_through(rig: _Rig) -> None:
         pytest.param([{"x": 1.0, "y": "two"}], id="not a number"),
     ],
 )
-def test_go_through_rejects_bad_waypoints_before_sending_anything(
+def test_go_to_rejects_bad_waypoints_before_sending_anything(
     rig: _Rig, waypoints: list[dict[str, float]]
 ) -> None:
     rig.pose.return_value = PoseStamped(position=(0.0, 0.0, 0.3))
 
     with pytest.raises(ValueError):
-        _result(rig.module.go_through(waypoints))
+        _result(rig.module.go_to(waypoints))
 
     assert rig.routes == []
     assert rig.tool_calls() == []
