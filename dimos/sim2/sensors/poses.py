@@ -20,6 +20,7 @@ import threading
 from typing import Any, ClassVar
 
 from dimos_lcm.sim_msgs import WorldState
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
@@ -56,10 +57,12 @@ class _PoseSensorModule(SharedConfigModule, ABC):
     @rpc
     def start(self) -> None:
         super().start()
+        # Rolling sensors need history, before the async handler's LATEST mailbox.
+        self.register_disposable(Disposable(self.observations.subscribe(self._on_observations)))
         self._thread = threading.Thread(target=self._run, args=(self.config.scene,), daemon=True)
         self._thread.start()
 
-    async def handle_observations(self, sample: WorldState) -> None:
+    def _on_observations(self, sample: WorldState) -> None:
         try:
             self._queue.put_nowait(sample)
         except Full:
