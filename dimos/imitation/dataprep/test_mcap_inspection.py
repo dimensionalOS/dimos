@@ -23,6 +23,8 @@ claim is made about real robot manipulation recordings.
 
 from __future__ import annotations
 
+import builtins
+import errno
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -380,3 +382,57 @@ def test_missing_recording_is_a_plain_missing_file_error(tmp_path: Path) -> None
     with pytest.raises(FileNotFoundError):
         inspect_recording(absent)
     assert not absent.exists()  # never created as a side effect
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EIO, errno.EISDIR])
+def test_filesystem_failure_keeps_native_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """EACCES/EIO/EISDIR at open time are not MCAP corruption: the native
+    OSError subclass and errno must survive, not a truncation ValueError."""
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise OSError(code, "simulated filesystem failure")
+
+    monkeypatch.setattr(builtins, "open", fail)
+    with pytest.raises(OSError) as caught:
+        McapStore(path=str(tmp_path / "source.mcap"))
+    assert caught.value.errno == code
+    assert not isinstance(caught.value, ValueError)
+
+
+def test_directory_path_is_not_reported_as_corruption(tmp_path: Path) -> None:
+    with pytest.raises(IsADirectoryError):
+        McapStore(path=str(tmp_path))
+
+
+def test_default_finalized_empty_recording_is_supported(tmp_path: Path) -> None:
+    """A finalized empty MCAP (default writer settings) opens with no streams."""
+    source = tmp_path / "empty.mcap"
+    with source.open("wb") as output:
+        writer = McapWriter(output)
+        writer.start(profile="dimos", library="test")
+        writer.finish()
+
+    with McapStore(path=str(source)) as store:
+        assert store.list_streams() == []
+
+
+def test_finalized_recording_without_statistics_names_indexing_policy(
+    tmp_path: Path,
+) -> None:
+    """A valid finalized MCAP written without statistics is well-formed input
+    the read-only store does not support: the error must name the missing
+    indexing, not claim the file is truncated or corrupt."""
+    source = tmp_path / "unindexed.mcap"
+    with source.open("wb") as output:
+        writer = McapWriter(output, use_statistics=False)
+        writer.start(profile="dimos", library="test")
+        writer.finish()
+
+    with pytest.raises(ValueError, match="no summary statistics") as caught:
+        McapStore(path=str(source))
+    message = str(caught.value)
+    assert "indexed" in message
+    assert "truncated" not in message
+    assert "corrupt" not in message

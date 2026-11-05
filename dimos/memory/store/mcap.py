@@ -33,7 +33,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
+import errno
 from functools import partial
+import struct
 from typing import Any, Protocol, cast, runtime_checkable
 
 from dimos.memory.backend import Backend
@@ -214,33 +216,56 @@ class McapStore(Store):
         streams: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        from mcap.reader import make_reader  # optional mcap dependency
+        from mcap.reader import make_reader  # optional mcap dependency  # noqa: I001
+        from mcap.exceptions import McapError
 
         super().__init__(**kwargs)
         self._codecs = dict(codecs or {})
         name_of = {topic: name for name, topic in (streams or {}).items()}  # topic -> override
         try:
-            with open(self.config.path, "rb") as f:
+            source = open(self.config.path, "rb")
+        except OSError:
+            # Filesystem failures (missing file, permissions, a directory
+            # path, I/O errors) say nothing about the recording's format:
+            # they keep their native exception class and errno.
+            raise
+        with source as f:
+            try:
                 summary = make_reader(f).get_summary()
-        except FileNotFoundError:
-            raise  # a missing source must stay a plain missing-file error
-        except OSError as exc:
-            # A truncated or never-finalized file (e.g. an interrupted
-            # recording) has no footer, so the mcap reader fails its summary
-            # seek with a bare OSError. Name the actual problem and remedy.
-            raise ValueError(
-                f"Cannot open MCAP recording {self.config.path!r}: no readable summary "
-                "index — the file is truncated or was never finalized (for example an "
-                "interrupted recording). Recover and reindex it (e.g. `mcap recover`) "
-                "before opening it read-only."
-            ) from exc
+            except OSError as exc:
+                if exc.errno != errno.EINVAL:
+                    raise  # a real mid-read filesystem failure, not corruption
+                # A file shorter than the footer fails the reader's end-seek
+                # with EINVAL: the file is truncated or was never finalized.
+                raise ValueError(
+                    f"Cannot open MCAP recording {self.config.path!r}: no readable summary "
+                    "index — the file is truncated or was never finalized (for example an "
+                    "interrupted recording). Recover and reindex it (e.g. `mcap recover`) "
+                    "before opening it read-only."
+                ) from exc
+            except (McapError, struct.error) as exc:
+                # The parser could not read a footer/summary: the file is
+                # truncated, malformed, or was never finalized (e.g. an
+                # interrupted recording). Name the actual problem and remedy.
+                raise ValueError(
+                    f"Cannot open MCAP recording {self.config.path!r}: no readable summary "
+                    "index — the file is truncated, malformed, or was never finalized (for "
+                    "example an interrupted recording). Recover and reindex it (e.g. "
+                    "`mcap recover`) before opening it read-only."
+                ) from exc
         if summary is None or summary.statistics is None:
-            # Stream names/counts come from the summary index; without it the
-            # store would silently report an empty recording. Refuse instead.
+            # Stream names/counts come from the summary section and its
+            # statistics record; without them the store would silently report
+            # an empty recording. The file itself may be perfectly valid —
+            # this store only supports indexed recordings. Refuse, naming the
+            # missing indexing rather than claiming corruption.
+            missing = "no summary section" if summary is None else "no summary statistics"
             raise ValueError(
-                f"Cannot open MCAP recording {self.config.path!r}: no summary index — "
-                "stream metadata is unavailable. Reindex the file (e.g. `mcap recover` "
-                "or rewrite it with summary records) before opening it read-only."
+                f"Cannot open MCAP recording {self.config.path!r}: {missing} — this "
+                "read-only store requires an indexed recording (a summary section with "
+                "statistics) to enumerate streams. Reindex the file (e.g. `mcap recover`) "
+                "or rewrite it with summary records and statistics before opening it "
+                "read-only."
             )
         self._stream_topic: dict[str, str] = {}  # stream name -> topic
         self._available: dict[str, int] = {}  # stream name -> message count
