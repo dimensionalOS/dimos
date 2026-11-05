@@ -226,7 +226,6 @@ interface Group {
   settings: TopicSettings;
   cap: Partial<TopicSettings>;
   adaptation: AdaptTarget;
-  receiver: (() => RTCRtpReceiver | null) | null;
   handles: Set<Handle>;
   sent: boolean;
   source: string | null;
@@ -277,6 +276,8 @@ function signatureOf(keyExpr: string, identity: Identity, requested: Record<stri
 class Handle implements TopicSubscription {
   group: Group | null = null;
   move: Move | null = null;
+  /** A video handle's receiver, for the statistics of whichever group it is in. */
+  receiver: (() => RTCRtpReceiver | null) | null = null;
   #status: TopicStatus = { phase: "connecting" };
   #settings: TopicSettings = { maxHz: 30 };
   #wait = deferred();
@@ -465,8 +466,7 @@ export class TopicClient implements Topics {
       return handle;
     },
     receiver: (handle, receiver) => {
-      const group = (handle as Handle).group;
-      if (group !== null) group.receiver = receiver;
+      (handle as Handle).receiver = receiver;
     },
     routeOf: (handle) => {
       const group = (handle as Handle).group;
@@ -559,7 +559,6 @@ export class TopicClient implements Topics {
         identity,
         requested,
         cap: {},
-        receiver: null,
         adaptation: {
           profile: identity.profile,
           policy: identity,
@@ -568,7 +567,12 @@ export class TopicClient implements Topics {
             normalizeTopicSettings(this.#ranges(group!) ?? {}, group!.requested).settings ??
               group!.settings,
           settings: () => group!.settings,
-          receiver: () => group!.receiver?.() ?? null,
+          receiver: () => {
+            for (const h of group!.handles) {
+              if (h.group === group && h.receiver !== null) return h.receiver();
+            }
+            return null;
+          },
           apply: (cap) =>
             new Promise((resolve, reject) => {
               const handle = [...group!.handles].find((h) => h.group === group);
@@ -695,7 +699,8 @@ export class TopicClient implements Topics {
     const effective = applyCap(requested, cap);
     const ranges = this.#ranges(group);
     if (ranges !== null) {
-      const result = normalizeTopicSettings(ranges, effective);
+      // The page's request on its own: a cap would hide a bad value until it lifts.
+      const result = normalizeTopicSettings(ranges, requested);
       if (result.error !== undefined) {
         update.reject(new TopicError(result.error, "rejected"));
         return;

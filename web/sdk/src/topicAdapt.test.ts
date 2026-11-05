@@ -369,6 +369,30 @@ describe("adaptation ladders", () => {
     expect(adaptationLadder(JPEG, { maxHz: 0.5, quality: 20, maxResolution: [80, 64] }, "rate"))
       .toHaveLength(1);
   });
+  it("never raises the video bitrate further down the ladder", () => {
+    const ceiling: TopicSettings = { maxHz: 30, maxResolution: [1920, 1080], maxBitrate: 500000 };
+    const ladder = adaptationLadder(VIDEO, ceiling, "rate");
+    expect(ladder.map((r) => r.name)).toEqual([
+      "requested",
+      "bitrate:0.6",
+      "bitrate:0.35",
+      "resolution:720p",
+      "resolution:360p",
+      "rate:15",
+      "rate:10",
+      "rate:5",
+    ]);
+    expect(ladder.map((r) => applyCap(ceiling, r.cap).maxBitrate)).toEqual([
+      500000,
+      300000,
+      200000,
+      200000,
+      200000,
+      200000,
+      200000,
+      200000,
+    ]);
+  });
 });
 
 function clientSetup() {
@@ -490,5 +514,20 @@ describe("acknowledged cap layer", () => {
     expect(one.settings()).toMatchObject({ quality: 75, maxHz: 30 });
     expect(two.settings()).toMatchObject({ quality: 75, maxHz: 12 });
     expect(vi.getTimerCount()).toBe(0);
+  });
+  it("checks a page update against the ranges before the cap hides it", async () => {
+    const h = clientSetup();
+    const one = h.client.subscribe("camera", { profile: JPEG }, vi.fn());
+    await h.tick(0);
+    h.client.pong(1);
+    await h.tick(1000);
+    expect(one.settings().quality).toBe(56);
+    await expect(one.update({ quality: 101 })).rejects.toMatchObject({
+      code: "option_out_of_range",
+    });
+    expect(one.settings().quality).toBe(56);
+    h.client.setAdaptation(false);
+    await h.tick(2000);
+    expect(one.settings().quality).toBe(75);
   });
 });

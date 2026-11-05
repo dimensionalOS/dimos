@@ -128,7 +128,7 @@ export function adaptationLadder(
           name: `resolution:${box[1]}p`,
           cap: {
             maxResolution: [box[0], Math.min(box[1], ceiling.maxResolution[1])],
-            maxBitrate: Math.min(ceiling.maxBitrate, videoBitrate(box) * 0.35),
+            maxBitrate: videoBitrate(box) * 0.35,
           },
         });
       }
@@ -141,7 +141,8 @@ export function adaptationLadder(
   for (const rung of keep === "quality" ? [...rate, ...detail] : [...detail, ...rate]) {
     cap = { ...cap, ...rung.cap };
     if (video && bitrate !== undefined) {
-      if (rung.cap.maxBitrate !== undefined) bitrate = rung.cap.maxBitrate;
+      // A smaller picture never raises the target above the bitrate rungs before it.
+      if (rung.cap.maxBitrate !== undefined) bitrate = Math.min(bitrate, rung.cap.maxBitrate);
       cap.maxBitrate = Math.min(
         ceiling.maxBitrate!,
         Math.max(200000, Math.round(bitrate * (cap.maxHz ?? ceiling.maxHz) / ceiling.maxHz)),

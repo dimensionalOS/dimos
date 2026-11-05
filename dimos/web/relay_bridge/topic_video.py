@@ -188,6 +188,7 @@ class SharedEncoder:
         self._configuration_lock = Lock()
         self._pending_settings: dict[str, Any] | None = None
         self.revision = 0
+        self.applied_revision = 0
         self.peers: dict[str, Peer] = {}
         self._codec: av.VideoCodecContext | None = None
         self._size: tuple[int, int] | None = None
@@ -226,6 +227,7 @@ class SharedEncoder:
     def _apply_settings(self) -> None:
         with self._configuration_lock:
             settings, self._pending_settings = self._pending_settings, None
+            self.applied_revision = self.revision
         if settings is not None:
             self.box = list(settings["maxResolution"])
             self.max_hz = float(settings["maxHz"])
@@ -326,7 +328,6 @@ class VideoRoute:
         encoder = self.encoders.get(variant)
         if encoder is None or not any(peer.connected for peer in encoder.peers.values()):
             return
-        revision = encoder.revision
         started = time.monotonic()
         try:
             packets = await self._video.transforms.run(encoder.encode, payload)
@@ -339,8 +340,10 @@ class VideoRoute:
                 logger.warning("video encoder rebuilt", route=self.route, error=str(error))
                 encoder.reset()
             return
-        if encoder.revision != revision:
-            return  # the next encode applies the acknowledged configuration
+        if encoder.revision != encoder.applied_revision:
+            # Encoded before the reconfigure reached the worker: the next encode
+            # applies it, from an IDR. An encode that applied it already is kept.
+            return
         encoder.failures = 0
         if time.monotonic() - started > encoder.deadline:
             # The frame is stale, and later frames reference it: the next one
