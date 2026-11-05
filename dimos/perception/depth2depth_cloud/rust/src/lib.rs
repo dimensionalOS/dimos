@@ -14,3 +14,4 @@
 
 pub mod module;
 pub mod undistort;
+pub use depth2depth;

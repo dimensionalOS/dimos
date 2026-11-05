@@ -144,6 +144,8 @@ class R1ProConnectionConfig(ModuleConfig):
     enable_wrist_depth: bool = Field(default=False)
     # Each wrist copies and publishes JPEG frames even when unread; turn off if nothing reads them.
     enable_wrist_color: bool = Field(default=True)
+    # The chassis and torso IMUs: ~300 ROS messages/s through Python, unused by Point-LIO navigation.
+    enable_imu: bool = Field(default=True)
     # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
     color_publish_hz: float = Field(default=30.0)
     # Boot the vendor stack (HDAS, mobiman), which serves every ROS topic used here, if it is not running.
@@ -418,8 +420,9 @@ class R1ProConnection(Module):
             for stream, topic in _WRIST_DEPTH_CAMERAS.items():
                 add_stream(stream, topic, RosImage, self._convert_loop, Image)
 
-        add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
-        add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
+        if self.config.enable_imu:
+            add_stream("imu_chassis", "/hdas/imu_chassis", RosImu, self._imu_loop, maxsize=4)
+            add_stream("imu_torso", "/hdas/imu_torso", RosImu, self._imu_loop, maxsize=4)
 
         # Periodic per-stream stats reporter (joined on stop via _sensor_stop).
         if self.config.sensor_stats_interval_s > 0:
