@@ -20,6 +20,7 @@ from numpy.typing import NDArray
 import pytest
 from scipy.spatial.transform import Rotation
 
+from dimos.robot.unitree.g1.sim2 import G1Sim
 from dimos.robot.unitree.go2.sim2 import Go2Sim
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
@@ -154,3 +155,7 @@ def test_ball_joints_are_refused(tmp_path: Path) -> None:
 
 def test_the_go2_urdf_matches_its_mjcf_and_its_sensor_frames(tmp_path: Path) -> None:
     assert_urdf_matches_mujoco(Go2Sim.mjcf, tmp_path, 20)
+
+
+def test_the_g1_urdf_matches_its_mjcf_and_its_sensor_frames(tmp_path: Path) -> None:
+    assert_urdf_matches_mujoco(G1Sim.mjcf, tmp_path, 20)
