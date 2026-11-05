@@ -110,8 +110,15 @@ on the owner thread between steps. No manual-step API or standalone executor.
 
 `ActionCommand` contains one `SampleHeader`, `based_on_time_ns`, `apply_at_ns`,
 `valid_until_ns`, `joint_commands: JointCommand[]` and `cbor_commands: CborCommand[]`
-(with matching array counts). One or both arrays must be nonempty. Each joint
-target carries `joint_id`, `position`, `velocity`, `kp`, `kd` and `feedforward`.
+(with matching array counts). One or both arrays must be nonempty. The existing ROS
+`control_msgs.JointCommand` is unchanged: `header`, `joint_names[]`,
+`interface_name`, `values[]`. Sim2's motor profile sends five records in one batch:
+`position`, `velocity`, `kp`, `kd`, and `effort`, each addressing the same named
+joint set. The backend applies `kp*(position-q) + kd*(velocity-dq) + effort`.
+Names resolve values independently of array order. Missing/duplicate interfaces,
+mismatched lengths, nonfinite values or negative gains reject the complete action.
+This five-interface motor law is a Sim2 convention, not a generic ROS guarantee;
+ordinary ROS position controllers can consume a single position record.
 
 The module checks identity, timing, counts, CBOR envelopes and controller ownership,
 then calls `backend.apply_action(...)` once. The backend validates all entries
@@ -166,7 +173,7 @@ the physics backend. See the G1 guide for both truth and Point-LIO mapping paths
 
 ## Run and test
 
-```sh
+```sh skip
 uv sync --extra sim
 source .venv/bin/activate
 dimos run sim2-basic --daemon
@@ -188,7 +195,10 @@ not been validated. The core imports no robot-specific policy or coordinator cod
 The stack implements Option G: one `BodyState` per body, `JointCommand` records,
 and CBOR commands/observations without a schema field. The LCM dependency is pinned
 to the matching draft commit until a package release is available. JointCommand
-uses the six-field PD/feedforward definition, not the upstream ROS wire layout.
+retains its published ROS wire layout. The earlier `sensor_msgs.JointCommand` was
+a separate dimOS-only type; its two manipulation publishers now emit named
+`control_msgs.JointCommand` position records. Trajectories must provide joint
+names and Cartesian feedback must name each joint in the IK result's order.
 
 [The nine draft PRs](https://github.com/dimensionalOS/dimos/stack/5042) build on
 [shared configuration #4937](https://github.com/dimensionalOS/dimos/pull/4937).
@@ -234,3 +244,10 @@ The first PR's remaining sensor edits are decoder behavior, not a new header or
 transport. The standard Image decoder preserves zero; PointCloud2 retains its
 existing unspecified-zero convention. Consumers must not assume every timestamp
 has Unix-epoch meaning.
+
+Optional observation payloads use the existing CBOR array, with namespaced,
+versioned keys. Defining an unused extension costs zero additional bytes; old
+compiled readers can ignore unknown entries. Changing WorldState or its nested
+core fields still changes the LCM fingerprint and requires a new wire version.
+The companion LCM PR contains a compiled C++ compatibility test and a frozen
+JointCommand fixture from published 0.1.6.
