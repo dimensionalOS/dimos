@@ -85,7 +85,7 @@ SCENE = SceneConfig(
 
 IMU = ImuConfig("g1/imu_in_pelvis", source_id="g1/imu", orientation="ideal")
 MID360_IMU = ImuConfig("g1/mid360_link", source_id="g1/mid360/imu")
-ENCODERS = EncoderConfig(JOINTS, source_id="g1/encoders")
+ENCODERS = EncoderConfig(JOINTS, source_id="g1/encoders", hz=50)
 CAMERA = CameraConfig("g1/camera", source_id="g1/camera")
 LIDAR = LidarConfig(
     "g1/mid360_link",
@@ -124,6 +124,7 @@ def _g1_sim2(*, pointlio: bool = False) -> Blueprint:
         SimModule.blueprint(
             scene=SCENE,
             backend=MujocoBackend,
+            observation_hz=200,
             controllers=(CONTROL,),
             joint_ids=JOINTS,
         ),
