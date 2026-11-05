@@ -89,12 +89,13 @@ class CameraConfig:
     max_geom: int | None = 10000
     geom_groups: tuple[int, ...] | None = None
     base_body_name: str | None = None
+    render_depth: bool = True
 
 
 @dataclass
 class CameraFrame:
     rgb: NDArray[np.uint8]
-    depth: NDArray[np.float32]
+    depth: NDArray[np.float32] | None
     cam_pos: NDArray[np.float64]
     cam_mat: NDArray[np.float64]
     fovy: float
@@ -127,7 +128,7 @@ class _CameraRendererState:
     cfg: CameraConfig
     cam_id: int
     rgb_renderer: mujoco.Renderer
-    depth_renderer: mujoco.Renderer
+    depth_renderer: mujoco.Renderer | None
     scene_option: mujoco.MjvOption | None
     interval: float
     base_body_id: int | None = None
@@ -168,6 +169,7 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        gravity_compensation: bool = False,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
@@ -207,6 +209,13 @@ class MujocoEngine(SimulationEngine):
                 self._model, robot_sim_spec, self._joint_mappings
             )
             self._joint_mappings = list(self._robot_binding.joint_mappings)
+        if gravity_compensation:
+            if model is not None or binary_model:
+                raise ValueError(
+                    "MujocoEngine gravity_compensation needs an MJCF, not a compiled model"
+                )
+            self._model = self._with_gravity_compensation(model_path, assets)
+            self._data = mujoco.MjData(self._model)
         self._joint_names = [mapping.name for mapping in self._joint_mappings]
         self._num_joints = len(self._joint_names)
         self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
@@ -267,6 +276,43 @@ class MujocoEngine(SimulationEngine):
         if not model_path.exists():
             raise FileNotFoundError(f"MuJoCo model not found: {model_path}")
         return model_path
+
+    def _with_gravity_compensation(
+        self, model_path: Path, assets: dict[str, bytes] | None
+    ) -> mujoco.MjModel:
+        """Recompile the MJCF with the robot's weight cancelled, as real arm firmware does.
+
+        Every body from the first controlled joint down (links, gripper, fingers) gets
+        gravcomp=1, and each actuated joint carries its share through its actuator
+        (actuatorgravcomp), so force limits still apply. Without it, position actuators
+        settle below their targets under gravity. MuJoCo sizes gravcomp at compile time,
+        so this edits the spec rather than the compiled model.
+        """
+        joints = [m for m in self._joint_mappings if m.joint_id is not None]
+        roots = {int(self._model.jnt_bodyid[m.joint_id]) for m in joints}
+        bodies = [
+            b
+            for b in range(self._model.nbody)
+            if any(self._is_descendant(b, root) for root in roots)
+        ]
+        if assets is not None:
+            spec = mujoco.MjSpec.from_string(model_path.read_text(), assets=assets)
+        else:
+            spec = mujoco.MjSpec.from_file(str(model_path))
+        for b in bodies:
+            spec.body(self._model.body(b).name).gravcomp = 1.0
+        for m in joints:
+            if m.actuator_id is not None:
+                spec.joint(self._model.joint(m.joint_id).name).actgravcomp = True
+        logger.info("MujocoEngine: gravity compensation", bodies=len(bodies), joints=len(joints))
+        return spec.compile()
+
+    def _is_descendant(self, body: int, root: int) -> bool:
+        while body > 0:
+            if body == root:
+                return True
+            body = int(self._model.body_parentid[body])
+        return body == root
 
     def _find_first_freejoint_adrs(self) -> tuple[int | None, int | None]:
         if self._model.njnt > 0 and int(self._model.jnt_type[0]) == _MJJNT_FREE:
@@ -378,13 +424,15 @@ class MujocoEngine(SimulationEngine):
                 width=cfg.width,
                 max_geom=max_geom,
             )  # type: ignore[call-arg]
-            depth_renderer = mujoco.Renderer(
-                self._model,
-                height=cfg.height,
-                width=cfg.width,
-                max_geom=max_geom,
-            )  # type: ignore[call-arg]
-            depth_renderer.enable_depth_rendering()
+            depth_renderer = None
+            if cfg.render_depth:
+                depth_renderer = mujoco.Renderer(
+                    self._model,
+                    height=cfg.height,
+                    width=cfg.width,
+                    max_geom=max_geom,
+                )  # type: ignore[call-arg]
+                depth_renderer.enable_depth_rendering()
             scene_option = None
             if cfg.geom_groups is not None:
                 scene_option = mujoco.MjvOption()
@@ -456,14 +504,16 @@ class MujocoEngine(SimulationEngine):
             )
             rgb = state.rgb_renderer.render().copy()
 
-            state.depth_renderer.update_scene(
-                self._data, camera=state.cam_id, scene_option=state.scene_option
-            )
-            depth = state.depth_renderer.render().copy()
+            depth = None
+            if state.depth_renderer is not None:
+                state.depth_renderer.update_scene(
+                    self._data, camera=state.cam_id, scene_option=state.scene_option
+                )
+                depth = state.depth_renderer.render().astype(np.float32, copy=True)
 
             frame = CameraFrame(
                 rgb=rgb,
-                depth=depth.astype(np.float32),
+                depth=depth,
                 cam_pos=self._data.cam_xpos[state.cam_id].copy(),
                 cam_mat=self._data.cam_xmat[state.cam_id].copy(),
                 fovy=float(self._model.cam_fovy[state.cam_id]),
@@ -539,7 +589,8 @@ class MujocoEngine(SimulationEngine):
     def _close_cam_renderers(cam_renderers: dict[str, _CameraRendererState]) -> None:
         for state in cam_renderers.values():
             state.rgb_renderer.close()
-            state.depth_renderer.close()
+            if state.depth_renderer is not None:
+                state.depth_renderer.close()
 
     def _reset_unlocked(self) -> None:
         if self._model.nkey > 0:

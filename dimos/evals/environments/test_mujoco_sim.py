@@ -53,8 +53,12 @@ def test_launch_flags(monkeypatch):
     assert json.loads(proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"]) == ["apple", "cup"]
     assert proc.global_args == [
         "--record-topics",
-        "color_image,camera_info,coordinator_joint_state,tf,body_poses,odom",
+        "color_image,camera_info,coordinator_joint_state,tf,body_poses,odom,overview_image,overview_camera_info",
     ]
+
+    assert proc.extra_env["PEEK_HIDDEN_STREAMS"] == (
+        "body_poses,overview_image,overview_camera_info"
+    )
 
     proc = DimosCliCall()
     environment().configure_launch(proc)
@@ -252,3 +256,21 @@ def test_launch_and_cleanup(tmp_path, mocker):
         env.stop()
     proc.stop.assert_called_once()
     store.stop.assert_called_once()
+
+
+def test_launch_without_mcp_waits_on_the_run_instead(tmp_path, mocker):
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.extra_env = {}
+    proc.global_args = []
+    adapter = mocker.patch("dimos.evals.environments.live.McpAdapter")
+    mocker.patch("dimos.memory.store.sqlite.SqliteStore")
+    env = MujocoEnvironment(blueprint=["xarm-perception-sim"], python_guide="DIMOS.md")
+    waited = mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
+    mocker.patch.object(env, "wait_ready")
+    try:
+        result = env.start(())
+        adapter.assert_not_called()
+        waited.assert_called_once()
+        assert result.mcp_url == "" and result.python_guide == "DIMOS.md"
+    finally:
+        env.stop()

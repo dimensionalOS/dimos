@@ -818,6 +818,31 @@ class ManipulationModule(Module):
             return self._planning_failure()
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
+    @rpc
+    def check_reachable(
+        self,
+        poses: Sequence[PoseStamped],
+        planning_group: PlanningGroupID | None = None,
+    ) -> list[str]:
+        """Whether IK reaches each TCP pose within the joint limits, from the current joints.
+
+        One entry per pose: empty when it is reachable, otherwise why not. Nothing moves and
+        no plan is stored; collisions are not checked.
+        """
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            return [group.message] * len(poses)
+        reasons = []
+        for pose in poses:
+            ik = self.inverse_kinematics({group.id: pose}, check_collision=False)
+            if ik.is_success():
+                reasons.append("")
+            else:
+                reasons.append(
+                    f"IK failed: {ik.status.name}" + (f": {ik.message}" if ik.message else "")
+                )
+        return reasons
+
     def generate_plan_to_joint_targets(
         self,
         joint_targets: Mapping[PlanningGroupID, JointState],

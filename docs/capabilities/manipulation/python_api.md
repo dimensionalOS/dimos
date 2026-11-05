@@ -125,7 +125,9 @@ this rejects a colliding segment rather than finding a detour.
 | `reset()` | `CommandResult` after stopping motion and clearing a failed state |
 
 Gripper positions are normalized travel: `0.0` closed, `1.0` open. Movement calls
-accept `speed_scale` and execution `timeout` options. Ordinary calls block and
+accept `speed_scale` and execution `timeout` options. Gripper calls accept `timeout`
+only (default 2 s): they wait until the fingers stop, at the target or held on an
+object; `timeout=0` returns as soon as the command is accepted. Ordinary calls block and
 raise on failure, so scripts do not need success checks between every action.
 
 ### Shared presets
@@ -153,6 +155,11 @@ except MotionError as error:
     print(error.operation, error.result)
     raise
 ```
+
+A move whose execution completes but whose measured joints do not settle within
+`REACH_TOLERANCE_RAD` (0.05 rad) of the plan's end within `SETTLE_TIMEOUT_S` (1 s), for
+example because contact blocked the arm, also raises `MotionError`; its message names the
+joint furthest off and the end effector's position.
 
 `MotionError.result` preserves the original typed failure result. Invalid numeric
 inputs raise `ValueError`; unavailable telemetry raises `RuntimeError`. Transport

@@ -345,6 +345,20 @@ def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
     assert "--system-prompt" not in command
 
 
+def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path) -> None:
+    live = RunningEnvironment(
+        mcp_url="http://localhost:9990/mcp",
+        streams=(),
+        artifacts={},
+        python_guide="app = Dimos.connect()",
+    )
+    prompt = PiAdapter()._prepare_case(live, tmp_path)
+    assert (tmp_path / "DIMOS.md").read_text() == "app = Dimos.connect()"
+    assert "DIMOS.md" in prompt
+    # The tools stay up for readiness, but nothing points the agent at them.
+    assert "dimos mcp call" not in prompt and "Tools:" not in prompt
+
+
 @pytest.mark.parametrize(
     "message",
     [

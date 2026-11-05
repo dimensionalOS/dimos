@@ -41,8 +41,10 @@ import threading
 import time
 from typing import Any, Literal
 
+import cv2
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+import numpy as np
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -60,11 +62,12 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.localize.association import Groups
+from dimos.perception.localize.association import M_CX, M_CZ, M_KX, M_KZ, M_SCORE, M_TS, Groups
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.rig import (
     DEPTH_TOLERANCE,
     EMBED_HZ,
+    TF_TOLERANCE,
     WALK_EMBED_HZ,
     Rig,
     RigCamera,
@@ -126,6 +129,7 @@ class PerceptionLocalize(Module):
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
+        self._clouds: dict[str, PointCloud2] = {}  # by instance id, as last reported
 
         embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
         memory_frames = int(self.config.horizon_s * embed_hz)
@@ -241,12 +245,47 @@ class PerceptionLocalize(Module):
         return f"not ready: {self._stage}"
 
     @skill
+    def camera_pose(self) -> str:
+        """World pose of the camera's optical frame at its newest colour frame, as JSON.
+
+        ``{"t", "frame", "xyz", "quaternion_xyzw"}``; optical +Z forward, +X image right,
+        +Y image down. With the depth stream and camera_info's K, a depth pixel (u, v)
+        back-projects as z = depth[v, u], x = (u - cx) z / fx, y = (v - cy) z / fy, and this
+        pose takes it to world.
+        """
+        camera = self._camera
+        if camera is None:
+            return "camera_pose cannot answer yet: no camera_info"
+        try:
+            ts = self._color_feed.last().ts
+        except LookupError:
+            return "camera_pose cannot answer yet: no colour frame"
+        transform = self._tf_buffer.get(camera.frame_id, self.config.world_frame, ts, TF_TOLERANCE)
+        if transform is None:
+            return f"camera_pose: no transform from {self.config.world_frame} to {camera.frame_id}"
+        pose = (-transform).to_pose()
+        return json.dumps(
+            {
+                "t": ts,
+                "frame": self.config.world_frame,
+                "xyz": [round(v, 5) for v in pose.position.to_numpy().tolist()],
+                "quaternion_xyzw": [round(v, 6) for v in pose.orientation.to_numpy().tolist()],
+            }
+        )
+
+    @skill
     def localize(
-        self, objects: str, start: float = -10.0, duration: float = 10.0, params: str = ""
+        self,
+        objects: str | list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        params: str = "",
     ) -> str:
         """Locate objects in a window of the robot's memory.
 
-        ``objects`` is one label, or several separated by commas.
+        ``objects`` is one label, several separated by commas, or a list of labels.
+        Labels that describe how an object looks (colour and shape, e.g. "brown square
+        object") match better than object names.
 
         ``start`` and ``duration`` are seconds and name the window. A positive
         ``start`` counts forward from the beginning of the feed; a negative one
@@ -262,7 +301,8 @@ class PerceptionLocalize(Module):
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
-        queries = [q.strip() for q in objects.split(",") if q.strip()]
+        labels = objects.split(",") if isinstance(objects, str) else objects
+        queries = [q.strip() for q in labels if q.strip()]
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
         index = self.index.time_range(lo, lo + duration)
@@ -286,15 +326,132 @@ class PerceptionLocalize(Module):
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:
-                lines.append(f"no verified detection of {query!r}")
+                line = f"no verified detection of {query!r}"
+                near = best_candidate(self._groups.get(query), lo, lo + duration)
+                if near is not None:
+                    score, views, (x, y, z) = near
+                    line += (
+                        f"; best candidate score={score:.2f} views={views} at "
+                        f"({x:.2f}, {y:.2f}, {z:.2f}), needs accept_score={call_params.accept_score:.2f} "
+                        f"min_views={call_params.min_views}"
+                    )
+                lines.append(line)
             for hit in hits:
+                self._clouds[hit.instance_id] = hit.point_cloud
                 x, y, z = hit.position_world_xyz
+                line = f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
+                box = footprint(hit.point_cloud.as_numpy()[0])
+                if box is not None:
+                    (cx, cy), (length, width), yaw, (bottom, top) = box
+                    line += (
+                        f"footprint {length:.3f} x {width:.3f} m centred ({cx:.3f}, {cy:.3f}) "
+                        f"long side yaw={yaw:.0f}deg, seen surface z {bottom:.3f} to {top:.3f} "
+                    )
                 lines.append(
-                    f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
-                    f"score={hit.semantic_score:.2f} views={hit.n_views} id={hit.instance_id} "
-                    f"seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
+                    line + f"score={hit.semantic_score:.2f} views={hit.n_views} "
+                    f"id={hit.instance_id} seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+    @rpc
+    def object_cloud(self, object_id: str) -> PointCloud2 | None:
+        """The world-frame point cloud of an object localize reported, by its id; None if no
+        call has reported that id."""
+        return self._clouds.get(object_id)
+
+    @rpc
+    def scene_cloud(self, object_id: str, margin: float = 0.15) -> PointCloud2 | None:
+        """What surrounds an object localize reported, for collision checks: the newest
+        embedded frame's depth lifted to world, within ``margin`` of the object's footprint,
+        the object's own points removed, one point per 5 mm cell. None without the object's
+        cloud or a posed depth frame."""
+        cloud = self._clouds.get(object_id)
+        if cloud is None or not self._ready.is_set():
+            return None
+        try:
+            obs = self.index.last()
+        except LookupError:
+            return None
+        frame = obs.tags.get("camera") or obs.data.frame_id
+        backdrop = self.rig.backdrop(obs.ts, frame)
+        if backdrop is None:
+            return None
+        points = scene_around(backdrop.points_f32(), cloud.points_f32(), margin)
+        return PointCloud2.from_numpy(points, frame_id=self.config.world_frame, timestamp=obs.ts)
+
+
+# A scene point closer than this to an object point is the object's own surface.
+OBJECT_CLEARANCE_M = 0.01
+SCENE_CELL_M = 0.005
+
+
+def scene_around(
+    scene: np.ndarray,
+    target: np.ndarray,
+    margin: float,
+    clearance: float = OBJECT_CLEARANCE_M,
+    cell: float = SCENE_CELL_M,
+) -> np.ndarray:
+    """The ``scene`` points within ``margin`` (XY) of the ``target`` cloud's bounding box, less
+    those within ``clearance`` of a target point, one point per ``cell``-sized voxel."""
+    from scipy.spatial import cKDTree
+
+    if not len(scene):
+        return np.zeros((0, 3), dtype=np.float32)
+    lo, hi = target[:, :2].min(axis=0) - margin, target[:, :2].max(axis=0) + margin
+    near = scene[np.all((scene[:, :2] >= lo) & (scene[:, :2] <= hi), axis=1)]
+    if len(near) and len(target):
+        distance, _ = cKDTree(target).query(near, distance_upper_bound=clearance)
+        near = near[~np.isfinite(distance)]
+    if not len(near):
+        return np.zeros((0, 3), dtype=np.float32)
+    cells = np.floor(near / cell).astype(np.int64)
+    _, first = np.unique(cells, axis=0, return_index=True)
+    return near[np.sort(first)].astype(np.float32)
+
+
+def footprint(
+    points: np.ndarray,
+) -> tuple[tuple[float, float], tuple[float, float], float, tuple[float, float]] | None:
+    """Grasp geometry of a lifted cloud: the smallest rectangle around its XY points (centre,
+    long and short side in metres, long side's yaw in degrees in [-90, 90)) and the z range of
+    the surfaces the camera saw. The outer 2% each way is trimmed as depth noise. Faces the
+    camera never saw are missing, so the bottom is only as low as what was in view."""
+    if len(points) < 3:
+        return None
+    lo, hi = np.quantile(points, [0.02, 0.98], axis=0)
+    kept = points[np.all((points >= lo) & (points <= hi), axis=1)]
+    if len(kept) < 3:
+        return None
+    rect = cv2.minAreaRect(kept[:, :2].astype(np.float32))
+    corners = cv2.boxPoints(rect)
+    edges = [corners[1] - corners[0], corners[2] - corners[1]]
+    lengths = [float(np.hypot(*e)) for e in edges]
+    long_edge = edges[int(np.argmax(lengths))]
+    yaw = (np.degrees(np.arctan2(long_edge[1], long_edge[0])) + 90.0) % 180.0 - 90.0
+    centre = (float(rect[0][0]), float(rect[0][1]))
+    return centre, (max(lengths), min(lengths)), float(yaw), (float(lo[2]), float(hi[2]))
+
+
+def best_candidate(
+    groups: Groups | None, t0: float, t1: float
+) -> tuple[float, int, tuple[float, float, float]] | None:
+    """The highest-scoring group a call left unverified, from its sightings in ``[t0, t1]``:
+    best score, distinct views and newest position. None when nothing was lifted there."""
+    if groups is None:
+        return None
+    best = None
+    for i in range(len(groups.centers)):
+        rows = groups.rows(i)
+        rows = rows[(rows[:, M_TS] >= t0) & (rows[:, M_TS] <= t1)]
+        if not len(rows):
+            continue
+        score = float(rows[:, M_SCORE].max())
+        if best is None or score > best[0]:
+            views = len(np.unique(np.round(rows[:, M_KX : M_KZ + 1], 2), axis=0))
+            newest = rows[rows[:, M_TS].argmax(), M_CX : M_CZ + 1]
+            best = (score, views, (float(newest[0]), float(newest[1]), float(newest[2])))
+    return best
 
 
 def as_detection_array(
