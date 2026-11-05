@@ -13,20 +13,30 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic
 
 import numpy as np
-import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.protocol.pubsub.benchmark.type import Case
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.memory import Memory
+from dimos.protocol.pubsub.impl.rospubsub import (
+    ROS_AVAILABLE,
+    DimosROS,
+    RawROS,
+    RawROSTopic,
+    ROSTopic,
+)
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
-from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.pubsub.spec import MsgT, PubSub, TopicT
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 from dimos.utils.testing.waiting import wait_until
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
@@ -34,8 +44,28 @@ try:
     DDS_AVAILABLE = True
 except ImportError:
     DDS_AVAILABLE = False
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
-from dimos.protocol.pubsub.impl.memory import Memory
+
+MsgGen = Callable[[int], tuple[TopicT, MsgT]]
+PubSubContext = Callable[[], AbstractContextManager[PubSub[TopicT, MsgT]]]
+
+
+class UnsupportedMessageSizeError(ValueError):
+    """A transport cannot carry this benchmark payload size."""
+
+
+@dataclass
+class Case(Generic[TopicT, MsgT]):
+    pubsub_context: PubSubContext[TopicT, MsgT]
+    msg_gen: MsgGen[TopicT, MsgT]
+
+    @property
+    def name(self) -> str:
+        return self.pubsub_context.__name__.removesuffix("_pubsub_channel")
+
+    @property
+    def label(self) -> str:
+        name = self.name.replace("_", " ")
+        return name.upper() if len(name) <= 3 else name.title().replace(" ", "")
 
 
 def make_data_bytes(size: int) -> bytes:
@@ -57,15 +87,17 @@ def make_data_image(size: int) -> Image:
     return Image(data=data, format=ImageFormat.RGB)
 
 
-testcases: list[Case[Any, Any]] = []
+cases: list[Case[Any, Any]] = []
 
 
 @contextmanager
 def lcm_pubsub_channel() -> Generator[LCM, None, None]:
     lcm_pubsub = LCM()
     lcm_pubsub.start()
-    yield lcm_pubsub
-    lcm_pubsub.stop()
+    try:
+        yield lcm_pubsub
+    finally:
+        lcm_pubsub.stop()
 
 
 def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
@@ -73,7 +105,7 @@ def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
     return (topic, make_data_image(size))
 
 
-testcases.append(
+cases.append(
     Case(
         pubsub_context=lcm_pubsub_channel,
         msg_gen=lcm_msggen,
@@ -86,8 +118,10 @@ def udp_bytes_pubsub_channel() -> Generator[LCMPubSubBase, None, None]:
     """LCM with raw bytes - no encoding overhead."""
     lcm_pubsub = LCMPubSubBase()
     lcm_pubsub.start()
-    yield lcm_pubsub
-    lcm_pubsub.stop()
+    try:
+        yield lcm_pubsub
+    finally:
+        lcm_pubsub.stop()
 
 
 def udp_bytes_msggen(size: int) -> tuple[LCMTopic, bytes]:
@@ -96,7 +130,7 @@ def udp_bytes_msggen(size: int) -> tuple[LCMTopic, bytes]:
     return (topic, make_data_bytes(size))
 
 
-testcases.append(
+cases.append(
     Case(
         pubsub_context=udp_bytes_pubsub_channel,
         msg_gen=udp_bytes_msggen,
@@ -114,7 +148,7 @@ def memory_msggen(size: int) -> tuple[str, Any]:
     return ("benchmark/memory", make_data_image(size))
 
 
-# testcases.append(
+# cases.append(
 #     Case(
 #         pubsub_context=memory_pubsub_channel,
 #         msg_gen=memory_msggen,
@@ -148,8 +182,10 @@ if DDS_AVAILABLE:
         )
         dds_pubsub = DDS(qos=HIGH_THROUGHPUT_QOS)
         dds_pubsub.start()
-        yield dds_pubsub
-        dds_pubsub.stop()
+        try:
+            yield dds_pubsub
+        finally:
+            dds_pubsub.stop()
 
     @contextmanager
     def dds_reliable_pubsub_channel() -> Generator[DDS, None, None]:
@@ -161,22 +197,24 @@ if DDS_AVAILABLE:
         )
         dds_pubsub = DDS(qos=RELIABLE_QOS)
         dds_pubsub.start()
-        yield dds_pubsub
-        dds_pubsub.stop()
+        try:
+            yield dds_pubsub
+        finally:
+            dds_pubsub.stop()
 
     def dds_msggen(size: int) -> tuple[DDSTopic, DDSBenchmarkData]:
         """Generate DDS message for benchmark."""
         topic = DDSTopic(name="benchmark/dds", data_type=DDSBenchmarkData)
         return (topic, DDSBenchmarkData(data=list(make_data_bytes(size))))  # type: ignore[arg-type]
 
-    testcases.append(
+    cases.append(
         Case(
             pubsub_context=dds_high_throughput_pubsub_channel,
             msg_gen=dds_msggen,
         )
     )
 
-    testcases.append(
+    cases.append(
         Case(
             pubsub_context=dds_reliable_pubsub_channel,
             msg_gen=dds_msggen,
@@ -194,16 +232,18 @@ def zenoh_pubsub_channel() -> Generator[Zenoh, None, None]:
     pool = ZenohSessionPool()
     zenoh_pubsub = Zenoh(session_pool=pool)
     zenoh_pubsub.start()
-    yield zenoh_pubsub
-    zenoh_pubsub.stop()
-    pool.close_all()
+    try:
+        yield zenoh_pubsub
+    finally:
+        zenoh_pubsub.stop()
+        pool.close_all()
 
 
 def zenoh_msggen(size: int) -> tuple[ZenohTopic, Image]:
     return (ZenohTopic("dimos/benchmark/zenoh", Image), make_data_image(size))
 
 
-testcases.append(
+cases.append(
     Case(
         pubsub_context=zenoh_pubsub_channel,
         msg_gen=zenoh_msggen,
@@ -245,31 +285,22 @@ def zenoh_peers_pubsub_channel() -> Generator[_SplitPubSub, None, None]:
         timeout=5.0,
         message="Zenoh peer sessions did not discover each other",
     )
-    yield _SplitPubSub(pub_side=pub_side, sub_side=sub_side)
-    pub_side.stop()
-    sub_side.stop()
-    pub_pool.close_all()
-    sub_pool.close_all()
+    try:
+        yield _SplitPubSub(pub_side=pub_side, sub_side=sub_side)
+    finally:
+        pub_side.stop()
+        sub_side.stop()
+        pub_pool.close_all()
+        sub_pool.close_all()
 
 
-testcases.append(
+cases.append(
     Case(
         pubsub_context=zenoh_peers_pubsub_channel,
         msg_gen=zenoh_msggen,
     )
 )
 
-
-from dimos.protocol.pubsub.impl.rospubsub import (
-    ROS_AVAILABLE,
-    DimosROS,
-    RawROS,
-    RawROSTopic,
-    ROSTopic,
-)
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 if ROS_AVAILABLE:
     from rclpy.qos import (
@@ -290,8 +321,10 @@ if ROS_AVAILABLE:
         )
         ros_pubsub = RawROS(node_name="benchmark_ros_best_effort", qos=qos)
         ros_pubsub.start()
-        yield ros_pubsub
-        ros_pubsub.stop()
+        try:
+            yield ros_pubsub
+        finally:
+            ros_pubsub.stop()
 
     @contextmanager
     def ros_reliable_pubsub_channel() -> Generator[RawROS, None, None]:
@@ -303,12 +336,12 @@ if ROS_AVAILABLE:
         )
         ros_pubsub = RawROS(node_name="benchmark_ros_reliable", qos=qos)
         ros_pubsub.start()
-        yield ros_pubsub
-        ros_pubsub.stop()
+        try:
+            yield ros_pubsub
+        finally:
+            ros_pubsub.stop()
 
     def ros_msggen(size: int) -> tuple[RawROSTopic, ROSImage]:
-        import numpy as np
-
         # Create image data
         raw_data: NDArray[np.uint8] = np.frombuffer(make_data_bytes(size), dtype=np.uint8)
         padded_size = ((len(raw_data) + 2) // 3) * 3
@@ -329,14 +362,14 @@ if ROS_AVAILABLE:
         topic = RawROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
         return (topic, msg)
 
-    testcases.append(
+    cases.append(
         Case(
             pubsub_context=ros_best_effort_pubsub_channel,
             msg_gen=ros_msggen,
         )
     )
 
-    testcases.append(
+    cases.append(
         Case(
             pubsub_context=ros_reliable_pubsub_channel,
             msg_gen=ros_msggen,
@@ -353,8 +386,10 @@ if ROS_AVAILABLE:
         )
         ros_pubsub = DimosROS(node_name="benchmark_dimos_ros_best_effort", qos=qos)
         ros_pubsub.start()
-        yield ros_pubsub
-        ros_pubsub.stop()
+        try:
+            yield ros_pubsub
+        finally:
+            ros_pubsub.stop()
 
     @contextmanager
     def dimos_ros_reliable_pubsub_channel() -> Generator[DimosROS, None, None]:
@@ -366,8 +401,10 @@ if ROS_AVAILABLE:
         )
         ros_pubsub = DimosROS(node_name="benchmark_dimos_ros_reliable", qos=qos)
         ros_pubsub.start()
-        yield ros_pubsub
-        ros_pubsub.stop()
+        try:
+            yield ros_pubsub
+        finally:
+            ros_pubsub.stop()
 
     def dimos_ros_msggen(size: int) -> tuple[ROSTopic, Image]:
         topic = ROSTopic(topic="/benchmark/dimos_ros", msg_type=Image)
@@ -375,14 +412,14 @@ if ROS_AVAILABLE:
 
     # commented to save benchmarking time,
     # since reliable and best effort are very similar in performance for local pubsub
-    # testcases.append(
+    # cases.append(
     #     Case(
     #         pubsub_context=dimos_ros_best_effort_pubsub_channel,
     #         msg_gen=dimos_ros_msggen,
     #     )
     # )
 
-    testcases.append(
+    cases.append(
         Case(
             pubsub_context=dimos_ros_reliable_pubsub_channel,
             msg_gen=dimos_ros_msggen,
@@ -450,7 +487,7 @@ if WEBRTC_AVAILABLE:
     def webrtc_loopback_msggen(size: int) -> tuple[str, bytes]:
         return ("benchmark/webrtc_local", make_data_bytes(size))
 
-    testcases.append(
+    cases.append(
         Case(
             pubsub_context=webrtc_loopback_pubsub_channel,
             msg_gen=webrtc_loopback_msggen,
@@ -458,7 +495,9 @@ if WEBRTC_AVAILABLE:
     )
 
 
-if WEBRTC_AVAILABLE and os.environ.get("CF_TELEOP_APP_ID"):
+if WEBRTC_AVAILABLE and all(
+    os.environ.get(key) for key in ("CF_TELEOP_APP_ID", "CF_TELEOP_APP_SECRET")
+):
 
     @contextmanager
     def webrtc_cloudflare_pubsub_channel() -> Generator[WebRTCPubSub, None, None]:
@@ -475,10 +514,12 @@ if WEBRTC_AVAILABLE and os.environ.get("CF_TELEOP_APP_ID"):
 
     def webrtc_msggen(size: int) -> tuple[str, bytes]:
         if size > MAX_MSG_SIZE:
-            pytest.skip(f"{size}B exceeds the SCTP/CF DataChannel message limit")
+            raise UnsupportedMessageSizeError(
+                f"{size}B exceeds the SCTP/CF DataChannel message limit"
+            )
         return ("benchmark/webrtc", make_data_bytes(size))
 
-    testcases.append(
+    cases.append(
         Case(
             pubsub_context=webrtc_cloudflare_pubsub_channel,
             msg_gen=webrtc_msggen,

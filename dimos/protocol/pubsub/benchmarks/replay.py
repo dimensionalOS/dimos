@@ -15,11 +15,11 @@
 """End-to-end replay benchmark: raw Image blueprints vs CompressedCodec.
 
 Runs a real blueprint in replay mode for a fixed duration, with optional
-BenchSink consumer modules (configurable synthetic per-frame work, like a
-busy detector), and records per-frame freshness plus host CPU/RSS/loopback
+_BenchSink consumer modules (configurable synthetic per-frame work, like a
+busy detector), and records per-frame receive/completion times plus host CPU/RSS/loopback
 traffic. One process per run:
 
-    python -m dimos.protocol.pubsub.benchmark.tool_replay_bench \
+    python -m dimos.protocol.pubsub.benchmarks.replay \
         --blueprint unitree-go2 --mode codec --sinks 4 --work-ms 20 \
         --duration 60 --out /tmp/bench/go2_codec_0
 
@@ -29,72 +29,35 @@ Wrap with `taskset -c 0-3` / `tc netem` for constrained profiles.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 import json
+import math
 import os
 from pathlib import Path
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any
 
+import psutil
+
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
-from dimos.core.stream import In, Out, Stream
-from dimos.core.transport import PubSubTransport
+from dimos.core.stream import In
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
+from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-T = TypeVar("T")
 
-
-class CompressedCodec(PubSubTransport[T]):
-    """Image→CompressedImage jpeg codec over any inner transport.
-
-    Bench-only utility: rejected as public API in #2831 (transports shouldn't
-    peek into messages), kept here so raw-vs-codec cells stay comparable.
-    The wire carries a typed sensor_msgs.CompressedImage; ts/frame_id survive.
-    Subscribers always receive a decoded Image.
-    """
-
-    def __init__(self, inner: PubSubTransport[Any], quality: int = 75) -> None:
-        super().__init__(inner.topic)
-        self.inner = inner
-        self.quality = quality
-
-    def cbor_encode(self) -> dict[str, Any]:
-        return {"inner": self.inner, "quality": self.quality}
-
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> CompressedCodec[Any]:
-        return cls(data["inner"], data["quality"])
-
-    def broadcast(self, stream: Out[T] | None, msg: T) -> None:
-        from dimos.msgs.sensor_msgs.CompressedImage import (
-            CompressedImage,
-        )  # deferred to avoid pulling in cv2/rerun
-
-        if not isinstance(msg, CompressedImage):
-            msg = CompressedImage.from_image(msg, quality=self.quality)  # type: ignore[assignment, arg-type]
-        self.inner.broadcast(stream, msg)
-
-    def subscribe(
-        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
-    ) -> Callable[[], None]:
-        return self.inner.subscribe(  # type: ignore[no-any-return]
-            lambda m: callback(m.decode()), selfstream
-        )
-
-    def start(self) -> None:
-        self.inner.start()
-
-    def stop(self) -> None:
-        self.inner.stop()
-
-
-class BenchSink(Module):
-    """Records (recv_time, msg.ts, age) per frame; burns work_ms of real cpu."""
+class _BenchSink(Module):
+    """Records receive/completion times and the original frame timestamp."""
 
     color_image: In[Image]
 
@@ -120,8 +83,10 @@ class BenchSink(Module):
     def _on_image(self, msg: Image) -> None:
         now = time.time()
         self._count += 1
-        rec = {"t": now, "ts": msg.ts, "age": now - msg.ts, "i": self._count}
+        # Replay preserves recording timestamps, so now - msg.ts is not transport latency.
+        rec = {"t": now, "ts": msg.ts, "i": self._count}
         if self._work_ms > 0:
+            # Load the heavy OpenCV dependency only for synthetic image processing.
             import cv2
 
             deadline = time.perf_counter() + self._work_ms / 1000
@@ -142,21 +107,19 @@ class BenchSink(Module):
 
 
 # distinct classes so several sinks can live in one blueprint (fan-out)
-class BenchSink1(BenchSink): ...
+class _BenchSink1(_BenchSink): ...
 
 
-class BenchSink2(BenchSink): ...
+class _BenchSink2(_BenchSink): ...
 
 
-class BenchSink3(BenchSink): ...
+class _BenchSink3(_BenchSink): ...
 
 
-SINK_CLASSES = [BenchSink, BenchSink1, BenchSink2, BenchSink3]
+SINK_CLASSES = [_BenchSink, _BenchSink1, _BenchSink2, _BenchSink3]
 
 
 def _sample_host(out_path: str, stop: threading.Event) -> None:
-    import psutil
-
     me = psutil.Process()
     procs: dict[int, psutil.Process] = {}
     lo0 = psutil.net_io_counters(pernic=True).get("lo")
@@ -198,17 +161,20 @@ def main() -> None:
     ap.add_argument("--duration", type=float, default=60.0)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    if not 1 <= args.sinks <= len(SINK_CLASSES):
+        ap.error(f"sinks must be between 1 and {len(SINK_CLASSES)}")
+    if not math.isfinite(args.duration) or args.duration <= 0:
+        ap.error("duration must be positive and finite")
+    if not math.isfinite(args.work_ms) or args.work_ms < 0:
+        ap.error("work-ms must be nonnegative and finite")
+    if not 1 <= args.quality <= 100:
+        ap.error("quality must be between 1 and 100")
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "meta.json").write_text(json.dumps(vars(args)))
 
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.transport import LCMTransport
-    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-    from dimos.robot.get_all_blueprints import get_blueprint_by_name
-
+    global_config.update(replay=True, viewer="none", transport="lcm")
     bp = get_blueprint_by_name(args.blueprint)
     sinks = [
         cls.blueprint(out_path=str(out / f"sink{i}.jsonl"), work_ms=args.work_ms)
@@ -224,24 +190,28 @@ def main() -> None:
             }
         )
 
-    coordinator = ModuleCoordinator.build(bp, {"g": {"replay": True, "viewer": "none"}})
+    parsed = BlueprintConfigParser(bp).parse(
+        overrides={"g": {"replay": True, "viewer": "none", "transport": "lcm"}},
+    )
+    coordinator = ModuleCoordinator.build(bp, parsed)
     logger.info("benchmark run started", mode=args.mode, blueprint=args.blueprint)
 
     stop = threading.Event()
     sampler = threading.Thread(target=_sample_host, args=(str(out / "host.jsonl"), stop))
-    sampler.start()
     try:
+        sampler.start()
         time.sleep(args.duration)
     finally:
         stop.set()
-        sampler.join(timeout=5)
+        if sampler.ident is not None:
+            sampler.join(timeout=5)
         stopper = threading.Thread(target=coordinator.stop, daemon=True)
         stopper.start()
         stopper.join(timeout=30)
-        (out / "done").write_text("ok")
         if stopper.is_alive():
-            logger.warning("coordinator.stop() hung; hard exit")
-            os._exit(0)
+            logger.error("coordinator.stop() did not finish within 30 seconds")
+            os._exit(1)
+        (out / "done").write_text("ok")
 
 
 if __name__ == "__main__":
