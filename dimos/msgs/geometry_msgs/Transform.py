@@ -30,6 +30,7 @@ from dimos_lcm.geometry_msgs import (
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.Header import Header
 from dimos.types.timestamped import Timestamped
 
 
@@ -86,7 +87,7 @@ class Transform(Timestamped):
     def lcm_transform(self) -> LCMTransformStamped:
         return LCMTransformStamped(
             child_frame_id=self.child_frame_id,
-            header=self.acquisition_header(self.frame_id),
+            header=Header(self.ts, self.frame_id),
             transform=LCMTransform(
                 translation=self.translation,
                 rotation=self.rotation,
@@ -283,7 +284,9 @@ class Transform(Timestamped):
         lcm_transform_stamped = lcm_msg.transforms[0]
 
         # Extract timestamp from header
-        ts = lcm_transform_stamped.header.time_ns / 1e9
+        ts = lcm_transform_stamped.header.stamp.sec + (
+            lcm_transform_stamped.header.stamp.nsec / 1_000_000_000
+        )
 
         # Create and return Transform instance
         return cls(
@@ -301,7 +304,7 @@ class Transform(Timestamped):
             frame_id=lcm_transform_stamped.header.frame_id,
             child_frame_id=lcm_transform_stamped.child_frame_id,
             ts=ts,
-        ).with_sample_header(lcm_transform_stamped.header)
+        )
 
     def to_rerun(self, frameless: bool = False) -> rr.Transform3D:
         """Convert to a rerun Transform3D.

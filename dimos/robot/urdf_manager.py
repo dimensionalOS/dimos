@@ -174,7 +174,7 @@ class UrdfManager(Module):
                         frame_id="world",
                         child_frame_id=model.root_link,
                         ts=sample.header.time_ns / 1e9,
-                    ).with_sample_header(sample.header)
+                    )
                 )
             for joint in model.joints:
                 parent_id, child_id = joint.parent_link, joint.child_link
@@ -190,7 +190,7 @@ class UrdfManager(Module):
                         frame_id=parent_id,
                         child_frame_id=child_id,
                         ts=sample.header.time_ns / 1e9,
-                    ).with_sample_header(sample.header)
+                    )
                 )
         self.tfbuffer.publish(*edges)
 

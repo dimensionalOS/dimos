@@ -31,20 +31,20 @@ def imu(world):
     module.dispose()
 
 
-def test_noise_is_acquired_once_and_metadata_survives_codec(poses, imu):
+def test_noise_is_acquired_once_and_timestamp_survives_codec(poses, imu):
     truth = poses()
     a = imu.measure(truth)
     b = imu.measure(truth)
     assert a is b
     assert a.angular_velocity.x == pytest.approx(0.1)
     restored = Imu.lcm_decode(a.lcm_encode())
-    assert restored.sample_header.clock_id == "test"
-    assert restored.sample_header.time_ns == 0
+    assert restored.ts == 0
+    assert restored.frame_id == "left/imu"
     assert restored.linear_acceleration.z == a.linear_acceleration.z
     assert restored.orientation_covariance[0] == -1
     truth.header = SampleHeader(clock_id="test", epoch=1, frame_id="left/imu")
     c = imu.measure(truth)
-    assert c.sample_header.epoch == 1
+    assert c.ts == 0
     assert c.linear_acceleration.z != a.linear_acceleration.z
 
 

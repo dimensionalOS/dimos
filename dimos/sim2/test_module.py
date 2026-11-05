@@ -59,7 +59,7 @@ def test_nondivisible_export_rate_has_no_rounding_drift(make_sim, command):
     stamps = Queue()
 
     def receive(sample):
-        if sample.header.epoch == 1:
+        if sample.header.time_ns > 0:
             stamps.put(sample.header.time_ns)
 
     sim = make_sim(
@@ -67,9 +67,7 @@ def test_nondivisible_export_rate_has_no_rounding_drift(make_sim, command):
         on_observations=receive,
         observation_hz=200,
     )
-    baseline = sim.reset()
-    # Wait for the reset sample to arrive before releasing the controller boundary.
-    assert stamps.get(timeout=3) == 0
+    baseline = sim.inspect()
     sim.submit(command(baseline.header))
     assert [stamps.get(timeout=3) for _ in range(4)] == [
         6_000_000,
@@ -92,7 +90,7 @@ def test_wrong_clock_and_duplicate_commands_are_rejected(controlled, command):
     assert controlled.status()["error"] == ""
 
 
-def test_command_expiry_holds_motor_and_reset_rejects_previous_epoch(make_sim, command):
+def test_command_expiry_holds_motor_and_new_run_rejects_previous_commands(make_sim, command):
     sim = make_sim(
         controllers=(ControllerConfig("test", 1_220_000_000, ("right/slide_x",)),),
     )
@@ -106,17 +104,23 @@ def test_command_expiry_holds_motor_and_reset_rejects_previous_epoch(make_sim, c
     joints = poses.joint_truth
     assert joints.position[joints.name.index("left/slide_x")] < 0.2
     stale = command(poses.header, names=("right/slide_x",), positions=(0.0,), ttl=1.22)
-    reset = sim.reset()
-    sim.submit(stale)
-    wait_until(lambda: sim.status()["rejected_commands"] == 1, timeout=3)
-    assert reset.header.epoch == header.epoch + 1
-    assert reset.header.time_ns == 0
-    assert reset.joint_truth.header.lcm_encode() == reset.header.lcm_encode()
-    joints = sim.inspect().joint_truth
+    sim.stop()
+    restarted = make_sim(
+        controllers=(ControllerConfig("test", 1_220_000_000, ("right/slide_x",)),),
+    )
+    baseline = restarted.inspect()
+    assert baseline.header.clock_id != header.clock_id
+    restarted.submit(stale)
+    wait_until(lambda: restarted.status()["rejected_commands"] == 1, timeout=3)
+    assert baseline.header.epoch == baseline.header.time_ns == 0
+    assert baseline.joint_truth.header.stamp.sec == 0
+    joints = restarted.inspect().joint_truth
     assert joints.position[joints.name.index("right/slide_x")] == pytest.approx(0)
 
 
-def test_place_is_atomic_and_invalidates_old_samples(controlled):
+def test_place_is_atomic_and_does_not_restart_time(controlled, command):
+    controlled.submit(command(controlled.inspect().header))
+    wait_until(lambda: controlled.status()["time_ns"] == 20_000_000, timeout=3)
     before = controlled.inspect()
     with pytest.raises(ValueError, match="free root"):
         controlled.place("left/tool", (0.2, 0.2, 0.4, 0, 0, 0, 1))
@@ -124,8 +128,8 @@ def test_place_is_atomic_and_invalidates_old_samples(controlled):
     placed = controlled.place("box", (0.2, 0.2, 0.4, 0, 0, 0, 1))
     position = poses_by_id(placed)["box"].position
     assert (position.x, position.y, position.z) == pytest.approx((0.2, 0.2, 0.4))
-    assert placed.header.epoch == before.header.epoch + 1
-    assert placed.header.time_ns == 0
+    assert placed.header.epoch == before.header.epoch
+    assert placed.header.time_ns == before.header.time_ns
 
 
 class ExtendedMujocoBackend(MujocoBackend):
@@ -163,8 +167,9 @@ def test_complete_state_replaces_extensions_and_keeps_one_acquisition(make_sim, 
     assert second.header.time_ns == 20_000_000
     assert second.cbor_observations_length == 0 and second.cbor_observations == []
     assert second.model_revision == first.model_revision
-    assert first.joint_truth.header.lcm_encode() == first.header.lcm_encode()
-    assert second.joint_truth.header.lcm_encode() == second.header.lcm_encode()
+    assert first.joint_truth.header.stamp.sec == 0
+    assert first.joint_truth.header.stamp.nsec == first.header.time_ns
+    assert second.joint_truth.header.stamp.nsec == second.header.time_ns
     assert {p.body_id for p in second.bodies} == {p.body_id for p in first.bodies}
     assert "left/imu" in {b.body_id for b in second.bodies}
     joints = second.joint_truth
@@ -251,7 +256,6 @@ def test_cbor_stream_executes_once_and_cannot_release_motor_boundary(
     actions.publish(motors)
     wait_until(lambda: sim.status()["time_ns"] == 20_000_000, timeout=3)
     assert sim.status()["error"] == ""
-    assert cbor2.loads(bytes(sim.reset().cbor_observations[0].value)) == 0
 
 
 @pytest.mark.parametrize("invalid", ["key", "payload", "joint", "bytes", "empty", "expired"])
