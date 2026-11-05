@@ -18,7 +18,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
 import math
-from queue import Empty, Full, Queue
+from queue import Empty, Queue
 import threading
 import time
 from typing import Any, ClassVar, cast
@@ -26,7 +26,7 @@ import uuid
 
 from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.control_msgs import ActionCommand
-from dimos_lcm.sim_msgs import SimulationClock, WorldState
+from dimos_lcm.sim_msgs import WorldState
 
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
@@ -61,7 +61,6 @@ class SimModule(SharedConfigModule):
     dedicated_worker: ClassVar[bool] = True
     actions: In[ActionCommand]
     observations: Out[WorldState]
-    clock: Out[SimulationClock]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -70,7 +69,6 @@ class SimModule(SharedConfigModule):
         self._clock_id = uuid.uuid4().hex
         self._epoch = self._time_ns = 0
         self._observations: Queue[WorldState] = Queue(512)
-        self._clock_queue: Queue[SimulationClock] = Queue(1)
         self._ready: Future[None] = Future()
         self._commands: Queue[ActionCommand] = Queue(256)
         self._pending: list[ActionCommand] = []
@@ -291,27 +289,6 @@ class SimModule(SharedConfigModule):
     def _set_status(self, **fields: Any) -> None:
         with self._status_lock:
             self._status.update(fields, time_ns=self._time_ns, epoch=self._epoch)
-        sample = SimulationClock(
-            header=self._header("sim/clock"),
-            dt_ns=self.config.dt_ns,
-            status=self._status["status"],
-            detail=self._status["error"],
-        )
-        self._latest(self._clock_queue, sample)
-
-    @staticmethod
-    def _latest(queue: Queue[Any], value: Any) -> bool:
-        dropped = False
-        try:
-            queue.put_nowait(value)
-        except Full:
-            try:
-                queue.get_nowait()
-                dropped = True
-            except Empty:
-                pass
-            queue.put_nowait(value)
-        return dropped
 
     def _sample_truth(self) -> None:
         if self._time_ns >= self._next_sample_ns:
@@ -430,19 +407,12 @@ class SimModule(SharedConfigModule):
     def _publish(self) -> None:
         try:
             while not self._done.is_set():
-                sent = False
-                for queue, output in (
-                    (self._observations, self.observations),
-                    (self._clock_queue, self.clock),
-                ):
-                    try:
-                        sample = queue.get_nowait()
-                    except Empty:
-                        continue
-                    output.publish(sample)
-                    sent = True
-                if not sent:
+                try:
+                    sample = self._observations.get_nowait()
+                except Empty:
                     self._done.wait(0.001)
+                    continue
+                self.observations.publish(sample)
         except Exception as error:
             self._publication_failed(error)
 
