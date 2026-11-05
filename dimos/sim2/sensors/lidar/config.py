@@ -29,8 +29,20 @@ from dimos.sim2.description import SceneConfig
 class ScanPattern(Protocol):
     def rays(
         self, start_ns: int, duration_ns: int
-    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
-        """Unit sensor-axis directions and per-ray offsets in nanoseconds."""
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64], NDArray[np.uint8]]:
+        """Unit sensor-axis directions, offsets in nanoseconds, and laser channel IDs."""
+        ...
+
+
+@runtime_checkable
+class RangeResponse(Protocol):
+    def measure(
+        self,
+        ranges: NDArray[np.float64],
+        cos_incidence: NDArray[np.float64],
+        rng: np.random.Generator,
+    ) -> NDArray[np.float64]:
+        """Measured ranges in metres; negative values denote missing returns."""
         ...
 
 
@@ -41,11 +53,15 @@ class UniformScan:
 
     def rays(
         self, start_ns: int, duration_ns: int
-    ) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
+    ) -> tuple[NDArray[np.float64], NDArray[np.int64], NDArray[np.uint8]]:
         az = np.linspace(-np.pi, np.pi, self.rays_per_scan, endpoint=False)
         el = np.resize(self.elevations, len(az))
         directions = np.column_stack((np.cos(az) * np.cos(el), np.sin(az) * np.cos(el), np.sin(el)))
-        return directions, np.arange(len(az), dtype=np.int64) * duration_ns // len(az)
+        return (
+            directions,
+            np.arange(len(az), dtype=np.int64) * duration_ns // len(az),
+            (np.arange(len(az)) % len(self.elevations)).astype(np.uint8),
+        )
 
 
 @dataclass(frozen=True)
@@ -60,15 +76,22 @@ class LidarConfig:
     max_pose_gap_ns: int = 10_000_000
     range_std: float = 0
     seed: int = 0
+    response: Callable[[], RangeResponse] | None = None
+    # Optical exclusions refer to links in the shared model, never whole robots.
+    excluded_bodies: tuple[str, ...] = ()
+    publish_truth: bool = True
 
 
 class Raycaster(Protocol):
-    def load(self, scene: SceneConfig) -> None: ...
+    def load(self, scene: SceneConfig, excluded_bodies: tuple[str, ...] = ()) -> None: ...
     def set_poses(self, sample: WorldState) -> None: ...
     def cast(
         self,
         origins: NDArray[np.float64],
         directions: NDArray[np.float64],
         exclude_body: str | None = None,
-    ) -> NDArray[np.float64]: ...
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Distance and world normal for each ray; negative distance on a miss."""
+        ...
+
     def close(self) -> None: ...
