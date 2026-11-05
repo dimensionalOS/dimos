@@ -17,19 +17,19 @@
 from dataclasses import dataclass
 from typing import Any
 
+from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.sim2.sensors.sampling import Acquisition, measurement_header, same_acquisition
+from dimos.sim2.sensors.sampling import Acquisition, same_acquisition
 
 
 @dataclass(frozen=True)
 class EncoderConfig:
     joints: tuple[str, ...]
-    source_id: str = "encoders"
     hz: float = 500
     offset: float = 0
     resolution: float = 0
@@ -51,6 +51,7 @@ class SimJointEncoderModule(Module):
         c = self.config.sensor
         self._sampling = Acquisition(c.hz)
         self._last: JointState | None = None
+        self._last_header: SampleHeader | None = None
         if (
             not c.joints
             or len(set(c.joints)) != len(c.joints)
@@ -61,7 +62,7 @@ class SimJointEncoderModule(Module):
 
     def measure(self, truth: WorldState) -> JointState | None:
         c = self.config.sensor
-        if self._last is not None and same_acquisition(truth.header, self._last.sample_header):
+        if self._last is not None and same_acquisition(truth.header, self._last_header):
             return self._last
         if not self._sampling.due(truth.header):
             return None
@@ -80,7 +81,8 @@ class SimJointEncoderModule(Module):
             effort=[],
             ts=truth.header.time_ns / 1e9,
         )
-        self._last = sample.with_sample_header(measurement_header(truth.header, c.source_id, ""))
+        self._last = sample
+        self._last_header = truth.header
         return self._last
 
     async def handle_observations(self, truth: WorldState) -> None:

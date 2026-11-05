@@ -25,7 +25,7 @@ from dimos.sim2.description import SceneConfig
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.sensors.camera.config import CameraConfig, CameraRenderer
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
-from dimos.sim2.sensors.sampling import Acquisition, measurement_header
+from dimos.sim2.sensors.sampling import Acquisition
 
 
 class CameraModuleConfig(PoseSensorConfig):
@@ -51,25 +51,17 @@ class SimCameraModule(_PoseSensorModule):
         pose = poses_by_id(sample)[c.frame_id]
         self.renderer.set_poses(sample)
         rgb, depth = self.renderer.render(pose)
-        header = measurement_header(sample.header, c.source_id, c.frame_id)
-        self.color_image.publish(
-            Image.from_numpy(
-                rgb, ImageFormat.RGB, c.frame_id, header.time_ns / 1e9
-            ).with_sample_header(header)
-        )
-        self.depth_image.publish(
-            Image.from_numpy(
-                depth, ImageFormat.DEPTH, c.frame_id, header.time_ns / 1e9
-            ).with_sample_header(header)
-        )
+        stamp = sample.header.time_ns / 1e9
+        self.color_image.publish(Image.from_numpy(rgb, ImageFormat.RGB, c.frame_id, stamp))
+        self.depth_image.publish(Image.from_numpy(depth, ImageFormat.DEPTH, c.frame_id, stamp))
         info = CameraInfo(
             width=c.width,
             height=c.height,
             K=[c.fx, 0, c.cx, 0, c.fy, c.cy, 0, 0, 1],
             frame_id=c.frame_id,
-            ts=header.time_ns / 1e9,
+            ts=stamp,
         )
-        self.camera_info.publish(info.with_sample_header(header))
+        self.camera_info.publish(info)
         self.count("acquisitions")
 
     def close_sensor(self) -> None:

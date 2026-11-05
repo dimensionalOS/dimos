@@ -17,6 +17,7 @@
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from numpy.typing import NDArray
@@ -28,13 +29,12 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.sim2.sensors.sampling import Acquisition, measurement_header, same_acquisition
+from dimos.sim2.sensors.sampling import Acquisition, same_acquisition
 
 
 @dataclass(frozen=True)
 class ImuConfig:
     frame_id: str
-    source_id: str = "imu"
     hz: float = 200
     orientation: Literal["none", "ideal"] = "none"
     gyro_bias: tuple[float, float, float] = (0, 0, 0)
@@ -57,6 +57,7 @@ class SimImuModule(SharedConfigModule):
         super().__init__(**kwargs)
         self._sampling = Acquisition(self.config.sensor.hz)
         self._last: Imu | None = None
+        self._last_header: SampleHeader | None = None
         self._gravity_world: NDArray[np.float64] | None = None
         c = self.config.sensor
         if (
@@ -81,7 +82,7 @@ class SimImuModule(SharedConfigModule):
         body = next((b for b in truth.bodies if b.body_id == c.frame_id), None)
         if body is None:
             raise ValueError(f"WorldState lacks configured IMU body: {c.frame_id}")
-        if self._last is not None and same_acquisition(truth.header, self._last.sample_header):
+        if self._last is not None and same_acquisition(truth.header, self._last_header):
             return self._last
         if not self._sampling.due(truth.header):
             return None
@@ -106,9 +107,8 @@ class SimImuModule(SharedConfigModule):
             linear_acceleration_covariance=(np.eye(3) * c.accel_std**2).ravel().tolist(),
             ts=truth.header.time_ns / 1e9,
         )
-        self._last = sample.with_sample_header(
-            measurement_header(truth.header, c.source_id, c.frame_id)
-        )
+        self._last = sample
+        self._last_header = truth.header
         return self._last
 
     async def handle_observations(self, truth: WorldState) -> None:
