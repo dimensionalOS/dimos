@@ -68,7 +68,8 @@ def test_unit_runs_host_run_from_the_checkout() -> None:
     unit = machine.render_unit("/venv/bin/dimos", Path("/repo"))
     assert "ExecStart=/venv/bin/dimos host start --foreground" in unit
     assert "WorkingDirectory=/repo" in unit
-    assert "Environment=PATH=/venv/bin:" in unit
+    nix = f"{Path.home()}/.nix-profile/bin:/nix/var/nix/profiles/default/bin"
+    assert f"Environment=PATH=/venv/bin:{nix}:/usr/local/bin:/usr/bin:/bin\n" in unit
     assert "KillSignal=SIGINT" in unit and "Restart=on-failure" in unit
 
 

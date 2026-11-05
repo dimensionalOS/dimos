@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import pytest
 
 from dimos.hosted.doctor import CHECKS, Check, run
+from dimos.protocol.service.zenohservice import LOOPBACK_INTERFACE
 
 
 def test_doctor_runner_outcomes() -> None:
@@ -69,6 +72,25 @@ def test_a_loopback_only_host_is_flagged_unreachable(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447"))
     assert "Only this machine" in (doctor._reachable() or "")
     monkeypatch.setattr(
-        doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447,iface/eth0")
+        doctor,
+        "HostConfig",
+        lambda: HostConfig(listen=f"tcp/127.0.0.1:7447,iface/{LOOPBACK_INTERFACE}"),
+    )
+    assert "Only this machine" in (doctor._reachable() or "")
+    monkeypatch.setattr(
+        doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447,tcp/10.0.0.5:7447")
     )
     assert doctor._reachable() is None
+
+
+def test_nix_missing_from_the_unit_path_is_flagged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dimos.hosted import doctor
+
+    monkeypatch.setattr(doctor.machine, "unit_search_path", lambda _: str(tmp_path))
+    assert "nix is not on the unit's PATH" in (doctor._nix() or "")
+    nix = tmp_path / "nix"
+    nix.write_text("#!/bin/sh\n")
+    nix.chmod(0o755)
+    assert doctor._nix() is None

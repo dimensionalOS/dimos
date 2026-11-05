@@ -25,7 +25,6 @@ from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 import os
 from pathlib import Path
-import socket
 import sys
 import threading
 import time
@@ -104,15 +103,14 @@ class HostDaemon:
 
     @property
     def client_endpoint(self) -> str:
-        """The locator this daemon's fragments dial: its first listener, on loopback or its interface."""
-        endpoint, _, options = self.listen[0].partition("#")
+        """The locator this daemon's fragments dial: its first listener, a wildcard on loopback."""
+        endpoint = self.listen[0].partition("#")[0]
         protocol, _, address = endpoint.partition("/")
         host, _, port = address.rpartition(":")
         if not port or port == "0":
             raise ValueError(f"Listen endpoint {self.listen[0]!r} needs a fixed port")
         if host in ("0.0.0.0", "[::]", ""):
-            iface = dict(o.partition("=")[::2] for o in options.split(";") if o).get("iface")
-            host = _ipv4(iface) if iface else "127.0.0.1"
+            host = "127.0.0.1"
         return f"{protocol}/{host}:{port}"
 
     @contextmanager
@@ -358,14 +356,6 @@ class HostDaemon:
             log_dir=str(deployment.log_dir),
             error=None,
         )
-
-
-def _ipv4(iface: str) -> str:
-    """An interface's IPv4 address; a listener bound to it answers nowhere else."""
-    for address in psutil.net_if_addrs().get(iface, ()):
-        if address.family == socket.AF_INET:
-            return str(address.address)
-    raise ValueError(f"Interface {iface!r} has no IPv4 address to reach this Host on")
 
 
 def _terminate(process: BaseProcess, timeout: float) -> None:
