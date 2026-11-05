@@ -272,7 +272,7 @@ const controlMsgs: Record<string, Msg> = {
     t: "topic_variant",
     route: "@t:p2",
     gen: 3,
-    variant: "v2",
+    variant: "v12",
     settings: { maxHz: 7.5, maxResolution: [640, 360], quality: 40 },
   },
   topic_variant_ready: {
@@ -1252,7 +1252,8 @@ const invalidTopics = {
     })),
     ...[
       ["variant_zero", { variant: "v0" }],
-      ["variant_beyond_bound", { variant: "v5" }],
+      ["variant_beyond_bound", { variant: "v12345678901234567" }],
+      ["variant_leading_zero", { variant: "v01" }],
       ["variant_prefix", { variant: "w1" }],
       ["variant_newline", { variant: "v1\n" }],
       ["variant_null_settings", { settings: null }],
@@ -1293,7 +1294,7 @@ const invalidTopics = {
       ["oversized_sdp", { sdp: "v=0\r\n".padEnd(48 * 1024 + 1, "a") }],
       ["empty_sdp", { sdp: "" }],
       ["numeric_sdp", { sdp: 1 }],
-      ["rtc_variant_beyond_bound", { variant: "v5" }],
+      ["rtc_variant_beyond_bound", { variant: "v12345678901234567" }],
       ["rtc_null_variant", { variant: null }],
       ["rtc_literal_key_route", { route: "demo/a" }],
       ["rtc_negative_gen", { gen: -1 }],

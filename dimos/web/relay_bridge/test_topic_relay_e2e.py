@@ -1390,13 +1390,18 @@ class VideoViewer:
 
 @asynccontextmanager
 async def video_viewer(
-    relay: RelayReadyInfo, key: str, settings: TopicSettingsRequest | None = None
+    relay: RelayReadyInfo,
+    key: str,
+    settings: TopicSettingsRequest | None = None,
+    max_hz: float = 30,
 ) -> AsyncIterator[VideoViewer]:
     async with await RelayClient.connect(relay.wt_url, "viewer") as client:
         await client.hello(topics=True)
         sources = await next_message(client, TopicSources)
         assert "video.h264.v1" in sources.sources[0].profiles
-        ready = await subscribe_camera(client, key, profile="video.h264.v1", settings=settings)
+        ready = await subscribe_camera(
+            client, key, profile="video.h264.v1", settings=settings, max_hz=max_hz
+        )
         viewer = VideoViewer(client, ready)
         try:
             yield viewer
@@ -1445,6 +1450,30 @@ async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
             assert encoder.keyframes >= 1
 
 
+async def test_direct_video_viewers_receive_the_rate_each_requested(relay: RelayReadyInfo) -> None:
+    def rate(frames: list[Any]) -> float:
+        elapsed = (frames[-1].pts - frames[0].pts) * frames[0].time_base
+        return (len(frames) - 1) / float(elapsed)
+
+    with local_session() as session:
+        async with (
+            provider_connection(relay, session, video=True) as provider,
+            video_viewer(relay, "sensor/rates", max_hz=5) as slow,
+            video_viewer(relay, "sensor/rates", max_hz=30) as fast,
+        ):
+            assert slow.ready.settings is not None and slow.ready.settings.maxHz == 5
+            assert fast.ready.settings is not None and fast.ready.settings.maxHz == 30
+            await slow.offer()
+            await fast.offer()
+            assert provider._video is not None
+            assert provider._video.encoders() == 2
+            publisher = publish_camera(session, "sensor/rates", 120)
+            slow_frames, fast_frames = await asyncio.gather(slow.frames(8), fast.frames(30))
+            publisher.join(5)
+            assert 3.5 <= rate(slow_frames) <= 6.5
+            assert rate(fast_frames) >= 15
+
+
 async def test_direct_video_last_viewer_closing_releases_the_encoder_within_a_second(
     relay: RelayReadyInfo, mocker
 ) -> None:
@@ -1461,8 +1490,9 @@ async def test_direct_video_last_viewer_closing_releases_the_encoder_within_a_se
                 assert provider._video.encoders() == 1
             # The viewer connection is gone: the relay closes the route and the peer.
             async with timeout(1):
-                while provider._video.encoders() or provider._video.peers:
+                while provider._video.encoders() or provider._video.peers or provider._routes:
                     await asyncio.sleep(0.02)
+            assert not provider._video._routes
             settled = encode.call_count
             await asyncio.sleep(0.3)
             assert encode.call_count == settled

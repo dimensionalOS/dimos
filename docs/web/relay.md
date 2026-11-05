@@ -144,7 +144,7 @@ Access is relay-wide. A relay without an auth file (the local one `dimos run --l
 
 Source ids start with a letter or digit and run to 64 letters, digits, `_`, `.` or `-`. A relay serves up to 64 sources at once, as long as their announcement with the providers' capabilities fits one 64 KiB control frame. A topic source is not a robot: it never appears in the robot list or in a Cockpit manifest.
 
-A media route serves up to four encode variants, the settings pages change with `update()`, each at the highest rate among its viewers; the relay keeps every viewer's own rate gate, moves a viewer only once its new variant encodes, and closes a variant nobody uses after two seconds. The fixed profiles stay the ceilings.
+A media route serves up to four encode variants, the settings pages change with `update()`, each at the highest rate among its viewers; the relay keeps every viewer's own rate gate, moves a viewer only once its new variant encodes, and closes a variant nobody uses after two seconds. Direct video has no data frames to gate, so each rate is a variant of its own. The fixed profiles stay the ceilings.
 
 ## Binding beyond loopback
 

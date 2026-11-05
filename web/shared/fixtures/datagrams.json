@@ -553,7 +553,7 @@
         "t": "topic_variant",
         "route": "@t:p2",
         "gen": 3,
-        "variant": "v2",
+        "variant": "v12",
         "settings": {
           "maxHz": 7.5,
           "maxResolution": [
@@ -563,7 +563,7 @@
           "quality": 40
         }
       },
-      "b64": "eyJ0IjoidG9waWNfdmFyaWFudCIsInJvdXRlIjoiQHQ6cDIiLCJnZW4iOjMsInZhcmlhbnQiOiJ2MiIsInNldHRpbmdzIjp7Im1heEh6Ijo3LjUsIm1heFJlc29sdXRpb24iOls2NDAsMzYwXSwicXVhbGl0eSI6NDB9fQ=="
+      "b64": "eyJ0IjoidG9waWNfdmFyaWFudCIsInJvdXRlIjoiQHQ6cDIiLCJnZW4iOjMsInZhcmlhbnQiOiJ2MTIiLCJzZXR0aW5ncyI6eyJtYXhIeiI6Ny41LCJtYXhSZXNvbHV0aW9uIjpbNjQwLDM2MF0sInF1YWxpdHkiOjQwfX0="
     },
     {
       "name": "topic_variant_ready",

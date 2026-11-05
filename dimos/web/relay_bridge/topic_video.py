@@ -14,8 +14,8 @@
 
 """Direct WebRTC H.264 video for topic routes.
 
-One aiortc peer per viewer, one software encoder per (route, encode
-settings), per-viewer packetization: N viewers of one setting cost one encode
+One aiortc peer per viewer, one software encoder per (route, settings, rate
+included), per-viewer packetization: N viewers of one setting cost one encode
 and N packetizations. The relay signals offers, answers and candidates on the
 topic control lane and never carries the media.
 
@@ -29,6 +29,8 @@ Upgrade audit for the aiortc==1.14.0 pin (the aioquic one is in _wt_session.py):
   ``track.recv()`` with ``H264Encoder.pack`` instead of encoding a frame.
 * ``aiortc.sdp.candidate_from_sdp`` parses a browser candidate line without
   its ``candidate:`` prefix.
+* ``RTCPeerConnection.setRemoteDescription`` raises ``OperationError`` only when
+  no offered codec is among the transceiver's preferences.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from aiortc import (
     RTCRtpSender,
     RTCSessionDescription,
 )
+from aiortc.exceptions import OperationError
 from aiortc.mediastreams import MediaStreamError, MediaStreamTrack
 from aiortc.sdp import candidate_from_sdp
 import av
@@ -114,13 +117,14 @@ def fit_box(width: int, height: int, box: Mapping[int, int] | list[int]) -> tupl
     return max(2, int(width * scale) // 2 * 2), max(2, int(height * scale) // 2 * 2)
 
 
-def prefer_h264(pc: RTCPeerConnection) -> None:
+def require_h264(pc: RTCPeerConnection) -> None:
+    """Negotiate H.264 and its retransmission only: the sender packetizes
+    encoded H.264 as is, which a peer that negotiated VP8 could never decode."""
     capabilities = RTCRtpSender.getCapabilities("video")
-    preferred = [c for c in capabilities.codecs if c.mimeType.lower() == "video/h264"]
-    rest = [c for c in capabilities.codecs if c.mimeType.lower() != "video/h264"]
+    codecs = [c for c in capabilities.codecs if c.mimeType.lower() in ("video/h264", "video/rtx")]
     for transceiver in pc.getTransceivers():
         if transceiver.kind == "video":
-            transceiver.setCodecPreferences(preferred + rest)
+            transceiver.setCodecPreferences(codecs)
 
 
 class PacketTrack(MediaStreamTrack):
@@ -167,8 +171,8 @@ class PacketTrack(MediaStreamTrack):
 
 
 class SharedEncoder:
-    """One H.264 encoder per (route, encode settings), run in a worker thread
-    under a transform permit; every peer of the settings gets its packets."""
+    """One H.264 encoder per (route, settings), run in a worker thread under a
+    transform permit; every peer of the settings gets every packet."""
 
     def __init__(self, codec_name: str, settings: Mapping[str, Any]) -> None:
         self.codec_name = codec_name
@@ -280,11 +284,6 @@ class VideoRoute:
         self.route = route
         self.encoders: dict[str, SharedEncoder] = {}
 
-    def set_rate(self, variant: str, max_hz: float) -> None:
-        encoder = self.encoders.get(variant)
-        if encoder is not None:
-            encoder.max_hz = max_hz
-
     async def encode(self, variant: str, payload: bytes) -> None:
         """Encode once for every connected peer of ``variant``; permit held."""
         encoder = self.encoders.get(variant)
@@ -321,6 +320,7 @@ class VideoRoute:
             await self._video.close_peer(token, reason)
 
     async def close(self, reason: str = "route_closed") -> None:
+        self._video._routes.pop(self.route, None)
         for variant in list(self.encoders):
             await self.close_variant(variant, reason)
 
@@ -389,7 +389,7 @@ class TopicVideo:
         pc = self._peer_factory()
         track = PacketTrack()
         transceiver = pc.addTransceiver(track, direction="sendonly")
-        prefer_h264(pc)
+        require_h264(pc)
         peer = Peer(msg.id, msg.route, msg.gen, variant, pc, track, encoder)
         self._peers[msg.id] = peer
         encoder.peers[msg.id] = peer
@@ -411,7 +411,10 @@ class TopicVideo:
             answer = await pc.createAnswer()
             # Host candidates only: gathering completes inside setLocalDescription.
             await asyncio.wait_for(pc.setLocalDescription(answer), NEGOTIATE_S)
-        except Exception as error:  # a malformed or incompatible offer
+        except OperationError:  # no compatible H.264: the viewer can use its fallback
+            await self.close_peer(peer.token, "rtc_unavailable")
+            return
+        except Exception as error:  # a malformed offer
             logger.warning("video offer rejected", route=msg.route, error=str(error))
             await self.close_peer(peer.token, "rtc_failed")
             return
@@ -485,14 +488,9 @@ class TopicVideo:
         with suppress(asyncio.TimeoutError, Exception):
             await asyncio.wait_for(peer.pc.close(), PEER_CLOSE_S)
 
-    async def close_route(self, route: str, reason: str = "route_closed") -> None:
-        video_route = self._routes.pop(route, None)
-        if video_route is not None:
-            await video_route.close(reason)
-
     async def close(self) -> None:
-        for route in list(self._routes):
-            await self.close_route(route, "provider_closed")
+        for route in list(self._routes.values()):
+            await route.close("provider_closed")
         for token in list(self._peers):
             await self.close_peer(token, "provider_closed", notify=False)
         for task in list(self._tasks):

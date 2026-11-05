@@ -190,7 +190,7 @@ def decode_color(data: bytes) -> tuple[PILImage.Image, dict[str, Any]]:
     target_mode = "L" if channels == 1 else "RGBA" if channels == 4 else "RGB"
     # Pillow accepts the buffer protocol; its stub omits memoryview.
     image = PILImage.frombytes(target_mode, (width, height), cast("Any", pixels), "raw", mode, step)
-    if channels == 4:
+    if channels != 3:
         image = image.convert("RGB")
     return image, meta
 

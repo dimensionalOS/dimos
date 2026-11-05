@@ -67,8 +67,7 @@ interface Source {
   capabilities: TopicCapabilities;
 }
 /** One encoder configuration of a media route. Its identity within the
- * group is the canonical encode settings; the rate is the highest among the
- * viewers it serves. */
+ * group is `variantKey`; the rate is the highest among the viewers it serves. */
 interface Variant {
   id: string;
   key: string;
@@ -94,6 +93,8 @@ interface Group {
    * provider is older: only the rate can change, and only this relay gates it. */
   ranges: OptionRanges | null;
   variants: Map<string, Variant> | null;
+  /** The number in the newest variant id: ids are never reused on a route. */
+  lastVariant: number;
   /** The variant opened with the route itself; topic_opened acknowledges it. */
   opening: Variant | null;
 }
@@ -149,12 +150,18 @@ interface PendingPublication {
   deadline: number;
 }
 
-/** The canonical encode settings: what distinguishes variants of one route. */
-function variantKey(settings: TopicSettings): string {
+const isVideo = (profile: string) => profile.startsWith("video.");
+
+/** What distinguishes variants of one route: the canonical encode settings.
+ * The relay gates each viewer's rate on data frames, but a video peer takes
+ * every packet of its encoder, and H.264 P-frames cannot be dropped per peer,
+ * so there the rate is part of the encoder too. */
+function variantKey(settings: TopicSettings, profile: string): string {
   const encode = settings as unknown as Record<string, unknown>;
-  return JSON.stringify(
-    TOPIC_SETTING_NAMES.filter((name) => name !== "maxHz").map((name) => encode[name] ?? null),
-  );
+  const names = isVideo(profile)
+    ? TOPIC_SETTING_NAMES
+    : TOPIC_SETTING_NAMES.filter((name) => name !== "maxHz");
+  return JSON.stringify(names.map((name) => encode[name] ?? null));
 }
 
 export class TopicRegistry {
@@ -528,6 +535,7 @@ export class TopicRegistry {
         maxHz: settings.maxHz,
         ranges,
         variants: ranges === null ? null : new Map(),
+        lastVariant: 0,
         opening: null,
       };
       source.groups.set(signature, group);
@@ -590,7 +598,7 @@ export class TopicRegistry {
     settings: TopicSettings,
   ): { variant: Variant; created: boolean } | null {
     const variants = group.variants!;
-    const key = variantKey(settings);
+    const key = variantKey(settings, group.spec.profile);
     for (const variant of variants.values()) {
       if (variant.key === key) {
         variant.idleSince = 0;
@@ -602,19 +610,15 @@ export class TopicRegistry {
       if (idle === undefined) return null;
       this.#closeVariant(group, idle);
     }
-    let id = "";
-    for (let n = 1; n <= MAX_TOPIC_VARIANTS && id === ""; n++) {
-      if (!variants.has(`v${n}`)) id = `v${n}`;
-    }
     const variant: Variant = {
-      id,
+      id: `v${++group.lastVariant}`,
       key,
       settings: { ...settings },
       ready: false,
       idleSince: 0,
       keys: new Map(),
     };
-    variants.set(id, variant);
+    variants.set(variant.id, variant);
     return { variant, created: true };
   }
 
@@ -864,8 +868,7 @@ export class TopicRegistry {
       const group = this.#groups.get(msg.route);
       if (group?.source.peer !== peer || group.source.gen !== msg.gen) return;
       const variant = group.variants?.get(msg.variant);
-      // A late acknowledgement of a retired variant names different settings.
-      if (variant === undefined || variantKey(msg.settings) !== variant.key) return;
+      if (variant === undefined) return; // a late acknowledgement of a retired variant
       variant.ready = true;
       // Before topic_opened, viewers wait for the route itself.
       if (!group.opened) return;
@@ -1030,7 +1033,7 @@ export class TopicRegistry {
     // A video route carries its media on direct peers, never as data frames.
     if (
       group?.source.peer !== peer || !group.opened || !group.active || meta === null ||
-      group.spec.profile.startsWith("video.") ||
+      isVideo(group.spec.profile) ||
       meta.gen !== group.source.gen || header.delivery !== group.spec.delivery ||
       !Number.isSafeInteger(header.seq) || header.seq < 1 || !Number.isFinite(header.ts) ||
       payload.byteLength > MAX_TOPIC_PAYLOAD_BYTES

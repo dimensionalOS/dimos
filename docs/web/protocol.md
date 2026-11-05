@@ -103,7 +103,7 @@ and is sent again whenever a source connects or leaves.
 | Viewer → relay | `topic_credit {route, gen, frames, bytes}` | Cumulative browser receipts for reliable route bytes |
 | Viewer → relay | `topic_update {id, revision, options}` | Change the settings of one desired subscription; `null` resets a key. The revision returns on the acknowledgement or rejection |
 | Relay → viewer | `topic_applied {id, revision, settings}` | The viewer now receives frames with these settings, also when the relay moved it itself |
-| Relay → provider | `topic_variant {route, gen, variant, settings}` | Open encode variant `v1`..`v4` of a media route, or change its rate |
+| Relay → provider | `topic_variant {route, gen, variant, settings}` | Open an encode variant of a media route, or change its rate. Ids count up from `v1` and a route never reuses one |
 | Provider → relay | `topic_variant_ready {route, gen, variant, settings}` | The variant encodes with these settings |
 | Relay → provider | `topic_variant_close {route, gen, variant}` | No viewer uses the variant any more |
 | Viewer → relay | `topic_unsub {id}` | Drop only this connection's desired subscription |
@@ -129,7 +129,10 @@ rejects with `unsupported_option`, a value outside its range with
 value) go to the provider and back to the viewer. A media route serves up to
 four variants keyed by their encode settings; each samples at the highest
 rate among its viewers and stamps its frames with `variant`, which the relay
-dispatches on and strips. A viewer keeps its old variant until the new one
+dispatches on and strips. A video variant also has its rate in the key, since
+a peer takes every packet of its encoder. Variant ids are never reused on a
+route, so a frame delayed past its variant's retirement matches nothing and is
+dropped. A viewer keeps its old variant until the new one
 acknowledges, then gets `topic_applied`; a `topic_update` sent before that
 merges into the request still waiting. A fifth settings set rejects with
 `variant_limit` unless a variant nobody uses can be retired, and such a
@@ -340,9 +343,10 @@ Both sides use host candidates only, with an empty ICE server list: direct
 video needs the provider's UDP ports reachable from the browser, and nothing
 of it rides the relay or Cloudflare. The provider answers with one sendonly
 H.264 transceiver (constrained baseline, level 3.1, no B-frames, a safety
-keyframe every 4 s) fed from one encoder per route and settings; a viewer
-joining mid-stream, and a PLI or FIR from any viewer, force the next frame to
-be an IDR. Bounds: an SDP of at most `MAX_SDP_LEN` (48 KiB), 64 candidates of
+keyframe every 4 s) fed from one encoder per route and settings, rate included;
+a viewer joining mid-stream, and a PLI or FIR from any viewer, force the next
+frame to be an IDR. An offer without a compatible H.264 codec ends with
+`rtc_unavailable`. Bounds: an SDP of at most `MAX_SDP_LEN` (48 KiB), 64 candidates of
 at most 512 bytes per peer, `max_peers` (16) and `max_encoders` (4) on the
 provider, which refuses beyond them with `rtc_limit`.
 

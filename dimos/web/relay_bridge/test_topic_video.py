@@ -22,6 +22,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from aiortc import RTCConfiguration, RTCPeerConnection, RTCRtpReceiver
 from aiortc.mediastreams import MediaStreamError
 import av
 from dimos_lcm.sensor_msgs import Image
@@ -231,7 +232,10 @@ async def test_one_encode_feeds_every_peer_and_a_joiner_starts_from_an_idr(
     second = await harness.offer("r2")
     assert harness.video.encoders() == 1
     assert [m.id for m in harness.answers()] == ["r1", "r2"]
-    assert first.transceivers[0].preferences[0].mimeType.lower() == "video/h264"
+    assert {c.mimeType.lower() for c in first.transceivers[0].preferences} == {
+        "video/h264",
+        "video/rtx",
+    }
     first.connect()
     await harness.encode(1)
     await harness.encode(2)
@@ -415,3 +419,91 @@ async def test_packet_track_ends_recv_when_stopped() -> None:
     track.stop()
     with pytest.raises(MediaStreamError):
         await waiting
+
+
+async def viewer_offer(*mime_types: str) -> str:
+    """A real aiortc viewer's offer, restricted to the given codecs."""
+    viewer = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+    transceiver = viewer.addTransceiver("video", direction="recvonly")
+    codecs = RTCRtpReceiver.getCapabilities("video").codecs
+    transceiver.setCodecPreferences(
+        [codec for codec in codecs if codec.mimeType.lower() in mime_types]
+    )
+    await viewer.setLocalDescription(await viewer.createOffer())
+    sdp: str = viewer.localDescription.sdp
+    await viewer.close()
+    return sdp
+
+
+@pytest.fixture
+def real_peers(harness: Harness) -> Harness:
+    harness.video._peer_factory = lambda: RTCPeerConnection(RTCConfiguration(iceServers=[]))
+    return harness
+
+
+async def test_an_offer_without_h264_is_refused_as_unavailable(real_peers: Harness) -> None:
+    await real_peers.video.offer(
+        real_peers.video.route("@t:p1"),
+        normalize_settings(PROFILE, {}),
+        TopicRtcOffer(
+            id="r1",
+            route="@t:p1",
+            gen=1,
+            sdp=await viewer_offer("video/vp8", "video/rtx"),
+            variant="v1",
+        ),
+    )
+    assert real_peers.answers() == []
+    assert real_peers.closes() == [
+        TopicRtcClose(id="r1", route="@t:p1", gen=1, reason="rtc_unavailable")
+    ]
+    assert not real_peers.video.peers
+    assert real_peers.video.encoders() == 0
+
+
+async def test_an_answer_names_only_h264_and_its_retransmission(real_peers: Harness) -> None:
+    await real_peers.video.offer(
+        real_peers.video.route("@t:p1"),
+        normalize_settings(PROFILE, {}),
+        TopicRtcOffer(
+            id="r1",
+            route="@t:p1",
+            gen=1,
+            sdp=await viewer_offer("video/vp8", "video/h264", "video/rtx"),
+            variant="v1",
+        ),
+    )
+    [answer] = real_peers.answers()
+    assert "H264/90000" in answer.sdp
+    assert "rtx/90000" in answer.sdp
+    assert "VP8" not in answer.sdp
+
+
+@pytest.mark.parametrize("encoding", ["mono8", "8UC1"])
+def test_grayscale_images_encode(encoding: str) -> None:
+    message = Image.lcm_decode(bytes.fromhex(VECTOR["lcm"]))
+    message.height, message.width, message.encoding = 32, 32, encoding
+    message.is_bigendian, message.step = False, 32
+    message.data = bytes(range(256)) * 4
+    message.data_length = len(message.data)
+    encoder = SharedEncoder(resolve_encoder("software"), normalize_settings(PROFILE, {}))
+    packets = encoder.encode(message.lcm_encode())
+    assert packets
+    assert packets[0].is_keyframe
+
+
+async def test_closing_routes_returns_the_registry_to_empty(harness: Harness) -> None:
+    for cycle in range(3):
+        name = f"@t:p{cycle}"
+        route = harness.video.route(name)
+        await harness.video.offer(
+            route,
+            normalize_settings(PROFILE, {}),
+            TopicRtcOffer(id=f"r{cycle}", route=name, gen=1, sdp=OFFER_SDP, variant="v1"),
+        )
+        assert harness.video.encoders() == 1
+        await route.close()
+        assert harness.video.encoders() == 0
+        assert not harness.video.peers
+        assert not harness.video._routes
+    assert {close.reason for close in harness.closes()} == {"route_closed"}
