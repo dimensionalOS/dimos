@@ -25,6 +25,7 @@ from typing import Any
 
 from dimos_lcm.common_msgs import SampleHeader
 from dimos_lcm.control_msgs import ActionCommand, JointCommand
+from dimos_lcm.std_msgs import Header, Time
 import numpy as np
 
 from dimos.control.components import make_humanoid_joints
@@ -220,13 +221,22 @@ class G1PolicyModule(SharedConfigModule):
                 based_on_time_ns=identity,
                 apply_at_ns=identity,
                 valid_until_ns=identity + self.config.control.period_ns,
-                joint_commands_length=len(JOINTS),
+                joint_commands_length=5,
                 joint_commands=[
                     JointCommand(
-                        joint_id=n, position=float(q), velocity=0, kp=kp, kd=kd, feedforward=0
+                        header=Header(stamp=Time(sec=identity // 10**9, nsec=identity % 10**9)),
+                        joint_names_length=len(JOINTS),
+                        joint_names=list(JOINTS),
+                        interface_name=interface,
+                        values_length=len(JOINTS),
+                        values=list(values),
                     )
-                    for n, q, kp, kd in zip(
-                        JOINTS, positions, G1_GROOT_KP, G1_GROOT_KD, strict=True
+                    for interface, values in (
+                        ("position", positions),
+                        ("velocity", [0.0] * len(JOINTS)),
+                        ("kp", G1_GROOT_KP),
+                        ("kd", G1_GROOT_KD),
+                        ("effort", [0.0] * len(JOINTS)),
                     )
                 ],
             )
