@@ -37,7 +37,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
 import psutil
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -87,6 +86,9 @@ class _BenchSink(Module):
         # Replay preserves recording timestamps, so now - msg.ts is not transport latency.
         rec = {"t": now, "ts": msg.ts, "i": self._count}
         if self._work_ms > 0:
+            # Load the heavy OpenCV dependency only for synthetic image processing.
+            import cv2
+
             deadline = time.perf_counter() + self._work_ms / 1000
             while time.perf_counter() < deadline:
                 cv2.GaussianBlur(msg.data, (31, 31), 5)
