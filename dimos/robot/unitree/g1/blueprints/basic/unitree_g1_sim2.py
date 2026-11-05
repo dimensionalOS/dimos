@@ -98,7 +98,6 @@ unitree_g1_sim2 = autoconnect(
         scene=SCENE,
         backend=MujocoBackend,
         controllers=(CONTROL,),
-        motion_frames=(IMU.frame_id,),
         joint_ids=JOINTS,
     ),
     SimImuModule.blueprint(sensor=IMU),

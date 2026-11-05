@@ -23,7 +23,7 @@ import time
 from typing import Any
 
 from dimos_lcm.common_msgs import SampleHeader
-from dimos_lcm.control_msgs import ActionCommand, JointTarget
+from dimos_lcm.control_msgs import ActionCommand, JointCommand
 import numpy as np
 
 from dimos.control.components import make_humanoid_joints
@@ -221,9 +221,9 @@ class G1PolicyModule(SharedConfigModule):
                 based_on_time_ns=h.time_ns,
                 apply_at_ns=h.time_ns,
                 valid_until_ns=h.time_ns + self.config.control.period_ns,
-                joint_targets_length=len(JOINTS),
-                joint_targets=[
-                    JointTarget(
+                joint_commands_length=len(JOINTS),
+                joint_commands=[
+                    JointCommand(
                         joint_id=n, position=float(q), velocity=0, kp=kp, kd=kd, feedforward=0
                     )
                     for n, q, kp, kd in zip(
