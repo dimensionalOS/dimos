@@ -57,11 +57,10 @@ def known_names(state: State) -> set[str] | None:
     if cache.get("fingerprint") != state.scanner.current_fingerprint():
         return None
     names = {str(entry["name"]) for entry in state.listed}
+    # every registered module, including one whose import failed or timed out in the scan (a launch may still run it)
+    names.update(str(name) for name in (cache.get("names") or {}).get("modules") or [])
     for record in catalog.modules(cache):
         names.update((str(record["name"]), str(record["class"])))
-    for error in catalog.errors(cache):
-        if error.startswith("module "):
-            names.add(error[len("module ") :].split(":", 1)[0].strip())
     return names
 
 
