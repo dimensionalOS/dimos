@@ -353,11 +353,13 @@ def _teleop(arm: XArmType) -> Blueprint:
                         "timeout": 0.3,
                     },
                 ),
+                # drive_joint is open at 0 rad.
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
                     joint_names=["arm/drive_joint"],
                     priority=20,
+                    params={"open_at": "lower"},
                     stream_bind={"gripper_command": "right_gripper_command"},
                 ),
             ],

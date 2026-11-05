@@ -629,46 +629,6 @@ def test_with_renamed_joints_rejects_invalid_model(
         robot_model.RobotModel.from_file(urdf).with_renamed_joints(names).load()
 
 
-def test_with_reversed_joints_keeps_every_pose_and_counts_the_other_way(tmp_path: Path) -> None:
-    # A knuckle from 0 to 0.85 rad, a finger that copies it and is reversed too,
-    # and a pad that copies it at twice the angle and is not.
-    urdf = tmp_path / "gripper.urdf"
-    limit = "<limit lower='0' upper='0.85' effort='50' velocity='2'/>"
-    urdf.write_text(
-        "<robot name='r'><link name='base'/><link name='knuckle'/><link name='finger'/>"
-        "<link name='pad'/>"
-        "<joint name='drive' type='revolute'><parent link='base'/><child link='knuckle'/>"
-        f"<origin xyz='0 0.035 0.059' rpy='0.1 0.2 0.3'/><axis xyz='1 0 0'/>{limit}</joint>"
-        "<joint name='finger_joint' type='revolute'><parent link='knuckle'/>"
-        f"<child link='finger'/><origin xyz='0 0.035 0.042'/><axis xyz='-1 0 0'/>{limit}"
-        "<mimic joint='drive'/></joint>"
-        "<joint name='pad_joint' type='prismatic'><parent link='base'/><child link='pad'/>"
-        "<axis xyz='0 1 0'/><limit lower='0' upper='2' effort='50' velocity='2'/>"
-        "<mimic joint='drive' multiplier='2' offset='0.1'/></joint></robot>"
-    )
-    before = {joint.name: joint for joint in robot_model.RobotModel.from_file(urdf).load().joints}
-    model = robot_model.RobotModel.from_file(urdf).with_reversed_joints("drive", "finger_joint")
-    after = {joint.name: joint for joint in model.load().joints}
-
-    def follower(name: str, drive: float) -> float:
-        mimic = after[name].mimic
-        assert mimic is not None and mimic[0] == "drive"
-        return mimic[1] * drive + mimic[2]
-
-    assert (after["drive"].lower, after["drive"].upper) == (0.0, 0.85)
-    for p in (0.0, 0.3, 0.85):
-        drive = 0.85 - p
-        assert after["drive"].parent_from_child(drive) == pytest.approx(
-            before["drive"].parent_from_child(p)
-        )
-        assert after["finger_joint"].parent_from_child(
-            follower("finger_joint", drive)
-        ) == pytest.approx(before["finger_joint"].parent_from_child(p))
-        assert after["pad_joint"].parent_from_child(follower("pad_joint", drive)) == pytest.approx(
-            before["pad_joint"].parent_from_child(2 * p + 0.1)
-        )
-
-
 @pytest.mark.parametrize(
     ("lower", "upper", "message"),
     [

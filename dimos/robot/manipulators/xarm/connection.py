@@ -60,9 +60,10 @@ _NOT_READY = 9
 #: The oldest firmware that reports joint speeds (``get_joint_states``).
 MIN_FIRMWARE = (1, 9, 0)
 
-# The xArm Gripper's drive_joint runs 0 rad closed to 0.85 rad open (see
-# xarm_model); the SDK counts 0 closed to 850 open.
-_GRIPPER_SDK_PER_RAD = 1000.0
+# The xArm Gripper's drive_joint is open at 0 rad and closed at 0.85 rad; the
+# SDK counts 850 open down to 0 closed.
+_GRIPPER_CLOSED_RAD = 0.85
+_GRIPPER_OPEN_SDK = 850.0
 
 _READ_HZ = 100.0
 # Joint targets are refused once the latest joint reading is older than this,
@@ -119,7 +120,7 @@ class XArmConnection(ConnectionModule):
 
     Joint targets come in on ``position_command`` and joint speeds on
     ``velocity_command``, in rad and rad/s; the gripper is its URDF joint
-    ``drive_joint`` (0 rad closed, 0.85 rad open). ``joint_state`` goes out
+    ``drive_joint`` (0 rad open, 0.85 rad closed). ``joint_state`` goes out
     about 100 times a second, the gripper in a message of its own. Once the
     arm reports an error, or is stopped from outside DimOS (xArm Studio, its
     stop button), it takes no command until ``clear_errors()``. Joint targets
@@ -279,7 +280,7 @@ class XArmConnection(ConnectionModule):
                 "set_servo_angle_j", lambda: self._sdk.set_servo_angle_j(angles, is_radian=True)
             )
         if gripper is not None and gripper != self._gripper_sent:
-            pulses = gripper * _GRIPPER_SDK_PER_RAD
+            pulses = _GRIPPER_OPEN_SDK * (1.0 - gripper / _GRIPPER_CLOSED_RAD)
             _check("set_gripper_position", self._sdk.set_gripper_position(pulses, wait=False))
             self._gripper_sent = gripper
 
@@ -381,7 +382,7 @@ class XArmConnection(ConnectionModule):
                         JointState(
                             ts=time.time(),
                             name=[self._gripper],
-                            position=[pulses / _GRIPPER_SDK_PER_RAD],
+                            position=[_GRIPPER_CLOSED_RAD * (1.0 - pulses / _GRIPPER_OPEN_SDK)],
                         )
                     )
             except Exception as error:

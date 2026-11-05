@@ -59,7 +59,7 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 def xarm_gripper_config(prefix: str = "", *, robot: str | None = None) -> GripperConfig:
     """Which xArm Gripper links may touch a grasped object, and how it closes.
 
-    drive_joint runs 0.0 (closed) to 0.85 rad (open); the other knuckles and
+    drive_joint runs 0.0 (open) to 0.85 rad (closed); the other knuckles and
     fingers mimic it in the URDF.
 
     Args:
@@ -70,7 +70,7 @@ def xarm_gripper_config(prefix: str = "", *, robot: str | None = None) -> Grippe
     joint_prefix = f"{robot}/" if robot else prefix
     return GripperConfig(
         pad_links=(f"{prefix}left_finger", f"{prefix}right_finger"),
-        finger_joints={f"{joint_prefix}drive_joint": (0.85, 0.0)},
+        finger_joints={f"{joint_prefix}drive_joint": (0.0, 0.85)},
     )
 
 
@@ -125,9 +125,6 @@ def xarm_model(
 ) -> RobotModel:
     """The arm's URDF, from UFACTORY's xarm_ros2 description.
 
-    The xArm Gripper's drive_joint runs 0 (closed) to 0.85 rad (open), as other
-    grippers do; UFACTORY's own URDF counts it the other way.
-
     Args:
         arm: Which arm, e.g. "xarm7".
         gripper: What is on its flange: "xarm" for the xArm Gripper (on a Lite 6,
@@ -153,12 +150,11 @@ def xarm_model(
     model = RobotModel.from_file(
         XARM_MODEL_PATH, package_paths=XARM_PACKAGE_PATHS, xacro_args=xacro_args
     )
-    gripper_joints = _GRIPPER_JOINTS[gripper] if gripper is not None and arm != "lite6" else ()
-    if gripper_joints:
-        model = model.with_reversed_joints(*(f"{prefix}{joint}" for joint in gripper_joints))
     if not robot:
         return model
-    moving = [*joint_names(dof), *gripper_joints]
+    moving = joint_names(dof)
+    if gripper is not None and arm != "lite6":
+        moving.extend(_GRIPPER_JOINTS[gripper])
     return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
 
 
