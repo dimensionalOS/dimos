@@ -244,9 +244,7 @@ def first_seen_by_instance_for_camera(
             times = [
                 float(view.timestamp)
                 for view in views
-                if not camera_frame
-                or not view.camera_frame
-                or view.camera_frame == camera_frame
+                if not camera_frame or not view.camera_frame or view.camera_frame == camera_frame
             ]
             if not times:
                 continue
