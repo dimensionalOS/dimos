@@ -100,7 +100,11 @@ def migrate_dataset(root: Path, *, dry_run: bool) -> int:
                 case = case.model_copy(update={"question": new_question})
             rows.append(case.model_dump(mode="json", exclude_none=True))
 
-    print(f"{root}: {changed} case(s) would be updated" if dry_run else f"{root}: updated {changed} case(s)")
+    print(
+        f"{root}: {changed} case(s) would be updated"
+        if dry_run
+        else f"{root}: updated {changed} case(s)"
+    )
     if dry_run or changed == 0:
         return changed
 

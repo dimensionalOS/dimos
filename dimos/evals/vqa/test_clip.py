@@ -166,8 +166,7 @@ def test_load_suite_wires_clips(tmp_path: Path) -> None:
         id="c",
         clips=("assets/clips/c/first", "assets/clips/c/second"),
         question=(
-            "Stream first_clip covers t=1.000s to t=1.500s (absolute recording time). "
-            "Same object?"
+            "Stream first_clip covers t=1.000s to t=1.500s (absolute recording time). Same object?"
         ),
         choices=("yes", "no"),
     )

@@ -101,10 +101,7 @@ class QuestionAnswer(SingleCallAgent):
                         "answer spatial questions relative to that frame."
                     )
             else:
-                header = (
-                    f"observations from stream {stream.name!r} "
-                    f"(t is absolute recording time):"
-                )
+                header = f"observations from stream {stream.name!r} (t is absolute recording time):"
             blocks.append({"type": "text", "text": header})
             blocks += _legend_block(observations[0])
             last_i = len(observations) - 1

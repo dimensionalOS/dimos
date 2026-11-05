@@ -1293,9 +1293,7 @@ def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> N
         ),
     )
 
-    case_id = make_case_id(
-        4, "closest_object", ("left person", "right person", "chair")
-    )
+    case_id = make_case_id(4, "closest_object", ("left person", "right person", "chair"))
     assert result.cases[0].id == case_id
     assert result.cases[0].choices == ("left person", "right person", "chair")
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
@@ -1360,9 +1358,7 @@ def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Pat
     )
 
     assert len(result.cases) == 1
-    assert result.cases[0].id == make_case_id(
-        4, "largest_visible_area", ("chair", "table", "box")
-    )
+    assert result.cases[0].id == make_case_id(4, "largest_visible_area", ("chair", "table", "box"))
 
 
 def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path) -> None:

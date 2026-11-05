@@ -882,9 +882,7 @@ def _materialize_ego_memory_clips(
         for case in frame.cases:
             frame_ts_by_id[case.id] = frame.image_ts
             frame_cam_by_id[case.id] = frame.camera_frame
-            family = family_from_answered_audit(
-                question=case.question, audit_rows=frame.audit_rows
-            )
+            family = family_from_answered_audit(question=case.question, audit_rows=frame.audit_rows)
             if family is None or family not in _EGO_CLIP_FAMILIES:
                 continue
             family_by_id[case.id] = family

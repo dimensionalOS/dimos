@@ -633,9 +633,7 @@ def _answer_ego_any_fore_aft(
     bare = parsed.category
     hits = instances_named(localize_scene, bare)
     answer = existential_ahead_label(localize_scene, bare, hits=hits)
-    ahead = (
-        instances_in_ahead_cone(localize_scene, bare, hits=hits) if answer == "yes" else ()
-    )
+    ahead = instances_in_ahead_cone(localize_scene, bare, hits=hits) if answer == "yes" else ()
     ahead_xyz = {inst.position_world_xyz for inst in ahead}
     first_seen = min(
         (inst.first_seen_timestamp for inst in hits if inst.first_seen_timestamp is not None),

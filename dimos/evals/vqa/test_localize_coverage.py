@@ -97,9 +97,9 @@ def test_select_rotates_cells_across_frames() -> None:
 
 def test_select_respects_per_frame_k() -> None:
     cell = ("ego_fore_aft", "nearest")
-    candidates = [
-        (f"f100-{i}", "frame-000100", cell, (i, 0, 0), "box") for i in range(6)
-    ] + [(f"f200-{i}", "frame-000200", cell, (i, 1, 0), "flag") for i in range(6)]
+    candidates = [(f"f100-{i}", "frame-000100", cell, (i, 0, 0), "box") for i in range(6)] + [
+        (f"f200-{i}", "frame-000200", cell, (i, 1, 0), "flag") for i in range(6)
+    ]
     kept = select_localize_coverage_ids(candidates, k=2)
     assert sum(1 for case_id in kept if case_id.startswith("f100-")) == 2
     assert sum(1 for case_id in kept if case_id.startswith("f200-")) == 2
