@@ -113,3 +113,5 @@ for focused tests, software-only checks and physical bring-up. The YAM tests
 cover deployed joint names, gripper routing, planner priority, Dual YAM hand
 isolation, model limits and the Quest profile. The native recorder test verifies
 Zenoh serialization and episode extraction with synthetic input streams.
+
+- Dual OpenYAM leader teleop: [Dual OpenYAM Leader Teleop](/docs/capabilities/manipulation/dual_openyam_leader_teleop.md)
