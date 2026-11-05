@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -546,3 +547,42 @@ async def test_reconfigure_keeps_the_peer_and_emits_an_idr_with_monotonic_pts(ha
     assert pc.transceivers[0].track is track
     assert len(harness.answers()) == 1
     assert harness.closes() == []
+
+
+async def test_a_reconfigure_the_queued_worker_applies_keeps_that_idr(
+    harness: Harness, mocker: MockerFixture
+) -> None:
+    pc = await harness.offer("r1")
+    pc.connect()
+    route = harness.video._routes["@t:p1"]
+    track = pc.transceivers[0].track
+    await harness.encode(1)
+    await track.recv()
+    original = SharedEncoder.encode
+    entered, proceed = threading.Event(), threading.Event()
+
+    def held(self: SharedEncoder, payload: bytes) -> list[av.Packet]:
+        entered.set()
+        assert proceed.wait(5)
+        return original(self, payload)
+
+    mocker.patch.object(SharedEncoder, "encode", held)
+    encoding = asyncio.create_task(harness.encode(2))
+    await asyncio.to_thread(entered.wait, 5)
+    # The settings land while the worker is queued, before it applies them:
+    # the frame it encodes is the acknowledged configuration's IDR, not a
+    # stale one to drop (that left the peer waiting for the safety keyframe).
+    route.reconfigure(
+        "v1",
+        normalize_settings(
+            PROFILE, {"maxResolution": [32, 32], "maxHz": 15, "maxBitrate": 200_000}
+        ),
+    )
+    proceed.set()
+    await encoding
+    async with timeout(2):
+        packet = await track.recv()
+    assert packet.is_keyframe
+    decoded = av.CodecContext.create("h264", "r").decode(packet)
+    assert (decoded[0].width, decoded[0].height) == (32, 24)
+    assert route.encoders["v1"].frames == 2

@@ -213,6 +213,44 @@ describe("direct topic video", () => {
     expect(pc.closed).toBe(0);
   });
 
+  it("keeps polling receiver statistics after an update moves the handle to another group", async () => {
+    vi.useFakeTimers();
+    const h = setup();
+    const video = h.video({ maxResolution: [1280, 720] });
+    h.sources();
+    const settings: TopicSettings = { maxHz: 30, maxResolution: [1280, 720], maxBitrate: 2500000 };
+    const ref = h.ready("@t:v1", 1, undefined, settings);
+    await flush();
+    h.client.onMessage({ t: "topic_rtc_answer", ...ref, sdp: "answer" });
+    await flush();
+    h.pcs[0].track();
+    h.pcs[0].media();
+    const moved = video.update({ priority: 3 });
+    await flush();
+    expect(h.subs()).toHaveLength(2);
+    const next = h.ready("@t:v1", 1, undefined, settings);
+    await flush();
+    h.client.onMessage({ t: "topic_rtc_answer", ...next, sdp: "answer" });
+    await flush();
+    const pc = h.pcs[1];
+    pc.track();
+    pc.media();
+    await expect(moved).resolves.toEqual(settings);
+    for (let i = 0; i < 4; i++) {
+      pc.stats = [{
+        type: "inbound-rtp",
+        kind: "video",
+        packetsReceived: 97 * i,
+        packetsLost: 3 * i,
+        framesDecoded: 15 * i,
+        bytesReceived: 1000 * i,
+      }];
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    expect(video.stats()?.video).toMatchObject({ lossFraction: 0.03, fps: 30 });
+    expect(h.sent.filter((m): m is TopicUpdateMsg => m.t === "topic_update")).toHaveLength(1);
+  });
+
   it("backs off and offers again after an answer timeout, ICE failure or provider close, and stays failed after the third", async () => {
     vi.useFakeTimers();
     const h = setup();
