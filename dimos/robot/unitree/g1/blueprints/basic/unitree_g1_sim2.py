@@ -156,7 +156,8 @@ def _g1_sim2(*, pointlio: bool = False) -> Blueprint:
     )
 
 
-unitree_g1_sim2 = _g1_sim2().global_config(viewer="none", transport="zenoh", n_workers=5)
+# Keep mapping/TF/filter work off the IMU, encoder and policy worker loops.
+unitree_g1_sim2 = _g1_sim2().global_config(viewer="none", transport="zenoh", n_workers=9)
 unitree_g1_sim2_pointlio = _g1_sim2(pointlio=True).global_config(
-    viewer="none", transport="zenoh", n_workers=5
+    viewer="none", transport="zenoh", n_workers=10
 )
