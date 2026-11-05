@@ -70,7 +70,7 @@ def mjcf(tmp_path: Path) -> Path:
 
 
 def test_bodies_and_hinges_become_links_and_joints(mjcf: Path) -> None:
-    loaded = mjcf_to_urdf(mjcf).load()
+    loaded = mjcf_to_urdf(mujoco.MjSpec.from_file(str(mjcf))).load()
     assert loaded.root_link == "base_link"
     hip, wheel = loaded.joints
     assert (hip.name, hip.type, hip.parent_link, hip.child_link) == (
@@ -93,7 +93,7 @@ def test_bodies_and_hinges_become_links_and_joints(mjcf: Path) -> None:
 def test_inertia_meshes_and_collisions_come_across(mjcf: Path) -> None:
     from xml.etree import ElementTree as ET
 
-    robot = ET.fromstring(mjcf_to_urdf(mjcf).load().xml)
+    robot = ET.fromstring(mjcf_to_urdf(mujoco.MjSpec.from_file(str(mjcf))).load().xml)
     base = robot.find("link[@name='base_link']")
     assert base is not None
     assert float(base.find("inertial/mass").get("value")) == 15.0  # type: ignore[union-attr]
@@ -113,7 +113,7 @@ def test_the_urdf_poses_the_robot_as_mujoco_does(mjcf: Path) -> None:
     model = mujoco.MjModel.from_xml_path(str(mjcf))
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
-    joints = {j.name: j for j in mjcf_to_urdf(mjcf).load().joints}
+    joints = {j.name: j for j in mjcf_to_urdf(mujoco.MjSpec.from_file(str(mjcf))).load().joints}
     hip = joints["hip_joint"]
     wheel = joints["wheel_joint"]
     base = np.array(data.xpos[model.body("base_link").id])
@@ -124,5 +124,9 @@ def test_the_urdf_poses_the_robot_as_mujoco_does(mjcf: Path) -> None:
 
 
 def test_model_edits_still_apply(mjcf: Path) -> None:
-    trimmed = mjcf_to_urdf(mjcf).without_joint_subtrees("wheel_joint").load()
+    trimmed = (
+        mjcf_to_urdf(mujoco.MjSpec.from_file(str(mjcf)))
+        .without_joint_subtrees("wheel_joint")
+        .load()
+    )
     assert [j.name for j in trimmed.joints] == ["hip_joint"]

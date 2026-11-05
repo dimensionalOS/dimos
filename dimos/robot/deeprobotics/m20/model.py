@@ -18,6 +18,8 @@ import threading
 import time
 from typing import Any
 
+import mujoco
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -41,7 +43,7 @@ M20_SDK_SOURCE = SparseDescriptionSource(
 M20_MJCF = M20_SDK_SOURCE / _MJCF_DIR / "mjcf" / "M20.xml"
 M20_POLICY = M20_SDK_SOURCE / _SDK / "policy" / "policy.onnx"
 # The URDF the real robot and the sim show, derived from the same MJCF the sim steps.
-M20_MODEL = mjcf_to_urdf(M20_MJCF)
+M20_MODEL = mjcf_to_urdf(mujoco.MjSpec.from_file(str(M20_MJCF)))
 
 # Hip pitch and knee of the vendor SDK's standing pose; front knees fold back, hind knees forward.
 STAND_JOINT_POSITIONS = {

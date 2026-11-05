@@ -17,66 +17,21 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
-import os
 from pathlib import Path
 from typing import Any
 import warnings
 import xml.etree.ElementTree as ET
 
-from filelock import FileLock
 import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.constants import CACHE_DIR
 from dimos.robot.assets.model import RobotModel
 
-_URDF_CACHE = CACHE_DIR / "mjcf_urdf"
 
-
-def mjcf_to_urdf(mjcf: Path | str | os.PathLike[str]) -> RobotModel:
-    """The robot in an MJCF file as a lazy RobotModel; the MJCF is read and converted when the model is loaded."""
-    return RobotModel.from_file(UrdfFromMjcf(mjcf))
-
-
-class UrdfFromMjcf(os.PathLike[str]):
-    """A path to the URDF converted from an MJCF, written to the cache the first time the path is used."""
-
-    def __init__(self, mjcf: Path | str | os.PathLike[str]) -> None:
-        self.mjcf = mjcf
-
-    def __fspath__(self) -> str:
-        mjcf = Path(os.fspath(self.mjcf)).resolve()
-        xml = mjcf_spec_to_urdf_xml(mujoco.MjSpec.from_file(str(mjcf)))
-        urdf = _URDF_CACHE / f"{sha256(xml.encode()).hexdigest()[:16]}" / f"{mjcf.stem}.urdf"
-        urdf.parent.mkdir(parents=True, exist_ok=True)
-        with FileLock(str(urdf) + ".lock"):
-            if not urdf.exists():
-                urdf.write_text(xml)
-        return str(urdf)
-
-    def __str__(self) -> str:
-        return self.__fspath__()
-
-    def __repr__(self) -> str:
-        return f"UrdfFromMjcf({self.mjcf!r})"
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, UrdfFromMjcf) and self.mjcf == other.mjcf
-
-    def __hash__(self) -> int:
-        return hash(("UrdfFromMjcf", self.mjcf))
-
-    def cbor_encode(self) -> dict[str, Any]:
-        return {"mjcf": self.mjcf}
-
-    @classmethod
-    def cbor_decode(cls, data: dict[str, Any]) -> UrdfFromMjcf:
-        return cls(data["mjcf"])
-
-    def __reduce__(self) -> tuple[Any, ...]:
-        return (UrdfFromMjcf, (self.mjcf,))
+def mjcf_to_urdf(spec: mujoco.MjSpec) -> RobotModel:
+    """The robot in an MJCF as a RobotModel, built from the URDF string the spec converts to."""
+    return RobotModel.from_urdf_string(mjcf_spec_to_urdf_xml(spec))
 
 
 def _xyz(values: object) -> str:
