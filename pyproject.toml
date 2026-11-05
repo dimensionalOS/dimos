@@ -582,7 +582,7 @@ override-dependencies = [
 
 [tool.uv.sources]
 # Option G message contract; replace the draft Git pin with a release before merge.
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "225f7df4f4cc71f0d22e13272b082f08e4f800f9" }
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "c0d6d49a67ab44819d6a3b1fbcc8010e23447fe1" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
