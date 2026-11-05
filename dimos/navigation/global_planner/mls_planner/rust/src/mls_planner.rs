@@ -37,7 +37,7 @@ use crate::nodes::{
 };
 use crate::planner;
 use crate::surfaces::{extract_surfaces, extract_surfaces_region};
-use crate::voxel::{voxelize, VoxelKey, Xyz};
+use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
 
 #[native_config]
 #[derive(Clone)]
@@ -122,13 +122,14 @@ fn validate_wall_buffer(config: &Config) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// How a plan toward the goal ended, with the waypoints to follow.
+/// How a plan through the route ended, with the path to follow.
+/// `via` is the index in `points` of each route waypoint the path passes.
 #[derive(Debug, PartialEq)]
 pub enum Plan {
-    /// A full path to the goal.
-    Full(Vec<Xyz>),
+    /// A full path through every waypoint.
+    Full { points: Vec<Xyz>, via: Vec<usize> },
     /// No full path, so the cached one cut where it stops being safe.
-    Truncated(Vec<Xyz>),
+    Truncated { points: Vec<Xyz>, via: Vec<usize> },
     /// No full path and nothing safe ahead.
     Blocked,
 }
@@ -259,13 +260,17 @@ struct PlannedRoute {
 }
 
 impl PlannedRoute {
-    /// The cells from the start of the segment ending at the waypoint, if cached.
-    fn cells_toward(&self, waypoint: usize) -> Option<&[VoxelKey]> {
-        let at = match waypoint.checked_sub(self.first)? {
+    /// The cells from the start of the segment ending at the waypoint, if cached,
+    /// with the index on them of that waypoint and each one after it.
+    fn cells_toward(&self, waypoint: usize) -> Option<(&[VoxelKey], Vec<usize>)> {
+        let k = waypoint.checked_sub(self.first)?;
+        let at = match k {
             0 => 0,
             k => *self.joints.get(k - 1)?,
         };
-        self.cells.get(at..)
+        let cells = self.cells.get(at..)?;
+        let joints = self.joints[k..].iter().map(|j| j - at).collect();
+        Some((cells, joints))
     }
 }
 
@@ -273,6 +278,27 @@ impl PlannedRoute {
 fn join<T: PartialEq>(path: &mut Vec<T>, segment: Vec<T>) {
     let shared = path.last().is_some() && path.last() == segment.first();
     path.extend(segment.into_iter().skip(usize::from(shared)));
+}
+
+/// The index on the tail of each joint cell it passes, in order, up to the
+/// first one it is cut short of. The tail's first point is the pose it resumes
+/// from, never a joint.
+fn joints_on(tail: &[Xyz], cells: &[VoxelKey], joints: &[usize], voxel_size: f32) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut after = 1;
+    for &j in joints {
+        let (ix, iy, iz) = cells[j];
+        let point = surface_point_xyz(ix, iy, iz, voxel_size);
+        let Some(i) = tail
+            .get(after..)
+            .and_then(|t| t.iter().position(|p| *p == point))
+        else {
+            break;
+        };
+        found.push(after + i);
+        after += i + 1;
+    }
+    found
 }
 
 impl Planner {
@@ -732,6 +758,7 @@ impl Planner {
         config: &Config,
     ) -> Plan {
         let mut points: Vec<Xyz> = Vec::new();
+        let mut via: Vec<usize> = Vec::new();
         let mut cells: Vec<VoxelKey> = Vec::new();
         let mut joints: Vec<usize> = Vec::new();
         let mut from = start;
@@ -743,6 +770,7 @@ impl Planner {
                     break;
                 };
                 join(&mut points, segment);
+                via.push(points.len() - 1);
                 join(&mut cells, segment_cells);
                 joints.push(cells.len().saturating_sub(1));
                 from = waypoint;
@@ -757,22 +785,26 @@ impl Planner {
                 cells,
                 joints,
             });
-            return Plan::Full(points);
+            return Plan::Full { points, via };
         }
         self.log_outcome(waypoints, false, points.len());
-        let tail = self
+        let cached = self
             .last_route
             .as_ref()
             .filter(|cache| cache.waypoints == waypoints)
-            .and_then(|cache| cache.cells_toward(planned))
-            .map_or(Vec::new(), |cells| {
-                planner::truncate_to_safe(&self.graph, cells, from, config)
-            });
-        join(&mut points, tail);
+            .and_then(|cache| cache.cells_toward(planned));
+        if let Some((cells, joints)) = cached {
+            let tail = planner::truncate_to_safe(&self.graph, cells, from, config);
+            let on_tail = joints_on(&tail, cells, &joints, config.voxel_size);
+            let tail_len = tail.len();
+            join(&mut points, tail);
+            let offset = points.len() - tail_len;
+            via.extend(on_tail.iter().map(|i| offset + i));
+        }
         if points.is_empty() {
             Plan::Blocked
         } else {
-            Plan::Truncated(points)
+            Plan::Truncated { points, via }
         }
     }
 

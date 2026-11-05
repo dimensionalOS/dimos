@@ -92,14 +92,15 @@ fn a_cached_path_is_followed_up_to_a_new_gap_and_no_further() {
     p.update_global_map(&floor(false), &cfg);
     assert!(matches!(
         p.plan_route_or_truncate(start, &[goal], 0, &cfg),
-        Plan::Full(_)
+        Plan::Full { .. }
     ));
 
     p.update_global_map(&floor(true), &cfg);
-    let Plan::Truncated(waypoints) = p.plan_route_or_truncate(start, &[goal], 0, &cfg) else {
+    let Plan::Truncated { points, via } = p.plan_route_or_truncate(start, &[goal], 0, &cfg) else {
         panic!("the cached path is safe up to the gap");
     };
-    assert!(waypoints.iter().all(|w| w.0 < 3.0), "{waypoints:?}");
+    assert!(points.iter().all(|w| w.0 < 3.0), "{points:?} {via:?}");
+    assert_eq!(via, Vec::<usize>::new());
 
     // A goal with no cached path has nothing to fall back on.
     let other = (5.5, 1.5, vs);
@@ -127,7 +128,7 @@ fn a_route_plans_as_one_path_through_each_waypoint() {
     let mut p = Planner::new(cfg.worker_threads);
     p.update_global_map(&floor_with_gap(0..0, vs), &cfg);
 
-    let Plan::Full(points) = p.plan_route_or_truncate(start, &route, 0, &cfg) else {
+    let Plan::Full { points, via } = p.plan_route_or_truncate(start, &route, 0, &cfg) else {
         panic!("every segment plans");
     };
     assert_eq!(points.first(), Some(&start));
@@ -142,6 +143,7 @@ fn a_route_plans_as_one_path_through_each_waypoint() {
         .collect();
     assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?}");
     assert_eq!(at[2], points.len() - 1);
+    assert_eq!(via, at);
     assert!(points.windows(2).all(|w| w[0] != w[1]), "{points:?}");
 }
 
@@ -154,10 +156,11 @@ fn a_route_whose_later_segment_fails_ends_at_the_last_waypoint_planned() {
     let mut p = Planner::new(cfg.worker_threads);
     p.update_global_map(&floor_with_gap(30..40, vs), &cfg);
 
-    let Plan::Truncated(points) = p.plan_route_or_truncate(start, &route, 0, &cfg) else {
+    let Plan::Truncated { points, via } = p.plan_route_or_truncate(start, &route, 0, &cfg) else {
         panic!("the first segment plans");
     };
     assert_eq!(points.last(), Some(&route[0]));
+    assert_eq!(via, vec![points.len() - 1]);
 }
 
 #[test]
@@ -170,11 +173,11 @@ fn a_route_follows_its_cached_tail_past_the_last_waypoint_planned() {
     p.update_global_map(&floor_with_gap(0..0, vs), &cfg);
     assert!(matches!(
         p.plan_route_or_truncate(start, &route, 0, &cfg),
-        Plan::Full(_)
+        Plan::Full { .. }
     ));
 
     p.update_global_map(&floor_with_gap(45..55, vs), &cfg);
-    let Plan::Truncated(points) = p.plan_route_or_truncate(start, &route, 0, &cfg) else {
+    let Plan::Truncated { points, via } = p.plan_route_or_truncate(start, &route, 0, &cfg) else {
         panic!("the first segment plans and the cached tail is safe up to the gap");
     };
     let at = points
@@ -185,6 +188,51 @@ fn a_route_follows_its_cached_tail_past_the_last_waypoint_planned() {
     assert!(
         at < points.len() - 1 && end.0 > 2.5 && end.0 < 4.5,
         "{points:?}"
+    );
+    assert_eq!(via, vec![at]);
+}
+
+#[test]
+fn a_cached_tail_flags_each_waypoint_it_passes() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let route = [(2.5, 1.0, vs), (4.0, 1.5, vs), (5.5, 1.0, vs)];
+    let mut p = Planner::new(cfg.worker_threads);
+    p.update_global_map(&floor_with_gap(0..0, vs), &cfg);
+    assert!(matches!(
+        p.plan_route_or_truncate((0.5, 1.0, vs), &route, 0, &cfg),
+        Plan::Full { .. }
+    ));
+
+    // A start too high to snap plans nothing, so the whole tail is the cached route.
+    let Plan::Truncated { points, via } =
+        p.plan_route_or_truncate((0.5, 1.0, 2.0), &route, 0, &cfg)
+    else {
+        panic!("the cached route is safe");
+    };
+    let flagged: Vec<Xyz> = via.iter().map(|&i| points[i]).collect();
+    assert_eq!(flagged.len(), route.len(), "{points:?} {via:?}");
+    for (f, w) in flagged.iter().zip(&route) {
+        assert!(
+            (f.0 - w.0).abs() < vs && (f.1 - w.1).abs() < vs,
+            "{f:?} vs {w:?}"
+        );
+    }
+    assert_eq!(via.last(), Some(&(points.len() - 1)));
+}
+
+#[test]
+fn joints_on_a_tail_are_found_in_order_even_through_the_same_cell_twice() {
+    let vs = 0.1;
+    let at = |ix: i32| surface_point_xyz(ix, 0, 0, vs);
+    let cells: Vec<VoxelKey> = [0, 1, 2, 3, 2, 1].iter().map(|&ix| (ix, 0, 0)).collect();
+    let tail = vec![(0.01, 0.0, 0.0), at(1), at(2), at(3), at(2), at(1)];
+    assert_eq!(joints_on(&tail, &cells, &[3, 5], vs), vec![3, 5]);
+    assert_eq!(joints_on(&tail, &cells, &[2, 4], vs), vec![2, 4]);
+    assert_eq!(joints_on(&tail[..4], &cells, &[3, 5], vs), vec![3]);
+    assert_eq!(
+        joints_on(&tail[..3], &cells, &[3, 5], vs),
+        Vec::<usize>::new()
     );
 }
 
@@ -197,12 +245,13 @@ fn the_route_cache_survives_an_advance() {
     p.update_global_map(&floor_with_gap(0..0, vs), &cfg);
     assert!(matches!(
         p.plan_route_or_truncate((0.5, 1.0, vs), &route, 0, &cfg),
-        Plan::Full(_)
+        Plan::Full { .. }
     ));
 
     p.update_global_map(&floor_with_gap(45..55, vs), &cfg);
     let at_first = (2.6, 1.0, vs);
-    let Plan::Truncated(points) = p.plan_route_or_truncate(at_first, &route, 1, &cfg) else {
+    let Plan::Truncated { points, via } = p.plan_route_or_truncate(at_first, &route, 1, &cfg)
+    else {
         panic!("the cached tail is safe up to the gap");
     };
     let end = points.last().expect("non-empty");
@@ -210,6 +259,7 @@ fn the_route_cache_survives_an_advance() {
         points[0] == at_first && end.0 > 2.6 && end.0 < 4.5,
         "{points:?}"
     );
+    assert_eq!(via, Vec::<usize>::new());
 }
 
 #[test]

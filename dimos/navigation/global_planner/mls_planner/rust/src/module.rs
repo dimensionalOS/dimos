@@ -44,6 +44,10 @@ type Xyzi = (f32, f32, f32, f32);
 /// local planner's `msg::HEADING_GOAL_SEQ` reads.
 const HEADING_GOAL_SEQ: i32 = 1;
 
+/// `header.seq` of a path pose that is a route waypoint to pass through, the
+/// value the local planner's `msg::WAYPOINT_SEQ` reads.
+const WAYPOINT_SEQ: i32 = 2;
+
 /// State shared between the handle loop and the worker.
 type Shared<T> = Arc<Mutex<Option<T>>>;
 
@@ -992,7 +996,7 @@ impl Worker {
         let report = Report::new(goal.id, status, reason)
             .on_route(route)
             .with_remaining(distance(start, goal.position));
-        let waypoints = match outcome {
+        let (points, via) = match outcome {
             Replan::Reached => {
                 progress.unblock();
                 if progress.arrive(goal.id) {
@@ -1009,8 +1013,10 @@ impl Worker {
                 self.status.report(report).await;
                 return;
             }
-            Replan::Turning => vec![start, goal.position],
-            Replan::Planned(Plan::Full(waypoints) | Plan::Truncated(waypoints)) => waypoints,
+            Replan::Turning => (vec![start, goal.position], Vec::new()),
+            Replan::Planned(Plan::Full { points, via } | Plan::Truncated { points, via }) => {
+                (points, via)
+            }
         };
         progress.unblock();
         let plan_ms = ms_since(plan_start);
@@ -1018,10 +1024,11 @@ impl Worker {
 
         let stamp = now();
         let path_msg =
-            build_path_from_waypoints(&waypoints, heading, &self.config.world_frame, stamp);
+            build_path_from_waypoints(&points, &via, heading, &self.config.world_frame, stamp);
         debug_throttled!(
             DEBUG_LOG_PERIOD,
-            waypoints = waypoints.len(),
+            points = points.len(),
+            via = via.len(),
             plan_ms,
             since_last_ms,
             "path planned"
@@ -1082,8 +1089,8 @@ impl Replan {
         match self {
             Replan::Reached => (GoalStatus::SUCCEEDED, "reached"),
             Replan::Turning => (GoalStatus::ACTIVE, "at the goal, turning to its heading"),
-            Replan::Planned(Plan::Full(_)) => (GoalStatus::ACTIVE, "following the path"),
-            Replan::Planned(Plan::Truncated(_)) => (
+            Replan::Planned(Plan::Full { .. }) => (GoalStatus::ACTIVE, "following the path"),
+            Replan::Planned(Plan::Truncated { .. }) => (
                 GoalStatus::ACTIVE,
                 "path blocked ahead, following it while safe",
             ),
@@ -1125,7 +1132,7 @@ fn replan(
 /// which does not end at the goal.
 fn path_heading(outcome: &Replan, goal: &Goal) -> Option<f32> {
     match outcome {
-        Replan::Planned(Plan::Truncated(_)) => None,
+        Replan::Planned(Plan::Truncated { .. }) => None,
         _ => goal.yaw,
     }
 }
@@ -1294,24 +1301,33 @@ fn empty_path(frame_id: &str, stamp: Time) -> Path {
     }
 }
 
-/// The route as a path. With a heading, the last pose faces it and the header is
-/// flagged, so the local planner and the follower end on that pose.
+/// The route as a path. Each waypoint it passes short of its end, the `via`
+/// indices, is flagged in its pose header. With a heading, the last pose faces
+/// it and the path header is flagged, so the local planner and the follower end
+/// on that pose.
 fn build_path_from_waypoints(
-    waypoints: &[Xyz],
+    points: &[Xyz],
+    via: &[usize],
     heading: Option<f32>,
     frame_id: &str,
     stamp: Time,
 ) -> Path {
-    let last = waypoints.len().saturating_sub(1);
-    let poses: Vec<PoseStamped> = waypoints
+    let last = points.len().saturating_sub(1);
+    let poses: Vec<PoseStamped> = points
         .iter()
         .enumerate()
-        .map(|(k, &w)| PoseStamped {
-            header: header(frame_id, stamp.clone()),
-            pose: match heading {
-                Some(yaw) if k == last => pose_facing(w, yaw),
-                _ => pose_at(w, 1.0),
-            },
+        .map(|(k, &w)| {
+            let mut header = header(frame_id, stamp.clone());
+            if k != last && via.contains(&k) {
+                header.seq = WAYPOINT_SEQ;
+            }
+            PoseStamped {
+                header,
+                pose: match heading {
+                    Some(yaw) if k == last => pose_facing(w, yaw),
+                    _ => pose_at(w, 1.0),
+                },
+            }
         })
         .collect();
     let mut header = header(frame_id, stamp);
@@ -1557,8 +1573,14 @@ mod tests {
     fn the_path_carries_the_heading_unless_truncated() {
         let goal = goal_facing(1, (5.0, 0.0, 0.0), 0.0);
         let wp = vec![(0.0, 0.0, 0.0), (5.0, 0.0, 0.0)];
-        let full = Replan::Planned(Plan::Full(wp.clone()));
-        let cut = Replan::Planned(Plan::Truncated(wp.clone()));
+        let full = Replan::Planned(Plan::Full {
+            points: wp.clone(),
+            via: vec![1],
+        });
+        let cut = Replan::Planned(Plan::Truncated {
+            points: wp.clone(),
+            via: vec![1],
+        });
         assert_eq!(path_heading(&full, &goal), Some(0.0));
         assert_eq!(path_heading(&Replan::Turning, &goal), Some(0.0));
         assert_eq!(path_heading(&cut, &goal), None);
@@ -1569,6 +1591,7 @@ mod tests {
         let stamp = Time { sec: 0, nsec: 0 };
         let flagged = build_path_from_waypoints(
             &wp,
+            &[1],
             Some(std::f32::consts::FRAC_PI_2),
             "odom",
             stamp.clone(),
@@ -1578,9 +1601,23 @@ mod tests {
         let half = std::f64::consts::FRAC_PI_4;
         assert!((last.z - half.sin()).abs() < 1e-6 && (last.w - half.cos()).abs() < 1e-6);
         assert_eq!(flagged.poses[0].pose.orientation.w, 1.0);
-        let plain = build_path_from_waypoints(&wp, None, "odom", stamp);
+        let plain = build_path_from_waypoints(&wp, &[1], None, "odom", stamp);
         assert_eq!(plain.header.seq, 0);
         assert_eq!(plain.poses[1].pose.orientation.w, 1.0);
+    }
+
+    #[test]
+    fn the_path_flags_the_waypoints_it_passes_short_of_its_end() {
+        let points = [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (3.0, 0.0, 0.0),
+        ];
+        let msg =
+            build_path_from_waypoints(&points, &[1, 3], None, "odom", Time { sec: 0, nsec: 0 });
+        let flags: Vec<i32> = msg.poses.iter().map(|p| p.header.seq).collect();
+        assert_eq!(flags, vec![0, WAYPOINT_SEQ, 0, 0]);
     }
 
     #[test]
@@ -1699,7 +1736,7 @@ mod tests {
         let goal = route_at(1, (5.0, 1.0, cell + 0.62));
 
         let far = replan(&mut planner, (1.0, 1.0, cell), None, &goal, &config);
-        assert!(matches!(far, Replan::Planned(Plan::Full(_))), "{far:?}");
+        assert!(matches!(far, Replan::Planned(Plan::Full { .. })), "{far:?}");
         let arrived = replan(&mut planner, (5.0, 1.0, cell), None, &goal, &config);
         assert_eq!(arrived, Replan::Reached);
     }
