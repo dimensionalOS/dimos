@@ -16,7 +16,6 @@ import importlib.util
 import sys
 
 import pytest
-from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
@@ -29,9 +28,6 @@ from dimos.robot.all_blueprints import all_blueprints
 @pytest.mark.parametrize(
     ("blueprint_name", "simulation"),
     [
-        ("unitree-g1-nav-simple", ""),
-        ("unitree-g1-groot-wbc", ""),
-        ("unitree-g1-groot-wbc", "mujoco"),
         ("r1pro-nav", ""),
     ],
 )
@@ -39,17 +35,9 @@ def test_navigation_blueprint_preserves_costmapper_config(
     blueprint_name: str,
     simulation: str,
     monkeypatch: pytest.MonkeyPatch,
-    mocker: MockerFixture,
 ) -> None:
     monkeypatch.setattr(global_config, "simulation", simulation)
     monkeypatch.setattr(global_config, "scene_package", None)
-    # The onboard hardware stack imports the optional Unitree DDS SDK. Keep this
-    # test focused on the navigation config without requiring that hardware extra.
-    monkeypatch.setitem(
-        sys.modules,
-        "dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_onboard",
-        mocker.Mock(spec=["_unitree_g1_onboard"], _unitree_g1_onboard=Blueprint(blueprints=())),
-    )
     module_name, variable = all_blueprints[blueprint_name].split(":")
     # Re-evaluate the simulation branch and restore any cached module after the test.
     spec = importlib.util.find_spec(module_name)

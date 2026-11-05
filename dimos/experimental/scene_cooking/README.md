@@ -188,21 +188,6 @@ mujoco_scene = package.mujoco_scene_path
 entities = package.entities
 ```
 
-Run the G1 GR00T WBC blueprint with a cooked package:
-
-```bash
-dimos --simulation mujoco \
-  --scene-package office \
-  --viewer rerun \
-  --n-workers 12 \
-  run unitree-g1-groot-wbc \
-  --headless=true
-```
-
-Use `--headless=true` for normal testing and inspect Rerun. Use
-`--headless=false` only when the native MuJoCo window is needed for contact or
-render debugging; it can run much slower.
-
 ## Data Publishing
 
 Raw scene sources and cooked packages live under `data/` and should not be

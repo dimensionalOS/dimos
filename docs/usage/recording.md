@@ -110,4 +110,4 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 - The Python recorder uses one writer thread. Its queue holds 1000 messages, then
   drops and warns. The Rust recorder uses its existing native encoding pool and
   ordered writer pipeline.
-- We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly.
+- We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`) that are unaffected and still record their own streams. These will be deprecated shortly.

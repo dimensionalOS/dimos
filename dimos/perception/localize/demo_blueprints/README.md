@@ -106,7 +106,7 @@ lifts through its window's paired scans merged into one map.
 
 The module uses the incoming calibration and TF frame names. Select one
 colour camera, its calibration and its aligned depth. For a G1 depth rig using
-the topic names in `unitree-g1-record`, compose:
+the topic names in the archived `g1_sf_office.db` recording, compose:
 
     from dataclasses import replace
 

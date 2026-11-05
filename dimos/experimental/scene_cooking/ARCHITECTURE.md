@@ -106,7 +106,7 @@ package.browser_collision_path
 package.objects_path
 package.mujoco_scene_path
 package.mujoco_binary_path
-package.mujoco_composed_binary_path(robot="unitree-g1-groot-wbc")
+package.mujoco_composed_binary_path(robot="example-robot")
 package.entities
 ```
 

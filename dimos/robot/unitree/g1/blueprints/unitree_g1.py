@@ -1,4 +1,4 @@
-# Copyright 2026 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 ready-pose constants shared without loading controller or model dependencies."""
+"""Unitree G1 with the stock DDS locomotion controller."""
 
-G1_READY_JOINTS = {
-    "left_arm": (-0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
-    "right_arm": (-0.4, -0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
-}
-G1_READY_SPEED_SCALE = 0.25
+from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.robot.unitree.g1.requirements import g1_hardware
+
+unitree_g1 = (
+    G1Connection.blueprint().global_config(robot_model="unitree_g1").requirements(g1_hardware)
+)

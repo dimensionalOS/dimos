@@ -18,7 +18,6 @@ The first runs pull the MuJoCo scenes and models from LFS and download the MuJoC
 ```bash
 uv run dimos --simulation run unitree-go2
 uv run dimos --simulation run unitree-go2-agentic
-uv run dimos --simulation run unitree-g1-sim
 ```
 
 * With `unitree-go2` running, click a visible point on the mapped floor in the Rerun 3D view. Clicking empty background/grid space only selects the view and sends no goal. The robot walks to the selected point, and the planner logs `arrived=True`.

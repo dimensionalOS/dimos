@@ -22,8 +22,8 @@ dimos --replay run unitree-go2-agentic          # + LLM agent (gpt-5.6-luna) + s
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161  # real Go2 hardware
 
 # --- G1 humanoid ---
-dimos --simulation run unitree-g1-agentic-sim   # G1 in MuJoCo sim + agent + skills
-dimos run unitree-g1-agentic --robot-ip 192.168.123.161   # real G1 hardware
+dimos run unitree-g1 --network-interface eth0            # stock DDS control
+dimos run unitree-g1-groot-wbc --network-interface eth0  # GR00T whole-body control
 
 # --- Inspect & control ---
 dimos status
@@ -40,7 +40,8 @@ dimos restart          # stop + re-run with same original args
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
 | `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
-| `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
+| `unitree-g1` | G1 | real | — | — | Stock DDS control |
+| `unitree-g1-groot-wbc` | G1 | real | — | — | GR00T control; starts unarmed with policy output in dry-run |
 | `xarm-grasp-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
@@ -48,6 +49,9 @@ dimos restart          # stop + re-run with same original args
 | `dual-xarm6-planner-coordinator` | xArm6×2 | mock | — | — | Dual-arm motion planner |
 
 Run `dimos list` for the full list.
+
+G1 has exactly these two control blueprints; its legacy simulation stack was removed.
+New robot support must include sim2 support. Sim2 has not landed on this branch yet.
 
 ---
 
@@ -114,7 +118,7 @@ dimos/
 │   ├── unitree/             # Unitree robot implementations (Go2, G1, B1)
 │   │   ├── unitree_skill_container.py  # Go2 @skill methods
 │   │   ├── go2/             # Go2 blueprints and connection
-│   │   └── g1/              # G1 blueprints, connection, sim, skills
+│   │   └── g1/              # Stock DDS and GR00T control; two blueprints
 │   └── drone/               # Drone implementations (MAVLink + DJI)
 │       ├── connection_module.py        # MAVLink connection
 │       ├── camera_module.py            # DJI video stream
@@ -291,9 +295,8 @@ my_skill_container = MySkillContainer.blueprint
 | Robot | File | Variable |
 |-------|------|----------|
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
-| G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
+The default prompt is Go2-specific. G1 ships control-only blueprints and has no bundled agent prompt.
 
 ### RPC Wiring
 
@@ -327,7 +330,7 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 2. `@skill` + mandatory docstring + type annotations on all params.
 3. If it needs another module's RPC, use the Spec pattern.
 4. Return a descriptive `str`, or a `SkillResult`.
-5. Update the system prompt if the skill needs usage guidance — `dimos/agents/system_prompt.py`, or the robot-specific prompt.
+5. Update the owning agent's system prompt if the skill needs usage guidance.
 6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
 
 ---
