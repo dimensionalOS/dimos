@@ -205,3 +205,26 @@ def test_a_map_file_that_is_not_a_recording_is_refused():
 
     with pytest.raises(ValueError, match="recording"):
         load_premap("office.pc2.lcm", "map_cloud")
+
+
+def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
+    mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
+    from dimos.mapping.relocalization.module import load_premap
+
+    path = tmp_path / "premap.mcap"
+    cloud = PointCloud2.from_numpy(np.eye(3, dtype=np.float32), frame_id="map", timestamp=1.0)
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start()
+        payload_type = {"dimos.payload_type": "dimos.msgs.sensor_msgs.PointCloud2.PointCloud2"}
+        channel = writer.register_channel("/map_cloud", "lcm", 0, payload_type)
+        writer.add_message(channel, 1_000_000_000, cloud.lcm_encode(), 1_000_000_000)
+        # Two camera topics that fold to one stream name
+        for topic in ("rt/camera_info", "camera_info"):
+            clash = writer.register_channel(topic, "cdr", 0)
+            writer.add_message(clash, 1_000_000_000, b"\0", 1_000_000_000)
+        writer.finish()
+
+    loaded = load_premap(str(path), "map_cloud")
+    assert isinstance(loaded, PointCloud2)
+    assert np.allclose(loaded.as_numpy()[0], np.eye(3))

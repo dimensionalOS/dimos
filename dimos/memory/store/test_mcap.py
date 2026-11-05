@@ -226,3 +226,19 @@ def test_explicit_codec_takes_precedence_over_metadata(tmp_path):
         writer.finish()
     with McapStore(path=str(path), codecs={"imu": LcmCodec(Imu)}, decode_metadata=True) as store:
         assert store.stream("imu").first().data.lcm_encode() == expected.lcm_encode()
+
+
+def test_a_name_two_topics_fold_to_fails_only_when_read(tmp_path):
+    path = tmp_path / "clash.mcap"
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start()
+        for topic in ("rt/camera_info", "camera_info", "imu"):
+            channel = writer.register_channel(topic=topic, message_encoding="cdr", schema_id=0)
+            writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=b"\0")
+        writer.finish()
+    with McapStore(path=str(path)) as store:
+        assert store.list_streams() == ["imu"]
+        assert store.stream("imu").count() == 1
+        with pytest.raises(ValueError, match="pass streams="):
+            store.stream("camera_info")

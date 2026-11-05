@@ -31,13 +31,16 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 
-def open_store(path: str | Path) -> Store:
-    """Open an already-resolved dataset *path*, dispatching on its extension."""
+def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
+    """Open an already-resolved dataset *path*, dispatching on its extension.
+
+    ``decode_metadata`` trusts an .mcap channel's ``dimos.payload_type`` (see ``McapStore``).
+    """
     s = str(path)
     if s.endswith(".mcap"):
         from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codecs
 
-        return Go2McapStore(path=s)
+        return Go2McapStore(path=s, decode_metadata=decode_metadata)
     if s.endswith(".db"):
         from dimos.memory.store.sqlite import SqliteStore
 

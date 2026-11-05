@@ -96,7 +96,7 @@ def load_premap(map_file: str, stream: str) -> PointCloud2:
     from dimos.memory.cli.dataset import open_store
 
     path = resolve_named_path(map_file, Path(map_file).suffix)
-    with open_store(path) as store:
+    with open_store(path, decode_metadata=True) as store:
         name = find_stream(store.list_streams(), stream)
         if name is None:
             raise ValueError(f"{path} has no {stream!r} stream, have {store.list_streams()}")
