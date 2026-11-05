@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import warnings
 
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
@@ -491,7 +492,18 @@ class Image(Timestamped):
         msg = LCMImage()
 
         # Header
-        msg.header = self.acquisition_header(frame_id or self.frame_id)
+        msg.header = Header()
+        msg.header.seq = 0
+        msg.header.frame_id = frame_id or self.frame_id
+
+        # Set timestamp
+        if self.ts is not None:
+            msg.header.stamp.sec = int(self.ts)
+            msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
+        else:
+            now = time.time()
+            msg.header.stamp.sec = int(now)
+            msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
         # Image properties
         msg.height = self.height
@@ -527,8 +539,12 @@ class Image(Timestamped):
             data=arr,
             format=fmt,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
-            ts=msg.header.time_ns / 1e9,
-        ).with_sample_header(msg.header)
+            ts=(
+                msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
+                if hasattr(msg, "header") and hasattr(msg.header, "stamp")
+                else time.time()
+            ),
+        )
 
     def to_jpeg_bytes(self, quality: int = 75) -> bytes:
         """Encode this image as JPEG bytes using TurboJPEG.
@@ -563,7 +579,18 @@ class Image(Timestamped):
         msg = LCMImage()
 
         # Header
-        msg.header = self.acquisition_header(frame_id or self.frame_id)
+        msg.header = Header()
+        msg.header.seq = 0
+        msg.header.frame_id = frame_id or self.frame_id
+
+        # Set timestamp
+        if self.ts is not None:
+            msg.header.stamp.sec = int(self.ts)
+            msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
+        else:
+            now = time.time()
+            msg.header.stamp.sec = int(now)
+            msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
         jpeg_data = self.to_jpeg_bytes(quality=quality)
 
@@ -600,8 +627,12 @@ class Image(Timestamped):
             data=rgb_array,
             format=ImageFormat.RGB,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
-            ts=msg.header.time_ns / 1e9,
-        ).with_sample_header(msg.header)
+            ts=(
+                msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
+                if hasattr(msg, "header") and hasattr(msg.header, "stamp")
+                else time.time()
+            ),
+        )
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
