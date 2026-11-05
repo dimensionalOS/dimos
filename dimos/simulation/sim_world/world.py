@@ -404,8 +404,6 @@ class SimWorld(Module, ABC):
     contacts: Out[Contacts]
     scene: Out[LineSegments3D]
     loaded_map: Out[PointCloud2]
-    # the scene's id, so a viewer knows a world is there to ask for
-    scene_info: Out[String]
     file_info: Out[File]
 
     _thread: Thread | None = None
@@ -564,7 +562,6 @@ class SimWorld(Module, ABC):
                         ts=stamp, frame_id=sim.rig.world_frame, segments=scene_edges(sim.scene)
                     )
                 )
-                self.scene_info.publish(String(_scene_id(sim)))
                 next_scene_publish = sim.t + SCENE_PUBLISH_DT
             delay = stamp - time.time()
             if delay > 0:
