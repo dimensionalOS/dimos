@@ -35,6 +35,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 import errno
 from functools import partial
+import os
 import struct
 from typing import Any, Protocol, cast, runtime_checkable
 
@@ -216,8 +217,13 @@ class McapStore(Store):
         streams: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        from mcap.reader import make_reader  # optional mcap dependency  # noqa: I001
+        from mcap.reader import FOOTER_SIZE, make_reader  # optional mcap dependency  # noqa: I001
         from mcap.exceptions import McapError
+        from mcap.stream_reader import MAGIC_SIZE
+
+        # The summary reader seeks this many bytes back from the end for the
+        # footer; only a file shorter than this fails that seek with EINVAL.
+        footer_seekback = FOOTER_SIZE + MAGIC_SIZE
 
         super().__init__(**kwargs)
         self._codecs = dict(codecs or {})
@@ -235,8 +241,14 @@ class McapStore(Store):
             except OSError as exc:
                 if exc.errno != errno.EINVAL:
                     raise  # a real mid-read filesystem failure, not corruption
-                # A file shorter than the footer fails the reader's end-seek
-                # with EINVAL: the file is truncated or was never finalized.
+                # The reader's end-seek fails with EINVAL only when the file
+                # is shorter than the footer+magic it seeks back over. Errno
+                # alone does not prove that condition — a mid-read device
+                # fault raises the same errno — so verify the file is
+                # actually that short before diagnosing truncation. Any other
+                # EINVAL is a filesystem fault and keeps its native class.
+                if os.fstat(f.fileno()).st_size >= footer_seekback:
+                    raise
                 raise ValueError(
                     f"Cannot open MCAP recording {self.config.path!r}: no readable summary "
                     "index — the file is truncated or was never finalized (for example an "

@@ -384,11 +384,11 @@ def test_missing_recording_is_a_plain_missing_file_error(tmp_path: Path) -> None
     assert not absent.exists()  # never created as a side effect
 
 
-@pytest.mark.parametrize("code", [errno.EACCES, errno.EIO, errno.EISDIR])
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EIO, errno.EISDIR, errno.EINVAL])
 def test_filesystem_failure_keeps_native_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
 ) -> None:
-    """EACCES/EIO/EISDIR at open time are not MCAP corruption: the native
+    """EACCES/EIO/EISDIR/EINVAL at open time are not MCAP corruption: the native
     OSError subclass and errno must survive, not a truncation ValueError."""
 
     def fail(*args: Any, **kwargs: Any) -> None:
@@ -399,6 +399,76 @@ def test_filesystem_failure_keeps_native_error(
         McapStore(path=str(tmp_path / "source.mcap"))
     assert caught.value.errno == code
     assert not isinstance(caught.value, ValueError)
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EIO, errno.EISDIR, errno.EINVAL])
+def test_read_failure_on_valid_recording_keeps_native_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """A filesystem fault while reading a valid finalized MCAP — including
+    EINVAL — is not proof of truncation: the native OSError and errno must
+    survive instead of a corruption ValueError."""
+    source = tmp_path / "valid.mcap"
+    with source.open("wb") as output:
+        writer = McapWriter(output)
+        writer.start(profile="dimos", library="test")
+        writer.finish()
+    real_open = builtins.open
+
+    class _FailingRead:
+        def __init__(self, wrapped: Any) -> None:
+            self._wrapped = wrapped
+
+        def __enter__(self) -> _FailingRead:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._wrapped.close()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._wrapped, name)
+
+        def read(self, *args: Any) -> bytes:
+            raise OSError(code, "simulated device read failure on valid input")
+
+    def open_with_failing_read(*args: Any, **kwargs: Any) -> _FailingRead:
+        return _FailingRead(real_open(*args, **kwargs))
+
+    monkeypatch.setattr(builtins, "open", open_with_failing_read)
+    with pytest.raises(OSError) as caught:
+        McapStore(path=str(source))
+    assert caught.value.errno == code
+    assert not isinstance(caught.value, ValueError)
+
+
+@pytest.mark.parametrize("cut", [1, 8, 25, 40])
+def test_truncated_recording_reports_missing_summary_index(tmp_path: Path, cut: int) -> None:
+    """A finalized MCAP with its tail cut off is really truncated: the store
+    must diagnose the missing summary index and leave the file untouched."""
+    source = tmp_path / "truncated.mcap"
+    with source.open("wb") as output:
+        writer = McapWriter(output)
+        writer.start(profile="dimos", library="test")
+        writer.finish()
+    source.write_bytes(source.read_bytes()[:-cut])
+    before_bytes = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    with pytest.raises(ValueError, match="no readable summary index"):
+        McapStore(path=str(source))
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before_bytes
+
+
+def test_stub_file_shorter_than_footer_reports_missing_summary_index(
+    tmp_path: Path,
+) -> None:
+    """A file shorter than the footer the summary reader seeks back over is
+    genuinely truncated/unfinished: the verified short-file condition must
+    still be diagnosed as a missing summary index."""
+    source = tmp_path / "stub.mcap"
+    source.write_bytes(b"\x89MCAP\r\n")  # valid magic, far shorter than a footer
+
+    with pytest.raises(ValueError, match="no readable summary index"):
+        McapStore(path=str(source))
 
 
 def test_directory_path_is_not_reported_as_corruption(tmp_path: Path) -> None:
