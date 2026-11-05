@@ -1700,3 +1700,36 @@ Deno.test("a video rate is part of the encoder: viewers at one rate share it, an
   assertEquals(h.forwarded()[1].variant, "v2");
   h.close();
 });
+
+Deno.test("topic load is per negotiated viewer and congestion resets exclude healthy expiry and replacement", async () => {
+  const registry = new TopicRegistry();
+  const viewer = new Viewer();
+  assertEquals(registry.load(viewer), undefined);
+  registry.addViewer(viewer, viewer.sendMsg);
+  assertEquals(registry.load(viewer), { aborted: 0 });
+  const budget = new TopicBudget(10);
+  const other = new TopicBudget(10);
+  const sink = new Sink();
+  const egress = new TopicEgress("latest", sink, [budget], () => {
+    throw new Error("unexpected overflow");
+  }, () => 0);
+  try {
+    egress.offer("a", new Uint8Array(4));
+    egress.offer("a", new Uint8Array(4));
+    assertEquals(budget.aborted, 0);
+    egress.activate();
+    await flush();
+    egress.reap(500);
+    assertEquals(budget.aborted, 0);
+    egress.offer("a", new Uint8Array(6));
+    await flush();
+    egress.offer("b", new Uint8Array(6));
+    assertEquals(budget.aborted, 1);
+    egress.reap(500);
+    assertEquals(budget.aborted, 2);
+    assertEquals(other.aborted, 0);
+  } finally {
+    egress.dispose();
+  }
+  assertEquals(budget.aborted, 2);
+});

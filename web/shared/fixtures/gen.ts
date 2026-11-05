@@ -357,6 +357,7 @@ const controlMsgs: Record<string, Msg> = {
   },
   ping: { t: "ping", n: 7, ts: 1752576000.5 },
   pong: { t: "pong", n: 7, ts: 1752576000.5 },
+  pong_aborted: { t: "pong", n: 7, ts: 1752576000.5, aborted: 3 },
   error_version: {
     t: "error",
     code: "version_mismatch",
@@ -1164,6 +1165,10 @@ const manifests = {
 const dir = new URL(".", import.meta.url);
 const invalidTopics = {
   vectors: [
+    ...[-1, 0.5, null, true, 9007199254740992].map((aborted, i) => ({
+      name: `invalid_pong_aborted_${i}`,
+      message: { t: "pong", n: 7, ts: 1752576000.5, aborted },
+    })),
     ...[null, true, 0, -1, 1001, "30"].map((maxHz, i) => ({
       name: `invalid_rate_update_${i}`,
       message: { ...controlMsgs.topic_activate, maxHz },

@@ -759,6 +759,16 @@
       "b64": "eyJ0IjoicG9uZyIsIm4iOjcsInRzIjoxNzUyNTc2MDAwLjV9"
     },
     {
+      "name": "pong_aborted",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": 3
+      },
+      "b64": "eyJ0IjoicG9uZyIsIm4iOjcsInRzIjoxNzUyNTc2MDAwLjUsImFib3J0ZWQiOjN9"
+    },
+    {
       "name": "error_version",
       "message": {
         "t": "error",
