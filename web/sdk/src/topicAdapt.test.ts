@@ -235,26 +235,28 @@ describe("adaptation decisions", () => {
     const camera = h.target(VIDEO);
     let n = 0;
     const receiver = {
-      getStats: vi.fn(async () => {
+      getStats: vi.fn(() => {
         const i = n++;
-        return new Map([
-          ["in", {
-            type: "inbound-rtp",
-            kind: "video",
-            packetsLost: i * delta.packetsLost,
-            packetsReceived: i * delta.packetsReceived,
-            framesDecoded: i * delta.framesDecoded,
-            bytesReceived: i * delta.bytesReceived,
-            totalFreezesDuration: i *
-              ("totalFreezesDuration" in delta ? delta.totalFreezesDuration! : 0),
-          }],
-          ["pair", {
-            type: "candidate-pair",
-            nominated: true,
-            state: "succeeded",
-            availableIncomingBitrate: "estimate" in delta ? delta.estimate : undefined,
-          }],
-        ]);
+        return Promise.resolve(
+          new Map([
+            ["in", {
+              type: "inbound-rtp",
+              kind: "video",
+              packetsLost: i * delta.packetsLost,
+              packetsReceived: i * delta.packetsReceived,
+              framesDecoded: i * delta.framesDecoded,
+              bytesReceived: i * delta.bytesReceived,
+              totalFreezesDuration: i *
+                ("totalFreezesDuration" in delta ? delta.totalFreezesDuration! : 0),
+            }],
+            ["pair", {
+              type: "candidate-pair",
+              nominated: true,
+              state: "succeeded",
+              availableIncomingBitrate: "estimate" in delta ? delta.estimate : undefined,
+            }],
+          ]),
+        );
       }),
     } as unknown as RTCRtpReceiver;
     camera.receiver = () => receiver;
@@ -273,25 +275,27 @@ describe("adaptation decisions", () => {
     let n = 0;
     camera.receiver = () => receiver;
     const receiver = {
-      getStats: async () => {
+      getStats: () => {
         const i = n++;
-        return new Map([
-          ["in", {
-            type: "inbound-rtp",
-            kind: "video",
-            packetsLost: i * 2,
-            packetsReceived: i * 98,
-            framesDecoded: i * 15,
-            bytesReceived: i * 1000,
-            totalFreezesDuration: i * 0.1,
-          }],
-          ["pair", {
-            type: "candidate-pair",
-            selected: true,
-            state: "succeeded",
-            availableIncomingBitrate: 3600000,
-          }],
-        ]);
+        return Promise.resolve(
+          new Map([
+            ["in", {
+              type: "inbound-rtp",
+              kind: "video",
+              packetsLost: i * 2,
+              packetsReceived: i * 98,
+              framesDecoded: i * 15,
+              bytesReceived: i * 1000,
+              totalFreezesDuration: i * 0.1,
+            }],
+            ["pair", {
+              type: "candidate-pair",
+              selected: true,
+              state: "succeeded",
+              availableIncomingBitrate: 3600000,
+            }],
+          ]),
+        );
       },
     } as unknown as RTCRtpReceiver;
     await h.tick(4000);
