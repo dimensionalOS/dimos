@@ -599,11 +599,11 @@ def test_a_stop_during_standup_leaves_sit_as_the_last_posture_command(
     started: Callable[..., M20Connection],
 ) -> None:
     conn = started({"_enter_navigation_mode": lambda: True}, auto_stand=True, sit_timeout_s=0.1)
-    sent = conn.motion_state_cmd.transport.sent
+    sent = conn.motion_state_cmd.transport.sent  # type: ignore[attr-defined]
     _wait_until(lambda: [msg.data for msg in sent] == [MOTION_STAND])
     conn.stop()
     assert [msg.data for msg in sent] == [MOTION_STAND, MOTION_SIT]
-    assert not conn._auto_stand_thread.is_alive()
+    assert conn._auto_stand_thread is not None and not conn._auto_stand_thread.is_alive()
 
 
 class FakeRobot:
