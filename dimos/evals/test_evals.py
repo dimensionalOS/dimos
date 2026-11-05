@@ -285,6 +285,11 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
     proc.stop.assert_called_once_with()
 
 
+def test_attach_checks_the_python_guide_exists(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="python_guide .* does not exist"):
+        _sim(attach=True, python_guide=tmp_path / "missing.md").preflight(McpClientAdapter())
+
+
 def test_sim_attach_rejects_added_modules() -> None:
     with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
         _sim(attach=True).preflight(McpClientAdapter(modules=("agent",)))
@@ -400,6 +405,15 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
         McpClientAdapter().preflight(frozen)
     McpClientAdapter(modules=("mcp-server", "agent")).preflight(frozen)  # brings its own
     McpClientAdapter().preflight(_sim())  # the environment will launch the stack
+
+
+def test_mcp_client_adapter_needs_an_mcp_server_beside_a_python_guide(tmp_path: Path) -> None:
+    guide = tmp_path / "python_api.md"
+    guide.touch()
+    env = _sim(python_guide=guide)
+    with pytest.raises(RuntimeError, match="add mcp-server"):
+        McpClientAdapter(modules=("mcp-client",)).preflight(env)
+    McpClientAdapter(modules=("mcp-server", "mcp-client")).preflight(env)
 
 
 def test_question_answer_encodes_the_recording_into_one_call(

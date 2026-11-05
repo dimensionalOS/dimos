@@ -73,15 +73,24 @@ def test_a_run_without_mcp_server_is_still_found() -> None:
 def test_wait_connectable_retries_until_the_coordinator_answers(mocker) -> None:
     client = mocker.Mock()
     connect = mocker.patch(
-        "dimos.porcelain.dimos.Dimos.connect", side_effect=[TimeoutError(), client]
+        "dimos.evals.environments.lib.launch.CoordinatorRPC.connect",
+        side_effect=[TimeoutError(), client],
     )
     wait_connectable(time.monotonic() + 5)
     assert connect.call_count == 2
     client.stop.assert_called_once()
 
 
+def test_wait_connectable_times_out_with_no_coordinator_running() -> None:
+    # The real client, unmocked: no coordinator must surface as a timeout, which is retried.
+    with pytest.raises(TimeoutError, match="launch deadline"):
+        wait_connectable(time.monotonic() + 1)
+
+
 def test_wait_connectable_fails_when_dimos_exits_or_the_deadline_passes(mocker) -> None:
-    mocker.patch("dimos.porcelain.dimos.Dimos.connect", side_effect=TimeoutError())
+    mocker.patch(
+        "dimos.evals.environments.lib.launch.CoordinatorRPC.connect", side_effect=TimeoutError()
+    )
     exited = SimpleNamespace(poll=lambda: 3, returncode=3)
     with pytest.raises(RuntimeError, match="exited with code 3"):
         wait_connectable(time.monotonic() + 5, exited)
