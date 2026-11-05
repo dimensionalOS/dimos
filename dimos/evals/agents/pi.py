@@ -268,14 +268,7 @@ class PiAdapter(EvalSubject):
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
-        if env.python_guide is not None and not self.config.no_dimos:
-            if self.config.builtin_guidance:
-                parts.append(
-                    "dimOS is already running and drives the robot. Control it from Python "
-                    "scripts as DIMOS.md describes, connecting with Dimos.connect(); do not "
-                    "start another runtime."
-                )
-        elif env.mcp_url and not self.config.no_dimos:
+        if env.mcp_url and env.python_guide is None and not self.config.no_dimos:
             if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"

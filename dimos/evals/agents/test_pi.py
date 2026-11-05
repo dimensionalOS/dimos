@@ -369,7 +369,7 @@ def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path, mocker: Mock
     prompt = adapter._prepare_case(env, run_dir)
     assert (run_dir / "DIMOS.md").read_text() == "# Manipulation from Python"
     assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt
-    assert "Dimos.connect()" in prompt and "dimos mcp call" not in prompt
+    assert "dimos mcp call" not in prompt
     listing.assert_not_called()
 
 
