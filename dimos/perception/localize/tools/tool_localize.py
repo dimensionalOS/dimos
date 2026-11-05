@@ -220,7 +220,8 @@ def render(
         rows = np.round(pixels[:, 1]).astype(int)
         rgb = det.image.to_rgb().data
         height, width = rgb.shape[:2]
-        return rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
+        colors: np.ndarray = rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
+        return colors
 
     # backdrop: each depth camera's RGBD cloud at the answer frame, on a mobile
     # rig its frames over the window merged, and the lidar's scans over the
