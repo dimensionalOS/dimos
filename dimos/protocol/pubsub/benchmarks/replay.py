@@ -1,0 +1,216 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""End-to-end replay benchmark: raw Image blueprints vs CompressedCodec.
+
+Runs a real blueprint in replay mode for a fixed duration, with optional
+_BenchSink consumer modules (configurable synthetic per-frame work, like a
+busy detector), and records per-frame receive/completion times plus host CPU/RSS/loopback
+traffic. One process per run:
+
+    python -m dimos.protocol.pubsub.benchmarks.replay \
+        --blueprint unitree-go2 --mode codec --sinks 4 --work-ms 20 \
+        --duration 60 --out /tmp/bench/go2_codec_0
+
+Wrap with `taskset -c 0-3` / `tc netem` for constrained profiles.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import threading
+import time
+from typing import Any
+
+import cv2
+import psutil
+
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.global_config import global_config
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
+from dimos.robot.get_all_blueprints import get_blueprint_by_name
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+class _BenchSink(Module):
+    """Records receive/completion times and the original frame timestamp."""
+
+    color_image: In[Image]
+
+    def __init__(self, out_path: str = "", work_ms: float = 0.0, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._out_path = out_path
+        self._work_ms = work_ms
+        self._buf: list[str] = []
+        self._count = 0
+        self._lock = threading.Lock()
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.color_image.subscribe(self._on_image)
+
+    @rpc
+    def stop(self) -> None:
+        with self._lock:
+            self._flush()
+        super().stop()
+
+    def _on_image(self, msg: Image) -> None:
+        now = time.time()
+        self._count += 1
+        # Replay preserves recording timestamps, so now - msg.ts is not transport latency.
+        rec = {"t": now, "ts": msg.ts, "i": self._count}
+        if self._work_ms > 0:
+            deadline = time.perf_counter() + self._work_ms / 1000
+            while time.perf_counter() < deadline:
+                cv2.GaussianBlur(msg.data, (31, 31), 5)
+        rec["done_t"] = time.time()
+        with self._lock:
+            self._buf.append(json.dumps(rec))
+            if len(self._buf) >= 20:
+                self._flush()
+
+    def _flush(self) -> None:
+        if not self._out_path or not self._buf:
+            return
+        with open(self._out_path, "a") as f:
+            f.write("\n".join(self._buf) + "\n")
+        self._buf = []
+
+
+# distinct classes so several sinks can live in one blueprint (fan-out)
+class _BenchSink1(_BenchSink): ...
+
+
+class _BenchSink2(_BenchSink): ...
+
+
+class _BenchSink3(_BenchSink): ...
+
+
+SINK_CLASSES = [_BenchSink, _BenchSink1, _BenchSink2, _BenchSink3]
+
+
+def _sample_host(out_path: str, stop: threading.Event) -> None:
+    me = psutil.Process()
+    procs: dict[int, psutil.Process] = {}
+    lo0 = psutil.net_io_counters(pernic=True).get("lo")
+    last_lo = (lo0.bytes_sent if lo0 else 0, time.time())
+    with open(out_path, "a") as f:
+        while not stop.wait(1.0):
+            tree = [me, *me.children(recursive=True)]
+            cpu = rss = 0.0
+            for p in tree:
+                try:
+                    if p.pid not in procs:
+                        procs[p.pid] = p
+                        p.cpu_percent(None)  # prime
+                        continue
+                    cpu += p.cpu_percent(None)
+                    rss += p.memory_info().rss
+                except psutil.NoSuchProcess:
+                    procs.pop(p.pid, None)
+            lo = psutil.net_io_counters(pernic=True).get("lo")
+            now = time.time()
+            lo_rate = (lo.bytes_sent - last_lo[0]) / (now - last_lo[1]) if lo else 0
+            last_lo = (lo.bytes_sent if lo else 0, now)
+            f.write(
+                json.dumps(
+                    {"t": now, "cpu_pct": cpu, "rss_mb": rss / 1e6, "lo_mbps": lo_rate * 8 / 1e6}
+                )
+                + "\n"
+            )
+            f.flush()
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--blueprint", default="unitree-go2")
+    ap.add_argument("--mode", choices=["raw", "codec"], default="raw")
+    ap.add_argument("--quality", type=int, default=75)
+    ap.add_argument("--sinks", type=int, default=1)
+    ap.add_argument("--work-ms", type=float, default=0.0)
+    ap.add_argument("--duration", type=float, default=60.0)
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+    if not 1 <= args.sinks <= len(SINK_CLASSES):
+        ap.error(f"sinks must be between 1 and {len(SINK_CLASSES)}")
+    if not math.isfinite(args.duration) or args.duration <= 0:
+        ap.error("duration must be positive and finite")
+    if not math.isfinite(args.work_ms) or args.work_ms < 0:
+        ap.error("work-ms must be nonnegative and finite")
+    if not 1 <= args.quality <= 100:
+        ap.error("quality must be between 1 and 100")
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "meta.json").write_text(json.dumps(vars(args)))
+
+    global_config.update(replay=True, viewer="none", transport="lcm")
+    bp = get_blueprint_by_name(args.blueprint)
+    sinks = [
+        cls.blueprint(out_path=str(out / f"sink{i}.jsonl"), work_ms=args.work_ms)
+        for i, cls in enumerate(SINK_CLASSES[: args.sinks])
+    ]
+    bp = autoconnect(bp, *sinks)
+    if args.mode == "codec":
+        bp = bp.transports(
+            {
+                ("color_image", Image): CompressedCodec(
+                    LCMTransport("/color_image", CompressedImage), quality=args.quality
+                )
+            }
+        )
+
+    parsed = BlueprintConfigParser(bp).parse(
+        overrides={"g": {"replay": True, "viewer": "none", "transport": "lcm"}},
+    )
+    coordinator = ModuleCoordinator.build(bp, parsed)
+    logger.info("benchmark run started", mode=args.mode, blueprint=args.blueprint)
+
+    stop = threading.Event()
+    sampler = threading.Thread(target=_sample_host, args=(str(out / "host.jsonl"), stop))
+    try:
+        sampler.start()
+        time.sleep(args.duration)
+    finally:
+        stop.set()
+        if sampler.ident is not None:
+            sampler.join(timeout=5)
+        stopper = threading.Thread(target=coordinator.stop, daemon=True)
+        stopper.start()
+        stopper.join(timeout=30)
+        if stopper.is_alive():
+            logger.error("coordinator.stop() did not finish within 30 seconds")
+            os._exit(1)
+        (out / "done").write_text("ok")
+
+
+if __name__ == "__main__":
+    main()
