@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quest-guided dual OpenYAM collection."""
+"""Quest-guided dual OpenYAM collection on the workcell: three D405s, collection pacing."""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -23,8 +23,8 @@ from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     teleop_webxr_dual_openyam_collection,
 )
 
-dual_openyam_quest_collection = autoconnect(
-    collect(profile=dual_openyam_collection_profile("dual-openyam-quest")),
+dual_openyam_workcell_collection = autoconnect(
+    collect(profile=dual_openyam_collection_profile("dual-openyam-workcell")),
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
     teleop_webxr_dual_openyam_collection,
     *dual_openyam_collection_cameras(),

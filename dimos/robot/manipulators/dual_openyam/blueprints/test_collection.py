@@ -23,7 +23,6 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
@@ -37,14 +36,9 @@ from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     dual_openyam_collection_teleop_tasks,
     teleop_webxr_dual_openyam_collection,
 )
-from dimos.robot.manipulators.dual_openyam.blueprints.learning_quest_collection import (
-    dual_openyam_quest_collection,
-)
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
-from dimos.robot.manipulators.dual_openyam.collection import (
-    DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
-    DualOpenYamCollectionTeleopModule,
-    scale_controller_pose,
+from dimos.robot.manipulators.dual_openyam.blueprints.workcell_collection import (
+    dual_openyam_workcell_collection,
 )
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 from dimos.teleop.webxr.extensions import ArmTeleopModule
@@ -88,28 +82,17 @@ def test_collection_teleop_is_the_stock_task_at_the_collection_speed() -> None:
         )
 
 
-def test_controller_pose_scale_keeps_orientation_and_stamp() -> None:
-    pose = PoseStamped(
-        position=[0.4, -0.2, 0.8], orientation=[0.0, 0.0, 0.7071, 0.7071], ts=12.5, frame_id="right"
-    )
-    scaled = scale_controller_pose(pose, 0.5)
-
-    assert (scaled.position.x, scaled.position.y, scaled.position.z) == (0.2, -0.1, 0.4)
-    assert scaled.orientation == pose.orientation
-    assert (scaled.ts, scaled.frame_id) == (12.5, "right")
-    assert 0.0 < DUAL_OPENYAM_COLLECTION_MOTION_SCALE <= 1.0
-    assert issubclass(DualOpenYamCollectionTeleopModule, ArmTeleopModule)
-
-
-def test_collection_graph_only_swaps_the_teleop_tasks_module_and_zero_button() -> None:
+def test_collection_graph_only_swaps_the_teleop_tasks_and_zero_button() -> None:
     stock = teleop_webxr_dual_openyam
     ours = teleop_webxr_dual_openyam_collection
 
-    assert sorted(ours.remapping_map.values()) == sorted(stock.remapping_map.values())
+    assert sorted(map(str, ours.remapping_map.values())) == sorted(
+        map(str, stock.remapping_map.values())
+    )
     assert len(ours.blueprints) == len(stock.blueprints)
     for a, b in zip(ours.blueprints, stock.blueprints, strict=True):
         if b.module is ArmTeleopModule:
-            assert a.module is DualOpenYamCollectionTeleopModule
+            assert a.module is ArmTeleopModule
             assert a.kwargs == {**b.kwargs, "zero_button": DUAL_OPENYAM_COLLECTION_ZERO_BUTTON}
         elif b.module is DualOpenYamCoordinator:
             assert a.module is b.module
@@ -133,7 +116,7 @@ def test_collection_camera_streams_carry_the_camera_prefix(name: str) -> None:
 
     assert "serial_number" not in atom.kwargs
     assert atom.kwargs["enable_depth"] is False
-    remapped = {camera.remapping_map[(atom.name, s.name)] for s in atom.streams}
+    remapped = {str(camera.remapping_map[(atom.name, s.name)]) for s in atom.streams}
     assert f"{name}_color_image" in remapped
     assert all("/" not in stream for stream in remapped)
 
@@ -156,19 +139,19 @@ def test_profile_records_three_images_the_joints_and_the_commanded_targets() -> 
     assert profile.metadata == {"name": "dual-openyam-quest", "robot_type": "dual_openyam"}
 
 
-def test_quest_collection_records_first_and_takes_normal_configuration(tmp_path: Path) -> None:
-    modules = [atom.module for atom in dual_openyam_quest_collection.active_blueprints]
+def test_workcell_collection_records_first_and_takes_normal_configuration(tmp_path: Path) -> None:
+    modules = [atom.module for atom in dual_openyam_workcell_collection.active_blueprints]
     assert issubclass(modules[0], CollectionModule)
     assert modules[1] is EpisodeMonitorModule
     outputs = {
-        dual_openyam_quest_collection.remapping_map.get((atom.name, stream.name), stream.name)
-        for atom in dual_openyam_quest_collection.active_blueprints
+        dual_openyam_workcell_collection.remapping_map.get((atom.name, stream.name), stream.name)
+        for atom in dual_openyam_workcell_collection.active_blueprints
         for stream in atom.streams
         if stream.direction == "out"
     }
     assert set(dual_openyam_collection_profile("x").input_types()) <= outputs
 
-    parsed = BlueprintConfigParser(dual_openyam_quest_collection).parse(
+    parsed = BlueprintConfigParser(dual_openyam_workcell_collection).parse(
         [
             "--recorder.recording",
             str(tmp_path / "session"),
@@ -180,7 +163,9 @@ def test_quest_collection_records_first_and_takes_normal_configuration(tmp_path:
         environ={},
     )
     recorder = next(
-        atom for atom in dual_openyam_quest_collection.active_blueprints if atom.name == "recorder"
+        atom
+        for atom in dual_openyam_workcell_collection.active_blueprints
+        if atom.name == "recorder"
     )
     assert recorder.kwargs["recording_schema"].robot_type == "dual_openyam"
     assert parsed.module_configs["recorder"]["recording"] == tmp_path / "session"

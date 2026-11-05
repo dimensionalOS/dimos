@@ -25,7 +25,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     build_dual_openyam_webxr,
     dual_openyam_webxr_tasks,
 )
-from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollectionTeleopModule
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_JOINTS,
     DUAL_OPENYAM_LEFT_ARM_JOINTS,
@@ -53,7 +52,6 @@ def dual_openyam_collection_teleop_tasks() -> list[TaskConfig]:
 teleop_webxr_dual_openyam_collection = autoconnect(
     build_dual_openyam_webxr(
         teleop_tasks=dual_openyam_collection_teleop_tasks(),
-        teleop_module=DualOpenYamCollectionTeleopModule,
         zero_button=DUAL_OPENYAM_COLLECTION_ZERO_BUTTON,
     )
 )

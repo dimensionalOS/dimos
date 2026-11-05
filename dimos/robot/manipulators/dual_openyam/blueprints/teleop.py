@@ -102,12 +102,11 @@ def build_dual_openyam_webxr(
     *,
     visualization: ManipulationVisualizationConfig = ViserVisualizationConfig(),
     teleop_tasks: Sequence[TaskConfig] | None = None,
-    teleop_module: type[ArmTeleopModule] = ArmTeleopModule,
     zero_button: str | None = "B",
 ) -> Blueprint:
     """Compose dual-arm teleop with deployment-specific visualization and tuning."""
     return autoconnect(
-        teleop_module.blueprint(zero_button=zero_button),
+        ArmTeleopModule.blueprint(zero_button=zero_button),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
@@ -140,10 +139,10 @@ def build_dual_openyam_webxr(
         ),
     ).remappings(
         [
-            (teleop_module, "left_controller_output", "left_cartesian_command"),
-            (teleop_module, "left_gripper_command", "left_gripper_command"),
-            (teleop_module, "right_controller_output", "right_cartesian_command"),
-            (teleop_module, "right_gripper_command", "right_gripper_command"),
+            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
         ]
     )
 
