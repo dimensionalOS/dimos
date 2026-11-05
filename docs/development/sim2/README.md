@@ -7,8 +7,7 @@ engine operations. There is no separate Runtime/Simulation execution layer.
 UrdfManager -- shared model configuration --> SimModule / geometry consumers
 
 ActionCommand --> SimModule --> observations: WorldState --> sensor modules
-                      |                                 --> UrdfManager TF
-                      +--> clock: SimulationClock
+                                                        --> UrdfManager TF
 ```
 
 ## Directory and ownership
@@ -99,7 +98,7 @@ current properties from `read_cbor_observations()` without changing the module o
 The deployed extension test exercises this path over real DimOS transport.
 
 Input: `actions: ActionCommand`.
-Outputs: `observations: WorldState`, `clock: SimulationClock` (execution status).
+Output: `observations: WorldState`.
 RPCs: `inspect()`, `reset()` and `place(body_id, pose)` each return WorldState;
 `submit(command)` and `status()` handle commands/diagnostics. RPC requests execute
 on the owner thread between steps. No manual-step API or standalone executor.
