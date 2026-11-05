@@ -30,10 +30,10 @@ from dimos_lcm.sim_msgs import SimulationClock, WorldState
 
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
+from dimos.core.shared_config import ConfigSenders, SharedConfigModule, shared_config
 from dimos.core.stream import In, Out
+from dimos.sim2.cbor import validate_cbor_entries
 from dimos.sim2.description import SceneConfig
-from dimos.sim2.extensions import validate_cbor_entries
 from dimos.sim2.physics.interface import PhysicsBackend
 
 
@@ -53,7 +53,6 @@ class SimConfig(ModuleConfig):
     startup_timeout_s: float = 30.0
     pace_to_wall_time: bool = True
     observation_hz: float = 500
-    motion_frames: tuple[str, ...] = ()
     joint_ids: tuple[str, ...] = ()
 
 
@@ -99,6 +98,11 @@ class SimModule(SharedConfigModule):
 
     def config_receive(self, config_senders: ConfigSenders) -> None:
         self.config.scene = self.config.scene.resolve(config_senders)
+
+    @shared_config(SharedConfigModule)
+    def gravity(self) -> dict[str, Any]:
+        """Deliver the scene's fixed gravity to sensors before any module starts."""
+        return {"sim_gravity_world": self.config.scene.gravity_world}
 
     @rpc
     def start(self) -> None:
@@ -177,8 +181,6 @@ class SimModule(SharedConfigModule):
             controllers.add(controller.controller_id)
         if not set(c.joint_ids) <= set(self._backend.joint_ids):
             raise ValueError("unknown exported joint")
-        if not set(c.motion_frames) <= set(self._backend.body_ids):
-            raise ValueError("unknown exported rigid frame")
         for controller in c.controllers:
             if controller.period_ns % round(1e9 / c.observation_hz):
                 raise ValueError("observation schedule must include every control boundary")
@@ -199,23 +201,22 @@ class SimModule(SharedConfigModule):
 
     def _inspect(self) -> WorldState:
         """Capture one complete acquisition on the physics owner thread."""
-        poses = self._backend.read_body_poses()
-        motion = [self._backend.read_motion(frame) for frame in self.config.motion_frames]
+        bodies = self._backend.read_bodies()
         joints = self._backend.read_joints(self.config.joint_ids or self._backend.joint_ids)
-        extensions = self._backend.read_extensions()
+        cbor_observations = self._backend.read_cbor_observations()
         validate_cbor_entries(
-            extensions, {"world", *self._backend.body_ids, *self._backend.joint_ids}
+            cbor_observations, {"world", *self._backend.body_ids, *self._backend.joint_ids}
         )
+        header = self._header("sim/observations", "world")
+        joints.header = header
         return WorldState(
-            header=self._header("sim/observations", "world"),
+            header=header,
             model_revision=self.config.scene.revision,
-            body_poses_length=len(poses),
-            body_poses=poses,
-            body_motion_length=len(motion),
-            body_motion=motion,
+            bodies_length=len(bodies),
+            bodies=bodies,
             joint_truth=joints,
-            extensions_length=len(extensions),
-            extensions=extensions,
+            cbor_observations_length=len(cbor_observations),
+            cbor_observations=cbor_observations,
         )
 
     def _apply_commands(self) -> None:
@@ -239,11 +240,11 @@ class SimModule(SharedConfigModule):
                     continue
                 if not self._time_ns < command.valid_until_ns <= self._time_ns + 10_000_000_000:
                     raise ValueError("command validity must be in (0, 10] simulation seconds")
-                if command.joint_targets_length != len(command.joint_targets):
+                if command.joint_commands_length != len(command.joint_commands):
                     raise ValueError("invalid joint target count")
                 if command.cbor_commands_length != len(command.cbor_commands):
                     raise ValueError("invalid CBOR command count")
-                if not command.joint_targets and not command.cbor_commands:
+                if not command.joint_commands and not command.cbor_commands:
                     raise ValueError("empty action")
                 if command.based_on_time_ns > command.apply_at_ns:
                     raise ValueError("command cannot depend on a future measurement")
@@ -251,7 +252,7 @@ class SimModule(SharedConfigModule):
                     command.cbor_commands,
                     {"world", *self._backend.body_ids, *self._backend.joint_ids},
                 )
-                names = {t.joint_id for t in command.joint_targets}
+                names = {t.joint_id for t in command.joint_commands}
                 answered = []
                 for controller in self.config.controllers:
                     if names.intersection(controller.joint_ids):
@@ -266,7 +267,7 @@ class SimModule(SharedConfigModule):
                             raise ValueError("controlled joints require their exact current sample")
                         answered.append(controller.controller_id)
                 # Backend validates the whole action before changing any native state.
-                self._backend.apply_action(command.joint_targets, command.cbor_commands)
+                self._backend.apply_action(command.joint_commands, command.cbor_commands)
                 self._expires.update((n, command.valid_until_ns) for n in names)
                 # An unrelated CBOR operation is never a controller's motor reply.
                 self._answered.update((source, self._time_ns) for source in answered)
