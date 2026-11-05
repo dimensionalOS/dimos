@@ -1,0 +1,41 @@
+[package]
+name = "dimos-dds-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Generic DDS (ROS 2 CDR) to DimOS bridge as a native module"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_dds_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dds_bridge"
+path = "src/bin/dds_bridge.rs"
+
+# Publishes synthetic ROS 2 samples onto DDS, for checking a bridge end to end.
+[[bin]]
+name = "dds_bridge_publish"
+path = "src/bin/dds_bridge_publish.rs"
+
+[dependencies]
+byteorder = "1"
+cdr-encoding = "0.11"
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+futures = "0.3"
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+# Pure-rust DDS/RTPS: no system DDS libraries, so it cross-compiles like the rest of the crate.
+rustdds = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde-big-array = "0.5"
+serde_bytes = "0.11"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+
+# Not in the bake registry: its ports come from config, and bake reads them from this manifest.
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
