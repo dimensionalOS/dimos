@@ -284,23 +284,41 @@ def inspect_recording(
     status_stream: str = "status",
     config: DataPrepConfig | None = None,
 ) -> dict[str, Any]:
-    """Summarize a source recording, including an episode left open at EOF."""
+    """Summarize a source recording, including an episode left open at EOF.
+
+    With ``config``, episode extraction follows the recording's own schema
+    (``config.recording_schema.episodes``): the status stream the recorder
+    actually wrote, or explicit ``ranges`` for schema-configured episodes.
+    Without it, the standalone ``status_stream`` argument names the marker
+    stream (default ``"status"``).
+    """
     p = Path(path)
     store = _open_recording(p)
     try:
         stream_names = store.list_streams()
         stream_counts = {name: store.stream(name).count() for name in stream_names}
-        if status_stream in stream_names:
-            report = inspect_episodes(store, EpisodeExtractor(status_stream=status_stream))
+        extractor = (
+            config.recording_schema.episodes
+            if config is not None
+            else EpisodeExtractor(status_stream=status_stream)
+        )
+        if extractor.extractor == "ranges":
+            # Explicit (start, end) tuples; no status stream is required.
+            report = inspect_episodes(store, extractor)
+            effective_status_stream = None
+        elif extractor.status_stream in stream_names:
+            report = inspect_episodes(store, extractor)
+            effective_status_stream = extractor.status_stream
         else:
             report = None
+            effective_status_stream = None
         episodes = report.episodes if report is not None else []
         incomplete = report.incomplete if report is not None else []
         result: dict[str, Any] = {
             "format": "recording",
             "path": str(p),
             "streams": stream_counts,
-            "status_stream": status_stream if status_stream in stream_names else None,
+            "status_stream": effective_status_stream,
             "episodes": len(episodes),
             "saved_episodes": sum(episode.success for episode in episodes),
             "discarded_episodes": sum(not episode.success for episode in episodes),

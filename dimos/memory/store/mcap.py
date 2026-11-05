@@ -219,8 +219,29 @@ class McapStore(Store):
         super().__init__(**kwargs)
         self._codecs = dict(codecs or {})
         name_of = {topic: name for name, topic in (streams or {}).items()}  # topic -> override
-        with open(self.config.path, "rb") as f:
-            summary = make_reader(f).get_summary()
+        try:
+            with open(self.config.path, "rb") as f:
+                summary = make_reader(f).get_summary()
+        except FileNotFoundError:
+            raise  # a missing source must stay a plain missing-file error
+        except OSError as exc:
+            # A truncated or never-finalized file (e.g. an interrupted
+            # recording) has no footer, so the mcap reader fails its summary
+            # seek with a bare OSError. Name the actual problem and remedy.
+            raise ValueError(
+                f"Cannot open MCAP recording {self.config.path!r}: no readable summary "
+                "index — the file is truncated or was never finalized (for example an "
+                "interrupted recording). Recover and reindex it (e.g. `mcap recover`) "
+                "before opening it read-only."
+            ) from exc
+        if summary is None or summary.statistics is None:
+            # Stream names/counts come from the summary index; without it the
+            # store would silently report an empty recording. Refuse instead.
+            raise ValueError(
+                f"Cannot open MCAP recording {self.config.path!r}: no summary index — "
+                "stream metadata is unavailable. Reindex the file (e.g. `mcap recover` "
+                "or rewrite it with summary records) before opening it read-only."
+            )
         self._stream_topic: dict[str, str] = {}  # stream name -> topic
         self._available: dict[str, int] = {}  # stream name -> message count
         self._observation_uses_publish_time: dict[str, bool] = {}
@@ -228,62 +249,61 @@ class McapStore(Store):
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
-        if summary is not None and summary.statistics is not None:
-            for cid, ch in summary.channels.items():
-                count = summary.statistics.channel_message_counts.get(cid, 0)
-                name = name_of.get(ch.topic) or _slug(ch.topic)
-                taken = self._stream_topic.get(name)
-                if taken is not None and taken != ch.topic:
-                    # Two topics, one name. One port carrying two types is
-                    # the type's to tell apart (`shared` -> `shared_Imu`); two
-                    # ports folding to one slug is a naming decision for
-                    # `streams=`, not something to guess at.
-                    wire, had = _dimos_wire(ch.topic), _dimos_wire(taken)
-                    if wire is not None and had is not None and wire[0] == had[0]:
-                        name = f"{name}_{wire[1].__name__}"
-                    if self._stream_topic.get(name, ch.topic) != ch.topic:
-                        raise ValueError(
-                            f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
-                            " pass streams= to name them apart"
-                        )
-                payload_type = ch.metadata.get("dimos.payload_type")
+        for cid, ch in summary.channels.items():
+            count = summary.statistics.channel_message_counts.get(cid, 0)
+            name = name_of.get(ch.topic) or _slug(ch.topic)
+            taken = self._stream_topic.get(name)
+            if taken is not None and taken != ch.topic:
+                # Two topics, one name. One port carrying two types is
+                # the type's to tell apart (`shared` -> `shared_Imu`); two
+                # ports folding to one slug is a naming decision for
+                # `streams=`, not something to guess at.
+                wire, had = _dimos_wire(ch.topic), _dimos_wire(taken)
+                if wire is not None and had is not None and wire[0] == had[0]:
+                    name = f"{name}_{wire[1].__name__}"
+                if self._stream_topic.get(name, ch.topic) != ch.topic:
+                    raise ValueError(
+                        f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
+                        " pass streams= to name them apart"
+                    )
+            payload_type = ch.metadata.get("dimos.payload_type")
+            if (
+                decode_metadata
+                and ch.topic not in self._codecs
+                and payload_type
+                and ch.message_encoding
+                in {
+                    "jpeg",
+                    "lcm",
+                    "lz4+lcm",
+                }
+            ):
+                try:
+                    self._codecs[ch.topic] = cast(
+                        "StreamCodec", codec_from_id(ch.message_encoding, payload_type)
+                    )
+                except (ImportError, AttributeError) as exc:
+                    raise ImportError(
+                        f"Cannot decode MCAP stream {ch.topic!r}: install the package "
+                        f"providing {payload_type!r} in the dataset reader environment"
+                    ) from exc
+            if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
+                self._codecs[ch.topic] = JpegCodec()
+            if ch.topic not in self._codecs and ch.message_encoding == "json":
+                kind = JsonCodec.payload_type
                 if (
-                    decode_metadata
-                    and ch.topic not in self._codecs
-                    and payload_type
-                    and ch.message_encoding
-                    in {
-                        "jpeg",
-                        "lcm",
-                        "lz4+lcm",
-                    }
+                    ch.metadata.get("dimos.payload_type")
+                    == f"{kind.__module__}.{kind.__qualname__}"
                 ):
-                    try:
-                        self._codecs[ch.topic] = cast(
-                            "StreamCodec", codec_from_id(ch.message_encoding, payload_type)
-                        )
-                    except (ImportError, AttributeError) as exc:
-                        raise ImportError(
-                            f"Cannot decode MCAP stream {ch.topic!r}: install the package "
-                            f"providing {payload_type!r} in the dataset reader environment"
-                        ) from exc
-                if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
-                    self._codecs[ch.topic] = JpegCodec()
-                if ch.topic not in self._codecs and ch.message_encoding == "json":
-                    kind = JsonCodec.payload_type
-                    if (
-                        ch.metadata.get("dimos.payload_type")
-                        == f"{kind.__module__}.{kind.__qualname__}"
-                    ):
-                        self._codecs[ch.topic] = JsonCodec()
-                self._stream_topic[name] = ch.topic
-                self._available[name] = count
-                self._observation_uses_publish_time[name] = (
-                    ch.metadata.get("dimos.observation_time") == "publish_time"
-                )
-                if ch.topic not in self._codecs and _dimos_wire(ch.topic) is None:
-                    sch = summary.schemas.get(ch.schema_id)
-                    self._raw[name] = sch.name if sch else None
+                    self._codecs[ch.topic] = JsonCodec()
+            self._stream_topic[name] = ch.topic
+            self._available[name] = count
+            self._observation_uses_publish_time[name] = (
+                ch.metadata.get("dimos.observation_time") == "publish_time"
+            )
+            if ch.topic not in self._codecs and _dimos_wire(ch.topic) is None:
+                sch = summary.schemas.get(ch.schema_id)
+                self._raw[name] = sch.name if sch else None
 
     def list_streams(self) -> list[str]:
         return sorted(set(self._available) | set(self._streams))
