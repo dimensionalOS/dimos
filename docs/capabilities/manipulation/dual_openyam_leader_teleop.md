@@ -130,6 +130,7 @@ dimos run dual-openyam-leader-collection --config workcell.json \
   --port-left /dev/ttyACM1 --port-right /dev/ttyACM0 \
   --yamleaderteleopmodule.gripper-travel-radians 1.5 \
   --left-can-port follower_l --right-can-port follower_r \
+  --recorder.recording recordings/leader-001 \
   --episodes.task "stack the cups"
 dimos imitation control
 ```
