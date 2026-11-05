@@ -16,7 +16,7 @@ from queue import Queue
 
 import cbor2
 from dimos_lcm.control_msgs import CborCommand
-from dimos_lcm.sim_msgs import CborExtension, WorldState
+from dimos_lcm.sim_msgs import CborObservation, WorldState
 import pytest
 
 from dimos.sim2.geometry.poses import poses_by_id
@@ -111,6 +111,7 @@ def test_command_expiry_holds_motor_and_reset_rejects_previous_epoch(make_sim, c
     wait_until(lambda: sim.status()["rejected_commands"] == 1, timeout=3)
     assert reset.header.epoch == header.epoch + 1
     assert reset.header.time_ns == 0
+    assert reset.joint_truth.header.lcm_encode() == reset.header.lcm_encode()
     joints = sim.inspect().joint_truth
     assert joints.position[joints.name.index("right/slide_x")] == pytest.approx(0)
 
@@ -130,15 +131,14 @@ def test_place_is_atomic_and_invalidates_old_samples(controlled):
 class ExtendedMujocoBackend(MujocoBackend):
     """Test a backend-owned optional property through the real module/transport."""
 
-    def read_extensions(self):
+    def read_cbor_observations(self):
         if self.data.time > 0:
             return []
         value = cbor2.dumps({"temperature_c": 21.5})
         return [
-            CborExtension(
+            CborObservation(
                 entity_id="box",
                 key="thermal",
-                schema="example.thermal.v1",
                 value_length=len(value),
                 value=value,
             )
@@ -151,21 +151,22 @@ def test_complete_state_replaces_extensions_and_keeps_one_acquisition(make_sim, 
         backend_type=ExtendedMujocoBackend,
         controllers=(ControllerConfig("test", 20_000_000, ("left/slide_x",)),),
         observation_hz=50,
-        motion_frames=("left/imu",),
         on_observations=samples.put,
     )
     first = samples.get(timeout=5)
     assert isinstance(first, WorldState)
     assert first.header.time_ns == 0
-    assert cbor2.loads(bytes(first.extensions[0].value)) == {"temperature_c": 21.5}
+    assert cbor2.loads(bytes(first.cbor_observations[0].value)) == {"temperature_c": 21.5}
     sim.submit(command(first.header))
     while (second := samples.get(timeout=5)).header.time_ns == 0:
         pass
     assert second.header.time_ns == 20_000_000
-    assert second.extensions_length == 0 and second.extensions == []
+    assert second.cbor_observations_length == 0 and second.cbor_observations == []
     assert second.model_revision == first.model_revision
-    assert {p.body_id for p in second.body_poses} == {p.body_id for p in first.body_poses}
-    assert second.body_motion[0].frame_id == "left/imu"
+    assert first.joint_truth.header.lcm_encode() == first.header.lcm_encode()
+    assert second.joint_truth.header.lcm_encode() == second.header.lcm_encode()
+    assert {p.body_id for p in second.bodies} == {p.body_id for p in first.bodies}
+    assert "left/imu" in {b.body_id for b in second.bodies}
     joints = second.joint_truth
     q = joints.position[joints.name.index("left/slide_x")]
     assert poses_by_id(second)["left/carriage"].position.x == pytest.approx(-0.4 + q)
@@ -178,13 +179,12 @@ class CommandMujocoBackend(MujocoBackend):
         super().reset()
         self.count = 0
 
-    def apply_action(self, joint_targets, cbor_commands):
+    def apply_action(self, joint_commands, cbor_commands):
         increments = []
         for command in cbor_commands:
-            if (command.entity_id, command.key, command.schema) != (
+            if (command.entity_id, command.key) != (
                 "world",
                 "increment",
-                "example.increment.v1",
             ):
                 raise ValueError("unsupported test operation")
             value = cbor2.loads(bytes(command.value))
@@ -192,16 +192,15 @@ class CommandMujocoBackend(MujocoBackend):
                 raise ValueError("increment requires an integer")
             increments.append(value)
         # Both CBOR semantics and joint targets must validate before any effect.
-        super().apply_action(joint_targets, [])
+        super().apply_action(joint_commands, [])
         self.count += sum(increments)
 
-    def read_extensions(self):
+    def read_cbor_observations(self):
         value = cbor2.dumps(self.count)
         return [
-            CborExtension(
+            CborObservation(
                 entity_id="world",
                 key="count",
-                schema="example.count.v1",
                 value_length=len(value),
                 value=value,
             )
@@ -213,14 +212,13 @@ def cbor_action(command):
     def make(header, *, with_joints=False):
         action = command(header)
         if not with_joints:
-            action.joint_targets = []
-            action.joint_targets_length = 0
+            action.joint_commands = []
+            action.joint_commands_length = 0
         value = cbor2.dumps(1)
         action.cbor_commands = [
             CborCommand(
                 entity_id="world",
                 key="increment",
-                schema="example.increment.v1",
                 value_length=len(value),
                 value=value,
             )
@@ -242,51 +240,54 @@ def test_cbor_stream_executes_once_and_cannot_release_motor_boundary(
     first = sim.inspect()
     action = cbor_action(first.header)
     actions.publish(action)
-    wait_until(lambda: cbor2.loads(bytes(sim.inspect().extensions[0].value)) == 1, timeout=3)
+    wait_until(lambda: cbor2.loads(bytes(sim.inspect().cbor_observations[0].value)) == 1, timeout=3)
     actions.publish(action)
     wait_until(lambda: sim.status()["rejected_commands"] == 1, timeout=3)
     held = sim.inspect()
     assert held.header.time_ns == 0
-    assert cbor2.loads(bytes(held.extensions[0].value)) == 1
+    assert cbor2.loads(bytes(held.cbor_observations[0].value)) == 1
     motors = command(held.header)
     motors.header.sequence += 1
     actions.publish(motors)
     wait_until(lambda: sim.status()["time_ns"] == 20_000_000, timeout=3)
     assert sim.status()["error"] == ""
-    assert cbor2.loads(bytes(sim.reset().extensions[0].value)) == 0
+    assert cbor2.loads(bytes(sim.reset().cbor_observations[0].value)) == 0
 
 
-@pytest.mark.parametrize("invalid", ["schema", "joint", "bytes", "empty", "expired"])
+@pytest.mark.parametrize("invalid", ["key", "payload", "joint", "bytes", "empty", "expired"])
 def test_invalid_action_has_no_partial_effect(make_sim, cbor_action, invalid):
     sim = make_sim(
         backend_type=CommandMujocoBackend,
         controllers=(ControllerConfig("test", 20_000_000, ("left/slide_x",)),),
     )
     action = cbor_action(sim.inspect().header, with_joints=True)
-    if invalid == "schema":
-        action.cbor_commands[0].schema = "unknown.v1"
+    if invalid == "key":
+        action.cbor_commands[0].key = "unknown"
+    elif invalid == "payload":
+        action.cbor_commands[0].value = cbor2.dumps("wrong type")
+        action.cbor_commands[0].value_length = len(action.cbor_commands[0].value)
     elif invalid == "joint":
-        action.joint_targets[0].position = 999
+        action.joint_commands[0].position = 999
     elif invalid == "bytes":
         action.cbor_commands[0].value = b"\x01\x02"
         action.cbor_commands[0].value_length = 2
     elif invalid == "empty":
-        action.joint_targets = action.cbor_commands = []
-        action.joint_targets_length = action.cbor_commands_length = 0
+        action.joint_commands = action.cbor_commands = []
+        action.joint_commands_length = action.cbor_commands_length = 0
     else:
         action.valid_until_ns = 0
     sim.submit(action)
     wait_until(lambda: sim.status()["rejected_commands"] == 1, timeout=3)
     rejected = sim.inspect()
     assert rejected.header.time_ns == 0
-    assert cbor2.loads(bytes(rejected.extensions[0].value)) == 0
+    assert cbor2.loads(bytes(rejected.cbor_observations[0].value)) == 0
     # Rejection consumes no sequence and changes no motor settings: a valid
     # replacement at the same boundary is accepted and advances physics.
     accepted = cbor_action(rejected.header, with_joints=True)
-    accepted.joint_targets[0].position = 0
+    accepted.joint_commands[0].position = 0
     sim.submit(accepted)
     wait_until(lambda: sim.status()["time_ns"] == 20_000_000, timeout=3)
     after = sim.inspect()
-    assert cbor2.loads(bytes(after.extensions[0].value)) == 1
+    assert cbor2.loads(bytes(after.cbor_observations[0].value)) == 1
     joints = after.joint_truth
     assert joints.position[joints.name.index("left/slide_x")] == pytest.approx(0)
