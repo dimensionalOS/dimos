@@ -20,14 +20,23 @@ collision boxes. Passive +Z hinge, .4 kg panel, COM (.225,0,.15), +/-1.5 rad sto
 These Python builders own temporary URDFs; they are not distributed robot assets.
 """
 
+from contextlib import ExitStack
 import math
 from pathlib import Path
+import uuid
 import xml.etree.ElementTree as ET
 
+from dimos_lcm.common_msgs import SampleHeader
+from dimos_lcm.control_msgs import ActionCommand, JointCommand
+from dimos_lcm.sim_msgs import WorldState
+from dimos_lcm.std_msgs import Header, Time
 import pytest
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.assets.model import RobotModel
 from dimos.sim2.description import Drive, Instance, SceneConfig
+from dimos.sim2.module import SimModule
+from dimos.sim2.physics.mujoco import MujocoBackend
 
 
 def _box_link(
@@ -140,3 +149,119 @@ def world(tmp_path: Path) -> SceneConfig:
             ),
         ),
     )
+
+
+@pytest.fixture
+def backend(world):
+    backend = MujocoBackend()
+    backend.load(world, 2_000_000)
+    try:
+        yield backend
+    finally:
+        backend.close()
+
+
+@pytest.fixture
+def poses(backend, world):
+    def capture(time_ns=0, epoch=0):
+        bodies = backend.read_bodies()
+        header = SampleHeader(
+            clock_id="test",
+            epoch=epoch,
+            time_ns=time_ns,
+            source_id="sim/observations",
+            frame_id="world",
+        )
+        joints = backend.read_joints(backend.joint_ids)
+        sec, nsec = divmod(time_ns, 1_000_000_000)
+        joints.header = Header(stamp=Time(sec=sec, nsec=nsec))
+        return WorldState(
+            header=header,
+            model_revision=world.revision,
+            bodies_length=len(bodies),
+            bodies=bodies,
+            joint_truth=joints,
+        )
+
+    return capture
+
+
+@pytest.fixture
+def make_sim(world, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    with ExitStack() as cleanup:
+
+        def deploy(
+            *, on_observations=None, backend_type=MujocoBackend, with_actions=False, **settings
+        ):
+            blueprint = SimModule.blueprint(
+                scene=world, backend=backend_type, **settings
+            ).global_config(
+                viewer="none",
+                transport="zenoh",
+                n_workers=1,
+                zenoh_domain="sim2-owner-test-" + uuid.uuid4().hex,
+            )
+            coordinator = ModuleCoordinator.build(blueprint)
+            cleanup.callback(coordinator.stop)
+            if on_observations is not None:
+                transport = coordinator.transports[("observations", WorldState)]
+                cleanup.callback(transport.stop)
+                cleanup.callback(transport.subscribe(on_observations))
+            sim = coordinator.get_instance(SimModule)
+            if with_actions:
+                actions = coordinator.transports[("actions", ActionCommand)]
+                cleanup.callback(actions.stop)
+                return sim, actions
+            return sim
+
+        yield deploy
+
+
+@pytest.fixture
+def motor_commands():
+    def make(
+        names=("left/slide_x",), positions=(0.2,), velocity=0.0, kp=200.0, kd=20.0, effort=0.0
+    ):
+        return [
+            JointCommand(
+                joint_names_length=len(names),
+                joint_names=list(names),
+                interface_name=interface,
+                values_length=len(values),
+                values=list(values),
+            )
+            for interface, values in (
+                ("position", positions),
+                ("velocity", [velocity] * len(names)),
+                ("kp", [kp] * len(names)),
+                ("kd", [kd] * len(names)),
+                ("effort", [effort] * len(names)),
+            )
+        ]
+
+    return make
+
+
+@pytest.fixture
+def command(motor_commands):
+    def make(
+        header, names=("left/slide_x",), positions=(0.2,), ttl=2.0, kp=200.0, kd=20.0, effort=0.0
+    ):
+        return ActionCommand(
+            header=SampleHeader(
+                clock_id=header.clock_id,
+                epoch=header.epoch,
+                time_ns=header.time_ns,
+                source_id="test",
+                sequence=header.sequence,
+            ),
+            based_on_time_ns=header.time_ns,
+            apply_at_ns=header.time_ns,
+            valid_until_ns=header.time_ns + round(ttl * 1e9),
+            joint_commands_length=5,
+            joint_commands=motor_commands(names, positions, kp=kp, kd=kd, effort=effort),
+        )
+
+    return make
