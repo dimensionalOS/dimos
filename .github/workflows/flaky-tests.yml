@@ -1,0 +1,26 @@
+name: flaky-tests
+on:
+  schedule:
+    - cron: '0 7 * * *'  # Daily, 07:00 UTC.
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  flaky-tests:
+    # A test that failed on the pull requests of several authors in the last
+    # day is flaky (or broken on main); file an issue so someone looks.
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+      issues: write  # To file the flaky tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: List the tests that failed across pull requests and file issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 bin/ci/flaky-tests --days 1 --create-issues
