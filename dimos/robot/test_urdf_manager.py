@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 from pathlib import Path
+import threading
 from typing import Any, cast
 
 from dimos_lcm.common_msgs import SampleHeader
@@ -27,6 +29,7 @@ import numpy as np
 from open3d.core import Tensor
 import pinocchio as pin
 import pytest
+from reactivex.subject import Subject
 import trimesh
 
 from dimos.msgs.files.File import File
@@ -441,8 +444,7 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
         )
 
 
-@pytest.mark.asyncio
-async def test_rolling_self_filter_uses_capture_state_and_rejects_previous_reset(make_filter):
+def test_rolling_self_filter_uses_capture_state_and_rejects_previous_reset(make_filter):
     module = make_filter(urdf_xml=_joint_robot("prismatic"), publish_joint_tf=False)
 
     def observation(time_ns, position, epoch=0):
@@ -453,8 +455,8 @@ async def test_rolling_self_filter_uses_capture_state_and_rejects_previous_reset
             joint_truth=LCMJointState(name=["shoulder"], position=[position]),
         )
 
-    await module.handle_observations(observation(1_000_000_000, 0.0))
-    await module.handle_observations(observation(1_050_000_000, 0.5))
+    module._on_observations(observation(1_000_000_000, 0.0))
+    module._on_observations(observation(1_050_000_000, 0.5))
     cloud = PointCloud2.from_numpy(
         np.array([[0, 0, 0], [0.5, 0, 0], [2, 0, 0]], dtype=np.float32),
         frame_id="world",
@@ -468,14 +470,14 @@ async def test_rolling_self_filter_uses_capture_state_and_rejects_previous_reset
     np.testing.assert_array_equal(filtered.lines_u8(), [3])
     assert filtered.sample_header.lcm_encode() == cloud.sample_header.lcm_encode()
 
-    await module.handle_observations(observation(1_000_000_000, 2.0, epoch=1))
+    module._on_observations(observation(1_000_000_000, 2.0, epoch=1))
     assert module.filter_cloud(cloud) is None
     cloud.with_sample_header(
         SampleHeader(clock_id="sim", epoch=1, time_ns=1_000_000_000, frame_id="world")
     )
     # The second firing lacks matching state in the new epoch: never reuse the old poses.
     assert module.filter_cloud(cloud) is None
-    await module.handle_observations(observation(1_050_000_000, 2.0, epoch=1))
+    module._on_observations(observation(1_050_000_000, 2.0, epoch=1))
     filtered = module.filter_cloud(cloud)
     assert filtered is not None
     np.testing.assert_allclose(filtered.points_f32(), [[0, 0, 0], [0.5, 0, 0]])
@@ -489,3 +491,48 @@ def test_visual_self_filter_covers_visual_only_parts_without_changing_source_mod
     assert filtered is not None
     np.testing.assert_allclose(filtered.points_f32(), [[2, 0, 0]])
     assert "<collision>" not in module._description.xml
+
+
+def test_rolling_self_filter_keeps_capture_history_while_tf_dispatch_is_busy(make_filter, mocker):
+    module = make_filter(urdf_xml=_joint_robot("prismatic"), publish_joint_tf=False)
+    with ExitStack() as cleanup:
+        observations = Subject()
+        cleanup.callback(observations.dispose)
+        for name, port in {**module.inputs, **module.ios}.items():
+            subject = observations if name == "observations" else Subject()
+            cleanup.callback(subject.dispose)
+            mocker.patch.object(
+                port,
+                "subscribe",
+                side_effect=lambda cb, subject=subject: subject.subscribe(cb).dispose,
+            )
+        cleanup.callback(module.stop)
+        module.start()
+        blocked, release = threading.Event(), threading.Event()
+
+        async def busy_loop():
+            blocked.set()
+            assert release.wait(5)
+
+        future = module.spawn(busy_loop())
+        cleanup.callback(lambda: future.result(timeout=5))
+        cleanup.callback(release.set)
+        assert blocked.wait(5)
+        # The middle pose is needed to remove the arm halfway through this scan.
+        for offset, position in ((0, 0.0), (50_000_000, 0.5), (100_000_000, 1.0)):
+            observations.on_next(
+                WorldState(
+                    header=SampleHeader(clock_id="sim", time_ns=1_000_000_000 + offset),
+                    bodies_length=1,
+                    bodies=[BodyState(body_id="base", pose=Pose(orientation=LCMQuaternion(w=1)))],
+                    joint_truth=LCMJointState(name=["shoulder"], position=[position]),
+                )
+            )
+        cloud = PointCloud2.from_numpy(
+            np.array([[0, 0, 0], [0.5, 0, 0], [2, 0, 0]], dtype=np.float32),
+            frame_id="world",
+            offset_times=np.array([0, 50_000_000, 50_000_000], dtype=np.uint32),
+        ).with_sample_header(SampleHeader(clock_id="sim", time_ns=1_000_000_000, frame_id="world"))
+        filtered = module.filter_cloud(cloud)
+        assert filtered is not None
+        np.testing.assert_allclose(filtered.points_f32(), [[2, 0, 0]])

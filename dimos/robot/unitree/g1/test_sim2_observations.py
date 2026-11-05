@@ -14,7 +14,6 @@
 
 """Real G1 geometry and GR00T weights through ordinary worker/transport lifecycle."""
 
-import asyncio
 from collections import defaultdict, deque
 from contextlib import ExitStack
 from dataclasses import replace
@@ -180,7 +179,7 @@ def test_g1_mid360_mount_observes_the_floor_instead_of_its_head():
                 bodies=bodies,
                 joint_truth=backend.read_joints(JOINTS),
             )
-            asyncio.run(self_filter.handle_observations(state))
+            self_filter._on_observations(state)
             scan = lidar.measure(state)
         assert scan is not None
         raw, world = scan

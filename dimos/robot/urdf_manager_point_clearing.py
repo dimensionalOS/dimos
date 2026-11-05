@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Mapping
+import threading
 import time
 from typing import Literal, Protocol
 
@@ -26,8 +27,10 @@ from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
+from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
+from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -68,28 +71,33 @@ class UrdfManagerPointClearing(UrdfManager):
         self._base_link = self._description.root_link
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._observations: deque[WorldState] = deque(maxlen=4096)
+        self._observations_lock = threading.Lock()
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
-    async def handle_observations(self, sample: WorldState) -> None:
-        """Keep capture-time simulation poses for self-filtering, then publish TF as usual."""
-        # This callback runs on the module event loop. Filtering takes a tuple
-        # snapshot of the deque, so it never holds up observation/encoder dispatch.
-        if self._observations:
-            last = self._observations[-1].header
-            if sample.header.clock_id != last.clock_id:
-                raise ValueError("self-filter clock changed; restart its binding")
-            if sample.header.epoch < last.epoch:
-                return
-            if sample.header.epoch > last.epoch:
-                self._observations.clear()
-            elif sample.header.time_ns <= last.time_ns:
-                return
-        self._observations.append(sample)
-        cutoff = sample.header.time_ns - round(self.config.state_history_s * 1e9)
-        while len(self._observations) > 1 and self._observations[0].header.time_ns < cutoff:
-            self._observations.popleft()
-        await super().handle_observations(sample)
+    @rpc
+    def start(self) -> None:
+        # Capture history directly; the inherited async handler may coalesce TF updates.
+        self.register_disposable(Disposable(self.observations.subscribe(self._on_observations)))
+        super().start()
+
+    def _on_observations(self, sample: WorldState) -> None:
+        """Retain capture-time poses independently of TF publication and cloud filtering."""
+        with self._observations_lock:
+            if self._observations:
+                last = self._observations[-1].header
+                if sample.header.clock_id != last.clock_id:
+                    raise ValueError("self-filter clock changed; restart its binding")
+                if sample.header.epoch < last.epoch:
+                    return
+                if sample.header.epoch > last.epoch:
+                    self._observations.clear()
+                elif sample.header.time_ns <= last.time_ns:
+                    return
+            self._observations.append(sample)
+            cutoff = sample.header.time_ns - round(self.config.state_history_s * 1e9)
+            while len(self._observations) > 1 and self._observations[0].header.time_ns < cutoff:
+                self._observations.popleft()
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
         """Filter the latest capture without starving TF transport callbacks."""
@@ -177,7 +185,8 @@ class UrdfManagerPointClearing(UrdfManager):
         Raw sensor-axis clouds and truth-registered world clouds are supported.
         Estimated/deskewed clouds must be filtered before the estimator instead.
         """
-        history = tuple(self._observations)
+        with self._observations_lock:
+            history = tuple(self._observations)
         if not history:
             return None
         header = cloud.sample_header
