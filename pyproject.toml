@@ -312,6 +312,10 @@ manipulation = [
     "dimos[planning,base,sim,cpu]",
 ]
 
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+]
+
 cpu = [
     # CPU inference backends. >=1.21 for onnxruntime.preload_dlls().
     "onnxruntime>=1.21",
@@ -789,6 +793,8 @@ module = [
     "reportlab",
     "reportlab.*",
     "sam2.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "scipy",
     "scipy.*",
     "sensor_msgs.*",
