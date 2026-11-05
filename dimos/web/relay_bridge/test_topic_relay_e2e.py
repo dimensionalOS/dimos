@@ -32,9 +32,9 @@ import zenoh
 from dimos.protocol.service.zenoh_wire import make_zenoh_config
 from dimos.utils.asyncio_timeout import timeout
 from dimos.utils.deno import ensure_deno
-from dimos.web.relay_bridge import topic_service, topic_transform
+from dimos.web.relay_bridge import topic_service, topic_transform, wt_client
 from dimos.web.relay_bridge.locate import relay_run_cmd
-from dimos.web.relay_bridge.protocol import FrameHeader, ProtocolError, encode_data_frame
+from dimos.web.relay_bridge.protocol import FrameHeader, Ping, ProtocolError, encode_data_frame
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.topic_metadata import METADATA_PREFIX, DescriptorSnapshot
 from dimos.web.relay_bridge.topic_profiles import PROFILE_OPTIONS
@@ -1569,3 +1569,73 @@ async def test_direct_video_provider_shutdown_ends_the_track(relay: RelayReadyIn
             async with timeout(10):
                 assert await ended in ("closed", "failed")
             assert (await next_message(viewer.client, TopicError)).code == "source_offline"
+
+
+async def test_sole_video_viewer_changes_size_with_an_idr_on_the_same_peer(relay):
+    with local_session() as session:
+        async with (
+            provider_connection(relay, session, video=True) as provider,
+            video_viewer(relay, "sensor/adapt") as viewer,
+        ):
+            await viewer.offer()
+            with publish_camera(session, "sensor/adapt", 60):
+                before = await viewer.frames(3)
+                track = await viewer.track
+                assert provider._video is not None
+                peers = dict(provider._video.peers)
+                viewer.client.send_control(
+                    TopicUpdate(
+                        id=viewer.ready.id,
+                        revision=1,
+                        options=TopicOptions(maxResolution=[160, 120], maxBitrate=200_000),
+                    )
+                )
+                applied = await next_message(viewer.client, TopicApplied)
+                assert applied.settings.maxBitrate == 200_000
+                async with timeout(5):
+                    while True:
+                        changed = await track.recv()
+                        if changed.width == 160:
+                            break
+                assert changed.height == 120
+                assert changed.key_frame
+                assert changed.pts > before[-1].pts
+                assert provider._video.peers == peers
+                assert await viewer.track is track
+                assert len(await viewer.frames(5)) == 5
+
+
+async def test_slow_topic_viewer_sees_congestion_resets_in_pong(relay, source, mocker):
+    configure = wt_client.make_quic_configuration
+
+    def limited(*args, **kwargs):
+        config = configure(*args, **kwargs)
+        config.max_stream_data = 64 * 1024
+        return config
+
+    mocker.patch.object(wt_client, "make_quic_configuration", side_effect=limited)
+    async with await RelayClient.connect(relay.wt_url, "viewer") as viewer:
+        await viewer.hello(topics=True)
+        await next_message(viewer, TopicSources)
+        quic = viewer._session._quic
+        write_limits = quic._write_stream_limits
+
+        def stalled(builder, space, stream):
+            # Freeze receive credit on server-initiated unidirectional streams
+            # only. Control remains readable, like a viewer not draining media.
+            if stream.stream_id % 4 != 3:
+                write_limits(builder, space, stream)
+
+        mocker.patch.object(quic, "_write_stream_limits", side_effect=stalled)
+        await subscribe_camera(viewer, "slow/payload", profile="raw")
+        async with timeout(6):
+            for n in itertools.count(1):
+                source.put("slow/payload", bytes(256 * 1024))
+                waiter = viewer._session.register_pong_waiter(n)
+                viewer.send_control(Ping(n=n, ts=0))
+                pong = await waiter
+                if pong.aborted and pong.aborted > 0:
+                    break
+                await asyncio.sleep(0.05)
+        assert pong.aborted > 0
+        assert not viewer.is_closed
