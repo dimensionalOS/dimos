@@ -40,6 +40,9 @@ class LidarModuleConfig(PoseSensorConfig):
 class SimLidarModule(_PoseSensorModule):
     config: LidarModuleConfig
     lidar: Out[PointCloud2]
+    # Privileged, truth-registered hits for inspection/mapping without SLAM.
+    # Never connect this stream to a lidar-inertial estimator.
+    pointcloud: Out[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -54,15 +57,16 @@ class SimLidarModule(_PoseSensorModule):
         ):
             raise ValueError("invalid lidar timing/range model")
         self._pattern = c.pattern()
+        self._response = c.response() if c.response is not None else None
         self._history: deque[WorldState] = deque()
         self._sampling = Acquisition(c.scan_hz)
         self._epoch = -1
 
     def open_sensor(self, scene: SceneConfig) -> None:
         self.raycaster = self.config.raycaster()
-        self.raycaster.load(scene)
+        self.raycaster.load(scene, self.config.sensor.excluded_bodies)
 
-    def measure(self, sample: WorldState) -> PointCloud2 | None:
+    def measure(self, sample: WorldState) -> tuple[PointCloud2, PointCloud2] | None:
         c = self.config.sensor
         # Check the clock even when a scan is not due.
         due = self._sampling.due(sample.header)
@@ -86,12 +90,12 @@ class SimLidarModule(_PoseSensorModule):
         if start < self._history[0].header.time_ns:
             self.count("gaps")
             return None
-        directions, offsets = self._pattern.rays(start, duration)
+        directions, offsets, lines = self._pattern.rays(start, duration)
         # Piecewise-held geometry at a bounded physical sample interval.
         # Keep each point's actual acquisition time, never scan-publication time.
         interval = round(1e9 / c.motion_hz)
         buckets = offsets // interval
-        points, times = [], []
+        raw_points, world_points, times, channels = [], [], [], []
         for bucket in np.unique(buckets):
             indices = np.flatnonzero(buckets == bucket)
             stamp = start + int(offsets[indices[0]])
@@ -104,28 +108,49 @@ class SimLidarModule(_PoseSensorModule):
             rotation = Rotation.from_quat(pose[3:]).as_matrix()
             world_rays = directions[indices] @ rotation.T
             origins = np.broadcast_to(pose[:3], world_rays.shape).copy()
-            distance = self.raycaster.cast(origins, world_rays, c.frame_id)
+            distance, normals = self.raycaster.cast(origins, world_rays, c.frame_id)
             rng = np.random.default_rng([c.seed, sample.header.epoch, stamp])
-            distance = distance + rng.normal(0, c.range_std, len(distance))
+            hit = distance >= 0
+            if self._response is not None:
+                distance = self._response.measure(
+                    distance, np.einsum("ij,ij->i", world_rays, normals), rng
+                )
+                hit &= distance >= 0
+            distance = np.where(hit, distance + rng.normal(0, c.range_std, len(distance)), -1)
             keep = (distance >= c.min_range) & (distance <= c.max_range)
-            points.append(origins[keep] + world_rays[keep] * distance[keep, None])
+            raw_points.append(directions[indices[keep]] * distance[keep, None])
+            world_points.append(origins[keep] + world_rays[keep] * distance[keep, None])
             times.append(offsets[indices[keep]])
-        # World coordinates retain motion distortion and don't pretend all rays
-        # were taken at one moving sensor pose. Per-point offsets remain explicit.
-        header = measurement_header(sample.header, c.source_id, "world")
+            channels.append(lines[indices[keep]])
+        # Each raw point is in the sensor axes at its own firing time. No
+        # simulator pose is used to deskew these estimator inputs.
+        header = measurement_header(sample.header, c.source_id, c.frame_id)
         header.time_ns = start
-        cloud = PointCloud2.from_numpy(
-            np.concatenate(points).astype(np.float32),
+        offsets_out = np.concatenate(times).astype(np.uint32)
+        raw = PointCloud2.from_numpy(
+            np.concatenate(raw_points).astype(np.float32),
+            frame_id=c.frame_id,
+            timestamp=start / 1e9,
+            offset_times=offsets_out,
+            lines=np.concatenate(channels),
+            tags=np.zeros(len(offsets_out), dtype=np.uint8),
+        ).with_sample_header(header)
+        world_header = measurement_header(header, c.source_id, "world")
+        world = PointCloud2.from_numpy(
+            np.concatenate(world_points).astype(np.float32),
             frame_id="world",
             timestamp=start / 1e9,
-            offset_times=np.concatenate(times).astype(np.uint32),
-        )
-        return cloud.with_sample_header(header)
+            offset_times=offsets_out,
+        ).with_sample_header(world_header)
+        return raw, world
 
     def acquire(self, sample: WorldState, *, latest: bool = True) -> None:
-        cloud = self.measure(sample)
-        if cloud is not None and latest:
-            self.lidar.publish(cloud)
+        clouds = self.measure(sample)
+        if clouds is not None:
+            raw, world = clouds
+            self.lidar.publish(raw)
+            if self.config.sensor.publish_truth:
+                self.pointcloud.publish(world)
             self.count("acquisitions")
 
     def close_sensor(self) -> None:

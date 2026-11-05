@@ -138,7 +138,8 @@ controller boundaries must align with the observation schedule. Physics waits fo
 the matching command, with a finite host-time timeout; it never resets automatically.
 
 `pace_to_wall_time=False` removes real-time pacing. Required controller replies
-still gate progress. Camera/lidar currently allow skipped samples/output when busy;
+still gate progress. Camera can skip output when busy; lidar emits completed scans
+but drops scans when its bounded pose history has gaps;
 lossless accelerated sensing/backpressure is not implemented. Observation queue
 overflow faults explicitly. This is not a measured speedup claim.
 
@@ -147,6 +148,14 @@ applies bias/noise. Ideal orientation is opt-in. Encoders select named joints an
 apply calibration/quantization/noise; effort is unavailable. Both cache repeated
 acquisitions. Camera and lidar maintain geometry-only scenes from the same models;
 they never step a second dynamics trajectory. Lidar checks pose-history coverage.
+Its `lidar: Out[PointCloud2]` contains raw sensor-axis points, scan-start time,
+per-point firing offsets and laser-channel IDs. Its optional
+`pointcloud: Out[PointCloud2]` contains the same hits registered in world using
+simulation truth; it is for inspection, not an estimator input. The raycaster
+returns distances and surface normals. `Mid360Scan` defines directions/times;
+`Mid360Returns` applies the reused approximate range-noise and incidence-dropout
+model. Device configuration and optical exclusions belong to the sensor, not
+the physics backend. See the G1 guide for both truth and Point-LIO mapping paths.
 
 ## Run and test
 
