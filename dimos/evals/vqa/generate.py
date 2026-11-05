@@ -16,24 +16,35 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+import hashlib
 import json
+import os
 from pathlib import Path
-import re
+import shutil
 import tempfile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
+from dimos.evals.vqa.clip import (
+    clip_duration_s,
+    dense_clip_around,
+    ego_memory_clip,
+    format_clip_span,
+    write_image_clip,
+)
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
     FamilySpec,
     InsufficientEvidenceError,
     InvalidQuestionProposalError,
     NonEmptyString,
+    ObjectDetector,
     ObjectMaskEstimator,
     ObjectRangeEstimator,
     QuestionProposal,
@@ -42,18 +53,42 @@ from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
     answer_question,
 )
+from dimos.evals.vqa.localize_coverage import (
+    DEFAULT_LOCALIZE_COVERAGE_K,
+    CoverageCandidate,
+    collect_coverage_candidates_from_audit,
+    family_from_answered_audit,
+    select_localize_coverage_ids,
+)
 from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrame,
     PointCloudFrameLoader,
     PointCloudFrameUnavailableError,
     select_quality_indices,
 )
+from dimos.evals.vqa.primitives.cross_view_identity import (
+    IdentityPair,
+    SightingView,
+    answer_cross_view_same_object,
+    dedupe_identity_pairs,
+    pair_case_id,
+    propose_identity_pairs,
+)
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
+from dimos.evals.vqa.primitives.localize_scene import LocalizeSceneEvidence
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
+from dimos.evals.vqa.template_author import (
+    LocalizeSightingCatalog,
+    OpenVocabDetectionCatalog,
+    TemplateDetectionAuthor,
+)
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.models.vl.base import VlModel
+    from dimos.evals.vqa.localize_recording import LocalizeWindowResult
+
+logger = setup_logger()
 
 _UNORDERED_FAMILIES = frozenset(
     family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
@@ -61,7 +96,16 @@ _UNORDERED_FAMILIES = frozenset(
 
 
 class GenerationRequest(BaseModel):
-    """Single-frame or range selection from a recorded Memory dataset."""
+    """Generate a standalone VQA dataset from a Memory recording.
+
+    Frame selection (``image_index`` or ``start``/``stop``) drives image families.
+    With ``with_localize``, Dan localize runs **once** over the padded window and
+    feeds ego memory clips **and** cross-view identity pairs from the same hits /
+    first-sighting timestamps / color frames — no second localize pass.
+
+    Extra localize knobs below are programmatic defaults (CLI only exposes
+    ``--with-localize``).
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -73,9 +117,30 @@ class GenerationRequest(BaseModel):
     stride: int | None = Field(default=None, ge=1)
     quality_window: float | None = Field(default=None, gt=0)
     min_brightness: float | None = Field(default=None, ge=0, le=1)
+    with_localize: bool = False
+    localize_queries: tuple[NonEmptyString, ...] = ()
+    localize_pad_s: float = Field(default=10.0, gt=0)
+    # None = default K when with_localize; 0 = disable coverage budget (publish all).
+    localize_coverage_k: int | None = Field(default=None, ge=0)
+    # Minimum distinct camera poses for a cross-view identity instance.
+    min_views: int = Field(default=3, ge=1)
+    # Dan open-vocab detector registry name (owlv2 / omdet / gdino).
+    localize_detector: NonEmptyString = "owlv2"
+    # Name discovery: vlm (OpenAI, parallel OWL warmup) or lvis (detector vocab).
+    localize_discover: NonEmptyString = "vlm"
 
     @model_validator(mode="after")
     def valid_selection(self) -> GenerationRequest:
+        if self.localize_queries and not self.with_localize:
+            raise ValueError("localize_queries requires with_localize=True")
+        if self.localize_coverage_k is not None and not self.with_localize:
+            raise ValueError("localize_coverage_k requires with_localize=True")
+        if self.localize_detector != "owlv2" and not self.with_localize:
+            raise ValueError("localize_detector requires with_localize=True")
+        if self.localize_discover not in {"vlm", "lvis"}:
+            raise ValueError("localize_discover must be 'vlm' or 'lvis'")
+        if self.localize_discover != "vlm" and not self.with_localize:
+            raise ValueError("localize_discover requires with_localize=True")
         if self.image_index is not None:
             if self.start is not None or self.stop is not None or self.stride is not None:
                 raise ValueError("image_index cannot be combined with start, stop, or stride")
@@ -85,7 +150,7 @@ class GenerationRequest(BaseModel):
                 )
             return self
         if self.start is None or self.stop is None:
-            raise ValueError("provide image_index or both start and stop")
+            raise ValueError("provide image_index or start/stop")
         if self.stop <= self.start:
             raise ValueError("stop must be greater than start")
         if self.quality_window is not None and self.stride is not None:
@@ -129,23 +194,52 @@ class VqaGenerationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     synchronization_tolerance_s: float = Field(default=0.1, gt=0)
+    # openai = VLM author + Moondream detector (default without --with-localize).
+    # template = OWL / sighting catalog → family slots (used automatically with localize).
+    question_author: NonEmptyString = "openai"
+
+    @model_validator(mode="after")
+    def valid_question_author(self) -> VqaGenerationConfig:
+        if self.question_author not in {"template", "openai"}:
+            raise ValueError("question_author must be 'template' or 'openai'")
+        return self
 
 
 class PublicCase(BaseModel):
-    """One evaluator-facing multiple-choice VQA case."""
+    """One evaluator-facing multiple-choice VQA case.
+
+    Exactly one visual modality:
+
+    * ``image`` — single-frame families (presence, count, …) via ``ImageFile``
+    * ``clip`` — one short dense MemoryStore clip (ego history)
+    * ``clips`` — two+ short dense clips as separate streams (cross-view)
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: NonEmptyString
-    image: NonEmptyString
     question: NonEmptyString
     choices: tuple[NonEmptyString, ...]
+    image: NonEmptyString | None = None
+    clip: NonEmptyString | None = None
+    clips: tuple[NonEmptyString, ...] | None = None
 
     @model_validator(mode="after")
-    def choices_are_distinct(self) -> PublicCase:
+    def choices_and_modality(self) -> PublicCase:
         unique_choices = {choice.casefold() for choice in self.choices}
         if len(self.choices) < 2 or len(unique_choices) != len(self.choices):
             raise ValueError("a VQA case requires at least two unique choices")
+        modalities = sum(
+            (
+                self.image is not None,
+                self.clip is not None,
+                self.clips is not None,
+            )
+        )
+        if modalities != 1:
+            raise ValueError("a VQA case requires exactly one of image, clip, or clips")
+        if self.clips is not None and len(self.clips) < 2:
+            raise ValueError("clips requires at least two clip directories")
         return self
 
 
@@ -169,28 +263,37 @@ class GenerationResult(BaseModel):
 
 @dataclass(frozen=True)
 class GenerationFrame:
-    """One indexed image with optional image-aligned point-cloud evidence."""
+    """One indexed image with optional point-cloud or localize evidence."""
 
     index: int
     image: Image
     pointcloud_frame: PointCloudFrame | None = None
+    localize_scene: LocalizeSceneEvidence | None = None
 
 
 @dataclass(frozen=True)
 class _GeneratedFrame:
+    """Per-frame generation result. Image bytes are written immediately and not retained."""
+
     index: int
-    image: Image
+    image_ts: float
     cases: tuple[PublicCase, ...]
     labels: tuple[PrivateLabel, ...]
     audit_rows: tuple[dict[str, object], ...]
     families: tuple[FamilySpec, ...]
+    # Optical frame of the generation RGB; ego clips must use this camera's stream.
+    camera_frame: str = ""
 
 
 def generate_dataset(
     request: GenerationRequest,
     config: VqaGenerationConfig | None = None,
 ) -> GenerationResult:
-    """Generate a standalone dataset from selected Memory images."""
+    """Generate a standalone dataset from a Memory recording.
+
+    Image families always run on selected frames. With ``with_localize``, one
+    Dan localize window also supplies ego clips and cross-view identity pairs.
+    """
     # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
@@ -212,87 +315,233 @@ def generate_dataset(
         else:
             indices = resolve_generation_frame_indices(request, loader.image_count)
 
-        author_model = OpenAIVlModel()
-        detector_model = MoondreamVlModel()
-        try:
-            detector = detector_model
-            model_names = {
-                "author": author_model.config.model_name,
-                "detector": detector_model.config.model_name,
-            }
-            mask_estimator = EdgeTAMObjectMaskPipeline(detector)
+        localize_ctx: AbstractContextManager[LocalizeWindowResult | None] = nullcontext(None)
+        if request.with_localize:
+            from dimos.evals.vqa.localize_recording import localize_window
 
-            def pointcloud_frames() -> Iterable[GenerationFrame]:
-                for index in indices:
-                    try:
-                        pointcloud_frame = loader.load(index)
-                    except PointCloudFrameUnavailableError:
-                        yield GenerationFrame(index, loader.load_image(index))
-                    else:
-                        yield GenerationFrame(index, pointcloud_frame.image, pointcloud_frame)
-
-            return generate_frames_dataset(
-                request,
-                pointcloud_frames(),
-                OpenAIQuestionAuthor(author_model),
-                detector,
-                LidarRangeEstimator(mask_estimator),
-                mask_estimator,
-                config=config,
-                model_names=model_names,
+            timestamps = tuple(
+                float(loader.images.offset(index).limit(1).first().ts) for index in indices
             )
-        finally:
-            author_model.stop()
-            detector_model.stop()
+            localize_after = min(timestamps) - request.localize_pad_s
+            localize_before = max(timestamps) + request.localize_pad_s
+            localize_ctx = localize_window(
+                request.dataset,
+                request.localize_queries,
+                localize_after,
+                localize_before,
+                detector=request.localize_detector,
+                discover=request.localize_discover,
+            )
+
+        with localize_ctx as localize_result:
+            author_model: object | None = None
+            detector_model: object | None = None
+            catalog: OpenVocabDetectionCatalog | LocalizeSightingCatalog | None = None
+            detector: ObjectDetector
+            author: QuestionAuthor
+            try:
+                if localize_result is not None:
+                    # Reuse Dan 2D sightings — no second OWL for image families.
+                    catalog = LocalizeSightingCatalog(localize_result.views_by_query)
+                    author = TemplateDetectionAuthor(catalog)
+                    detector = catalog
+                    model_names = {
+                        "author": "template+localize-sightings",
+                        "detector": catalog.config.model_name,
+                        "question_author": "template",
+                        "catalog_queries": str(len(localize_result.queries)),
+                    }
+                elif config.question_author == "openai":
+                    author_model = OpenAIVlModel()
+                    detector_model = MoondreamVlModel()
+                    author = OpenAIQuestionAuthor(author_model)
+                    detector = detector_model
+                    model_names = {
+                        "author": author_model.config.model_name,
+                        "detector": detector_model.config.model_name,
+                        "question_author": "openai",
+                    }
+                else:
+                    catalog = OpenVocabDetectionCatalog()
+                    author = TemplateDetectionAuthor(catalog)
+                    detector = catalog
+                    model_names = {
+                        "author": "template+owlv2",
+                        "detector": catalog.config.model_name,
+                        "question_author": "template",
+                    }
+                if request.with_localize:
+                    model_names["localize"] = "dandetect"
+                    if localize_result is not None:
+                        model_names["localize_queries"] = ", ".join(localize_result.queries)
+                        model_names["localize_hits"] = str(len(localize_result.named_hits))
+                mask_estimator = EdgeTAMObjectMaskPipeline(detector)
+
+                def pointcloud_frames() -> Iterable[GenerationFrame]:
+                    from dimos.evals.vqa.localize_recording import (
+                        first_seen_by_instance_for_camera,
+                        scene_at_timestamp,
+                    )
+
+                    for index in indices:
+                        try:
+                            pointcloud_frame = loader.load(index)
+                            image = pointcloud_frame.image
+                            pc_frame = pointcloud_frame
+                        except PointCloudFrameUnavailableError:
+                            image = loader.load_image(index)
+                            pc_frame = None
+                        localize_scene = None
+                        if localize_result is not None:
+                            camera_frame = str(getattr(image, "frame_id", "") or "")
+                            views = getattr(localize_result, "views_by_query", {}) or {}
+                            camera_first_seen = (
+                                first_seen_by_instance_for_camera(views, camera_frame)
+                                if views and camera_frame
+                                else dict(getattr(localize_result, "first_seen_by_instance", {}))
+                            )
+                            localize_scene = scene_at_timestamp(
+                                localize_result.named_hits,
+                                localize_result.rig,
+                                image.ts,
+                                first_seen_by_instance=camera_first_seen,
+                                position_timeline_by_instance=getattr(
+                                    localize_result, "position_timeline_by_instance", {}
+                                ),
+                            )
+                        yield GenerationFrame(index, image, pc_frame, localize_scene=localize_scene)
+
+                color_frames = (
+                    getattr(localize_result, "color_frames", ())
+                    if localize_result is not None
+                    else ()
+                )
+                color_frames_by_camera = (
+                    getattr(localize_result, "color_frames_by_camera", {})
+                    if localize_result is not None
+                    else {}
+                )
+                views_by_query = (
+                    getattr(localize_result, "views_by_query", {})
+                    if localize_result is not None
+                    else {}
+                )
+                return generate_frames_dataset(
+                    request,
+                    pointcloud_frames(),
+                    author,
+                    detector,
+                    LidarRangeEstimator(mask_estimator),
+                    mask_estimator,
+                    config=config,
+                    model_names=model_names,
+                    color_frames=color_frames,
+                    color_frames_by_camera=color_frames_by_camera,
+                    views_by_query=views_by_query,
+                )
+            finally:
+                if author_model is not None:
+                    author_model.stop()  # type: ignore[attr-defined]
+                if detector_model is not None:
+                    detector_model.stop()  # type: ignore[attr-defined]
+                if catalog is not None:
+                    catalog.stop()
 
 
 def generate_frames_dataset(
     request: GenerationRequest,
     frames: Iterable[GenerationFrame],
     author: QuestionAuthor,
-    detector: VlModel,
+    detector: ObjectDetector,
     range_estimator: ObjectRangeEstimator | None = None,
     mask_estimator: ObjectMaskEstimator | None = None,
     *,
     config: VqaGenerationConfig | None = None,
     model_names: dict[str, str] | None = None,
+    color_frames: Sequence[tuple[float, Image]] = (),
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
+    views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]] | None = None,
 ) -> GenerationResult:
     """Generate and write one dataset from already loaded indexed images."""
     config = config or VqaGenerationConfig()
     output = request.output_directory()
-    _prepare_output(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
-        staging = Path(temporary)
-        all_cases: list[PublicCase] = []
-        all_labels: list[PrivateLabel] = []
-        frame_count = 0
-        rejected_count = 0
-        used_family_names: set[str] = set()
-        for source in frames:
-            frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
-            _write_frame(staging, frame)
-            all_cases.extend(frame.cases)
-            all_labels.extend(frame.labels)
-            frame_count += 1
-            used_family_names.update(family.name for family in frame.families)
-            rejected_count += sum(row.get("status") == "rejected" for row in frame.audit_rows)
+    claimed_output = False
+    try:
+        _prepare_output(output)
+        claimed_output = True
+        with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
+            staging = Path(temporary)
+            all_cases: list[PublicCase] = []
+            all_labels: list[PrivateLabel] = []
+            generated_frames: list[_GeneratedFrame] = []
+            frame_count = 0
+            rejected_count = 0
+            used_family_names: set[str] = set()
+            for source in frames:
+                frame, image = _generate_frame(
+                    source, author, detector, range_estimator, mask_estimator
+                )
+                _write_frame(staging, frame, image)
+                generated_frames.append(frame)
+                all_cases.extend(frame.cases)
+                all_labels.extend(frame.labels)
+                frame_count += 1
+                used_family_names.update(family.name for family in frame.families)
+                rejected_count += sum(row.get("status") == "rejected" for row in frame.audit_rows)
 
-        if frame_count == 0:
-            raise ValueError("generation selected no frames")
-        if not all_cases:
-            raise ValueError("no selected frame produced an answerable question")
-        _write_jsonl(
-            staging / "cases.jsonl",
-            [case.model_dump(mode="json") for case in all_cases],
-        )
-        _write_jsonl(
-            staging / "labels.jsonl",
-            [label.model_dump(mode="json") for label in all_labels],
-        )
-        _write_json(
-            staging / "audit" / "run.json",
-            {
+            if frame_count == 0:
+                raise ValueError("generation selected no frames")
+
+            coverage_k = _effective_localize_coverage_k(request)
+            coverage_stats: dict[str, object] | None = None
+            if coverage_k is not None and all_cases:
+                all_cases, all_labels, coverage_stats = _apply_localize_coverage_budget(
+                    generated_frames, all_cases, all_labels, k=coverage_k
+                )
+
+            # Multi-cam windows leave color_frames empty and fill by_camera only.
+            has_color_streams = bool(color_frames) or bool(color_frames_by_camera)
+            if request.with_localize and has_color_streams:
+                all_cases, all_labels = _materialize_ego_memory_clips(
+                    staging,
+                    generated_frames,
+                    all_cases,
+                    all_labels,
+                    color_frames=color_frames,
+                    color_frames_by_camera=color_frames_by_camera or {},
+                    views_by_query=views_by_query or {},
+                )
+
+            cross_view_stats: dict[str, object] | None = None
+            if request.with_localize and has_color_streams and views_by_query:
+                all_cases, all_labels, cross_view_stats, _cross_view_audit = (
+                    _materialize_cross_view_clips(
+                        staging,
+                        all_cases,
+                        all_labels,
+                        color_frames=color_frames,
+                        color_frames_by_camera=color_frames_by_camera or {},
+                        views_by_query=views_by_query,
+                        min_views=request.min_views,
+                    )
+                )
+                if cross_view_stats.get("question_count", 0):
+                    used_family_names.add("cross_view_same_object")
+
+            # Cross-view (and ego clip rewrites) may be the only published cases.
+            if not all_cases:
+                raise ValueError("no selected frame produced an answerable question")
+
+            _write_jsonl(
+                staging / "cases.jsonl",
+                [case.model_dump(mode="json", exclude_none=True) for case in all_cases],
+            )
+            _write_jsonl(
+                staging / "labels.jsonl",
+                [label.model_dump(mode="json") for label in all_labels],
+            )
+            run_payload: dict[str, object] = {
                 "generation": request.model_dump(mode="json", exclude={"output"}),
                 "configuration": config.model_dump(mode="json"),
                 "families": [
@@ -302,33 +551,206 @@ def generate_frames_dataset(
                 "frame_count": frame_count,
                 "question_count": len(all_cases),
                 "rejected_question_count": rejected_count,
-            },
+            }
+            if coverage_stats is not None:
+                run_payload["localize_coverage"] = coverage_stats
+            if cross_view_stats is not None:
+                run_payload["cross_view"] = cross_view_stats
+            _write_json(staging / "audit" / "run.json", run_payload)
+            if output.exists():
+                claim = output / _OUTPUT_CLAIM
+                if claim.exists():
+                    claim.unlink()
+                output.rmdir()
+            staging.replace(output)
+            claimed_output = False
+        return GenerationResult(output=output, cases=tuple(all_cases))
+    except Exception:
+        # Only remove the exclusive claim this run created — never wipe a finished
+        # dataset (e.g. concurrent FileExistsError, or failure after publish).
+        if claimed_output:
+            _remove_incomplete_output(output)
+        raise
+
+
+def _color_frames_for_view(
+    view: SightingView,
+    *,
+    color_frames: Sequence[tuple[float, Image]],
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]],
+) -> Sequence[tuple[float, Image]]:
+    """Pick the camera stream matching the sighting; fall back to primary frames."""
+    camera = view.camera_frame or str(getattr(view.image, "frame_id", "") or "")
+    if camera:
+        matched = color_frames_by_camera.get(camera)
+        if matched is not None:
+            return matched
+        if color_frames_by_camera:
+            raise ValueError(
+                f"no color frames for sighting camera {camera!r} "
+                f"(have {sorted(color_frames_by_camera)})"
+            )
+    # Multi-cam available but sighting has no optical frame → refuse wrong-camera cut.
+    if color_frames_by_camera:
+        raise ValueError(
+            "sighting has empty camera_frame but color_frames_by_camera is set; "
+            "refusing primary-camera fallback"
         )
-        if output.exists():
-            output.rmdir()
-        staging.replace(output)
-    return GenerationResult(output=output, cases=tuple(all_cases))
+    return color_frames
+
+
+def _materialize_cross_view_clips(
+    staging: Path,
+    cases: Sequence[PublicCase],
+    labels: Sequence[PrivateLabel],
+    *,
+    color_frames: Sequence[tuple[float, Image]],
+    views_by_query: Mapping[str, Mapping[str, Sequence[SightingView]]],
+    min_views: int,
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
+) -> tuple[
+    list[PublicCase],
+    list[PrivateLabel],
+    dict[str, object],
+    dict[str, tuple[dict[str, object], ...]],
+]:
+    """Append cross-view identity cases from the shared localize window (no second localize)."""
+    by_camera = color_frames_by_camera or {}
+    proposed: list[IdentityPair] = []
+    n_instances = 0
+    for query, by_id in views_by_query.items():
+        # Drop sightings whose camera has no clip stream when multi-cam is available.
+        instances: dict[str, tuple[SightingView, ...]] = {}
+        for iid, views in by_id.items():
+            kept = tuple(
+                v
+                for v in views
+                if not by_camera or not v.camera_frame or v.camera_frame in by_camera
+            )
+            if kept:
+                instances[iid] = kept
+        n_instances += len(instances)
+        pairs = propose_identity_pairs(instances, min_views=min_views)
+        logger.info(f"cross-view {query!r}: {len(instances)} instance(s) → {len(pairs)} pair(s)")
+        proposed.extend(pairs)
+    # Collapse same/diff collisions across queries that reuse the same clip windows.
+    all_pairs = list(dedupe_identity_pairs(proposed))
+
+    out_cases = list(cases)
+    out_labels = list(labels)
+    audit_rows: list[dict[str, object]] = []
+    audit_by_id: dict[str, tuple[dict[str, object], ...]] = {}
+    rejected = 0
+    published = 0
+    for pair_index, pair in enumerate(all_pairs):
+        case_id = pair_case_id(pair, pair_index)
+        try:
+            left_stream = _color_frames_for_view(
+                pair.left, color_frames=color_frames, color_frames_by_camera=by_camera
+            )
+            right_stream = _color_frames_for_view(
+                pair.right, color_frames=color_frames, color_frames_by_camera=by_camera
+            )
+            first_frames, _ = dense_clip_around(left_stream, pair.left.timestamp)
+            second_frames, _ = dense_clip_around(right_stream, pair.right.timestamp)
+            first_t0 = float(first_frames[0][0])
+            first_t1 = float(first_frames[-1][0])
+            second_t0 = float(second_frames[0][0])
+            second_t1 = float(second_frames[-1][0])
+            first_dur = clip_duration_s(first_frames)
+            second_dur = clip_duration_s(second_frames)
+            answered = answer_cross_view_same_object(
+                pair,
+                first_clip_t_start=first_t0,
+                first_clip_t_end=first_t1,
+                second_clip_t_start=second_t0,
+                second_clip_t_end=second_t1,
+            )
+        except (InsufficientEvidenceError, ValueError) as exc:
+            rejected += 1
+            audit_rows.append(
+                {
+                    "status": "rejected",
+                    "reason": str(exc),
+                    "query": pair.query,
+                    "same_object": pair.same_object,
+                }
+            )
+            continue
+
+        first_rel = f"assets/clips/{case_id}/first"
+        second_rel = f"assets/clips/{case_id}/second"
+        write_image_clip(staging / first_rel, first_frames, anchors=(pair.left.timestamp,))
+        write_image_clip(staging / second_rel, second_frames, anchors=(pair.right.timestamp,))
+        out_cases.append(
+            PublicCase(
+                id=case_id,
+                clips=(first_rel, second_rel),
+                question=answered.question,
+                choices=answered.choices,
+            )
+        )
+        out_labels.append(PrivateLabel(id=case_id, answer=answered.answer))
+        published += 1
+        answered_row: dict[str, object] = {
+            "status": "answered",
+            "case_id": case_id,
+            # Proposal + evidence kept on the case audit for coverage / debug.
+            "proposal": {
+                "family": "cross_view_same_object",
+                "object_names": [pair.query],
+            },
+            "answer": answered.model_dump(mode="json"),
+            "first_clip_duration_s": first_dur,
+            "second_clip_duration_s": second_dur,
+        }
+        audit_rows.append(answered_row)
+        audit_by_id[case_id] = (answered_row,)
+
+    if audit_rows:
+        _write_json(staging / "audit" / "pairs.json", audit_rows)
+    stats: dict[str, object] = {
+        "n_instances_considered": n_instances,
+        "n_pairs_proposed": len(all_pairs),
+        "question_count": published,
+        "rejected_question_count": rejected,
+    }
+    return out_cases, out_labels, stats, audit_by_id
 
 
 def _generate_frame(
     source: GenerationFrame,
     author: QuestionAuthor,
-    detector: VlModel,
+    detector: ObjectDetector,
     range_estimator: ObjectRangeEstimator | None,
     mask_estimator: ObjectMaskEstimator | None,
-) -> _GeneratedFrame:
+) -> tuple[_GeneratedFrame, Image]:
     image_index = source.index
     image = source.image
+    # Empty verified-hit scenes must not expose localize families (author would propose
+    # unresolvable referents; deterministic seeding would also be a no-op).
+    localize_ready = source.localize_scene is not None and len(source.localize_scene.instances) > 0
     families = tuple(
         family
         for family in AVAILABLE_FAMILIES
-        if not (family.requires_masks and mask_estimator is None)
+        if family.name != "cross_view_same_object"
+        and not (family.requires_masks and mask_estimator is None)
         and not (
             family.requires_pointcloud
             and (source.pointcloud_frame is None or range_estimator is None)
         )
+        and not (family.requires_localize and not localize_ready)
     )
-    proposals = _deduplicate_proposals(author.propose(image, families))
+    proposals = author.propose(image, families)
+    if localize_ready and any(family.requires_localize for family in families):
+        from dimos.evals.vqa.localize_recording import proposals_from_localize_scene
+
+        assert source.localize_scene is not None
+        proposals = (
+            *proposals,
+            *proposals_from_localize_scene(source.localize_scene),
+        )
+    proposals = _deduplicate_proposals(proposals)
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
     audit_rows: list[dict[str, object]] = []
     for proposal in proposals:
@@ -340,6 +762,7 @@ def _generate_frame(
                 source.pointcloud_frame,
                 range_estimator,
                 mask_estimator,
+                source.localize_scene,
             )
         except (InsufficientEvidenceError, InvalidQuestionProposalError) as exc:
             audit_rows.append(
@@ -373,14 +796,365 @@ def _generate_frame(
         PrivateLabel(id=case.id, answer=answer.answer)
         for case, answer in zip(cases, answers, strict=True)
     )
-    return _GeneratedFrame(
-        index=image_index,
-        image=image,
-        cases=cases,
-        labels=labels,
-        audit_rows=tuple(audit_rows),
-        families=tuple(families),
+    return (
+        _GeneratedFrame(
+            index=image_index,
+            image_ts=float(image.ts),
+            cases=cases,
+            labels=labels,
+            audit_rows=tuple(audit_rows),
+            families=tuple(families),
+            camera_frame=str(getattr(image, "frame_id", "") or ""),
+        ),
+        image,
     )
+
+
+_EGO_CLIP_FAMILIES = frozenset(
+    family.name for family in AVAILABLE_FAMILIES if family.requires_localize
+)
+# First sighting → question time must fit in one short memory clip.
+MAX_EGO_MEMORY_SPAN_S = 8.0
+# Cone/FOV proxy: outside ahead cone at question time (hard memory band).
+_HARD_EGO_FORE_AFT = frozenset({"behind"})
+_HARD_EGO_TURN = frozenset({"left", "right", "turn around"})
+
+
+def _ego_memory_band(family: str, answer: str) -> str | None:
+    """Return ``hard`` / ``soft`` for publishable ego answers, else ``None``."""
+    if family not in _EGO_CLIP_FAMILIES:
+        return None
+    if family == "ego_fore_aft":
+        return "hard" if answer in _HARD_EGO_FORE_AFT else "soft"
+    if family == "ego_turn":
+        return "hard" if answer in _HARD_EGO_TURN else "soft"
+    # ego_any_fore_aft, height_order, …
+    return "soft"
+
+
+_T = TypeVar("_T")
+
+
+def _balance_ego_memory_bands(hard: Sequence[_T], soft: Sequence[_T]) -> list[_T]:
+    """Keep hard:soft ≈ 1:1; if one side is empty, keep the other."""
+    if not hard:
+        return list(soft)
+    if not soft:
+        return list(hard)
+    n = min(len(hard), len(soft))
+    return list(hard[:n]) + list(soft[:n])
+
+
+def _height_object_first_seens(evidence: Mapping[str, object]) -> tuple[float, ...] | None:
+    """Per-object first_seen times for height_order; None if either referent is missing."""
+    objects = evidence.get("objects")
+    if not isinstance(objects, list) or len(objects) < 2:
+        return None
+    times: list[float] = []
+    for obj in objects:
+        if not isinstance(obj, Mapping):
+            return None
+        raw = obj.get("first_seen_timestamp")
+        if not isinstance(raw, (int, float)):
+            return None
+        times.append(float(raw))
+    return tuple(times)
+
+
+def _first_seen_on_camera(
+    views_by_query: Mapping[str, Mapping[str, Sequence[Any]]],
+    instance_id: str,
+    camera_frame: str,
+) -> float | None:
+    """Earliest sighting of ``instance_id`` on ``camera_frame`` (or any if blank)."""
+    times: list[float] = []
+    for by_id in views_by_query.values():
+        views = by_id.get(instance_id)
+        if not views:
+            continue
+        for view in views:
+            view_cam = str(getattr(view, "camera_frame", "") or "")
+            if camera_frame and view_cam and view_cam != camera_frame:
+                continue
+            times.append(float(view.timestamp))
+    return min(times) if times else None
+
+
+def _ego_required_instance_ids(family: str, evidence: Mapping[str, object]) -> tuple[str, ...]:
+    """Instance ids whose same-camera first sightings must appear in the ego clip."""
+    ids: list[str] = []
+    if family == "height_order":
+        objects = evidence.get("objects")
+        if isinstance(objects, list):
+            for obj in objects:
+                if isinstance(obj, Mapping) and isinstance(obj.get("instance_id"), str):
+                    ids.append(str(obj["instance_id"]))
+        return tuple(ids)
+    if family == "ego_any_fore_aft":
+        instances = evidence.get("instances")
+        if isinstance(instances, list):
+            for inst in instances:
+                if not isinstance(inst, Mapping):
+                    continue
+                iid = inst.get("instance_id")
+                if isinstance(iid, str) and iid:
+                    ids.append(iid)
+        return tuple(ids)
+    raw = evidence.get("instance_id")
+    if isinstance(raw, str) and raw:
+        ids.append(raw)
+    landmark = evidence.get("landmark_instance_id")
+    if isinstance(landmark, str) and landmark:
+        ids.append(landmark)
+    return tuple(ids)
+
+
+def _ego_clip_anchor_times(
+    family: str,
+    evidence: Mapping[str, object],
+    *,
+    camera_frame: str,
+    views_by_query: Mapping[str, Mapping[str, Sequence[Any]]],
+) -> tuple[float, ...] | None:
+    """Same-camera first_seen times for every required instance; ``None`` to skip.
+
+    When views are available, refuse cross-camera first_seen anchors. Without
+    views (tests / single-cam fixtures), fall back to evidence timestamps.
+    """
+    required_ids = _ego_required_instance_ids(family, evidence)
+    if views_by_query and camera_frame and required_ids:
+        times: list[float] = []
+        for instance_id in required_ids:
+            seen = _first_seen_on_camera(views_by_query, instance_id, camera_frame)
+            if seen is None:
+                return None
+            times.append(seen)
+        return tuple(times)
+
+    if family == "height_order":
+        return _height_object_first_seens(evidence)
+
+    times: list[float] = []
+    raw = evidence.get("first_seen_timestamp")
+    if isinstance(raw, (int, float)):
+        times.append(float(raw))
+    landmark_ts = evidence.get("landmark_first_seen_timestamp")
+    if isinstance(landmark_ts, (int, float)):
+        times.append(float(landmark_ts))
+    if family == "ego_any_fore_aft":
+        instances = evidence.get("instances")
+        if isinstance(instances, list):
+            for inst in instances:
+                if not isinstance(inst, Mapping):
+                    continue
+                ts = inst.get("first_seen_timestamp")
+                if isinstance(ts, (int, float)):
+                    times.append(float(ts))
+    return tuple(times) if times else None
+
+
+def _ego_clip_stream(
+    color_frames: Sequence[tuple[float, Image]],
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]],
+    camera_frame: str,
+) -> Sequence[tuple[float, Image]]:
+    """Use the generation camera's stream when multi-cam clips are available."""
+    if camera_frame and camera_frame in color_frames_by_camera:
+        return color_frames_by_camera[camera_frame]
+    if color_frames_by_camera and camera_frame:
+        # Multi-cam present but generation optical frame has no stream → reject later.
+        return ()
+    return color_frames
+
+
+def _materialize_ego_memory_clips(
+    staging: Path,
+    frames: Sequence[_GeneratedFrame],
+    cases: Sequence[PublicCase],
+    labels: Sequence[PrivateLabel],
+    *,
+    color_frames: Sequence[tuple[float, Image]],
+    color_frames_by_camera: Mapping[str, Sequence[tuple[float, Image]]] | None = None,
+    views_by_query: Mapping[str, Mapping[str, Sequence[Any]]] | None = None,
+) -> tuple[list[PublicCase], list[PrivateLabel]]:
+    """Publish ego cases as first-spot→query clips; balance hard/soft; no image fallback."""
+    by_camera = color_frames_by_camera or {}
+    views = views_by_query or {}
+    audit_by_id: dict[str, dict[str, object]] = {}
+    family_by_id: dict[str, str] = {}
+    frame_ts_by_id: dict[str, float] = {}
+    frame_cam_by_id: dict[str, str] = {}
+    for frame in frames:
+        for case in frame.cases:
+            frame_ts_by_id[case.id] = frame.image_ts
+            frame_cam_by_id[case.id] = frame.camera_frame
+            family = family_from_answered_audit(question=case.question, audit_rows=frame.audit_rows)
+            if family is None or family not in _EGO_CLIP_FAMILIES:
+                continue
+            family_by_id[case.id] = family
+            for row in frame.audit_rows:
+                if row.get("status") != "answered":
+                    continue
+                answer = row.get("answer")
+                if not isinstance(answer, dict):
+                    continue
+                if answer.get("question") == case.question:
+                    audit_by_id[case.id] = answer
+                    break
+
+    label_by_id = {label.id: label for label in labels}
+    non_ego_cases: list[PublicCase] = []
+    non_ego_labels: list[PrivateLabel] = []
+    # Defer disk write until after 1:1 hard/soft balance so unused clips are not left behind.
+    EgoClipRow = tuple[PublicCase, PrivateLabel, tuple[tuple[float, Image], ...], tuple[float, ...]]
+    hard: list[EgoClipRow] = []
+    soft: list[EgoClipRow] = []
+
+    for case in cases:
+        family = family_by_id.get(case.id)
+        if family is None or family not in _EGO_CLIP_FAMILIES:
+            non_ego_cases.append(case)
+            non_ego_labels.append(label_by_id[case.id])
+            continue
+
+        label = label_by_id[case.id]
+        band = _ego_memory_band(family, label.answer)
+        if band is None:
+            continue
+
+        query_ts = frame_ts_by_id.get(case.id)
+        answered = audit_by_id.get(case.id)
+        if query_ts is None or answered is None:
+            # Ego must be memory-clip; never fall back to a single RGB frame.
+            continue
+
+        evidence = answered.get("evidence")
+        if not isinstance(evidence, dict):
+            continue
+        camera_frame = frame_cam_by_id.get(case.id, "")
+        anchor_times = _ego_clip_anchor_times(
+            family,
+            evidence,
+            camera_frame=camera_frame,
+            views_by_query=views,
+        )
+        if not anchor_times:
+            continue
+        first_spot = min(anchor_times)
+        extra_anchors = tuple(t for t in anchor_times if t != first_spot)
+        if query_ts - first_spot > MAX_EGO_MEMORY_SPAN_S:
+            continue
+
+        stream = _ego_clip_stream(color_frames, by_camera, camera_frame)
+        if not stream:
+            continue
+
+        try:
+            picked, _t0 = ego_memory_clip(
+                stream,
+                first_spot_ts=first_spot,
+                query_ts=query_ts,
+                extra_anchors=extra_anchors,
+            )
+        except ValueError:
+            continue
+        if clip_duration_s(picked) > MAX_EGO_MEMORY_SPAN_S + 1e-6:
+            continue
+
+        rel = f"assets/clips/{case.id}"
+        span = format_clip_span(float(picked[0][0]), float(picked[-1][0]))
+        question = (
+            f"This clip covers {span} (first sighting of the referent through the "
+            f"question time). {case.question}"
+        )
+        clip_case = PublicCase(
+            id=case.id,
+            clip=rel,
+            question=question,
+            choices=case.choices,
+        )
+        bucket = hard if band == "hard" else soft
+        anchors = (first_spot, query_ts, *extra_anchors)
+        bucket.append((clip_case, label, picked, anchors))
+
+    balanced = _balance_ego_memory_bands(hard, soft)
+    out_cases: list[PublicCase] = list(non_ego_cases)
+    out_labels: list[PrivateLabel] = list(non_ego_labels)
+    for clip_case, label, picked, anchors in balanced:
+        assert clip_case.clip is not None
+        write_image_clip(
+            staging / clip_case.clip,
+            picked,
+            anchors=anchors,
+        )
+        out_cases.append(clip_case)
+        out_labels.append(label)
+    return out_cases, out_labels
+
+
+def _effective_localize_coverage_k(request: GenerationRequest) -> int | None:
+    """Resolve publish budget: default K with localize, ``0`` disables, else explicit K."""
+    if not request.with_localize:
+        return None
+    if request.localize_coverage_k is None:
+        return DEFAULT_LOCALIZE_COVERAGE_K
+    if request.localize_coverage_k == 0:
+        return None
+    return request.localize_coverage_k
+
+
+def _apply_localize_coverage_budget(
+    frames: Sequence[_GeneratedFrame],
+    cases: Sequence[PublicCase],
+    labels: Sequence[PrivateLabel],
+    *,
+    k: int,
+) -> tuple[list[PublicCase], list[PrivateLabel], dict[str, object]]:
+    """Keep image-path cases; budget up to ``K`` localize cases per frame."""
+    candidates: list[CoverageCandidate] = []
+    localize_ids: set[str] = set()
+    for frame in frames:
+        frame_key = f"frame-{frame.index:06d}"
+        for case in frame.cases:
+            candidate = collect_coverage_candidates_from_audit(
+                case_id=case.id,
+                frame_key=frame_key,
+                question=case.question,
+                audit_rows=frame.audit_rows,
+            )
+            if candidate is None:
+                continue
+            candidates.append(candidate)
+            localize_ids.add(case.id)
+
+    kept_localize = select_localize_coverage_ids(candidates, k=k)
+    kept_ids = {case.id for case in cases if case.id not in localize_ids} | kept_localize
+    filtered_cases = [case for case in cases if case.id in kept_ids]
+    filtered_labels = [label for label in labels if label.id in kept_ids]
+    by_cell: dict[str, int] = {}
+    by_category: dict[str, int] = {}
+    by_frame: dict[str, int] = {}
+    for case_id, frame_key, cell, _pose, category in candidates:
+        if case_id not in kept_localize:
+            continue
+        key = f"{cell[0]}|{cell[1]}"
+        by_cell[key] = by_cell.get(key, 0) + 1
+        by_category[category] = by_category.get(category, 0) + 1
+        by_frame[frame_key] = by_frame.get(frame_key, 0) + 1
+    stats: dict[str, object] = {
+        "k": k,
+        "k_meaning": "max_localize_cases_per_frame",
+        "localize_before": len(localize_ids),
+        "localize_after": len(kept_localize),
+        "non_localize_kept": len(kept_ids) - len(kept_localize),
+        "total_before": len(cases),
+        "total_after": len(filtered_cases),
+        "frames_with_localize": len(by_frame),
+        "kept_per_cell": dict(sorted(by_cell.items())),
+        "kept_per_category": dict(sorted(by_category.items())),
+        "kept_per_frame": dict(sorted(by_frame.items())),
+    }
+    return filtered_cases, filtered_labels, stats
 
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
@@ -400,6 +1174,27 @@ def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[Quest
     return tuple(unique)
 
 
+def make_case_id(
+    image_index: int,
+    family: str,
+    object_names: Sequence[str],
+    *,
+    occurrence: int = 1,
+) -> str:
+    """Opaque ``case-<hex>`` id for agent-visible run dirs and clip paths.
+
+    Family / category stay in audit only — never in the public id string.
+    """
+    names = tuple(object_names)
+    if family in _UNORDERED_FAMILIES:
+        names = tuple(sorted(names, key=str.casefold))
+    material = "\0".join(
+        (f"{image_index:06d}", family, "-vs-".join(names).casefold(), str(occurrence))
+    )
+    digest = hashlib.sha256(material.encode()).hexdigest()[:12]
+    return f"case-{digest}"
+
+
 def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tuple[str, ...]:
     counts: dict[str, int] = {}
     identifiers: list[str] = []
@@ -407,31 +1202,65 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
         object_names = proposal.object_names
         if proposal.family in _UNORDERED_FAMILIES:
             object_names = tuple(sorted(object_names, key=str.casefold))
-        joined_names = "-vs-".join(object_names)
-        object_id = re.sub(r"[^a-z0-9]+", "-", joined_names.casefold()).strip("-")
-        base = f"frame-{image_index:06d}-{object_id or 'object'}-{proposal.family}"
-        count = counts.get(base, 0) + 1
-        counts[base] = count
-        identifiers.append(base if count == 1 else f"{base}-{count}")
+        key = f"{image_index:06d}\0{proposal.family}\0{'-vs-'.join(object_names).casefold()}"
+        count = counts.get(key, 0) + 1
+        counts[key] = count
+        identifiers.append(
+            make_case_id(image_index, proposal.family, object_names, occurrence=count)
+        )
     return tuple(identifiers)
 
 
+_OUTPUT_CLAIM = ".dimos_vqa_claim"
+
+
 def _prepare_output(output: Path) -> None:
-    if output.exists() and any(output.iterdir()):
-        raise FileExistsError(f"VQA output directory is not empty: {output}")
+    """Claim ``output`` exclusively (absent or empty destinations only).
+
+    The CLI allows an absent or empty destination. An exclusive claim file stops
+    two concurrent runs from both accepting the same empty directory and later
+    colliding when one publishes.
+    """
+    claim = output / _OUTPUT_CLAIM
+    if output.exists():
+        if not output.is_dir():
+            raise FileExistsError(f"VQA output path already exists: {output}")
+        entries = list(output.iterdir())
+        if claim.exists():
+            raise FileExistsError(f"VQA output directory already claimed: {output}")
+        if entries:
+            raise FileExistsError(f"VQA output directory is not empty: {output}")
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+    try:
+        fd = os.open(str(claim), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise FileExistsError(f"VQA output directory already claimed: {output}") from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"{os.getpid()}\n")
 
 
-def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
+def _remove_incomplete_output(output: Path) -> None:
+    """Delete this run's failed claim without removing a published dataset."""
+    if not output.exists():
+        return
+    # A finished publish always has cases.jsonl at the dataset root.
+    if (output / "cases.jsonl").is_file():
+        return
+    shutil.rmtree(output)
+
+
+def _write_frame(output: Path, frame: _GeneratedFrame, image: Image) -> None:
     (output / "assets").mkdir(parents=True, exist_ok=True)
     frame_audit = output / "audit" / f"frame-{frame.index:06d}"
     frame_audit.mkdir(parents=True, exist_ok=True)
 
     image_name = f"assets/frame-{frame.index:06d}.png"
     image_path = output / image_name
-    if not frame.image.save(str(image_path)):
+    if not image.save(str(image_path)):
         raise RuntimeError(f"failed to write VQA image: {image_path}")
 
-    case_rows = [case.model_dump(mode="json") for case in frame.cases]
+    case_rows = [case.model_dump(mode="json", exclude_none=True) for case in frame.cases]
     label_rows = [label.model_dump(mode="json") for label in frame.labels]
     _write_json(frame_audit / "cases.json", case_rows)
     _write_json(frame_audit / "labels.json", label_rows)
@@ -441,7 +1270,7 @@ def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
         {
             "frame_index": frame.index,
             "image": image_name,
-            "timestamp": frame.image.ts,
+            "timestamp": frame.image_ts,
             "question_count": len(frame.cases),
             "rejected_question_count": sum(
                 row.get("status") == "rejected" for row in frame.audit_rows

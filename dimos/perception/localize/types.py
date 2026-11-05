@@ -64,6 +64,8 @@ class LocalizeParams:
     fuse_voxel_m: float = 0.01  # union cloud voxel at merge; 0 concatenates
     plane_keyframes: int = 5
     plane_cell_m: float = 2.0  # XY cell of the support-plane cache
+    # Free embedder VRAM after retrieve so OWL/EdgeTAM can use the GPU alone.
+    release_embedder_after_retrieve: bool = False
 
     def read_key(self) -> LocalizeParams:
         """What a frame counts as read under: these params without the answer gates,

@@ -104,6 +104,12 @@ class DimcodeAdapter(PiAdapter):
         self, proc: subprocess.Popen[bytes], paths: RunPaths, deadline: float
     ) -> Generator[dict[str, JsonValue], None, None]:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            # Large gateway events (clip frames as base64) exceed the ~212 KiB
+            # default Unix SO_*BUF; raise both sides before connect so a single
+            # NDJSON line can land without depending on mid-write drain alone.
+            buf = 16 * 1024 * 1024
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, buf)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, buf)
             while True:
                 if time.monotonic() >= deadline:
                     raise TimeoutError

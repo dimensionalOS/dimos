@@ -65,11 +65,11 @@ class Owlv2Detector(HuggingFaceModel):
         from transformers import Owlv2ForObjectDetection
 
         self._ensure_cuda_initialized()
-        return (
-            Owlv2ForObjectDetection.from_pretrained(self.config.model_name)
-            .eval()
-            .to(self.config.device)
-        )
+        model = Owlv2ForObjectDetection.from_pretrained(self.config.model_name).eval()
+        # Keep weights in config.dtype (fp16 for Dan) — not fp32 + autocast-only.
+        if self.config.dtype is not torch.float32:
+            return model.to(device=self.config.device, dtype=self.config.dtype)
+        return model.to(self.config.device)
 
     @cached_property
     def _processor(self):  # type: ignore[no-untyped-def]

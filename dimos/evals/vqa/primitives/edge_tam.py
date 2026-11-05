@@ -21,13 +21,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.evals.vqa.contracts import InsufficientEvidenceError
+from dimos.evals.vqa.contracts import InsufficientEvidenceError, ObjectDetector
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenterCompatible
-    from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -54,7 +53,7 @@ class EdgeTAMObjectMaskPipeline:
 
     def __init__(
         self,
-        detector: VlModel,
+        detector: ObjectDetector,
         segmenter: EdgeTAMImageSegmenterCompatible | None = None,
     ) -> None:
         self._detector = detector

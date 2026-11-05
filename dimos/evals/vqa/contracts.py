@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol
 
 from pydantic import (
     BaseModel,
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from dimos.evals.vqa.primitives.edge_tam import ObjectMaskEvidence
     from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
     from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 FamilyName = Literal[
@@ -43,6 +44,11 @@ FamilyName = Literal[
     "largest_visible_area",
     "object_distance",
     "closest_object",
+    "ego_fore_aft",
+    "height_order",
+    "ego_turn",
+    "ego_any_fore_aft",
+    "cross_view_same_object",
 ]
 
 
@@ -92,6 +98,7 @@ class FamilySpec:
     distinct_objects: bool = False
     requires_masks: bool = False
     requires_pointcloud: bool = False
+    requires_localize: bool = False
     object_order_matters: bool = True
 
     def validate(self, proposal: QuestionProposal) -> None:
@@ -116,6 +123,14 @@ class FamilySpec:
 
 class InsufficientEvidenceError(ValueError):
     """A family cannot derive an answer from the available primitive evidence."""
+
+
+class ObjectDetector(Protocol):
+    """Named-object boxes for image families (VlModel or localization catalogs)."""
+
+    def query_detections(
+        self, image: Image, query: str, **kwargs: Any
+    ) -> ImageDetections2D[Any]: ...
 
 
 class ObjectMaskEstimator(Protocol):

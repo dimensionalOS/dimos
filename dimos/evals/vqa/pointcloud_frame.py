@@ -260,23 +260,23 @@ def select_quality_indices(
     Callers (``GenerationRequest`` / CLI) own argument validation. This keeps the
     sharpest observation in each ``quality_window`` seconds — same path as
     loop-closure / semantic-peak image picking — after an optional brightness floor.
+
+    Brightness filtering must run **after** the index window is fixed. Chaining
+    ``Stream.filter`` (a ``PredicateFilter``) before consuming ``range_seek``
+    prevents SQL ``LIMIT``/``OFFSET`` pushdown, so offset would apply to the
+    post-brightness stream and slide past ``[start, stop)``.
     """
     from dimos.memory.transform import QualityWindow
 
-    ranged = images.range_seek(start, stop)
-    ts_to_index = {obs.ts: start + offset for offset, obs in enumerate(ranged)}
-    if not ts_to_index:
+    ranged = list(images.range_seek(start, stop))
+    if not ranged:
         raise ValueError(f"color_image range [{start}, {stop}) is empty")
+    ts_to_index = {obs.ts: start + offset for offset, obs in enumerate(ranged)}
 
-    # None means no floor; keep the filter in the chain either way.
     brightness_floor = float("-inf") if min_brightness is None else min_brightness
-    selected_obs = cast(
-        "list[Observation[Image]]",
-        list(
-            images.range_seek(start, stop)
-            .filter(lambda obs: obs.data.brightness > brightness_floor)
-            .transform(QualityWindow(lambda img: img.sharpness, window=quality_window))
-        ),
+    bright = [obs for obs in ranged if obs.data.brightness > brightness_floor]
+    selected_obs = list(
+        QualityWindow[Image](lambda img: img.sharpness, window=quality_window)(iter(bright))
     )
     indices: list[int] = []
     for obs in selected_obs:

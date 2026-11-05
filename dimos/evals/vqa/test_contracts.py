@@ -49,6 +49,7 @@ from dimos.evals.vqa.generate import (
     VqaGenerationConfig,
     generate_dataset,
     generate_frames_dataset,
+    make_case_id,
     resolve_generation_frame_indices,
 )
 from dimos.evals.vqa.pointcloud_frame import PointCloudFrameUnavailableError
@@ -222,6 +223,10 @@ class _QuestionModel:
         assert "largest_visible_area" in prompt
         assert "object_distance" in prompt
         assert "closest_object" in prompt
+        assert "ego_fore_aft" in prompt
+        assert "height_order" in prompt
+        assert "ego_turn" in prompt
+        assert "ego_any_fore_aft" in prompt
         assert "JSON array" in prompt
         return [
             {"family": "presence", "object_names": ["chair"]},
@@ -237,6 +242,10 @@ class _QuestionModel:
                 "family": "closest_object",
                 "object_names": ["left person", "right person", "chair"],
             },
+            {"family": "ego_fore_aft", "object_names": ["chair"]},
+            {"family": "height_order", "object_names": ["shelf", "table"]},
+            {"family": "ego_turn", "object_names": ["door"]},
+            {"family": "ego_any_fore_aft", "object_names": ["chair"]},
         ]
 
 
@@ -768,6 +777,10 @@ def test_openai_author_parses_constrained_proposals() -> None:
             family="closest_object",
             object_names=("left person", "right person", "chair"),
         ),
+        QuestionProposal(family="ego_fore_aft", object_names=("chair",)),
+        QuestionProposal(family="height_order", object_names=("shelf", "table")),
+        QuestionProposal(family="ego_turn", object_names=("door",)),
+        QuestionProposal(family="ego_any_fore_aft", object_names=("chair",)),
     )
 
 
@@ -805,8 +818,11 @@ def test_generation_request_defaults_output_under_state_directory() -> None:
 
 def test_generation_config_validates_synchronization_tolerance() -> None:
     assert VqaGenerationConfig().synchronization_tolerance_s == 0.1
+    assert VqaGenerationConfig().question_author == "openai"
     with pytest.raises(ValidationError):
         VqaGenerationConfig(synchronization_tolerance_s=0.0)
+    with pytest.raises(ValidationError):
+        VqaGenerationConfig(question_author="nope")
 
 
 def test_generation_request_selects_frame_range() -> None:
@@ -865,6 +881,21 @@ def test_generate_dataset_forwards_quality_window_indices(
         def stop(self) -> None:
             return None
 
+    class _FakeCatalog:
+        def __init__(self) -> None:
+            self.config = type("config", (), {"model_name": "fake-owlv2"})()
+
+        def stop(self) -> None:
+            return None
+
+        def names_for(self, image: object) -> tuple[str, ...]:
+            del image
+            return ("chair",)
+
+        def query_detections(self, image: object, query: str, **_kwargs: object) -> object:
+            del image, query
+            return object()
+
     def fake_select_quality_indices(
         images: object,
         start: int,
@@ -900,6 +931,7 @@ def test_generate_dataset_forwards_quality_window_indices(
     monkeypatch.setattr(
         "dimos.evals.vqa.generate.select_quality_indices", fake_select_quality_indices
     )
+    monkeypatch.setattr("dimos.evals.vqa.generate.OpenVocabDetectionCatalog", _FakeCatalog)
     monkeypatch.setattr("dimos.models.vl.openai.OpenAIVlModel", _FakeModel)
     monkeypatch.setattr("dimos.models.vl.moondream.MoondreamVlModel", _FakeModel)
     monkeypatch.setattr(
@@ -971,7 +1003,7 @@ def test_standalone_rows_match_public_private_contract() -> None:
     )
     label = PrivateLabel(id=case.id, answer="yes")
 
-    assert case.model_dump(mode="json") == {
+    assert case.model_dump(mode="json", exclude_none=True) == {
         "id": "frame-000004-chair-presence",
         "image": "assets/frame-000004.png",
         "question": "Is there a chair in the image?",
@@ -1133,7 +1165,9 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
         _Detector(present=True),
     )
 
-    assert result.cases[0].id == "frame-000004-chair-presence"
+    presence_id = make_case_id(4, "presence", ("chair",))
+    assert result.cases[0].id == presence_id
+    assert "chair" not in presence_id and "presence" not in presence_id
     image_path = output / "assets" / "frame-000004.png"
     assert image_path.is_file()
     assert np.array_equal(Image.from_file(image_path).data, image.data)
@@ -1144,7 +1178,7 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     suite = load_suite(output)
     case = suite[0]
 
-    assert case.id == "frame-000004-chair-presence"
+    assert case.id == presence_id
     assert 'Choices: ["yes", "no"]' in case.inputs
     assert isinstance(case.environment, ImageFile)
     assert case.environment.config.path == image_path
@@ -1172,6 +1206,31 @@ def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path)
 
     assert existing.read_text() == "keep me"
     assert list(output.iterdir()) == [existing]
+
+
+def test_generation_accepts_precreated_empty_output_directory(tmp_path: Path) -> None:
+    """CLI allows absent or empty destinations; empty dirs must not be rejected."""
+    output = tmp_path / "vqa"
+    output.mkdir()
+    result = generate_frames_dataset(
+        GenerationRequest(dataset="recording.db", image_index=4, output=output),
+        (GenerationFrame(4, Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))),),
+        _Author(),
+        _Detector(present=True),
+    )
+    assert result.cases
+    assert (output / "cases.jsonl").is_file()
+
+
+def test_generation_rejects_second_claim_on_empty_output_directory(tmp_path: Path) -> None:
+    """Two concurrent empty-dir claims must not both proceed."""
+    from dimos.evals.vqa.generate import _prepare_output
+
+    output = tmp_path / "vqa"
+    output.mkdir()
+    _prepare_output(output)
+    with pytest.raises(FileExistsError, match="already claimed"):
+        _prepare_output(output)
 
 
 def test_generation_audits_invalid_family_proposals_and_continues(tmp_path: Path) -> None:
@@ -1205,7 +1264,8 @@ def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
         _RangeEstimator(1.5),
     )
 
-    assert result.cases[0].id == "frame-000004-chair-object_distance"
+    distance_id = make_case_id(4, "object_distance", ("chair",))
+    assert result.cases[0].id == distance_id
     assert result.cases[0].choices == (
         "under 1 meter",
         "1 to under 2 meters",
@@ -1213,7 +1273,7 @@ def test_generate_distance_case_from_pointcloud_frame(tmp_path: Path) -> None:
         "3 meters or more",
     )
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
-    assert labels == [{"id": "frame-000004-chair-object_distance", "answer": "1 to under 2 meters"}]
+    assert labels == [{"id": distance_id, "answer": "1 to under 2 meters"}]
 
 
 def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> None:
@@ -1233,7 +1293,7 @@ def test_generate_closest_object_case_from_pointcloud_frame(tmp_path: Path) -> N
         ),
     )
 
-    case_id = "frame-000004-chair-vs-left-person-vs-right-person-closest_object"
+    case_id = make_case_id(4, "closest_object", ("left person", "right person", "chair"))
     assert result.cases[0].id == case_id
     assert result.cases[0].choices == ("left person", "right person", "chair")
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
@@ -1257,9 +1317,10 @@ def test_generate_image_coverage_case_without_pointcloud(tmp_path: Path) -> None
         mask_estimator=_MaskEstimator({"chair": 24}),
     )
 
-    assert result.cases[0].id == "frame-000004-chair-image_coverage"
+    coverage_id = make_case_id(4, "image_coverage", ("chair",))
+    assert result.cases[0].id == coverage_id
     labels = [json.loads(line) for line in (output / "labels.jsonl").read_text().splitlines()]
-    assert labels == [{"id": "frame-000004-chair-image_coverage", "answer": "15% to under 35%"}]
+    assert labels == [{"id": coverage_id, "answer": "15% to under 35%"}]
 
 
 def test_generation_deduplicates_reordered_closest_object_references(tmp_path: Path) -> None:
@@ -1282,8 +1343,8 @@ def test_generation_deduplicates_reordered_closest_object_references(tmp_path: P
     )
 
     assert len(result.cases) == 1
-    assert result.cases[0].id == (
-        "frame-000004-chair-vs-left-person-vs-right-person-closest_object"
+    assert result.cases[0].id == make_case_id(
+        4, "closest_object", ("left person", "right person", "chair")
     )
 
 
@@ -1297,7 +1358,7 @@ def test_generation_deduplicates_reordered_largest_area_references(tmp_path: Pat
     )
 
     assert len(result.cases) == 1
-    assert result.cases[0].id == "frame-000004-box-vs-chair-vs-table-largest_visible_area"
+    assert result.cases[0].id == make_case_id(4, "largest_visible_area", ("chair", "table", "box"))
 
 
 def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path) -> None:
@@ -1367,8 +1428,8 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     )
 
     assert [case.id for case in result.cases] == [
-        "frame-000001-chair-presence",
-        "frame-000003-chair-presence",
+        make_case_id(1, "presence", ("chair",)),
+        make_case_id(3, "presence", ("chair",)),
     ]
     assert (output / "assets" / "frame-000001.png").is_file()
     assert (output / "assets" / "frame-000003.png").is_file()
@@ -1380,7 +1441,8 @@ def test_generate_multiple_images_aggregates_frame_artifacts(tmp_path: Path) -> 
     assert run["generation"]["start"] == 1
     assert run["generation"]["stop"] == 5
     assert run["generation"]["stride"] == 2
-    assert run["configuration"] == {"synchronization_tolerance_s": 0.025}
+    assert run["configuration"]["synchronization_tolerance_s"] == 0.025
+    assert "diversity" not in run
     assert run["models"] == {
         "author": "gpt-4o-mini",
         "detector": "vikhyatk/moondream2",
@@ -1426,7 +1488,7 @@ def test_generation_keeps_answered_questions_and_audits_rejections(tmp_path: Pat
         detector,
     )
 
-    assert [case.id for case in result.cases] == ["frame-000004-chair-presence"]
+    assert [case.id for case in result.cases] == [make_case_id(4, "presence", ("chair",))]
     ground_truth = json.loads((output / "audit" / "frame-000004" / "ground_truth.json").read_text())
     assert [row["status"] for row in ground_truth] == ["rejected", "answered"]
     assert "exactly one" in ground_truth[0]["reason"]
@@ -1446,6 +1508,25 @@ def test_generation_propagates_detector_failures(tmp_path: Path) -> None:
         )
 
     assert not output.exists()
+
+
+def test_generation_failure_does_not_erase_completed_dataset(tmp_path: Path) -> None:
+    output = tmp_path / "vqa"
+    output.mkdir()
+    (output / "cases.jsonl").write_text("{}\n", encoding="utf-8")
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    request = GenerationRequest(dataset="recording.db", image_index=4, output=output)
+
+    with pytest.raises(FileExistsError, match="already exists|is not empty"):
+        generate_frames_dataset(
+            request,
+            (GenerationFrame(4, image),),
+            _Author(),
+            _Detector(present=True),
+        )
+
+    assert output.exists()
+    assert (output / "cases.jsonl").read_text(encoding="utf-8") == "{}\n"
 
 
 def test_later_frame_failure_does_not_publish_partial_dataset(tmp_path: Path) -> None:
@@ -1480,6 +1561,6 @@ def test_generation_deduplicates_proposals_and_suffixes_id_collisions(tmp_path: 
     )
 
     assert [case.id for case in result.cases] == [
-        "frame-000004-chair-presence",
-        "frame-000004-chair-presence-2",
+        make_case_id(4, "presence", ("chair",), occurrence=1),
+        make_case_id(4, "presence", ("chair",), occurrence=2),
     ]

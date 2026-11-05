@@ -38,6 +38,7 @@ def test_vqa_cli_exposes_generate_and_run() -> None:
     assert result.exit_code == 0
     assert "generate" in output
     assert "run" in output
+    assert "generate-cross-view" not in output
 
 
 def test_vqa_generate_cli_declares_single_image_input() -> None:
@@ -52,6 +53,16 @@ def test_vqa_generate_cli_declares_single_image_input() -> None:
     assert "--stride" in output
     assert "--quality-window" in output
     assert "--min-brightness" in output
+    assert "--with-localize" in output
+    assert "--localize-query" not in output
+    assert "--localize-pad" not in output
+    assert "localize-cover" not in output
+    assert "--min-views" not in output
+    assert "localize-evidence" not in output
+    assert "--localize-detector" not in output
+    assert "--query" not in output
+    assert "--from" not in output
+    assert "--params" not in output
     assert "--sharp-stride" not in output
     assert "--sync-tolerance" not in output
     assert "--output" in output
@@ -110,6 +121,56 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
         )
     ]
     assert "Generated 1 VQA case" in result.stdout
+
+
+def test_vqa_generate_cli_accepts_optional_localize_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[GenerationRequest] = []
+
+    def fake_generate(
+        request: GenerationRequest, config: VqaGenerationConfig | None = None
+    ) -> GenerationResult:
+        del config
+        seen.append(request)
+        return GenerationResult(
+            output=request.output_directory(),
+            cases=(
+                PublicCase(
+                    id="q",
+                    image="assets/frame.jpg",
+                    question="Is the chair ahead?",
+                    choices=("ahead", "behind"),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(generate_module, "generate_dataset", fake_generate)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "vqa",
+            "generate",
+            "recording.db",
+            "--image-index",
+            "3",
+            "--output",
+            str(tmp_path),
+            "--with-localize",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen == [
+        GenerationRequest(
+            dataset="recording.db",
+            image_index=3,
+            output=tmp_path,
+            with_localize=True,
+        )
+    ]
 
 
 def test_vqa_generate_cli_accepts_frame_range(

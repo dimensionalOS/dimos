@@ -50,8 +50,21 @@ def generate(
         None,
         help="Destination directory; must be absent or empty",
     ),
+    with_localize: bool = typer.Option(
+        False,
+        "--with-localize/--no-with-localize",
+        help=(
+            "Run Dan localize once over a padded window and add ego memory clips + "
+            "cross_view_same_object pairs (off by default). Discovery, pad, coverage, "
+            "and min-views use built-in defaults."
+        ),
+    ),
 ) -> None:
-    """Generate questions for one image or an indexed image range."""
+    """Generate a standalone VQA dataset from selected color_image frames.
+
+    ``--with-localize`` runs Dan localize once and adds ego + cross-view cases from
+    that shared evidence.
+    """
     # Keep generation's optional model stack out of global CLI startup.
     from dimos.evals.vqa.generate import (
         GenerationRequest,
@@ -68,6 +81,7 @@ def generate(
             stride=stride,
             quality_window=quality_window,
             min_brightness=min_brightness,
+            with_localize=with_localize,
         )
         result = generate_dataset(request)
     except (ValueError, IndexError, OSError) as exc:
