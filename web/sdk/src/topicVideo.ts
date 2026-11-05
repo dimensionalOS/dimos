@@ -25,10 +25,14 @@ export const VIDEO_PROFILE = "video.h264.v1";
 export const VIDEO_FALLBACK_PROFILE = "image.jpeg.balanced.v1";
 /** Mirrors the relay's answer deadline for an offer it forwarded. */
 export const RTC_ANSWER_TIMEOUT_MS = 10_000;
-/** Peer failures before the handle stays failed (or falls back). */
-export const RTC_MAX_FAILURES = 3;
-/** Re-offer delays after the first, second and third failure. */
-export const RTC_RETRY_MS = [1_000, 2_000, 4_000] as const;
+/** An answered peer that has not connected by then counts as failed, without
+ * waiting for however long the browser takes to report it. */
+export const RTC_CONNECT_TIMEOUT_MS = 15_000;
+/** Re-offer delays after the first and second failure; the third is final. */
+export const RTC_RETRY_MS = [1_000, 2_000] as const;
+/** Peer failures, with no media played since, before the handle stays failed
+ * (or falls back). */
+export const RTC_MAX_FAILURES = RTC_RETRY_MS.length + 1;
 
 export type TopicVideoMode = "rtc" | "jpeg" | "none";
 export interface TopicVideoOptions extends TopicOptions {
@@ -43,7 +47,7 @@ export interface TopicVideo {
   ready(): Promise<void>;
   status(): TopicStatus;
   onStatus(callback: (status: TopicStatus) => void): () => void;
-  /** `rtc` while a track is live, `jpeg` on the fallback, `none` otherwise. */
+  /** `rtc` once media plays on the track, `jpeg` on the fallback, `none` otherwise. */
   mode(): TopicVideoMode;
   track(): MediaStreamTrack | null;
   /** The receiver behind the track, for jitterBufferTarget and stats. */
@@ -73,6 +77,8 @@ export interface VideoHost {
   /** Route incoming topic_rtc_* messages for subscription `id` to `sink`. */
   bind(id: string, sink: (msg: TopicRtcSignal) => void): void;
   unbind(id: string): void;
+  /** The source and settings an inner subscription has in force. */
+  requestOf(handle: TopicSubscription): TopicOptions;
   /** False while disconnected. */
   send(msg: Msg): boolean;
   createPeerConnection(): PeerConnectionLike;
@@ -89,7 +95,6 @@ function codeFor(reason: string): "rtc_unavailable" | "encoder_failed" | "rtc_fa
 interface Peer {
   ref: VideoRouteRef;
   pc: PeerConnectionLike;
-  answered: boolean;
   candidates: number;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -107,7 +112,6 @@ export class TopicVideoHandle implements TopicVideo {
   #retry: ReturnType<typeof setTimeout> | null = null;
   #closed = false;
   #ready: { promise: Promise<void>; resolve: () => void; reject: (e: TopicError) => void };
-  readonly #settings: TopicOptions;
 
   constructor(
     readonly host: VideoHost,
@@ -116,7 +120,6 @@ export class TopicVideoHandle implements TopicVideo {
     readonly onTrack: (track: MediaStreamTrack | null) => void,
   ) {
     const { fallback: _fallback, onSample: _onSample, profile: _profile, ...settings } = options;
-    this.#settings = settings;
     this.#ready = deferred();
     this.#inner = host.subscribe(
       keyExpr,
@@ -199,7 +202,11 @@ export class TopicVideoHandle implements TopicVideo {
       this.#transition({ ...status, error: this.#status.error ?? status.error });
       return;
     }
-    if (status.phase === "ready") {
+    if (status.phase === "connecting") {
+      // Another route is on its way, as after a changed source; the old peer ended.
+      this.#dropPeer();
+      this.#transition(status);
+    } else if (status.phase === "ready") {
       const ref = this.host.routeOf(this.#inner);
       if (ref === null) return;
       const current = this.#peer?.ref;
@@ -210,8 +217,11 @@ export class TopicVideoHandle implements TopicVideo {
       this.#transition(status);
     } else if (status.phase === "rejected") {
       const code = status.error?.code;
+      // A camera out of encoders is as unavailable as one without the profile.
       const error = code === "unsupported_profile"
         ? new TopicError("rtc_unavailable", "rejected", "source offers no direct video")
+        : code === "variant_limit"
+        ? new TopicError("rtc_unavailable", "rejected", code)
         : status.error ?? new TopicError("rejected", "rejected");
       this.#giveUp(error);
     } else if (status.phase === "closed") {
@@ -224,7 +234,7 @@ export class TopicVideoHandle implements TopicVideo {
     if (this.#retry !== null) clearTimeout(this.#retry);
     this.#retry = null;
     const pc = this.host.createPeerConnection();
-    const peer: Peer = { ref, pc, answered: false, candidates: 0, timer: null };
+    const peer: Peer = { ref, pc, candidates: 0, timer: null };
     this.#peer = peer;
     this.host.bind(ref.id, (msg) => this.#signal(peer, msg));
     pc.addEventListener("icecandidate", (event) => {
@@ -246,13 +256,24 @@ export class TopicVideoHandle implements TopicVideo {
       const { track, receiver } = event as RTCTrackEvent;
       this.#track = track;
       this.#receiver = receiver ?? null;
-      this.#mode = "rtc";
-      this.#failures = 0;
-      this.#transition({ phase: "ready" });
+      // This event only says the answer applied. The track plays, and the peer
+      // has proven itself, when its first packet unmutes it.
+      const playing = () => {
+        if (this.#peer !== peer) return;
+        this.#stopDeadline(peer);
+        this.#mode = "rtc";
+        this.#failures = 0;
+        this.#transition({ phase: "ready" });
+      };
+      if (track.muted) track.addEventListener("unmute", playing, { once: true });
+      else playing();
       this.onTrack(track);
     });
     pc.addEventListener("connectionstatechange", () => {
-      if (this.#peer === peer && pc.connectionState === "failed") {
+      if (this.#peer !== peer) return;
+      // Connected with no media yet is a quiet camera, not a failure: no deadline.
+      if (pc.connectionState === "connected") this.#stopDeadline(peer);
+      else if (pc.connectionState === "failed") {
         this.#peerFailed(peer, new TopicError("rtc_failed", "interrupted", "no_direct_path"));
       }
     });
@@ -263,11 +284,7 @@ export class TopicVideoHandle implements TopicVideo {
       const sdp = pc.localDescription?.sdp ?? "";
       if (sdp.length === 0 || sdp.length > MAX_SDP_LEN) throw new Error("offer SDP out of bounds");
       if (!this.host.send({ t: "topic_rtc_offer", ...ref, sdp })) return; // the reconnect re-offers
-      peer.timer = setTimeout(() => {
-        if (this.#peer === peer && !peer.answered) {
-          this.#peerFailed(peer, new TopicError("rtc_failed", "interrupted", "rtc_answer_timeout"));
-        }
-      }, RTC_ANSWER_TIMEOUT_MS);
+      this.#startDeadline(peer, RTC_ANSWER_TIMEOUT_MS, "rtc_answer_timeout");
     }).catch((error) => {
       if (this.#peer !== peer) return;
       this.#peerFailed(peer, new TopicError("rtc_failed", "interrupted", String(error)));
@@ -277,9 +294,7 @@ export class TopicVideoHandle implements TopicVideo {
   #signal(peer: Peer, msg: TopicRtcSignal): void {
     if (this.#peer !== peer) return;
     if (msg.t === "topic_rtc_answer") {
-      peer.answered = true;
-      if (peer.timer !== null) clearTimeout(peer.timer);
-      peer.timer = null;
+      this.#startDeadline(peer, RTC_CONNECT_TIMEOUT_MS, "no_direct_path");
       peer.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp }).catch((error) => {
         if (this.#peer === peer) {
           this.#peerFailed(peer, new TopicError("rtc_failed", "interrupted", String(error)));
@@ -305,6 +320,18 @@ export class TopicVideoHandle implements TopicVideo {
     }
   }
 
+  /** The peer fails unless it gets past this step in time. */
+  #startDeadline(peer: Peer, ms: number, reason: string): void {
+    this.#stopDeadline(peer);
+    peer.timer = setTimeout(() => {
+      this.#peerFailed(peer, new TopicError("rtc_failed", "interrupted", reason));
+    }, ms);
+  }
+  #stopDeadline(peer: Peer): void {
+    if (peer.timer !== null) clearTimeout(peer.timer);
+    peer.timer = null;
+  }
+
   /** A terminal failure of the peer: backoff and offer again, up to RTC_MAX_FAILURES. */
   #peerFailed(peer: Peer, error: TopicError): void {
     if (this.#peer !== peer) return;
@@ -315,24 +342,28 @@ export class TopicVideoHandle implements TopicVideo {
       return;
     }
     this.#transition({ phase: "interrupted", error });
-    const delay = RTC_RETRY_MS[Math.min(this.#failures, RTC_RETRY_MS.length) - 1];
     this.#retry = setTimeout(() => {
       this.#retry = null;
       const ref = this.host.routeOf(this.#inner);
       if (ref !== null && this.#peer === null && !this.#closed) this.#offer(ref);
-    }, delay);
+    }, RTC_RETRY_MS[this.#failures - 1]);
   }
 
   /** Direct video is over for this handle: the fallback, or a rejection. */
   #giveUp(error: TopicError): void {
+    if (this.#retry !== null) clearTimeout(this.#retry);
+    this.#retry = null;
     const direct = ["rtc_unavailable", "rtc_failed", "encoder_failed"].includes(error.code);
     if (this.options.fallback === "jpeg" && direct) {
+      // Not the options the handle opened with: a successful update() holds, and
+      // the relay clamps the rest to the JPEG profile.
+      const request = this.host.requestOf(this.#inner);
       this.#unlisten();
       this.#inner.close();
       this.#mode = "jpeg";
       this.#inner = this.host.subscribe(
         this.keyExpr,
-        { ...this.#settings, delivery: "latest", profile: VIDEO_FALLBACK_PROFILE },
+        { ...request, delivery: "latest", profile: VIDEO_FALLBACK_PROFILE },
         this.options.onSample ?? noop,
         false,
       );
@@ -348,7 +379,7 @@ export class TopicVideoHandle implements TopicVideo {
     const peer = this.#peer;
     if (peer === null) return;
     this.#peer = null;
-    if (peer.timer !== null) clearTimeout(peer.timer);
+    this.#stopDeadline(peer);
     this.host.unbind(peer.ref.id);
     peer.pc.close();
     if (this.#track !== null) {

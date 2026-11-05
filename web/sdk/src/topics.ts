@@ -405,6 +405,10 @@ export class TopicClient implements Topics {
     },
     bind: (id, sink) => this.#videoSinks.set(id, sink),
     unbind: (id) => this.#videoSinks.delete(id),
+    requestOf: (handle) => {
+      const group = (handle as Handle).group;
+      return group === null ? {} : { source: group.identity.source, ...group.requested };
+    },
     send: (msg) => {
       if (this.#send === null) return false;
       this.#send(msg);
