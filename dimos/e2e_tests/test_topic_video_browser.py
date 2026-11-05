@@ -30,8 +30,10 @@ Marked web_browser: excluded from the default suite (needs the
 """
 
 from collections.abc import Iterator
+from contextlib import ExitStack
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -116,8 +118,16 @@ class Stack:
 def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     root = tmp_path_factory.mktemp("topic-video")
     (root / "index.html").write_text(PAGE % {"key": CAMERA_KEY})
+    # Each resource registers its cleanup as it comes up, so a failure in the
+    # middle of the setup still tears down what was started before it.
+    with ExitStack() as cleanup:
+        yield from _stack(root, cleanup)
+
+
+def _stack(root: Path, cleanup: ExitStack) -> Iterator[Stack]:
     relay = RelayProcess(serve_dir=root)
     info = relay.start()
+    cleanup.callback(relay.stop)
     port = free_port()
     publisher = zenoh.open(
         make_zenoh_config(
@@ -129,6 +139,7 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
             }
         )
     )
+    cleanup.callback(publisher.close)
     config = root / "provider.json"
     config.write_text(
         json.dumps(
@@ -150,6 +161,18 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
         [sys.executable, "-m", "dimos.web.relay_bridge.topic_service", "--config", str(config)],
         stdin=subprocess.PIPE,
     )
+
+    def stop_provider() -> None:
+        if provider.stdin is not None:
+            provider.stdin.close()
+        provider.terminate()
+        try:
+            provider.wait(10)
+        except subprocess.TimeoutExpired:
+            provider.kill()
+            provider.wait()
+
+    cleanup.callback(stop_provider)
     stop = threading.Event()
     published: list[int] = [0]
 
@@ -158,24 +181,16 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
         while not stop.is_set():
             publisher.put(CAMERA_KEY, camera_frame(seq))
             published[0] = seq = seq + 1
-            time.sleep(1 / 30)
+            stop.wait(1 / 30)
+
+    def stop_publishing() -> None:
+        stop.set()
+        thread.join(2)
 
     thread = threading.Thread(target=publish, daemon=True)
     thread.start()
-    try:
-        yield Stack(info, publisher, published)
-    finally:
-        stop.set()
-        thread.join(2)
-        if provider.stdin is not None:
-            provider.stdin.close()
-        provider.terminate()
-        try:
-            provider.wait(10)
-        except subprocess.TimeoutExpired:
-            provider.kill()
-        publisher.close()
-        relay.stop()
+    cleanup.callback(stop_publishing)
+    yield Stack(info, publisher, published)
 
 
 @pytest.fixture(params=["chromium", "firefox"])

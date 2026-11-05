@@ -101,7 +101,7 @@ interface Peer {
 
 export class TopicVideoHandle implements TopicVideo {
   #inner: TopicSubscription;
-  #unlisten: () => void;
+  #unlisten: () => void = noop;
   #peer: Peer | null = null;
   #track: MediaStreamTrack | null = null;
   #receiver: RTCRtpReceiver | null = null;
@@ -127,7 +127,19 @@ export class TopicVideoHandle implements TopicVideo {
       noop,
       true,
     );
-    this.#unlisten = this.#inner.onStatus((status) => this.#innerStatus(status));
+    this.#listen(this.#inner);
+  }
+
+  /** Follow `inner`'s status, with the listener removable before its first
+   * status is handled: a subscription the client refuses on the spot reports
+   * `rejected` synchronously, and that may already switch to the fallback. */
+  #listen(inner: TopicSubscription): void {
+    let armed = false;
+    this.#unlisten = inner.onStatus((status) => {
+      if (armed) this.#innerStatus(status);
+    });
+    armed = true;
+    this.#innerStatus(inner.status());
   }
 
   ready(): Promise<void> {
@@ -368,7 +380,7 @@ export class TopicVideoHandle implements TopicVideo {
         false,
       );
       this.#transition({ phase: "connecting", error });
-      this.#unlisten = this.#inner.onStatus((status) => this.#innerStatus(status));
+      this.#listen(this.#inner);
       return;
     }
     this.#mode = "none";

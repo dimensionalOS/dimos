@@ -406,8 +406,12 @@ export class TopicClient implements Topics {
     bind: (id, sink) => this.#videoSinks.set(id, sink),
     unbind: (id) => this.#videoSinks.delete(id),
     requestOf: (handle) => {
+      // The source serving the camera, also when it was picked as the only one
+      // connected: a fallback must not lose it to a source that joined since.
       const group = (handle as Handle).group;
-      return group === null ? {} : { source: group.identity.source, ...group.requested };
+      return group === null
+        ? {}
+        : { source: group.source ?? group.identity.source, ...group.requested };
     },
     send: (msg) => {
       if (this.#send === null) return false;
@@ -788,6 +792,17 @@ export class TopicClient implements Topics {
       return;
     }
     group.source = source;
+    // The relay refuses a profile the source does not offer before it looks at
+    // the settings; the same order here keeps the reason the same when the
+    // settings would also fail against the missing profile's empty ranges.
+    const offered = this.#sources.get(source)?.profiles;
+    if (offered !== undefined && !offered.includes(group.identity.profile)) {
+      this.#transition(group, {
+        phase: "rejected",
+        error: new TopicError("unsupported_profile", "rejected"),
+      });
+      return;
+    }
     // What the provider will apply, known from its advertised ranges; the
     // relay's acknowledgement replaces this once the route is ready.
     const ranges = this.#ranges(group);
