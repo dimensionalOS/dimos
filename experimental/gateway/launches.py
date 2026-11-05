@@ -447,7 +447,7 @@ def active() -> dict[str, Any]:
 
 
 def gossip_env() -> dict[str, str]:
-    gossip = shared_config.setting("zenoh", "gossip")
+    gossip = shared_config.shared_config().zenoh_gossip
     return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
 
 
