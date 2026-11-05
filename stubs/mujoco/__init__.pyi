@@ -222,4 +222,5 @@ def mj_ray(
     flg_static: int,
     bodyexclude: int,
     geomid: NDArray[np.int32],
+    normal: NDArray[np.float64] | None = ...,
 ) -> float: ...

@@ -220,7 +220,32 @@ def make_sim(world, tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def command():
+def motor_commands():
+    def make(
+        names=("left/slide_x",), positions=(0.2,), velocity=0.0, kp=200.0, kd=20.0, effort=0.0
+    ):
+        return [
+            JointCommand(
+                joint_names_length=len(names),
+                joint_names=list(names),
+                interface_name=interface,
+                values_length=len(values),
+                values=list(values),
+            )
+            for interface, values in (
+                ("position", positions),
+                ("velocity", [velocity] * len(names)),
+                ("kp", [kp] * len(names)),
+                ("kd", [kd] * len(names)),
+                ("effort", [effort] * len(names)),
+            )
+        ]
+
+    return make
+
+
+@pytest.fixture
+def command(motor_commands):
     def make(
         header, names=("left/slide_x",), positions=(0.2,), ttl=2.0, kp=200.0, kd=20.0, effort=0.0
     ):
@@ -235,11 +260,8 @@ def command():
             based_on_time_ns=header.time_ns,
             apply_at_ns=header.time_ns,
             valid_until_ns=header.time_ns + round(ttl * 1e9),
-            joint_commands_length=len(names),
-            joint_commands=[
-                JointCommand(joint_id=n, position=q, velocity=0, kp=kp, kd=kd, feedforward=effort)
-                for n, q in zip(names, positions, strict=True)
-            ],
+            joint_commands_length=5,
+            joint_commands=motor_commands(names, positions, kp=kp, kd=kd, effort=effort),
         )
 
     return make

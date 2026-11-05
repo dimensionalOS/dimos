@@ -271,7 +271,7 @@ def test_invalid_action_has_no_partial_effect(make_sim, cbor_action, invalid):
         action.cbor_commands[0].value = cbor2.dumps("wrong type")
         action.cbor_commands[0].value_length = len(action.cbor_commands[0].value)
     elif invalid == "joint":
-        action.joint_commands[0].position = 999
+        action.joint_commands[0].values[0] = 999
     elif invalid == "bytes":
         action.cbor_commands[0].value = b"\x01\x02"
         action.cbor_commands[0].value_length = 2
@@ -288,7 +288,7 @@ def test_invalid_action_has_no_partial_effect(make_sim, cbor_action, invalid):
     # Rejection consumes no sequence and changes no motor settings: a valid
     # replacement at the same boundary is accepted and advances physics.
     accepted = cbor_action(rejected.header, with_joints=True)
-    accepted.joint_commands[0].position = 0
+    accepted.joint_commands[0].values[0] = 0
     sim.submit(accepted)
     wait_until(lambda: sim.status()["time_ns"] == 20_000_000, timeout=3)
     after = sim.inspect()

@@ -251,7 +251,7 @@ class SimModule(SharedConfigModule):
                     command.cbor_commands,
                     {"world", *self._backend.body_ids, *self._backend.joint_ids},
                 )
-                names = {t.joint_id for t in command.joint_commands}
+                names = {name for row in command.joint_commands for name in row.joint_names}
                 answered = []
                 for controller in self.config.controllers:
                     if names.intersection(controller.joint_ids):
