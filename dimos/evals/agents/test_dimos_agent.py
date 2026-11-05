@@ -170,3 +170,24 @@ def test_run_records_tool_results_and_reports_unanswered_cases(
     }
     process.terminate.assert_called_once()
     assert not Path(process_env["XDG_RUNTIME_DIR"]).exists()
+
+
+def test_a_live_robot_case_is_framed_as_a_task_on_the_robot(tmp_path):
+    agent = DimosAgentAdapter()
+    env = RunningEnvironment(mcp_url="http://robot.test:4321/mcp", streams=(), artifacts={})
+    prompt = agent._prepare_case(env, tmp_path)
+    assert prompt.startswith(agent.config.robot_prompt)
+    assert "dimos mcp call" not in prompt
+    assert (tmp_path / "system-prompt.txt").read_text() == prompt
+
+
+def test_the_python_guide_reaches_the_agent_as_dimos_md(tmp_path):
+    guide = tmp_path / "python_api.md"
+    guide.write_text("# Manipulation from Python")
+    run_dir = tmp_path / "case"
+    run_dir.mkdir()
+    agent = DimosAgentAdapter()
+    env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=guide)
+    prompt = agent._prepare_case(env, run_dir)
+    assert prompt.startswith(agent.config.robot_prompt)
+    assert (run_dir / "DIMOS.md").is_file() and "DIMOS.md" in prompt

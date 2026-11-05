@@ -13,13 +13,15 @@
 # limitations under the License.
 
 """xArm7 at a table with a red ball (``apple``) and a cylinder (``cup``): two picks,
-planner skills and the wrist camera only, graded on the bodies' recorded poses.
+driven through the Python API with the planner and the wrist camera only, graded on the
+bodies' recorded poses.
 
     dimos evals run dimos.evals.suites.mujoco_xarm --agent dimos.evals.agents.pi
 """
 
 from __future__ import annotations
 
+from dimos.evals.environments.live import MANIPULATION_PYTHON_GUIDE
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import lifted, stacked_on
 from dimos.evals.types import EvalCase, Suite
@@ -38,15 +40,15 @@ SCENE = (
     "ahead of the arm base. On it are a red ball about 8 cm wide, an orange ball about 9 cm "
     "wide and a cylinder about 7 cm wide and 12 cm tall; find where they are by looking "
     "through the wrist camera. The gripper starts pointing straight down: for top-down moves "
-    "omit roll/pitch/yaw in move_to_pose to keep the current orientation, or pass "
-    "roll=3.1416, pitch=0. roll=pitch=yaw=0 points the gripper up."
+    "omit the orientation in arm.move_pose to keep it."
 )
 
 
 def environment() -> MujocoEnvironment:
     return MujocoEnvironment(
-        blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
+        blueprint=["xarm-perception-sim", "observe-skill"],
         disable=PERCEPTION_MODULES,
+        python_guide=MANIPULATION_PYTHON_GUIDE,
         scene=LfsPath("xarm7/scene.xml"),
         tracked_bodies=TRACKED,
     )

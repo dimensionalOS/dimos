@@ -15,6 +15,7 @@
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -223,7 +224,11 @@ def test_settle_waits_for_joints_to_stop():
 
 def test_launch_and_cleanup(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
-    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    mocker.patch("dimos.evals.environments.live.wait_connectable")
     proc.extra_env = {}
     proc.global_args = []
     mocker.patch(
@@ -252,3 +257,28 @@ def test_launch_and_cleanup(tmp_path, mocker):
         env.stop()
     proc.stop.assert_called_once()
     store.stop.assert_called_once()
+
+
+def test_launch_without_mcp_waits_for_the_coordinator(tmp_path, mocker):
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.extra_env = {}
+    proc.global_args = []
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run", return_value=SimpleNamespace(mcp_url=None)
+    )
+    connectable = mocker.patch("dimos.evals.environments.live.wait_connectable")
+    mcp = mocker.patch("dimos.evals.environments.live.McpAdapter")
+    mocker.patch("dimos.memory.store.sqlite.SqliteStore")
+    guide = tmp_path / "python_api.md"
+    guide.write_text("# guide")
+    env = MujocoEnvironment(blueprint=["xarm-perception-sim"], python_guide=guide)
+    mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
+    mocker.patch.object(env, "wait_ready")
+    try:
+        result = env.start(())
+        connectable.assert_called_once()
+        mcp.assert_not_called()
+        assert result.mcp_url == ""
+        assert result.python_guide == guide
+    finally:
+        env.stop()

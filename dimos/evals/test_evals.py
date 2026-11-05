@@ -296,7 +296,11 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
     proc.global_args = []
     proc.extra_env = {}
-    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    mocker.patch("dimos.evals.environments.live.wait_connectable")
     adapter = mocker.patch("dimos.evals.environments.live.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")

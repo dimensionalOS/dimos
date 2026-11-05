@@ -24,14 +24,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
+from dimos.evals.environments.live import MANIPULATION_PYTHON_GUIDE
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
 from dimos.utils.data import get_data
 
 GradeKind = Literal["lifted"]
 
-# Same stack as ``mujoco_xarm`` — perception modules off for planner/MCP evals.
-XARM_EVAL_BLUEPRINT = ["xarm-perception-sim", "mcp-server", "observe-skill"]
+# Same stack as ``mujoco_xarm`` — perception modules off, the arm driven from Python.
+XARM_EVAL_BLUEPRINT = ["xarm-perception-sim", "observe-skill"]
 XARM_EVAL_DISABLE = (
     "object-scene-registration-module",
     "pick-and-place-module",
@@ -82,6 +83,7 @@ def xarm_table_env(scene: Path, tracked_bodies: tuple[str, ...] = ()) -> MujocoE
     return MujocoEnvironment(
         blueprint=XARM_EVAL_BLUEPRINT,
         disable=XARM_EVAL_DISABLE,
+        python_guide=MANIPULATION_PYTHON_GUIDE,
         scene=scene,
         tracked_bodies=tracked_bodies,
     )
