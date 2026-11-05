@@ -642,7 +642,24 @@
         "t": "topic_variant",
         "route": "@t:p2",
         "gen": 3,
-        "variant": "v5",
+        "variant": "v12345678901234567",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_leading_zero",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v01",
         "settings": {
           "maxHz": 7.5,
           "maxResolution": [
@@ -693,7 +710,7 @@
         "t": "topic_variant",
         "route": "@t:p2",
         "gen": 3,
-        "variant": "v2",
+        "variant": "v12",
         "settings": null
       }
     },
@@ -961,7 +978,7 @@
         "route": "@t:v2",
         "gen": 3,
         "sdp": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:0\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\na=mid:1\r\na=sendonly\r\na=rtpmap:96 H264/90000\r\n",
-        "variant": "v5"
+        "variant": "v12345678901234567"
       }
     },
     {

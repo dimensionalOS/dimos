@@ -97,7 +97,7 @@ TopicGuardHandle = Annotated[str, Field(pattern=r"^@p:[A-Za-z0-9_-]{1,48}$")]
 TopicGuardTimeout = Annotated[int | float, Field(ge=100, le=1000), AfterValidator(_integer)]
 TopicTicket = Annotated[int | float, Field(ge=1, le=9007199254740991), AfterValidator(_integer)]
 TopicCount = Annotated[int | float, Field(ge=0, le=9007199254740991), AfterValidator(_integer)]
-TopicVariantId = Annotated[str, Field(pattern=r"^v[1-4]$")]  # MAX_TOPIC_VARIANTS
+TopicVariantId = Annotated[str, Field(pattern=r"^v[1-9][0-9]{0,15}$")]
 TopicName = Annotated[str, Field(min_length=1, max_length=32)]
 TopicNames = Annotated[list[TopicName], Field(max_length=16), AfterValidator(_unique)]
 TopicSize = Annotated[list[TopicCount], Field(min_length=2, max_length=2)]

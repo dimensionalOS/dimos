@@ -53,6 +53,7 @@ from dimos.web.relay_bridge.topic_profiles import (
 )
 from dimos.web.relay_bridge.topic_protocol import (
     MAX_TOPIC_ROUTES,
+    MAX_TOPIC_VARIANTS,
     TopicActivate,
     TopicCapabilities,
     TopicClose,
@@ -144,9 +145,10 @@ class TopicServiceConfig(BaseModel):
     zenoh: dict[str, Any] = Field(default_factory=_local_zenoh)
 
 
-def _encode_key(settings: dict[str, Any]) -> list[Any]:
-    """The settings that define an encoder; the rate is not one of them."""
-    return [settings.get(name) for name in SETTING_NAMES if name != "maxHz"]
+def _encode_key(settings: dict[str, Any], *, video: bool) -> list[Any]:
+    """What an open variant keeps for life. The rate changes in place, except
+    on video: every peer takes every packet of its encoder."""
+    return [settings.get(name) for name in SETTING_NAMES if video or name != "maxHz"]
 
 
 class _Variant:
@@ -313,25 +315,21 @@ class _Route:
         """Open a variant, or change the rate of an open one; returns its settings."""
         settings = normalize_settings(self.spec.profile, requested)
         existing = self._variants.get(name)
-        if existing is not None and _encode_key(existing.settings) == _encode_key(settings):
-            # A rate change keeps each key's last encode time, as the mailbox does.
-            period = 1 / float(settings["maxHz"])
-            existing.next_due = {
-                key: due + period - existing.period for key, due in existing.next_due.items()
-            }
-            existing.settings = settings
-            if self._video is not None:
-                self._video.set_rate(name, float(settings["maxHz"]))
-            self._sync_rate()
-        else:
-            if existing is not None:
-                if existing.writer is not None:
-                    existing.writer.stop()
-                if self._video is not None:
-                    # New encode settings: the peers offer again for the new encoder.
-                    self._loop.create_task(self._video.close_variant(name, "settings_changed"))
-                del self._variants[name]
+        if existing is None:
+            if len(self._variants) >= MAX_TOPIC_VARIANTS:
+                raise ValueError("variant_limit")
             self._add_variant(name, settings)
+            return settings
+        video = self._video is not None
+        if _encode_key(existing.settings, video=video) != _encode_key(settings, video=video):
+            raise ValueError("variant_settings_changed")
+        # A rate change keeps each key's last encode time, as the mailbox does.
+        period = 1 / float(settings["maxHz"])
+        existing.next_due = {
+            key: due + period - existing.period for key, due in existing.next_due.items()
+        }
+        existing.settings = settings
+        self._sync_rate()
         return settings
 
     async def close_variant(self, name: str) -> None:

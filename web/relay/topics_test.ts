@@ -1030,13 +1030,13 @@ Deno.test("an update moves the viewer once the new variant encodes, and the idle
     gen: open.gen,
     variant: "v1",
   });
-  // A reset returns to the profile settings, in a fresh variant on the freed slot.
+  // A reset returns to the profile settings, in a fresh variant: ids are never reused.
   h.update(a, 2, { quality: null });
   assertEquals(h.variants().at(-1), {
     t: "topic_variant",
     route: open.route,
     gen: open.gen,
-    variant: "v1",
+    variant: "v3",
     settings: LOW,
   });
   h.variantReady();
@@ -1155,7 +1155,40 @@ Deno.test("a fifth settings set rejects with variant_limit until a variant in it
     "topic_variant_close",
     "topic_variant",
   ]);
-  assertEquals(h.variants().at(-1)?.variant, "v4");
+  assertEquals(h.variants().at(-1)?.variant, "v5");
+  h.close();
+});
+
+Deno.test("a frame delayed past its variant's retirement never reaches a viewer of the replacement", async () => {
+  const h = mediaSetup();
+  const viewers = [10, 20, 30, 40].map((quality, i) => h.subscribe(`viewer${i}`, { quality }));
+  h.opened();
+  for (const announced of h.variants()) h.variantReady(announced);
+  h.activate(viewers[0]);
+  // v4 at quality 40 retires at once to make room, while its frames may still fly.
+  h.registry.viewerClosed(viewers[3]);
+  h.update(viewers[0], 1, { quality: 50 });
+  assertEquals(h.provider.messages.at(-2), {
+    t: "topic_variant_close",
+    route: h.provider.opens()[0].route,
+    gen: h.provider.opens()[0].gen,
+    variant: "v4",
+  });
+  assertEquals(h.variants().at(-1)?.variant, "v5");
+  h.variantReady();
+  assertEquals(h.last(viewers[0]), {
+    t: "topic_applied",
+    id: "cam",
+    revision: 1,
+    settings: { ...LOW, quality: 50 },
+  });
+  h.frame(1, "v4");
+  await flush();
+  assertEquals(h.received(viewers[0]), []);
+  h.tick(100);
+  h.frame(2, "v5");
+  await flush();
+  assertEquals(h.received(viewers[0]), [2]);
   h.close();
 });
 
@@ -1245,8 +1278,8 @@ Deno.test("a late variant acknowledgement is ignored and a source restart reopen
   h.tick(VARIANT_GRACE_MS);
   assertEquals(h.provider.messages.at(-1)?.t, "topic_variant_close");
   h.update(a, 2, { quality: 50 });
-  assertEquals(h.variants().at(-1)?.variant, "v1");
-  // The provider answers for the retired v1 first; its settings do not match.
+  assertEquals(h.variants().at(-1)?.variant, "v3");
+  // The provider answers for the retired v1 first; that id is gone for good.
   h.registry.onProviderMsg(h.provider, {
     t: "topic_variant_ready",
     route: open.route,
@@ -1620,13 +1653,50 @@ Deno.test("a settings change to another encoder closes the peer with settings_ch
   ]);
   h.offer();
   assertEquals(h.forwarded()[1].variant, "v2");
-  // A rate-only change keeps the encoder and the peer.
-  h.update(h.v, 2, { maxHz: 10 });
-  assertEquals(h.last(h.v)?.t, "topic_applied");
-  assertEquals(h.forwarded().length, 2);
   // No data frames ever flow on a video route.
   h.frame(1, "v2");
   await flush();
   assertEquals(h.received(h.v), []);
+  h.close();
+});
+
+Deno.test("a video rate is part of the encoder: viewers at one rate share it, another rate gets its own", () => {
+  const h = videoSetup();
+  const profile = "video.h264.v1";
+  const full: TopicSettings = { maxHz: 30, maxResolution: [1920, 1080] };
+  const slow = h.subscribe("slow", undefined, { profile, maxHz: 5 });
+  assertEquals(h.variants().map((m) => [m.variant, m.settings]), [["v2", { ...full, maxHz: 5 }]]);
+  h.variantReady();
+  assertEquals(slow.ready()[0].settings, { ...full, maxHz: 5 });
+  assertEquals(h.v.ready()[0].settings, full);
+  const slower = h.subscribe("slower", undefined, { profile, maxHz: 5 });
+  assertEquals(slower.ready()[0].settings, { ...full, maxHz: 5 });
+  assertEquals(h.variants().length, 1);
+  // v1 stays at 30 and v2 at 5: neither viewer raises the other's encoder.
+  h.registry.viewerClosed(slower);
+  assertEquals(h.variants().length, 1);
+  // A rate change moves the viewer to another encoder, like any other setting.
+  h.offer();
+  const [first] = h.forwarded();
+  h.fromProvider({
+    t: "topic_rtc_answer",
+    id: first.id,
+    route: h.open.route,
+    gen: h.open.gen,
+    sdp: "a",
+  });
+  h.update(h.v, 1, { maxHz: 5 });
+  assertEquals(h.v.messages.slice(-2), [
+    {
+      t: "topic_rtc_close",
+      id: "cam",
+      route: h.ready.route,
+      gen: h.ready.gen,
+      reason: "settings_changed",
+    },
+    { t: "topic_applied", id: "cam", revision: 1, settings: { ...full, maxHz: 5 } },
+  ]);
+  h.offer();
+  assertEquals(h.forwarded()[1].variant, "v2");
   h.close();
 });

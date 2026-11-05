@@ -19,7 +19,8 @@ export const TOPIC_PUBLISH_CHANNEL = "@put";
 export const TOPIC_GUARD_CHANNEL = "@guard";
 export const MAX_TOPIC_GUARD_BYTES = 8192;
 export const MAX_TOPIC_GUARDS = 32;
-/** Encode variants one provider route serves at once; ids are v1..v4. */
+/** Encode variants one provider route serves at once. Ids count up from v1 and
+ * are never reused on a route, so a late frame cannot pass for its successor. */
 export const MAX_TOPIC_VARIANTS = 4;
 export const MAX_TOPIC_PROFILE_OPTIONS = 8;
 /** An SDP rides a control frame or an @control payload, so it stays well
@@ -401,7 +402,7 @@ const names = (v: unknown, max: number): v is string[] =>
   Array.isArray(v) && v.length <= max && v.every((s) => string(s, 32)) &&
   new Set(v).size === v.length;
 export const topicVariantOk = (v: unknown): v is string =>
-  typeof v === "string" && /^v[1-4](?![\s\S])/.test(v); // MAX_TOPIC_VARIANTS
+  typeof v === "string" && /^v[1-9][0-9]{0,15}(?![\s\S])/.test(v);
 const settingOk = (name: string, v: unknown): boolean => {
   switch (name) {
     case "maxHz":
