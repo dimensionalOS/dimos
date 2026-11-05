@@ -211,6 +211,12 @@ export class TopicRegistry {
     reply(this.sources());
   }
 
+  /** Congestion resets for a viewer that negotiated topics. */
+  load(viewer: TopicViewer): { aborted: number } | undefined {
+    const state = this.#viewers.get(viewer);
+    return state === undefined ? undefined : { aborted: state.budget.aborted };
+  }
+
   #announce(): void {
     const sources = this.sources();
     for (const state of this.#viewers.values()) state.reply(sources);

@@ -1,6 +1,51 @@
 {
   "vectors": [
     {
+      "name": "invalid_pong_aborted_0",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": -1
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_1",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": 0.5
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_2",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": null
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_3",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": true
+      }
+    },
+    {
+      "name": "invalid_pong_aborted_4",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5,
+        "aborted": 9007199254740992
+      }
+    },
+    {
       "name": "invalid_rate_update_0",
       "message": {
         "t": "topic_activate",
