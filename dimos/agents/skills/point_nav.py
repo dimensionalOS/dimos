@@ -120,7 +120,7 @@ class PointNavSkillContainer(Module):
         self.goal.publish(
             PointStamped(math.nan, math.nan, math.nan, frame_id=self.config.world_frame)
         )
-        # Tell the BasicPathFollower to stop
+        # Tell the follower to stop
         self.stop_movement.publish(Bool(True))
         pose = self._pose()
         if pose is None:

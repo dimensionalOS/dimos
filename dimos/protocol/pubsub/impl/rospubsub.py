@@ -84,7 +84,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
 
         Args:
             node_name: Name for the ROS node (auto-generated if None)
-            qos: Optional QoS profile (defaults to BEST_EFFORT for throughput)
+            qos: Optional QoS profile (defaults to RELIABLE)
         """
         if not ROS_AVAILABLE:
             raise ImportError("rclpy is not installed. ROS pubsub requires ROS 2.")
@@ -101,15 +101,12 @@ class RawROS(PubSub[RawROSTopic, Any]):
         self._subscriptions: dict[str, list[tuple[Any, Callable[[Any, RawROSTopic], None]]]] = {}
         self._lock = threading.Lock()
 
-        # QoS profile - use provided or default to best-effort for throughput
+        # QoS profile - use provided or default to reliable, which had marginally higher
+        # throughput than best-effort for local comms
         if qos is not None:
             self._qos = qos
         else:
             self._qos = QoSProfile(  # type: ignore[no-untyped-call]
-                # Haven't noticed any difference between BEST_EFFORT and RELIABLE for local comms in our tests
-                # ./bin/dev python -m pytest -sv -k ros dimos/protocol/pubsub/benchmark/tool_benchmark.py
-                #
-                # but RELIABLE seems to have marginally higher throughput
                 reliability=QoSReliabilityPolicy.RELIABLE,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 durability=QoSDurabilityPolicy.VOLATILE,
@@ -260,7 +257,7 @@ class DimosROS(PubSub[ROSTopic, DimosMsg]):
 
         Args:
             node_name: Name for the ROS node (auto-generated if None)
-            qos: Optional QoS profile (defaults to BEST_EFFORT for throughput)
+            qos: Optional QoS profile (defaults to RELIABLE)
         """
         self._raw = RawROS(node_name, qos)
 

@@ -16,7 +16,7 @@
 
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pytest
@@ -27,7 +27,9 @@ roboplan_planner_module = importlib.import_module(
     "dimos.manipulation.planning.planners.roboplan_planner"
 )
 
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
     RoboPlanPlannerConfig,
@@ -38,6 +40,10 @@ from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
+    SimpleTrapezoidParametrizationConfig,
+)
+from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
+    SimpleTrapezoidParametrizer,
 )
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -45,6 +51,9 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
+    seeed_b601_dm_planner_coordinator,
+)
 from dimos.robot.manipulators.xarm.config import (
     make_dual_xarm6_model_config,
     make_xarm6_model_config,
@@ -286,3 +295,43 @@ def test_real_rrt_and_toppra_use_finite_prepared_limits(scalar_world, roboplan_t
     assert np.max(np.abs(velocities)) <= 0.2 * 1.05
     assert np.max(np.abs(accelerations)) <= 0.4 * 1.05
     assert world.check_edge_collision_free(start, goal)
+
+
+@pytest.mark.parametrize("speed_mode", ["bounded", "time_optimal"])
+def test_materialized_cartesian_plan_respects_reduced_joint_speeds(
+    roboplan_types: tuple[type[Any], type[Any]],
+    speed_mode: Literal["bounded", "time_optimal"],
+) -> None:
+    atom = next(
+        a
+        for a in seeed_b601_dm_planner_coordinator.active_blueprints
+        if issubclass(a.module, ManipulationModule)
+    )
+    config = atom.kwargs["model"]
+    world_type, planner_type = roboplan_types
+    world = world_type()
+    world.load_model(prepare_robot_model(config))
+    world.finalize()
+    planner = planner_type(world, RoboPlanPlannerConfig())
+    selection = PlanningGroupRegistry(config.planning_groups).select(("manipulator",))
+    start = JointState(name=list(selection.joint_names), position=[0.0] * 6)
+    world.sync_from_joint_state(start)
+    result = planner.plan_cartesian_path(
+        world,
+        selection,
+        start,
+        {"manipulator": (Transform.identity(), Transform(translation=Vector3(0.05, 0.0, 0.0)))},
+        RoboPlanCartesianPathConfig(speed_mode=speed_mode, toppra_blend_deviation=0.0),
+    )
+    assert result.is_success(), result.message
+    parametrizer = SimpleTrapezoidParametrizer(
+        SimpleTrapezoidParametrizationConfig(**atom.kwargs["trajectory_parametrization"])
+    )
+    plan = parametrizer.materialize_plan(world, selection, result)
+    velocities = np.asarray([point.velocities for point in plan.trajectory.points])
+    times = np.asarray([point.time_from_start for point in plan.trajectory.points])
+    positions = np.asarray([point.positions for point in plan.trajectory.points])
+    limits = np.asarray([0.2, 0.2, 0.2, 0.8, 0.8, 0.8])
+    assert np.max(np.abs(velocities) / limits) <= 1.01
+    assert np.max(np.abs(np.diff(positions, axis=0) / np.diff(times)[:, None]) / limits) <= 1.01
+    assert np.linalg.norm(positions[-1] - positions[0]) > 0.01

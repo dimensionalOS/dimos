@@ -94,42 +94,50 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], None]
     ) -> Callable[[], None]:
+        def noop() -> None:
+            pass
+
         if self.l is None:
             logger.error("Tried to subscribe after LCM was closed")
-
-            def noop() -> None:
-                pass
-
             return noop
 
         # The lcm-level detach is deferred to the loop thread (see
         # _defer_unsubscribe), but delivery must stop the moment unsubscribe()
         # returns — gate dispatch on a liveness flag.
         alive = True
+        handler: Callable[[str, bytes], None]
 
         if topic.is_pattern:
 
-            def handler(channel: str, msg: bytes) -> None:
+            def pattern_handler(channel: str, msg: bytes) -> None:
                 if not alive or channel == "LCM_SELF_TEST":
                     return
                 callback(msg, Topic.from_channel_str(channel, topic.lcm_type))
 
-            pattern_str = str(topic)
-            if not pattern_str.endswith("*"):
-                pattern_str = f"{pattern_str}(#.*)?"
-
-            lcm_subscription = self.l.subscribe(pattern_str, handler)
+            handler = pattern_handler
+            channel_str = str(topic)
+            if not channel_str.endswith("*"):
+                channel_str = f"{channel_str}(#.*)?"
         else:
-            topic_str = str(topic)
 
             def plain_handler(_: str, msg: bytes) -> None:
                 if alive:
                     callback(msg, topic)
 
-            lcm_subscription = self.l.subscribe(topic_str, plain_handler)
+            handler = plain_handler
+            channel_str = str(topic)
 
-        # Set queue capacity to 10000 to handle high-volume bursts
-        lcm_subscription.set_queue_capacity(10000)
+        # lcm_subscribe grows the channel's handler array, which the loop
+        # thread iterates without a lock while dispatching: a use-after-free
+        # that segfaulted CI workers. Exclude the loop for the native call.
+        # This waits for the current dispatch to return, so never call
+        # subscribe() while holding a lock that a callback may take.
+        with self._l_lock:
+            if self.l is None:
+                return noop
+            lcm_subscription = self.l.subscribe(channel_str, handler)
+            # Set queue capacity to 10000 to handle high-volume bursts
+            lcm_subscription.set_queue_capacity(10000)
 
         def unsubscribe() -> None:
             nonlocal alive

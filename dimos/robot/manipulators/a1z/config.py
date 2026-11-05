@@ -135,6 +135,5 @@ def make_a1z_model_config(
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=A1Z_COLLISION_EXCLUSIONS,
-        gripper_hardware_id="arm" if has_gripper else None,
         home_joints=home_joints or [0.0] * A1Z_DOF,
     )
