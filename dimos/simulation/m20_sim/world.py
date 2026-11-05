@@ -56,8 +56,8 @@ STAND_HEIGHT = 0.566
 CLEARANCE_HEIGHT = 0.66
 # the trunk's collision shapes with the lidar housings, in base_link
 TRUNK_HALF_EXTENTS = (0.41, 0.121, 0.087)
-# nearer returns are dropped (the driver's own minimum is 0.2 m)
-LIO_BLIND_RANGE = 0.5
+# past most of each Airy's view of its own legs and wheels (the far wheel reaches 1.02 m mid-stride)
+LIO_BLIND_RANGE = 0.8
 # the vendor LIO's skip_num
 LIO_KEEP_EVERY = 5
 COLLISION_RGBA = (0.3, 0.3, 0.3, 1.0)
@@ -84,7 +84,6 @@ FRONT = Sensor(
     lio_blind_range=LIO_BLIND_RANGE,
     lio_keep_every=LIO_KEEP_EVERY,
     sees_base=False,
-    sees_robot=False,
 )
 REAR = Sensor(
     "rear_lidar",
@@ -95,7 +94,6 @@ REAR = Sensor(
     lio_blind_range=LIO_BLIND_RANGE,
     lio_keep_every=LIO_KEEP_EVERY,
     sees_base=False,
-    sees_robot=False,
 )
 
 SHAPE = BodyShape(

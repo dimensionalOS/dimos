@@ -61,8 +61,6 @@ class Sensor:
     lio_blind_range: float = 0.0
     lio_keep_every: int = 1
     sees_base: bool = True
-    # off: returns off any of the robot's own geoms are dropped, as the vendor driver's self-filter does
-    sees_robot: bool = True
 
 
 @dataclass(frozen=True)

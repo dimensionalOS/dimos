@@ -273,7 +273,6 @@ class Sim:
                     self.data,
                     self.lidar_groups,
                     NO_BODY_EXCLUDED if sensor.sees_base else base,
-                    NO_BODY_EXCLUDED if sensor.sees_robot else int(self.model.body_rootid[base]),
                 ),
                 seed + i,
             )
