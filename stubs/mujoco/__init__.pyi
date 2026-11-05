@@ -165,6 +165,10 @@ class mjtLightType:
     mjLIGHT_DIRECTIONAL: int
     mjLIGHT_SPOT: int
 
+class mjtLimited:
+    mjLIMITED_FALSE: int
+    mjLIMITED_TRUE: int
+
 class mjtSensor:
     mjSENS_GYRO: int
     mjSENS_ACCELEROMETER: int

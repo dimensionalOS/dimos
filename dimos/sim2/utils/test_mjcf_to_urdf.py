@@ -20,6 +20,7 @@ from numpy.typing import NDArray
 import pytest
 from scipy.spatial.transform import Rotation
 
+from dimos.robot.unitree.go2.sim2 import Go2Sim
 from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 
@@ -149,3 +150,7 @@ def test_ball_joints_are_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="hinge and slide"):
         mjcf_to_urdf(mjcf, out_dir=tmp_path)
+
+
+def test_the_go2_urdf_matches_its_mjcf_and_its_sensor_frames(tmp_path: Path) -> None:
+    assert_urdf_matches_mujoco(Go2Sim.mjcf, tmp_path, 20)

@@ -25,6 +25,16 @@ Vector = tuple[float, float, float]
 
 
 @dataclass(frozen=True)
+class Servo:
+    """A joint whose actuator becomes a PD position servo, starting at and holding initial."""
+
+    joint: str
+    kp: float
+    kd: float
+    initial: float = 0.0
+
+
+@dataclass(frozen=True)
 class SimulatedRobot:
     robot_id: str
     # Its MJCF: its sensors' frames are sites (or bodies) in it (mjcf_with_frames adds them).
@@ -35,6 +45,8 @@ class SimulatedRobot:
     floating: bool = True
     # Its controller acts every this many sim seconds: the world sets "act" on it then, and waits for its actions.
     control_period: float | None = None
+
+    servos: tuple[Servo, ...] = ()
 
 
 @dataclass(frozen=True)
