@@ -241,12 +241,38 @@ pub struct Planner {
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
-    // Last successful path and its goal, for safe truncation when a later
-    // replan finds no full path.
-    last_path: Option<((f32, f32, f32), Vec<VoxelKey>)>,
-    // Last goal and whether a full plan reached it, so replan outcomes log
-    // on transitions instead of every cycle.
-    last_result: Option<((f32, f32, f32), bool)>,
+    // Last full route plan, for safe truncation when a later replan finds no
+    // full path.
+    last_route: Option<PlannedRoute>,
+    // Last route and whether a full plan ran through it, so replan outcomes
+    // log on transitions instead of every cycle.
+    last_result: Option<(Vec<Xyz>, bool)>,
+}
+
+/// The cells of the last full plan through a route, from the segment to
+/// waypoint `first` on, with the index on them of each waypoint from there.
+struct PlannedRoute {
+    waypoints: Vec<Xyz>,
+    first: usize,
+    cells: Vec<VoxelKey>,
+    joints: Vec<usize>,
+}
+
+impl PlannedRoute {
+    /// The cells from the start of the segment ending at the waypoint, if cached.
+    fn cells_toward(&self, waypoint: usize) -> Option<&[VoxelKey]> {
+        let at = match waypoint.checked_sub(self.first)? {
+            0 => 0,
+            k => *self.joints.get(k - 1)?,
+        };
+        self.cells.get(at..)
+    }
+}
+
+/// Append a segment, dropping the point it shares with the end of the path.
+fn join<T: PartialEq>(path: &mut Vec<T>, segment: Vec<T>) {
+    let shared = path.last().is_some() && path.last() == segment.first();
+    path.extend(segment.into_iter().skip(usize::from(shared)));
 }
 
 impl Planner {
@@ -256,7 +282,7 @@ impl Planner {
             graph: PlannerGraph::default(),
             voxel_map: AHashSet::new(),
             by_col: ColumnIz::default(),
-            last_path: None,
+            last_route: None,
             last_result: None,
         }
     }
@@ -695,36 +721,79 @@ impl Planner {
         planner::plan(&self.graph, start, goal, config).map(|(wp, _)| wp)
     }
 
-    /// Plan to the goal, or follow the cached path as far as it is still safe.
-    pub fn plan_or_truncate(&mut self, start: Xyz, goal: Xyz, config: &Config) -> Plan {
+    /// Plan from the start through the route's waypoints from `next` on, as one
+    /// path. Where a segment no longer plans, the path ends at the last waypoint
+    /// that did and the cached route carries on from there while it is safe.
+    pub fn plan_route_or_truncate(
+        &mut self,
+        start: Xyz,
+        waypoints: &[Xyz],
+        next: usize,
+        config: &Config,
+    ) -> Plan {
+        let mut points: Vec<Xyz> = Vec::new();
+        let mut cells: Vec<VoxelKey> = Vec::new();
+        let mut joints: Vec<usize> = Vec::new();
+        let mut from = start;
         if !self.graph.nodes.is_empty() {
-            if let Some((waypoints, cells)) = planner::plan(&self.graph, start, goal, config) {
-                if self.last_result != Some((goal, true)) {
-                    tracing::info!(?goal, waypoints = waypoints.len(), "full path to goal");
-                }
-                self.last_result = Some((goal, true));
-                self.last_path = Some((goal, cells));
-                return Plan::Full(waypoints);
+            for &waypoint in &waypoints[next..] {
+                let Some((segment, segment_cells)) =
+                    planner::plan(&self.graph, from, waypoint, config)
+                else {
+                    break;
+                };
+                join(&mut points, segment);
+                join(&mut cells, segment_cells);
+                joints.push(cells.len().saturating_sub(1));
+                from = waypoint;
             }
         }
-        if self.last_result != Some((goal, false)) {
-            tracing::warn!(
-                ?goal,
-                "no full path to goal, following any cached path while safe"
-            );
+        let planned = next + joints.len();
+        if planned == waypoints.len() {
+            self.log_outcome(waypoints, true, points.len());
+            self.last_route = Some(PlannedRoute {
+                waypoints: waypoints.to_vec(),
+                first: next,
+                cells,
+                joints,
+            });
+            return Plan::Full(points);
         }
-        self.last_result = Some((goal, false));
-        let waypoints = match &self.last_path {
-            Some((cached_goal, cells)) if *cached_goal == goal => {
-                planner::truncate_to_safe(&self.graph, cells, start, config)
-            }
-            _ => Vec::new(),
-        };
-        if waypoints.is_empty() {
+        self.log_outcome(waypoints, false, points.len());
+        let tail = self
+            .last_route
+            .as_ref()
+            .filter(|cache| cache.waypoints == waypoints)
+            .and_then(|cache| cache.cells_toward(planned))
+            .map_or(Vec::new(), |cells| {
+                planner::truncate_to_safe(&self.graph, cells, from, config)
+            });
+        join(&mut points, tail);
+        if points.is_empty() {
             Plan::Blocked
         } else {
-            Plan::Truncated(waypoints)
+            Plan::Truncated(points)
         }
+    }
+
+    fn log_outcome(&mut self, waypoints: &[Xyz], full: bool, points: usize) {
+        let same = self
+            .last_result
+            .as_ref()
+            .is_some_and(|(last, was_full)| last == waypoints && *was_full == full);
+        if same {
+            return;
+        }
+        if full {
+            tracing::info!(?waypoints, points, "full path through the route");
+        } else {
+            tracing::warn!(
+                ?waypoints,
+                points,
+                "no full path through the route, following any cached path while safe"
+            );
+        }
+        self.last_result = Some((waypoints.to_vec(), full));
     }
 
     pub fn graph(&self) -> &PlannerGraph {

@@ -898,13 +898,12 @@ impl Worker {
         let Some(timed_out) = progress.take_timed_out() else {
             return;
         };
-        if self.clear_goal(timed_out.goal) {
+        if let Some(route) = self.clear_goal(timed_out.goal) {
             self.status
-                .report(Report::new(
-                    timed_out.goal.id,
-                    GoalStatus::ABORTED,
-                    timed_out.reason,
-                ))
+                .report(
+                    Report::new(timed_out.goal.id, GoalStatus::ABORTED, timed_out.reason)
+                        .on_route(&route),
+                )
                 .await;
         }
     }
@@ -919,16 +918,16 @@ impl Worker {
         let Some(stalled) = progress.take_stalled() else {
             return;
         };
-        if !self.clear_goal(stalled.goal) {
+        let Some(route) = self.clear_goal(stalled.goal) else {
             return;
-        }
+        };
         progress.followed = None;
         publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
         let reason = position.map_or(NO_PROGRESS, |p| {
             stall_reason(&stalled.goal, p, &self.config)
         });
         self.status
-            .report(Report::new(stalled.goal.id, GoalStatus::ABORTED, reason))
+            .report(Report::new(stalled.goal.id, GoalStatus::ABORTED, reason).on_route(&route))
             .await;
     }
 
@@ -939,16 +938,11 @@ impl Worker {
         goal_changed: bool,
         progress: &mut GoalProgress,
     ) {
-        let goal = self
-            .active_goal
-            .lock()
-            .expect("goal mutex")
-            .as_ref()
-            .map(Route::goal);
         let start = self
             .base_position()
             .map(|s| (s.0, s.1, s.2 - self.config.start_z_offset_m));
-        match goal_step(goal, goal_changed, progress.followed.is_some(), start) {
+        let route = self.advance_route(planner, start);
+        match goal_step(route, goal_changed, progress.followed.is_some(), start) {
             GoalStep::Idle => progress.release(),
             GoalStep::Clear => {
                 info!("Goal cancelled, clearing the path.");
@@ -957,27 +951,47 @@ impl Worker {
                 publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             }
             GoalStep::NoPose(goal) => progress.block(goal, NO_POSE),
-            GoalStep::Plan { start, goal } => self.plan(planner, start, goal, progress).await,
+            GoalStep::Plan { start, route } => self.plan(planner, start, &route, progress).await,
         }
     }
 
-    /// Plan for the goal, then publish the path and the status it leaves the
-    /// goal in.
+    /// The active route, moved on past the waypoints the robot has reached.
+    fn advance_route(&self, planner: &Planner, start: Option<Xyz>) -> Option<Route> {
+        let mut guard = self.active_goal.lock().expect("goal mutex");
+        let route = guard.as_mut()?;
+        if let Some(start) = start {
+            let was = route.next;
+            route.advance(|waypoint| is_at_goal(planner, start, waypoint, &self.config));
+            if route.next != was {
+                info!(
+                    reached = route.next,
+                    of = route.waypoints.len(),
+                    "Waypoint reached, driving on to the next."
+                );
+            }
+        }
+        Some(route.clone())
+    }
+
+    /// Plan for the route's current waypoint, then publish the path and the
+    /// status it leaves the goal in.
     async fn plan(
         &self,
         planner: &mut Planner,
         start: Xyz,
-        goal: Goal,
+        route: &Route,
         progress: &mut GoalProgress,
     ) {
+        let goal = route.goal();
         let plan_start = Instant::now();
         let facing = self.base_yaw();
         let outcome =
-            tokio::task::block_in_place(|| replan(planner, start, facing, &goal, &self.config));
+            tokio::task::block_in_place(|| replan(planner, start, facing, route, &self.config));
         let (status, reason) = outcome.status();
         let heading = path_heading(&outcome, &goal);
-        let report =
-            Report::new(goal.id, status, reason).with_remaining(distance(start, goal.position));
+        let report = Report::new(goal.id, status, reason)
+            .on_route(route)
+            .with_remaining(distance(start, goal.position));
         let waypoints = match outcome {
             Replan::Reached => {
                 progress.unblock();
@@ -1016,9 +1030,9 @@ impl Worker {
         self.status.report(report).await;
     }
 
-    /// Clear the active goal unless a newer one replaced it meanwhile. True
-    /// when it was cleared.
-    fn clear_goal(&self, goal: Goal) -> bool {
+    /// Clear the active goal unless a newer one replaced it meanwhile, returning
+    /// the route it was on.
+    fn clear_goal(&self, goal: Goal) -> Option<Route> {
         clear_if_held(&self.active_goal, goal)
     }
 }
@@ -1034,22 +1048,22 @@ enum GoalStep {
     NoPose(Goal),
     Plan {
         start: Xyz,
-        goal: Goal,
+        route: Route,
     },
 }
 
-/// Pick this pass's step from the goal, the pose, and whether a path is out.
+/// Pick this pass's step from the route, the pose, and whether a path is out.
 fn goal_step(
-    goal: Option<Goal>,
+    route: Option<Route>,
     goal_changed: bool,
     path_out: bool,
     start: Option<Xyz>,
 ) -> GoalStep {
-    match (goal, start) {
+    match (route, start) {
         (None, _) if goal_changed && path_out => GoalStep::Clear,
         (None, _) => GoalStep::Idle,
-        (Some(goal), None) => GoalStep::NoPose(goal),
-        (Some(goal), Some(start)) => GoalStep::Plan { start, goal },
+        (Some(route), None) => GoalStep::NoPose(route.goal()),
+        (Some(route), Some(start)) => GoalStep::Plan { start, route },
     }
 }
 
@@ -1086,11 +1100,17 @@ fn replan(
     planner: &mut Planner,
     start: Xyz,
     facing: Option<f32>,
-    goal: &Goal,
+    route: &Route,
     config: &Config,
 ) -> Replan {
+    let goal = route.goal();
     if !is_at_goal(planner, start, goal.position, config) {
-        return Replan::Planned(planner.plan_or_truncate(start, goal.position, config));
+        return Replan::Planned(planner.plan_route_or_truncate(
+            start,
+            &route.waypoints,
+            route.next,
+            config,
+        ));
     }
     match goal.yaw {
         None => Replan::Reached,
@@ -1470,39 +1490,67 @@ mod tests {
     use super::*;
     use crate::mls_planner::test_config;
 
-    /// A goal stamped and arrived in order n.
+    /// A route of one waypoint, stamped and arrived in order n.
+    fn route_at(n: i32, position: Xyz) -> Route {
+        route_through(n, vec![position], None)
+    }
+
+    fn route_facing(n: i32, position: Xyz, yaw: f32) -> Route {
+        route_through(n, vec![position], Some(yaw))
+    }
+
+    fn route_through(n: i32, waypoints: Vec<Xyz>, yaw: Option<f32>) -> Route {
+        let id = GoalId {
+            sec: n,
+            nsec: 0,
+            arrival: n as u64,
+        };
+        Route::new(id, waypoints, yaw)
+    }
+
     fn goal_at(n: i32, position: Xyz) -> Goal {
-        Goal {
-            id: GoalId {
-                sec: n,
-                nsec: 0,
-                arrival: n as u64,
-            },
-            position,
-            yaw: None,
-        }
+        route_at(n, position).goal()
     }
 
     fn goal_facing(n: i32, position: Xyz, yaw: f32) -> Goal {
-        Goal {
-            yaw: Some(yaw),
-            ..goal_at(n, position)
-        }
+        route_facing(n, position, yaw).goal()
     }
 
     #[test]
     fn a_heading_goal_is_reached_only_facing_it() {
         let mut planner = Planner::new(1);
         let config = test_config();
-        let goal = goal_facing(1, (0.1, 0.0, 0.0), PI);
-        let mut at = |facing: Option<f32>, goal: &Goal| {
-            replan(&mut planner, (0.0, 0.0, 0.0), facing, goal, &config)
+        let route = route_facing(1, (0.1, 0.0, 0.0), PI);
+        let mut at = |facing: Option<f32>, route: &Route| {
+            replan(&mut planner, (0.0, 0.0, 0.0), facing, route, &config)
         };
-        assert_eq!(at(Some(0.0), &goal), Replan::Turning);
-        assert_eq!(at(None, &goal), Replan::Turning);
-        assert_eq!(at(Some(PI - 0.1), &goal), Replan::Reached);
-        assert_eq!(at(Some(-PI + 0.1), &goal), Replan::Reached);
-        assert_eq!(at(Some(0.0), &goal_at(1, (0.1, 0.0, 0.0))), Replan::Reached);
+        assert_eq!(at(Some(0.0), &route), Replan::Turning);
+        assert_eq!(at(None, &route), Replan::Turning);
+        assert_eq!(at(Some(PI - 0.1), &route), Replan::Reached);
+        assert_eq!(at(Some(-PI + 0.1), &route), Replan::Reached);
+        assert_eq!(
+            at(Some(0.0), &route_at(1, (0.1, 0.0, 0.0))),
+            Replan::Reached
+        );
+    }
+
+    #[test]
+    fn a_reached_waypoint_is_advanced_past_and_only_the_last_is_reached() {
+        let mut planner = Planner::new(1);
+        let config = test_config();
+        let start = (0.0, 0.0, 0.0);
+        let near = (0.1, 0.0, 0.0);
+        let mut route = route_through(1, vec![near, (0.2, 0.0, 0.0), (5.0, 0.0, 0.0)], None);
+        route.advance(|w| is_at_goal(&planner, start, w, &config));
+        assert_eq!(route.next, 2);
+        let outcome = replan(&mut planner, start, None, &route, &config);
+        assert_eq!(outcome, Replan::Planned(Plan::Blocked));
+
+        let mut all_near = route_through(2, vec![near, (0.2, 0.0, 0.0), near], None);
+        all_near.advance(|w| is_at_goal(&planner, start, w, &config));
+        assert_eq!(all_near.next, 2);
+        let outcome = replan(&mut planner, start, None, &all_near, &config);
+        assert_eq!(outcome, Replan::Reached);
     }
 
     #[test]
@@ -1515,6 +1563,8 @@ mod tests {
         assert_eq!(path_heading(&Replan::Turning, &goal), Some(0.0));
         assert_eq!(path_heading(&cut, &goal), None);
         assert_eq!(path_heading(&full, &goal_at(1, (5.0, 0.0, 0.0))), None);
+        let middle = route_through(1, vec![(1.0, 0.0, 0.0), (5.0, 0.0, 0.0)], Some(0.0)).goal();
+        assert_eq!(path_heading(&full, &middle), None);
 
         let stamp = Time { sec: 0, nsec: 0 };
         let flagged = build_path_from_waypoints(
@@ -1611,7 +1661,7 @@ mod tests {
             &mut planner,
             (0.0, 0.0, 0.0),
             None,
-            &goal_at(1, (0.0, 0.0, 3.0)),
+            &route_at(1, (0.0, 0.0, 3.0)),
             &test_config(),
         );
         assert_eq!(outcome, Replan::Planned(Plan::Blocked));
@@ -1624,7 +1674,7 @@ mod tests {
             &mut planner,
             (0.0, 0.0, 0.0),
             None,
-            &goal_at(1, (0.1, 0.0, 0.0)),
+            &route_at(1, (0.1, 0.0, 0.0)),
             &test_config(),
         );
         assert_eq!(outcome, Replan::Reached);
@@ -1646,7 +1696,7 @@ mod tests {
         let mut planner = Planner::new(1);
         planner.update_global_map(&floor, &config);
         // Further above the floor than goal_z_tolerance, yet within the snap.
-        let goal = goal_at(1, (5.0, 1.0, cell + 0.62));
+        let goal = route_at(1, (5.0, 1.0, cell + 0.62));
 
         let far = replan(&mut planner, (1.0, 1.0, cell), None, &goal, &config);
         assert!(matches!(far, Replan::Planned(Plan::Full(_))), "{far:?}");
@@ -1855,25 +1905,31 @@ mod tests {
     #[test]
     fn a_cancel_clears_the_path_once() {
         let start = Some((0.0, 0.0, 0.0));
-        let goal = goal_at(1, (5.0, 0.0, 0.0));
+        let route = route_at(1, (5.0, 0.0, 0.0));
         assert_eq!(
-            goal_step(Some(goal), true, false, start),
+            goal_step(Some(route.clone()), true, false, start),
             GoalStep::Plan {
                 start: (0.0, 0.0, 0.0),
-                goal
+                route: route.clone()
             }
         );
         assert_eq!(
-            goal_step(Some(goal), true, false, None),
-            GoalStep::NoPose(goal)
+            goal_step(Some(route.clone()), true, false, None),
+            GoalStep::NoPose(route.goal())
         );
 
         let canceled = goal_position(&point(f64::NAN, f64::NAN, f64::NAN))
-            .map(|position| goal_at(2, position));
+            .map(|position| route_at(2, position));
         // Even with no pose on tf.
-        assert_eq!(goal_step(canceled, true, true, None), GoalStep::Clear);
+        assert_eq!(
+            goal_step(canceled.clone(), true, true, None),
+            GoalStep::Clear
+        );
         // Teleop repeats the cancel every command, and nothing is out to clear.
-        assert_eq!(goal_step(canceled, true, false, start), GoalStep::Idle);
+        assert_eq!(
+            goal_step(canceled.clone(), true, false, start),
+            GoalStep::Idle
+        );
         // A live update with no goal publishes nothing.
         assert_eq!(goal_step(canceled, false, false, start), GoalStep::Idle);
     }

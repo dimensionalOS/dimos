@@ -164,6 +164,13 @@ impl Route {
             yaw: self.yaw.filter(|_| last),
         }
     }
+
+    /// Move on past the waypoints reached, never past the last one.
+    pub(crate) fn advance(&mut self, reached: impl Fn(Xyz) -> bool) {
+        while self.next + 1 < self.waypoints.len() && reached(self.waypoints[self.next]) {
+            self.next += 1;
+        }
+    }
 }
 
 /// One goal's state as nav_status carries it.
@@ -172,6 +179,8 @@ pub(crate) struct Report {
     id: GoalId,
     status: i8,
     reason: &'static str,
+    /// The waypoint driven to and the count, on a route of more than one.
+    waypoint: Option<(usize, usize)>,
     remaining_m: Option<f32>,
 }
 
@@ -181,8 +190,16 @@ impl Report {
             id,
             status,
             reason,
+            waypoint: None,
             remaining_m: None,
         }
+    }
+
+    pub(crate) fn on_route(mut self, route: &Route) -> Self {
+        if route.waypoints.len() > 1 {
+            self.waypoint = Some((route.next + 1, route.waypoints.len()));
+        }
+        self
     }
 
     pub(crate) fn with_remaining(mut self, remaining_m: f32) -> Self {
@@ -193,7 +210,8 @@ impl Report {
     /// Whether this differs from the last report by more than the distance.
     fn is_transition_from(&self, last: Option<&Report>) -> bool {
         last.is_none_or(|last| {
-            (last.id, last.status, last.reason) != (self.id, self.status, self.reason)
+            (last.id, last.status, last.reason, last.waypoint)
+                != (self.id, self.status, self.reason, self.waypoint)
         })
     }
 
@@ -202,10 +220,13 @@ impl Report {
     }
 
     fn message(&self) -> GoalStatus {
-        let text = match self.remaining_m {
-            Some(remaining_m) => format!("{}, {remaining_m:.2} m from the goal", self.reason),
-            None => self.reason.to_string(),
-        };
+        let mut text = self.reason.to_string();
+        if let Some((k, n)) = self.waypoint {
+            text += &format!(", waypoint {k} of {n}");
+        }
+        if let Some(remaining_m) = self.remaining_m {
+            text += &format!(", {remaining_m:.2} m from the goal");
+        }
         GoalStatus {
             goal_id: GoalID {
                 stamp: Time {
@@ -280,13 +301,11 @@ pub(crate) fn stop_on_arrival(followed: Option<GoalId>, goal: GoalId) -> bool {
     !followed.is_some_and(|followed| followed.same_stamp(&goal))
 }
 
-pub(crate) fn clear_if_held(slot: &Mutex<Option<Route>>, goal: Goal) -> bool {
+/// Clear the slot if it still holds the route the goal is on, returning that route.
+pub(crate) fn clear_if_held(slot: &Mutex<Option<Route>>, goal: Goal) -> Option<Route> {
     let mut guard = slot.lock().expect("goal mutex");
     let held = guard.as_ref().is_some_and(|route| route.goal() == goal);
-    if held {
-        *guard = None;
-    }
-    held
+    held.then(|| guard.take()).flatten()
 }
 
 #[cfg(test)]
@@ -316,5 +335,49 @@ mod tests {
         let reached = report(2, GoalStatus::SUCCEEDED, "reached");
         assert!(record(&mut latest, &reached));
         assert!(!record(&mut latest, &second));
+    }
+
+    fn route_of(waypoints: Vec<Xyz>, yaw: Option<f32>) -> Route {
+        let id = GoalId {
+            sec: 0,
+            nsec: 0,
+            arrival: 1,
+        };
+        Route::new(id, waypoints, yaw)
+    }
+
+    #[test]
+    fn only_the_last_waypoint_carries_the_heading() {
+        let mut route = route_of(vec![(1.0, 0.0, 0.0), (2.0, 0.0, 0.0)], Some(1.0));
+        assert_eq!(route.goal().yaw, None);
+        assert_eq!(route.goal().position, (1.0, 0.0, 0.0));
+        route.advance(|_| true);
+        assert_eq!(route.next, 1);
+        assert_eq!(route.goal().yaw, Some(1.0));
+    }
+
+    #[test]
+    fn an_advance_to_the_next_waypoint_is_a_transition() {
+        let route = route_of(
+            vec![(1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0)],
+            None,
+        );
+        let mut advanced = route.clone();
+        advanced.advance(|w| w == (1.0, 0.0, 0.0));
+        let following = || report(1, GoalStatus::ACTIVE, "following the path");
+        let mut latest = None;
+        assert!(record(&mut latest, &following().on_route(&route)));
+        assert!(!record(&mut latest, &following().on_route(&route)));
+        let next = following().on_route(&advanced).with_remaining(3.1);
+        assert!(record(&mut latest, &next));
+        assert_eq!(
+            next.message().text,
+            "following the path, waypoint 2 of 3, 3.10 m from the goal"
+        );
+        let single = route_of(vec![(1.0, 0.0, 0.0)], None);
+        assert_eq!(
+            following().on_route(&single).message().text,
+            "following the path"
+        );
     }
 }
