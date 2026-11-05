@@ -22,6 +22,7 @@ calibration are config, published natively by GO2DDS.
 
 from __future__ import annotations
 
+import math
 import threading
 from typing import Any, Literal
 
@@ -38,7 +39,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisherConfig
+from dimos.protocol.tf.static_tf_publisher import FrameSpec, StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -46,6 +47,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     L1_XYZ,
     MID360_MOUNT_PRESETS,
     MID360_XYZ,
+    OPTICAL_RPY,
 )
 
 
@@ -78,6 +80,22 @@ class Go2BaseConfig(StaticTfPublisherConfig):
                     f"expected one of {sorted(MID360_MOUNT_PRESETS)}"
                 ) from None
         return value
+
+    def mount_frames(self) -> list[FrameSpec]:
+        """The mount tree rooted at base_link, as GO2DDS publishes it."""
+
+        def rad(deg: tuple[float, float, float]) -> tuple[float, float, float]:
+            return (math.radians(deg[0]), math.radians(deg[1]), math.radians(deg[2]))
+
+        mid360_mount = self.mid360_mount
+        assert not isinstance(mid360_mount, str)  # resolved by the validator
+        return [
+            ("base_link", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            ("front_camera", "base_link", self.camera_xyz, (0.0, 0.0, 0.0)),
+            ("mid360_link", "front_camera", self.mid360_xyz, rad(mid360_mount)),
+            ("camera_optical", "front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
+            ("utlidar_lidar", "base_link", self.l1_xyz, rad(self.l1_mount)),
+        ]
 
 
 class Go2Base(Module):
