@@ -33,13 +33,15 @@ import threading
 import time
 from typing import Any
 
+from dimos_lcm.control_msgs import JointCommand
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
@@ -186,6 +188,16 @@ class JointTrajectoryController(Module):
                 logger.warning("Invalid trajectory: no points")
                 return False
 
+            names = trajectory.joint_names
+            if (
+                not names
+                or not all(names)
+                or len(set(names)) != len(names)
+                or any(len(point.positions) != len(names) for point in trajectory.points)
+            ):
+                logger.warning("Trajectory requires unique joint names matching every waypoint")
+                return False
+
             # Preempt any active trajectory
             if self._state == TrajectoryState.EXECUTING:
                 logger.info("Preempting active trajectory")
@@ -323,7 +335,14 @@ class JointTrajectoryController(Module):
                             q_ref, _qd_ref = self._trajectory.sample(t)
 
                             # Create and publish command (outside lock would be better but simpler here)
-                            cmd = JointCommand(positions=q_ref, timestamp=time.time())
+                            cmd = JointCommand(
+                                header=Header(time.time()),
+                                joint_names_length=len(self._trajectory.joint_names),
+                                joint_names=list(self._trajectory.joint_names),
+                                interface_name="position",
+                                values_length=len(q_ref),
+                                values=q_ref,
+                            )
 
                             # Publish - must release lock first for thread safety
                             trajectory_active = True

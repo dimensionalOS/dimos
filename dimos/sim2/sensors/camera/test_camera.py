@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.control_msgs import JointCommand
 import numpy as np
 import pytest
 
@@ -32,14 +31,16 @@ def renderer(world):
     renderer.close()
 
 
-def test_camera_renders_recorded_body_poses_without_physics_state(backend, poses, renderer):
+def test_camera_renders_recorded_body_poses_without_physics_state(
+    backend, poses, renderer, motor_commands
+):
     sample = poses()
     renderer.set_poses(sample)
     rgb, depth = renderer.render(poses_by_id(sample)["left/camera"])
     assert rgb.std() > 5
     assert depth.shape == (240, 320) and np.isfinite(depth).all()
     assert renderer.geometry.model.nq == renderer.geometry.model.nv == 0
-    backend.apply_action([JointCommand(joint_id="left/slide_x", position=0.2, kp=200, kd=20)], [])
+    backend.apply_action(motor_commands(), [])
     for _ in range(300):
         backend.step()
     moved = poses()

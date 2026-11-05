@@ -58,32 +58,53 @@ class MujocoBackend:
             raise ValueError(f"unsupported CBOR command: {command.key}")
         if not joint_commands:
             return
-        targets = joint_commands
-        names = [t.joint_id for t in targets]
-        if not names or len(set(names)) != len(names):
-            raise ValueError("targets require unique, nonempty joint IDs")
-        values = np.asarray([[t.position, t.velocity, t.kp, t.kd, t.feedforward] for t in targets])
+        # ROS JointCommand carries one interface across named joints. Sim2's
+        # motor profile supplies all five interfaces in one atomic action.
+        interfaces = ("position", "velocity", "kp", "kd", "effort")
+        rows: dict[str, dict[str, float]] = {}
+        for command in joint_commands:
+            names = list(command.joint_names)
+            if (
+                command.joint_names_length != len(names)
+                or command.values_length != len(command.values)
+                or len(names) != len(command.values)
+                or not names
+                or not all(names)
+                or len(set(names)) != len(names)
+            ):
+                raise ValueError(
+                    "interface requires matching values and unique, nonempty joint IDs"
+                )
+            if command.interface_name not in interfaces or command.interface_name in rows:
+                raise ValueError("unknown or duplicate motor interface")
+            rows[command.interface_name] = dict(zip(names, command.values, strict=True))
+        if set(rows) != set(interfaces):
+            raise ValueError("motor action requires position, velocity, kp, kd and effort")
+        names = list(rows["position"])
+        if any(set(row) != set(names) for row in rows.values()):
+            raise ValueError("motor interfaces must address the same joint set")
+        values = np.asarray([[rows[interface][name] for interface in interfaces] for name in names])
         if not np.isfinite(values).all() or np.any(values[:, 2:4] < 0):
             raise ValueError("targets must be finite with nonnegative gains")
         ids = []
-        for target in targets:
-            if target.joint_id not in self._drives:
-                raise ValueError(f"not a driven joint: {target.joint_id}")
-            joint = self.model.joint(target.joint_id)
+        for name, (position, _velocity, kp, kd, effort) in zip(names, values, strict=True):
+            if name not in self._drives:
+                raise ValueError(f"not a driven joint: {name}")
+            joint = self.model.joint(name)
             if (
-                target.kp
+                kp
                 and self.model.jnt_limited[joint.id]
-                and not joint.range[0] <= target.position <= joint.range[1]
+                and not joint.range[0] <= position <= joint.range[1]
             ):
-                raise ValueError(f"target outside joint limits: {target.joint_id}")
-            aid = self._drives[target.joint_id]
+                raise ValueError(f"target outside joint limits: {name}")
+            aid = self._drives[name]
             if (
-                target.kp == target.kd == 0
+                kp == kd == 0
                 and not self.model.actuator_forcerange[aid, 0]
-                <= target.feedforward
+                <= effort
                 <= self.model.actuator_forcerange[aid, 1]
             ):
-                raise ValueError(f"effort outside limits: {target.joint_id}")
+                raise ValueError(f"effort outside limits: {name}")
             ids.append(aid)
         position, velocity, kp, kd, feedforward = values.T
         self.model.actuator_gainprm[ids] = 0
