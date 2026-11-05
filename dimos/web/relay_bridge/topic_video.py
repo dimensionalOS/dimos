@@ -195,8 +195,12 @@ class SharedEncoder:
         """An encode slower than this is stale: dropped, and a keyframe follows."""
         return max(2 / self.max_hz, 0.5)
 
-    def request_keyframe(self) -> None:
+    def request_keyframe(self, *, now: bool = False) -> None:
+        """Make the next frame an IDR: at most once per KEYFRAME_FORCE_S for a
+        joining or asking (PLI, FIR) peer, at once after a dropped frame."""
         self._keyframe_wanted = True
+        if now:
+            self._last_forced = float("-inf")
 
     def reset(self) -> None:
         """Rebuild the codec on the next frame (after repeated failures)."""
@@ -303,9 +307,13 @@ class VideoRoute:
             return
         encoder.failures = 0
         if time.monotonic() - started > encoder.deadline:
-            # The frame is stale, and the next one must not reference it.
+            # The frame is stale, and later frames reference it: the next one
+            # is an IDR whatever the force window says, and until it arrives
+            # the peers skip frames that would decode broken.
             encoder.dropped += 1
-            encoder.request_keyframe()
+            encoder.request_keyframe(now=True)
+            for peer in encoder.peers.values():
+                peer.track.waiting_idr = True
             return
         for packet in packets:
             for peer in list(encoder.peers.values()):
