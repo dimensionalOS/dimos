@@ -767,3 +767,33 @@ def test_joint_velocity_limits_replace_only_requested_limits(tmp_path: Path) -> 
         robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits(
             {"slide": 0.2}
         ).with_joint_velocity_limits({"slide": 0.3}).load()
+
+
+_URDF_WITH_MESH = """<robot name="arm">
+  <link name="base"><visual><geometry><mesh filename="meshes/base.stl"/></geometry></visual></link>
+  <link name="tip"/>
+  <joint name="elbow" type="revolute">
+    <parent link="base"/><child link="tip"/><axis xyz="0 0 1"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+</robot>"""
+
+
+def test_a_model_from_urdf_content_loads_resolves_meshes_and_takes_edits(tmp_path: Path) -> None:
+    (tmp_path / "meshes").mkdir()
+    (tmp_path / "meshes" / "base.stl").write_bytes(b"solid")
+    model = robot_model.RobotModel.from_urdf_string(_URDF_WITH_MESH, asset_dir=tmp_path)
+
+    loaded = model.load()
+    assert model.source_path is None and loaded.source_path is None
+    assert [joint.name for joint in loaded.joints] == ["elbow"]
+    mesh = ET.fromstring(loaded.xml).find("link/visual/geometry/mesh")
+    assert mesh is not None and mesh.get("filename") == str(tmp_path / "meshes" / "base.stl")
+
+    fixed = model.with_fixed_joints("elbow").load()
+    assert [joint.type for joint in fixed.joints] == ["fixed"]
+
+
+def test_a_model_from_urdf_content_crosses_to_workers() -> None:
+    model = robot_model.RobotModel.from_urdf_string(_URDF_WITH_MESH)
+    assert decode(encode(model)) == model
