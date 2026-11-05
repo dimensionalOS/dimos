@@ -50,9 +50,6 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 class UrdfManagerConfig(ModuleConfig):
     model: RobotModel | None = None
     models: dict[str, RobotModel] = Field(default_factory=dict)
-    # model ID -> link whose global pose is supplied by an estimator on TF.
-    # Re-root that model's internal edges here and do not publish its truth root.
-    external_pose_frames: dict[str, str] = Field(default_factory=dict)
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -88,19 +85,6 @@ class UrdfManager(Module):
             raise ValueError("UrdfManager requires at least one model")
         self._descriptions = {name: model.load() for name, model in sources.items()}
         self._description = next(iter(self._descriptions.values()))
-        self._reversed_edges: dict[str, set[str]] = {}
-        for name, frame in self.config.external_pose_frames.items():
-            if name not in self._descriptions:
-                raise ValueError(f"external pose references unknown model: {name}")
-            model = self._descriptions[name]
-            parents = {j.child_link: j.parent_link for j in model.joints}
-            reversed_edges: set[str] = set()
-            while frame != model.root_link:
-                if frame not in parents:
-                    raise ValueError(f"external pose references unknown frame: {frame}")
-                reversed_edges.add(frame)
-                frame = parents[frame]
-            self._reversed_edges[name] = reversed_edges
         self._file_paths = set().union(
             *(_files_named_by(m.xml) for m in self._descriptions.values())
         )
@@ -164,22 +148,19 @@ class UrdfManager(Module):
             matrix[:3, 3] = [p.x, p.y, p.z]
             poses[body.body_id] = matrix
         edges = []
-        for name, model in self._descriptions.items():
+        for model in self._descriptions.values():
             if model.root_link not in poses:
                 raise ValueError(f"missing model root in body poses: {model.root_link}")
-            if name not in self.config.external_pose_frames:
-                edges.append(
-                    Transform.from_matrix(
-                        poses[model.root_link],
-                        frame_id="world",
-                        child_frame_id=model.root_link,
-                        ts=sample.header.time_ns / 1e9,
-                    )
+            edges.append(
+                Transform.from_matrix(
+                    poses[model.root_link],
+                    frame_id="world",
+                    child_frame_id=model.root_link,
+                    ts=sample.header.time_ns / 1e9,
                 )
+            )
             for joint in model.joints:
                 parent_id, child_id = joint.parent_link, joint.child_link
-                if child_id in self._reversed_edges.get(name, set()):
-                    parent_id, child_id = child_id, parent_id
                 parent, child = poses[parent_id], poses[child_id]
                 relative = np.eye(4)
                 relative[:3, :3] = parent[:3, :3].T @ child[:3, :3]
