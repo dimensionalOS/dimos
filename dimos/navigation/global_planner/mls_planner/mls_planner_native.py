@@ -78,7 +78,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     blocked_timeout_s: float = 2.0
     # Seconds a followed goal may go without the robot moving before it is aborted.
     progress_timeout_s: float = 10.0
-    # Ground-plane distance the robot must cover to count as moving.
+    # Ground-plane meters the robot must move within the progress timeout window.
     progress_min_m: float = 0.2
     viz_publish_hz: float = 2.0
     # The surface and edge viz publish by square cells of this edge, only the
