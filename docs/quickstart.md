@@ -51,7 +51,6 @@ The installer's default extras include `sim`. To run a physics simulation, pass 
 
 ```bash
 dimos --simulation run unitree-go2       # quadruped
-dimos --simulation run unitree-g1-sim    # humanoid
 ```
 
 ### Real robot
@@ -105,7 +104,8 @@ The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) 
 | `dimos --replay run unitree-go2` | Quadruped navigation replay with SLAM, costmap, and A-star planning |
 | `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped spatial memory replay |
 | `dimos --simulation run unitree-go2-agentic` | Quadruped LLM agent plus MCP server in simulation (needs `OPENAI_API_KEY`) |
-| `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
+| `dimos run unitree-g1` | G1 stock DDS control (hardware) |
+| `dimos run unitree-g1-groot-wbc` | G1 GR00T control (hardware) |
 | `dimos --replay run drone-basic` | Drone video and telemetry replay |
 | `dimos --replay run drone-agentic` | Drone with an LLM agent and flight skills, replayed |
 | `dimos run demo-camera` | Webcam demo, no robot needed |

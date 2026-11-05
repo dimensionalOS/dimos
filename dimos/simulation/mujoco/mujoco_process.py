@@ -117,8 +117,6 @@ def _run_simulation(config: MujocoConfig, shm: ShmReader, robot_model: str | Non
     match robot_name:
         case "unitree_go1":
             z = 0.3
-        case "unitree_g1":
-            z = 0.8
         case _:
             z = 0
 

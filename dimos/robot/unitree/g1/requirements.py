@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 stack: base sensors plus real robot connection and ROS nav."""
+"""Runtime requirements shared by the two G1 hardware blueprints."""
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
-    unitree_g1_primitive_no_nav,
-)
-from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.core.global_config import global_config
 
-unitree_g1_basic = autoconnect(
-    unitree_g1_primitive_no_nav,
-    G1Connection.blueprint(),
-)
+
+def g1_hardware() -> str | None:
+    if global_config.simulation:
+        return (
+            "G1 simulation requires the upcoming sim2 integration; legacy simulation was removed."
+        )
+    if global_config.replay:
+        return "The G1 control blueprints do not support replay."
+    return None

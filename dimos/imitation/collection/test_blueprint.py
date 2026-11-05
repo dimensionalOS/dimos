@@ -30,7 +30,6 @@ from dimos.imitation.collection.episode_monitor import (
 from dimos.imitation.collection.recorder import CollectionModule
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.get_all_blueprints import get_by_name
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
@@ -38,7 +37,7 @@ AGGREGATE = "coordinator_joint_state"
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper, unitree_g1_teleop],
+    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
 def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint) -> None:
     monitor = next(

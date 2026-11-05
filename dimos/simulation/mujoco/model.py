@@ -27,7 +27,7 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.menagerie import menagerie_path
-from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
+from dimos.simulation.mujoco.policy import Go1OnnxController
 from dimos.utils.data import get_data
 
 
@@ -52,7 +52,6 @@ def get_assets() -> dict[str, bytes]:
     _update_assets(assets, data_dir / "scene_office1/office_split", "*.obj")
     menagerie = menagerie_path()
     _update_assets(assets, menagerie / "unitree_go1" / "assets")
-    _update_assets(assets, menagerie / "unitree_g1" / "assets")
 
     # From: https://sketchfab.com/3d-models/jeong-seun-34-42956ca979404a038b8e0d3e496160fd
     person_dir = get_data("person")
@@ -65,6 +64,9 @@ def get_assets() -> dict[str, bytes]:
 def load_model(
     input_device: InputController, robot: str, scene_xml: str
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
+    if robot != "unitree_go1":
+        raise ValueError(f"Unknown robot policy: {robot}")
+
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
@@ -77,12 +79,7 @@ def load_model(
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
 
-    match robot:
-        case "unitree_g1":
-            sim_dt = 0.002
-        case _:
-            sim_dt = 0.005
-
+    sim_dt = 0.005
     ctrl_dt = 0.02
     n_substeps = round(ctrl_dt / sim_dt)
     model.opt.timestep = sim_dt
@@ -93,16 +90,9 @@ def load_model(
         "n_substeps": n_substeps,
         "action_scale": 0.5,
         "input_controller": input_device,
-        "ctrl_dt": ctrl_dt,
     }
 
-    match robot:
-        case "unitree_go1":
-            policy: OnnxController = Go1OnnxController(**params)
-        case "unitree_g1":
-            policy = G1OnnxController(**params, drift_compensation=[-0.18, 0.0, -0.09])
-        case _:
-            raise ValueError(f"Unknown robot policy: {robot}")
+    policy = Go1OnnxController(**params)
 
     mujoco.set_mjcb_control(policy.get_control)
 

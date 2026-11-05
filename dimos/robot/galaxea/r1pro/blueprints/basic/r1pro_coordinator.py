@@ -15,7 +15,7 @@
 
 """R1 Pro ControlCoordinator, ROS connection, and Point-LIO on the chassis Mid-360.
 
-Mirrors ``unitree_g1_coordinator.py``: the 18-DOF upper body goes through
+The 18-DOF upper body goes through
 the generic whole-body transport adapter, the holonomic chassis through the
 twist-base transport adapter. ``base_link`` is placed by Point-LIO, not wheel odometry.
 

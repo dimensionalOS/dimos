@@ -172,9 +172,6 @@ dimos --replay run unitree-go2
 # The installer's default extras include simulation support.
 # Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
-
-# Run humanoid in simulation
-dimos --simulation run unitree-g1-sim
 ```
 
 ```bash
@@ -190,7 +187,8 @@ dimos run unitree-go2
 | `dimos --replay run unitree-go2` | Quadruped navigation replay — SLAM, costmap, A* planning |
 | `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped temporal memory replay |
 | `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
-| `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
+| `dimos run unitree-g1` | G1 stock DDS control (hardware) |
+| `dimos run unitree-g1-groot-wbc` | G1 GR00T control (hardware) |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
 | `dimos run demo-camera` | Webcam demo — no hardware needed |

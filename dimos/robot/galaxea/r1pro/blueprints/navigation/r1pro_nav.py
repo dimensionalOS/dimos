@@ -15,7 +15,7 @@
 
 """R1 Pro click-to-drive navigation: raytracing costmap + A* replanning.
 
-Mirrors ``unitree_g1_nav_simple``, fed by the chassis Mid-360 and Point-LIO.
+Fed by the chassis Mid-360 and Point-LIO.
 
 Usage:
     dimos run r1pro-nav        # click a goal in the rerun viewer

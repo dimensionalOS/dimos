@@ -12,29 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 from typer.testing import CliRunner
 
 from dimos.cli import hardware_cli
 from dimos.cli.hardware import g1 as g1_cli
-from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS, G1_READY_SPEED_SCALE
 
 runner = CliRunner()
 
 
 class _Client:
-    def __init__(self, coordinator: Mock, manipulation: Mock | None = None) -> None:
+    def __init__(self, coordinator: Mock) -> None:
         self.coordinator = coordinator
-        self.manipulation = manipulation
         self.stopped = False
 
     def get_module(self, name: str) -> Mock:
         if name == "ControlCoordinator":
             return self.coordinator
-        if name == "G1Manipulation" and self.manipulation is not None:
-            return self.manipulation
         raise KeyError(name)
 
     def stop(self) -> None:
@@ -56,7 +51,7 @@ def test_hardware_namespace_exposes_g1_operator_commands() -> None:
     result = runner.invoke(hardware_cli.app, ["g1", "--help"])
 
     assert result.exit_code == 0, result.output
-    for command in ("status", "arm", "enable", "activate", "ready", "disable"):
+    for command in ("status", "arm", "enable", "activate", "disable"):
         assert command in result.output
 
 
@@ -245,88 +240,6 @@ def test_activate_already_enabled_skips_arm_and_confirmation(mocker) -> None:
     coordinator.set_activated.assert_not_called()
     coordinator.set_dry_run.assert_not_called()
     confirm.assert_not_called()
-
-
-def test_ready_plans_both_arms_at_conservative_speed(mocker) -> None:
-    coordinator = Mock()
-    coordinator.task_invoke.return_value = _state(armed=True, dry_run=False)
-    coordinator.get_active_tasks.return_value = ["groot_wbc"]
-    manipulation = Mock()
-    manipulation.plan_to_joints.return_value = SimpleNamespace(succeeded=True)
-    manipulation.execute.return_value = SimpleNamespace(succeeded=True)
-    client = _Client(coordinator, manipulation)
-    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
-
-    result = runner.invoke(g1_cli.app, ["ready"])
-
-    assert result.exit_code == 0, result.output
-    targets = manipulation.plan_to_joints.call_args.args[0]
-    assert set(targets) == {"left_arm", "right_arm"}
-    assert tuple(targets["left_arm"].position) == G1_READY_JOINTS["left_arm"]
-    assert tuple(targets["right_arm"].position) == G1_READY_JOINTS["right_arm"]
-    assert manipulation.plan_to_joints.call_args.kwargs == {"speed_scale": G1_READY_SPEED_SCALE}
-    manipulation.execute.assert_called_once_with(blocking=True)
-
-
-def test_activate_ready_enables_before_moving_arms(mocker) -> None:
-    coordinator = Mock()
-    coordinator.task_invoke.side_effect = [
-        _state(armed=True, dry_run=True),
-        _state(armed=True, dry_run=False),
-        _state(armed=True, dry_run=False),
-    ]
-    coordinator.get_active_tasks.return_value = ["groot_wbc"]
-    manipulation = Mock()
-    manipulation.plan_to_joints.return_value = SimpleNamespace(succeeded=True)
-    manipulation.execute.return_value = SimpleNamespace(succeeded=True)
-    client = _Client(coordinator, manipulation)
-    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
-    mocker.patch.object(g1_cli.typer, "confirm", return_value=True)
-
-    result = runner.invoke(g1_cli.app, ["activate", "--ready"])
-
-    assert result.exit_code == 0, result.output
-    coordinator.set_dry_run.assert_called_once_with(False)
-    manipulation.execute.assert_called_once_with(blocking=True)
-    assert result.output.index("G1 motor output enabled") < result.output.index(
-        "G1 reached the ready pose"
-    )
-
-
-def test_activate_ready_failure_reports_that_motor_output_remains_enabled(mocker) -> None:
-    coordinator = Mock()
-    coordinator.task_invoke.side_effect = [
-        _state(armed=True, dry_run=True),
-        _state(armed=True, dry_run=False),
-        _state(armed=True, dry_run=False),
-    ]
-    coordinator.get_active_tasks.return_value = ["groot_wbc"]
-    manipulation = Mock()
-    manipulation.plan_to_joints.return_value = SimpleNamespace(succeeded=False)
-    client = _Client(coordinator, manipulation)
-    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
-    mocker.patch.object(g1_cli.typer, "confirm", return_value=True)
-
-    result = runner.invoke(g1_cli.app, ["activate", "--ready"])
-
-    assert result.exit_code == 1
-    assert "GR00T motor output remains enabled" in result.output
-    manipulation.execute.assert_not_called()
-
-
-def test_ready_rejects_active_teleoperation_before_planning(mocker) -> None:
-    coordinator = Mock()
-    coordinator.task_invoke.return_value = _state(armed=True, dry_run=False)
-    coordinator.get_active_tasks.return_value = ["groot_wbc", "teleop_g1"]
-    manipulation = Mock()
-    client = _Client(coordinator, manipulation)
-    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
-
-    result = runner.invoke(g1_cli.app, ["ready"])
-
-    assert result.exit_code == 1
-    assert "disengage both hands" in result.output
-    manipulation.plan_to_joints.assert_not_called()
 
 
 def test_disable_attempts_every_safety_action(mocker) -> None:

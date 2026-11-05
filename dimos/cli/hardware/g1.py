@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Safe operator commands for a running Unitree G1 teleop stack."""
+"""Safe operator commands for a running Unitree G1 GR00T stack."""
 
 from __future__ import annotations
 
@@ -22,17 +22,13 @@ from typing import Any, NoReturn, Protocol, TypeGuard
 import typer
 
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import ModuleHandle
-from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS, G1_READY_SPEED_SCALE
 
 app = typer.Typer(help="Operate a running Unitree G1 stack safely")
 
 _COORDINATOR = "ControlCoordinator"
-_MANIPULATION = "G1Manipulation"
 _GROOT_TASK = "groot_wbc"
-_TELEOP_TASK = "teleop_g1"
 _ARM_POLL_SECONDS = 0.1
 
 
@@ -40,14 +36,7 @@ class _G1CoordinatorHandle(Protocol):
     def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any]) -> Any: ...
     def set_dry_run(self, dry_run: bool) -> Any: ...
     def set_activated(self, activated: bool) -> Any: ...
-    def get_active_tasks(self) -> list[str]: ...
     def cancel_trajectory(self) -> Any: ...
-
-
-class _G1ManipulationHandle(Protocol):
-    def list_planning_groups(self) -> list[Any]: ...
-    def plan_to_joints(self, targets: dict[str, JointState], *, speed_scale: float) -> Any: ...
-    def execute(self, *, blocking: bool) -> Any: ...
 
 
 def _abort(message: str) -> NoReturn:
@@ -69,25 +58,14 @@ def _has_methods(handle: ModuleHandle, names: tuple[str, ...]) -> bool:
 def _is_coordinator(handle: ModuleHandle) -> TypeGuard[_G1CoordinatorHandle]:
     return _has_methods(
         handle,
-        ("task_invoke", "set_dry_run", "set_activated", "get_active_tasks", "cancel_trajectory"),
+        ("task_invoke", "set_dry_run", "set_activated", "cancel_trajectory"),
     )
-
-
-def _is_manipulation(handle: ModuleHandle) -> TypeGuard[_G1ManipulationHandle]:
-    return _has_methods(handle, ("list_planning_groups", "plan_to_joints", "execute"))
 
 
 def _coordinator(client: Dimos) -> _G1CoordinatorHandle:
     handle = client.get_module(_COORDINATOR)
     if not _is_coordinator(handle):
         _abort("the running stack does not expose the required G1 coordinator RPCs")
-    return handle
-
-
-def _manipulation(client: Dimos) -> _G1ManipulationHandle:
-    handle = client.get_module(_MANIPULATION)
-    if not _is_manipulation(handle):
-        _abort("the running stack does not expose the required G1 manipulation RPCs")
     return handle
 
 
@@ -99,15 +77,6 @@ def _groot_state(coordinator: _G1CoordinatorHandle) -> dict[str, Any]:
     state = coordinator.task_invoke(_GROOT_TASK, "state_snapshot", {})
     if not _is_groot_state(state):
         _abort("the running stack does not expose G1 GR00T safety state")
-    return state
-
-
-def _require_armed_and_enabled(coordinator: _G1CoordinatorHandle) -> dict[str, Any]:
-    state = _groot_state(coordinator)
-    if not state.get("armed") or state.get("arming") or state.get("arm_pending"):
-        _abort("G1 is not fully armed; run `dimos hardware g1 arm` first")
-    if state.get("dry_run"):
-        _abort("motor output is still disabled; run `dimos hardware g1 enable` first")
     return state
 
 
@@ -151,31 +120,9 @@ def _enable_motor_output(
     return enabled
 
 
-def _require_teleop_disengaged(coordinator: _G1CoordinatorHandle) -> None:
-    if _TELEOP_TASK in coordinator.get_active_tasks():
-        _abort("G1 teleoperation is active; disengage both hands before moving to ready pose")
-
-
-def _execute_ready_pose(
-    coordinator: _G1CoordinatorHandle,
-    manipulation: _G1ManipulationHandle,
-) -> None:
-    _require_armed_and_enabled(coordinator)
-    _require_teleop_disengaged(coordinator)
-    targets = {
-        group: JointState(position=list(positions)) for group, positions in G1_READY_JOINTS.items()
-    }
-    planned = manipulation.plan_to_joints(targets, speed_scale=G1_READY_SPEED_SCALE)
-    if not planned.succeeded:
-        _abort(f"ready-pose planning failed: {planned}")
-    executed = manipulation.execute(blocking=True)
-    if not executed.succeeded:
-        _abort(f"ready-pose execution failed: {executed}")
-
-
 @app.command()
 def status() -> None:
-    """Show the G1 safety state, trajectory state, and planning groups."""
+    """Show the G1 safety and arm trajectory state."""
     client = _connect()
     try:
         coordinator = _coordinator(client)
@@ -183,20 +130,13 @@ def status() -> None:
         trajectory = coordinator.task_invoke(
             JOINT_TRAJECTORY_TASK_NAME, "get_status", {"t_now": None}
         )
-        try:
-            groups = _manipulation(client).list_planning_groups()
-            group_ids = [str(group.id) for group in groups]
-        except (AttributeError, KeyError):
-            group_ids = []
-
         typer.echo(f"active:      {bool(state.get('active'))}")
         typer.echo(f"armed:       {bool(state.get('armed'))}")
         typer.echo(f"arming:      {bool(state.get('arming') or state.get('arm_pending'))}")
         typer.echo(f"dry_run:     {bool(state.get('dry_run'))}")
         typer.echo(f"trajectory:  {trajectory}")
-        typer.echo(f"manipulation: {', '.join(group_ids) if group_ids else 'unavailable'}")
     except (AttributeError, KeyError, RuntimeError) as exc:
-        _abort(f"running stack is not a compatible G1 teleop stack: {exc}")
+        _abort(f"running stack is not a compatible G1 GR00T stack: {exc}")
     finally:
         client.stop()
 
@@ -232,11 +172,6 @@ def enable() -> None:
 @app.command()
 def activate(
     timeout: float = typer.Option(15.0, min=0.1, help="Arming timeout in seconds."),
-    ready: bool = typer.Option(
-        False,
-        "--ready",
-        help="Move both arms to the conservative ready pose after enabling motor output.",
-    ),
 ) -> None:
     """Arm, confirm physical safety, and enable live GR00T output."""
     client = _connect()
@@ -262,34 +197,11 @@ def activate(
             motor_output_enabled = True
             typer.echo("G1 is already activated.")
 
-        if ready:
-            manipulation = _manipulation(client)
-            try:
-                _execute_ready_pose(coordinator, manipulation)
-            except typer.Exit:
-                typer.echo("GR00T motor output remains enabled.", err=True)
-                raise
-            typer.echo("G1 reached the ready pose.")
-        elif state.get("dry_run"):
+        if state.get("dry_run"):
             typer.echo("G1 activated.")
     except (AttributeError, KeyError, RuntimeError) as exc:
         suffix = "; GR00T motor output remains enabled" if motor_output_enabled else ""
         _abort(f"failed to activate G1: {exc}{suffix}")
-    finally:
-        client.stop()
-
-
-@app.command()
-def ready() -> None:
-    """Plan and execute the conservative bimanual ready pose."""
-    client = _connect()
-    try:
-        coordinator = _coordinator(client)
-        manipulation = _manipulation(client)
-        _execute_ready_pose(coordinator, manipulation)
-        typer.echo("G1 reached the ready pose.")
-    except (AttributeError, KeyError, RuntimeError) as exc:
-        _abort(f"failed to move G1 to the ready pose: {exc}")
     finally:
         client.stop()
 

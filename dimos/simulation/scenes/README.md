@@ -111,8 +111,8 @@ Runtime code should look up declared composed binaries through the package API:
 
 ```python
 composed_mjb = package.mujoco_composed_binary_path(
-    key="unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar",
-    robot="unitree-g1-groot-wbc",
+    key="example-robot_default-spawn_static-only",
+    robot="example-robot",
     entity_policy="static-only",
 )
 ```
@@ -120,45 +120,6 @@ composed_mjb = package.mujoco_composed_binary_path(
 If the lookup returns `None`, the consumer can fall back to the robot-agnostic
 `wrapper.xml` flow above. If it returns a path that is missing on disk, the
 package is stale or incomplete.
-
-## Run G1 With A Scene
-
-No scene:
-
-```bash
-dimos \
-  --simulation mujoco \
-  --scene-package none \
-  --viewer rerun \
-  --n-workers 12 \
-  run unitree-g1-groot-wbc --rerunbridgemodule.rerun-open native
-```
-
-Office:
-
-```bash
-dimos \
-  --simulation mujoco \
-  --scene-package office \
-  --viewer rerun \
-  --n-workers 12 \
-  run unitree-g1-groot-wbc --rerunbridgemodule.rerun-open native
-```
-
-Supermarket:
-
-```bash
-dimos \
-  --simulation mujoco \
-  --scene-package supermarket \
-  --viewer rerun \
-  --n-workers 12 \
-  run unitree-g1-groot-wbc --rerunbridgemodule.rerun-open native
-```
-
-Prefer headless MuJoCo with Rerun native for normal testing. Opening the MuJoCo
-viewer with `--headless=false` is useful for contact debugging,
-but it can run much slower.
 
 ## Boundaries
 

@@ -13,7 +13,7 @@
 3. Run wired ssh command:
 
 ```bash
-ssh -L 3030:localhost:3030 unitree@192.168.123.164
+ssh unitree@192.168.123.164
 # Password: 123
 ```
 
@@ -74,164 +74,50 @@ Note: this button combination may vary based on the model of the G1
    - The robot will be super stiff now. Manually pick it up into a standing position and hold it there.
    - Press **R2 + A** (will attempt to self-balance)
 
-## 4. Start G1 teleoperation
+## 4. Choose a controller
 
-The robot must already be standing and balancing in sport mode. Use a clear,
-level work area, keep the Unitree remote and emergency stop reachable, and use
-a gantry or spotter for the first hardware run. Keep the robot stationary while
-using WebXR arm teleoperation or planned manipulation; WebXR thumbsticks do not
-command locomotion in this blueprint.
+G1 has two blueprints. Run one at a time on a host with the Unitree DDS SDK
+installed and network access to the robot. Set `--network-interface` to the
+interface connected to it.
 
-On the G1 computer:
+| Blueprint | Controller |
+|-----------|------------|
+| `unitree-g1` | Stock Unitree DDS locomotion |
+| `unitree-g1-groot-wbc` | GR00T whole-body policy and bounded arm joint commands |
 
 ```bash
-# Activate the developer environment created by the installer first.
-uv run dimos run unitree-g1-teleop --network-interface eth0
+uv run dimos run unitree-g1 --network-interface eth0
+# Or, after stopping the stock stack:
+uv run dimos run unitree-g1-groot-wbc --network-interface eth0
 ```
 
-The teleop blueprint excludes navigation and mapping, so no module-disable
-arguments are needed. Wait for the WebXR server to listen on port `8443`, then
-activate the robot from a second SSH session:
+The stock stack exposes locomotion RPCs through `dimos shell` and accepts
+`cmd_vel`. GR00T accepts `/g1/cmd_vel` and arm targets on `/g1/joint_command`.
+Both are control stacks; sensors, mapping, navigation, agents, WebXR and
+collection are no longer bundled as G1-specific variants.
+
+The old G1 simulation and replay paths have been removed. These blueprints
+reject `--simulation` and `--replay`; sim2 support is pending integration.
+
+## 5. Activate GR00T
+
+Keep the remote and emergency stop reachable, with the robot supported in a
+clear work area. GR00T starts unarmed with policy output in dry-run. In another
+terminal on the same host:
 
 ```bash
 uv run dimos hardware g1 status
 uv run dimos hardware g1 activate
 uv run dimos hardware g1 status
-uv run dimos hardware g1 ready
 ```
 
-`activate` runs the GR00T pose ramp and requires interactive confirmation before
-enabling output. Check the status before `ready` moves both arms to the
-conservative ready pose. Routine startup must use these hardware commands rather
-than `dimos shell`. `activate --ready` remains available as a combined shortcut.
-
-Open `https://<g1-computer-ip>:8443/teleop` in the Quest browser and accept the
-self-signed certificate.
-
-| Input | Operation |
-|---|---|
-| Hold X + A | Engage both arms from a shared reference pose |
-| B | Start or save a recording episode |
-| Y | Discard the current episode |
-
-The blueprint also serves the Viser manipulation panel at
-`http://<g1-computer-ip>:8095`. It can execute arm motion; only expose this port
-on a trusted robot network. WebXR arm targets preempt planned arm trajectories.
-
-When finished, cancel arm motion, enter dry-run, and disarm:
+`activate` runs the pose ramp, asks for confirmation, then enables live policy
+output. For separate steps, use `arm` followed by `enable`. The arming ramp
+itself moves the robot even though policy output remains in dry-run.
 
 ```bash
 uv run dimos hardware g1 disable
 ```
 
-## 5. Legacy navigation viewer example
-
-In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
-
-```sh skip
-source .venv/bin/activate
-uv run dimos run unitree-g1-nav-simple --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
-# should print out something like:
-# ============================================================
-# Rerun gRPC server running (no viewer opened)
-#
-# Connect a viewer:
-#   dimos-viewer --connect rerun+http://0.0.0.0:9877/proxy --ws-url ws://0.0.0.0:3030/ws
-#   dimos-viewer --connect rerun+http://192.168.123.164:9877/proxy --ws-url ws://192.168.123.164:3030/ws  # eth0
-#   dimos-viewer --connect rerun+http://100.88.236.73:9877/proxy --ws-url ws://100.88.236.73:3030/ws  # tailscale0
-#   dimos-viewer --connect rerun+http://10.0.0.197:9877/proxy --ws-url ws://10.0.0.197:3030/ws  # wlan0
-#   dimos-viewer --connect rerun+http://172.17.0.1:9877/proxy --ws-url ws://172.17.0.1:3030/ws  # docker0
-#
-#   hostname: ubuntu
-# ============================================================
-```
-
-On your laptop:
-
-```sh skip
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv --python "3.12"
-# use uv to get the dimos viewer
-uvx dimos-viewer --version
-
-# run the connect command. NOTE: the address will be different for you
-uvx dimos-viewer --connect rerun+http://100.88.236.73:9877/proxy --ws-url ws://100.88.236.73:3030/ws
-```
-
-The viewer should open up. It'll run in faster-than-real speed until its caught up with reality, then should show what's happening in real time.
-
-## Troubleshooting
-
-### `libgomp.so.1: cannot allocate memory in static TLS block`
-
-RoboPlan 0.6.0's aarch64 wheel bundles a renamed private `libgomp`, while
-Pinocchio loads the system copy. On affected systems, start the blueprint with
-both libraries preloaded:
-
-```bash
-ROBOPLAN_GOMP="$(find "$PWD/.venv/lib/python3.12/site-packages/roboplan.libs" \
-  -maxdepth 1 -name 'libgomp-*.so*' -print -quit)"
-test -n "$ROBOPLAN_GOMP" || {
-  echo "RoboPlan's bundled libgomp was not found"
-  exit 1
-}
-
-LD_PRELOAD="$ROBOPLAN_GOMP:/lib/aarch64-linux-gnu/libgomp.so.1" \
-  uv run --no-sync dimos run unitree-g1-teleop --network-interface eth0
-```
-
-Preloading only the system library is insufficient. If startup still fails,
-confirm that `ROBOPLAN_GOMP` resolves to a file and appears first in
-`LD_PRELOAD`.
-
-### Activation or ready-pose recovery
-
-Use the individual stages to identify whether the arming ramp, output enable,
-or planned ready motion failed:
-
-```bash
-uv run dimos hardware g1 arm
-uv run dimos hardware g1 enable
-uv run dimos hardware g1 ready
-```
-
-`ready` requires completed arming, enabled output, and disengaged WebXR arm
-tracking. Run `uv run dimos hardware g1 disable` before restarting the sequence.
-
-### A mapping module tries to build with Nix
-
-Update this branch. The G1 teleop blueprint no longer includes Point-LIO, voxel
-mapping, cost mapping, route planning, or the navigation web view. Seeing one
-of those modules means the checkout predates the upper-body-only composition.
-
-### `dimos hardware g1 status` cannot connect
-
-The teleop blueprint must still be running, and both terminals must use the
-same dimOS transport configuration. Check the primary process with
-`uv run dimos status` and `uv run dimos log -f`.
-
-### Ready-pose planning fails
-
-Do not bypass the planner. Confirm that the robot is stationary, both arm and
-waist joint states are arriving, no object starts in collision with the upper
-body, and `status` lists `g1_upper_body/left_arm` and
-`g1_upper_body/right_arm`.
-
-#### Keyboard Controls Not Working
-
-This usually means port `3030` wasn't forwarded. The `3030:localhost:3030` in the ssh command is what forwards the port. If you use VS Code with the SSH plugin, ports will be forwarded automatically. However sometimes the auto-forward will map 3030 to 3031 - thus breaking the connect command. Clear whatever is on port 3030 (on the G1 sid and the Laptop) then try again.
-
-#### Viewer Crashing
-
-If the viewer keeps crashing for you, there are two options for now:
-1. On the G1 (ssh connection) change `_MAX_HZ` (inside `dimos/robot/unitree/g1/blueprints/primitive/unitree_g1_vis.py`) to a lower number, like 20 or 15
-2. Get more RAM
-
-
-
-## External Resources
-
-- [Unitree Developer Docs](https://support.unitree.com/home/en/developer)
-- [Sport Mode Services](https://support.unitree.com/home/en/developer/sports_services)
-- [Unitree SDK2 Python](https://github.com/unitreerobotics/unitree_sdk2_python)
+`disable` cancels arm trajectories, restores dry-run and disarms the controller.
+The GR00T operator commands do not apply to the stock controller.
