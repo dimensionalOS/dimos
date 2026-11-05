@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::goal_status::{
-    clear_if_held, stop_on_arrival, Blocked, Goal, GoalId, LatestStatus, Report, Stall,
+    clear_if_held, stop_on_arrival, Blocked, Goal, GoalId, LatestStatus, Report, Route, Stall,
     StatusReporter, HEADING_NOT_REACHED, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED,
     PREEMPT_REPLACED,
 };
@@ -286,7 +286,7 @@ pub struct MlsPlanner {
     // on map processing. Seed regions queue in arrival order.
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
-    active_goal: Shared<Goal>,
+    active_goal: Shared<Route>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
     latest_status: LatestStatus,
@@ -434,19 +434,19 @@ impl MlsPlanner {
         match goal_position(&msg.pose.position) {
             Some(position) => {
                 let id = self.next_goal_id(&msg.header.stamp);
-                let held = *self.active_goal.lock().expect("goal mutex");
+                let held = self.held_goal_id();
                 // A goal sent again keeps its id, so it is not preempted.
-                if let Some(held) = held.filter(|held| !held.id.same_stamp(&id)) {
+                if let Some(held) = held.filter(|held| !held.same_stamp(&id)) {
                     self.preempt(held, PREEMPT_REPLACED).await;
                 }
                 self.status()
                     .report(Report::new(id, GoalStatus::PENDING, "planning"))
                     .await;
-                self.set_active_goal(Some(Goal { id, position, yaw }));
+                self.set_active_goal(Some(Route::new(id, vec![position], yaw)));
             }
             None => {
                 if let Some(held) = self.set_active_goal(None) {
-                    self.preempt(held, PREEMPT_CANCELED).await;
+                    self.preempt(held.id, PREEMPT_CANCELED).await;
                 }
             }
         }
@@ -454,10 +454,18 @@ impl MlsPlanner {
         self.wake.notify_one();
     }
 
-    async fn preempt(&self, goal: Goal, reason: &'static str) {
+    async fn preempt(&self, goal: GoalId, reason: &'static str) {
         self.status()
-            .report(Report::new(goal.id, GoalStatus::PREEMPTED, reason))
+            .report(Report::new(goal, GoalStatus::PREEMPTED, reason))
             .await;
+    }
+
+    fn held_goal_id(&self) -> Option<GoalId> {
+        self.active_goal
+            .lock()
+            .expect("goal mutex")
+            .as_ref()
+            .map(|route| route.id)
     }
 
     fn next_goal_id(&mut self, stamp: &Time) -> GoalId {
@@ -470,8 +478,8 @@ impl MlsPlanner {
     }
 
     /// Replace the active goal, returning the one it displaced.
-    fn set_active_goal(&self, goal: Option<Goal>) -> Option<Goal> {
-        std::mem::replace(&mut *self.active_goal.lock().expect("goal mutex"), goal)
+    fn set_active_goal(&self, route: Option<Route>) -> Option<Route> {
+        std::mem::replace(&mut *self.active_goal.lock().expect("goal mutex"), route)
     }
 }
 
@@ -621,7 +629,7 @@ impl GoalProgress {
 struct Worker {
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
-    active_goal: Shared<Goal>,
+    active_goal: Shared<Route>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
     tf: Tf,
@@ -931,7 +939,12 @@ impl Worker {
         goal_changed: bool,
         progress: &mut GoalProgress,
     ) {
-        let goal = *self.active_goal.lock().expect("goal mutex");
+        let goal = self
+            .active_goal
+            .lock()
+            .expect("goal mutex")
+            .as_ref()
+            .map(Route::goal);
         let start = self
             .base_position()
             .map(|s| (s.0, s.1, s.2 - self.config.start_z_offset_m));

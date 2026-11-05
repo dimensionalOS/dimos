@@ -133,6 +133,39 @@ pub(crate) struct Goal {
     pub(crate) yaw: Option<f32>,
 }
 
+/// The waypoints of the active goal in order, never empty, and the one being
+/// driven to. The goal the planner works on each pass is derived from it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Route {
+    pub(crate) id: GoalId,
+    pub(crate) waypoints: Vec<Xyz>,
+    /// The heading to face at the last waypoint, when it carries one.
+    pub(crate) yaw: Option<f32>,
+    /// Index of the waypoint being driven to.
+    pub(crate) next: usize,
+}
+
+impl Route {
+    pub(crate) fn new(id: GoalId, waypoints: Vec<Xyz>, yaw: Option<f32>) -> Self {
+        Self {
+            id,
+            waypoints,
+            yaw,
+            next: 0,
+        }
+    }
+
+    /// The waypoint being driven to, as a goal. Only the last one carries the heading.
+    pub(crate) fn goal(&self) -> Goal {
+        let last = self.next + 1 == self.waypoints.len();
+        Goal {
+            id: self.id,
+            position: self.waypoints[self.next],
+            yaw: self.yaw.filter(|_| last),
+        }
+    }
+}
+
 /// One goal's state as nav_status carries it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Report {
@@ -247,9 +280,9 @@ pub(crate) fn stop_on_arrival(followed: Option<GoalId>, goal: GoalId) -> bool {
     !followed.is_some_and(|followed| followed.same_stamp(&goal))
 }
 
-pub(crate) fn clear_if_held(slot: &Mutex<Option<Goal>>, goal: Goal) -> bool {
+pub(crate) fn clear_if_held(slot: &Mutex<Option<Route>>, goal: Goal) -> bool {
     let mut guard = slot.lock().expect("goal mutex");
-    let held = *guard == Some(goal);
+    let held = guard.as_ref().is_some_and(|route| route.goal() == goal);
     if held {
         *guard = None;
     }
