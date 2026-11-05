@@ -26,7 +26,7 @@ import watchfiles
 
 from dimos.core import run_registry
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import constants, launches, store
+from experimental.gateway import constants, launches, shared_config, store
 
 if TYPE_CHECKING:
     from experimental.gateway.process_stats import ProcessStats
@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def resolve_namespace(given: str | None) -> str | None:
-    namespace = given or store.setting("zenoh", "namespace")
+def resolve_namespace() -> str | None:
+    namespace = shared_config.shared_config().zenoh_namespace
     if not namespace:
         return None
     if any(chunk == "" for chunk in namespace.split("/")) or re.search(r"[*?#$]", namespace):
@@ -43,11 +43,10 @@ def resolve_namespace(given: str | None) -> str | None:
     return namespace
 
 
-def resolve_connect(given: str | None) -> list[str]:
+def resolve_connect() -> list[str]:
     from dimos.core.global_config import global_config
 
-    configured = store.setting("zenoh", "connect")
-    value = given if given is not None else configured or global_config.zenoh_connect
+    value = shared_config.shared_config().zenoh_connect or global_config.zenoh_connect
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 

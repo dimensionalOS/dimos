@@ -32,6 +32,7 @@ from dimos.robot.manipulators.seeed_b601_dm.joints import B601_DM_ARM_JOINTS
 
 seeed_b601_dm_planner_coordinator = autoconnect(
     planner(
+        gripper_tasks={"manipulator": "b601_dm_gripper"},
         model=b601_dm_model_config(),
         visualization={"backend": "viser"},
         trajectory_parametrization={
