@@ -168,7 +168,7 @@ def test_g1_mid360_mount_observes_the_floor_instead_of_its_head():
         lidar.open_sensor(scene)
         cleanup.callback(lidar.close_sensor)
         self_filter = UrdfManagerPointClearing(
-            models=MODELS, padding_m=0.03, filter_geometry="visual", publish_joint_tf=False
+            models=MODELS, padding_m=0.05, filter_geometry="visual", publish_joint_tf=False
         )
         cleanup.callback(self_filter.dispose)
         for tick in range(51):

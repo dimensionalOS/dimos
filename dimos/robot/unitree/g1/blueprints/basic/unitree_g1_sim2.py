@@ -115,7 +115,7 @@ def _g1_sim2(*, pointlio: bool = False) -> Blueprint:
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
             models=MODELS,
-            padding_m=0.03,
+            padding_m=0.05,
             filter_geometry="visual",
             external_pose_frames={"g1": "g1/mid360_link"} if pointlio else {},
         ).remappings(

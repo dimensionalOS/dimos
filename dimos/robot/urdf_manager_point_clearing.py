@@ -73,21 +73,22 @@ class UrdfManagerPointClearing(UrdfManager):
 
     async def handle_observations(self, sample: WorldState) -> None:
         """Keep capture-time simulation poses for self-filtering, then publish TF as usual."""
-        with self._lock:
-            if self._observations:
-                last = self._observations[-1].header
-                if sample.header.clock_id != last.clock_id:
-                    raise ValueError("self-filter clock changed; restart its binding")
-                if sample.header.epoch < last.epoch:
-                    return
-                if sample.header.epoch > last.epoch:
-                    self._observations.clear()
-                elif sample.header.time_ns <= last.time_ns:
-                    return
-            self._observations.append(sample)
-            cutoff = sample.header.time_ns - round(self.config.state_history_s * 1e9)
-            while len(self._observations) > 1 and self._observations[0].header.time_ns < cutoff:
-                self._observations.popleft()
+        # This callback runs on the module event loop. Filtering takes a tuple
+        # snapshot of the deque, so it never holds up observation/encoder dispatch.
+        if self._observations:
+            last = self._observations[-1].header
+            if sample.header.clock_id != last.clock_id:
+                raise ValueError("self-filter clock changed; restart its binding")
+            if sample.header.epoch < last.epoch:
+                return
+            if sample.header.epoch > last.epoch:
+                self._observations.clear()
+            elif sample.header.time_ns <= last.time_ns:
+                return
+        self._observations.append(sample)
+        cutoff = sample.header.time_ns - round(self.config.state_history_s * 1e9)
+        while len(self._observations) > 1 and self._observations[0].header.time_ns < cutoff:
+            self._observations.popleft()
         await super().handle_observations(sample)
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
@@ -176,8 +177,11 @@ class UrdfManagerPointClearing(UrdfManager):
         Raw sensor-axis clouds and truth-registered world clouds are supported.
         Estimated/deskewed clouds must be filtered before the estimator instead.
         """
+        history = tuple(self._observations)
+        if not history:
+            return None
         header = cloud.sample_header
-        latest = self._observations[-1].header
+        latest = history[-1].header
         if header is None or (header.clock_id, header.epoch) != (latest.clock_id, latest.epoch):
             return None
         offsets = cloud.offset_times_u32()
@@ -186,16 +190,20 @@ class UrdfManagerPointClearing(UrdfManager):
         # Bound articulated collision queries to 5 ms batches, like sim lidar.
         buckets = offsets // 5_000_000
         keep = np.zeros(len(points), dtype=bool)
+        multi_dof = tuple(j for j in self._description.joints if j.type in MULTI_DOF_JOINT_TYPES)
+        needed = {self._base_link, cloud.frame_id}
+        for joint in multi_dof:
+            needed.update((joint.parent_link, joint.child_link))
         for bucket in np.unique(buckets):
             indices = np.flatnonzero(buckets == bucket)
             stamp = header.time_ns + int(offsets[indices].min())
-            state = next(
-                (s for s in reversed(self._observations) if s.header.time_ns <= stamp), None
-            )
+            state = next((s for s in reversed(history) if s.header.time_ns <= stamp), None)
             if state is None or stamp - state.header.time_ns > self.config.state_tolerance_s * 1e9:
                 return None
             poses = {"world": np.eye(4)}
             for body in state.bodies:
+                if body.body_id not in needed:
+                    continue
                 p, q = body.pose.position, body.pose.orientation
                 transform = np.eye(4)
                 transform[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
@@ -210,15 +218,14 @@ class UrdfManagerPointClearing(UrdfManager):
                 return None
             positions = dict(zip(joints.name, joints.position, strict=True))
             motions = {}
-            for joint in self._description.joints:
-                if joint.type in MULTI_DOF_JOINT_TYPES:
-                    if joint.parent_link not in poses or joint.child_link not in poses:
-                        return None
-                    motions[joint.name] = (
-                        np.linalg.inv(joint.origin())
-                        @ np.linalg.inv(poses[joint.parent_link])
-                        @ poses[joint.child_link]
-                    )
+            for joint in multi_dof:
+                if joint.parent_link not in poses or joint.child_link not in poses:
+                    return None
+                motions[joint.name] = (
+                    np.linalg.inv(joint.origin())
+                    @ np.linalg.inv(poses[joint.parent_link])
+                    @ poses[joint.child_link]
+                )
             mask = self._body_filter.keep_mask(root_points, positions, motions)
             if mask is None:
                 return None
