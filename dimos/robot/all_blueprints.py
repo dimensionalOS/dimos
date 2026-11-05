@@ -71,7 +71,7 @@ all_blueprints = {
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-makermods-metal-planner-coordinator": "dimos.robot.manipulators.dual_makermods_metal.blueprints.basic:dual_makermods_metal_planner_coordinator",
     "dual-openyam-planner-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic:dual_openyam_planner_coordinator",
-    "dual-openyam-workcell-collection": "dimos.robot.manipulators.dual_openyam.blueprints.workcell_collection:dual_openyam_workcell_collection",
+    "dual-openyam-quest-d405-collection": "dimos.robot.manipulators.dual_openyam.blueprints.quest_d405_collection:dual_openyam_quest_d405_collection",
     "dual-xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner_coordinator",
     "go2-dds": "dimos.robot.unitree.go2.dds.blueprints:go2_dds",
     "go2-dds-mid360": "dimos.robot.unitree.go2.dds.blueprints:go2_dds_mid360",

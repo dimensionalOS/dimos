@@ -36,10 +36,10 @@ from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     dual_openyam_collection_teleop_tasks,
     teleop_webxr_dual_openyam_collection,
 )
-from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
-from dimos.robot.manipulators.dual_openyam.blueprints.workcell_collection import (
-    dual_openyam_workcell_collection,
+from dimos.robot.manipulators.dual_openyam.blueprints.quest_d405_collection import (
+    dual_openyam_quest_d405_collection,
 )
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
@@ -139,19 +139,19 @@ def test_profile_records_three_images_the_joints_and_the_commanded_targets() -> 
     assert profile.metadata == {"name": "dual-openyam-quest", "robot_type": "dual_openyam"}
 
 
-def test_workcell_collection_records_first_and_takes_normal_configuration(tmp_path: Path) -> None:
-    modules = [atom.module for atom in dual_openyam_workcell_collection.active_blueprints]
+def test_quest_d405_collection_records_first_and_takes_normal_configuration(tmp_path: Path) -> None:
+    modules = [atom.module for atom in dual_openyam_quest_d405_collection.active_blueprints]
     assert issubclass(modules[0], CollectionModule)
     assert modules[1] is EpisodeMonitorModule
     outputs = {
-        dual_openyam_workcell_collection.remapping_map.get((atom.name, stream.name), stream.name)
-        for atom in dual_openyam_workcell_collection.active_blueprints
+        dual_openyam_quest_d405_collection.remapping_map.get((atom.name, stream.name), stream.name)
+        for atom in dual_openyam_quest_d405_collection.active_blueprints
         for stream in atom.streams
         if stream.direction == "out"
     }
     assert set(dual_openyam_collection_profile("x").input_types()) <= outputs
 
-    parsed = BlueprintConfigParser(dual_openyam_workcell_collection).parse(
+    parsed = BlueprintConfigParser(dual_openyam_quest_d405_collection).parse(
         [
             "--recorder.recording",
             str(tmp_path / "session"),
@@ -164,7 +164,7 @@ def test_workcell_collection_records_first_and_takes_normal_configuration(tmp_pa
     )
     recorder = next(
         atom
-        for atom in dual_openyam_workcell_collection.active_blueprints
+        for atom in dual_openyam_quest_d405_collection.active_blueprints
         if atom.name == "recorder"
     )
     assert recorder.kwargs["recording_schema"].robot_type == "dual_openyam"
