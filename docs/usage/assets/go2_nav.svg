@@ -112,12 +112,6 @@
 <title>WavefrontFrontierExplorer&#45;&gt;chan_goal_request_PoseStamped</title>
 <path fill="none" stroke="#fff59d" d="M804.55,-116.25C816.36,-115.99 828.42,-115.74 839.96,-115.49"/>
 </g>
-<!-- FoxgloveBridge -->
-<g id="node5" class="node">
-<title>FoxgloveBridge</title>
-<polygon fill="#0b0f0f" stroke="#5c9ff0" points="118.53,-52 17.88,-52 17.88,-16 118.53,-16 118.53,-52"/>
-<text text-anchor="middle" x="68.2" y="-31.23" font-family="fixed" font-size="12.00" fill="#b5e4f4">FoxgloveBridge</text>
-</g>
 <!-- GO2Connection -->
 <g id="node6" class="node">
 <title>GO2Connection</title>

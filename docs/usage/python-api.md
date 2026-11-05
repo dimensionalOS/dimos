@@ -203,9 +203,9 @@ app.unload(SomeModule)            # stop and remove it; the rest keeps running
 ```
 
 Strings and registered Module classes take a name-based fast path. Other
-Module classes and `Blueprint` objects are pickled and unpickled on the
+Module classes and `Blueprint` objects are encoded and rebuilt on the
 daemon, so their module classes must be importable there and all kwargs must
-be picklable.
+be encodable by the RPC codec ([cbor.py](/dimos/protocol/encode/cbor.py)).
 
 The daemon and its workers also import from `dimos.constants.RUNTIME_MODULES_DIR`
 (`~/.local/state/dimos/modules`, or under `$XDG_STATE_HOME`), so a module saved

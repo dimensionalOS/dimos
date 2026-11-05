@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from functools import partial
 import inspect
 import json
-import pickle
 import sys
 import threading
 from typing import (
@@ -43,8 +42,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor, extract_module_info
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
-from dimos.core.rpc_client import RpcCall
-from dimos.core.stream import IO, In, Out, RemoteOut, Transport
+from dimos.core.stream import IO, In, Out, RemoteOut, Transport, TransportSpec
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
@@ -85,13 +83,12 @@ _skills_by_class: dict[type, list[SkillInfo]] = {}
 _skills_lock = threading.Lock()
 
 
+@dataclass(frozen=True, slots=True)
 class PeekNotFound:
     """Sentinel returned by `Module.peek_stream` when the named stream is
-    not present on a module. A class instance survives pickle round-trips so
+    not present on a module. A class instance survives the RPC round trip so
     `Dimos.peek_stream` can `isinstance(result, PeekNotFound)`-test the reply.
     """
-
-    __slots__ = ()
 
     def __repr__(self) -> str:
         return "<PeekNotFound>"
@@ -159,7 +156,6 @@ class ModuleBase(Configurable, CompositeResource):
     _tf: TF | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
-    _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
     _loop_lock: threading.Lock
@@ -270,35 +266,6 @@ class ModuleBase(Configurable, CompositeResource):
             self.rpc.stop()  # type: ignore[attr-defined]
             self.rpc = None  # type: ignore[assignment]
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Exclude unpicklable runtime attributes when serializing."""
-        state = self.__dict__.copy()
-        # Remove unpicklable attributes
-        state.pop("_disposables", None)
-        state.pop("_module_closed_lock", None)
-        state.pop("_loop_lock", None)
-        state.pop("_loop", None)
-        state.pop("_loop_thread", None)
-        state.pop("_rpc", None)
-        state.pop("_tf", None)  # conventional slot for a TF view over the tf port
-        state.pop("_main_gen", None)
-        state.pop("_tools", None)
-        state.pop("_tools_lock", None)
-        return state
-
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        """Restore object from pickled state."""
-        self.__dict__.update(state)
-        # Reinitialize runtime attributes
-        self._module_closed_lock = threading.Lock()
-        self._loop_lock = threading.Lock()
-        self._loop = None
-        self._loop_thread = None
-        self._rpc = None
-        self._main_gen = None
-        self._tools = {}
-        self._tools_lock = threading.Lock()
-
     @property
     def outputs(self) -> dict[str, Out]:  # type: ignore[type-arg]
         return {
@@ -394,7 +361,8 @@ class ModuleBase(Configurable, CompositeResource):
                     channel=transport.channel
                     if isinstance(transport, PubSubTransport)
                     else type(transport).__name__,
-                    transport=pickle.dumps((stream.type, transport)),
+                    type=stream.type,
+                    transport=TransportSpec.of(transport),
                 )
             )
         return descriptors
