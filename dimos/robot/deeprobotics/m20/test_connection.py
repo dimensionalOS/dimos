@@ -12,21 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterator
 import json
+import math
 import socket
 import struct
 from threading import Event, Thread
+import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.msgs.std_msgs.UInt32 import UInt32
 from dimos.robot.deeprobotics.m20 import connection as m20_connection
-from dimos.robot.deeprobotics.m20.connection import MOTION_SIT, M20Connection
+from dimos.robot.deeprobotics.m20.connection import (
+    _BASIC_SERVER_HEADER,
+    _BASIC_SERVER_MAGIC,
+    CHARGE_CHARGING,
+    CHARGE_ENTERING,
+    CHARGE_ERROR,
+    CHARGE_EXITING,
+    CHARGE_IDLE,
+    CHARGE_ON_DOCK,
+    DOCK_CHARGING,
+    GAIT_STAIR_AGILE,
+    MOTION_RL_CONTROL,
+    MOTION_SIT,
+    M20Connection,
+    dock_verdict,
+)
 
 INPUTS = ("command_ready", "motion_state", "gait_state", "odometry")
 OUTPUTS = ("cmd_vel", "motion_state_cmd", "gait_cmd", "odom")
@@ -54,17 +72,99 @@ class FakeTransport:
         self.subscribers.clear()
 
 
+class FakeBasicServer:
+    """Loopback basic_server that reports to whoever sends it heartbeats."""
+
+    def __init__(self) -> None:
+        self.charge = CHARGE_IDLE
+        self.errors: list[int] = []
+        self.received: list[dict[str, Any]] = []
+        self.raw: list[bytes] = []
+        self.reporting = True
+        self._stop = Event()
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.bind(("127.0.0.1", 0))
+        self._socket.settimeout(0.02)
+        self.port = int(self._socket.getsockname()[1])
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join()
+        self._socket.close()
+
+    def charge_commands(self) -> list[int]:
+        return [
+            frame["Items"]["Charge"]
+            for frame in list(self.received)
+            if (frame["Type"], frame["Command"]) == (2, 24)
+        ]
+
+    def _run(self) -> None:
+        peer = None
+        while not self._stop.is_set():
+            try:
+                data, peer = self._socket.recvfrom(0xFFFF)
+                self.raw.append(data)
+                self.received.append(json.loads(data[_BASIC_SERVER_HEADER.size :])["PatrolDevice"])
+            except TimeoutError:
+                pass
+            if peer is None or not self.reporting:
+                continue
+            for frame in (
+                b"garbage",
+                _BASIC_SERVER_MAGIC + b"\0" * 12 + b"{not json",
+                self._report(4, {"MotionStatus": {"Height": 0.5}}),
+                self._report(6, {"BasicStatus": {"MotionState": 17, "Charge": self.charge}}),
+                self._report(3, {"ErrorList": [{"errorCode": []}]}),
+                self._report(3, {"ErrorList": [{"errorCode": c} for c in [0, *self.errors]]}),
+            ):
+                self._socket.sendto(frame, peer)
+
+    @staticmethod
+    def _report(command: int, items: dict[str, Any]) -> bytes:
+        body = json.dumps(
+            {"PatrolDevice": {"Type": 1002, "Command": command, "Items": items}}
+        ).encode()
+        return _BASIC_SERVER_HEADER.pack(_BASIC_SERVER_MAGIC, len(body), 1, 1, b"\0" * 7) + body
+
+
 @pytest.fixture
-def basic_server() -> Iterator[socket.socket]:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-        udp.bind(("127.0.0.1", 0))
-        udp.settimeout(2.0)
-        yield udp
+def server() -> Iterator[FakeBasicServer]:
+    fake = FakeBasicServer()
+    try:
+        yield fake
+    finally:
+        fake.close()
+
+
+@pytest.fixture
+def connection(server: FakeBasicServer) -> Iterator[M20Connection]:
+    module = M20Connection(
+        basic_server_host="127.0.0.1",
+        basic_server_udp_port=server.port,
+        dock_settle_s=0.05,
+        dock_start_timeout_s=0.4,
+        dock_timeout_s=1.5,
+        undock_timeout_s=1.5,
+    )
+    for stream in ("cmd_vel", "goal", "motion_state_cmd", "gait_cmd", "odom"):
+        setattr(module, stream, MagicMock())
+    for tool in ("start_tool", "tool_update", "stop_tool"):
+        setattr(module, tool, MagicMock())
+    module._stand = MagicMock(return_value=True)  # type: ignore[method-assign]
+    module._motion_state = MOTION_RL_CONTROL
+    module._start_basic_server_link()
+    try:
+        yield module
+    finally:
+        module.stop()
 
 
 @pytest.fixture
 def started(
-    basic_server: socket.socket, mocker: MockerFixture
+    server: FakeBasicServer, mocker: MockerFixture
 ) -> Iterator[Callable[..., M20Connection]]:
     """Start M20Connections on fake streams with the given methods stubbed, and stop the ones a test left running."""
     built: list[M20Connection] = []
@@ -72,7 +172,7 @@ def started(
     def start(stubs: dict[str, Callable[..., Any]] | None = None, **config: Any) -> M20Connection:
         conn = M20Connection(
             basic_server_host="127.0.0.1",
-            basic_server_udp_port=basic_server.getsockname()[1],
+            basic_server_udp_port=server.port,
             **config,
         )
         for name in INPUTS + OUTPUTS:
@@ -85,15 +185,342 @@ def started(
 
     yield start
     for conn in built:
-        if not conn._heartbeat_stop.is_set():
+        if not conn._link_stop.is_set():
             conn.stop()
 
 
+def _wait_until(condition: Callable[[], bool], timeout_s: float = 3.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while not condition():
+        assert time.monotonic() < deadline, "condition not met in time"
+        time.sleep(0.01)
+
+
+def _wait_for_status(module: M20Connection, status: int) -> None:
+    _wait_until(lambda: module._fresh_charge_status() == status)
+
+
+def _updates(module: M20Connection) -> list[str]:
+    return [call.args[1] for call in module.tool_update.call_args_list]  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "status,entered,elapsed_s,expected",
+    [
+        (CHARGE_CHARGING, True, 1.0, DOCK_CHARGING),
+        (CHARGE_ERROR, True, 1.0, "the robot reported a charging error"),
+        (CHARGE_EXITING, True, 1.0, "the robot gave up and is backing off the dock"),
+        (CHARGE_IDLE, True, 1.0, "the robot stopped docking and returned to idle"),
+        (CHARGE_IDLE, False, 1.0, None),
+        (CHARGE_IDLE, False, 5.0, "the robot did not accept the dock command"),
+        (CHARGE_ENTERING, True, 149.0, None),
+        (CHARGE_ENTERING, True, 150.0, "timed out after 150 s"),
+        (CHARGE_ON_DOCK, True, 149.0, None),
+        (CHARGE_ON_DOCK, True, 150.0, "the robot is on the dock but not charging"),
+    ],
+)
+def test_dock_verdict(status: int, entered: bool, elapsed_s: float, expected: str | None) -> None:
+    assert dock_verdict(status, entered, elapsed_s, 5.0, 150.0) == expected
+
+
+def test_reports_update_the_status_past_malformed_frames(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    server.charge = CHARGE_CHARGING
+    _wait_for_status(connection, CHARGE_CHARGING)
+    assert connection.charge_status() == "charging"
+
+    server.errors = [0x8506]
+    _wait_until(lambda: connection._charge_error == 0x8506)
+    assert connection.charge_status() == "charging, last error 0x8506 no current from the dock"
+
+
+def test_charge_status_is_unknown_when_reports_go_stale(
+    connection: M20Connection, server: FakeBasicServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    server.reporting = False
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_MAX_AGE_S", 0.05)
+    _wait_until(lambda: connection.charge_status() == "unknown")
+
+
+def test_dock_cancels_nav_then_sends_the_vendor_command_and_reports_charging(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+
+    assert "Docking" in connection.dock()
+    _wait_until(lambda: server.charge_commands() == [1])
+
+    connection.goal.publish.assert_called_once()  # type: ignore[attr-defined]
+    goal = connection.goal.publish.call_args.args[0]  # type: ignore[attr-defined]
+    assert math.isnan(goal.x) and math.isnan(goal.y) and math.isnan(goal.z)
+    connection.cmd_vel.publish.assert_not_called()  # type: ignore[attr-defined]
+
+    apdu = next(frame for frame in server.raw if b'"Command":24' in frame)
+    magic, length, _message_id, encoding, _reserved = _BASIC_SERVER_HEADER.unpack(
+        apdu[: _BASIC_SERVER_HEADER.size]
+    )
+    assert (magic, encoding, length) == (
+        bytes.fromhex("eb91eb90"),
+        1,
+        len(apdu) - _BASIC_SERVER_HEADER.size,
+    )
+
+    server.charge = CHARGE_ENTERING
+    _wait_until(lambda: "Charge status: entering the dock." in _updates(connection))
+    server.charge = CHARGE_CHARGING
+    _wait_until(lambda: "Docked and charging." in _updates(connection))
+
+    connection.start_tool.assert_called_once_with("dock")  # type: ignore[attr-defined]
+    connection.stop_tool.assert_called_once_with("dock")  # type: ignore[attr-defined]
+    assert connection._charge_task is None
+
+
+@pytest.mark.parametrize(
+    "prepare,reason",
+    [
+        (lambda m, s: setattr(s, "charge", CHARGE_CHARGING), "charge status is charging"),
+        (lambda m, s: setattr(m, "_motion_state", 4), "not standing"),
+    ],
+)
+def test_dock_refuses_from_a_bad_state(
+    connection: M20Connection,
+    server: FakeBasicServer,
+    prepare: Callable[[M20Connection, FakeBasicServer], None],
+    reason: str,
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    prepare(connection, server)
+    time.sleep(0.1)
+
+    message = connection.dock()
+
+    assert reason in message
+    assert server.charge_commands() == []
+    connection.goal.publish.assert_not_called()  # type: ignore[attr-defined]
+    connection.stop_tool.assert_called_once_with("dock")  # type: ignore[attr-defined]
+
+
+def test_dock_refuses_without_status_reports(server: FakeBasicServer) -> None:
+    server.reporting = False
+    module = M20Connection(basic_server_host="127.0.0.1", basic_server_udp_port=server.port)
+    module.cmd_vel = MagicMock()  # type: ignore[assignment]
+    for tool in ("start_tool", "stop_tool"):
+        setattr(module, tool, MagicMock())
+    module._start_basic_server_link()
+    try:
+        assert "not reporting" in module.dock()
+    finally:
+        module.stop()
+    assert server.charge_commands() == []
+
+
+def test_dock_failure_names_the_vendor_error_even_after_it_clears(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+    _wait_until(lambda: server.charge_commands() == [1])
+    server.charge = CHARGE_ENTERING
+    _wait_for_status(connection, CHARGE_ENTERING)
+    server.errors = [0x8503]
+    _wait_until(lambda: connection._charge_error == 0x8503)
+    server.errors = []
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: connection._charge_task is None)
+
+    assert _updates(connection)[-1] == (
+        "Docking failed: the robot stopped docking and returned to idle "
+        "(0x8503 no location, reflectors not found). The robot is standing ready to navigate."
+    )
+    assert server.charge_commands() == [1]
+    connection._stand.assert_called_once()  # type: ignore[attr-defined]
+
+
+def test_dock_failure_leaves_a_sitting_robot_sitting(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+    _wait_until(lambda: server.charge_commands() == [1])
+    server.charge = CHARGE_ERROR
+    _wait_for_status(connection, CHARGE_ERROR)
+    connection._on_motion_state(Int32(MOTION_SIT))
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: connection._charge_task is None)
+
+    assert _updates(connection)[-1].endswith("Call standup() before navigating.")
+    connection._stand.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_gait_is_resent_when_the_robot_drops_it(connection: M20Connection) -> None:
+    connection.config.gait_timeout_s = 0.1
+    sends: list[int] = []
+
+    def publish(msg: UInt32) -> None:
+        sends.append(msg.data)
+        if len(sends) == 2:
+            connection._on_gait_state(msg)
+
+    connection.gait_cmd.publish.side_effect = publish  # type: ignore[attr-defined]
+
+    assert connection._set_gait_and_wait(GAIT_STAIR_AGILE) is True
+    assert sends == [GAIT_STAIR_AGILE, GAIT_STAIR_AGILE]
+
+
+def test_dock_timeout_sends_stop(connection: M20Connection, server: FakeBasicServer) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+    _wait_until(lambda: server.charge_commands() == [1])
+    server.charge = CHARGE_ENTERING
+    _wait_until(lambda: server.charge_commands() == [1, 0])
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: connection._charge_task is None)
+
+    assert "timed out" in _updates(connection)[-1]
+
+
+def test_undock_leaves_the_dock_and_stands(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    server.charge = CHARGE_CHARGING
+    _wait_for_status(connection, CHARGE_CHARGING)
+
+    assert "Undocking" in connection.undock()
+    _wait_until(lambda: server.charge_commands() == [0])
+    server.charge = CHARGE_EXITING
+    connection._stand.assert_not_called()  # type: ignore[attr-defined]
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: "Off the dock and ready to navigate." in _updates(connection))
+    connection._stand.assert_called_once()  # type: ignore[attr-defined]
+    connection.stop_tool.assert_called_once_with("undock")  # type: ignore[attr-defined]
+
+
+def test_undock_cancels_a_running_dock(connection: M20Connection, server: FakeBasicServer) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+    _wait_until(lambda: server.charge_commands() == [1])
+    server.charge = CHARGE_ENTERING
+    _wait_for_status(connection, CHARGE_ENTERING)
+
+    connection.undock()
+    _wait_until(lambda: server.charge_commands() == [1, 0])
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: connection._charge_task is None)
+    updates = _updates(connection)
+    assert "Docking cancelled by undock." in updates
+    assert "Off the dock and ready to navigate." in updates
+
+
+def test_undock_refuses_when_not_on_the_dock(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+
+    assert "not on the dock" in connection.undock()
+
+    assert server.charge_commands() == []
+
+
+def test_undock_stays_off_when_the_vendor_reports_an_exit_timeout(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    server.charge = CHARGE_CHARGING
+    _wait_for_status(connection, CHARGE_CHARGING)
+    connection.undock()
+    _wait_until(lambda: server.charge_commands() == [0])
+    server.errors = [0x8510]
+    server.charge = CHARGE_IDLE
+
+    _wait_until(lambda: connection._charge_task is None)
+
+    assert _updates(connection)[-1] == "Undocking failed: 0x8510 dock exit timeout."
+    connection._stand.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_commands_are_refused_on_the_dock(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    server.charge = CHARGE_CHARGING
+    _wait_for_status(connection, CHARGE_CHARGING)
+
+    assert connection.move(Twist.zero()) is False
+    connection.stop_movement()
+    assert connection.liedown() is False
+    assert connection.standup() is False
+    assert connection.set_navigation_terrain("flat") is False
+
+    connection.cmd_vel.publish.assert_not_called()  # type: ignore[attr-defined]
+    connection.motion_state_cmd.publish.assert_not_called()  # type: ignore[attr-defined]
+    connection.gait_cmd.publish.assert_not_called()  # type: ignore[attr-defined]
+    connection._stand.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_stop_does_not_sit_the_robot_on_the_dock(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    server.charge = CHARGE_CHARGING
+    connection.config.auto_stand = True
+    _wait_for_status(connection, CHARGE_CHARGING)
+
+    connection.stop()
+
+    connection.motion_state_cmd.publish.assert_not_called()  # type: ignore[attr-defined]
+    connection.cmd_vel.publish.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_auto_stand_undocks_when_on_the_dock(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    server.charge = CHARGE_CHARGING
+    _wait_for_status(connection, CHARGE_CHARGING)
+
+    connection._auto_stand()
+
+    _wait_until(lambda: server.charge_commands() == [0])
+    connection._stand.assert_not_called()  # type: ignore[attr-defined]
+    server.charge = CHARGE_IDLE
+    _wait_until(lambda: "Off the dock and ready to navigate." in _updates(connection))
+    connection._stand.assert_called_once()  # type: ignore[attr-defined]
+
+
+def test_auto_stand_stands_when_idle(connection: M20Connection, server: FakeBasicServer) -> None:
+    _wait_for_status(connection, CHARGE_IDLE)
+
+    connection._auto_stand()
+
+    connection._stand.assert_called_once()  # type: ignore[attr-defined]
+    assert server.charge_commands() == []
+
+
+def test_auto_stand_does_not_stand_without_status(
+    server: FakeBasicServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server.reporting = False
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_WAIT_S", 0.05)
+    module = M20Connection(basic_server_host="127.0.0.1", basic_server_udp_port=server.port)
+    module.cmd_vel = MagicMock()  # type: ignore[assignment]
+    module._stand = MagicMock()  # type: ignore[method-assign]
+    try:
+        module._auto_stand()
+    finally:
+        module.stop()
+
+    module._stand.assert_not_called()  # type: ignore[attr-defined]
+
+
 def test_heartbeat_sends_a_type_100_apdu_to_the_udp_port(
-    started: Callable[..., M20Connection], basic_server: socket.socket
+    started: Callable[..., M20Connection], server: FakeBasicServer
 ) -> None:
     started()
-    datagram = basic_server.recv(4096)
+    _wait_until(lambda: len(server.raw) > 0)
+    datagram = server.raw[0]
     magic, length, _message_id, encoding, _reserved = HEADER.unpack_from(datagram)
     payload = datagram[HEADER.size :]
     device = json.loads(payload)["PatrolDevice"]
